@@ -33,6 +33,9 @@ final class ReviewPlanModel {
     /// snapshot shows a different job in `ready`.
     private var baselineJobID: String?
     private var initialFlag: PlanSectionID?
+    /// The sheet was dismissed: an update already being sent still finishes (never half-send a turn), but nothing
+    /// is followed afterwards.
+    private var dismissed = false
     private let pollInterval: Duration
     private let giveUpAfter: Duration
 
@@ -65,6 +68,12 @@ final class ReviewPlanModel {
     var changedSections: [PlanSectionID] { blocks.filter(\.changed).map(\.section) }
 
     func block(_ section: PlanSectionID) -> PlanBlock? { blocks.first { $0.section == section } }
+
+    /// Undo needs the draft head the server sent with the snapshot (its revision guards the restore); without one
+    /// the button must not be offered.
+    func canUndo(_ block: PlanBlock) -> Bool {
+        block.changed && block.previous != nil && snapshot?.draft != nil
+    }
 
     /// Whether the creator may flag or edit this section right now.
     func canChange(_ block: PlanBlock) -> Bool {
@@ -113,6 +122,14 @@ final class ReviewPlanModel {
             if blocks.isEmpty { loadFailed = true }
         }
         isLoading = false
+        if initial { resumeIfUpdating() }
+    }
+
+    /// The sheet opened while an update render was already running (it was closed mid-update, or started from the
+    /// chat): nothing else would ever poll, so follow it to its end.
+    private func resumeIfUpdating() {
+        guard phase == .reviewing, followTask == nil, snapshot?.status == .updating else { return }
+        followTask = Task { [weak self] in await self?.follow(awaitNewJob: false) }
     }
 
     private func apply(_ fresh: PlanSnapshot) {
@@ -140,11 +157,14 @@ final class ReviewPlanModel {
         let message = draft.message
         let edits = draft.manualEdits(titleBarID: titleBarID, captionOrder: captionLineOrder)
         askedPrompt = draft.trimmedPrompt.isEmpty ? nil : draft.trimmedPrompt
-        begin(scope: scope) { [actions] in try await actions.update(scope, edits, message) }
+        begin(scope: scope) { [actions] in
+            try await actions.update(scope, edits, message)
+            return true
+        }
     }
 
     func undo(_ section: PlanSectionID) {
-        guard phase == .reviewing, let block = block(section), block.changed, block.previous != nil,
+        guard phase == .reviewing, let block = block(section), canUndo(block),
               let draftRevision = snapshot?.draft?.draftRevision else { return }
         askedPrompt = nil
         begin(scope: [section]) { [actions] in try await actions.undoSection(section, block.revision, draftRevision) }
@@ -153,12 +173,20 @@ final class ReviewPlanModel {
     func undoAll() {
         guard phase == .reviewing, canUndoAll, let draftRevision = snapshot?.draft?.draftRevision else { return }
         askedPrompt = nil
-        begin(scope: changedSections) { [actions] in try await actions.undoAll(draftRevision) }
+        begin(scope: changedSections) { [actions] in
+            try await actions.undoAll(draftRevision)
+            return true
+        }
     }
 
+    /// The sheet went away. Polling stops; a turn that is still being sent / approved is allowed to finish, so a
+    /// dismissal never leaves a submitted draft unapproved.
     func cancelFollowing() {
-        followTask?.cancel()
-        followTask = nil
+        dismissed = true
+        if phase != .submitting {
+            followTask?.cancel()
+            followTask = nil
+        }
     }
 
     private var titleBarID: String? {
@@ -171,15 +199,17 @@ final class ReviewPlanModel {
         return []
     }
 
-    private func begin(scope: [PlanSectionID], send: @escaping @MainActor () async throws -> Void) {
+    /// `send` returns whether it queued a re-render (see `ReviewPlanActions.undoSection`).
+    private func begin(scope: [PlanSectionID], send: @escaping @MainActor () async throws -> Bool) {
         notice = nil
         phase = .submitting
         updatingScope = scope
         baselineJobID = snapshot?.jobID
         followTask?.cancel()
         followTask = Task { [weak self] in
+            let rendering: Bool
             do {
-                try await send()
+                rendering = try await send()
             } catch is CancellationError {
                 return
             } catch {
@@ -188,8 +218,16 @@ final class ReviewPlanModel {
             }
             guard let self, !Task.isCancelled else { return }
             self.draft = ReviewPlanDraft()
-            self.phase = .updating
-            await self.follow()
+            if self.dismissed {
+                self.finish(notice: nil)
+            } else if rendering {
+                self.phase = .updating
+                await self.follow(awaitNewJob: true)
+            } else {
+                // Nothing was queued (a restore that only changed the draft): show what the server has now.
+                await self.refresh()
+                self.finish(notice: nil)
+            }
         }
     }
 
@@ -209,8 +247,10 @@ final class ReviewPlanModel {
         }
     }
 
-    /// Polls the snapshot until the update render is ready (a different job, `ready`), stopped, or taking too long.
-    private func follow() async {
+    /// Polls the snapshot until the update render is ready, stopped, or taking too long. `awaitNewJob`: the update
+    /// this sheet sent must show up as a different job first (an old `ready` is not its result); false when
+    /// following a render that was already running.
+    private func follow(awaitNewJob: Bool) async {
         let started = ContinuousClock.now
         var failures = 0
         while !Task.isCancelled {
@@ -222,13 +262,7 @@ final class ReviewPlanModel {
                     finish(notice: "The update was stopped.")
                     return
                 }
-                if fresh.status == .ready, fresh.jobID != baselineJobID {
-                    finish(notice: nil)
-                    return
-                }
-                // No new job ever appeared (for example an undo that only restored values): settle on what the
-                // server shows now instead of waiting out the full timeout.
-                if fresh.status == .ready, ContinuousClock.now - started > .seconds(20) {
+                if fresh.status == .ready, !awaitNewJob || fresh.jobID != baselineJobID {
                     finish(notice: nil)
                     return
                 }

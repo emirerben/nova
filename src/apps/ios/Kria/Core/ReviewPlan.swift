@@ -114,7 +114,9 @@ struct ReviewPlanActions {
     var loadSnapshot: @MainActor () async throws -> PlanSnapshot
     /// Submits the scoped turn and auto-approves the resulting draft (tapping Update video is the consent).
     var update: @MainActor (_ scope: [PlanSectionID], _ edits: [ManualPlanEdit], _ message: String) async throws -> Void
-    var undoSection: @MainActor (_ section: PlanSectionID, _ blockRevision: Int, _ draftRevision: Int) async throws -> Void
+    /// Returns whether a re-render was queued. `false` = the restore changed the draft only (no successor turn),
+    /// so there is no new job to wait for.
+    var undoSection: @MainActor (_ section: PlanSectionID, _ blockRevision: Int, _ draftRevision: Int) async throws -> Bool
     var undoAll: @MainActor (_ draftRevision: Int) async throws -> Void
 }
 

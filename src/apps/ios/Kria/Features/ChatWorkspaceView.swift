@@ -650,7 +650,7 @@ private struct CreationWorkspaceView: View {
         try await approveReviewDraft(turnID: accepted.turnID, afterSequence: startSequence)
     }
 
-    private func undoReviewSection(_ section: PlanSectionID, blockRevision: Int, draftRevision: Int) async throws {
+    private func undoReviewSection(_ section: PlanSectionID, blockRevision: Int, draftRevision: Int) async throws -> Bool {
         _ = try? await refreshDelta()
         let startSequence = afterSequence
         let result = try await model.api.undoPlanSection(
@@ -659,8 +659,9 @@ private struct CreationWorkspaceView: View {
         )
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: result.threadRevision)
         // A null successor turn means nothing was queued to render: there is no approval to wait for.
-        guard let turnID = result.turnID else { return }
+        guard let turnID = result.turnID else { return false }
         try await approveReviewDraft(turnID: turnID, afterSequence: startSequence)
+        return true
     }
 
     private func undoAllReview(draftRevision: Int) async throws {

@@ -74,7 +74,7 @@ final class ReviewPlanTests: XCTestCase {
         let actions = ReviewPlanActions(
             loadSnapshot: { first },
             update: { _, _, _ in throw ReviewPlanError.declined("That would change music, which you did not flag.") },
-            undoSection: { _, _, _ in }, undoAll: { _ in }
+            undoSection: { _, _, _ in true }, undoAll: { _ in }
         )
         let model = ReviewPlanModel(seed: [], initialFlag: nil, actions: actions, pollInterval: .milliseconds(5))
         await model.load()
@@ -98,7 +98,7 @@ final class ReviewPlanTests: XCTestCase {
                 if reads < 4 { return try self.snapshot(status: "updating", job: "job-2", editable: false) }
                 return try self.snapshot(job: "job-2")
             },
-            update: { _, _, _ in }, undoSection: { _, _, _ in }, undoAll: { _ in }
+            update: { _, _, _ in }, undoSection: { _, _, _ in true }, undoAll: { _ in }
         )
         let model = ReviewPlanModel(seed: [], initialFlag: .captions, actions: actions, pollInterval: .milliseconds(5))
         await model.load()
@@ -109,5 +109,59 @@ final class ReviewPlanTests: XCTestCase {
         XCTAssertEqual(model.snapshot?.jobID, "job-2")
         XCTAssertNil(model.notice)
         XCTAssertTrue(model.draft.isEmpty, "the draft is spent once the update is sent")
+    }
+
+    private func changedSnapshot(status: String = "ready", job: String, withDraft: Bool = true) throws -> PlanSnapshot {
+        let before: [String: Any] = ["revision": 1, "job_id": "job-1", "summary": "4 lines", "skipped": false]
+        let block: [String: Any] = ["section_id": "captions", "state": "decided", "intent": false, "skipped": false,
+                                    "summary": "4 lines, shorter", "revision": 2, "changed": true, "previous": before, "editable": true]
+        var body: [String: Any] = ["thread_id": "t", "thread_revision": 3, "job_id": job, "status": status, "blocks": [block],
+                                   "scope": ["captions"], "next_after_sequence": 9]
+        if withDraft { body["draft"] = ["draft_id": "d", "draft_revision": 2, "etag": "e", "can_undo": true] }
+        return try JSONDecoder().decode(PlanSnapshot.self, from: JSONSerialization.data(withJSONObject: body))
+    }
+
+    func testReopeningMidUpdateFollowsTheRenderToTheEnd() async throws {
+        var reads = 0
+        let actions = ReviewPlanActions(
+            loadSnapshot: {
+                reads += 1
+                return try self.changedSnapshot(status: reads < 4 ? "updating" : "ready", job: "job-2")
+            },
+            update: { _, _, _ in }, undoSection: { _, _, _ in true }, undoAll: { _ in }
+        )
+        let model = ReviewPlanModel(seed: [], initialFlag: nil, actions: actions, pollInterval: .milliseconds(5))
+        await model.load()
+        XCTAssertTrue(model.isUpdating, "the render was already running when the sheet opened")
+        for _ in 0..<200 where model.isUpdating { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(model.isUpdating, "nothing else polls, so the sheet must follow the render itself")
+        XCTAssertTrue(model.showsUpdated)
+    }
+
+    func testARestoreThatQueuesNoRenderSettlesAtOnceInsteadOfWaitingForANewJob() async throws {
+        let actions = ReviewPlanActions(
+            loadSnapshot: { try self.changedSnapshot(job: "job-2") },
+            update: { _, _, _ in }, undoSection: { _, _, _ in false }, undoAll: { _ in }
+        )
+        let model = ReviewPlanModel(seed: [], initialFlag: nil, actions: actions, pollInterval: .seconds(30))
+        await model.load()
+        model.undo(.captions)
+        for _ in 0..<100 where model.phase != .reviewing { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(model.phase, .reviewing, "no successor turn means no new job to wait for")
+        XCTAssertNil(model.notice)
+    }
+
+    func testUndoIsOfferedOnlyWhenTheServerSentADraftHead() async throws {
+        for (withDraft, expected) in [(true, true), (false, false)] {
+            let actions = ReviewPlanActions(
+                loadSnapshot: { try self.changedSnapshot(job: "job-2", withDraft: withDraft) },
+                update: { _, _, _ in }, undoSection: { _, _, _ in true }, undoAll: { _ in }
+            )
+            let model = ReviewPlanModel(seed: [], initialFlag: nil, actions: actions, pollInterval: .milliseconds(5))
+            await model.load()
+            XCTAssertEqual(model.canUndo(try XCTUnwrap(model.block(.captions))), expected)
+            model.undo(.captions)
+            if !withDraft { XCTAssertEqual(model.phase, .reviewing, "a missing draft head must not start a phantom undo") }
+        }
     }
 }

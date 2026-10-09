@@ -66,7 +66,7 @@ struct ReviewPlanView: View {
     private var topFade: some View {
         LinearGradient(
             // Opaque enough under the title and subtitle that scrolled cards never read through them.
-            stops: [.init(color: Color.white.opacity(0.98), location: 0), .init(color: Color.white.opacity(0.96), location: 0.62),
+            stops: [.init(color: Color.white.opacity(0.98), location: 0), .init(color: Color.white.opacity(0.96), location: 0.78),
                     .init(color: Color.white.opacity(0), location: 1)],
             startPoint: .top, endPoint: .bottom
         )
@@ -439,7 +439,7 @@ private struct ReviewSectionCard: View {
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityIdentifier("review-was-\(section.rawValue)")
-            if block.previous != nil {
+            if model.canUndo(block) {
                 Button { model.undo(section) } label: {
                     Text("Undo")
                         .font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink)
