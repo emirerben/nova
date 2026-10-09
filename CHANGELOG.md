@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.203.0] - 2026-10-09
+
+### Changed
+- feat(kria): song-timeline order screen for lip-sync takes (KRI-561) (#1524) <!-- release-pr: 1524 -->
+
 ## [0.78.202.0] - 2026-10-09
 
 ### Changed
