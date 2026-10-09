@@ -1399,9 +1399,12 @@ private struct CreationWorkspaceView: View {
 
     private func loadCompletedThoughtSummaries() async {
         guard let response = try? await model.api.creationThoughtSummaryHistory(threadID: project.id) else { return }
-        completedThoughtSummaries = Dictionary(grouping: response.summaries.filter {
+        let history = Dictionary(grouping: response.summaries.filter {
             $0.status == .completed && $0.hasText && $0.clientRequestID != nil
         }, by: { $0.clientRequestID! })
+        // A history request started on appear can finish after a newer live
+        // turn; keep the completed record that was already shown for that turn.
+        completedThoughtSummaries.merge(history) { current, _ in current }
     }
 
     private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil) async {
