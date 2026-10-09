@@ -87,6 +87,7 @@ async def test_attempt_fencing_history_ownership_and_chat_revision(
     first(" late chunk")
     second("Provider ")
     second("summary")
+    publisher.mark_model_success()
     publisher.complete()
 
     empty = ThoughtSummaryPublisher(
@@ -101,6 +102,12 @@ async def test_attempt_fencing_history_ownership_and_chat_revision(
     failed.begin_attempt()("Partial thought")
     failed.fail()
 
+    malformed = ThoughtSummaryPublisher(
+        creator_id=owner_id, thread_id=thread_id, client_request_id="request-malformed"
+    )
+    malformed.begin_attempt()("Unusable model output")
+    malformed.complete()
+
     abandoned = ThoughtSummaryPublisher(
         creator_id=owner_id, thread_id=thread_id, client_request_id="request-restarted"
     )
@@ -112,12 +119,14 @@ async def test_attempt_fencing_history_ownership_and_chat_revision(
     resumed.begin_attempt()("New worker text")
     late(" late chunk")
     abandoned.complete()
+    resumed.mark_model_success()
     resumed.complete()
 
     slide = ThoughtSummaryPublisher(
         creator_id=owner_id, plan_item_id=item_id, client_request_id="slide-request"
     )
     slide.begin_attempt()("Slide provider summary")
+    slide.mark_model_success()
     slide.complete()
 
     with sync_session() as db:
@@ -125,6 +134,7 @@ async def test_attempt_fencing_history_ownership_and_chat_revision(
         assert sorted((row.status, row.text) for row in rows if row.thread_id == thread_id) == [
             ("completed", "New worker text"),
             ("completed", "Provider summary"),
+            ("failed", ""),
             ("failed", ""),
             ("failed", ""),
             ("failed", ""),

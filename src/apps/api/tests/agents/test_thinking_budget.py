@@ -21,6 +21,7 @@ from app.agents._runtime import (
     ModelClient,
     ModelInvocation,
     ProviderOutcomeUnknownError,
+    RunContext,
     TerminalError,
     TerminalSchemaError,
 )
@@ -266,6 +267,41 @@ def test_main_creator_fits_heavy_thinking_plus_a_full_reaction_beat_plan() -> No
     output = MainCreatorAgent(client).run(fixture["input"])
 
     assert len(output.action.strategy.reaction_beats) == 13
+
+
+def test_agent_marks_only_a_parsed_thought_attempt_successful() -> None:
+    from app.agents.main_creator import MainCreatorAgent
+
+    class Marker:
+        attempts = 0
+        successes = 0
+
+        def begin_attempt(self):
+            self.attempts += 1
+            return lambda _: None
+
+        def mark_model_success(self):
+            self.successes += 1
+
+    fixture = json.loads(_KRI178_FIXTURE.read_text())
+    marker = Marker()
+    client = _SharedBudgetGemini(
+        answer=fixture["raw_text"], thinking_tokens=100, answer_tokens=2_380
+    )
+    MainCreatorAgent(client).run(fixture["input"], ctx=RunContext(thought_summary_callback=marker))
+    assert (marker.attempts, marker.successes) == (1, 1)
+
+    failed_marker = Marker()
+    truncated = _SharedBudgetGemini(
+        answer=fixture["raw_text"],
+        thinking_tokens=MainCreatorAgent.max_output_tokens,
+        answer_tokens=2_380,
+    )
+    with pytest.raises(TerminalError, match="output truncated"):
+        MainCreatorAgent(truncated).run(
+            fixture["input"], ctx=RunContext(thought_summary_callback=failed_marker)
+        )
+    assert (failed_marker.attempts, failed_marker.successes) == (2, 0)
 
 
 def test_main_creator_budget_runs_out_before_its_provider_timeout() -> None:

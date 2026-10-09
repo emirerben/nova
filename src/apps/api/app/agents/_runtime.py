@@ -236,6 +236,7 @@ class AgentSpec:
 
 class ThoughtSummaryAttemptPublisher(Protocol):
     def begin_attempt(self) -> Callable[[str], None]: ...
+    def mark_model_success(self) -> None: ...
 
 
 @dataclass(slots=True)
@@ -539,6 +540,9 @@ class Agent(ABC, Generic[InputT, OutputT]):
                         output.model_dump() if hasattr(output, "model_dump") else None
                     ),
                 )
+                mark_success = getattr(ctx.thought_summary_callback, "mark_model_success", None)
+                if callable(mark_success):
+                    mark_success()
                 return output
             except RefusalError as exc:
                 # Refusing model probably won't yield to a different one — terminate.

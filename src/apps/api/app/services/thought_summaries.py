@@ -60,6 +60,7 @@ class ThoughtSummaryPublisher:
         self._closed = False
         self._last_write_at = 0.0
         self._attempt_started_at: datetime | None = None
+        self._model_succeeded = False
 
     def begin_attempt(self) -> Callable[[str], None]:
         with self._lock:
@@ -73,11 +74,18 @@ class ThoughtSummaryPublisher:
             self._closed = False
             self._last_write_at = 0.0
             self._attempt_started_at = datetime.now(UTC)
+            self._model_succeeded = False
 
         def publish(chunk: str) -> None:
             self._append(generation, chunk)
 
         return publish
+
+    def mark_model_success(self) -> None:
+        """Only a parsed agent result can make this attempt eligible for history."""
+        with self._lock:
+            if not self._closed and self._row_id is not None:
+                self._model_succeeded = True
 
     def _append(self, generation: int, chunk: str) -> None:
         if not isinstance(chunk, str) or not chunk:
@@ -134,6 +142,9 @@ class ThoughtSummaryPublisher:
             if self._closed:
                 return
             self._closed = True
+            if not self._model_succeeded:
+                self._discard_current_locked()
+                return
             if self._row_id is None or not self._text.strip():
                 return
             try:
