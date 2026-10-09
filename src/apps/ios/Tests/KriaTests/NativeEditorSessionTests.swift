@@ -1400,6 +1400,19 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(cloud.canAddTimelineMedia, cloud.addClipUnavailableReason == nil)
     }
 
+    func testDeviceOnlyModeMakesLegacyCloudEditorPlaybackOnly() async throws {
+        let (session, fake) = await Self.footageSession(destination: "cloud", operationsEditable: true)
+        fake.creationMode = .deviceOnly
+        await session.load(api: fake, threadID: UUID())
+
+        let message = try XCTUnwrap(session.cloudEditorUnavailableMessage)
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("still play"))
+        XCTAssertFalse(session.canEditTimeline)
+        XCTAssertFalse(session.canEditText)
+        XCTAssertFalse(session.canAddTimelineMedia)
+        XCTAssertEqual(session.addClipUnavailableReason, message)
+    }
+
     // KRI-166: the cap is 50 (matching server + creation), not the old 20 — an
     // edit with 20+ clips must still be able to add another.
     func testClipCapIsFiftyAndAddClipStaysAllowedPastTwenty() async throws {
@@ -4917,6 +4930,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     private var sourcePoolContinuation: CheckedContinuation<Void, Never>?
     private var sourcePoolResumeRequested = false
     var phoneDestination = false
+    var creationMode: CreationMode?
     /// What `editorSource` polls return (nil ⇒ the default unsupported error).
     var editorSourceResponse: EditorSourceRegistrationResponse?
     var deviceFetchCount = 0
@@ -4953,6 +4967,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
         self.suspendNextCommit = suspendNextCommit
     }
     func projects() async throws -> [ProjectSummary] { throw APIError.unsupported }
+    func creationCapabilities() async throws -> CreationCapabilities { CreationCapabilities(formats: [], creationMode: creationMode) }
     func project(threadID: UUID) async throws -> CreationThread {
         projectCallCount += 1
         guard let refreshedThread else { throw APIError.unsupported }

@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # Admission-only rollout fence.  Rendering remains controlled by its own
     # phone capability gates so this can safely retire web creation first.
     ios_device_only_mode: bool = False
+    # Native-only rollout fence. Unlike IOS_DEVICE_ONLY_MODE this never retires
+    # web creation: it binds only projects created through the iPhone client to
+    # the device renderer, regardless of the legacy phone allowlist.
+    ios_native_device_only_enabled: bool = False
     kria_minimum_client_protocol: int = 2
     # Executor behavior is intentionally owned by the render pipeline; this
     # setting only declares the rollout control plane default.

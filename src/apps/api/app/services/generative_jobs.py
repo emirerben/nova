@@ -318,6 +318,7 @@ def build_generative_job(
     creator_render_shape: dict | None = None,
     phone_sources: tuple[PhoneSourceBinding, ...] = (),
     render_on_device: bool = False,
+    native_device_only: bool = False,
     phone_subtitled_lanes: dict | None = None,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
@@ -350,7 +351,9 @@ def build_generative_job(
     if phone_sources:
         from app.config import settings  # noqa: PLC0415
 
-        if not settings.phone_rendering_for(user_id) or mode != "content_plan":
+        if (
+            not settings.phone_rendering_for(user_id) and not native_device_only
+        ) or mode != "content_plan":
             raise ValueError("phone planning is unavailable for this job")
         if voiceover_gcs_path and not _phone_voiceover_supported(
             edit_format=edit_format, creator_strategy=creator_strategy
@@ -388,7 +391,7 @@ def build_generative_job(
         from app.config import settings  # noqa: PLC0415
 
         if (
-            not settings.phone_rendering_for(user_id)
+            (not settings.phone_rendering_for(user_id) and not native_device_only)
             or mode != "content_plan"
             or voiceover_gcs_path
             or coerce_edit_format(edit_format) not in GUIDED_EDIT_FORMATS
@@ -619,6 +622,10 @@ def build_generative_job(
         # and keeps the job out of every cloud re-renderer.
         phone_assembly_plan = {PHONE_SOURCES_FIELD: []}
     assembly_plan = dict(phone_assembly_plan or {})
+    if native_device_only:
+        from app.services.phone_destination import NATIVE_DEVICE_ONLY_JOB_FIELD  # noqa: PLC0415
+
+        assembly_plan[NATIVE_DEVICE_ONLY_JOB_FIELD] = True
     if creator_generation_id is not None:
         assembly_plan["creator_generation_id"] = creator_generation_id
     if creator_contract is not None:

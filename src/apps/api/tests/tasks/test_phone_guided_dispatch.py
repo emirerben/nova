@@ -77,6 +77,21 @@ def test_worker_stops_at_immutable_device_request(monkeypatch):
     assert planner.call_count == 1
 
 
+def test_native_only_marker_survives_the_first_device_variant_write(monkeypatch):
+    """The worker copies the marker forward while pinning its first recipe."""
+    job, snapshot, _session, _planner, cloud = setup(monkeypatch)
+    job.assembly_plan["native_device_only"] = True
+    monkeypatch.setattr(gb.settings, "phone_rendering_enabled", False)
+    monkeypatch.setattr(gb.settings, "ios_native_device_only_enabled", True)
+
+    gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    assert job.assembly_plan["native_device_only"] is True
+    assert device_status(job, "guided_story").request.identity.variant_id == "guided_story"
+    cloud.assert_not_called()
+
+
 def test_worker_repairs_a_sequence_pop_in_instead_of_failing_after_approval(monkeypatch):
     """KRI-286 (prod 76db6913): the worker repairs, notes it, and persists the repaired rows."""
     from app.agents._schemas.text_element import TextElement

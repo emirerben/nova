@@ -6,6 +6,12 @@ enabling the currently supported path for their own account after the physical
 pilot. Full style parity, long exports, thermal and recovery qualification remain
 open in the [coverage ledger](../reviews/kri-29/coverage.md).
 
+KRI-563 adds a separate default-off native-only creation fence. When
+`IOS_NATIVE_DEVICE_ONLY_ENABLED=true`, new iPhone videos use the verified phone
+path for every native account, regardless of this pilot allowlist; unsupported
+edits are refused. Web creation and existing cloud playback retain their own
+contracts. See [the native-only rollout steps](ios-device-only-runtime.md#kri-563-iphone-only-cloud-refusal).
+
 ## Account pilot configuration
 
 Deploy the account-gating backend before enabling it. Set `PHONE_RENDER_USER_IDS`

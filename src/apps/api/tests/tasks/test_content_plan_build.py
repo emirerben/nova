@@ -3480,6 +3480,30 @@ def test_phone_gate_guided_approved_binds_sources(monkeypatch: pytest.MonkeyPatc
     assert result.outcome == "dispatched"
 
 
+def test_native_only_proxy_dispatch_bypasses_the_legacy_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A persisted native intent is enough to mint a device Job for a new account."""
+    monkeypatch.setattr(
+        "app.services.phone_destination.item_requires_native_device_only_sync",
+        lambda *_args: True,
+    )
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "ios_native_device_only_enabled", True)
+
+    result, _job, build, bind = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="montage",
+        approved=True,
+        phone_rendering_enabled=False,
+    )
+
+    assert result.outcome == "dispatched"
+    bind.assert_called_once()
+    assert build.call_args.kwargs["native_device_only"] is True
+
+
 def test_phone_gate_guided_unapproved_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     """(ii) guided + unapproved -> rejected with the approval message."""
     with patch("app.tasks.content_plan_build.log") as mock_log:

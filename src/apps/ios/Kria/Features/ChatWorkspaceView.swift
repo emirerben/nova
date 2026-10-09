@@ -492,7 +492,7 @@ private struct CreationWorkspaceView: View {
         if selectedFormat == .slides { return fullThread?.readyVisualCount ?? 0 }
         if attachedClipCount > 0 { return attachedClipCount }
         let destination = ProjectUploadDestination.resolve(
-            capabilities: capabilities?.phoneRendering, capabilitiesLoaded: capabilitiesAreAuthoritative,
+            capabilities: capabilities?.phoneRendering, creationMode: capabilities?.creationMode, capabilitiesLoaded: capabilitiesAreAuthoritative,
             sourcePurposes: [], role: .visual
         )
         return selectedFormat == .montage && destination.visualKinds != nil ? fullThread?.deviceReadyVisualCount ?? 0 : 0
@@ -1361,7 +1361,7 @@ private struct CreationWorkspaceView: View {
                     visualCount: selectedFormat == .slides
                         ? (fullThread?.readyVisualCount ?? 0)
                         : ProjectUploadDestination.resolve(
-                        capabilities: capabilities?.phoneRendering, capabilitiesLoaded: capabilitiesAreAuthoritative,
+                        capabilities: capabilities?.phoneRendering, creationMode: capabilities?.creationMode, capabilitiesLoaded: capabilitiesAreAuthoritative,
                         sourcePurposes: [], role: .visual
                     ).visualKinds == nil ? 0 : fullThread?.deviceReadyVisualCount ?? 0
                 )

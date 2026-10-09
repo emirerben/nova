@@ -121,6 +121,7 @@ from app.services.job_storage_paths import (
 )
 from app.services.phone_destination import (
     has_device_intent,
+    has_native_device_only_intent,
     item_visuals_only_on_device,
     with_device_intent,
 )
@@ -750,7 +751,7 @@ def _client_id(value: str) -> str:
     return value.strip()
 
 
-def _available_formats() -> dict[str, str]:
+def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web") -> dict[str, str]:
     available = {"montage": "montage"}
     if settings.narrated_archetype_enabled:
         available["narrated"] = "narrated_planned"
@@ -758,11 +759,15 @@ def _available_formats() -> dict[str, str]:
         available["talking_to_camera"] = "subtitled"
     if settings.slide_posts_enabled:
         available["slides"] = "slides"
-    if settings.ios_device_only_mode:
+    if settings.ios_device_only_mode or native_mode != "web":
         from app.services.phone_rollout import phone_render_supported_formats  # noqa: PLC0415
 
         supported = phone_render_supported_formats()
-        available = {key: value for key, value in available.items() if value in supported}
+        available = {
+            key: value
+            for key, value in available.items()
+            if value in supported or (native_mode == "pilot" and value == "slides")
+        }
     return available
 
 
@@ -782,7 +787,11 @@ def _media_path(user_id: uuid.UUID, thread_id: uuid.UUID, media_id: str) -> str:
 
 
 async def _device_ready_visual_count(
-    db: AsyncSession, item_id: uuid.UUID, creator_id: uuid.UUID
+    db: AsyncSession,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    *,
+    native_device_only: bool = False,
 ) -> int:
     """Visuals the iPhone can render from right now (KRI-121).
 
@@ -795,7 +804,7 @@ async def _device_ready_visual_count(
     from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
 
     drawable_kinds = phone_drawable_visual_kinds()
-    if not settings.phone_rendering_for(creator_id) or not drawable_kinds:
+    if not (settings.phone_rendering_for(creator_id) or native_device_only) or not drawable_kinds:
         return 0
     return int(
         (
@@ -3184,7 +3193,10 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
             clip_count=len(item.clip_gcs_paths or []),
             visual_count=visual_count,
             device_ready_visual_count=await _device_ready_visual_count(
-                db, item.id, thread.creator_id
+                db,
+                item.id,
+                thread.creator_id,
+                native_device_only=bool((thread.state or {}).get("native_device_only") is True),
             ),
         )
     public_state = dict(thread.state or {})
@@ -3434,7 +3446,7 @@ async def _agent_message(
     return await _link_creator_session(db, thread_id, owner_id, uuid.UUID(result.id))
 
 
-def _user_song_enabled(user_id: object) -> bool:
+def _user_song_enabled(user_id: object, *, native_device_only: bool = False) -> bool:
     """Server-side admission for a creator-uploaded song (KRI-374).
 
     Phone-only: the cloud renderer never plays a user song, and the kill switch
@@ -3443,10 +3455,15 @@ def _user_song_enabled(user_id: object) -> bool:
 
     from app.services.phone_rollout import phone_user_song_supported  # noqa: PLC0415
 
-    return bool(settings.phone_rendering_for(user_id) and phone_user_song_supported())
+    return bool(
+        (settings.phone_rendering_for(user_id) or native_device_only)
+        and phone_user_song_supported()
+    )
 
 
-def _user_song_available(user_id: object, client_protocol: int | None) -> bool:
+def _user_song_available(
+    user_id: object, client_protocol: int | None, *, native_device_only: bool = False
+) -> bool:
     """Should capabilities OFFER the song affordance to THIS client?
 
     The protocol gate keeps an app build that cannot decode the ``"song"`` render
@@ -3455,7 +3472,7 @@ def _user_song_available(user_id: object, client_protocol: int | None) -> bool:
     """
 
     return bool(
-        _user_song_enabled(user_id)
+        _user_song_enabled(user_id, native_device_only=native_device_only)
         and client_protocol is not None
         and client_protocol >= settings.kria_minimum_client_protocol
     )
@@ -3467,40 +3484,19 @@ async def capabilities(
     native_client: NativeClient = False,
     client_protocol: KriaClientProtocol = None,
 ) -> dict[str, Any]:
-    phone_enabled = settings.phone_rendering_for(user.id)
-    song_available = _user_song_available(user.id, client_protocol)
-    formats = _available_formats()
-    if settings.ios_device_only_mode or (phone_enabled and native_client):
-        # The app on a pilot account renders every project on the iPhone, and
-        # only these formats can; offering the others would end in a refusal
-        # after the creator has already uploaded footage. The web keeps them
-        # all. `phone_render_supported_formats()` is the settings-aware single
-        # source of truth (KRI-132): once `phone_subtitled_rendering_enabled`/
-        # `phone_narrated_rendering_enabled` are rolled out, "Talking to
-        # camera" and "Narrated" appear here too, not just Montage. This is a
-        # FORMAT-level filter only -- the per-item nuances (subtitled's
-        # one-clip requirement, narrated's voiceover-vs-self-narration split)
-        # are enforced later, once the item actually has clips, by the
-        # `phone_format:{format}` manifest capability and the dispatch gate.
-        from app.services.phone_rollout import (  # noqa: PLC0415
-            phone_render_supported_formats,
-        )
-
-        supported_now = phone_render_supported_formats()
-        # In hybrid mode, `slides` is exempt from this filter even though it's never in
-        # `phone_render_supported_formats()`. A slide post has no clip
-        # pipeline at all -- its media lives exclusively in the
-        # `PlanItemAsset` pool (see the `upload-urls` fence above) and its
-        # render always dispatches to the cloud slides renderer
-        # (`content_plan_build.py` / `slide_build.py`), never through the
-        # phone dispatch gate this filter exists to protect. Dropping it
-        # here would just hide a working, cloud-only format from a phone
-        # account for no reason.
-        formats = {
-            key: value
-            for key, value in formats.items()
-            if value in supported_now or (not settings.ios_device_only_mode and value == "slides")
-        }
+    native_device_only = bool(native_client and settings.ios_native_device_only_enabled)
+    phone_enabled = settings.phone_rendering_for(user.id) or native_device_only
+    song_available = _user_song_available(
+        user.id, client_protocol, native_device_only=native_device_only
+    )
+    native_mode: Literal["web", "pilot", "strict"] = (
+        "strict"
+        if settings.ios_device_only_mode or native_device_only
+        else "pilot"
+        if native_client and phone_enabled
+        else "web"
+    )
+    formats = _available_formats(native_mode=native_mode)
     return {
         # A pilot account is offered v2 only once `KRIA_RUNTIME_V2_PHONE_ENABLED`
         # covers it (KRI-187): a v2 approval then reaches a device job via
@@ -3533,7 +3529,9 @@ async def capabilities(
         "slide_post_chat_edit": bool(
             settings.slide_post_chat_edit_enabled and settings.slide_post_rich_text_enabled
         ),
-        "creation_mode": "device_only" if settings.ios_device_only_mode else "hybrid",
+        "creation_mode": (
+            "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"
+        ),
         "minimum_client_protocol": settings.kria_minimum_client_protocol,
         "formats": [
             {
@@ -3696,7 +3694,18 @@ async def create_thread(
         event_type="format_prompt",
         role="assistant",
         content="What are we making? Pick a format and we’ll shape it together.",
-        payload={"kind": "select_format", "formats": _available_formats()},
+        payload={
+            "kind": "select_format",
+            "formats": _available_formats(
+                native_mode=(
+                    "strict"
+                    if has_native_device_only_intent(thread.state)
+                    else "pilot"
+                    if has_device_intent(thread.state)
+                    else "web"
+                )
+            ),
+        },
     )
     if body.message:
         await _append(
@@ -4338,7 +4347,18 @@ async def message_thread(
                 event_type="format_prompt",
                 role="assistant",
                 content="Choose a format and I’ll shape the edit around it.",
-                payload={"kind": "select_format", "formats": _available_formats()},
+                payload={
+                    "kind": "select_format",
+                    "formats": _available_formats(
+                        native_mode=(
+                            "strict"
+                            if has_native_device_only_intent(thread.state)
+                            else "pilot"
+                            if has_device_intent(thread.state)
+                            else "web"
+                        )
+                    ),
+                },
             )
         await db.commit()
         await db.refresh(thread)
@@ -4507,7 +4527,15 @@ async def action_thread(
         )
         if selected not in _PAPER_FORMATS:
             raise HTTPException(status_code=422, detail="Unknown creation format")
-        formats = _available_formats()
+        formats = _available_formats(
+            native_mode=(
+                "strict"
+                if has_native_device_only_intent(thread.state)
+                else "pilot"
+                if has_device_intent(thread.state)
+                else "web"
+            )
+        )
         if selected not in formats:
             raise HTTPException(status_code=409, detail="That format is unavailable")
         edit_format = formats[selected]
@@ -4913,7 +4941,18 @@ async def action_thread(
         planned_format = (session.active_plan or {}).get("edit_format")
         picked_format = state.get("edit_format")
         format_mismatch = body.action != "revise" and (
-            planned_format not in set(_available_formats().values())
+            planned_format
+            not in set(
+                _available_formats(
+                    native_mode=(
+                        "strict"
+                        if has_native_device_only_intent(thread.state)
+                        else "pilot"
+                        if has_device_intent(thread.state)
+                        else "web"
+                    )
+                ).values()
+            )
             or planned_format != picked_format
         )
         if (
@@ -5400,9 +5439,11 @@ async def upload_urls(
     body: UploadBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
 ) -> list[UploadTarget]:
     _ = request
     thread = await _load(thread_id, user, db, lock=True)
+    _stamp_device_intent(thread, user, native_client)
     if thread.status != "active":
         _reject_media(
             "creation_thread.upload_urls.rejected",
@@ -5488,7 +5529,12 @@ async def upload_urls(
             )
         elif content_type.startswith("audio/"):
             if file.role == "song":
-                if not _user_song_enabled(user.id):
+                if not _user_song_enabled(
+                    user.id,
+                    native_device_only=has_native_device_only_intent(
+                        getattr(thread, "state", None)
+                    ),
+                ):
                     _reject_media(
                         "creation_thread.upload_urls.rejected",
                         404,
@@ -5523,6 +5569,18 @@ async def upload_urls(
                 file_size_bytes=file.file_size_bytes,
             )
         contract = file.upload_contract
+        if (
+            has_native_device_only_intent(getattr(thread, "state", None))
+            and content_type.startswith("video/")
+            and contract.purpose == "cloud_render_source"
+        ):
+            _reject_media(
+                "creation_thread.upload_urls.rejected",
+                422,
+                "This iPhone project requires an on-device video source.",
+                reason="device_render_unsupported",
+                thread_id=str(thread.id),
+            )
         if file.client_upload_id.startswith(PROXY_MEDIA_PREFIX):
             _reject_media(
                 "creation_thread.upload_urls.rejected",
@@ -5532,7 +5590,9 @@ async def upload_urls(
                 thread_id=str(thread.id),
             )
         if contract.purpose == "analysis_proxy":
-            if not settings.phone_rendering_for(user.id):
+            if not (
+                settings.phone_rendering_for(user.id) or has_native_device_only_intent(thread.state)
+            ):
                 _reject_media(
                     "creation_thread.upload_urls.rejected",
                     404,
@@ -5764,6 +5824,16 @@ async def attach_media(
             reason="slide_post_fence",
             thread_id=str(thread.id),
         )
+    if has_native_device_only_intent(getattr(thread, "state", None)) and any(
+        media.kind == "video" and not is_analysis_proxy_path(media.media_id) for media in body.media
+    ):
+        _reject_media(
+            "creation_thread.attach_media.rejected",
+            422,
+            "This iPhone project requires an on-device video source.",
+            reason="device_render_unsupported",
+            thread_id=str(thread.id),
+        )
     existing_state = dict(getattr(thread, "state", None) or {})
     existing_media = [entry for entry in existing_state.get("media", []) if isinstance(entry, dict)]
     existing_media_ids = {str(entry.get("media_id")) for entry in existing_media}
@@ -5796,7 +5866,10 @@ async def attach_media(
     requested_voiceovers = sum(
         1 for source in body.media if source.kind == "audio" and source.role != "song"
     )
-    if requested_songs and not _user_song_enabled(user.id):
+    if requested_songs and not _user_song_enabled(
+        user.id,
+        native_device_only=has_native_device_only_intent(thread.state),
+    ):
         _reject_media(
             "creation_thread.attach_media.rejected",
             404,

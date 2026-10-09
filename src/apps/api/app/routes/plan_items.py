@@ -40,7 +40,7 @@ from app.agents._runtime import (
 )
 from app.agents._schemas.edit_format import coerce_edit_format, guided_edit_applicable
 from app.agents.music_matcher import _sanitize_text
-from app.auth import SYNTHETIC_USER_ID, CurrentUser
+from app.auth import SYNTHETIC_USER_ID, CurrentUser, NativeClient
 from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK
@@ -5197,12 +5197,20 @@ async def generate_item(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     body: GenerateItemBody | None = Body(default=None),
+    native_client: NativeClient = False,
 ) -> PlanItemResponse:
     """Enqueue a render from attached clips or an approved guided story."""
     item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    if native_client and settings.ios_native_device_only_enabled:
+        from app.services.phone_destination import item_requires_native_device_only  # noqa: PLC0415
+
+        if not await item_requires_native_device_only(db, item, user.id):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="device_render_unsupported",
+            )
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS  # noqa: PLC0415
-    from app.config import settings  # noqa: PLC0415
 
     # These two validations are hard business rules independent of guided-edit
     # state and MUST run before auto-design gets a chance to intercept the
@@ -7172,10 +7180,11 @@ async def editor_commit_item(
     body: EditorCommitRequest,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClient = False,
 ) -> EditorCommitResponse:
     """Route wrapper: logs every 422 (detail + payload section keys, no content)."""
     try:
-        return await _editor_commit_item(item_id, variant_id, body, user, db)
+        return await _editor_commit_item(item_id, variant_id, body, user, db, native_client)
     except HTTPException as exc:
         if exc.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY:
             log.warning(
@@ -7195,6 +7204,7 @@ async def _editor_commit_item(
     body: EditorCommitRequest,
     user: CurrentUser,
     db: AsyncSession,
+    native_client: bool = False,
 ) -> EditorCommitResponse:
     """Transactional editor Save (E2): all sections in ONE commit + ONE render kick.
 
@@ -7242,6 +7252,20 @@ async def _editor_commit_item(
     )
     if not isinstance(locked_variant, dict):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    from app.services.cloud_render_policy import cloud_render_mutation_block_reason  # noqa: PLC0415
+
+    block_reason = cloud_render_mutation_block_reason(
+        locked_job, variant=locked_variant, native_client=native_client
+    )
+    if block_reason is not None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_422_UNPROCESSABLE_ENTITY
+                if block_reason == "device_render_unsupported"
+                else status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail=block_reason,
+        )
     # An all-removed timeline does not enter the normal nonempty validator, so
     # enforce the same compare-and-fail fence before creating its draft.
     if body.base_generation != variant_render_baseline(locked_variant):

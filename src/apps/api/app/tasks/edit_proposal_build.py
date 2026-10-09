@@ -1588,6 +1588,14 @@ def _run_draft_attempt(
             # Decided once per attempt so the plan, its digest and the story
             # layouts agree; the save below rejects the attempt if it moved.
             visuals_only_device = item_visuals_only_on_device_sync(db, item, owner_id)
+            from app.services.phone_destination import (  # noqa: PLC0415
+                item_requires_native_device_only_sync,
+            )
+
+            native_device_only = (
+                settings.ios_native_device_only_enabled
+                and item_requires_native_device_only_sync(db, item, owner_id)
+            )
             assignments = [
                 dict(a)
                 for a in (item.clip_assignments or [])
@@ -1748,6 +1756,7 @@ def _run_draft_attempt(
             clip_refs + [ref for ref in pool if ref.gcs_path not in clip_paths],
             owner_id,
             visuals_only_device=visuals_only_device,
+            native_device_only=native_device_only,
         )
         if not media:
             with sync_session() as db:
@@ -1982,13 +1991,19 @@ def _run_draft_attempt(
                 assert owner_id is not None
                 fresh_pool = _pool_refs(db, item, owner_id)
                 fresh_visuals_only = item_visuals_only_on_device_sync(db, item, owner_id)
+                fresh_native_device_only = (
+                    settings.ios_native_device_only_enabled
+                    and item_requires_native_device_only_sync(db, item, owner_id)
+                )
                 fresh_media = phone_renderable_media(
                     clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths],
                     owner_id,
                     visuals_only_device=fresh_visuals_only,
+                    native_device_only=fresh_native_device_only,
                 )
                 if (
                     fresh_visuals_only != visuals_only_device
+                    or fresh_native_device_only != native_device_only
                     or canonical_media_digest(fresh_media, narration) != digest
                 ):
                     _fail(
@@ -2447,7 +2462,12 @@ def _run_draft_attempt(
         snapshot = _snapshot_for(output)
         if snapshot is None:
             return
-        snapshot = phone_story_layouts(snapshot, owner_id, visuals_only_device=visuals_only_device)
+        snapshot = phone_story_layouts(
+            snapshot,
+            owner_id,
+            visuals_only_device=visuals_only_device,
+            native_device_only=native_device_only,
+        )
         # Dry-run the strict compiler on EVERY draft, not only on recoveries. The
         # planner now repairs an authored plan instead of rejecting it (KRI-129);
         # without this, a repaired plan the renderer cannot allocate would be
@@ -2457,7 +2477,10 @@ def _run_draft_attempt(
         # repair fixes takes the same deterministic fallback as any other dry-run reject
         # instead of failing after the creator approves.
         phone_destination = renders_on_phone(
-            snapshot.media, owner_id, visuals_only_device=visuals_only_device
+            snapshot.media,
+            owner_id,
+            visuals_only_device=visuals_only_device,
+            native_device_only=native_device_only,
         )
         phone_repair_notes: list[str] = []
 
@@ -2515,7 +2538,10 @@ def _run_draft_attempt(
             if snapshot is None:
                 return
             snapshot = phone_story_layouts(
-                snapshot, owner_id, visuals_only_device=visuals_only_device
+                snapshot,
+                owner_id,
+                visuals_only_device=visuals_only_device,
+                native_device_only=native_device_only,
             )
             validate_proposal_timing(snapshot)
             if phone_destination:

@@ -293,6 +293,15 @@ struct NativeEditorView: View {
             VStack(spacing: 0) {
                 NativeEditorSaveBanner(session: session)
                 NativeEditorExportBanner(exporter: exporter)
+                if let message = session.cloudEditorUnavailableMessage {
+                    Label(message, systemImage: "lock")
+                        .font(KriaFont.body(13))
+                        .foregroundStyle(KriaColor.zinc)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .accessibilityIdentifier("native-editor-cloud-read-only")
+                }
                 if let presentation = session.editorSongReferencePresentation {
                     NativeSongReferenceCard(presentation: presentation)
                         .padding(.horizontal, 16)
