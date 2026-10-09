@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "journeys": [
+    {
+      "id": "kri-524-creation",
+      "fixture_generator": "scripts/ios/kri-524-creation-e2e.py",
+      "xctest": "KriaTests/DeviceMontageRenderE2ETests/testCapturedCreationWordsRetimedThenExportOnTheIPhone",
+      "paths": [
+        "src/apps/api/app/pipeline/guided_story.py",
+        "src/apps/api/app/pipeline/phone_guided_plan.py",
+        "src/apps/api/app/agents/edit_copilot.py",
+        "src/apps/api/app/services/creation_text_composition.py",
+        "src/apps/api/app/services/cloud_render_contract.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/kria_editor_ops.py",
+        "src/apps/api/app/services/phone_rollout.py",
+        "src/apps/api/app/services/phone_sources.py",
+        "src/apps/api/tests/fixtures/prompt_coverage/creation_composition.json",
+        "src/apps/api/tests/evals/request_following/test_kri559_journey.py",
+        "src/apps/ios/Kria/",
+        "src/apps/ios/Packages/KriaMediaEngine/",
+        "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift",
+        "src/apps/ios/Tests/Fixtures/KRI524CreationDraft.json",
+        "scripts/ios/kri-524-creation-e2e.py"
+      ]
+    }
+  ]
+}

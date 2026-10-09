@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.189.0] - 2026-10-09
+
+### Changed
+- feat(kria): require affected journey evidence (KRI-559) (#1513) <!-- release-pr: 1513 -->
+
 ## [0.78.188.0] - 2026-10-09
 
 ### Changed

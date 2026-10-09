@@ -223,10 +223,13 @@ def main() -> None:
         else "/private/tmp/nova-kri-524-state/work/kri-524-creation"
     )
     out.mkdir(parents=True, exist_ok=True)
+    stages: dict[str, str] = {}
     capture = captured_case()
     composed = compose_from_capture(capture)
     before = compile_proposal_execution_plan(composed)
+    stages["creation_composition"] = "passed"
     after, retime_provenance = retime(before, capture["followup"])
+    stages["same_chat_retime"] = "passed"
     # Production holds the approved wording constant while composition changes
     # its representation. Exercise those gates before handing a fixture to iOS.
     contract = CreatorRenderContract(
@@ -242,8 +245,13 @@ def main() -> None:
     assembly = {CONTRACT_FIELD: contract.model_dump(mode="json")}
     for candidate in (before, after):
         check_guided_plan_text(assembly, candidates=None, plan=candidate)
-    # Reload the persisted JSON boundary before compiler input, as production does.
-    plan = GuidedStoryExecutionPlan.model_validate_json(json.dumps(after))
+    stages["guided_validation"] = "passed"
+    # Save and reopen the approved draft before the phone compiler sees it.
+    # This is a filesystem persistence boundary, not a database write.
+    saved_plan = out / "saved-guided-plan.json"
+    saved_plan.write_text(json.dumps(after, indent=2) + "\n")
+    plan = GuidedStoryExecutionPlan.model_validate_json(saved_plan.read_text())
+    stages["persistence_reload"] = "passed"
     for moment in plan.story_timeline:
         moment.gcs_path = f"users/test/analysis-proxy-{moment.media_id}.mp4"
     files = {"c0": out / "creation-c0.mp4", "c1": out / "creation-c1.mp4"}
@@ -268,9 +276,11 @@ def main() -> None:
             )
         )
     recipe = compile_phone_guided_plan(plan, tuple(bindings))
+    stages["phone_compilation"] = "passed"
     settings.phone_render_verified_features = sorted(recipe.required_capabilities)
     validate_phone_pilot_recipe(recipe)
     verify_phone_recipe(contract, recipe, source_audio={"c0": True, "c1": True})
+    stages["phone_validation"] = "passed"
     request = make_device_request(
         job_id=uuid.uuid4(),
         variant_id="creation_words_retimed",
@@ -321,6 +331,20 @@ def main() -> None:
                                 "rgb": [0, 0, 255],
                             },
                         ],
+                        "audio_samples": [
+                            {
+                                "name": "first_clip_original_audio",
+                                "t": 1,
+                                "speaker_hz": 440,
+                                "muted_hz": 660,
+                            },
+                            {
+                                "name": "second_clip_original_audio",
+                                "t": 11,
+                                "speaker_hz": 440,
+                                "muted_hz": 660,
+                            },
+                        ],
                         "caption_samples": [
                             {
                                 "name": "word_fade_start",
@@ -359,6 +383,51 @@ def main() -> None:
             indent=2,
         )
     )
+    source_fixture = (
+        REPO / "src/apps/api/tests/fixtures/prompt_coverage/creation_composition.json"
+    )
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPO,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    fixture_provenance = json.loads(source_fixture.read_text())["provenance"]
+    proof = {
+        "schema_version": 1,
+        "head_sha": head_sha,
+        "fixture_provenance": {
+            "creation": "authored_synthetic_live_capture_replayed_offline",
+            "retime": retime_provenance,
+            "raw_user_media": False,
+        },
+        "model_prompt_configuration": {
+            "creation_model": capture["model"],
+            "creation_prompt_version": fixture_provenance["prompt_version"],
+            "retime_model": capture["followup"]["model"],
+            "retime_prompt_version": capture["followup"]["prompt_version"],
+        },
+        "evidence_level": "offline_replay_and_production_validation",
+        "settled_spend_usd": 0,
+        "stages": stages,
+        "stage_details": {
+            "persistence_reload": "Saved and reopened GuidedStoryExecutionPlan JSON on disk; no database write",
+            "guided_validation": "check_guided_plan_text on both creation and retimed plans",
+            "phone_validation": "validate_phone_pilot_recipe and verify_phone_recipe",
+        },
+        "source_fixture_sha256": fingerprint(source_fixture)[0],
+        "input_hashes": {
+            name: fingerprint(out / name)[0]
+            for name in (
+                "e2e.json",
+                "status-creation-words-retimed.json",
+                "editor-draft.json",
+                "saved-guided-plan.json",
+            )
+        },
+    }
+    (out / "journey-input-proof.json").write_text(json.dumps(proof, indent=2) + "\n")
     print(
         f"Wrote {out}; compiled {len(words)} retimed word layers from captured server draft."
     )
