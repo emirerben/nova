@@ -98,6 +98,12 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "the ops changed; it runs on the draft before any render and decides nothing",
         None,
     ),
+    "kria/plan_review.py": (
+        "carry",
+        "a section undo mints a render-only turn whose creator_request is the fixed undo "
+        "reply; it carries no creator words and decides nothing",
+        frozenset({"_mint_restore_turn"}),
+    ),
     "routes/admin_plan_items.py": ("plan_time", "admin debug payload", None),
     "routes/creation_threads.py": ("plan_time", "render-shape projection / repair", None),
     "routes/creator_agent.py": (
