@@ -925,3 +925,58 @@ def test_successive_revision_saves_compile_from_the_workers_plan_not_the_last_sa
     again = [{**original[0], "text": "Again", "start_s": 0.0, "end_s": 0.5}]
     _guided_save(job, revision, text_elements=again)
     assert device_status(job, "guided_story").request.recipe.duration == pytest.approx(0.8)
+
+
+def test_guided_trim_projects_compacted_context_label_to_new_timeline(monkeypatch, prod_profile):
+    """A compact server label spanning the approval must follow a shorter Save."""
+    job, revision = _guided_shape_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    canonical = job.assembly_plan["guided_story_execution_plan"]
+    canonical["context_label_text_elements"] = [
+        TextElement(
+            id="context-sport-0",
+            text="Championship",
+            start_s=0,
+            end_s=3,
+            role="generative_sequence",
+            position="custom",
+            x_frac=0.86,
+            y_frac=0.86,
+            font_family="Inter",
+            size_class="small",
+            color="#FFFFFF",
+            highlight_color="#FFFFFF",
+            alignment="right",
+            effect="static",
+            z=8,
+            source_params={
+                "source": "context_sport",
+                "source_clip_id": "source",
+                "identity": "context_sport:source:0:3",
+            },
+        ).model_dump(mode="json", exclude_none=True)
+    ]
+    # The worker-pinned plan is the provenance base used by Save.
+    variant["guided_story_execution_plan"] = copy.deepcopy(canonical)
+    current = gj._guided_v2_revision(job, variant)
+    segment = current["segments"][0]
+
+    prep = _guided_save(
+        job,
+        revision,
+        timeline_slots=[
+            gj.TimelineSlotEdit(
+                slot_id=segment["segment_id"], clip_index=0, in_s=2.2, duration_s=0.8
+            )
+        ],
+    )
+
+    assert prep["render_destination"] == "device"
+    projected = device_status(job, "guided_story").request.recipe.text_layers
+    assert projected
+    assert all(layer.end <= 0.8 + 1e-6 for layer in projected)
+    saved_plan = job.assembly_plan["variants"][0]["_phone_editor_saved_plan_v1"]
+    assert any(
+        element["text"] == "Championship" and element["end_s"] <= 0.8 + 1e-6
+        for element in saved_plan["context_label_text_elements"]
+    )

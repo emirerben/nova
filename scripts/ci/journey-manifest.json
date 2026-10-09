@@ -13,6 +13,8 @@
         "src/apps/api/app/services/cloud_render_contract.py",
         "src/apps/api/app/services/creator_render_contract.py",
         "src/apps/api/app/services/kria_editor_ops.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/services/kria_editor_timeline.py",
         "src/apps/api/app/services/phone_rollout.py",
         "src/apps/api/app/services/phone_sources.py",
         "src/apps/api/tests/fixtures/prompt_coverage/creation_composition.json",
@@ -21,7 +23,8 @@
         "src/apps/ios/Packages/KriaMediaEngine/",
         "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift",
         "src/apps/ios/Tests/Fixtures/KRI524CreationDraft.json",
-        "scripts/ios/kri-524-creation-e2e.py"
+        "scripts/ios/kri-524-creation-e2e.py",
+        "scripts/ios/kri-524-trim-save-e2e.py"
       ]
     }
   ]

@@ -142,9 +142,13 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         try await assertCase("creation_words_retimed")
     }
 
+    func testCompoundWordTrimSavedThenExportOnTheIPhone() async throws {
+        try await assertCase("compound_words_trim_save", expectedCreationProvenance: "authored_editor_fixture")
+    }
+
     // MARK: -
 
-    private func assertCase(_ caseID: String) async throws {
+    private func assertCase(_ caseID: String, expectedCreationProvenance: String = "authored_model_transport_fixture") async throws {
         let input = try inputDirectory()
         let meta = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: input.appendingPathComponent("e2e.json"))) as? [String: Any]
@@ -177,7 +181,7 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
                 "\(caseID): the saved follow-up must halve the word sequence window"
             )
             let provenance = try XCTUnwrap(caseMeta["model_transport_provenance"] as? [String: String])
-            XCTAssertEqual(provenance["creation"], "authored_model_transport_fixture")
+            XCTAssertEqual(provenance["creation"], expectedCreationProvenance)
         }
 
         // Route decision: local while every capability this case declares is

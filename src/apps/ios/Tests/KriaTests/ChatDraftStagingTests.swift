@@ -655,6 +655,78 @@ final class ChatDraftStagingTests: XCTestCase {
 
     // MARK: - Editor-state turns (the user never saves mid-flow)
 
+    /// KRI-524: a clip trim and twelve explicit word windows must arrive and save
+    /// together, even when the draft retains older nested section values.
+    func testCompoundOpeningTrimStagesAndSavesExactWordWindows() async throws {
+        var variant = Self.variant()
+        let words = "Join us for our favorite bakery and tea shop near the harbor".split(separator: " ")
+        func texts(duration: Double) -> [JSONValue] {
+            words.enumerated().map { index, word in
+                .object(["id": .string("word-\(index)"), "text": .string(String(word)),
+                         "start_s": .number(Double(index) * duration / 12),
+                         "end_s": .number(Double(index + 1) * duration / 12),
+                         "role": .string("generative_sequence"), "effect": .string("fade"),
+                         "font_family": .string("Inter"), "font_size_px": .number(72),
+                         "x_frac": .number(0.3), "y_frac": .number(0.7)])
+            }
+        }
+        func slots(firstDuration: Double) -> [JSONValue] {
+            (0..<3).map { index in
+                .object(["slot_id": .string("s\(index + 1)"), "clip_index": .number(Double(index)),
+                         "in_s": .number(0), "duration_s": .number(index == 0 ? firstDuration : 2),
+                         "source_duration_s": .number(6), "removed": .bool(false)])
+            }
+        }
+        let oldWords = texts(duration: 4.633333)
+        variant["duration_s"] = .number(8.633333)
+        variant["user_timeline"] = .object(["slots": .array(slots(firstDuration: 4.633333))])
+        variant["text_elements"] = .array(oldWords)
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: variant,
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2",
+                sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: true, mix: false),
+                revisionNumber: 4, revisionHash: "r4", expectedDuration: nil))
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+        let submitted = try XCTUnwrap(session.exportEditorState())
+        let newWords = texts(duration: 2)
+        let snapshot = DraftSnapshot(draftID: "trim", itemID: "item", variantKey: "initial", draftRevision: 6,
+            snapshotHash: "trim", etag: "trim", baseJobID: Self.jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "editor_payload": .object([
+                "base_generation": .string("g1"),
+                "timeline_slots": .array(slots(firstDuration: 2)), "text_elements": .array(newWords),
+                "sections": .object(["timeline_slots": .array(slots(firstDuration: 4.633333)),
+                                     "text_elements": .array(oldWords)])])], canUndo: true, createdAt: .now)
+        fake.draftSnapshot = Self.echoing(submitted.clientStateID, snapshot)
+        await session.synchronizePromptRevision()
+        XCTAssertNotEqual(session.saveState, .conflict)
+        XCTAssertEqual(session.document.clips.map(\.durationS), [2, 2, 2])
+        XCTAssertEqual(session.document.textElements.count, 12)
+        XCTAssertEqual(session.dirtySections, [.timeline, .text])
+        // A repeated refresh must not restore the older nested sections.
+        await session.synchronizePromptRevision()
+        await session.save()
+        let request = try XCTUnwrap(fake.lastRequest)
+        XCTAssertEqual(fake.commitCount, 1)
+        let savedSlots = try XCTUnwrap(request.timelineSlots)
+        XCTAssertEqual(savedSlots.count, 3)
+        for (index, value) in savedSlots.enumerated() {
+            guard case let .object(row) = value else { return XCTFail("clip row missing") }
+            XCTAssertEqual(row["slot_id"], .string("s\(index + 1)"))
+            XCTAssertEqual(row["duration_s"], .number(2))
+            XCTAssertEqual(row["in_s"], .number(0))
+            XCTAssertEqual(row["source_duration_s"], .number(6))
+        }
+        let savedWords = try XCTUnwrap(request.textElements)
+        for (index, value) in savedWords.enumerated() {
+            guard case let .object(row) = value, case let .object(expected) = newWords[index] else {
+                return XCTFail("word must remain an individual text row")
+            }
+            for key in ["id", "text", "start_s", "end_s", "effect", "font_family", "font_size_px", "x_frac", "y_frac"] {
+                XCTAssertEqual(row[key], expected[key], "word \(index), \(key)")
+            }
+        }
+    }
+
     private static func echoing(_ stateID: String, _ snapshot: DraftSnapshot) -> DraftSnapshot {
         var value = snapshot.snapshot
         value["client_state_id"] = .string(stateID)
