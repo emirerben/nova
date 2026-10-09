@@ -57,6 +57,7 @@ from app.models import (
     CreatorAgentSession,
     CreatorAgentTurn,
     CreatorEditDraft,
+    Job,
     PlanItem,
 )
 from app.schemas.user_song import SongOrderAnswerIn
@@ -114,6 +115,9 @@ def request_digest(body: SubmitTurnBody) -> str:
         | ({"clip_selection"} if body.clip_selection is None else set())
         | ({"choice_selection"} if body.choice_selection is None else set())
         | ({"song_order"} if body.song_order is None else set())  # KRI-374: additive digest
+        # KRI-441: additive the same way, so every pre-existing digest holds.
+        | ({"scope"} if body.scope is None else set())
+        | ({"manual_edits"} if body.manual_edits is None else set())
     )
     encoded = json.dumps(
         body.model_dump(mode="json", exclude=excluded),
@@ -410,6 +414,99 @@ async def _append_event(
     return event
 
 
+async def _scoped_target(db: AsyncSession, thread: CreationThread) -> tuple[Job, dict] | None:
+    """The thread's rendered, editable variant (plain reads; the thread lock is held)."""
+    if thread.active_plan_item_id is None:
+        return None
+    item = await db.get(PlanItem, thread.active_plan_item_id)
+    if item is None or item.current_job_id is None:
+        return None
+    job = await db.get(Job, item.current_job_id)
+    if job is None:
+        return None
+    variants = [
+        row for row in (job.assembly_plan or {}).get("variants") or [] if isinstance(row, dict)
+    ]
+    session = (
+        await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
+        if thread.active_creator_agent_session_id is not None
+        else None
+    )
+    wanted = getattr(session, "target_variant_id", None)
+    variant = next((v for v in variants if wanted and v.get("variant_id") == wanted), None) or (
+        variants[0] if len(variants) == 1 else None
+    )
+    return (job, variant) if variant is not None else None
+
+
+async def _validate_scoped_turn(
+    db: AsyncSession, thread: CreationThread, body: SubmitTurnBody
+) -> list[str]:
+    """KRI-441 submit-time checks for a scoped turn; returns the normalized scope."""
+    from app.kria import plan_review  # noqa: PLC0415
+
+    revision = int(thread.revision)
+    if body.scope is None:
+        raise RuntimeFailure(
+            422,
+            "manual_edit_out_of_scope",
+            "Manual edits need the sections they change to be flagged.",
+            recovery="manual",
+            current_revision=revision,
+        )
+    try:
+        scope = plan_review.validate_scope(body.scope)
+    except plan_review.ScopeError as exc:
+        raise RuntimeFailure(
+            exc.status, exc.code, str(exc), recovery="manual", current_revision=revision
+        ) from exc
+    target = await _scoped_target(db, thread)
+    if target is None:
+        raise RuntimeFailure(
+            409,
+            "scope_target_missing",
+            "There is no rendered video to update yet.",
+            recovery="refresh_replan",
+            current_revision=revision,
+        )
+    job, variant = target
+    if body.manual_edits:
+        from app.services.kria_editor_ops import _clip_label_links  # noqa: PLC0415
+
+        bars = [r for r in variant.get("text_elements") or [] if isinstance(r, dict)]
+        cue_ids = {
+            str(c.get("id"))
+            for c in variant.get("caption_cues") or []
+            if isinstance(c, dict) and c.get("id")
+        }
+        try:
+            clip_ids = frozenset(_clip_label_links(job, variant))
+        except Exception:  # noqa: BLE001 - classification falls back to id prefixes
+            clip_ids = frozenset()
+        for edit in body.manual_edits:
+            try:
+                section = plan_review.edit_section(
+                    edit, bars=bars, cue_ids=cue_ids, clip_bar_ids=clip_ids
+                )
+            except plan_review.ManualEditTargetMissing as exc:
+                raise RuntimeFailure(
+                    409,
+                    "scope_target_missing",
+                    "That line changed. Refresh and try again.",
+                    recovery="refresh_replan",
+                    current_revision=revision,
+                ) from exc
+            if section not in scope:
+                raise RuntimeFailure(
+                    422,
+                    "manual_edit_out_of_scope",
+                    "That edit is outside the sections you flagged.",
+                    recovery="manual",
+                    current_revision=revision,
+                )
+    return scope
+
+
 async def submit_turn(
     db: AsyncSession,
     *,
@@ -429,6 +526,13 @@ async def submit_turn(
     revision, which the client could not have known).
     """
 
+    if (body.scope is not None or body.manual_edits is not None) and (
+        not settings.live_plan_review_enabled
+    ):
+        # Never silently dropped: that would turn a scoped ask into an unscoped re-plan.
+        raise RuntimeFailure(
+            404, "live_plan_review_unavailable", "Plan review is unavailable", phase="accept"
+        )
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
     digest = request_digest(body)
     existing = (
@@ -479,6 +583,10 @@ async def submit_turn(
             current_revision=int(thread.revision),
         )
 
+    scope: list[str] | None = None
+    if body.scope is not None or body.manual_edits is not None:
+        scope = await _validate_scoped_turn(db, thread, body)
+
     choice_selection = body.choice_selection
     if not settings.kria_choice_questions_enabled and choice_selection is not None:
         # Existing generic-choice flag-off behavior is preserved. Durable creative
@@ -494,7 +602,12 @@ async def submit_turn(
         if question is None or question.get("question_id") != choice_selection.question_id:
             choice_selection = None
     choice_delegated = False
-    if choice_selection is None and body.clip_selection is None and body.song_order is None:
+    if (
+        choice_selection is None
+        and body.clip_selection is None
+        and body.song_order is None
+        and scope is None  # a scoped ask is an edit; free text must not become an answer
+    ):
         # The request digest above stays that of the body as sent (idempotency); only
         # the stored event carries the derived selection.
         derived = await _free_text_choice_selection(db, thread, body.message)
@@ -574,7 +687,9 @@ async def submit_turn(
     remember_reply_language(thread, reply_language)
     inert_response: tuple[Literal["progress", "question"], str] | None = None
     with reply_language_for(reply_language):
-        if is_status_question(body.message):
+        if scope is not None:
+            pass  # "Update: captions, music" is never a status or help question
+        elif is_status_question(body.message):
             status = getattr(active, "status", None)
             if status in {"pending", "planning"}:
                 message = say(
@@ -727,6 +842,24 @@ async def submit_turn(
             **(
                 {"song_order": body.song_order.model_dump(mode="json")}
                 if body.song_order is not None and settings.user_song_montage_enabled
+                else {}
+            ),
+            # KRI-441: the worker reads these back through `turn.source_event_id`.
+            **(
+                {
+                    "scope": scope,
+                    **(
+                        {
+                            "manual_edits": [
+                                edit.model_dump(mode="json", exclude_none=True)
+                                for edit in body.manual_edits
+                            ]
+                        }
+                        if body.manual_edits
+                        else {}
+                    ),
+                }
+                if scope is not None
                 else {}
             ),
             **(

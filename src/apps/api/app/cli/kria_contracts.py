@@ -39,7 +39,11 @@ from app.kria.device_render import (
     DeviceRetryBody,
     DeviceRetryOut,
 )
-from app.kria.plan_contract import PlanSnapshotOut
+from app.kria.plan_contract import (
+    PlanSectionUndoBody,
+    PlanSectionUndoOut,
+    PlanSnapshotOut,
+)
 from app.kria.recipes import EditRecipeV1
 from app.kria.registry import KRIA_TOOLS
 from app.routes.auth import (
@@ -123,6 +127,8 @@ API_MODELS = (
     CreativeBriefOut,
     ThreadDeltaOut,
     KriaProblemOut,
+    PlanSectionUndoBody,
+    PlanSectionUndoOut,
 )
 
 MOBILE_API_MODELS = (
@@ -766,6 +772,23 @@ def mobile_openapi_json() -> str:
                     "security": bearer,
                     "requestBody": _json_request(DraftUndoBody),
                     "responses": _json_responses(DraftSnapshotOut),
+                },
+            },
+            "/creation-threads/{thread_id}/plan/sections/{section_id}/undo": {
+                "parameters": [
+                    thread_id,
+                    {
+                        "name": "section_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    },
+                ],
+                "post": {
+                    "operationId": "undoCreationPlanSection",
+                    "security": bearer,
+                    "requestBody": _json_request(PlanSectionUndoBody),
+                    "responses": _json_responses(PlanSectionUndoOut),
                 },
             },
             "/creation-threads/{thread_id}/turns/{turn_id}/cancel-render": {

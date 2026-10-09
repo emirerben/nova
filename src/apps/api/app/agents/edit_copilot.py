@@ -41,7 +41,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-08-v75"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-09-v76"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -3221,6 +3221,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             max_ops=_operation_limit(input.variant_snapshot),
         )
         prompt = _with_v2_fragments(prompt, input.variant_snapshot)
+        prompt = _with_scope_fragment(prompt, input.variant_snapshot)
         # KRI-520: the reply-language instruction goes last, after every fragment.
         # "" for English/unknown: byte-identical prompt.
         language_line = prompt_language_line(input.reply_language)
@@ -3704,6 +3705,32 @@ def _with_v2_fragments(prompt: str, snapshot: object) -> str:
     surface = _v2.surface_of(snapshot)
     fragments = _v2.prompt_fragments(surface) if surface else _v2.prompt_fragments()
     return f"{prompt}\n\n{fragments}" if fragments else prompt
+
+
+_SCOPE_SECTIONS = ("title", "clips", "captions", "music", "sfx", "overlays", "look")
+
+
+def _with_scope_fragment(prompt: str, snapshot: object) -> str:
+    """KRI-441: append "Change only: <sections>" when the turn is section-scoped.
+
+    ONLY when ``snapshot["scope"]`` is present, so every unscoped prompt stays byte-identical.
+    Section ids are whitelisted: the snapshot is data, never instructions.
+    """
+    scope = snapshot.get("scope") if isinstance(snapshot, dict) else None
+    if not isinstance(scope, list):
+        return prompt
+    sections = [s for s in _SCOPE_SECTIONS if s in scope]
+    if not sections:
+        return prompt
+    try:
+        text = (
+            (Path(__file__).resolve().parents[2] / "prompts" / "edit_copilot_ops" / "scope.txt")
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+    except OSError:
+        return prompt
+    return f"{prompt}\n\n{text.replace('{sections}', ', '.join(sections))}"
 
 
 def _coerce_confidence(value: object) -> float:

@@ -112,6 +112,7 @@ from app.services.kria_editor_ops import (
     EditorStateReplyError,
     EditorStateSpeechCutError,
     KriaEditorOpError,
+    _clip_label_links,
     compile_editor_ops,
     editor_state_has_lanes,
     merge_editor_draft,
@@ -633,6 +634,7 @@ def _complete_draft_turn(
     state_id: str | None = None
     your_edits_snapshot: dict[str, Any] | None = None
     your_edits_hash = ""
+    restore_record: dict[str, Any] | None = None  # KRI-442: pre-update lanes for Undo
     if apply_intent.tool_name == "draft.apply_strategy":
         changes = _strategy_changes(arguments)
         document = KriaDraftDocument(
@@ -804,6 +806,58 @@ def _complete_draft_turn(
             elif wants_speech_cut and prior_payload:
                 raise RuntimeError("Save the current draft before applying speech processing")
             compiled = compile_editor_ops(job, editor_base.projected, arguments.operations)
+            scoped_fields = _scoped_turn_fields(db.get(CreationThreadEvent, turn.source_event_id))
+            if scoped_fields is not None:
+                # KRI-441 layer 3: whatever the model or a manual edit slipped outside the
+                # flagged sections is stripped from the compiled draft, never failed.
+                from app.kria import plan_review  # noqa: PLC0415
+
+                clip_bar_ids = frozenset(_clip_label_links(job, editor_base.projected))
+                compiled, repair = plan_review.repair_compiled(
+                    compiled, scoped_fields["scope"], clip_bar_ids=clip_bar_ids
+                )
+                dropped = (plan.diagnostics or {}).get("scope_dropped") or []
+                if repair or dropped:
+                    log.info(
+                        "plan_review_scope_repaired",
+                        thread_id=str(thread.id),
+                        turn_id=str(turn.id),
+                        dropped_ops=[d.get("op") for d in dropped],
+                        reverted_fields=[*repair.reverted_fields, *repair.reverted_bars],
+                    )
+                if isinstance(compiled.payload, EditorCommitRequest):
+                    repaired_data = compiled.payload.model_dump(mode="json", exclude_none=True)
+                    if not plan_review.lanes_in(repaired_data):
+                        raise KriaEditorOpError(
+                            say(
+                                en="that would only change sections you did not flag",
+                                tr="bu yalnızca işaretlemediğin bölümleri değiştirirdi",
+                            )
+                        )
+                    restore_record = plan_review.build_restore_record(
+                        repaired_data,
+                        compiled.before,
+                        scoped_fields["scope"],
+                        turn_id=str(turn.id),
+                        base_job_id=str(job.id),
+                        clip_bar_ids=clip_bar_ids,
+                    )
+                if head is None and not (
+                    editor_base.source == "client_state" and editor_state_has_lanes(client_state)
+                ):
+                    # A baseline revision under the update, so "Undo all" has a parent.
+                    from app.kria.drafts import _editor_snapshot  # noqa: PLC0415
+
+                    baseline = KriaDraftDocument(
+                        kind="editor",
+                        intent="Before update",
+                        edit_format=str(item.edit_format or "montage"),
+                        editor_payload=_editor_snapshot(
+                            dict(editor_base.projected), canonical_generation_id
+                        ),
+                        changes=[],
+                    )
+                    your_edits_snapshot, your_edits_hash = canonical_snapshot(baseline)
             changes = compiled.changes
             editor_diff_trace = compiled.diff.to_json()
             state_id = (
@@ -1151,6 +1205,7 @@ def _complete_draft_turn(
                 "changes": changes,
                 **({"editor_diff": editor_diff_trace} if editor_diff_trace else {}),
                 **state_trace,
+                **({"plan_review_before": restore_record} if restore_record else {}),
             },
             started_at=datetime.now(UTC),
             completed_at=datetime.now(UTC),
@@ -1432,6 +1487,24 @@ async def _plan_with_live_agent(
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
             parsed_state = parse_editor_state(editor_state)
+            live_scope = snapshot.get("live_scope")
+            scoped: dict[str, Any] = {}
+            if isinstance(live_scope, dict):
+                from app.kria.plan_contract import ManualEdit  # noqa: PLC0415
+
+                scoped = {
+                    "scope": list(live_scope["scope"]),
+                    "manual_edits": [
+                        ManualEdit.model_validate(e) for e in live_scope["manual_edits"]
+                    ],
+                }
+                log.info(
+                    "plan_review_scope_applied",
+                    thread_id=str(snapshot["thread_id"]),
+                    turn_id=str(turn_id),
+                    scope=scoped["scope"],
+                    manual_edit_count=len(scoped["manual_edits"]),
+                )
             with bind_thought_publisher(thought_publisher):
                 return await plan_live_turn(
                     db,
@@ -1443,6 +1516,7 @@ async def _plan_with_live_agent(
                     **({"editor_state": parsed_state} if parsed_state is not None else {}),
                     # KRI-282: a clip-picker answer must re-plan, never take the copilot path.
                     **({"answers_clip_question": True} if answers_clip_question else {}),
+                    **scoped,
                 )
     finally:
         turn_deadline.reset(deadline)
@@ -1516,6 +1590,23 @@ def _answers_clip_question(source: Any) -> bool:
     )
 
 
+def _scoped_turn_fields(source: Any) -> dict[str, Any] | None:
+    """``{"scope": [...], "manual_edits": [...]}`` stored on a scoped turn's user_message."""
+    payload = getattr(source, "payload", None)
+    if not settings.live_plan_review_enabled or not isinstance(payload, dict):
+        return None
+    scope = payload.get("scope")
+    if not isinstance(scope, list) or not scope:
+        return None
+    edits = payload.get("manual_edits")
+    return {
+        "scope": [str(s) for s in scope],
+        "manual_edits": [e for e in edits if isinstance(e, dict)]
+        if isinstance(edits, list)
+        else [],
+    }
+
+
 def _stored_editor_state(turn: Any) -> dict[str, Any] | None:
     state = getattr(turn, "editor_state", None)
     return state if isinstance(state, dict) else None
@@ -1561,8 +1652,13 @@ def _claim(
         source = db.get(CreationThreadEvent, turn.source_event_id)
         if thread is None or source is None:
             return None
+        claimed_snapshot = {**_snapshot(thread), "client_request_id": turn.client_event_id}
+        live_scope = _scoped_turn_fields(source)
+        if live_scope is not None:
+            # KRI-441: rides the snapshot dict so the claim tuple keeps its shape.
+            claimed_snapshot["live_scope"] = live_scope
         return (
-            {**_snapshot(thread), "client_request_id": turn.client_event_id},
+            claimed_snapshot,
             str(source.content or ""),
             int(turn.lease_epoch),
             int(thread.revision),

@@ -30,7 +30,8 @@ from app.kria.api_schemas import (
 from app.kria.contracts import CreativeBriefOut
 from app.kria.drafts import read_or_bootstrap_draft, undo_draft, write_draft
 from app.kria.http import KriaRuntimeRoute, problem_response
-from app.kria.plan_contract import PlanSnapshotOut
+from app.kria.plan_contract import PlanSectionUndoBody, PlanSectionUndoOut, PlanSnapshotOut
+from app.kria.plan_review import undo_all_with_render, undo_section
 from app.kria.plan_snapshot import read_plan_snapshot
 from app.kria.runtime import (
     RuntimeFailure,
@@ -504,6 +505,17 @@ async def undo_runtime_draft(
         return rejected
     try:
         _runtime_enabled(user)
+        if body.render:
+            # KRI-442 "Undo all": restore + re-render. No queued successor to promote:
+            # the render turn it mints waits for the client's auto-approval.
+            return await undo_all_with_render(
+                db,
+                thread_id=_uuid(
+                    thread_id, code="thread_not_found", message="Creation thread not found"
+                ),
+                creator_id=user.id,
+                expected_revision=body.expected_draft_revision,
+            )
         draft, successor_turn_id = await undo_draft(
             db,
             thread_id=_uuid(
@@ -522,6 +534,43 @@ async def undo_runtime_draft(
                     error_class=type(exc).__name__,
                 )
         return draft
+    except RuntimeFailure as failure:
+        await db.rollback()
+        return _problem(request, failure)
+
+
+@router.post(
+    "/{thread_id}/plan/sections/{section_id}/undo",
+    response_model=PlanSectionUndoOut,
+    responses={404: {"model": KriaProblemOut}, 409: {"model": KriaProblemOut}},
+)
+@limiter.limit("30/minute")
+async def undo_creation_plan_section(
+    request: Request,
+    thread_id: str,
+    section_id: str,
+    body: PlanSectionUndoBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
+) -> PlanSectionUndoOut | JSONResponse:
+    """KRI-442: put ONE plan section back to its pre-update value and re-render."""
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
+    try:
+        _runtime_enabled(user)
+        return await undo_section(
+            db,
+            thread_id=_uuid(
+                thread_id, code="thread_not_found", message="Creation thread not found"
+            ),
+            creator_id=user.id,
+            section_id=section_id,
+            body=body,
+        )
     except RuntimeFailure as failure:
         await db.rollback()
         return _problem(request, failure)
