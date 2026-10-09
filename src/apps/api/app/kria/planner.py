@@ -2598,6 +2598,164 @@ async def _gate_unresolved_choices(
     )
 
 
+async def _plan_scoped_turn(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item: PlanItem,
+    persona: Persona,
+    user_message: str,
+    scope: list[str],
+    manual_edits: list[Any],
+    editor_state: Any = None,
+) -> PlannedKriaTurn:
+    """KRI-441: plan a turn the creator scoped to some plan sections.
+
+    ALWAYS editor operations (``[draft.apply_editor_ops, render.request]``): never a strategy
+    re-plan, never a brief extraction, and every failure is a reply, not a fall-through to the
+    unscoped planner. Enforcement layers 1 and 2 live here (``kria/plan_review.py``); layer 3
+    runs at draft compile in ``tasks/kria_runtime._complete_draft_turn``.
+    """
+    from app.kria import plan_review  # noqa: PLC0415
+
+    manifest, _ = await resolve_item_creator_context(db, item, persona=persona)
+
+    def _planned(plan: KriaTurnPlan) -> PlannedKriaTurn:
+        return PlannedKriaTurn(
+            plan=plan, manifest_hash=manifest.manifest_hash, context_hash=manifest.context_hash
+        )
+
+    def _reply(text: str, value: str = "recovery") -> PlannedKriaTurn:
+        return _planned(KriaTurnPlan(mode="respond", turn_value=value, response=text))  # type: ignore[arg-type]
+
+    try:
+        target = await _load_editor_target(
+            db, thread_id=thread_id, item=item, **_state_kw(editor_state)
+        )
+    except BriefCoverageError:
+        return _reply(
+            say(
+                en="Your saved request is too large for this update. Your video is unchanged.",
+                tr="Kayıtlı isteğin bu güncelleme için çok büyük. Videon değişmedi.",
+            )
+        )
+    if target is None:
+        miss = _editor_target_miss.get()
+        if miss == "render_in_flight":
+            return _reply(
+                say(en=_EDITOR_TARGET_IN_FLIGHT_REPLY, tr=_EDITOR_TARGET_IN_FLIGHT_REPLY_TR)
+            )
+        if miss == "editor_state_stale":
+            return _reply(_editor_state_stale_reply())
+        return _reply(
+            say(
+                en="I couldn't open your current video to update it. Try again in a moment.",
+                tr="Şu anki videonu güncellemek için açamadım. Birazdan tekrar dene.",
+            )
+        )
+    snapshot = plan_review.scoped_snapshot(target.snapshot, scope)
+    if snapshot is None:
+        return _reply(plan_review.nothing_in_scope_reply([], scope))
+
+    bars = [b for b in target.snapshot.get("text_bars") or [] if isinstance(b, dict)]
+    cue_ids = {
+        str(c.get("id"))
+        for c in (target.snapshot.get("captions") or {}).get("cues") or []
+        if isinstance(c, dict) and c.get("id")
+    }
+    covered: set[str] = set()
+    ops: list[dict] = []
+    reply = ""
+    if manual_edits:
+        try:
+            covered = {
+                plan_review.edit_section(edit, bars=bars, cue_ids=cue_ids) for edit in manual_edits
+            }
+            raw = plan_review.manual_edits_to_ops(manual_edits, snapshot)
+        except plan_review.ManualEditTargetMissing:
+            return _reply(
+                say(
+                    en=(
+                        "One of those lines changed, so I left your video as it was. "
+                        "Refresh and try again."
+                    ),
+                    tr=(
+                        "Satırlardan biri değişmiş, o yüzden videonu olduğu gibi bıraktım. "
+                        "Yenileyip tekrar dene."
+                    ),
+                )
+            )
+        # The SAME coercion the model's ops go through, with no model call.
+        ops, detail = plan_review.parse_ops_without_model(raw, snapshot, user_message)
+        if not ops:
+            return _reply(
+                detail
+                or say(
+                    en="I couldn't apply that edit, so your video is unchanged.",
+                    tr="Bu düzenlemeyi uygulayamadım, videon değişmedi.",
+                )
+            )
+        reply = say(
+            en=f"Updated {plan_review.scope_phrase(sorted(covered, key=scope.index))}.",
+            tr=f"{plan_review.scope_phrase(sorted(covered, key=scope.index))} güncellendi.",
+        )
+
+    dropped: list[dict[str, str]] = []
+    # Sections flagged without a deterministic edit still need the model (scoped to them).
+    model_scope = [section for section in scope if section not in covered]
+    if model_scope:
+        model_snapshot = plan_review.scoped_snapshot(target.snapshot, model_scope)
+        if model_snapshot is None:
+            if not ops:
+                return _reply(plan_review.nothing_in_scope_reply([], model_scope))
+        else:
+            await db.rollback()
+            response = await run_copilot_turn(
+                CopilotTurnBody(
+                    message=user_message,
+                    turns=target.conversation,
+                    snapshot=model_snapshot,
+                    client_contract_version=2,
+                ),
+                job_id=target.job_id,
+            )
+            kept, dropped = plan_review.filter_ops_to_scope(
+                list(response.ops), model_snapshot, model_scope
+            )
+            if kept:
+                ops = [*ops, *kept]
+                if not reply:
+                    reply = _phone_editor_reply(response.reply)
+            elif not ops:
+                if dropped:
+                    return _reply(plan_review.nothing_in_scope_reply(dropped, model_scope))
+                # No op survived: the copilot's own honest answer (question / limit).
+                return _reply(
+                    response.reply
+                    or say(
+                        en="That change isn't available for these sections yet.",
+                        tr="Bu değişiklik bu bölümler için henüz yapılamıyor.",
+                    ),
+                    "question" if response.outcome == "clarification" else "recovery",
+                )
+    note = plan_review.left_alone_note(dropped, scope)
+    plan = adapt_editor_action(
+        reply=f"{reply} {note}".strip() or say(en="Updated your video.", tr="Videon güncellendi."),
+        ops=ops,
+        request_render=True,
+    )
+    if plan.mode == "act":
+        plan = plan.model_copy(
+            update={
+                "diagnostics": {
+                    "scope": list(scope),
+                    **({"scope_dropped": dropped} if dropped else {}),
+                }
+            }
+        )
+    return _planned(plan)
+
+
 async def _plan_live_turn(
     db: AsyncSession,
     *,
@@ -2609,6 +2767,8 @@ async def _plan_live_turn(
     first_editor_result: tuple[KriaTurnPlan | None] | None = None,
     editor_state: Any = None,
     answers_clip_question: bool = False,
+    scope: list[str] | None = None,
+    manual_edits: list[Any] | None = None,
 ) -> PlannedKriaTurn:
     # KRI-282: `answers_clip_question` marks a turn that ANSWERS a clip-picker
     # question: structured `clip_selection` plus a synthetic message ("Dodgeball:
@@ -2624,6 +2784,19 @@ async def _plan_live_turn(
     persona = await db.get(Persona, plan.persona_id)
     if persona is None or persona.user_id != creator_id:
         raise RuntimeError("Kria creator context is unavailable")
+    if scope:
+        # KRI-441: a scoped turn is editor operations only; it never reaches the
+        # strategy re-plan, the clip-understanding wait or a brief extraction below.
+        return await _plan_scoped_turn(
+            db,
+            thread_id=thread_id,
+            item=item,
+            persona=persona,
+            user_message=user_message,
+            scope=scope,
+            manual_edits=manual_edits or [],
+            editor_state=editor_state,
+        )
     pending_analysis_ids: list[str] = []
     if settings.brief_binding_for(creator_id) and settings.kria_clip_understanding_enabled:
         from app.services.clip_intent_planning import wait_for_clip_understanding  # noqa: PLC0415

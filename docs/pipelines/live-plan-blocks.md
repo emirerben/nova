@@ -95,6 +95,28 @@ The dispatch event is built inside a savepoint: if `dispatch_payload` raises, th
 transaction falls back to the plain all-`waiting` event (log `plan_dispatch_payload_failed`)
 instead of failing a render that is already queued.
 
+### Scoped turns re-render the same Job (KRI-441, KRI-442)
+
+A turn with `scope` is planned only as editor operations (`kria/plan_review.py`: scoped op
+families + prompt line, op filter, post-compile lane repair) and commits through the editor
+path, so it re-renders the SAME Job; there is no "previous job" to compare or restore from.
+Two consequences, both handled in `plan_review.py`:
+
+- **Feed:** `emit_scoped_update_feed` runs at dispatch (inside the dispatch savepoint, thread
+  lock held) for a scoped editor commit or a section undo. Sections in scope whose value moved
+  get a `decided` block with `revision + 1`, `changed=true`, `previous` (what they replaced),
+  plus the `plan_update_summary`. Unmoved or out-of-scope sections are never written.
+- **Undo:** the pre-update value of every changed lane is captured at compile time
+  (`CompiledEditorDraft.before`) and stored on the draft's execution
+  (`result["plan_review_before"]`); `POST .../plan/sections/{id}/undo` and `DraftUndoBody.render`
+  restore from it and mint a render-only successor turn. The restore turn's source event carries
+  `scope`, so the same feed path toggles the block back (revision + 1 again).
+
+Known limits: blocks reflect the committed draft at dispatch, not the finished render (a failed
+render leaves the changed block and the undo guard `variant.render_status == "ready"` blocks Undo
+until a render succeeds); a later scoped update does not clear `changed` on sections it did not
+touch; Undo only reaches the LATEST update's lanes.
+
 ### `plan_update_summary`
 
 `role="system"`, `content=null`, payload `{turn_id, job_id, text, changed_sections}`. Appended
@@ -245,4 +267,6 @@ capability), `tests/kria/test_plan_snapshot_postgres.py` (real SQL: first render
 copy + changed/previous + undo toggle + update summary, signed URL fill, ownership and flag
 errors, post caption generated/variant/failure/timeout, finalize enrichment, metrics),
 `tests/tasks/test_phone_plan_blocks.py` (the three phone writers emit payloads),
+`tests/kria/test_plan_review.py` + `tests/kria/test_plan_review_feed_postgres.py` (scope enforcement,
+restore record, same-Job feed + undo toggle against real SQL),
 `tests/routes/test_lock_order.py`.

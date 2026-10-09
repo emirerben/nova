@@ -137,6 +137,10 @@ class CompiledEditorDraft:
     text_diff: list[dict[str, Any]] = field(default_factory=list)
     # KRI-558: what the bundle changed, lane by lane (receipts name these changes).
     diff: EditorDiff = field(default_factory=EditorDiff)
+    # KRI-442: the pre-op value of every lane this bundle changed, in COMMIT shape (the
+    # same shape `payload` carries), so a live-plan section Undo can put it back. Empty
+    # for a speech cut. Never read by the draft/render path itself.
+    before: dict[str, Any] = field(default_factory=dict)
 
 
 def is_caption_text_bar(row: dict[str, Any]) -> bool:
@@ -2075,6 +2079,10 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
     except Exception:  # noqa: BLE001 - the diff only informs receipts; it must never block a draft
         log.warning("kria_editor_diff_snapshot_failed", exc_info=True)
         before = None
+    before_text = copy.deepcopy(state.text)
+    before_captions = copy.deepcopy(state.captions)
+    before_camera = copy.deepcopy(state.camera_effects)
+    before_sfx = copy.deepcopy(state.sound_effects)
 
     for op in ops:
         name = str(op.get("op") or "")
@@ -2170,7 +2178,70 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         changes=list(dict.fromkeys(state.changes))[:3],
         text_diff=text_diff,
         diff=diff,
+        before=_before_lanes(
+            state,
+            variant,
+            text=before_text,
+            captions=before_captions,
+            camera_effects=before_camera,
+            sound_effects=before_sfx,
+        ),
     )
+
+
+def _before_lanes(
+    state: _DraftState,
+    variant: dict[str, Any],
+    *,
+    text: list[dict[str, Any]],
+    captions: list[dict[str, Any]],
+    camera_effects: list[dict[str, Any]],
+    sound_effects: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Pre-op lane values for the lanes this bundle changed (commit shape)."""
+    changed = state.changed
+    before: dict[str, Any] = {}
+    if "text" in changed:
+        before["text_elements"] = text
+    if "captions" in changed:
+        before["caption_cues"] = captions
+    if "caption_meta" in changed:
+        before["caption_meta"] = {
+            key: variant.get("captions_enabled", True)
+            if key == "enabled"
+            else variant.get(f"caption_{key}")
+            for key in state.caption_patch
+            if key != "font_set"
+        }
+    if "timeline" in changed:
+        before["timeline_slots"] = [
+            row.model_dump(mode="json", exclude_none=True)
+            for row in _timeline_models(state.initial_slots)
+        ]
+    if "camera_effects" in changed:
+        before["camera_effects"] = camera_effects
+    if "sound_effects" in changed:
+        before["sound_effects"] = sound_effects
+    if "mix" in changed:
+        mix: dict[str, Any] = {}
+        if state.mix_level is not None and variant.get("mix") is not None:
+            mix["music_level"] = variant["mix"]
+        if state.original_level is not None and variant.get("original_audio_level") is not None:
+            mix["original_level"] = variant["original_audio_level"]
+        if mix:
+            before["mix"] = mix
+    if state.music_gain_db is not None and state.background_track_id:
+        treatment = variant.get("smart_music_treatment")
+        gain = treatment.get("gain_db") if isinstance(treatment, dict) else None
+        if gain is not None:
+            before["background_music"] = {"track_id": state.background_track_id, "gain_db": gain}
+    if "music" in changed:
+        before["music_track_id"] = variant.get("music_track_id")
+    if "title" in changed and isinstance(variant.get("intro_text"), str):
+        before["title"] = variant["intro_text"]
+    if state.visual_blocks is not None:
+        before["visual_blocks"] = copy.deepcopy(variant.get("visual_blocks") or [])
+    return before
 
 
 def apply_text_lane_ops(
