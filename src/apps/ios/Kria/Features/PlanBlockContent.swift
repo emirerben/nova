@@ -92,7 +92,8 @@ private struct PlanClipFilmstrip: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            // Lazy: a 30-clip montage must not build (and read thumbnails for) every tile up front.
+            LazyHStack(spacing: 6) {
                 ForEach(clips) { clip in
                     PlanClipTile(clip: clip)
                 }

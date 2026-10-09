@@ -128,11 +128,11 @@ struct KriaButterWash: View {
             LinearGradient(colors: [KriaColor.screenTop, KriaColor.paper], startPoint: .top, endPoint: .bottom)
             if !KriaTransparency.isReduced(reduceTransparency) {
                 GeometryReader { proxy in
-                    Circle().fill(KriaColor.butter.opacity(0.55))
+                    Circle().fill(KriaColor.butter.opacity(0.32))
                         .frame(width: proxy.size.width * 0.9)
                         .blur(radius: 70)
                         .offset(x: -proxy.size.width * 0.25, y: proxy.size.height * 0.1)
-                    Circle().fill(KriaColor.butterWarm.opacity(0.5))
+                    Circle().fill(KriaColor.butterWarm.opacity(0.28))
                         .frame(width: proxy.size.width * 0.8)
                         .blur(radius: 80)
                         .offset(x: proxy.size.width * 0.35, y: proxy.size.height * 0.55)
