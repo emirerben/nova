@@ -433,7 +433,12 @@ final class CreationChatFixture: @unchecked Sendable {
             let after = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "after_sequence" })?.value.flatMap(Int.init) ?? -1
             return response(["thread_id": id, "runtime_version": runtime, "status": "active", "after_sequence": after, "has_more": false, "thread_revision": revision, "events": events.filter { ($0["sequence"] as? Int ?? 0) > after }, "next_after_sequence": events.count - 1])
         }
-        if parts.last == "turns" { return response(["turn_id": editorTurnIDs[id] ?? id, "thread_revision": revision, "status": "queued"], status: 202) }
+        if parts.last == "turns" {
+            // Like the server (`runtime.py`), the accepted turn id is the one stamped on that turn's events
+            // (the client event id), so `ChatThinkingSettlement` can match the reply to the wait.
+            let acceptedTurnID = editorTurnIDs[id] ?? (body["client_event_id"] as? String ?? id)
+            return response(["turn_id": acceptedTurnID, "thread_revision": revision, "status": "queued"], status: 202)
+        }
         if parts.last == "approve" { return response(["approval_id": approvalID, "thread_id": id, "status": "approved", "thread_revision": revision]) }
         return response(withRenderShape(thread))
     }

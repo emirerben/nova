@@ -32,8 +32,14 @@ final class SongOrderUITests: XCTestCase {
 
     private func bringIntoView(_ element: XCUIElement, in app: XCUIApplication) {
         let conversation = app.descendants(matching: .any)["Conversation history"].firstMatch
-        for _ in 0..<8 where !element.isHittable { conversation.swipeUp(velocity: .slow) }
-        XCTAssertTrue(element.isHittable, "\(element.identifier) must be on screen before it is tapped")
+        // The composer floats over the bottom of the conversation, so an element can report hittable while its
+        // centre still sits under the composer pill and the tap lands there. Scroll until it clears the composer.
+        let composer = app.buttons["chat-send-message"]
+        func isClearOfComposer() -> Bool {
+            element.isHittable && (!composer.exists || element.frame.maxY <= composer.frame.minY)
+        }
+        for _ in 0..<8 where !isClearOfComposer() { conversation.swipeUp(velocity: .slow) }
+        XCTAssertTrue(isClearOfComposer(), "\(element.identifier) must be on screen, above the composer, before it is tapped")
     }
 
     func testOrderCardShowsBadgesReordersAndSendsTheConfirmedOrder() {

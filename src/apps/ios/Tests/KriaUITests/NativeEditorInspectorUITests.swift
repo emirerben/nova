@@ -224,9 +224,11 @@ final class NativeEditorInspectorUITests: XCTestCase {
         var sampledSecondClip = false
         var sampledBrandOutro = false
         var sampledContentAfterOutro = false
-        func assertDisplayedPreview() {
+        let previewElement = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let timeElement = app.descendants(matching: .any)["native-editor-current-time"].firstMatch
+        func samplePreview() -> (rgba: [UInt8], label: String, time: Double, diagnostic: String) {
             let screenshot = app.screenshot()
-            let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch.frame
+            let preview = previewElement.frame
             let image = screenshot.image.cgImage!
             let scale = Double(image.width) / app.frame.width
             let sample = image.cropping(to: CGRect(x: preview.midX * scale, y: (preview.minY + preview.height * 0.2) * scale, width: 1, height: 1))!
@@ -234,9 +236,29 @@ final class NativeEditorInspectorUITests: XCTestCase {
             let context = CGContext(data: &rgba, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
                 space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
             context.draw(sample, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-            let label = app.descendants(matching: .any)["native-editor-current-time"].firstMatch.value as? String ?? ""
+            let label = timeElement.value as? String ?? ""
             let time = Double(label.split(separator: ":").last ?? "0") ?? 0
-            let previewDiagnostic = app.descendants(matching: .any)["native-editor-preview"].firstMatch.value as? String ?? ""
+            return (rgba, label, time, previewElement.value as? String ?? "")
+        }
+        /// Whether the sampled pixel is the clip the playhead is on (transition boundaries match anything).
+        func showsExpectedClip(_ rgba: [UInt8], at time: Double) -> Bool {
+            if abs(time - 2) <= 0.1 || abs(time - 4) <= 0.1 { return true }
+            if time < 2 { return rgba[0] > 220 && rgba[2] < 40 }
+            if time < 4 { return rgba[2] > 220 && rgba[0] < 40 }
+            return rgba[0] > 220 && rgba[1] > 220 && rgba[2] > 220
+        }
+        func assertDisplayedPreview() {
+            // The still frame is requested asynchronously after each scrub, so the screenshot can still show the
+            // previous position. Wait for the diagnostic to report the frame, then re-sample (bounded) until the
+            // pixel matches; a preview that is genuinely stuck on the wrong clip still fails after the deadline.
+            let frameReady = NSPredicate { _, _ in (previewElement.value as? String ?? "").contains("stillFrameReady:true") }
+            _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: frameReady, object: previewElement)], timeout: 5)
+            var (rgba, label, time, previewDiagnostic) = samplePreview()
+            let deadline = Date().addingTimeInterval(3)
+            while !showsExpectedClip(rgba, at: time), Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.15)
+                (rgba, label, time, previewDiagnostic) = samplePreview()
+            }
             // The accessible source preview now includes the 1.6-second Kria
             // outro after its two editable two-second clips. Skip the two
             // transition boundaries, then sample the red, blue, and branded
