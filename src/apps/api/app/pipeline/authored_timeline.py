@@ -460,6 +460,9 @@ def rerender_authored_timeline(job_id: str, variant_id: str, generation: str | N
                     audio_gain=float(variant.get("mix", 1))
                     if variant.get("resolved_archetype") == "guided_story"
                     else 1.0,
+                    # The creator's footage level plays under the song. With a
+                    # narration lane the footage bed is handled by _mix_narration.
+                    original_level=None if voice_path else variant.get("original_audio_level"),
                 )
                 clean_local = mixed
             if voice_path:

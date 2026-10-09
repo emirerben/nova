@@ -10580,14 +10580,31 @@ def _prepare_editor_commit(
             )
         # Same rule as dispatch_set_mix: only voiceover variants carry a voice
         # bed to rebalance.
+        # The footage's own level (`original_level`) is independent of the voice bed:
+        # the cloud renderer applies it to the original sound / under the song, so
+        # an original_level-only mix needs no voiceover.
+        is_voiceover_id = str(variant_id).startswith("voiceover")
         if (
             not guided_v2
             and variant.get("mix") is None
-            and not str(variant_id).startswith("voiceover")
+            and not is_voiceover_id
+            and (payload.mix.music_level is not None or payload.mix.original_level is None)
         ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="This edit has no voiceover to mix.",
+            )
+        if (
+            not guided_v2
+            and is_voiceover_id
+            and payload.mix.original_level is not None
+            and variant.get("render_destination") != "device"
+        ):
+            # The cloud voiceover mixer ducks the footage by the voice mix and has no
+            # separate footage level; refuse rather than accept a silent no-op.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="original_audio_voiceover_unsupported",
             )
         mix_override = payload.mix.music_level
 
@@ -11121,9 +11138,10 @@ def _prepare_editor_commit(
             if payload.mix.music_level is not None:
                 updated["mix"] = float(payload.mix.music_level)
             if payload.mix.original_level is not None:
-                # Persisted for round-tripping on every variant; honored by the phone
-                # compiler for guided edits (revision.audio.original_level) and the
-                # phone authored timeline. Cloud renders ignore it (see the guided gate).
+                # Persisted on every variant; honored by the phone compiler for guided
+                # edits (revision.audio.original_level), the phone authored timeline,
+                # and the cloud renderer (original-sound volume / footage under the
+                # song). Guided cloud edits stay refused by the guided gate.
                 updated["original_audio_level"] = float(payload.mix.original_level)
         if payload.music_track_id is not None:
             updated["music_track_id"] = payload.music_track_id
@@ -11323,6 +11341,11 @@ def _prepare_editor_commit(
             else resolved_slots
         ),
         "mix_override": mix_override,
+        # Footage-level edits re-assemble the audio (the cloud renderer reads the
+        # persisted `original_audio_level`), but carry no per-call override kwarg.
+        "original_level_changed": bool(
+            payload.mix is not None and payload.mix.original_level is not None
+        ),
         "sfx_override": validated_sfx,
         "audio_sfx_override": (
             validated_sfx if validated_sfx is not None else list(variant.get("sound_effects") or [])
@@ -11533,6 +11556,7 @@ def enqueue_editor_commit_render(
     full_render = (
         prep["timeline_override"] is not None
         or prep["mix_override"] is not None
+        or prep.get("original_level_changed") is True
         or prep.get("new_track_id") is not None
         or prep.get("remove_music") is True
         or prep.get("orientation_override") is not None
@@ -11566,6 +11590,7 @@ def enqueue_editor_commit_render(
             or prep.get("text_requires_full_render") is True
             or prep.get("orientation_override") is not None
             or prep.get("remove_music") is True
+            or prep.get("original_level_changed") is True
             or prep.get("pending_overlay_camera_rebuild") is True
             or sections.get("carousel_moment") is True
         ):
@@ -11579,6 +11604,7 @@ def enqueue_editor_commit_render(
     is_reburn_only = (
         prep["timeline_override"] is None
         and prep["mix_override"] is None
+        and prep.get("original_level_changed") is not True
         and prep.get("new_track_id") is None
         and prep.get("remove_music") is not True
         and prep.get("orientation_override") is None

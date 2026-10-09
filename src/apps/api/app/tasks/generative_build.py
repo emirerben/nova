@@ -17854,6 +17854,11 @@ def _run_regenerate_variant(
                 resolved_mix = _VOICEOVER_ONLY_DEFAULT_MIX
             spec["voiceover_gcs_path"] = voiceover_gcs_path
             spec["mix"] = resolved_mix
+        # The footage's own sound level (editor `mix.original_level`) is persisted
+        # on the variant by the editor commit; a re-render must honour it. Absent
+        # => the historical behaviour (song replaces, original keeps full level).
+        if existing.get("original_audio_level") is not None:
+            spec["original_audio_level"] = existing["original_audio_level"]
         if regen_cloud_evidence is not None:
             # Contract-bound job: the re-render reports receipt evidence too.
             spec["cloud_evidence_ctx"] = regen_cloud_evidence
@@ -21690,6 +21695,9 @@ def _process_generative_variant(
     voiceover_local: str | None = decision.extras["voiceover_local"]
     voiceover_target_s: float = decision.extras["voiceover_target_s"]
     mix: float = decision.extras["mix"]
+    original_audio_level: float | None = _coerce_original_audio_level(
+        spec.get("original_audio_level")
+    )
     masonry_requested: bool = decision.extras["masonry_requested"]
     resolved_montage_preset: str = decision.extras["resolved_montage_preset"]
     effective_available_footage_s: float = decision.extras["effective_available_footage_s"]
@@ -21955,11 +21963,24 @@ def _process_generative_variant(
                 else None
             ),
             require_audio=True,
+            # Creator-set footage level: footage plays UNDER the song. None (the
+            # default) keeps the song-replaces-source behaviour byte-identical.
+            original_level=original_audio_level,
         )
     else:
         # Original-audio variant: KEEP the clips' source audio — skip the mix.
         # `_assemble_clips` already muxed source audio into assembled.mp4.
         audio_mixed_path = assembled_path
+        if original_audio_level is not None and abs(original_audio_level - 1.0) > 1e-6:
+            from app.pipeline.authored_timeline import (  # noqa: PLC0415
+                _apply_original_audio_level,
+            )
+
+            audio_mixed_path = _apply_original_audio_level(
+                assembled_path,
+                os.path.join(variant_dir, "audio_original_level.mp4"),
+                original_audio_level,
+            )
     _record_render_subphase(
         job_id,
         "render_variants",
@@ -22423,6 +22444,19 @@ def _finish_generative_variant_failure(
         "error": err,
         "error_class": _classify_error(exc),
     }
+
+
+def _coerce_original_audio_level(value: Any) -> float | None:
+    """Clamp a persisted `original_audio_level` to 0..1; unset/garbage => None."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        level = float(value)
+    except (TypeError, ValueError):
+        return None
+    if level != level:  # NaN
+        return None
+    return max(0.0, min(1.0, level))
 
 
 def _render_generative_variant(**kwargs: Any) -> dict[str, Any]:
