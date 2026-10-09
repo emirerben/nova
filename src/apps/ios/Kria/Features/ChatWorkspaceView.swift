@@ -439,6 +439,14 @@ private struct CreationWorkspaceView: View {
     @State private var answeredChoices: [String: ChoiceSelectionSubmission] = [:]
     @State private var isActing = false
     @State private var isThinking = false
+    /// The turn request id doubles as the thought-summary lookup key. It is
+    /// retained across the accepted-turn wait so a retry cannot inherit a
+    /// previous attempt's successful disclosure.
+    @State private var thoughtRequestID: String?
+    @State private var liveThoughtSummaries: [KriaThoughtSummary] = []
+    /// Server history is keyed by the user's stable request id, so a row is
+    /// placed immediately after the request that produced it.
+    @State private var completedThoughtSummaries: [String: [KriaThoughtSummary]] = [:]
     /// Highest transcript sequence known when the thinking turn was accepted; only later events can settle it.
     @State private var thinkingAnchor: Int?
     @State private var thinkingTurnID: String?
@@ -543,7 +551,8 @@ private struct CreationWorkspaceView: View {
         ChatTimeline.build(
             events: events, pending: pendingMessages, stage: stageAnchor,
             suppressedMessageIDs: suppressedTimelineMessages,
-            uploads: activeUploadIDs.compactMap { uploadAnchors[$0] }
+            uploads: activeUploadIDs.compactMap { uploadAnchors[$0] },
+            thoughtSummaries: completedThoughtSummaries
         )
     }
 
@@ -664,6 +673,15 @@ private struct CreationWorkspaceView: View {
             + "|feed\(feed.decidedCount)/\(feed.totalCount)"
     }
 
+    private var streamingThoughtSummaries: [KriaThoughtSummary] {
+        liveThoughtSummaries.filter { $0.status == .streaming && $0.hasText }
+    }
+
+    private var hasCompletedThoughtForActiveRequest: Bool {
+        guard let requestID = thoughtRequestID else { return false }
+        return !(completedThoughtSummaries[requestID] ?? []).isEmpty
+    }
+
     @ViewBuilder private var conversationContent: some View {
         ForEach(ChatTimelineGroup.group(timeline)) { group in
             if case .media = group.entries[0].content {
@@ -674,7 +692,9 @@ private struct CreationWorkspaceView: View {
             }
         }
         if (isThinking || isSending) && workspaceStage != .rendering {
-            ThinkingRow().id("thinking")
+            ThoughtSummaryDisclosure(summaries: streamingThoughtSummaries)
+                .id("thought-summary")
+            if streamingThoughtSummaries.isEmpty && !hasCompletedThoughtForActiveRequest { ThinkingRow().id("thinking") }
         }
         if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
         if let failure {
@@ -730,6 +750,8 @@ private struct CreationWorkspaceView: View {
             }
             .accessibilityIdentifier("chat-upload-\(recordID.uuidString)")
             .id(entry.id)
+        case .thoughts(let summaries):
+            ThoughtSummaryDisclosure(summaries: summaries).id(entry.id)
         case .media:
             EmptyView() // Consecutive receipts are rendered together above.
         }
@@ -1001,6 +1023,7 @@ private struct CreationWorkspaceView: View {
         // !hasDedicatedSlideWorkspace via the if/else above.
         .onAppear {
             if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) }
+            Task { await loadCompletedThoughtSummaries() }
             // Persisted from the holder, not `.onChange(of: prompt)`: reading `prompt` in
             // this body would subscribe the whole workspace to every keystroke.
             promptDraft.onChange = { [chatDrafts = model.chatDrafts, id = project.id] in chatDrafts.setDraft($0, for: id) }
@@ -1013,6 +1036,22 @@ private struct CreationWorkspaceView: View {
             await resolveFormat()
             await pollUntilDismissed()
             await capabilities
+        }
+        .task(id: thoughtRequestID) {
+            guard let requestID = thoughtRequestID else { return }
+            while !Task.isCancelled, (isSending || isThinking), thoughtRequestID == requestID {
+                if let response = try? await model.api.creationThoughtSummaries(threadID: project.id, clientRequestID: requestID),
+                   response.clientRequestID == requestID {
+                    guard !Task.isCancelled, thoughtRequestID == requestID else { return }
+                    liveThoughtSummaries = response.summaries.filter { $0.hasText }
+                    let completed = liveThoughtSummaries.filter { $0.status == .completed }
+                    if !completed.isEmpty { completedThoughtSummaries[requestID] = completed }
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+            if !Task.isCancelled, thoughtRequestID == requestID {
+                await fetchFinalThoughtSummary(requestID: requestID)
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active, capabilitiesAreAuthoritative { Task { await refreshEditorStateCapability() } }
@@ -1358,6 +1397,13 @@ private struct CreationWorkspaceView: View {
         Task { await send(message: CreationConfirmationConflict.refreshDirectionMessage) }
     }
 
+    private func loadCompletedThoughtSummaries() async {
+        guard let response = try? await model.api.creationThoughtSummaryHistory(threadID: project.id) else { return }
+        completedThoughtSummaries = Dictionary(grouping: response.summaries.filter {
+            $0.status == .completed && $0.hasText && $0.clientRequestID != nil
+        }, by: { $0.clientRequestID! })
+    }
+
     private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil) async {
         // Slide direction is intentionally handled by SlidePostWorkspaceView.
         // Generic creator runtime has no slide proposal/create tools.
@@ -1400,6 +1446,8 @@ private struct CreationWorkspaceView: View {
             pendingTurnSubmission, for: message, expectedRevision: threadRevision
         )
         pendingTurnSubmission = submission
+        thoughtRequestID = submission.clientEventID
+        liveThoughtSummaries = []
         let optimistic: ChatPendingMessage
         if let previous = submissionAnchor, previous.clientEventID == submission.clientEventID {
             optimistic = previous
@@ -1426,7 +1474,9 @@ private struct CreationWorkspaceView: View {
                 apply(thread, requestSequence: requestSequence)
                 conversationAcceptedID = UUID()
                 await editorSession.synchronizePromptRevision()
+                await fetchFinalThoughtSummary(requestID: submission.clientEventID)
             } catch APIError.conflict {
+                thoughtRequestID = nil; liveThoughtSummaries = []
                 pendingMessages.removeAll { $0.id == optimistic.id }
                 if prompt.isEmpty { prompt = draftToRestore }
                 pendingTurnSubmission = nil
@@ -1434,6 +1484,7 @@ private struct CreationWorkspaceView: View {
                 await refreshNow()
                 failure = ChatFailure("This conversation changed. Your message is still here; review the latest direction and send again.")
             } catch {
+                thoughtRequestID = nil; liveThoughtSummaries = []
                 pendingMessages.removeAll { $0.id == optimistic.id }
                 if prompt.isEmpty { prompt = draftToRestore }
                 failure = ChatFailure(
@@ -1451,6 +1502,7 @@ private struct CreationWorkspaceView: View {
                 editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection
             )
         } catch let error as APIError where error == .conflict {
+            thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }
             if prompt.isEmpty { prompt = draftToRestore }
             pendingTurnSubmission = nil
@@ -1468,6 +1520,7 @@ private struct CreationWorkspaceView: View {
             ).map { ChatFailure($0) }
             return
         } catch {
+            thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }
             if prompt.isEmpty { prompt = draftToRestore }
             failure = ChatFailure("Kria couldn’t confirm that message. Your draft is saved here; retry to check it safely.", error: error)
@@ -1487,6 +1540,18 @@ private struct CreationWorkspaceView: View {
             "Your message was sent, but the conversation couldn’t refresh.",
             refresh: { try await refreshDelta() }
         )
+        await fetchFinalThoughtSummary(requestID: submission.clientEventID)
+    }
+
+    /// A turn can settle before the one-second live poll sees its completed
+    /// record. Read once after the successful request path, then let the
+    /// timeline own completed display so it cannot duplicate the live row.
+    private func fetchFinalThoughtSummary(requestID: String) async {
+        guard let response = try? await model.api.creationThoughtSummaries(threadID: project.id, clientRequestID: requestID),
+              response.clientRequestID == requestID else { return }
+        liveThoughtSummaries = response.summaries.filter { $0.hasText }
+        let completed = liveThoughtSummaries.filter { $0.status == .completed }
+        if !completed.isEmpty { completedThoughtSummaries[requestID] = completed }
     }
 
     private func selectFormat(_ format: CreationFormat) {

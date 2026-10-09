@@ -60,6 +60,26 @@ import XCTest
         let response = SlidePostProposal(draft: try XCTUnwrap(saved.draft), baseVersion: 1, fallbackUsed: false, summary: "Review the order")
         var paths: [String] = []
         NativeEditorURLProtocol.handler = { request in
+            if request.url!.path.hasSuffix("/thought-summaries") {
+                XCTAssertEqual(request.httpMethod, "GET")
+                var requestID = ""
+                for item in URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? [] {
+                    if item.name == "client_request_id" { requestID = item.value ?? "" }
+                }
+                let payload: [String: Any] = [
+                    "client_request_id": requestID,
+                    "summaries": [[
+                        "id": "33333333-3333-3333-3333-333333333333",
+                        "client_request_id": requestID,
+                        "status": "completed",
+                        "text": "Compared the slide order.",
+                        "started_at": "2026-10-09T08:00:00Z",
+                        "completed_at": "2026-10-09T08:00:02Z",
+                        "duration_ms": 2000
+                    ]]
+                ]
+                return (200, try JSONSerialization.data(withJSONObject: payload))
+            }
             paths.append(request.url!.path)
             if request.httpMethod == "POST" {
                 XCTAssertEqual(request.url?.path, "/plan-items/\(self.itemID)/slide-post/propose")
@@ -77,8 +97,15 @@ import XCTest
         await session.propose(api: api, itemID: itemID, instruction: "Lead with the landscape")
         XCTAssertEqual(session.draft, saved.draft)
         XCTAssertNotNil(session.proposal)
+        XCTAssertEqual(session.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
+        XCTAssertEqual(session.proposalRequestText, "Lead with the landscape")
+        XCTAssertEqual(session.proposalThoughtSummaries.first?.durationLabel, "Thought for 2s")
         XCTAssertEqual(paths.count, 2)
         XCTAssertFalse(session.hasUnsavedChanges)
+        let reopened = SlidePostSession(defaults: defaults)
+        await reopened.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reopened.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
+        XCTAssertEqual(reopened.proposalRequestText, "Lead with the landscape")
     }
     func testSaveSendsExpectedVersionAndNeverServerOwnedMetadata() async throws {
         let saved = fixture(version: 3)

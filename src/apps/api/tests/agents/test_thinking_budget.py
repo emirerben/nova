@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from app.agents._model_client import GeminiClient
+from app.agents._model_client import GeminiClient, _collect_gemini_stream
 from app.agents._runtime import (
     ModelClient,
     ModelInvocation,
@@ -32,11 +32,35 @@ class _CapturingModels:
     def __init__(self) -> None:
         self.captured_config: Any = None
         self.captured_model: str | None = None
+        self.stream_called = False
 
     def generate_content(self, *, model: str, contents: Any, config: Any):  # noqa: ARG002
         self.captured_model = model
         self.captured_config = config
         return SimpleNamespace(text='{"ranked": []}', usage_metadata=None)
+
+    def generate_content_stream(self, *, model: str, contents: Any, config: Any):  # noqa: ARG002
+        self.stream_called = True
+        self.captured_model = model
+        self.captured_config = config
+        yield SimpleNamespace(
+            candidates=[
+                SimpleNamespace(
+                    content=SimpleNamespace(parts=[SimpleNamespace(text="Planning", thought=True)])
+                )
+            ],
+            usage_metadata=None,
+        )
+        yield SimpleNamespace(
+            candidates=[
+                SimpleNamespace(
+                    content=SimpleNamespace(
+                        parts=[SimpleNamespace(text='{"ranked": []}', thought=False)]
+                    )
+                )
+            ],
+            usage_metadata=SimpleNamespace(prompt_token_count=5, candidates_token_count=3),
+        )
 
 
 class _FakeClient:
@@ -67,6 +91,35 @@ def test_thinking_budget_reaches_config_for_gemini_2_5(capturing_client):
 def test_no_thinking_config_when_budget_unset(capturing_client):
     GeminiClient().invoke(model="gemini-2.5-flash", prompt="hi")
     assert getattr(capturing_client.captured_config, "thinking_config", None) is None
+    assert not capturing_client.stream_called
+
+
+def test_opted_in_gemini_call_streams_summaries_and_keeps_json_usage(capturing_client):
+    seen: list[str] = []
+    invocation = GeminiClient().invoke(
+        model="gemini-2.5-flash",
+        prompt="hi",
+        thinking_budget=256,
+        thought_summary_callback=seen.append,
+    )
+    assert capturing_client.stream_called
+    assert capturing_client.captured_config.thinking_config.include_thoughts
+    assert seen == ["Planning"]
+    assert invocation.raw_text == '{"ranked": []}'
+    assert (invocation.tokens_in, invocation.tokens_out) == (5, 3)
+
+
+def test_gemini_3_stream_preserves_thinking_level(capturing_client):
+    GeminiClient().invoke(
+        model="gemini-3.1-pro-preview",
+        prompt="hi",
+        thinking_level="high",
+        thought_summary_callback=lambda _: None,
+    )
+    thinking = capturing_client.captured_config.thinking_config
+    assert capturing_client.stream_called
+    assert str(thinking.thinking_level).endswith("HIGH")
+    assert thinking.include_thoughts
 
 
 def test_thinking_budget_ignored_for_non_2_5_model(capturing_client):
@@ -85,6 +138,45 @@ def test_gemini_3_thinking_level_and_declared_model_reach_sdk(capturing_client):
     assert capturing_client.captured_model == "gemini-3.1-pro-preview"
     thinking = capturing_client.captured_config.thinking_config
     assert str(thinking.thinking_level).endswith("HIGH")
+
+
+def test_stream_assembly_forwards_only_provider_marked_thoughts() -> None:
+    """Thought text stays out of the final JSON, including signatures."""
+    seen: list[str] = []
+    first = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(
+                    parts=[
+                        SimpleNamespace(
+                            text="private thought", thought=True, thought_signature="secret"
+                        ),
+                        SimpleNamespace(text='{"answer":', thought=False),
+                    ]
+                )
+            )
+        ],
+        usage_metadata=None,
+    )
+    final_usage = SimpleNamespace(prompt_token_count=12, candidates_token_count=3)
+    last = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(parts=[SimpleNamespace(text="true}", thought=False)])
+            )
+        ],
+        usage_metadata=final_usage,
+        model_version="gemini-test",
+    )
+    response = _collect_gemini_stream([first, last], seen.append)
+    assert seen == ["private thought"]
+    assert response.text == '{"answer":true}'
+    assert response.usage_metadata is final_usage
+
+
+def test_stream_assembly_rejects_empty_provider_stream() -> None:
+    with pytest.raises(TerminalError, match="stream returned no chunks"):
+        _collect_gemini_stream([], lambda _: None)
 
 
 _KRI178_FIXTURE = (

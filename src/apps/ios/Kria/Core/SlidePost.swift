@@ -307,9 +307,10 @@ struct SlidePostProposalRequest: Encodable, Sendable {
     let platformProfile: String
     let assetIDs: [String]?
     let instruction: String
+    let clientRequestID: String?
     enum CodingKeys: String, CodingKey {
         case instruction
-        case expectedVersion = "expected_version", platformProfile = "platform_profile", assetIDs = "asset_ids"
+        case expectedVersion = "expected_version", platformProfile = "platform_profile", assetIDs = "asset_ids", clientRequestID = "client_request_id"
     }
 }
 struct SlidePostSaveRequest: Encodable, Sendable {
@@ -402,6 +403,9 @@ struct SlidePostChatMessage: Codable, Equatable, Identifiable, Sendable {
     var changes: [String] = []
     /// Set on a failed send: the message to resend with Retry.
     var retryText: String? = nil
+    /// Completed provider-marked summaries are part of the local transcript;
+    /// streaming and failed attempts are deliberately never persisted.
+    var thoughts: [KriaThoughtSummary] = []
     var isUser: Bool { role == "user" }
     /// Notes about something Kria could NOT do read as a warning, not a success. Matches ONLY the
     /// server's fixed note phrasings in `compile_slide_post_ops`
@@ -412,6 +416,19 @@ struct SlidePostChatMessage: Codable, Equatable, Identifiable, Sendable {
         let text = change.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.range(of: #"^\d+ photos? (has|have) no location\.?$"#, options: .regularExpression) != nil { return true }
         return text.hasPrefix("Animation and spacing aren't available on slides")
+    }
+    enum CodingKeys: String, CodingKey { case id, role, text, changes, retryText, thoughts }
+    init(id: UUID = UUID(), role: String, text: String, changes: [String] = [], retryText: String? = nil, thoughts: [KriaThoughtSummary] = []) {
+        self.id = id; self.role = role; self.text = text; self.changes = changes; self.retryText = retryText; self.thoughts = thoughts
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        role = try values.decode(String.self, forKey: .role)
+        text = try values.decode(String.self, forKey: .text)
+        changes = try values.decodeIfPresent([String].self, forKey: .changes) ?? []
+        retryText = try values.decodeIfPresent(String.self, forKey: .retryText)
+        thoughts = try values.decodeIfPresent([KriaThoughtSummary].self, forKey: .thoughts) ?? []
     }
 }
 
@@ -451,8 +468,12 @@ private struct SlidePostItemResponse: Decodable {
     /// The Kria thread for this post (chat-edit turns). Persisted with the rest of the local state.
     @Published private(set) var chat: [SlidePostChatMessage] = [] { didSet { persist() } }
     @Published private(set) var isChatting = false
+    @Published private(set) var liveThoughtSummaries: [KriaThoughtSummary] = []
+    @Published private(set) var proposalThoughtSummaries: [KriaThoughtSummary] = [] { didSet { persist() } }
+    @Published private(set) var proposalRequestText: String? { didSet { persist() } }
     @Published var error: String?
     @Published private(set) var operationMessage: String?
+    var isProposing: Bool { isBusy && operationMessage == "Kria is arranging your post…" }
     /// Text being edited on the canvas (not persisted; the text panel owns it).
     @Published var selectedTextID: String?
     /// Why some freshly imported media did not become a slide (limit / photos-only). Cleared by the user.
@@ -561,7 +582,7 @@ private struct SlidePostItemResponse: Decodable {
 
     func discardLocalChanges() {
         guard let state else { return }
-        error = nil; proposal = nil; undoDraft = nil; undoStack = []; redoStack = []; lastCoalesceKey = nil
+        error = nil; proposal = nil; proposalThoughtSummaries = []; proposalRequestText = nil; undoDraft = nil; undoStack = []; redoStack = []; lastCoalesceKey = nil
         baseVersion = state.draft?.version ?? 0; draft = state.draft
         selectedID = draft?.slides.first?.id
     }
@@ -574,18 +595,35 @@ private struct SlidePostItemResponse: Decodable {
         guard !prompt.isEmpty, prompt.count <= 2000 else { error = "Tell Kria your direction in 2,000 characters or fewer."; return }
         guard !readyAssets.isEmpty else { error = "Add photos or videos and wait for them to finish preparing."; return }
         mutationGeneration += 1
-        self.instruction = instruction; isBusy = true; error = nil; operationMessage = "Kria is arranging your post…"
+        let previousProposalRequestText = proposalRequestText
+        self.instruction = instruction; proposalRequestText = prompt; isBusy = true; error = nil; liveThoughtSummaries = []; operationMessage = "Kria is arranging your post…"
         defer { isBusy = false; operationMessage = nil }
         do {
             let profile = platformProfile ?? draft?.platformProfile ?? proposal?.draft.platformProfile ?? (readyAssets.contains(where: { $0.kind == "video" }) ? "instagram_carousel" : "tiktok_photo")
             let ids = draft?.slides.map(\.assetID) ?? proposal?.draft.slides.map(\.assetID) ?? readyAssets.map(\.id)
             // Media that arrives while Kria arranges is not in this request, so it must stay unseen.
             seenAssetIDs = (seenAssetIDs ?? []).union(ids)
-            let result = try await api.proposeSlidePost(itemID: itemID, request: .init(expectedVersion: baseVersion, platformProfile: profile, assetIDs: ids, instruction: prompt))
+            let requestID = UUID().uuidString
+            let polling = Task { [api, itemID] in
+                while !Task.isCancelled {
+                    if let response = try? await api.slidePostThoughtSummaries(itemID: itemID, clientRequestID: requestID), response.clientRequestID == requestID {
+                        guard !Task.isCancelled else { return }
+                        self.liveThoughtSummaries = response.summaries.filter { $0.hasText }
+                    }
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
+            defer { polling.cancel() }
+            let result = try await api.proposeSlidePost(itemID: itemID, request: .init(expectedVersion: baseVersion, platformProfile: profile, assetIDs: ids, instruction: prompt, clientRequestID: requestID))
+            polling.cancel()
+            if let response = try? await api.slidePostThoughtSummaries(itemID: itemID, clientRequestID: requestID), response.clientRequestID == requestID {
+                liveThoughtSummaries = response.summaries.filter { $0.hasText }
+            }
             guard result.baseVersion == baseVersion else { throw APIError.conflict }
             proposal = result
+            proposalThoughtSummaries = completedThoughts()
             if selectedID == nil { selectedID = result.draft.slides.first?.id }
-        } catch { handle(error) }
+        } catch { liveThoughtSummaries = []; proposalRequestText = previousProposalRequestText; handle(error) }
     }
 
     func applyProposal(api: any KriaAPIClient, itemID: String) async {
@@ -654,20 +692,39 @@ private struct SlidePostItemResponse: Decodable {
         chat.append(.init(role: "user", text: text))
         isChatting = true; error = nil
         defer { isChatting = false }
+        let requestID = UUID().uuidString
         let body = SlidePostChatEditRequest(message: text, expectedVersion: baseVersion, draft: hasUnsavedChanges ? current : nil,
-                                            turns: Array(turns), clientRequestID: UUID().uuidString)
+                                            turns: Array(turns), clientRequestID: requestID)
+        let thoughtPoll = Task { [api, itemID] in
+            while !Task.isCancelled {
+                if let response = try? await api.slidePostThoughtSummaries(itemID: itemID, clientRequestID: requestID), response.clientRequestID == requestID {
+                    guard !Task.isCancelled else { return }
+                    self.liveThoughtSummaries = response.summaries.filter { $0.hasText }
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        defer { thoughtPoll.cancel() }
         let result: SlidePostChatEditResponse
         do { result = try await api.slidePostChatEdit(itemID: itemID, body: body) } catch is CancellationError { return false } catch {
             Self.logChatFailure(error)
+            liveThoughtSummaries = []
             chat.append(.init(role: "assistant", text: Self.chatFailureMessage(error), retryText: text))
             return false
         }
+        thoughtPoll.cancel()
+        // The final response can beat the poll by a fraction of a second. Read
+        // once more before writing history so a completed disclosure survives
+        // closing and reopening the editor.
+        if let response = try? await api.slidePostThoughtSummaries(itemID: itemID, clientRequestID: requestID), response.clientRequestID == requestID {
+            liveThoughtSummaries = response.summaries.filter { $0.hasText }
+        }
         guard result.outcome == .edited, let proposed = result.draft else {
-            chat.append(.init(role: "assistant", text: result.reply, changes: result.changes)); return false
+            chat.append(.init(role: "assistant", text: result.reply, changes: result.changes, thoughts: completedThoughts())); return false
         }
         // The user changed the slides while Kria worked: never overwrite newer local edits.
         guard let latest = draft, latest.hasSameContent(as: current) else {
-            chat.append(.init(role: "assistant", text: "Your slides changed while I was working, so I left them as they are. Ask me again."))
+            chat.append(.init(role: "assistant", text: "Your slides changed while I was working, so I left them as they are. Ask me again.", thoughts: completedThoughts()))
             return false
         }
         var staged = proposed
@@ -678,8 +735,12 @@ private struct SlidePostItemResponse: Decodable {
         stageDraft(staged)
         if let selectedID, !staged.slides.contains(where: { $0.id == selectedID }) { self.selectedID = staged.slides.first?.id }
         selectedTextID = nil
-        chat.append(.init(role: "assistant", text: result.reply, changes: result.changes))
+        chat.append(.init(role: "assistant", text: result.reply, changes: result.changes, thoughts: completedThoughts()))
         return true
+    }
+    private func completedThoughts() -> [KriaThoughtSummary] {
+        defer { liveThoughtSummaries = [] }
+        return liveThoughtSummaries.filter { $0.status == .completed && $0.hasText }
     }
     /// Plain-language reason a chat send failed. Connection drops blame the connection; a server
     /// refusal never does (it was reached) and never leaks raw validation text.
@@ -992,20 +1053,24 @@ private struct SlidePostItemResponse: Decodable {
         let baseVersion: Int
         let baselineDraft: SlidePostDraft?
         var chat: [SlidePostChatMessage]? = nil
+        var proposalThoughtSummaries: [KriaThoughtSummary]? = nil
+        var proposalRequestText: String? = nil
         var seenAssets: [String]? = nil
     }
     private func persist() {
         guard !restoring, let itemID else { return }
-        let local = LocalState(draft: draft, proposal: proposal, selectedID: selectedID, instruction: instruction, baseVersion: baseVersion, baselineDraft: baselineDraft, chat: Array(chat.suffix(Self.maxPersistedChat)), seenAssets: seenAssetIDs.map { Array($0).sorted() })
+        let local = LocalState(draft: draft, proposal: proposal, selectedID: selectedID, instruction: instruction, baseVersion: baseVersion, baselineDraft: baselineDraft, chat: Array(chat.suffix(Self.maxPersistedChat)), proposalThoughtSummaries: proposalThoughtSummaries.filter { $0.status == .completed && $0.hasText }, proposalRequestText: proposalRequestText, seenAssets: seenAssetIDs.map { Array($0).sorted() })
         guard let data = try? JSONEncoder().encode(local) else { return }
         defaults.set(data, forKey: "kria.slide-post.\(itemID)")
     }
     private func restore() {
         guard let itemID, let data = defaults.data(forKey: "kria.slide-post.\(itemID)"), let local = try? JSONDecoder().decode(LocalState.self, from: data) else {
-            draft = nil; proposal = nil; selectedID = nil; instruction = ""; baseVersion = 0; baselineDraft = nil; chat = []; seenAssetIDs = nil; return
+            draft = nil; proposal = nil; proposalThoughtSummaries = []; proposalRequestText = nil; selectedID = nil; instruction = ""; baseVersion = 0; baselineDraft = nil; chat = []; seenAssetIDs = nil; return
         }
         draft = local.draft; proposal = local.proposal; selectedID = local.selectedID; instruction = local.instruction; baseVersion = local.baseVersion; baselineDraft = local.baselineDraft
         chat = Array((local.chat ?? []).suffix(Self.maxPersistedChat))
+        proposalThoughtSummaries = (local.proposalThoughtSummaries ?? []).filter { $0.status == .completed && $0.hasText }
+        proposalRequestText = local.proposalRequestText
         seenAssetIDs = local.seenAssets.map(Set.init)
     }
 }

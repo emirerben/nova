@@ -1335,6 +1335,8 @@ async def _call_main_creator(
     item_id: uuid.UUID | None = None,
     creator_agent_session_id: uuid.UUID | None = None,
 ) -> MainCreatorOutput:
+    from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
+
     def _run_agent():  # noqa: ANN202 - inferred MainCreatorOutput
         return MainCreatorAgent(default_client()).run(
             inputs.agent_input,
@@ -1345,6 +1347,7 @@ async def _call_main_creator(
                 creator_agent_session_id=(
                     str(creator_agent_session_id) if creator_agent_session_id else None
                 ),
+                thought_summary_callback=current_thought_publisher(),
             ),
         )
 

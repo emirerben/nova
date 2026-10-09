@@ -108,6 +108,10 @@ struct KeychainTokenStore: TokenStore, @unchecked Sendable {
 struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { "Secure sign-in storage is unavailable." } }
 
 protocol KriaAPIClient: Sendable {
+    func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
+    func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
+    func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse
+    func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse
     func slidePost(itemID: String) async throws -> SlidePostState
     func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal
     func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse
@@ -240,6 +244,10 @@ extension KriaAPIClient {
     func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse { throw APIError.unsupported }
     func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft { throw APIError.unsupported }
     func generateSlidePost(itemID: String, expectedVersion: Int) async throws { throw APIError.unsupported }
+    func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
+    func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
+    func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
+    func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
     func requestAccountDeletion() async throws -> AccountDeletionRequest { throw APIError.unsupported }
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws { throw APIError.unsupported }
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
@@ -968,6 +976,18 @@ struct KriaAPI: KriaAPIClient {
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
     func creationCapabilities() async throws -> CreationCapabilities { try await request(path: "creation-threads/capabilities", method: "GET", bodyData: nil, decode: CreationCapabilities.self) }
     func creationBrief(threadID: UUID) async throws -> CreativeBrief { try await request(path: "creation-threads/\(threadID.uuidString)/brief", method: "GET", bodyData: nil, decode: CreativeBrief.self) }
+    func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse {
+        try await request(path: "creation-threads/\(threadID.uuidString)/thought-summaries", method: "GET", query: [URLQueryItem(name: "client_request_id", value: clientRequestID)], bodyData: nil, decode: KriaThoughtSummaryResponse.self)
+    }
+    func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse {
+        try await request(path: "plan-items/\(itemID)/slide-post/thought-summaries", method: "GET", query: [URLQueryItem(name: "client_request_id", value: clientRequestID)], bodyData: nil, decode: KriaThoughtSummaryResponse.self)
+    }
+    func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse {
+        try await request(path: "creation-threads/\(threadID.uuidString)/thought-summaries", method: "GET", bodyData: nil, decode: KriaThoughtSummaryResponse.self)
+    }
+    func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse {
+        try await request(path: "plan-items/\(itemID)/slide-post/thought-summaries", method: "GET", bodyData: nil, decode: KriaThoughtSummaryResponse.self)
+    }
     func library() async throws -> [ProjectSummary] {
         var summaries: [ProjectSummary] = []
         var seenJobIDs = Set<String>()

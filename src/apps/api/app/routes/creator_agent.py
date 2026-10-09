@@ -2761,6 +2761,8 @@ async def _run_planning_turn(
             ],
         )
         try:
+            from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
+
             output = await asyncio.to_thread(
                 MainCreatorAgent(default_client()).run,
                 agent_input,
@@ -2773,6 +2775,7 @@ async def _run_planning_turn(
                     estimated_max_cost_usd=estimated_max_cost_usd,
                     reservation_approved=reservation_approved,
                     release_canary_id=release_canary_id,
+                    thought_summary_callback=current_thought_publisher(),
                 ),
             )
             action = output.action
