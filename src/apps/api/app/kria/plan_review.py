@@ -927,19 +927,16 @@ _ACTIVE_TURN_STATUSES = {
     "awaiting_approval",
     "observing",
 }
-_STATE_RANK = {"waiting": 0, "deciding": 1, "decided": 2}
 _APPROVAL_TTL = timedelta(minutes=30)
 
 
 async def current_block(
     db: AsyncSession, thread_id: uuid.UUID, section: str
 ) -> dict[str, Any] | None:
-    """Reduce the thread's ``plan_block`` events to the current block of ``section``.
-
-    Same rule as the client and ``GET /plan``: only the LATEST job's events count, a higher
-    revision replaces, and within a revision the state only moves forward. (Stub of the B1
-    snapshot reducer, against the contract shape.)
-    """
+    """The current block of ``section``: ``GET /plan``'s reducer over the thread's
+    ``plan_block`` events (only the LATEST job's events count; a higher revision replaces and
+    within a revision the state only moves forward)."""
+    from app.kria import plan_blocks  # noqa: PLC0415
     from app.models import CreationThreadEvent  # noqa: PLC0415
 
     rows = (
@@ -948,7 +945,7 @@ async def current_block(
                 select(CreationThreadEvent.payload)
                 .where(
                     CreationThreadEvent.thread_id == thread_id,
-                    CreationThreadEvent.event_type == "plan_block",
+                    CreationThreadEvent.event_type == plan_blocks.EVENT_TYPE,
                 )
                 .order_by(CreationThreadEvent.sequence)
             )
@@ -959,19 +956,117 @@ async def current_block(
     payloads = [p for p in rows if isinstance(p, dict)]
     if not payloads:
         return None
-    latest_job = payloads[-1].get("job_id")
-    best: dict[str, Any] | None = None
-    best_key = (-1, -1)
-    for payload in payloads:
-        if payload.get("job_id") != latest_job:
+    return plan_blocks.reduce_job_blocks(payloads, str(payloads[-1].get("job_id"))).get(section)
+
+
+def scoped_update_blocks(
+    reduced: dict[str, dict[str, Any]],
+    scope: list[str],
+    payloads: dict[str, dict[str, Any] | None],
+    *,
+    job_id: str,
+) -> list[dict[str, Any]]:
+    """The ``decided`` blocks a scoped editor update (or a section undo) adds to the feed.
+
+    A scoped update re-renders the SAME Job, so the feed's "previous job" bookkeeping
+    (``plan_blocks.annotate_blocks``) never sees a change. Here ``reduced`` is the job's
+    current blocks and ``payloads`` the freshly committed variant's payloads: a section in
+    ``scope`` whose value differs gets ``revision + 1``, ``changed=True`` and ``previous``
+    (what it replaced). Sections outside the scope, skipped or never-decided sections, and
+    sections whose value did not move are left alone. Pure.
+    """
+    from app.kria import plan_blocks  # noqa: PLC0415
+
+    out: list[dict[str, Any]] = []
+    for section in SCOPABLE_SECTIONS:
+        prior = reduced.get(section)
+        payload = payloads.get(section)
+        if (
+            section not in scope
+            or payload is None
+            or prior is None
+            or prior.get("state") != "decided"
+            or prior.get("skipped")
+        ):
             continue
-        for blk in payload.get("blocks") or []:
-            if not isinstance(blk, dict) or blk.get("section_id") != section:
-                continue
-            key = (int(blk.get("revision") or 0), _STATE_RANK.get(str(blk.get("state")), -1))
-            if key >= best_key:
-                best, best_key = blk, key
-    return best
+        entry = plan_blocks.block(
+            section,
+            "decided",
+            plan_blocks.summary_from_payload(section, payload) or prior.get("summary"),
+            None,
+            intent=bool(prior.get("intent")),
+            payload=payload,
+        )
+        if plan_blocks.same_value(entry, prior):
+            continue
+        prior_revision = plan_blocks.block_revision(prior)
+        entry["revision"] = prior_revision + 1
+        entry["changed"] = True
+        entry["previous"] = {
+            "revision": prior_revision,
+            "job_id": job_id,
+            "summary": prior.get("summary"),
+            "payload": prior.get("payload"),
+            "skipped": False,
+        }
+        out.append(entry)
+    return out
+
+
+def emit_scoped_update_feed(
+    db: Any,
+    thread: Any,
+    *,
+    turn_id: str | None,
+    job: Any,
+    variant: dict[str, Any],
+    scope: list[str],
+) -> list[str]:
+    """Append the feed events of a scoped editor update (or a section undo) that was just
+    queued: the changed sections' ``decided`` blocks, then the "Updated X." summary. Sync, run
+    inside the dispatch transaction under the Thread lock the caller already holds. Returns
+    the changed section ids (empty = nothing moved, nothing written). Never marks an
+    unchanged section changed; the caller wraps this in a savepoint so a feed problem can
+    never fail a dispatch."""
+    from app.kria import plan_blocks, plan_payloads  # noqa: PLC0415
+    from app.kria.reply_language import reply_language_for, thread_reply_language  # noqa: PLC0415
+    from app.tasks.kria_runtime import _append_sync_event  # noqa: PLC0415
+
+    job_id = str(job.id)
+    events = plan_blocks.load_plan_events(db, thread.id)
+    reduced = plan_blocks.reduce_job_blocks(events, job_id)
+    payloads = plan_payloads.finalized(plan_payloads.variant_raws(variant))
+    blocks = scoped_update_blocks(reduced, scope, payloads, job_id=job_id)
+    if not blocks:
+        return []
+    _append_sync_event(
+        db,
+        thread,
+        role="system",
+        event_type=plan_blocks.EVENT_TYPE,
+        content=None,
+        payload=plan_blocks.plan_block_payload(
+            turn_id=turn_id, job_id=job_id, blocks=blocks, scope=scope
+        ),
+    )
+    changed = [str(entry["section_id"]) for entry in blocks]
+    with reply_language_for(thread_reply_language(thread)):
+        text = plan_blocks.update_summary_text(changed)
+    _append_sync_event(
+        db,
+        thread,
+        role="system",
+        event_type=plan_blocks.SUMMARY_EVENT_TYPE,
+        content=None,
+        payload={
+            "turn_id": turn_id,
+            "job_id": job_id,
+            "text": text,
+            "changed_sections": [s for s in SECTION_ORDER if s in changed],
+        },
+    )
+    log.info("plan_scoped_update_feed", job_id=job_id, sections=changed)
+    return changed
 
 
 def _undo_reply(sections: list[str]) -> str:

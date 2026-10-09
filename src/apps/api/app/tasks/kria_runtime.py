@@ -3567,6 +3567,41 @@ def _finish_approval_dispatch(
                     content=None,
                     payload=plan_payload,
                 )
+                scoped_fields = (
+                    _scoped_turn_fields(db.get(CreationThreadEvent, turn.source_event_id))
+                    if getattr(claim, "draft_kind", "strategy") == "editor"
+                    else None
+                )
+                if scoped_fields is not None:
+                    # KRI-441/442: a scoped editor update (or a section undo) re-renders the
+                    # SAME Job, which the previous-job bookkeeping cannot see, so the
+                    # changed sections are written here from the freshly committed variant.
+                    try:
+                        with db.begin_nested():
+                            from app.kria import plan_review  # noqa: PLC0415
+
+                            job_row = db.get(Job, uuid.UUID(str(job_id)))
+                            variant_row = (
+                                _find_variant(job_row, claim.target_variant_id)
+                                if job_row is not None
+                                else None
+                            )
+                            if variant_row is not None:
+                                plan_review.emit_scoped_update_feed(
+                                    db,
+                                    thread,
+                                    turn_id=str(turn.id),
+                                    job=job_row,
+                                    variant=variant_row,
+                                    scope=scoped_fields["scope"],
+                                )
+                    except Exception as exc:  # noqa: BLE001 - the feed must never fail a dispatch
+                        log.warning(
+                            "plan_scoped_update_feed_failed",
+                            job_id=str(job_id),
+                            error_class=type(exc).__name__,
+                            error=str(exc)[:200],
+                        )
             db.commit()
             return "dispatched", None
 
