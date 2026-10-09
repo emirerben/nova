@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.201.0] - 2026-10-09
+
+### Changed
+- fix(kria): keep iPhone creation on device (KRI-563) (#1525) <!-- release-pr: 1525 -->
+
 ## [0.78.200.0] - 2026-10-09
 
 ### Changed
