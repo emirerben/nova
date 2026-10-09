@@ -308,11 +308,11 @@ jobs:
         run: |
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
             -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
-            -destination "platform=iOS Simulator,id=$(cat ../../test-results/kri-559/simulator-id.txt)" \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
             -only-testing:KriaTests/DeviceMontageRenderE2ETests/testCapturedCreationWordsRetimedThenExportOnTheIPhone \
-            -resultBundlePath ../../test-results/kri-559/native.xcresult test
-          xcrun xcresulttool get test-results tests --path ../../test-results/kri-559/native.xcresult \
-            > ../../test-results/kri-559/native-test-results.json
+            -resultBundlePath ../../../test-results/kri-559/native.xcresult test
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/native.xcresult \
+            > ../../../test-results/kri-559/native-test-results.json
           APP_INFO=$(find .derived-data/Build/Products -path '*/Kria.app/Info.plist' -print -quit)
           test -n "$APP_INFO"
           {
@@ -320,7 +320,7 @@ jobs:
             /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_INFO"
             /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_INFO"
             /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_INFO"
-          } > ../../test-results/kri-559/app-build.txt
+          } > ../../../test-results/kri-559/app-build.txt
       - name: Record and validate immutable journey evidence
         env:
           KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}
