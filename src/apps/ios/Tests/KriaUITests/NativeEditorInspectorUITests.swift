@@ -1309,14 +1309,27 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-text-panel"].exists)
         text.tap()
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-panel"].waitForExistence(timeout: 3))
-        // KRI-508: the second tap opens Edit text with the keyboard up; Start/End wait behind Timing.
+        // KRI-508: the second tap opens Edit text with the keyboard up; Start/End sit under the box.
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-content"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.textFields["native-editor-text-time-start"].exists)
-        app.buttons["native-editor-text-timing"].tap()
-        XCTAssertTrue(app.textFields["native-editor-text-time-start"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["native-editor-text-timing"].exists, "there is no Timing button")
+        XCTAssertTrue(app.textFields["native-editor-text-time-start"].exists)
         XCTAssertTrue(app.textFields["native-editor-text-time-end"].exists)
         XCTAssertTrue(app.buttons["native-editor-text-inspector-done"].exists)
+    }
+
+    /// Waits until an element's frame stops changing (the panel grows up from the bottom as it opens).
+    private func waitUntilSettled(_ element: XCUIElement, timeout: TimeInterval = 6) {
+        var last = element.frame
+        var stableSince = Date()
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            let now = element.frame
+            if abs(now.minY - last.minY) > 0.5 || abs(now.height - last.height) > 0.5 { stableSince = Date() }
+            last = now
+            if Date().timeIntervalSince(stableSince) > 0.5 { return }
+        }
     }
 
     /// KRI-508: tapping a selected text opens Edit text with the keyboard. The box above the keyboard
@@ -1330,7 +1343,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let back = app.buttons["native-editor-back"]
         XCTAssertTrue(back.waitForExistence(timeout: 8))
         let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
-        let browseHeight = preview.frame.height
+        let panel = app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch
         let text = app.descendants(matching: .any)["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"]
         XCTAssertTrue(text.waitForExistence(timeout: 3))
         text.tap()
@@ -1345,7 +1358,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
             .matching(NSPredicate(format: "label == %@", "Edit text")).firstMatch
         XCTAssertTrue(editTab.isSelected, "an existing text opens on Edit text, not Style")
         XCTAssertTrue(back.waitForNonExistence(timeout: 3), "the header steps away so the video gets the screen")
-        XCTAssertGreaterThan(preview.frame.height, browseHeight, "the video grows into the freed room")
+        waitUntilSettled(panel)
 
         func waitFor(_ message: String, _ condition: () -> Bool) {
             let deadline = Date().addingTimeInterval(5)
@@ -1364,6 +1377,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         shot("text-edit-one-line")
         let oneLine = field.frame.height
         let previewOneLine = preview.frame.height
+        let panelTop = panel.frame.minY
         XCTAssertLessThan(oneLine, 60, "the box starts as one line")
         assertClearOfKeyboard("one line")
 
@@ -1376,7 +1390,9 @@ final class NativeEditorInspectorUITests: XCTestCase {
         waitFor("long words grow the box") { field.frame.height > twoLines + 10 }
         shot("text-edit-grown")
         assertClearOfKeyboard("long words grow the box")
+        // Past one line the bar rises and the video gives the room back, always above the keyboard.
         waitFor("the preview gives the room to the box") { preview.frame.height < previewOneLine - 10 }
+        XCTAssertLessThan(panel.frame.minY, panelTop, "the bar rises as the box grows")
 
         app.buttons["native-editor-text-inspector-done"].tap()
         XCTAssertTrue(back.waitForExistence(timeout: 3), "the header returns with Done")
@@ -1415,13 +1431,23 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
         XCTAssertTrue(back.waitForNonExistence(timeout: 3))
+        waitUntilSettled(app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch)
         let editTop = panelTop()
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let editPreview = preview.frame
+        let title = app.staticTexts["Text"].firstMatch
+        let editTitleY = title.frame.minY
         shot("anchor-edit-text")
 
         app.buttons["Style"].tap()
         XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
-        settle("Style keeps the Edit text top edge") { abs(panelTop() - editTop) < 14 }
+        waitUntilSettled(app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch)
+        settle("Style keeps the Edit text top edge") { abs(panelTop() - editTop) < 2 }
         XCTAssertFalse(back.exists, "the header stays away on Style")
+        // The tab must not feel like it changed: the video, the title row and the tabs stay put.
+        XCTAssertEqual(preview.frame.minY, editPreview.minY, accuracy: 2)
+        XCTAssertEqual(preview.frame.height, editPreview.height, accuracy: 2, "the video keeps its size")
+        XCTAssertEqual(title.frame.minY, editTitleY, accuracy: 2, "the title row does not move")
         shot("anchor-style")
         let styleTop = panelTop()
 

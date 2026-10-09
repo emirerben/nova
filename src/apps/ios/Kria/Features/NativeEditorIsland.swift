@@ -94,10 +94,16 @@ struct NativeEditorLayoutMetrics: Equatable {
     /// The project header's measured height (falls back to `headerHeight`).
     var measuredHeaderHeight: CGFloat? = nil
 
-    /// Panels start 41% of the way down the screen (28% at accessibility sizes, which need the room).
-    static func panelAnchorTop(screenHeight: CGFloat, safeAreaTop: CGFloat, isAccessibilitySize: Bool) -> CGFloat {
-        max(0, screenHeight * (isAccessibilitySize ? 0.28 : 0.41) - safeAreaTop)
+    /// Where every tool panel starts: exactly where the one-line Edit text bar starts above the
+    /// keyboard (its bottom sits on the keyboard, its height is `oneLineBar`). Edit text -> Style and
+    /// every tool tab then share one panel top, so a tab change never moves the panel.
+    static func panelAnchorTop(screenHeight: CGFloat, safeAreaTop: CGFloat, keyboardHeight: CGFloat,
+                               oneLineBar: CGFloat) -> CGFloat {
+        max(0, screenHeight - safeAreaTop - keyboardHeight - NativeEditorIslandMetrics.bottomPadding - oneLineBar)
     }
+
+    /// The software keyboard's height before one has been seen on this device (about 38% of the screen).
+    static func estimatedKeyboardHeight(screenHeight: CGFloat) -> CGFloat { screenHeight * 0.38 }
 
     /// Preview height that leaves the panel exactly at the anchor, with the transport above it
     /// when it shows (it hides behind the keyboard).
@@ -115,8 +121,10 @@ struct NativeEditorLayoutMetrics: Equatable {
 
     /// Preview height that fills everything between the top chrome and the caption edit bar.
     private func captionEditPreviewHeight(bar: CGFloat) -> CGFloat {
+        // The text bar keeps the transport row above it, so the video is the size it has on every tab.
+        let transport = textEditBarHeight != nil ? Self.transportHeight : 0
         let fill = viewportSize.height - (measuredHeaderHeight ?? Self.headerHeight) - topChromeHeight
-            - Self.previewVerticalPadding - NativeEditorIslandMetrics.bottomPadding - bar
+            - Self.previewVerticalPadding - NativeEditorIslandMetrics.bottomPadding - bar - transport
         let widthBound = (viewportSize.width - 32) / max(0.01, previewAspectRatio)
         return max(Self.minPreviewHeight, min(fill, widthBound))
     }
@@ -176,7 +184,7 @@ struct NativeEditorLayoutMetrics: Equatable {
     /// Room for the panel below the transport and above the island's bottom padding.
     func panelBudget(areaHeight: CGFloat) -> CGFloat {
         max(0, areaHeight - NativeEditorIslandMetrics.bottomPadding
-            - (keyboardVisible || editsCaptionLine ? 0 : Self.transportHeight))
+            - (textEditBarHeight != nil || !(keyboardVisible || editsCaptionLine) ? Self.transportHeight : 0))
     }
 
     func panelDefaultHeight(areaHeight: CGFloat) -> CGFloat {

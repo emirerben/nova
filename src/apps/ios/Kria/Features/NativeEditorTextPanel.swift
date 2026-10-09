@@ -27,10 +27,10 @@ struct NativeTextPanelConfiguration {
 /// Sizes of the Text panel while its box has the keyboard (KRI-508). The editor reserves
 /// `height(lines:)` and the panel draws exactly that, so both read the same constants.
 enum TextEditBar {
-    /// Room above the title row so the buttons clear the panel's 32pt rounded corner.
-    static let topPadding: CGFloat = 12
+    /// The island's own top padding above the panel (room for the grab handle), the same on every tab.
+    static let topPadding: CGFloat = 18
     /// With the island's own 6pt this leaves 16pt between the box and the keyboard.
-    static let bottomPadding: CGFloat = 10
+    static let bottomPadding: CGFloat = 8
     /// Title row (44) + its spacing (6) + tabs (44 + 2*3) + spacing before the box (6) + gap above it (8).
     static let chromeHeight: CGFloat = 44 + 6 + 50 + 6 + 8
     static let fieldInset: CGFloat = 16
@@ -113,15 +113,6 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
                 HStack {
                     Text("Text").font(KriaFont.body(isConnectedPanel ? 18 : 15).weight(.semibold))
                     Spacer()
-                    if compactTyping && !configuration.hidesTiming {
-                        // The Start/End fields wait behind the keyboard: this lowers it to reach them.
-                        Button { typing = false } label: {
-                            Label("Timing", systemImage: "clock")
-                                .font(KriaFont.body(14).weight(.semibold))
-                                .frame(minWidth: 64, minHeight: 44)
-                        }
-                        .accessibilityIdentifier("native-editor-text-timing")
-                    }
                     if session.textDeletion(id: id).isAllowed {
                         Button {
                             performOutgoingCleanup()
@@ -157,7 +148,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
                         .frame(height: compactTyping ? TextEditBar.fieldHeight(lines: boxLines) : nil)
                         .padding(compactTyping ? 0 : 8)
                         .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
-                        if configuration.hidesTiming || compactTyping {
+                        if configuration.hidesTiming {
                             EmptyView()
                         } else if usesAccessibilityLayout {
                             VStack(spacing: 8) {
@@ -180,8 +171,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
             .disabled(!session.canEdit(.text))
         }
         .padding(.horizontal, isConnectedPanel ? 24 : 16)
-        .padding(.top, compactTyping ? TextEditBar.topPadding : 0)
-        .padding(.bottom, compactTyping ? TextEditBar.bottomPadding : 8)
+        .padding(.bottom, 8)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(isConnectedPanel ? Color.clear : KriaColor.paper)
         .overlay(alignment: .top) {
