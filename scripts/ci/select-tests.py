@@ -37,37 +37,43 @@ JOURNEY_PREFIXES = (
     "scripts/ios/kri-524-creation-e2e.py",
 )
 
-# CI-visible corpus: a mapped change must execute the corresponding fixture
-# and XCTest.  A broad journey input without an entry here is a deliberate
-# coverage gap and blocks the stable required check rather than borrowing the
-# KRI-524 sentinel as evidence for unrelated behavior.
-KRI524_JOURNEY_PREFIXES = tuple(
-    json.loads((Path(__file__).with_name("journey-manifest.json")).read_text())[
-        "journeys"
-    ][0]["paths"]
+# CI-visible corpus: a mapped change must execute its incident's fixture-backed
+# tests. Broad journey inputs without a mapping block the stable required check.
+JOURNEYS = json.loads((Path(__file__).with_name("journey-manifest.json")).read_text())[
+    "journeys"
+]
+JOURNEY_POLICY_PATHS = (
+    ".github/workflows/ci.yml",
+    ".github/workflows/ci-changes.yml",
+    "scripts/ci/select-tests.py",
+    "scripts/ci/journey-gate.py",
+    "scripts/ci/journey-manifest.json",
+    "scripts/ci/test_journey_gate.py",
+    "scripts/ci/test_select_tests.py",
 )
 
 
+def matches_journey_path(path, prefix):
+    return path.startswith(prefix) if prefix.endswith("/") else path == prefix
+
+
 def journey_affected(path):
-    """Whether a change must prove KRI-524's offline server-to-device path."""
-    if path.startswith(JOURNEY_PREFIXES):
+    """Whether a change needs an incident-corpus journey or an explicit gap."""
+    if path.startswith(JOURNEY_PREFIXES) or any(
+        matches_journey_path(path, prefix)
+        for journey in JOURNEYS
+        for prefix in journey["paths"]
+    ):
         return True
     # CI policy and this evidence parser are security boundaries.  A change to
     # either must execute the gate it could otherwise weaken.
-    return path in (
-        ".github/workflows/ci.yml",
-        ".github/workflows/ci-changes.yml",
-        "scripts/ci/select-tests.py",
-        "scripts/ci/journey-gate.py",
-        "scripts/ci/journey-manifest.json",
-        "scripts/ci/test_journey_gate.py",
-    )
+    return path in JOURNEY_POLICY_PATHS
 
 
 def journey_details(event, base, head):
     """Return (selected, coverage, fixture ids); unknown inputs fail closed."""
     if event != "pull_request":
-        return True, "covered", "kri-524-creation"
+        return True, "covered", ",".join(journey["id"] for journey in JOURNEYS)
     try:
         ancestor = git("merge-base", base, head).decode().strip()
         raw = git("diff", "--no-renames", "--name-only", "-z", ancestor, head)
@@ -77,21 +83,30 @@ def journey_details(event, base, head):
             return True, "gap", ""
         if not relevant:
             return False, "not_applicable", ""
-        if all(
-            path.startswith(KRI524_JOURNEY_PREFIXES)
-            or path
-            in (
-                ".github/workflows/ci.yml",
-                ".github/workflows/ci-changes.yml",
-                "scripts/ci/select-tests.py",
-                "scripts/ci/journey-gate.py",
-                "scripts/ci/journey-manifest.json",
-                "scripts/ci/test_journey_gate.py",
+        selected = set()
+        for path in relevant:
+            if path in JOURNEY_POLICY_PATHS:
+                selected.update(journey["id"] for journey in JOURNEYS)
+                continue
+            matches = [
+                (len(prefix), journey["id"])
+                for journey in JOURNEYS
+                for prefix in journey["paths"]
+                if matches_journey_path(path, prefix)
+            ]
+            if not matches:
+                return True, "gap", ""
+            longest = max(length for length, _ in matches)
+            selected.update(
+                journey_id for length, journey_id in matches if length == longest
             )
-            for path in relevant
-        ):
-            return True, "covered", "kri-524-creation"
-        return True, "gap", ""
+        return (
+            True,
+            "covered",
+            ",".join(
+                journey["id"] for journey in JOURNEYS if journey["id"] in selected
+            ),
+        )
     except (subprocess.CalledProcessError, UnicodeError, OSError):
         return True, "gap", ""
 

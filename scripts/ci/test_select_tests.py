@@ -501,6 +501,18 @@ class GitDiffTests(unittest.TestCase):
                 "src/apps/api/app/services/cloud_render_contract.py",
                 (True, "covered", "kri-524-creation"),
             ),
+            (
+                "src/apps/api/app/kria/planner.py",
+                (True, "covered", "kri-557-thinking"),
+            ),
+            (
+                "src/apps/ios/Kria/Features/ThoughtSummaryDisclosure.swift",
+                (True, "covered", "kri-557-thinking"),
+            ),
+            (
+                "src/apps/api/app/kria/planner.py.backup",
+                (True, "gap", ""),
+            ),
             # This has journey impact but no incident-corpus repro mapping.
             (
                 "src/apps/api/app/pipeline/unmapped_future_compiler.py",
@@ -516,6 +528,14 @@ class GitDiffTests(unittest.TestCase):
                     expected,
                 )
                 self.base = self.git("rev-parse", "HEAD")
+
+    def test_journey_selects_each_affected_incident_without_borrowing_another(self):
+        self.write("src/apps/api/app/pipeline/guided_story.py", "changed")
+        self.write("src/apps/ios/Kria/Core/Services.swift", "changed")
+        self.assertEqual(
+            ci.journey_details("pull_request", self.base, self.commit()),
+            (True, "covered", "kri-524-creation,kri-557-thinking"),
+        )
 
     def test_journey_diff_errors_and_empty_diff_are_coverage_gaps(self):
         self.assertEqual(
