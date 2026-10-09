@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.187.0] - 2026-10-09
+
+### Changed
+- test(ios): fixture returns the event turn id; scrub and song-order tests wait for the UI (KRI-554) (#1509) <!-- release-pr: 1509 -->
+
 ## [0.78.186.0] - 2026-10-09
 
 ### Changed
