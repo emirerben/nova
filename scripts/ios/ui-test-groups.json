@@ -107,6 +107,13 @@
       "KriaUITests/CreationUITests/testLivePlanFeedStopCancelsTheRender",
       "KriaUITests/CreationUITests/testLivePlanFeedStopHidesWhenTheRenderCannotBeCancelled",
       "KriaUITests/CreationUITests/testLivePlanFeedUnderReduceMotionAndReduceTransparency",
+      "KriaUITests/CreationUITests/testReviewPlanFlagsUpdatesAndUndoesASectionFromTheFeedCTA",
+      "KriaUITests/CreationUITests/testReviewPlanUndoAllPutsEverythingBack",
+      "KriaUITests/CreationUITests/testReviewPlanManualEditsOfTitleCaptionsAndMixFlagTheirSections",
+      "KriaUITests/CreationUITests/testReviewPlanChangeOnAFeedCardOpensReviewWithThatSectionFlagged",
+      "KriaUITests/CreationUITests/testReviewPlanOpensFromTheProjectAndKeepAsIsSendsNothing",
+      "KriaUITests/CreationUITests/testReviewPlanStaysHiddenOnAnOlderServer",
+      "KriaUITests/CreationUITests/testReviewPlanUnderReduceMotionAndReduceTransparency",
       "KriaUITests/CreationUITests/testLivePlanFeedRendersStructuredPayloadsAndOffersReview",
       "KriaUITests/CreationUITests/testLivePlanFeedV2UnderReduceTransparency"
     ],
@@ -291,6 +298,10 @@
     "src/apps/ios/Kria/Core/NativeUserSong.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorYourSongRow.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorOriginalAudioRow.swift": "editor",
-    "src/apps/ios/Kria/Features/NativeSongAudition.swift": "editor"
+    "src/apps/ios/Kria/Features/NativeSongAudition.swift": "editor",
+    "src/apps/ios/Kria/Core/ReviewPlan.swift": "creation",
+    "src/apps/ios/Kria/Core/ReviewPlanModel.swift": "creation",
+    "src/apps/ios/Kria/Features/ReviewPlanView.swift": "creation",
+    "src/apps/ios/Kria/Features/ReviewPlanUITestFixture.swift": "creation"
   }
 }

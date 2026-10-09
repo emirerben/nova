@@ -82,6 +82,9 @@ final class CreationChatFixture: @unchecked Sendable {
     private var planTicks: [String: Int] = [:]
     private var planTurnIDs: [String: String] = [:]
     private var editorTurnIDs: [String: String] = [:]
+    /// Live plan & review (`KRIA_CHAT_PLAN_REVIEW=1`): the contract-v2 server model (`GET /plan`, scoped turns, undo).
+    private let review = ReviewPlanFixture()
+    private var reviewEnabled: Bool { ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_REVIEW"] == "1" }
     private var editorTurnTicks: [String: Int] = [:]
     private let approvalID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     private var runtime: Int { ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1 }
@@ -193,6 +196,34 @@ final class CreationChatFixture: @unchecked Sendable {
             if let clientEventID { event["client_event_id"] = clientEventID }
             events.append(event)
         }
+        if reviewEnabled {
+            // An update render advances one step per read of the plan or the delta (like the staged feed).
+            if parts.last == "delta" || parts.last == "plan", let done = review.tick(id: id) {
+                append("plan_block", role: "system", payload: done.blocksEvent)
+                append("plan_update_summary", role: "system", payload: done.summaryEvent)
+                thread["job"] = ["id": done.jobID, "status": "ready", "variants": [["variant_id": "original_text", "render_status": "ready", "output_url": "https://fixture.invalid/result.mp4"]]]
+                append("generation_ready")
+            }
+            if parts.count == 6, parts[2] == "plan", parts[3] == "sections", parts[5] == "undo" {
+                let turn = UUID().uuidString
+                if let failure = review.undoSection(id: id, initial: reviewInitialBlocks, section: parts[4], blockRevision: body["expected_block_revision"] as? Int ?? -1, turnID: turn) {
+                    return response(failure.1, status: failure.0)
+                }
+                append("draft_applied", payload: ["turn_id": turn, "draft_id": id])
+                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turn])
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return response(["section_id": parts[4], "thread_revision": revision, "draft_revision": 4, "turn_id": turn])
+            }
+            if parts.count == 4, parts[2] == "draft", parts[3] == "undo", body["render"] as? Bool == true {
+                let turn = UUID().uuidString
+                if let failure = review.undoAll(id: id, initial: reviewInitialBlocks, turnID: turn) { return response(failure.1, status: failure.0) }
+                append("draft_undone", payload: ["draft_id": id])
+                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turn])
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return response(["draft_id": id, "item_id": id, "variant_key": "original_text", "draft_revision": 4, "snapshot_hash": "hash", "etag": "etag-4",
+                                 "snapshot": [String: Any](), "can_undo": false, "created_at": "2026-10-09T10:05:00Z"])
+            }
+        }
         if parts.last == "cancel-render" {
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_CANCEL"] == "unavailable" {
                 return response(["problem": ["code": "turn_not_cancellable", "message": "This render can no longer be stopped."]], status: 409)
@@ -290,8 +321,27 @@ final class CreationChatFixture: @unchecked Sendable {
             var userPayload: [String: Any] = [:]
             if let order = body["song_order"] as? [String: Any] { userPayload["song_order"] = order }
             if let selection = body["choice_selection"] as? [String: Any] { userPayload["choice_selection"] = selection }
+            if let scope = body["scope"] as? [String] {
+                // Live plan & review: a scoped "Update video" turn is planned as editor operations on `scope` only.
+                guard reviewEnabled, runtime == 2 else {
+                    return response(["problem": ["code": "live_plan_review_unavailable", "message": "Not available."]], status: 404)
+                }
+                if scope.contains("post_caption") {
+                    return response(["problem": ["code": "scope_section_unsupported", "message": "A post caption can't be changed here."]], status: 422)
+                }
+                if scope.isEmpty || Set(scope).count != scope.count || !Set(scope).isSubset(of: Set(ReviewPlanFixture.order)) {
+                    return response(["problem": ["code": "scope_invalid", "message": "Invalid scope."]], status: 422)
+                }
+                userPayload["scope"] = scope
+                if let edits = body["manual_edits"] { userPayload["manual_edits"] = edits }
+            }
             append("user_message", role: "user", text: body["message"] as? String, payload: userPayload, clientEventID: turnID)
-            if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] == "1",
+            if let scope = body["scope"] as? [String] {
+                review.scopedTurn(id: id, initial: reviewInitialBlocks, scope: scope, edits: body["manual_edits"] as? [[String: Any]] ?? [], turnID: turnID)
+                append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": turnID, "turn_value": "response"])
+                append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
+                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] == "1",
                (thread["job"] as? [String: Any])?["status"] as? String == "ready" {
                 editorTurnIDs[id] = turnID
                 editorTurnTicks[id] = 0
@@ -368,7 +418,17 @@ final class CreationChatFixture: @unchecked Sendable {
                 ])
             }
         } else if parts.contains("approvals") {
-            if parts.last == "approve" {
+            if parts.last == "approve", reviewEnabled, review.hasPending(id) {
+                // The creator tapped Update video / Undo: the pending review draft starts a NEW job.
+                let approved = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
+                let turn = approved?["turn_id"] as? String ?? id
+                if let started = review.approve(id: id, turnID: turn) {
+                    append("approval_approved")
+                    thread["active_job_id"] = started.jobID
+                    thread["job"] = ["id": started.jobID, "status": "processing", "variants": []]
+                    append("plan_block", role: "system", payload: started.event)
+                }
+            } else if parts.last == "approve" {
                 if let mismatch = renderShapeMismatch(body) { return response(["detail": mismatch], status: 422) }
                 let approved = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
                 append("approval_approved")
@@ -433,6 +493,12 @@ final class CreationChatFixture: @unchecked Sendable {
             } else { editorTurnTicks[id] = tick + 1 }
         }
         thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+        if reviewEnabled, parts.count == 3, parts[2] == "plan" {
+            // First render still deciding = planning; once the staged feed has finished, the plan is ready to review.
+            let feedDone = (planStages[id] ?? Self.planScript.count + 8) >= Self.planScript.count
+                && (thread["job"] as? [String: Any])?["id"] != nil
+            return response(review.snapshot(id: id, initial: reviewInitialBlocks, status: feedDone ? "ready" : "planning", eventCount: events.count))
+        }
         if parts.last == "delta" {
             let after = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "after_sequence" })?.value.flatMap(Int.init) ?? -1
             return response(["thread_id": id, "runtime_version": runtime, "status": "active", "after_sequence": after, "has_more": false, "thread_revision": revision, "events": events.filter { ($0["sequence"] as? Int ?? 0) > after }, "next_after_sequence": events.count - 1])
@@ -446,6 +512,17 @@ final class CreationChatFixture: @unchecked Sendable {
         if parts.last == "approve" { return response(["approval_id": approvalID, "thread_id": id, "status": "approved", "thread_revision": revision]) }
         return response(withRenderShape(thread))
     }
+    /// The first job's final decided block per section, from the staged feed script (contract v2).
+    private func reviewInitialBlocks() -> [String: [String: Any]] {
+        var result: [String: [String: Any]] = [:]
+        for stage in Self.planScript {
+            for block in stage where block["state"] as? String == "decided" {
+                if let section = block["section_id"] as? String { result[section] = block }
+            }
+        }
+        return result
+    }
+
     /// KRI-443: the staged `plan_block` payloads, in the order the pipeline would decide them.
     private static var planScript: [[[String: Any]]] {
         let v2 = (ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_VERSION"].flatMap(Int.init) ?? 1) >= 2
