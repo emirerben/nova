@@ -179,6 +179,38 @@ async def test_answer_resolves_uncertain_takes_onto_the_strategy_payload(monkeyp
     assert by_id["b"]["place"] == "pinned" and by_id["b"]["position_basis"] == "creator_position"
 
 
+async def test_timeline_placements_win_even_when_every_take_now_looks_confident(
+    monkeypatch,
+) -> None:
+    """KRI-561: a re-alignment that makes everything confident must not discard the layout."""
+    alignment = _alignment(_conf("a", 10.0), _conf("b", 40.0), _conf("c", 70.0))
+    q = build_song_order_question(
+        SongAlignment.model_validate(alignment),
+        ["a", "b", "c"],
+        durations={"a": 12.0, "b": 12.0, "c": 12.0},
+        song_duration_s=120.0,
+    )
+    answer = {
+        "question_id": q.question_id,
+        "ordered_media_ids": ["a", "c", "b"],
+        "placements": [{"media_id": "a", "delta_s": 10.0}, {"media_id": "c", "delta_s": 22.0}],
+    }
+    events = [
+        ("assistant", {"song_order_question": q.model_dump(mode="json")}),
+        ("user", {"song_order": answer}),
+    ]
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=events))
+    db = _Db(_item(alignment, {"status": "ready", "duration_s": 120.0, "lines": []}))
+    result = await _gate(db, _manifest("a", "b", "c"), _strategy())
+    assert result.plan is None
+    by_id = {r["media_id"]: r for r in result.resolved_takes}
+    assert by_id["a"]["place"] == "pinned" and by_id["a"]["delta_s"] == 10.0
+    # c moved from 70 to 22 by the creator; b was left in the tray.
+    assert by_id["c"]["delta_s"] == 22.0 and by_id["c"]["confirmed_by_creator"] is True
+    assert by_id["b"]["place"] == "broll" and by_id["b"]["delta_s"] is None
+    assert [r["media_id"] for r in result.resolved_takes] == ["a", "c", "b"]
+
+
 async def test_answer_for_a_previous_song_generation_is_asked_again(monkeypatch) -> None:
     """The song was replaced after the creator answered: the old order is not reused."""
     alignment = _alignment(_conf("a", 10.0), _amb("b", 30.0, [(30.0, 0.9), (80.0, 0.8)]))

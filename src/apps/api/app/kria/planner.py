@@ -126,6 +126,7 @@ from app.services.song_order import (
     build_song_order_question,
     fold_song_orders,
     load_ready_alignment,
+    resolve_creator_placements,
     resolve_uncertain_takes,
     resolved_song_takes_payload,
     song_order_question_text,
@@ -611,6 +612,21 @@ async def _song_order_gate(
         # No lyric lines to anchor on and nothing matched any take: no question
         # could place a take by the song.
         return _SongGateResult(strategy=kept_strategy)
+    if answered and folded.arranged:
+        # KRI-561: the creator arranged the takes on the song timeline. Their layout stands
+        # even when a re-alignment since made every take look confident, so this runs
+        # BEFORE the "nothing to ask" exit below.
+        arranged = await asyncio.to_thread(
+            resolve_creator_placements,
+            alignment,
+            folded.ordered_media_ids,
+            folded.placements,
+            durations,
+            song_duration_s,
+        )
+        return _SongGateResult(
+            resolved_takes=resolved_song_takes_payload(arranged), strategy=kept_strategy
+        )
     needing = await asyncio.to_thread(
         takes_needing_order, alignment, take_ids, durations, song_duration_s
     )
@@ -637,6 +653,7 @@ async def _song_order_gate(
             song_generation=song_generation,
             durations=durations,
             song_duration_s=song_duration_s,
+            first_line_s=first_line_s,
         )
     )
     return _SongGateResult(

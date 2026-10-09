@@ -2809,7 +2809,7 @@
         },
         "SongOrderAnswerIn": {
           "additionalProperties": false,
-          "description": "The creator's answer: the order they confirmed.",
+          "description": "The creator's answer: the order they confirmed.\n\n``placements`` (KRI-561, timeline card) lists the takes the creator put on the song with\nthe song time they chose; a take in ``ordered_media_ids`` but not in ``placements`` was\nleft in the tray (muted background footage). ``ordered_media_ids`` still names EVERY\ntake once, so old readers and the exact-set checks are unchanged.",
           "properties": {
             "ordered_media_ids": {
               "items": {
@@ -2818,6 +2818,21 @@
               "minItems": 1,
               "title": "Ordered Media Ids",
               "type": "array"
+            },
+            "placements": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/SongOrderPlacementIn"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Placements"
             },
             "question_id": {
               "title": "Question Id",
@@ -2829,6 +2844,26 @@
             "ordered_media_ids"
           ],
           "title": "SongOrderAnswerIn",
+          "type": "object"
+        },
+        "SongOrderPlacementIn": {
+          "additionalProperties": false,
+          "description": "One take the creator put on the song timeline (KRI-561): its song start is ``delta_s``.",
+          "properties": {
+            "delta_s": {
+              "title": "Delta S",
+              "type": "number"
+            },
+            "media_id": {
+              "title": "Media Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "media_id",
+            "delta_s"
+          ],
+          "title": "SongOrderPlacementIn",
           "type": "object"
         },
         "SourceCrop": {

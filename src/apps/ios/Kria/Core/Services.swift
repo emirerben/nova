@@ -171,6 +171,10 @@ protocol KriaAPIClient: SlidePostProposalClient, Sendable {
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted
     /// `songOrder` and `choiceSelection` are independent structured answers (a turn carries at most one); each is nil = omitted.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted
+    /// A short-lived signed URL for the thread's attached song, so the song timeline can draw and play it
+    /// (KRI-561). `generation` pins the song the question was built against; a 409 `song_changed` means it was
+    /// replaced. A 404 means the server does not offer it.
+    func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta
     func draft(threadID: UUID) async throws -> DraftSnapshot
@@ -321,6 +325,7 @@ extension KriaAPIClient {
     }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
+    func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink { throw APIError.unsupported }
     func creationBrief(threadID: UUID) async throws -> CreativeBrief { throw APIError.unsupported }
 
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse {
@@ -346,6 +351,29 @@ extension KriaAPIClient {
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse {
         _ = itemID; _ = variantID; _ = request
         throw APIError.unsupported
+    }
+}
+
+/// `GET creation-threads/{id}/song-audio`: where to fetch the creator's song (a signed https URL valid ~15 minutes).
+struct SongAudioLink: Decodable, Equatable, Sendable {
+    let url: URL
+    let generation: Int
+    let durationS: Double?
+    let expiresAt: String?
+    enum CodingKeys: String, CodingKey { case url, generation; case durationS = "duration_s"; case expiresAt = "expires_at" }
+    init(url: URL, generation: Int, durationS: Double?, expiresAt: String? = nil) {
+        self.url = url; self.generation = generation; self.durationS = durationS; self.expiresAt = expiresAt
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let raw = try c.decode(String.self, forKey: .url)
+        guard let parsed = URL(string: raw), parsed.scheme != nil else {
+            throw DecodingError.dataCorruptedError(forKey: .url, in: c, debugDescription: "Expected a URL")
+        }
+        url = parsed
+        generation = try c.decode(Int.self, forKey: .generation)
+        durationS = (try? c.decodeIfPresent(Double.self, forKey: .durationS)).flatMap { $0 }.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        expiresAt = (try? c.decodeIfPresent(String.self, forKey: .expiresAt)).flatMap { $0 }
     }
 }
 
@@ -996,6 +1024,11 @@ struct KriaAPI: KriaAPIClient {
     func projects() async throws -> [ProjectSummary] { try await request(path: "creation-threads", method: "GET", bodyData: nil, decode: [CreationThread].self).map(\.summary) }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
     func creationCapabilities() async throws -> CreationCapabilities { try await request(path: "creation-threads/capabilities", method: "GET", bodyData: nil, decode: CreationCapabilities.self) }
+    func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink {
+        try await request(path: "creation-threads/\(threadID.uuidString)/song-audio", method: "GET",
+                          query: generation.map { [URLQueryItem(name: "generation", value: String($0))] } ?? [],
+                          bodyData: nil, decode: SongAudioLink.self)
+    }
     func creationBrief(threadID: UUID) async throws -> CreativeBrief { try await request(path: "creation-threads/\(threadID.uuidString)/brief", method: "GET", bodyData: nil, decode: CreativeBrief.self) }
     func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse {
         try await request(path: "creation-threads/\(threadID.uuidString)/thought-summaries", method: "GET", query: [URLQueryItem(name: "client_request_id", value: clientRequestID)], bodyData: nil, decode: KriaThoughtSummaryResponse.self)

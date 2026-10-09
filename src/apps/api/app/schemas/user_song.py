@@ -18,6 +18,7 @@ Time convention (the one rule that must never drift): for a take,
 
 from __future__ import annotations
 
+import math
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -247,6 +248,21 @@ class UserSongPlan(BaseModel):
         return self.window_end_s - self.window_start_s
 
 
+class SongOrderCandidate(BaseModel):
+    """One place a take could sit, for the timeline card (KRI-561).
+
+    ``song_time = take_time + delta_s``; ``delta_s`` is negative for a take filmed
+    before the song starts.
+    """
+
+    model_config = _STRICT
+
+    delta_s: float
+    likelihood: float = Field(ge=0, le=1)
+    match_start_s: float | None = Field(default=None, exclude_if=lambda v: v is None)
+    match_end_s: float | None = Field(default=None, exclude_if=lambda v: v is None)
+
+
 class SongOrderItem(BaseModel):
     model_config = _STRICT
 
@@ -255,6 +271,13 @@ class SongOrderItem(BaseModel):
     # Where we think it sits; None when unmatched.
     song_start_s: float | None = None
     alternates: list[AlignmentAlternate] = Field(default_factory=list)
+    # KRI-561: take length and EVERY place it could sit (confident takes included), so the
+    # timeline card can size the block and snap a drag. Omitted when unset so questions
+    # written before these fields existed serialize byte-identically.
+    duration_s: float | None = Field(default=None, exclude_if=lambda v: v is None)
+    candidates: list[SongOrderCandidate] | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
     # KRI-471: why the creator is asked about this take. Omitted when unset.
     likelihood: float | None = Field(default=None, exclude_if=lambda v: v is None)
     reason: Literal["tie", "weak", "no_evidence"] | None = Field(
@@ -276,12 +299,41 @@ class SongOrderQuestion(BaseModel):
     # meaningless) and the creator is asked again. Omitted from the wire when unset so
     # questions written before this field existed serialize byte-identically.
     song_generation: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    # KRI-561: what the timeline card needs to lay the takes on the song. All omitted when
+    # unset (old questions stay byte-identical).
+    song_duration_s: float | None = Field(default=None, exclude_if=lambda v: v is None)
+    max_window_s: float | None = Field(default=None, exclude_if=lambda v: v is None)
+    first_line_s: float | None = Field(default=None, exclude_if=lambda v: v is None)
+
+
+class SongOrderPlacementIn(BaseModel):
+    """One take the creator put on the song timeline (KRI-561): its song start is ``delta_s``."""
+
+    model_config = _STRICT
+
+    media_id: str
+    delta_s: float
+
+    @model_validator(mode="after")
+    def _finite(self) -> SongOrderPlacementIn:
+        if not math.isfinite(self.delta_s):
+            raise ValueError("delta_s must be finite")
+        return self
 
 
 class SongOrderAnswerIn(BaseModel):
-    """The creator's answer: the order they confirmed."""
+    """The creator's answer: the order they confirmed.
+
+    ``placements`` (KRI-561, timeline card) lists the takes the creator put on the song with
+    the song time they chose; a take in ``ordered_media_ids`` but not in ``placements`` was
+    left in the tray (muted background footage). ``ordered_media_ids`` still names EVERY
+    take once, so old readers and the exact-set checks are unchanged.
+    """
 
     model_config = _STRICT
 
     question_id: str
     ordered_media_ids: list[str] = Field(min_length=1)
+    placements: list[SongOrderPlacementIn] | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )

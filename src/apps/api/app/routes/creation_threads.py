@@ -360,6 +360,10 @@ class CreationCapabilitiesOut(BaseModel):
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
     song_order_questions: bool = False
+    # KRI-561: the app may answer a song-order question with timeline `placements` and fetch
+    # the song for playback from GET /{thread_id}/song-audio. False (or absent) = the app
+    # keeps the reorder-only card and never sends `placements` (an old API would 422 it).
+    song_order_placements: bool = False
     # KRI-443: plan_block events follow Create and cancel-render is available.
     live_plan_review_enabled: bool = False
     # KRI-439: 2 = structured payloads, GET /plan, scoped turns and undo; 1 = the feed only.
@@ -3478,6 +3482,75 @@ def _user_song_available(
     )
 
 
+class SongAudioOut(BaseModel):
+    """A short-lived playable URL for the thread's song (KRI-561)."""
+
+    url: str
+    generation: int
+    duration_s: float | None = None
+    expires_at: datetime
+
+
+_SONG_AUDIO_URL_TTL_MIN = 15
+
+
+@router.get("/{thread_id}/song-audio", response_model=SongAudioOut)
+@limiter.limit("30/minute")
+async def get_song_audio(
+    request: Request,
+    thread_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    response: Response,
+    generation: Annotated[int | None, Query(ge=0)] = None,
+) -> SongAudioOut:
+    """Sign the creator's own song so the song-order timeline can play it (KRI-561).
+
+    Before a render job exists the only signed song URL was job-bound
+    (`device_render._song_download_url`), so the order question could not play the song.
+    This is bound to the owner's thread instead: ownership comes from `_load`, the item is
+    the thread's active plan item, and the URL pins the exact object generation (a replaced
+    or removed song fails closed with 409 `song_changed`).
+    """
+    response.headers["Cache-Control"] = "no-store"
+    if not (settings.user_song_montage_enabled and settings.song_order_timeline_enabled):
+        raise RuntimeFailure(404, "song_audio_unavailable", "Song preview unavailable")
+    thread = await _load(thread_id, user, db)
+    if not _user_song_enabled(user.id) or not thread.active_plan_item_id:
+        raise RuntimeFailure(404, "song_audio_unavailable", "Song preview unavailable")
+    item = await db.get(PlanItem, thread.active_plan_item_id, populate_existing=True)
+    path = getattr(item, "song_gcs_path", None) if item is not None else None
+    item_generation = getattr(item, "song_generation", None) if item is not None else None
+    if (
+        item is None
+        or getattr(item, "audio_mode", None) != "song"
+        or not path
+        or item_generation is None
+        or (generation is not None and int(generation) != int(item_generation))
+    ):
+        raise RuntimeFailure(409, "song_changed", "Your song changed. Refresh and try again.")
+    duration_s = getattr(item, "song_duration_s", None)
+    pinned = int(item_generation)
+    await db.rollback()  # no connection pinned across the signing call
+    try:
+        url = await asyncio.to_thread(
+            storage.signed_get_url_for_generation,
+            str(path),
+            generation=str(pinned),
+            expiration_minutes=_SONG_AUDIO_URL_TTL_MIN,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise RuntimeFailure(
+            409, "song_changed", "Your song changed. Refresh and try again."
+        ) from exc
+    return SongAudioOut(
+        url=url,
+        generation=pinned,
+        duration_s=float(duration_s) if isinstance(duration_s, (int, float)) else None,
+        expires_at=datetime.now(UTC) + timedelta(minutes=_SONG_AUDIO_URL_TTL_MIN),
+    )
+
+
 @router.get("/capabilities", response_model=CreationCapabilitiesOut)
 async def capabilities(
     user: CurrentUser,
@@ -3573,6 +3646,7 @@ async def capabilities(
             ),
         },
         "song_order_questions": song_available,
+        "song_order_placements": bool(song_available and settings.song_order_timeline_enabled),
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
     }
