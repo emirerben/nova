@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.193.0] - 2026-10-09
+
+### Changed
+- fix: preserve compound clip extensions and bound durable model waits (#1517) <!-- release-pr: 1517 -->
+
 ## [0.78.192.0] - 2026-10-09
 
 ### Changed
