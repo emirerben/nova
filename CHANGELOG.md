@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.202.0] - 2026-10-09
+
+### Changed
+- feat(kria): section-scoped turns and per-section undo (KRI-441, KRI-442) (#1522) <!-- release-pr: 1522 -->
+
 ## [0.78.201.0] - 2026-10-09
 
 ### Changed
