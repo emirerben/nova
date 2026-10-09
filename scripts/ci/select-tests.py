@@ -13,6 +13,88 @@ import ui_tests
 
 SUITES = ("web", "api", "ios", "ios_ui")
 
+# This is deliberately independent from the broad suite selector.  KRI-559 is
+# a cross-runtime proof: the saved creation transport must survive the API
+# compiler, persisted-draft boundary, and the actual iPhone exporter.
+JOURNEY_PREFIXES = (
+    "src/apps/api/app/pipeline/",
+    "src/apps/api/app/agents/edit_copilot.py",
+    "src/apps/api/app/services/creation_text_composition.py",
+    "src/apps/api/app/services/cloud_render_contract.py",
+    "src/apps/api/app/services/creator_render_contract.py",
+    "src/apps/api/app/services/kria_editor_ops.py",
+    "src/apps/api/app/services/phone_rollout.py",
+    "src/apps/api/app/services/phone_sources.py",
+    "src/apps/api/app/kria/",
+    "src/apps/api/app/schemas/",
+    "src/apps/api/prompts/",
+    "src/apps/api/tests/fixtures/",
+    "src/apps/api/tests/evals/request_following/",
+    "src/apps/ios/Kria/",
+    "src/apps/ios/Packages/KriaMediaEngine/",
+    "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift",
+    "src/apps/ios/Tests/Fixtures/KRI524CreationDraft.json",
+    "scripts/ios/kri-524-creation-e2e.py",
+)
+
+# CI-visible corpus: a mapped change must execute the corresponding fixture
+# and XCTest.  A broad journey input without an entry here is a deliberate
+# coverage gap and blocks the stable required check rather than borrowing the
+# KRI-524 sentinel as evidence for unrelated behavior.
+KRI524_JOURNEY_PREFIXES = tuple(
+    json.loads((Path(__file__).with_name("journey-manifest.json")).read_text())[
+        "journeys"
+    ][0]["paths"]
+)
+
+
+def journey_affected(path):
+    """Whether a change must prove KRI-524's offline server-to-device path."""
+    if path.startswith(JOURNEY_PREFIXES):
+        return True
+    # CI policy and this evidence parser are security boundaries.  A change to
+    # either must execute the gate it could otherwise weaken.
+    return path in (
+        ".github/workflows/ci.yml",
+        ".github/workflows/ci-changes.yml",
+        "scripts/ci/select-tests.py",
+        "scripts/ci/journey-gate.py",
+        "scripts/ci/journey-manifest.json",
+        "scripts/ci/test_journey_gate.py",
+    )
+
+
+def journey_details(event, base, head):
+    """Return (selected, coverage, fixture ids); unknown inputs fail closed."""
+    if event != "pull_request":
+        return True, "covered", "kri-524-creation"
+    try:
+        ancestor = git("merge-base", base, head).decode().strip()
+        raw = git("diff", "--no-renames", "--name-only", "-z", ancestor, head)
+        paths = [p.decode("utf-8") for p in raw.split(b"\0") if p]
+        relevant = [path for path in paths if journey_affected(path)]
+        if not paths:
+            return True, "gap", ""
+        if not relevant:
+            return False, "not_applicable", ""
+        if all(
+            path.startswith(KRI524_JOURNEY_PREFIXES)
+            or path
+            in (
+                ".github/workflows/ci.yml",
+                ".github/workflows/ci-changes.yml",
+                "scripts/ci/select-tests.py",
+                "scripts/ci/journey-gate.py",
+                "scripts/ci/journey-manifest.json",
+                "scripts/ci/test_journey_gate.py",
+            )
+            for path in relevant
+        ):
+            return True, "covered", "kri-524-creation"
+        return True, "gap", ""
+    except (subprocess.CalledProcessError, UnicodeError, OSError):
+        return True, "gap", ""
+
 
 def git(*args):
     return subprocess.check_output(["git", *args], stderr=subprocess.PIPE)
@@ -96,15 +178,11 @@ def affected(path):
         return {"web", "ios", "ios_ui"}
     # Unit-test edits and generated clients need compilation/unit contracts, but
     # do not change the native screens exercised by the fixture-driven UI suite.
-    if (
-        path.startswith(
-            ("src/apps/ios/Tests/KriaTests/", "src/apps/ios/Kria/Generated/")
-        )
-        or path
-        in (
-            "src/apps/ios/Tests/Fixtures/editor-commit-picker-contract.json",
-            "src/apps/ios/Tests/Fixtures/guided_label_rebase_vectors.json",
-        )
+    if path.startswith(
+        ("src/apps/ios/Tests/KriaTests/", "src/apps/ios/Kria/Generated/")
+    ) or path in (
+        "src/apps/ios/Tests/Fixtures/editor-commit-picker-contract.json",
+        "src/apps/ios/Tests/Fixtures/guided_label_rebase_vectors.json",
     ):
         return {"ios"}
     # Check runtime trees before documentation: prompts and fixtures can be .md.
@@ -192,6 +270,11 @@ def selection_details(event, base, head):
         )
 
 
+def journey_selection(event, base, head):
+    """Select the expensive offline journey, fail closed when diff data is absent."""
+    return journey_details(event, base, head)[0]
+
+
 def selection(event, base, head):
     return selection_details(event, base, head)[:2]
 
@@ -216,7 +299,12 @@ def ui_shards(event, groups):
 
 def gate(needs, suite, job):
     """A skipped job passes ONLY when a successful selector explicitly opted out."""
-    if set(needs) != {"changes", job} or needs["changes"].get("result") != "success":
+    required_needs = (
+        {"changes", "test-api-suite", "journey"}
+        if suite in ("api", "journey")
+        else {"changes", job}
+    )
+    if set(needs) != required_needs or needs["changes"].get("result") != "success":
         raise ValueError("CI selection failed or required job results are missing")
     outputs = needs["changes"].get("outputs", {})
     selected = outputs.get(suite)
@@ -260,7 +348,10 @@ def main():
     )
     shards = ui_shards(event, groups)
     output = "".join(f"{suite}={str(suite in suites).lower()}\n" for suite in SUITES)
-    output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\n"
+    journey, coverage, journey_ids = journey_details(
+        event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
+    )
+    output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\njourney={str(journey).lower()}\njourney_coverage={coverage}\njourney_ids={journey_ids}\n"
     print(reason + "\n" + output)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:

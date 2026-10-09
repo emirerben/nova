@@ -135,7 +135,7 @@ jobs:
 
   test-api:
     if: always()
-    needs: [changes, test-api-suite]
+    needs: [changes, test-api-suite, journey]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -144,6 +144,10 @@ jobs:
         env:
           CI_NEEDS: ${{ toJSON(needs) }}
         run: python3 scripts/ci/select-tests.py gate api test-api-suite
+      - name: Require selected KRI-559 journey to pass
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select-tests.py gate journey journey
 
   test-api-suite:
     needs: changes
@@ -240,3 +244,93 @@ jobs:
           WAITLIST_ADMIN_SECRET: test-admin-secret
           ALLOWED_ORIGINS: '["http://localhost:3000"]'
         run: python3 scripts/ci/api-tests.py "${{ matrix.shard }}"
+
+  # KRI-559 executes only incident-corpus journeys selected by ci-changes.
+  # An affected source without a mapped fixture fails in the first step; a
+  # green KRI-524 sentinel must never stand in for an unrelated journey.
+  journey:
+    needs: changes
+    if: needs.changes.outputs.journey == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a mapped incident-corpus journey
+        env:
+          COVERAGE: ${{ needs.changes.outputs.journey_coverage }}
+          JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
+        run: |
+          test "$COVERAGE" = covered
+          test "$JOURNEY_IDS" = kri-524-creation
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: src/apps/api/pyproject.toml
+      - name: Install offline journey dependencies
+        working-directory: src/apps/api
+        run: pip install -e '.[dev]'
+      - name: Require FFmpeg for deterministic fixture media
+        run: |
+          command -v ffmpeg >/dev/null || brew install ffmpeg
+          ffmpeg -version | head -n 1
+      - name: Generate and verify offline server journey fixture
+        env:
+          KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}
+        run: |
+          python3 scripts/ios/kri-524-creation-e2e.py test-results/kri-559/fixture
+          python3 scripts/ci/journey-gate.py verify-input --fixture test-results/kri-559/fixture --head "$KRIA_JOURNEY_HEAD_SHA"
+      - name: Generate iOS project and select simulator
+        run: |
+          mkdir -p test-results/kri-559
+          bash scripts/ios/generate-project.sh
+          xcrun simctl list devices available -j > test-results/kri-559/simulators.json
+          python3 - <<'PY' > test-results/kri-559/simulator-id.txt
+          import json
+          for devices in reversed(list(json.load(open("test-results/kri-559/simulators.json"))["devices"].values())):
+              for device in devices:
+                  if device.get("isAvailable") and device["name"].startswith("iPhone"):
+                      print(device["udid"]); raise SystemExit
+          raise SystemExit("No available iPhone simulator")
+          PY
+          xcrun simctl boot "$(cat test-results/kri-559/simulator-id.txt)" || true
+          xcrun simctl bootstatus "$(cat test-results/kri-559/simulator-id.txt)" -b
+      - name: Render captured creation journey on iPhone simulator
+        working-directory: src/apps/ios
+        env:
+          TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/fixture
+        run: |
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
+            -only-testing:KriaTests/DeviceMontageRenderE2ETests/testCapturedCreationWordsRetimedThenExportOnTheIPhone \
+            -resultBundlePath ../../../test-results/kri-559/native.xcresult test
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/native.xcresult \
+            > ../../../test-results/kri-559/native-test-results.json
+          APP_INFO=$(find .derived-data/Build/Products -path '*/Kria.app/Info.plist' -print -quit)
+          test -n "$APP_INFO"
+          {
+            xcodebuild -version
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_INFO"
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_INFO"
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_INFO"
+          } > ../../../test-results/kri-559/app-build.txt
+      - name: Record and validate immutable journey evidence
+        env:
+          KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}
+        run: |
+          python3 scripts/ci/journey-gate.py record-native --fixture test-results/kri-559/fixture --head "$KRIA_JOURNEY_HEAD_SHA" --xcresult test-results/kri-559/native.xcresult --test-results test-results/kri-559/native-test-results.json --render test-results/kri-559/fixture/frames/creation_words_retimed.mp4 --app-build test-results/kri-559/app-build.txt --output test-results/kri-559/journey-evidence.json
+          python3 scripts/ci/journey-gate.py validate --evidence test-results/kri-559/journey-evidence.json --head "$KRIA_JOURNEY_HEAD_SHA"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kri-559-journey-${{ github.sha }}
+          path: test-results/kri-559/
+          if-no-files-found: warn
+          retention-days: 14
