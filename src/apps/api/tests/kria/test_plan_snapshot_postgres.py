@@ -217,10 +217,14 @@ async def test_scoped_update_copies_untouched_sections_and_reports_what_changed(
     plan_blocks.emit_plan_blocks(
         job2, [b("captions", "decided", "captions summary", payload=new_captions)]
     )
-    # The render comes back with the OTHER sections decided again, equal: still not changed.
+    # The pipeline re-reports an OUT-OF-SCOPE section with a different value (it re-runs the
+    # whole render): the copied value stays, so the creator never sees a fake "Updated".
     plan_blocks.emit_plan_blocks(
-        job2, [b("title", "decided", "title summary", payload={"text": "Day one"})]
+        job2, [b("title", "decided", "other title", payload={"text": "Another day"})]
     )
+    kept = {blk.section_id: blk for blk in (await _snapshot(user_id, thread_id)).blocks}
+    assert kept["title"].payload == {"text": "Day one"}
+    assert (kept["title"].revision, kept["title"].changed) == (1, False)
     plan_blocks.emit_skipped_remainder(job2)  # sweep + update summary (post_caption copied)
     done = await _snapshot(user_id, thread_id)
     by_id = {blk.section_id: blk for blk in done.blocks}

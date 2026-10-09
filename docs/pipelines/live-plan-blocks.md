@@ -82,6 +82,19 @@ Per `job_id`, per section: a higher `revision` replaces the whole block; an equa
 moves forward (waiting -> deciding -> decided) and fills in, never blanks, `summary`, `detail`
 and `payload`; a lower revision is ignored.
 
+### Scoped updates never leak
+
+A render path that re-runs the whole pipeline may re-report a section outside the scope.
+`plan_blocks.freeze_out_of_scope` (in `_emit`, under the thread lock) drops any block for a
+section that is outside the job's `scope` and was already `decided` by the dispatch copy, so the
+copied value never turns into a fake "Updated" (log `plan_block_out_of_scope_ignored`). A section
+with no previous value is still free to be filled. `scope` accepts `SCOPABLE_SECTIONS` only
+(`post_caption` is dropped). The post caption is not generated alongside a scoped job.
+
+The dispatch event is built inside a savepoint: if `dispatch_payload` raises, the dispatch
+transaction falls back to the plain all-`waiting` event (log `plan_dispatch_payload_failed`)
+instead of failing a render that is already queued.
+
 ### `plan_update_summary`
 
 `role="system"`, `content=null`, payload `{turn_id, job_id, text, changed_sections}`. Appended

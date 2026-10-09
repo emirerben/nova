@@ -35,7 +35,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import sync_session
 from app.kria import plan_payloads
-from app.kria.plan_contract import DETAIL_MAX, SUMMARY_MAX
+from app.kria.plan_contract import DETAIL_MAX, SCOPABLE_SECTIONS, SUMMARY_MAX
 from app.kria.plan_contract import SECTION_ORDER as _CONTRACT_SECTION_ORDER
 
 log = structlog.get_logger()
@@ -223,6 +223,40 @@ def annotate_blocks(
     return out
 
 
+def freeze_out_of_scope(
+    blocks: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+    job_id: str,
+    scope: list[str] | None,
+) -> list[dict[str, Any]]:
+    """A scoped update never touches the sections outside its scope.
+
+    The dispatch event already copied them as `decided` (`changed=false`). A render path
+    that re-reports one of them (it runs the whole pipeline) must not turn that copy into a
+    fake "Updated" value, so such a block is dropped. A section that was NOT decided at
+    dispatch (it had no previous value) is still free to be filled in.
+    """
+    if not scope:
+        return blocks
+    copied = {
+        str(entry["section_id"])
+        for payload, entry in iter_blocks(events)
+        if str(payload.get("job_id")) == job_id and entry.get("state") == "decided"
+    }
+    kept = [
+        entry
+        for entry in blocks
+        if entry.get("section_id") in scope or entry.get("section_id") not in copied
+    ]
+    if len(kept) != len(blocks):
+        log.info(
+            "plan_block_out_of_scope_ignored",
+            job_id=job_id,
+            sections=[e["section_id"] for e in blocks if e not in kept],
+        )
+    return kept
+
+
 def merge_block(existing: dict[str, Any] | None, incoming: dict[str, Any]) -> dict[str, Any]:
     """Server reducer, the same forward-only rule as the client.
 
@@ -369,6 +403,10 @@ def _emit(job_id: str | uuid.UUID, blocks: list[dict[str, Any]]) -> dict[str, An
             return None
         job_key = str(job_uuid)
         events = load_plan_events(db, thread_id)
+        scope = scope_of(events, job_key)
+        blocks = freeze_out_of_scope(blocks, events, job_key, scope)
+        if not blocks:
+            return None
         annotated = annotate_blocks(blocks, events, job_key)
         _append_sync_event(
             db,
@@ -380,13 +418,18 @@ def _emit(job_id: str | uuid.UUID, blocks: list[dict[str, Any]]) -> dict[str, An
                 turn_id=str(turn_id) if turn_id else None,
                 job_id=job_key,
                 blocks=annotated,
-                scope=scope_of(events, job_key),
+                scope=scope,
                 previous_job_id=previous_job_id_of(events, job_key),
             ),
         )
         mode = getattr(job, "mode", None)
         db.commit()
-    return {"blocks": annotated, "mode": mode, "thread_id": str(thread_id)}
+    return {
+        "blocks": annotated,
+        "mode": mode,
+        "thread_id": str(thread_id),
+        "scoped": bool(scope),
+    }
 
 
 def dispatch_payload(
@@ -412,7 +455,7 @@ def dispatch_payload(
         source = db.get(CreationThreadEvent, source_event_id)
         raw = source.payload.get("scope") if source is not None and source.payload else None
         if isinstance(raw, list):
-            scope = [s for s in dict.fromkeys(map(str, raw)) if s in SECTION_ORDER] or None
+            scope = [s for s in dict.fromkeys(map(str, raw)) if s in SCOPABLE_SECTIONS] or None
     previous = latest_decided_other_job(events, job_id)
     out: list[dict[str, Any]] = []
     for section in SECTION_ORDER:
@@ -623,7 +666,7 @@ def _emit_update_summary(job_id: str) -> None:
             if not scope_of(events, job_id):
                 return
             reduced = reduce_job_blocks(events, job_id)
-            changed = [s for s, b in reduced.items() if b.get("changed")]
+            changed = [s for s, b in reduced.items() if b.get("changed") and s in _SECTION_WORDS]
             if not changed:
                 return
             existing = db.execute(
@@ -688,6 +731,13 @@ def _start_post_caption(job_id: str, hook_text: str) -> None:
     with _PENDING_LOCK:
         if job_id in _PENDING_COPY:
             return
+        now = time.monotonic()
+        for stale in [
+            key
+            for key, (future, started) in _PENDING_COPY.items()
+            if future.done() and now - started > 600
+        ]:
+            _PENDING_COPY.pop(stale, None)  # a job that never finalized must not leak
         _PENDING_COPY[job_id] = (
             _POST_CAPTION_POOL.submit(_generate_post_caption, hook_text, job_id),
             time.monotonic(),
@@ -697,8 +747,8 @@ def _start_post_caption(job_id: str, hook_text: str) -> None:
 def _maybe_start_post_caption(job_id: str | uuid.UUID, written: dict[str, Any]) -> None:
     """Start the copy agent in the background as soon as the title is decided, so it runs
     alongside the render. Only generative jobs; never holds a DB lock."""
-    if written.get("mode") != "generative":
-        return
+    if written.get("mode") != "generative" or written.get("scoped"):
+        return  # a scoped update copies the previous caption; nothing to generate alongside
     for entry in written["blocks"]:
         if entry["section_id"] == "title" and entry.get("state") == "decided":
             if entry.get("skipped"):

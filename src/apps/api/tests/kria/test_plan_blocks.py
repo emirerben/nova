@@ -506,6 +506,10 @@ def _finish(*, flag: bool, monkeypatch: pytest.MonkeyPatch) -> tuple[list, list]
         def commit(self) -> None:
             order.append("commit")
 
+        @contextmanager
+        def begin_nested(self):  # noqa: ANN201
+            yield
+
     @contextmanager
     def sessions():  # noqa: ANN202
         yield Db()
@@ -547,6 +551,21 @@ def test_waiting_blocks_share_the_render_queued_transaction(
     assert waiting["payload"]["turn_id"] == events[0]["payload"]["turn_id"]
     assert waiting["payload"]["job_id"] == events[0]["payload"]["job_id"]
     assert [b["state"] for b in waiting["payload"]["blocks"]] == ["waiting"] * 8
+
+
+def test_a_broken_scoped_payload_never_fails_the_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Celery task is already queued: the feed falls back to plain `waiting` blocks and
+    the dispatch still commits."""
+
+    def boom(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
+        raise RuntimeError("feed problem")
+
+    monkeypatch.setattr(plan_blocks, "dispatch_payload", boom)
+    events, order = _finish(flag=True, monkeypatch=monkeypatch)
+    assert order == ["render_queued", "plan_block", "commit"]
+    assert [b["state"] for b in events[1]["payload"]["blocks"]] == ["waiting"] * 8
 
 
 def test_flag_off_emits_no_plan_block_events(monkeypatch: pytest.MonkeyPatch) -> None:
