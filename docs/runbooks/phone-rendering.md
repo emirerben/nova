@@ -2536,9 +2536,9 @@ Rolling deploy: API before worker (the worker reads the new plan fields; an olde
 ignores them).
 
 Editor song controls (KRI-428): the Sounds tab edits the creator's own song through
-one Save section, `user_song: {volume?, window_start_s?, removed}` (all optional,
-`extra="forbid"`). Capabilities appear only while the variant's CURRENT plan has a
-song: `user_song: {volume, window, remove}`, each an `operation()` entry. The
+one Save section, `user_song: {volume?, window_start_s?, window_end_s?, removed}` (all
+optional, `extra="forbid"`). Capabilities appear only while the variant's CURRENT plan
+has a song: `user_song: {volume, window, remove, trim}`, each an `operation()` entry. The
 choices live on the guided revision (`GuidedEditorRevision.user_song`, omitted when
 unset so older revisions keep their state hash) and are replayed by
 `compile_guided_runtime_plan` onto the immutable approved plan on every Save.
@@ -2552,9 +2552,9 @@ unset so older revisions keep their state hash) and are replayed by
   shortening shrinks it and extending grows it again. A background song plays while
   it has time left and simply STOPS at its end (no start shift, no loop, no error;
   the phone lane fades out at the clip's real end). `UserSongPlan.window` may
-  therefore be shorter than the video, and the plan validator allows that only for a
-  background song whose window ends at the song's end (everything else keeps
-  window == video). Only a start leaving under `MIN_PLAYABLE_SONG_S` (1.0 s; max
+  therefore be shorter than the video: the plan validator allows any SHORTER window
+  for a background song (the song ran out, or the creator stopped it, KRI-561),
+  never a longer one; everything else (lip-sync) keeps window == video. Only a start leaving under `MIN_PLAYABLE_SONG_S` (1.0 s; max
   start = song duration - 1.0, shared with iOS) is `422 user_song_window_out_of_range`
   ("That start point leaves less than a second of your song. Slide it earlier.").
   `variants[].user_song.window_end_s` reports the REAL window. Lip-sync is unchanged:
@@ -2566,6 +2566,31 @@ unset so older revisions keep their state hash) and are replayed by
   user_song_lipsync_locked`; echoing the unchanged start is fine, and volume still
   works. `removed: true` wins over every other field in the section (a moved start on a
   lip-sync song is then a plain removal).
+- **End point (KRI-561).** Background only: `window_end_s` is where the creator stops
+  the music, in ABSOLUTE song seconds, stored on the revision
+  (`GuidedEditorUserSong.window_end_s`, omitted when unset so older revisions keep
+  their state hash) and replayed on every Save as
+  `window_end = min(start + video, song end, creator end)`: it survives later
+  video-length edits, a shorter video still wins, and moving the start later keeps the
+  same end. It must leave `MIN_PLAYABLE_SONG_S` after the start (checked against a
+  start moved in the same Save): else `422 user_song_window_out_of_range`. Sending the
+  song's own duration clears it. A lip-sync song has no end field (`422
+  user_song_lipsync_locked`). When the end stops the music before both the video and
+  the song end, `compile_phone_guided_plan` fades it out over 1.5 s (a song that
+  merely runs out keeps 0.5 s). The projection does not say whether an end was set:
+  the app infers it (`window_end_s` earlier than `min(start + video, song end)`).
+- **Lip-sync trim (KRI-561).** A lip-sync song is trimmed by CUTTING THE VIDEO in the
+  editor (drop the opening/closing cuts, head/tail-trim the straddlers). The server
+  derives the song start from the cuts: each cut on a pinned take votes
+  `delta + source_start - output_start` (the sync invariant
+  `source_start - output_start == window_start - delta`);
+  `lipsync_montage.window_start_from_pinned_cuts` moves `window_start` there when all
+  votes agree within a frame, and the end is always `start + video`. Cuts that
+  DISAGREE (a reorder, a retime) return None and fall back to the old first-cut-head
+  rule and then the take resync's refusal. `variants[].user_song.takes`
+  (`{media_id: delta_s}`, lip-sync only) lets the app mirror the formula for its
+  preview. Capability `user_song.trim` (both modes) gates the app's trim UI; older
+  servers lack it and the app keeps the single start bar / lip-sync lock.
 - **Remove.** Both modes. The song and its track go away and the camera's own sound
   returns at its normal level (a lip-sync take then plays the creator singing). This
   is per-edit: `PlanItem.song_*` stays, so a chat re-plan can bring the song back.
@@ -2579,7 +2604,9 @@ unset so older revisions keep their state hash) and are replayed by
 
 Deploy skew: `GuidedEditorRevision` is `extra="forbid"`, so deploy the API first, and do
 not roll the API back once any song edit has been saved (older code cannot load a
-revision carrying `user_song`).
+revision carrying `user_song`); the same holds for a saved `window_end_s` (KRI-561), and
+api + worker must roll together so no old pod validates a background window shorter than
+the video (the validator relaxation is what lets it through).
 
 Guards: `tests/routes/test_phone_song_editor_commit.py` (KRI-428 block; drives the
 real `prepare_editor_commit` -> `prepare_phone_editor_commit` ->

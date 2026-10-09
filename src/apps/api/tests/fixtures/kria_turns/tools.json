@@ -1496,6 +1496,19 @@
               "default": null,
               "title": "Volume"
             },
+            "window_end_s": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Window End S"
+            },
             "window_start_s": {
               "anyOf": [
                 {

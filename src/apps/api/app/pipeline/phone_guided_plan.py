@@ -830,6 +830,15 @@ def compile_phone_guided_plan(
         lipsync = user_song.mode == "lipsync"
         fade_in = song.fade_in_s if song.fade_in_s is not None else (0.05 if lipsync else 0.5)
         fade_out = song.fade_out_s if song.fade_out_s is not None else (0.3 if lipsync else 0.5)
+        if (
+            not lipsync
+            and song.fade_out_s is None
+            and song_duration_s < compiled_duration - 0.05
+            and song_start_s + song_duration_s < song.duration_s - 0.05
+        ):
+            # KRI-561: the creator stopped the music before both the video and the song end,
+            # so it fades out instead of cutting dead (a song that simply runs out keeps 0.5 s).
+            fade_out = 1.5
         tracks.append(
             TimelineTrack(
                 id=USER_SONG_TRACK_ID,

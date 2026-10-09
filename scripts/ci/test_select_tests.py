@@ -526,6 +526,10 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-561-song-order"),
             ),
             (
+                "src/apps/api/app/schemas/guided_edit_revision.py",
+                (True, "covered", "kri-561-song-order"),
+            ),
+            (
                 "src/apps/api/app/kria/planner.py.backup",
                 (True, "gap", ""),
             ),

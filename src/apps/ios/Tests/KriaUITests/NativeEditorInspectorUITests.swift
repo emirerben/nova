@@ -975,11 +975,24 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-music-volume"].firstMatch.exists)
     }
 
-    /// KRI-428: a background song carries a volume slider, a start-point bar and Remove; removing it is an
-    /// unsaved, undoable edit that falls back to the camera audio without offering any catalog controls.
+    /// Drags `handle` horizontally by `dx` points from its centre (a held press, so SwiftUI's zero-distance drag begins).
+    private func dragHandle(_ handle: XCUIElement, by dx: CGFloat) {
+        let from = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        from.press(forDuration: 0.1, thenDragTo: from.withOffset(CGVector(dx: dx, dy: 0)), withVelocity: 100, thenHoldForDuration: 0.2)
+    }
+
+    /// Raises the short Sounds panel so a whole control sits inside it, where a drag reaches it.
+    private func raiseSoundsPanel(_ app: XCUIApplication) {
+        let handle = app.descendants(matching: .any)["native-editor-panel-resize"].firstMatch
+        let grab = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 10))
+        grab.press(forDuration: 0.1, thenDragTo: grab.withOffset(CGVector(dx: 0, dy: -300)))
+    }
+
+    /// KRI-428 + KRI-561: a background song carries a volume slider, a two-handle trim bar (start AND end) and Remove;
+    /// every one is an unsaved, undoable edit, and removing it falls back to the camera audio without catalog controls.
     func testSoundsTabShowsSongVolumeStartAndRemove() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-user-song"]
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-song-trim", "-ui-testing-editor-user-song"]
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
 
@@ -988,24 +1001,33 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-volume"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["80%"].exists, "the saved song level is shown")
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-start"].firstMatch.exists)
-        XCTAssertTrue(app.staticTexts["Starts at 1:48"].exists)
+        XCTAssertTrue(app.staticTexts["Starts at 0:10"].exists)
+        XCTAssertTrue(app.staticTexts["Ends at 0:20"].exists)
+        XCTAssertTrue(app.staticTexts["Plays 0:10 – 0:20"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song-start-locked"].firstMatch.exists)
         XCTAssertFalse(app.buttons["native-editor-save"].exists, "the header is away while Sounds is open")
 
-        // Sliding the start window is one unsaved edit and moves the label.
+        raiseSoundsPanel(app)
         let bar = app.descendants(matching: .any)["native-editor-your-song-start-bar"].firstMatch
         XCTAssertTrue(bar.waitForExistence(timeout: 4))
-        XCTAssertTrue(bar.isEnabled)
-        // The Sounds panel starts short: raise it so the whole bar sits inside, where a drag reaches it.
-        let handle = app.descendants(matching: .any)["native-editor-panel-resize"].firstMatch
-        let grab = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 10))
-        grab.press(forDuration: 0.1, thenDragTo: grab.withOffset(CGVector(dx: 0, dy: -300)))
+        let start = app.descendants(matching: .any)["native-editor-your-song-trim-start"].firstMatch
+        let end = app.descendants(matching: .any)["native-editor-your-song-trim-end"].firstMatch
+        XCTAssertTrue(start.waitForExistence(timeout: 4))
+        XCTAssertTrue(end.exists)
+        XCTAssertGreaterThanOrEqual(start.frame.width, 43.9)
+        XCTAssertGreaterThanOrEqual(end.frame.width, 43.9)
         let scroll = app.scrollViews["native-editor-sounds-scroll"]
-        XCTAssertTrue(scroll.frame.contains(CGPoint(x: bar.frame.midX, y: bar.frame.midY)), "the start bar must sit inside the raised Sounds panel")
-        bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(forDuration: 0.1, thenDragTo: bar.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)),
-                   withVelocity: 100, thenHoldForDuration: 0.2)
-        XCTAssertFalse(app.staticTexts["Starts at 1:48"].exists, "the label follows the drag")
+        XCTAssertTrue(scroll.frame.contains(CGPoint(x: bar.frame.midX, y: bar.frame.midY)), "the trim bar must sit inside the raised Sounds panel")
+
+        // Each handle is its own edit: the start moves later, the end stops the song earlier.
+        dragHandle(start, by: bar.frame.width * 0.1)
+        XCTAssertFalse(app.staticTexts["Starts at 0:10"].exists, "the start label follows its handle")
+        XCTAssertFalse(app.staticTexts["Ends at 0:20"].exists, "with no end set the window follows the video, so the end moves with the start")
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song-ends-early"].firstMatch.exists)
+        dragHandle(end, by: -(bar.frame.width * 0.1))
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-ends-early"].firstMatch.waitForExistence(timeout: 3),
+                      "pulling the end in stops the song before the video does")
+        XCTAssertTrue(app.staticTexts["Song stops where you set it, before the video ends."].exists)
 
         let remove = app.buttons["native-editor-your-song-remove"]
         XCTAssertTrue(remove.exists)
@@ -1016,7 +1038,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertFalse(app.buttons["native-editor-add-music"].exists)
 
         // Undo lives on the timeline strip, behind the open Sounds panel. Closing the panel brings the
-        // header back, and Save shows the drag and the removal as unsaved edits.
+        // header back, and Save shows the drags and the removal as unsaved edits.
         app.buttons["native-editor-sounds-done"].tap()
         XCTAssertTrue(app.buttons["native-editor-save"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["native-editor-save"].isEnabled)
@@ -1025,13 +1047,71 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song"].firstMatch.waitForExistence(timeout: 4))
     }
 
-    /// KRI-428: a lip-sync song keeps its start where the takes were filmed; volume and Remove still work.
-    func testLipSyncSongLocksStartButKeepsVolumeAndRemove() {
+    /// KRI-561: trimming a lip-sync song cuts the video to the chosen range (the cuts outside it go, the rest
+    /// ripples), as one undo step; volume and Remove still work and the lock is gone.
+    func testLipSyncSongTrimCutsTheVideoAndKeepsVolumeAndRemove() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-user-song-lipsync"]
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-song-trim", "-ui-testing-editor-user-song-lipsync"]
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
 
+        app.buttons["native-editor-tool-sounds"].tap()
+        let row = app.descendants(matching: .any)["native-editor-your-song"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        XCTAssertEqual(row.label, "Midnight Drive, Plays 1:48 – 1:58, Lip-sync · master audio")
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-volume"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["native-editor-your-song-remove"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song-start-locked"].firstMatch.exists, "trim replaces the lock")
+        XCTAssertFalse(app.staticTexts["Lip-sync keeps the song where you filmed it."].exists)
+        XCTAssertTrue(app.staticTexts["Trimming cuts your video to match."].exists)
+
+        raiseSoundsPanel(app)
+        let start = app.descendants(matching: .any)["native-editor-your-song-trim-start"].firstMatch
+        XCTAssertTrue(start.waitForExistence(timeout: 4))
+        let bar = app.descendants(matching: .any)["native-editor-your-song-start-bar"].firstMatch
+        XCTAssertTrue(app.staticTexts["Starts at 1:48"].exists)
+        // Nothing is cut until the handle is released; a third of the bar is ~3.3 s of the 10 s range, so the opening cut goes.
+        dragHandle(start, by: bar.frame.width * 0.33)
+        XCTAssertFalse(app.staticTexts["Starts at 1:48"].exists, "the song start follows the cuts")
+        XCTAssertTrue(app.staticTexts["Ends at 1:58"].exists, "the end does not move")
+
+        app.buttons["native-editor-sounds-done"].tap()
+        XCTAssertTrue(app.buttons["native-editor-save"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["native-editor-save"].isEnabled, "the cut is an unsaved edit")
+        // The opening cut (0...2.5 s) is gone, so the first block is now the head-trimmed second cut.
+        let first = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 3))
+        XCTAssertNotEqual(first.value as? String, "2.500", "the first block is no longer the original opening cut")
+        XCTAssertLessThan(Double(first.value as? String ?? "") ?? 99, 2.5, "it lost its head")
+
+        // One Undo brings the cuts and the song range back together.
+        app.buttons["native-editor-undo"].tap()
+        XCTAssertEqual(app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.value as? String, "2.500")
+        XCTAssertFalse(app.buttons["native-editor-save"].isEnabled, "undone: nothing left to save")
+        app.buttons["native-editor-tool-sounds"].tap()
+        XCTAssertTrue(app.staticTexts["Starts at 1:48"].waitForExistence(timeout: 3))
+    }
+
+    /// KRI-561 rollout: a server that does not advertise `user_song.trim` keeps today's UI exactly: the
+    /// single-handle start bar on a background song, the lock label on a lip-sync one.
+    func testServerWithoutTrimKeepsTheSingleHandleBarAndTheLipSyncLock() {
+        let background = XCUIApplication()
+        background.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-user-song", "-ui-testing-editor-user-song-no-trim"]
+        background.launch()
+        XCTAssertTrue(background.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
+        background.buttons["native-editor-tool-sounds"].tap()
+        XCTAssertTrue(background.descendants(matching: .any)["native-editor-your-song"].firstMatch.waitForExistence(timeout: 4))
+        XCTAssertTrue(background.staticTexts["Starts at 1:48"].exists)
+        XCTAssertTrue(background.descendants(matching: .any)["native-editor-your-song-start-bar"].firstMatch.exists)
+        XCTAssertFalse(background.descendants(matching: .any)["native-editor-your-song-trim-start"].firstMatch.exists)
+        XCTAssertFalse(background.descendants(matching: .any)["native-editor-your-song-trim-end"].firstMatch.exists)
+        XCTAssertFalse(background.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ends at'")).firstMatch.exists)
+        background.terminate()
+
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-user-song-lipsync", "-ui-testing-editor-user-song-no-trim"]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
         app.buttons["native-editor-tool-sounds"].tap()
         let row = app.descendants(matching: .any)["native-editor-your-song"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 4))
@@ -1042,6 +1122,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Lip-sync keeps the song where you filmed it."].exists)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song-start"].firstMatch.exists, "no start bar to drag")
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song-start-bar"].firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song-trim-start"].firstMatch.exists)
         app.buttons["native-editor-sounds-done"].tap()
         XCTAssertTrue(app.buttons["native-editor-save"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.buttons["native-editor-save"].isEnabled, "opening the controls is not an edit")

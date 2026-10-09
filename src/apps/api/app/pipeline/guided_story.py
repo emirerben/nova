@@ -322,14 +322,14 @@ class GuidedStoryExecutionPlan(BaseModel):
             song = self.user_song
             if abs(song.window_duration_s - float(self.resolved_duration_s)) > 0.001:
                 # KRI-457: a background song that runs out before the video does simply
-                # stops, so its window may be shorter than the video, but only because
-                # it ends where the song ends. Lip-sync windows stay exactly the video.
-                runs_out = (
-                    song.mode == "background"
-                    and song.window_duration_s < float(self.resolved_duration_s)
-                    and abs(song.window_end_s - song.duration_s) <= 0.001
+                # stops, so its window may be shorter than the video, because it ends where
+                # the song ends. Lip-sync windows stay exactly the video.
+                # KRI-561: ... or because the creator stopped it earlier in the editor, so any
+                # shorter background window is valid; a LONGER one never is.
+                shorter_background = song.mode == "background" and song.window_duration_s < float(
+                    self.resolved_duration_s
                 )
-                if not runs_out:
+                if not shorter_background:
                     raise ValueError("the song window must cover the resolved video duration")
         if (self.song_reference is None) != (self.song_reference_track_duration_s is None):
             raise ValueError("song reference requires its pinned catalog duration")
@@ -3362,6 +3362,14 @@ def compile_guided_runtime_plan(
                     song_row["window_start_s"] = round(new_start, 3)
             if "volume" in song_edit:
                 song_row["volume"] = float(song_edit["volume"])
+            creator_end = song_edit.get("window_end_s")
+            if creator_end is not None and song_row.get("mode") == "lipsync":
+                # A lip-sync song is trimmed by cutting the video (the song start follows
+                # the cuts); an explicit end would take the footage off the song.
+                raise GuidedStoryError(
+                    USER_SONG_LIPSYNC_LOCKED,
+                    "Lip-sync keeps the song where you filmed it.",
+                )
             # KRI-374: the song window follows the video's length, so a trim or extension
             # re-windows the song from the SAME start (the per-take deltas are untouched;
             # the song stays the master clock). Always recomputed from the start and the NEW
@@ -3371,21 +3379,28 @@ def compile_guided_runtime_plan(
                 if moments
                 else None
             )
-            if (
-                song_row.get("mode") == "lipsync"
-                and opener is not None
-                and canonical.story_timeline
-                and str(opener.get("media_id")) == str(canonical.story_timeline[0].media_id)
-            ):
-                # Trimming the head of the opening cut must carry the song with it, or the
-                # singer drifts off the audio by the trim (job 5a7f6c88: 0.3 s). Only the take
-                # the plan opened with can do this; a reorder keeps the pinned window and is
-                # refused by the take resync as before.
+            if song_row.get("mode") == "lipsync" and moments:
                 from app.pipeline.lipsync_montage import (  # noqa: PLC0415
                     window_start_for_first_cut_head,
+                    window_start_from_pinned_cuts,
                 )
 
-                head_start = window_start_for_first_cut_head(song_row, moments)
+                # KRI-561: a song trim in the editor drops or head-trims the opening cuts and
+                # ripples the rest, so the start follows ALL pinned cuts (the first cut may
+                # be gone). Cuts that disagree (a reorder) return None and fall back to the
+                # opener rule below, then to the take resync's refusal, as before.
+                head_start = window_start_from_pinned_cuts(song_row, moments)
+                if (
+                    head_start is None
+                    and opener is not None
+                    and canonical.story_timeline
+                    and str(opener.get("media_id")) == str(canonical.story_timeline[0].media_id)
+                ):
+                    # Trimming the head of the opening cut must carry the song with it, or the
+                    # singer drifts off the audio by the trim (job 5a7f6c88: 0.3 s). Only the
+                    # take the plan opened with can do this; a reorder keeps the pinned window
+                    # and is refused by the take resync as before.
+                    head_start = window_start_for_first_cut_head(song_row, moments)
                 if head_start is not None:
                     song_row["window_start_s"] = head_start
             song_duration_s = float(song_row["duration_s"])
@@ -3412,6 +3427,18 @@ def compile_guided_runtime_plan(
                         "Slide it earlier.",
                     )
                 window_end = min(window_end, song_duration_s)
+                if creator_end is not None:
+                    # KRI-561: the creator stopped the music here (absolute song time, so it
+                    # survives a later video-length edit). It must still leave a playable bit.
+                    if float(creator_end) < float(song_row["window_start_s"]) + (
+                        MIN_PLAYABLE_SONG_S - 1e-3
+                    ):
+                        raise GuidedStoryError(
+                            USER_SONG_WINDOW_OUT_OF_RANGE,
+                            "That end point leaves less than a second of your song. "
+                            "Slide it later.",
+                        )
+                    window_end = min(window_end, round(float(creator_end), 3))
             song_row["window_end_s"] = window_end
         # A timeline revision can split, reorder, or reuse sources. Rebuild
         # grounded clip labels against its output windows so a label never leaks
