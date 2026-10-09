@@ -3391,12 +3391,10 @@ def _finish_approval_dispatch(
                 },
             )
             if settings.live_plan_review_enabled:
-                # KRI-443: all seven sections start `waiting`, in the SAME transaction
-                # (and under the same thread lock) as `render_queued`.
-                from app.kria.plan_blocks import (  # noqa: PLC0415
-                    plan_block_payload,
-                    waiting_blocks,
-                )
+                # KRI-443: every section starts `waiting` (a scoped update copies the
+                # untouched ones from the previous job), in the SAME transaction (and
+                # under the same thread lock) as `render_queued`.
+                from app.kria.plan_blocks import dispatch_payload  # noqa: PLC0415
 
                 _append_sync_event(
                     db,
@@ -3404,8 +3402,12 @@ def _finish_approval_dispatch(
                     role="system",
                     event_type="plan_block",
                     content=None,
-                    payload=plan_block_payload(
-                        turn_id=str(turn.id), job_id=str(job_id), blocks=waiting_blocks()
+                    payload=dispatch_payload(
+                        db,
+                        thread,
+                        turn_id=str(turn.id),
+                        job_id=str(job_id),
+                        source_event_id=getattr(turn, "source_event_id", None),
                     ),
                 )
             db.commit()
