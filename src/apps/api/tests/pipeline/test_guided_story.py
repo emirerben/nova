@@ -24,6 +24,7 @@ from app.pipeline.guided_story import (
     _download_selected,
     _enforce_strict_story_duration,
     _mix_pinned_music,
+    _project_context_label_text_elements,
     _quantize_quick_mixed_timeline,
     _render_image_moment,
     _render_moments,
@@ -57,6 +58,103 @@ from app.schemas.edit_proposal import (
     canonical_media_digest,
 )
 from app.schemas.guided_edit_revision import guided_editor_revision_from_approval
+
+
+def test_context_label_projection_uses_canonical_coverage_and_lineage() -> None:
+    """Compacted labels follow covered moments, including reordered repeats only."""
+    canonical = [
+        {"moment_id": "a-1", "media_id": "clip-a", "output_start_s": 0, "output_end_s": 1},
+        {"moment_id": "b-1", "media_id": "clip-b", "output_start_s": 1, "output_end_s": 2},
+        {"moment_id": "a-2", "media_id": "clip-a", "output_start_s": 2, "output_end_s": 3},
+    ]
+    revised = [
+        {"moment_id": "r-b", "media_id": "clip-b", "output_start_s": 0, "output_end_s": 1},
+        {"moment_id": "r-a-2", "media_id": "clip-a", "output_start_s": 1, "output_end_s": 2},
+        {"moment_id": "r-new", "media_id": "clip-new", "output_start_s": 2, "output_end_s": 3},
+    ]
+    label = TextElement(
+        id="context-sport-0",
+        text="Championship",
+        start_s=0.5,
+        end_s=2.5,
+        source_params={"source": "context_sport", "source_clip_id": "clip-a"},
+    )
+
+    projected = _project_context_label_text_elements(
+        [label],
+        revised,
+        canonical_moments=canonical,
+        moment_lineage={"r-b": ["b-1"], "r-a-2": ["a-2"]},
+    )
+
+    assert [(row["start_s"], row["end_s"]) for row in projected] == [
+        (0.0, 1.0),
+        (1.0, 1.5),
+    ]
+    assert [row["source_params"]["source_clip_id"] for row in projected] == [
+        "clip-b",
+        "clip-a",
+    ]
+    assert all(row["text"] == "Championship" for row in projected)
+    assert all(row["source_params"]["source_clip_id"] != "clip-new" for row in projected)
+
+
+def test_context_label_projection_splits_partial_label_across_source_descendants() -> None:
+    canonical = [
+        {
+            "moment_id": "a-1",
+            "media_id": "clip-a",
+            "output_start_s": 0,
+            "output_end_s": 1,
+            "source_start_s": 10,
+            "source_end_s": 20,
+        },
+        {
+            "moment_id": "a-2",
+            "media_id": "clip-a",
+            "output_start_s": 1,
+            "output_end_s": 2,
+            "source_start_s": 0,
+            "source_end_s": 10,
+        },
+    ]
+    revised = [
+        {
+            "moment_id": "child-1",
+            "media_id": "clip-a",
+            "output_start_s": 0,
+            "output_end_s": 1,
+            "source_start_s": 0,
+            "source_end_s": 5,
+        },
+        {
+            "moment_id": "child-2",
+            "media_id": "clip-a",
+            "output_start_s": 1,
+            "output_end_s": 2,
+            "source_start_s": 5,
+            "source_end_s": 10,
+        },
+    ]
+    label = TextElement(
+        id="context-sport-0",
+        text="Championship",
+        start_s=1.25,
+        end_s=1.75,
+        source_params={"source": "context_sport", "source_clip_id": "clip-a"},
+    )
+
+    projected = _project_context_label_text_elements(
+        [label],
+        revised,
+        canonical_moments=canonical,
+        moment_lineage={"child-1": ["a-2"], "child-2": ["a-2"]},
+    )
+
+    assert [(row["start_s"], row["end_s"]) for row in projected] == [
+        (0.5, 1.0),
+        (1.0, 1.5),
+    ]
 
 
 def test_only_fast_montage_may_have_no_approved_text_elements() -> None:

@@ -1032,17 +1032,56 @@ struct FailedStage: View {
 }
 
 struct ThinkingRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var shimmerOffset: CGFloat = -1
+
+    private static let shimmerInterval = 2.25
+    private static let shimmerDuration = 0.58
+    private var animates: Bool { !reduceMotion && scenePhase == .active }
+
     var body: some View {
-        HStack(spacing: 9) {
-            ProgressView().controlSize(.small).tint(KriaColor.ink)
-            Text("Kria is thinking…")
-                .font(KriaFont.body(12))
-                .foregroundStyle(KriaColor.zinc)
-        }
+        Text("Thinking")
+            .font(KriaFont.body(12))
+            .foregroundStyle(KriaColor.zinc)
+            .overlay {
+                if animates {
+                    GeometryReader { proxy in
+                        LinearGradient(
+                            colors: [KriaColor.paper.opacity(0), KriaColor.paper.opacity(0.65), KriaColor.paper.opacity(0)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: max(proxy.size.width * 0.65, 16))
+                        .offset(x: shimmerOffset * proxy.size.width)
+                    }
+                    .mask(Text("Thinking").font(KriaFont.body(12)))
+                }
+            }
         .frame(minHeight: 30)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Kria is thinking")
         .accessibilityIdentifier("chat-thinking")
+        .task(id: animates) { await shimmer() }
+    }
+
+    private func shimmer() async {
+        guard animates else {
+            resetShimmer()
+            return
+        }
+
+        while !Task.isCancelled {
+            resetShimmer()
+            withAnimation(.linear(duration: Self.shimmerDuration)) { shimmerOffset = 1.25 }
+            do { try await Task.sleep(for: .seconds(Self.shimmerInterval)) } catch { return }
+        }
+    }
+
+    private func resetShimmer() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { shimmerOffset = -1 }
     }
 }
 

@@ -2981,6 +2981,11 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
         if facts.narrated_steps is not None:
             return _check_narrated_timing(req, facts)
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    if req.scope != "global":
+        # The total edit length cannot establish a clip or text duration. Until
+        # that requirement has resolved target windows, report missing evidence
+        # instead of rejecting a valid edit (or falsely passing an equal total).
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
     if facts.edit_format == "subtitled":
         # KRI-142: the Talking renderers keep the whole take (minus any speech
         # cleanup); `target_duration_s` never trims it, so it can't be "met".

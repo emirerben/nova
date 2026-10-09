@@ -176,6 +176,181 @@ def test_retime_shortens_the_clip_and_its_label(guided) -> None:
     assert (_bar(compiled, "m1")["start_s"], _bar(compiled, "m1")["end_s"]) == (1.0, 3.0)
 
 
+def test_explicit_word_windows_survive_clip_trim_without_minimum_or_old_projection(guided) -> None:
+    job, variant, _rev = guided
+    compiled = compile_editor_ops(
+        job,
+        variant,
+        [
+            {
+                "op": "patch_slots",
+                "selector": {"slot_indexes": [0]},
+                "patch": {"duration_s": 1.0},
+            },
+            {"op": "set_text_timing", "bar_index": 1, "start_s": 0.0, "end_s": 0.14},
+            {"op": "set_text_timing", "bar_index": 2, "start_s": 0.14, "end_s": 0.30},
+        ],
+    )
+    first, second = _bar(compiled, "m0"), _bar(compiled, "m1")
+    assert (first["start_s"], first["end_s"]) == (0.0, 0.14)
+    assert (second["start_s"], second["end_s"]) == (0.14, 0.30)
+    # A following untouched label still ripples with the shortened clip.
+    assert _bar(compiled, "m2")["start_s"] == pytest.approx(3.0)
+
+
+def test_late_explicit_text_window_is_not_projected_after_clip_shorten(guided) -> None:
+    job, variant, _rev = guided
+    compiled = compile_editor_ops(
+        job,
+        variant,
+        [
+            {
+                "op": "patch_slots",
+                "selector": {"slot_indexes": [1]},
+                "patch": {"duration_s": 1.0},
+            },
+            {"op": "set_text_timing", "bar_index": 2, "start_s": 1.2, "end_s": 1.35},
+        ],
+    )
+    assert (_bar(compiled, "m1")["start_s"], _bar(compiled, "m1")["end_s"]) == (1.2, 1.35)
+
+
+def test_explicit_noop_window_is_authored_and_not_projected(guided) -> None:
+    job, variant, _rev = guided
+    compiled = compile_editor_ops(
+        job,
+        variant,
+        [
+            {
+                "op": "patch_slots",
+                "selector": {"slot_indexes": [0]},
+                "patch": {"duration_s": 1.0},
+            },
+            # Same values as the snapshot, but explicitly supplied by the user.
+            {"op": "set_text_timing", "bar_index": 2, "start_s": 2.0, "end_s": 4.0},
+        ],
+    )
+    assert (_bar(compiled, "m1")["start_s"], _bar(compiled, "m1")["end_s"]) == (2.0, 4.0)
+
+
+def test_nonfinite_explicit_timing_is_rejected(guided) -> None:
+    job, variant, _rev = guided
+    with pytest.raises(KriaEditorOpError, match="finite"):
+        compile_editor_ops(
+            job,
+            variant,
+            [{"op": "set_text_timing", "bar_index": 1, "end_s": float("nan")}],
+        )
+
+
+def test_invalid_explicit_text_window_rejected_atomically(guided) -> None:
+    job, variant, _rev = guided
+    before = copy.deepcopy(variant["text_elements"])
+    with pytest.raises(KriaEditorOpError, match="does not fit"):
+        compile_editor_ops(
+            job,
+            variant,
+            [
+                {
+                    "op": "patch_slots",
+                    "selector": {"slot_indexes": [0]},
+                    "patch": {"duration_s": 1.0},
+                },
+                {"op": "set_text_timing", "bar_index": 1, "start_s": 0.9, "end_s": 9.0},
+            ],
+        )
+    assert variant["text_elements"] == before
+
+
+def test_bulk_text_timing_selector_stays_explicit_while_untouched_labels_project(guided) -> None:
+    job, variant, _rev = guided
+    compiled = compile_editor_ops(
+        job,
+        variant,
+        [
+            {
+                "op": "patch_slots",
+                "selector": {"slot_indexes": [0]},
+                "patch": {"duration_s": 1.0},
+            },
+            {
+                "op": "set_texts_timing",
+                "selector": {"ids": ["clip-label-media-m0"]},
+                "target_ids": ["clip-label-media-m0"],
+                "expected_count": 1,
+                "start_s": 0.0,
+                "end_s": 0.4,
+            },
+        ],
+    )
+    assert (_bar(compiled, "m0")["start_s"], _bar(compiled, "m0")["end_s"]) == (0.0, 0.4)
+    # m1 was untouched by the bulk selector and follows the shortened output clock.
+    assert (_bar(compiled, "m1")["start_s"], _bar(compiled, "m1")["end_s"]) == (1.0, 3.0)
+
+
+def test_bulk_text_timing_noop_is_authored_before_clip_projection(guided) -> None:
+    job, variant, _rev = guided
+    compiled = compile_editor_ops(
+        job,
+        variant,
+        [
+            {
+                "op": "patch_slots",
+                "selector": {"slot_indexes": [0]},
+                "patch": {"duration_s": 1.0},
+            },
+            {
+                "op": "set_texts_timing",
+                "selector": {"ids": ["clip-label-media-m0"]},
+                "target_ids": ["clip-label-media-m0"],
+                "expected_count": 1,
+                # Same values as the snapshot, explicitly authored by the user.
+                "start_s": 0.0,
+                "end_s": 2.0,
+            },
+        ],
+    )
+    assert (_bar(compiled, "m0")["start_s"], _bar(compiled, "m0")["end_s"]) == (0.0, 2.0)
+
+
+@pytest.mark.parametrize(
+    "timing",
+    [
+        {"start_s": float("nan"), "end_s": 0.4},
+        {"start_s": 0.0, "end_s": float("inf")},
+        {"shift_s": float("-inf")},
+    ],
+    ids=["nonfinite-start", "nonfinite-end", "nonfinite-shift"],
+)
+def test_bulk_text_timing_nonfinite_values_reject_atomically_with_trim(guided, timing) -> None:
+    job, variant, _rev = guided
+    before = copy.deepcopy(variant["text_elements"])
+    with pytest.raises(KriaEditorOpError, match="finite"):
+        compile_editor_ops(
+            job,
+            variant,
+            [
+                {
+                    "op": "patch_slots",
+                    "selector": {"slot_indexes": [0]},
+                    "patch": {"duration_s": 1.0},
+                },
+                {
+                    "op": "set_texts_timing",
+                    "selector": {"group": "labels"},
+                    "target_ids": [
+                        row["id"] for row in variant["text_elements"] if row.get("role") == "label"
+                    ],
+                    "expected_count": sum(
+                        row.get("role") == "label" for row in variant["text_elements"]
+                    ),
+                    **timing,
+                },
+            ],
+        )
+    assert variant["text_elements"] == before
+
+
 def test_transition_overlap_moves_every_label_window(guided) -> None:
     job, variant, _rev = guided
     compiled = compile_editor_ops(
