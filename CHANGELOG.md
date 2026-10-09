@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.195.0] - 2026-10-09
+
+### Changed
+- feat(ios): every tool panel starts at one height, Style keeps the Edit text top (KRI-508) (#1510) <!-- release-pr: 1510 -->
+
 ## [0.78.194.0] - 2026-10-09
 
 ### Fixed
