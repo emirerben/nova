@@ -107,6 +107,28 @@ import XCTest
         XCTAssertEqual(reopened.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
         XCTAssertEqual(reopened.proposalRequestText, "Lead with the landscape")
     }
+    func testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory() async throws {
+        let saved = fixture()
+        let proposal = SlidePostProposal(draft: try XCTUnwrap(saved.draft), baseVersion: 1, fallbackUsed: false, summary: "Review the order")
+        let api = StreamingThoughtSlidePostAPI(saved: saved, proposal: proposal)
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+
+        let request = Task { await session.propose(api: api, itemID: itemID, instruction: "Lead with the landscape") }
+        for _ in 0..<40 where session.liveThoughtSummaries.first?.status != .streaming {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(session.isProposing)
+        XCTAssertEqual(session.liveThoughtSummaries.map(\.text), ["Comparing the slide order."])
+        XCTAssertEqual(session.liveThoughtSummaries.first?.status, .streaming)
+
+        await request.value
+        XCTAssertEqual(session.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
+        XCTAssertEqual(session.proposalThoughtSummaries.first?.status, .completed)
+        let reopened = SlidePostSession(defaults: defaults)
+        await reopened.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reopened.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
+    }
     func testSaveSendsExpectedVersionAndNeverServerOwnedMetadata() async throws {
         let saved = fixture(version: 3)
         NativeEditorURLProtocol.handler = { request in
@@ -477,5 +499,37 @@ import XCTest
         let rows = try await NativeEditorTestSupport.api().library()
         XCTAssertTrue(try XCTUnwrap(rows.first).isSlidePost)
         XCTAssertEqual(rows.first?.activePlanItemID, itemID)
+    }
+}
+
+private actor StreamingThoughtSlidePostAPI: KriaAPIClient {
+    let saved: SlidePostState
+    let proposal: SlidePostProposal
+    private var finished = false
+
+    init(saved: SlidePostState, proposal: SlidePostProposal) {
+        self.saved = saved; self.proposal = proposal
+    }
+
+    func slidePost(itemID: String) async throws -> SlidePostState { saved }
+
+    func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal {
+        try await Task.sleep(for: .milliseconds(250))
+        finished = true
+        return proposal
+    }
+
+    func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse {
+        KriaThoughtSummaryResponse(clientRequestID: clientRequestID, summaries: [
+            KriaThoughtSummary(
+                id: "33333333-3333-3333-3333-333333333333",
+                clientRequestID: clientRequestID,
+                status: finished ? .completed : .streaming,
+                text: finished ? "Compared the slide order." : "Comparing the slide order.",
+                startedAt: Date(timeIntervalSince1970: 1_000),
+                completedAt: finished ? Date(timeIntervalSince1970: 1_002) : nil,
+                durationMS: finished ? 2_000 : nil
+            ),
+        ])
     }
 }
