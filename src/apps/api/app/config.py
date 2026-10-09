@@ -1684,6 +1684,10 @@ class Settings(BaseSettings):
     # 404s. Capability `slide_post_chat_edit`. Apply: `fly secrets set
     # SLIDE_POST_CHAT_EDIT_ENABLED=true --app nova-video` + restart (api).
     slide_post_chat_edit_enabled: bool = False
+    # KRI-557: provider-marked Gemini thought summaries for native creation and
+    # slide-post calls. Deploy dark; enable after production canary with
+    # THOUGHT_SUMMARIES_ENABLED=true for API and Celery processes after canary.
+    thought_summaries_enabled: bool = False
     # KRI-482: keep extended phone slide exports off until physical-device parity passes.
     # False routes video/look slides through the existing server renderer.
     slide_post_extended_device_export_enabled: bool = False

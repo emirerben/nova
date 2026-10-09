@@ -17,6 +17,7 @@ inputs for the per-segment loop.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -43,6 +44,56 @@ _GEMINI_INVOKE_POOL = ThreadPoolExecutor(
     thread_name_prefix="gemini-invoke",
 )
 _GEMINI_INVOKE_SLOTS = BoundedSemaphore(_GEMINI_INVOKE_WORKERS)
+
+
+def _collect_gemini_stream(stream: Any, publish: Callable[[str], None]) -> Any:
+    """Join a Gemini stream while forwarding only provider-marked thought text.
+
+    The callback is intentionally best effort. A consumer failing must never
+    change the model attempt or turn outcome, and thought signatures are never
+    forwarded. The last chunk carries Gemini's aggregate usage metadata.
+    """
+    text_parts: list[str] = []
+    last: Any = None
+    finish_reason: Any = None
+    model_version: Any = None
+    response_id: Any = None
+    usage_metadata: Any = None
+    for chunk in stream:
+        last = chunk
+        chunk_candidates = getattr(chunk, "candidates", None) or ()
+        if chunk_candidates:
+            finish_reason = getattr(chunk_candidates[0], "finish_reason", None) or finish_reason
+        model_version = getattr(chunk, "model_version", None) or model_version
+        response_id = getattr(chunk, "response_id", None) or response_id
+        usage_metadata = getattr(chunk, "usage_metadata", None) or usage_metadata
+        for candidate in chunk_candidates:
+            for part in getattr(getattr(candidate, "content", None), "parts", None) or ():
+                value = getattr(part, "text", None)
+                if not value:
+                    continue
+                if getattr(part, "thought", False):
+                    try:
+                        publish(str(value))
+                    except Exception:  # noqa: BLE001 - display delivery is optional
+                        log.warning("gemini_thought_summary_publish_failed")
+                else:
+                    text_parts.append(str(value))
+    if last is None:
+        raise TerminalError("gemini stream returned no chunks")
+    # A final usage-only chunk may omit finish reason. Retain that one field
+    # without keeping candidate parts, which can include thought signatures.
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        text="".join(text_parts),
+        usage_metadata=usage_metadata,
+        model_version=model_version,
+        response_id=response_id,
+        candidates=[SimpleNamespace(finish_reason=finish_reason)]
+        if finish_reason is not None
+        else [],
+    )
 
 
 @dataclass(slots=True)
@@ -176,6 +227,7 @@ class GeminiClient(ModelClient):
         thinking_budget: int | None = None,
         thinking_level: str | None = None,
         timeout_s: float = 30.0,
+        thought_summary_callback: Callable[[str], None] | None = None,
     ) -> ModelInvocation:
         from google.genai import errors as genai_errors  # type: ignore[import]
         from google.genai import types as genai_types  # type: ignore[import]
@@ -205,24 +257,43 @@ class GeminiClient(ModelClient):
         # also run under the eval (pro) should use >=128 (256 is the house value).
         if thinking_budget is not None and model.startswith("gemini-2.5"):
             cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(
-                thinking_budget=thinking_budget
+                thinking_budget=thinking_budget,
+                include_thoughts=thought_summary_callback is not None,
             )
         elif thinking_level is not None and model.startswith("gemini-3"):
             level = thinking_level.strip().upper()
             if level not in {"MINIMAL", "LOW", "MEDIUM", "HIGH"}:
                 raise TerminalError(f"invalid Gemini thinking level: {thinking_level!r}")
             cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_level=level)
+        if thought_summary_callback is not None and "thinking_config" not in cfg_kwargs:
+            cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(include_thoughts=True)
+        elif thought_summary_callback is not None:
+            # Both Gemini thinking configuration variants expose this opt-in.
+            cfg_kwargs["thinking_config"].include_thoughts = True
 
         if not _GEMINI_INVOKE_SLOTS.acquire(timeout=min(1.0, max(0.1, timeout_s))):
             raise TransientError("gemini concurrency limit reached")
         future = None
         try:
-            future = _GEMINI_INVOKE_POOL.submit(
-                client.models.generate_content,
-                model=model,
-                contents=contents,
-                config=genai_types.GenerateContentConfig(**cfg_kwargs),
+            generate = (
+                client.models.generate_content_stream
+                if thought_summary_callback is not None
+                else client.models.generate_content
             )
+
+            def _invoke() -> Any:
+                result = generate(
+                    model=model,
+                    contents=contents,
+                    config=genai_types.GenerateContentConfig(**cfg_kwargs),
+                )
+                return (
+                    _collect_gemini_stream(result, thought_summary_callback)
+                    if thought_summary_callback is not None
+                    else result
+                )
+
+            future = _GEMINI_INVOKE_POOL.submit(_invoke)
             future.add_done_callback(lambda _: _GEMINI_INVOKE_SLOTS.release())
             response = future.result(timeout=max(0.1, timeout_s))
         except FutureTimeoutError as exc:
@@ -441,6 +512,7 @@ class ModelDispatcher(ModelClient):
         thinking_budget: int | None = None,
         thinking_level: str | None = None,
         timeout_s: float = 30.0,
+        thought_summary_callback: Callable[[str], None] | None = None,
     ) -> ModelInvocation:
         if model.startswith("gemini"):
             return self._gemini.invoke(
@@ -453,6 +525,7 @@ class ModelDispatcher(ModelClient):
                 thinking_budget=thinking_budget,
                 thinking_level=thinking_level,
                 timeout_s=timeout_s,
+                thought_summary_callback=thought_summary_callback,
             )
         if model == "whisper-1":
             return self._whisper.invoke(

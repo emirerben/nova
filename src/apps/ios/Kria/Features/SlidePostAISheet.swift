@@ -59,7 +59,8 @@ struct SlidePostAISheet: View {
     }
 
     private var updateToken: String {
-        "\(session.chat.map { $0.id.uuidString }.joined(separator: "|"))|\(session.isChatting)|\(session.isBusy)|\(session.proposal != nil)"
+        let liveThoughtToken = session.liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
+        return "\(session.chat.map { $0.id.uuidString }.joined(separator: "|"))|\(liveThoughtToken)|\(session.proposalThoughtSummaries.map(\.id).joined(separator: "|"))|\(session.isChatting)|\(session.isBusy)|\(session.proposal != nil)|\(session.proposalRequestText ?? "")"
     }
 
     // MARK: Conversation
@@ -75,8 +76,22 @@ struct SlidePostAISheet: View {
             .accessibilityIdentifier("slidepost-ai-empty")
         }
         ForEach(session.chat) { message in bubble(message) }
-        if session.isChatting || (session.isBusy && !chatEnabled) { ThinkingRow().id("thinking") }
-        if let proposal = session.proposal { proposalCard(proposal) }
+        if (session.isProposing || session.proposal != nil), let request = session.proposalRequestText {
+            ChatMessageRow(message: .init(id: "slidepost-proposal-request", role: .user, content: request))
+        }
+        if session.isChatting {
+            ThoughtSummaryDisclosure(summaries: session.liveThoughtSummaries)
+                .id("slidepost-thought-summary")
+            if session.liveThoughtSummaries.isEmpty { ThinkingRow().id("thinking") }
+        } else if session.isProposing {
+            ThoughtSummaryDisclosure(summaries: session.liveThoughtSummaries)
+                .id("slidepost-proposal-thought-summary")
+            if session.liveThoughtSummaries.isEmpty { ThinkingRow().id("thinking") }
+        } else if session.isBusy && !chatEnabled { ThinkingRow().id("thinking") }
+        if let proposal = session.proposal {
+            ThoughtSummaryDisclosure(summaries: session.proposalThoughtSummaries)
+            proposalCard(proposal)
+        }
         if let uploadGuidance { Text(uploadGuidance).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }
         if let error = session.error { Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText) }
     }
@@ -86,6 +101,7 @@ struct SlidePostAISheet: View {
             ChatMessageRow(message: .init(id: message.id.uuidString, role: .user, content: message.text))
         } else {
             VStack(alignment: .leading, spacing: 10) {
+                ThoughtSummaryDisclosure(summaries: message.thoughts)
                 ChatMessageRow(message: .init(id: message.id.uuidString, role: .assistant, content: message.text))
                 if !message.changes.isEmpty {
                     SlidePostWrap {

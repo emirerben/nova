@@ -7139,6 +7139,14 @@
             "title": "Asset Ids",
             "type": "array"
           },
+          "client_request_id": {
+            "default": null,
+            "maxLength": 128,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Client Request Id",
+            "type": "string"
+          },
           "expected_version": {
             "minimum": 0,
             "title": "Expected Version",

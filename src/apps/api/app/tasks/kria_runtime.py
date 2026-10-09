@@ -112,6 +112,11 @@ from app.services.kria_editor_ops import (
     parse_editor_state,
     resolve_editor_base,
 )
+from app.services.thought_summaries import (
+    ThoughtSummaryPublisher,
+    bind_thought_publisher,
+    publisher_for_creation,
+)
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -1354,6 +1359,7 @@ async def _plan_with_live_agent(
     lease_epoch: int,
     editor_state: dict[str, Any] | None = None,
     answers_clip_question: bool = False,
+    thought_publisher: ThoughtSummaryPublisher | None = None,
 ) -> PlannedKriaTurn:
     stop = asyncio.Event()
 
@@ -1394,17 +1400,18 @@ async def _plan_with_live_agent(
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
             parsed_state = parse_editor_state(editor_state)
-            return await plan_live_turn(
-                db,
-                thread_id=uuid.UUID(str(snapshot["thread_id"])),
-                item_id=uuid.UUID(str(snapshot["item_id"])),
-                creator_id=uuid.UUID(str(snapshot["creator_id"])),
-                user_message=user_message,
-                # Only passed when present so the no-state call is byte-identical.
-                **({"editor_state": parsed_state} if parsed_state is not None else {}),
-                # KRI-282: a clip-picker answer must re-plan, never take the copilot path.
-                **({"answers_clip_question": True} if answers_clip_question else {}),
-            )
+            with bind_thought_publisher(thought_publisher):
+                return await plan_live_turn(
+                    db,
+                    thread_id=uuid.UUID(str(snapshot["thread_id"])),
+                    item_id=uuid.UUID(str(snapshot["item_id"])),
+                    creator_id=uuid.UUID(str(snapshot["creator_id"])),
+                    user_message=user_message,
+                    # Only passed when present so the no-state call is byte-identical.
+                    **({"editor_state": parsed_state} if parsed_state is not None else {}),
+                    # KRI-282: a clip-picker answer must re-plan, never take the copilot path.
+                    **({"answers_clip_question": True} if answers_clip_question else {}),
+                )
     finally:
         turn_deadline.reset(deadline)
         stop.set()
@@ -1523,7 +1530,7 @@ def _claim(
         if thread is None or source is None:
             return None
         return (
-            _snapshot(thread),
+            {**_snapshot(thread), "client_request_id": turn.client_event_id},
             str(source.content or ""),
             int(turn.lease_epoch),
             int(thread.revision),
@@ -1913,6 +1920,15 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
     # KRI-520: every reply this turn writes (model prompts, server copy, failures)
     # follows the chat's language; released in the `finally` below.
     language_token = bind_reply_language(snapshot.get("reply_language"))
+    thought_publisher = (
+        publisher_for_creation(
+            creator_id=uuid.UUID(str(snapshot["creator_id"])),
+            thread_id=uuid.UUID(str(snapshot["thread_id"])),
+            client_request_id=str(snapshot["client_request_id"]),
+        )
+        if snapshot.get("client_request_id")
+        else None
+    )
     try:
         if settings.main_creator_agent_enabled and snapshot.get("item_id"):
             planned = asyncio.run(
@@ -1922,6 +1938,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     turn_id=identifier,
                     lease_owner=lease_owner,
                     lease_epoch=lease_epoch,
+                    thought_publisher=thought_publisher,
                     **({"editor_state": editor_state} if editor_state else {}),
                     **({"answers_clip_question": True} if answers_clip_question else {}),
                 )
@@ -2033,6 +2050,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     )
                     return {"turn_id": turn_id, "status": "requeued"}
                 return {"turn_id": turn_id, "status": "ignored"}
+            if thought_publisher is not None:
+                thought_publisher.complete()
             if planned.defer_brief:
                 try:
                     extract_kria_brief.apply_async(
@@ -2154,6 +2173,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             )
         raise
     finally:
+        if thought_publisher is not None:
+            thought_publisher.fail()
         release_reply_language(language_token)
 
 

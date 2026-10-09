@@ -4149,6 +4149,18 @@ async def message_thread(
         return await _response(db, await _load(thread_id, user, db, creator_id=owner_id))
     if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
+    from app.services.thought_summaries import (  # noqa: PLC0415
+        bind_thought_publisher,
+        publisher_for_creation,
+    )
+
+    def _thought_publisher():  # noqa: ANN202 - optional request-scoped publisher
+        return publisher_for_creation(
+            creator_id=user.id,
+            thread_id=thread.id,
+            client_request_id=body.client_event_id,
+        )
+
     # Editor actions own their user-message admission so the model call can
     # release locks without committing an incomplete idempotency receipt.
     from app.services import creation_editor_actions  # noqa: PLC0415
@@ -4158,11 +4170,17 @@ async def message_thread(
     )
 
     if thread.active_job_id and is_visual_removal_request(body.message):
+        thoughts = _thought_publisher()
         try:
-            thread = await execute_visual_removal(db, thread, body, user)
+            with bind_thought_publisher(thoughts):
+                thread = await execute_visual_removal(db, thread, body, user)
         except Exception:
+            if thoughts is not None:
+                await asyncio.to_thread(thoughts.fail)
             await db.rollback()
             raise
+        if thoughts is not None:
+            await asyncio.to_thread(thoughts.complete)
         return await _response(db, thread)
 
     _stamp_device_intent(thread, user, native_client)
@@ -4275,17 +4293,33 @@ async def message_thread(
             and current_job.status in creation_editor_actions.POST_RENDER_EDIT_JOB_STATUSES
             and not creator_agent._is_refresh_retry_message(body.message)
         ):
-            copilot_result = await creation_editor_actions.execute_copilot_edit(
-                db, thread, body, user, job=current_job
-            )
+            thoughts = _thought_publisher()
+            try:
+                with bind_thought_publisher(thoughts):
+                    copilot_result = await creation_editor_actions.execute_copilot_edit(
+                        db, thread, body, user, job=current_job
+                    )
+            except Exception:
+                if thoughts is not None:
+                    await asyncio.to_thread(thoughts.fail)
+                raise
             if copilot_result is not None:
-                thread = copilot_result["thread"]
-                await db.commit()
-                await db.refresh(thread)
-                await creation_editor_actions.finalize_copilot_edit_render(
-                    db, thread, user, copilot_result
-                )
+                try:
+                    thread = copilot_result["thread"]
+                    await db.commit()
+                    await db.refresh(thread)
+                    await creation_editor_actions.finalize_copilot_edit_render(
+                        db, thread, user, copilot_result
+                    )
+                except Exception:
+                    if thoughts is not None:
+                        await asyncio.to_thread(thoughts.fail)
+                    raise
+                if thoughts is not None:
+                    await asyncio.to_thread(thoughts.complete)
                 return await _response(db, thread)
+            if thoughts is not None:
+                await asyncio.to_thread(thoughts.fail)
             # Copilot reports this needs different footage/direction/format
             # than an in-place edit can address -- fall through to the Main
             # Creator planning turn below, unchanged.
@@ -4343,13 +4377,29 @@ async def message_thread(
     # controller may reject a stale session/manifest with HTTP 409; rolling
     # back here prevents a message that never produced a turn from being
     # committed and duplicated on client replay.
+    thoughts = _thought_publisher()
     try:
-        thread = await _agent_message(request, thread, body, user, db)
+        with bind_thought_publisher(thoughts):
+            thread = await _agent_message(request, thread, body, user, db)
+        await db.commit()
+        await db.refresh(thread)
+        if thoughts is not None:
+            session = (
+                await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
+                if thread.active_creator_agent_session_id
+                else None
+            )
+            if session is not None:
+                await db.refresh(session)
+            if session is not None and session.last_error is not None:
+                await asyncio.to_thread(thoughts.fail)
+            else:
+                await asyncio.to_thread(thoughts.complete)
     except Exception:
+        if thoughts is not None:
+            await asyncio.to_thread(thoughts.fail)
         await db.rollback()
         raise
-    await db.commit()
-    await db.refresh(thread)
     return await _response(db, thread)
 
 

@@ -4287,6 +4287,7 @@ class SlidePostProposeBody(BaseModel):
     platform_profile: str
     asset_ids: list[str] | None = None
     instruction: str = Field(min_length=1, max_length=2000)
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class SlidePostChatTurn(BaseModel):
@@ -4743,20 +4744,34 @@ async def propose_slide_post(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Add at least one ready photo or video to this item first.",
         )
-    composed = await propose_slide_post_draft(
-        item=item,
-        assets=assets,
-        platform_profile=platform_profile,
-        previous_version=base_version,
-        current_draft=current,
-        instruction=body.instruction,
-        run_context=_creator_run_context(
-            request,
-            creator_id=user.id,
-            request_id=_paid_agent_request_id("slide-post-propose", str(item.id), body),
-        ),
+    from app.services.thought_summaries import publisher_for_slide_post  # noqa: PLC0415
+
+    thoughts = publisher_for_slide_post(
+        creator_id=user.id,
+        plan_item_id=item.id,
+        client_request_id=body.client_request_id,
     )
-    return SlidePostProposalResponse(
+    run_context = _creator_run_context(
+        request,
+        creator_id=user.id,
+        request_id=_paid_agent_request_id("slide-post-propose", str(item.id), body),
+    )
+    run_context.thought_summary_callback = thoughts
+    try:
+        composed = await propose_slide_post_draft(
+            item=item,
+            assets=assets,
+            platform_profile=platform_profile,
+            previous_version=base_version,
+            current_draft=current,
+            instruction=body.instruction,
+            run_context=run_context,
+        )
+    except Exception:
+        if thoughts is not None:
+            await asyncio.to_thread(thoughts.fail)
+        raise
+    result = SlidePostProposalResponse(
         draft=composed.draft,
         base_version=base_version,
         fallback_used=composed.fallback_used,
@@ -4766,6 +4781,9 @@ async def propose_slide_post(
             else "Kria proposed an order, cover, and caption. Review before saving."
         ),
     )
+    if thoughts is not None:
+        await asyncio.to_thread(thoughts.fail if composed.fallback_used else thoughts.complete)
+    return result
 
 
 @router.post("/{item_id}/slide-post/chat-edit", response_model=SlidePostChatEditResponse)
@@ -4870,25 +4888,42 @@ async def chat_edit_slide_post(
                 ),
                 base_version=server_version,
             )
-    return await run_slide_post_chat_edit(
-        draft=draft,
-        assets_by_id={asset.id: asset for asset in owned_assets},
-        message=body.message,
-        turns=[t.model_dump() for t in body.turns],
-        user_id=user.id,
-        server_version=server_version,
-        brief_binding=brief_binding,
-        run_context=_creator_run_context(
-            request,
-            creator_id=user.id,
-            request_id=_paid_agent_request_id(
-                "slide-post-chat-edit",
-                str(item.id),
-                body,
-                client_request_id=body.client_request_id,
-            ),
+    from app.services.thought_summaries import publisher_for_slide_post  # noqa: PLC0415
+
+    thoughts = publisher_for_slide_post(
+        creator_id=user.id,
+        plan_item_id=item.id,
+        client_request_id=body.client_request_id,
+    )
+    run_context = _creator_run_context(
+        request,
+        creator_id=user.id,
+        request_id=_paid_agent_request_id(
+            "slide-post-chat-edit",
+            str(item.id),
+            body,
+            client_request_id=body.client_request_id,
         ),
     )
+    run_context.thought_summary_callback = thoughts
+    try:
+        result = await run_slide_post_chat_edit(
+            draft=draft,
+            assets_by_id={asset.id: asset for asset in owned_assets},
+            message=body.message,
+            turns=[t.model_dump() for t in body.turns],
+            user_id=user.id,
+            server_version=server_version,
+            brief_binding=brief_binding,
+            run_context=run_context,
+        )
+    except Exception:
+        if thoughts is not None:
+            await asyncio.to_thread(thoughts.fail)
+        raise
+    if thoughts is not None:
+        await asyncio.to_thread(thoughts.fail if result.outcome == "failed" else thoughts.complete)
+    return result
 
 
 @router.post("/{item_id}/slide-post/generate", response_model=PlanItemResponse)

@@ -91,9 +91,11 @@ def verify_input(fixture: Path, head: str) -> dict:
     return proof
 
 
-def require_passed_test(results: Path) -> None:
+def require_passed_test(
+    results: Path,
+    target: str = "DeviceMontageRenderE2ETests/testCapturedCreationWordsRetimedThenExportOnTheIPhone",
+) -> None:
     value = load(results)
-    target = "DeviceMontageRenderE2ETests/testCapturedCreationWordsRetimedThenExportOnTheIPhone"
     matches = []
 
     def visit(node):
@@ -103,10 +105,7 @@ def require_passed_test(results: Path) -> None:
                 for item in node.values()
                 if isinstance(item, (str, int, float))
             )
-            if (
-                target in text
-                or "testCapturedCreationWordsRetimedThenExportOnTheIPhone" in text
-            ):
+            if target in text or target.rsplit("/", 1)[-1] in text:
                 matches.append(node)
             for item in node.values():
                 visit(item)
@@ -260,6 +259,9 @@ def main() -> None:
     validate_parser = commands.add_parser("validate")
     validate_parser.add_argument("--evidence", type=Path, required=True)
     validate_parser.add_argument("--head", required=True)
+    tests_parser = commands.add_parser("verify-tests")
+    tests_parser.add_argument("--test-results", type=Path, required=True)
+    tests_parser.add_argument("--xctest", action="append", required=True)
     args = parser.parse_args()
     if args.command == "verify-input":
         verify_input(args.fixture, args.head)
@@ -273,6 +275,9 @@ def main() -> None:
             args.app_build,
             args.output,
         )
+    elif args.command == "verify-tests":
+        for xctest in args.xctest:
+            require_passed_test(args.test_results, xctest)
     else:
         validate(args.evidence, args.head)
 

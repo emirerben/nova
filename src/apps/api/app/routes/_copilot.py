@@ -322,6 +322,8 @@ async def run_copilot_turn(
         reply_language=current_reply_language(),
     )
 
+    from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
+
     try:
         output: EditCopilotOutput = await asyncio.to_thread(
             EditCopilotAgent(default_client()).run,
@@ -330,6 +332,7 @@ async def run_copilot_turn(
                 job_id=str(job_id),
                 request_id=_paid_request_id(body, job_id=job_id),
                 request_id_authoritative=bool(body.client_request_id),
+                thought_summary_callback=current_thought_publisher(),
             ),
         )
     except AiBudgetExceededError:

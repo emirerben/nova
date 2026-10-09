@@ -121,6 +121,39 @@ class JourneyGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stale"):
             gate.validate(evidence, "b" * 40)
 
+    def test_named_native_tests_must_each_pass(self):
+        results = Path(self.temp.name) / "thought-results.json"
+        results.write_text(
+            json.dumps(
+                {
+                    "tests": [
+                        {
+                            "testIdentifier": "KriaTests/ChatTimelineTests/testCompletedThoughtIsPlacedAfterItsUserRequestBeforeReply",
+                            "testStatus": "Success",
+                        },
+                        {
+                            "testIdentifier": "KriaTests/SlidePostTests/testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory",
+                            "testStatus": "Skipped",
+                        },
+                    ]
+                }
+            )
+        )
+        gate.require_passed_test(
+            results,
+            "ChatTimelineTests/testCompletedThoughtIsPlacedAfterItsUserRequestBeforeReply",
+        )
+        with self.assertRaisesRegex(ValueError, "did not pass"):
+            gate.require_passed_test(
+                results,
+                "SlidePostTests/testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory",
+            )
+        with self.assertRaisesRegex(ValueError, "does not contain"):
+            gate.require_passed_test(
+                results,
+                "SlidePostChatEditTests/testCompletedChatEditThoughtRemainsWithReplyAfterReopening",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
