@@ -1339,7 +1339,7 @@
           "type": "object"
         },
         "EditorCommitMix": {
-          "description": "Editor mix section. `music_level` maps onto the existing per-variant `mix`\nsemantics (voice/bed balance \u2014 voiceover variants only). `original_level` is the\nfootage's own sound level: persisted on every variant, and honored by the phone\nrenderer for guided-story edits (including creator-song videos, where it plays WITH\nthe song; unset keeps the song video's camera silent).",
+          "description": "Editor mix section. `music_level` maps onto the existing per-variant `mix`\nsemantics (voice/bed balance \u2014 voiceover variants only). `original_level` is the\nfootage's own sound level: persisted on every variant, and honored by the phone\nrenderer for guided-story edits (including creator-song videos, where it plays WITH\nthe song; unset keeps the song video's camera silent) and by the cloud renderer for\nsong variants (footage plays UNDER the song) and original-audio variants (footage\nvolume). Cloud voiceover variants refuse it (422 original_audio_voiceover_unsupported).",
           "properties": {
             "music_level": {
               "anyOf": [

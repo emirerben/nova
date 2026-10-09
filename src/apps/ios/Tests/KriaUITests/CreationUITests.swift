@@ -1251,7 +1251,7 @@ final class CreationUITests: XCTestCase {
     /// on the live feed.
     private func launchLivePlanFeed(
         reduceMotion: Bool, reduceTransparency: Bool = false, cancel: String? = nil, capability: Bool = true,
-        device: Bool = false, followup: Bool = false, contractV2: Bool = false
+        device: Bool = false, followup: Bool = false, contractV2: Bool = false, review: Bool = false
     ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
@@ -1259,7 +1259,9 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         if capability { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS"] = "1" }
         // Live-plan contract v2: structured payloads, 8 sections (post_caption), Review entry points.
-        if contractV2 { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_VERSION"] = "2" }
+        if contractV2 || review { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_VERSION"] = "2" }
+        // The contract-v2 server model behind the Review sheet: GET /plan, scoped turns, per-section undo.
+        if review { app.launchEnvironment["KRIA_CHAT_PLAN_REVIEW"] = "1" }
         if followup { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] = "1" }
         if device {
             app.launchEnvironment["KRIA_CHAT_DEVICE_RENDER"] = "ready"
@@ -1487,6 +1489,200 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(eventually(timeout: 60) { app.staticTexts["plan-feed.title"].label == "Plan ready · 7 of 7 decided" })
         attach(app, "plan-feed-reduced-complete")
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 60))
+    }
+
+    // MARK: - Live plan & review: the Review your video sheet
+
+    private let reviewSections = ["title", "clips", "captions", "music", "sfx", "overlays", "look", "post_caption"]
+
+    private func element(_ app: XCUIApplication, _ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
+
+    private func fieldText(_ app: XCUIApplication, _ id: String) -> String { element(app, id).value as? String ?? "" }
+
+    /// Scrolls the sheet until the element sits in the clear middle band (above the floating panel, below the
+    /// header), then returns it. The bottom panel floats over the cards, so a bare tap can land on the glass.
+    private func reveal(_ app: XCUIApplication, _ id: String) -> XCUIElement {
+        let target = element(app, id)
+        XCTAssertTrue(target.waitForExistence(timeout: 10), "\(id) exists")
+        let window = app.windows.firstMatch
+        for _ in 0..<10 {
+            let height = window.frame.height
+            let y = target.frame.midY
+            if y > 200 && y < height * 0.6 { break }
+            let from = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: y >= height * 0.6 ? 0.62 : 0.3))
+            let to = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: y >= height * 0.6 ? 0.38 : 0.55))
+            from.press(forDuration: 0.05, thenDragTo: to)
+        }
+        return target
+    }
+
+    /// The feed finishes, "Review your video" opens the sheet. Returns once every card is on screen.
+    private func openReviewFromFeed(_ app: XCUIApplication) {
+        let cta = app.buttons["plan-feed-review-cta"]
+        XCTAssertTrue(cta.waitForExistence(timeout: 100), "the finished feed offers the Review CTA")
+        cta.tap()
+        XCTAssertTrue(app.otherElements["review-section-title"].waitForExistence(timeout: 15), "the Review sheet opens")
+        XCTAssertTrue(element(app, "review-change-captions").waitForExistence(timeout: 15), "the snapshot makes sections changeable")
+    }
+
+    private func sectionValue(_ app: XCUIApplication, _ section: String) -> String {
+        app.otherElements["review-section-\(section)"].value as? String ?? ""
+    }
+
+    /// Flag Captions and Music, ask for something, press Update video and wait for the Updated state.
+    private func updateCaptionsAndMusic(_ app: XCUIApplication, screenshots: Bool = true) {
+        reveal(app, "review-change-captions").tap()
+        reveal(app, "review-change-music").tap()
+        XCTAssertTrue(element(app, "review-chip-captions").waitForExistence(timeout: 5), "a flagged section becomes a chip")
+        XCTAssertTrue(element(app, "review-chip-music").exists)
+        XCTAssertTrue(eventually(timeout: 5) { self.sectionValue(app, "captions") == "flagged" && self.sectionValue(app, "music") == "flagged" })
+        let prompt = element(app, "review-prompt-field")
+        prompt.tap()
+        prompt.typeText("Shorter captions, and something more upbeat")
+        if screenshots { attach(app, "review-flagged") }
+        let update = element(app, "review-update-video")
+        XCTAssertTrue(update.isEnabled)
+        update.tap()
+        XCTAssertTrue(element(app, "review-updating").waitForExistence(timeout: 10), "the panel switches to Updating")
+        XCTAssertTrue(eventually(timeout: 10) { self.sectionValue(app, "captions") == "updating" }, "flagged cards show as being redone")
+        XCTAssertNotEqual(sectionValue(app, "sfx"), "updating", "an unflagged section keeps its card")
+        if screenshots { attach(app, "review-updating") }
+        XCTAssertTrue(element(app, "review-updated-captions").waitForExistence(timeout: 60), "the update finishes with an Updated pill")
+        XCTAssertTrue(element(app, "review-updated-music").exists)
+    }
+
+    func testReviewPlanFlagsUpdatesAndUndoesASectionFromTheFeedCTA() {
+        let app = launchLivePlanFeed(reduceMotion: true, review: true)
+        openReviewFromFeed(app)
+
+        // Every section is there, in order, with the right affordances.
+        for section in reviewSections { XCTAssertTrue(app.otherElements["review-section-\(section)"].exists, "\(section) card") }
+        XCTAssertEqual(sectionValue(app, "overlays"), "not used")
+        XCTAssertEqual(sectionValue(app, "post_caption"), "read only")
+        XCTAssertFalse(element(app, "review-change-overlays").exists, "a section that is not used has nothing to change")
+        XCTAssertFalse(element(app, "review-change-post_caption").exists, "a post caption is display only")
+        XCTAssertTrue(element(app, "review-change-sfx").exists, "a malformed payload still shows its summary and can be changed")
+        XCTAssertFalse(element(app, "review-update-video").isEnabled, "nothing flagged yet")
+        XCTAssertTrue(element(app, "review-keep-as-is").exists)
+        XCTAssertEqual(fieldText(app, "review-edit-caption-c2"), "Salt, sun, sand.")
+        attach(app, "review-idle")
+
+        updateCaptionsAndMusic(app)
+        XCTAssertFalse(element(app, "review-updated-sfx").exists, "only the flagged sections changed")
+        XCTAssertTrue(element(app, "review-summary").label.contains("captions and music"), "the assistant summary is shown")
+        XCTAssertTrue(element(app, "review-was-captions").label.hasPrefix("Was 4 lines"))
+        XCTAssertEqual(fieldText(app, "review-edit-caption-c2"), "Salt, sun.")
+        XCTAssertTrue(element(app, "review-changed-line-c2").exists, "changed lines are marked")
+        XCTAssertFalse(element(app, "review-changed-line-c1").exists, "unchanged lines are not")
+        XCTAssertTrue(element(app, "review-undo-all").exists)
+        attach(app, "review-updated")
+
+        // Undo one section: only captions come back, as another update that can itself be undone.
+        reveal(app, "review-undo-captions").tap()
+        XCTAssertTrue(eventually(timeout: 60) { self.fieldText(app, "review-edit-caption-c2") == "Salt, sun, sand." }, "the previous captions are restored")
+        XCTAssertTrue(element(app, "review-updated-captions").waitForExistence(timeout: 30), "the restored section is marked changed, so Undo toggles")
+        XCTAssertFalse(element(app, "review-updated-music").exists, "the music update from the earlier job is not part of this one")
+        XCTAssertTrue(element(app, "review-was-captions").label.contains("4 lines · shorter"))
+        attach(app, "review-undone")
+    }
+
+    func testReviewPlanUndoAllPutsEverythingBack() {
+        let app = launchLivePlanFeed(reduceMotion: true, review: true)
+        openReviewFromFeed(app)
+        updateCaptionsAndMusic(app, screenshots: false)
+        XCTAssertEqual(fieldText(app, "review-edit-caption-c2"), "Salt, sun.")
+        XCTAssertTrue(app.staticTexts["Golden Hour"].exists, "the update swapped the track")
+        element(app, "review-undo-all").tap()
+        XCTAssertTrue(eventually(timeout: 60) { self.fieldText(app, "review-edit-caption-c2") == "Salt, sun, sand." }, "undo all restores the captions")
+        XCTAssertTrue(app.staticTexts["Sunday Drive"].waitForExistence(timeout: 30), "and the track")
+        XCTAssertTrue(element(app, "review-summary").waitForExistence(timeout: 30))
+        attach(app, "review-undo-all")
+    }
+
+    func testReviewPlanManualEditsOfTitleCaptionsAndMixFlagTheirSections() {
+        let app = launchLivePlanFeed(reduceMotion: true, review: true)
+        openReviewFromFeed(app)
+        XCTAssertFalse(element(app, "review-chip-title").exists)
+
+        // Typing in a field flags its section: no Change tap needed.
+        let title = reveal(app, "review-edit-title")
+        title.tap()
+        title.typeText(" by the sea")
+        XCTAssertTrue(element(app, "review-chip-title").waitForExistence(timeout: 5))
+        let line = reveal(app, "review-edit-caption-c3")
+        line.tap()
+        line.typeText("!")
+        XCTAssertTrue(element(app, "review-chip-captions").waitForExistence(timeout: 5))
+        let slider = reveal(app, "review-mix-music_level")
+        XCTAssertTrue(slider.waitForExistence(timeout: 5))
+        slider.adjust(toNormalizedSliderPosition: 0.2)
+        XCTAssertTrue(element(app, "review-chip-music").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "review-update-video").isEnabled, "edits alone are enough to update, no prompt needed")
+        attach(app, "review-manual-edits")
+
+        // Removing a chip discards that section's edits.
+        element(app, "review-chip-captions").tap()
+        XCTAssertTrue(eventually(timeout: 5) { !self.element(app, "review-chip-captions").exists })
+        XCTAssertEqual(fieldText(app, "review-edit-caption-c3"), "Golden hour.", "the caption edit is gone with its chip")
+
+        element(app, "review-update-video").tap()
+        XCTAssertTrue(element(app, "review-updated-title").waitForExistence(timeout: 60))
+        XCTAssertTrue(element(app, "review-updated-music").exists)
+        XCTAssertFalse(element(app, "review-updated-captions").exists, "captions were not sent")
+        XCTAssertTrue(fieldText(app, "review-edit-title").contains("by the sea"), "the typed title landed: \(fieldText(app, "review-edit-title"))")
+        let level = fieldText(app, "review-mix-music_level")
+        XCTAssertTrue(level.hasSuffix("percent") && (Int(level.split(separator: " ").first ?? "") ?? 0) <= 30, "the new mix level landed: \(level)")
+        attach(app, "review-manual-edits-updated")
+    }
+
+    func testReviewPlanChangeOnAFeedCardOpensReviewWithThatSectionFlagged() {
+        let app = launchLivePlanFeed(reduceMotion: true, review: true)
+        XCTAssertTrue(app.otherElements["plan-feed"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["plan-feed-review-cta"].waitForExistence(timeout: 100))
+        app.buttons["plan-feed.block.captions"].tap()
+        let change = element(app, "plan-feed.change.captions")
+        XCTAssertTrue(change.waitForExistence(timeout: 5))
+        change.tap()
+        XCTAssertTrue(element(app, "review-chip-captions").waitForExistence(timeout: 15), "the card's Change flags that section")
+        XCTAssertTrue(eventually(timeout: 5) { self.sectionValue(app, "captions") == "flagged" })
+        XCTAssertFalse(element(app, "review-chip-music").exists)
+        // Un-flagging from the card works the same as from the chip.
+        reveal(app, "review-change-captions").tap()
+        XCTAssertTrue(eventually(timeout: 5) { !self.element(app, "review-chip-captions").exists })
+        XCTAssertFalse(element(app, "review-update-video").isEnabled)
+    }
+
+    func testReviewPlanOpensFromTheProjectAndKeepAsIsSendsNothing() {
+        let app = launchLivePlanFeed(reduceMotion: true, review: true)
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 120))
+        let entry = app.buttons["project-review-entry"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 15), "a finished video offers Review")
+        entry.tap()
+        XCTAssertTrue(app.otherElements["review-section-captions"].waitForExistence(timeout: 15))
+        XCTAssertTrue(element(app, "review-change-captions").waitForExistence(timeout: 15))
+        XCTAssertFalse(element(app, "review-undo-all").exists, "nothing has been updated yet")
+        reveal(app, "review-change-music").tap()
+        element(app, "review-keep-as-is").tap()
+        XCTAssertTrue(eventually(timeout: 10) { !app.otherElements["review-section-captions"].exists }, "Keep as is closes the sheet")
+        XCTAssertTrue(app.buttons["Open editor"].exists, "nothing was sent: still the same finished video")
+        XCTAssertFalse(app.otherElements["plan-feed"].exists)
+    }
+
+    func testReviewPlanStaysHiddenOnAnOlderServer() {
+        // Feed only (no contract v2): no Review CTA in the feed and no Review row under the finished video.
+        let app = launchLivePlanFeed(reduceMotion: true)
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 120))
+        XCTAssertFalse(app.buttons["plan-feed-review-cta"].exists)
+        XCTAssertFalse(app.buttons["project-review-entry"].waitForExistence(timeout: 3))
+    }
+
+    func testReviewPlanUnderReduceMotionAndReduceTransparency() {
+        let app = launchLivePlanFeed(reduceMotion: true, reduceTransparency: true, review: true)
+        openReviewFromFeed(app)
+        attach(app, "review-reduced-idle")
+        updateCaptionsAndMusic(app, screenshots: false)
+        attach(app, "review-reduced-updated")
+        XCTAssertTrue(element(app, "review-done").exists)
     }
 
     private func createFreshChat(in app: XCUIApplication) {
