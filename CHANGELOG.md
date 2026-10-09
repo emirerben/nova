@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.190.0] - 2026-10-09
+
+### Fixed
+- fix(ios): shimmer Thinking label (KRI-556) (#1516) <!-- release-pr: 1516 -->
+
 ## [0.78.189.0] - 2026-10-09
 
 ### Changed
