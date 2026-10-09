@@ -262,7 +262,7 @@ jobs:
           python3 - <<'PY'
           import os
           selected = os.environ["JOURNEY_IDS"].split(",")
-          allowed = {"kri-524-creation", "kri-557-thinking"}
+          allowed = {"kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery"}
           if os.environ["COVERAGE"] != "covered" or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed:
               raise SystemExit("Journey selection has an unmapped or invalid incident")
           PY
@@ -390,6 +390,30 @@ jobs:
             --xctest ChatTimelineTests/testCompletedThoughtIsPlacedAfterItsUserRequestBeforeReply \
             --xctest SlidePostTests/testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory \
             --xctest SlidePostChatEditTests/testCompletedChatEditThoughtRemainsWithReplyAfterReopening
+      - name: Verify slide-post binding and save validation
+        if: contains(needs.changes.outputs.journey_ids, 'slide-post-binding-recovery')
+        working-directory: src/apps/api
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/routes/test_slide_post_native_routes.py -q \
+            | tee ../../../test-results/kri-559/slide-post-binding-api-tests.log
+      - name: Verify iOS binding round trip through chat and save requests
+        if: contains(needs.changes.outputs.journey_ids, 'slide-post-binding-recovery')
+        working-directory: src/apps/ios
+        run: |
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
+            -only-testing:KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave \
+            -resultBundlePath ../../../test-results/kri-559/slide-post-binding-native.xcresult test
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/slide-post-binding-native.xcresult \
+            > ../../../test-results/kri-559/slide-post-binding-native-test-results.json
+      - name: Require native slide-post binding journey to pass
+        if: contains(needs.changes.outputs.journey_ids, 'slide-post-binding-recovery')
+        run: |
+          python3 scripts/ci/journey-gate.py verify-tests \
+            --test-results test-results/kri-559/slide-post-binding-native-test-results.json \
+            --xctest SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave
       - uses: actions/upload-artifact@v4
         if: always()
         with:

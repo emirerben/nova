@@ -55,6 +55,42 @@ import XCTest
         let requestBinding = requestJSON?["brief_binding"] as? [String: Any]
         XCTAssertEqual(requestBinding?["version"] as? Double, 3)
     }
+    func testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave() throws {
+        let fixtureURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Fixtures/SlidePostBindingRoundTrip.json")
+        let draft = try JSONDecoder().decode(SlidePostDraft.self, from: Data(contentsOf: fixtureURL))
+        let digest = try XCTUnwrap(draft.briefBinding?.objectValue?["digest"]?.stringValue)
+
+        let chat = SlidePostChatEditRequest(
+            message: "Keep the title.", expectedVersion: 2, draft: draft, turns: [], clientRequestID: "fixture"
+        )
+        let save = SlidePostSaveRequest(draft: draft, expectedVersion: 2)
+        let encodedRequests = [
+            (data: try JSONEncoder().encode(chat), isChat: true),
+            (data: try JSONEncoder().encode(save), isChat: false),
+        ]
+
+        for request in encodedRequests {
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.data) as? [String: Any])
+            let draftBody: [String: Any]
+            if request.isChat {
+                draftBody = try XCTUnwrap(body["draft"] as? [String: Any])
+            } else {
+                draftBody = body
+            }
+            let binding = try XCTUnwrap(draftBody["brief_binding"] as? [String: Any])
+            XCTAssertEqual(binding["digest"] as? String, digest)
+
+            let snapshot = try XCTUnwrap(binding["media_snapshot"] as? [String: Any])
+            let snapshotDraft = try XCTUnwrap(snapshot["draft"] as? [String: Any])
+            let slides = try XCTUnwrap(snapshotDraft["slides"] as? [[String: Any]])
+            let edits = try XCTUnwrap(slides.first?["edits"] as? [String: Any])
+            let texts = try XCTUnwrap(edits["texts"] as? [[String: Any]])
+            let opacity = try XCTUnwrap(texts.first?["shadow_opacity"] as? NSNumber)
+            XCTAssertEqual(opacity.intValue, 1)
+            XCTAssertNotEqual(String(cString: opacity.objCType), "d", "the nested opacity must encode as JSON 1")
+        }
+    }
     func testAuthenticatedProposalIsReadOnlyUntilExplicitAcceptance() async throws {
         let saved = fixture()
         let response = SlidePostProposal(draft: try XCTUnwrap(saved.draft), baseVersion: 1, fallbackUsed: false, summary: "Review the order")

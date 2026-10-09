@@ -79,6 +79,21 @@
         "src/apps/ios/Tests/KriaTests/SlidePostChatEditTests.swift",
         "src/apps/ios/Tests/KriaTests/SlidePostTests.swift"
       ]
+    },
+    {
+      "id": "slide-post-binding-recovery",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py",
+      "xctests": [
+        "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave"
+      ],
+      "paths": [
+        "src/apps/api/app/routes/plan_items.py",
+        "src/apps/api/app/schemas/slide_post.py",
+        "src/apps/api/tests/routes/test_slide_post_native_routes.py",
+        "src/apps/ios/Kria/Core/SlidePost.swift",
+        "src/apps/ios/Tests/KriaTests/SlidePostTests.swift",
+        "src/apps/ios/Tests/Fixtures/SlidePostBindingRoundTrip.json"
+      ]
     }
   ]
 }

@@ -177,6 +177,7 @@ from app.schemas.slide_post import (
     SlidePostDraft,
     SlideRef,
     bump_slide_post_version,
+    canonicalize_slide_post_brief_binding,
     merge_legacy_text_edits,
     parse_slide_post,
 )
@@ -4272,6 +4273,11 @@ class SlidePostDraftBody(BaseModel):
     brief_binding: BriefBinding | None = None
     # Optional for the web editor's legacy payload. Native always supplies it.
     expected_version: int | None = Field(default=None, ge=0)
+
+    @field_validator("brief_binding", mode="before")
+    @classmethod
+    def _canonicalize_binding_snapshot(cls, value: object) -> object:
+        return canonicalize_slide_post_brief_binding(value)
 
 
 class SlidePostComposeBody(BaseModel):
