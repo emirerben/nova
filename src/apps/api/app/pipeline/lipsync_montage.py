@@ -649,9 +649,18 @@ def _media_ref(clip: UnifiedClip) -> MediaRef:
     )
 
 
+# KRI-561: a take the creator placed on the song timeline counts at least this much toward a
+# span, however weak its measured likelihood (a drop in an empty gap has none). Their layout
+# then wins span selection instead of being dropped as ``gap_unfillable`` behind a sure take.
+CREATOR_PLACED_WEIGHT = 0.5
+
+
 def _weight(block: _Block) -> float:
     """How much a placed block counts toward a span: its likelihood, never zero."""
-    return max(block.placed.likelihood, 0.05) if block.placed is not None else 0.0
+    if block.placed is None:
+        return 0.0
+    floor = CREATOR_PLACED_WEIGHT if block.placed.confirmed else 0.05
+    return max(block.placed.likelihood, floor)
 
 
 def _covered_ms(blocks: Sequence[_Block]) -> float:

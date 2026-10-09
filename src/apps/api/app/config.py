@@ -611,6 +611,12 @@ class Settings(BaseSettings):
     # `fly machine restart <id>`. Needs `musicBed` + `audioMix` in
     # PHONE_RENDER_VERIFIED_FEATURES (both already verified in prod).
     user_song_montage_enabled: bool = True
+    # KRI-561: the song-order question is answered on a horizontal song timeline (play the
+    # song, drop clips onto song time) instead of the vertical reorder list. Kill switch:
+    # `fly secrets set SONG_ORDER_TIMELINE_ENABLED=false` + restart (api): capabilities drop
+    # `song_order_placements` and the app falls back to the reorder card. Only effective
+    # while USER_SONG_MONTAGE_ENABLED holds.
+    song_order_timeline_enabled: bool = True
     # KRI-443: live plan block feed. After Create on a v2 thread, the render emits
     # `plan_block` events into CreationThreadEvent (read via GET /delta), and
     # POST /creation-threads/{id}/turns/{turn}/cancel-render is enabled. Default

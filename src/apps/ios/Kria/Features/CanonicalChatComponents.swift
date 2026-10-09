@@ -172,6 +172,9 @@ struct ChatMessageRow: View {
     /// KRI-374: how to present `message.songOrderQuestion`. nil (old server, flag off, not a question) = text only.
     var songOrderMode: SongOrderCardMode? = nil
     var songOrderMedia: [CreationAttachedMedia] = []
+    /// KRI-561: set when the server advertises `song_order_placements`; the order question is then the song timeline.
+    var songTimeline: SongTimelineConfiguration? = nil
+    var songDurationS: Double? = nil
     var projectID: UUID? = nil
     /// KRI-282: how to present `message.choiceQuestion`. nil (old server, flag off, not a question) = text question only.
     var choiceQuestionMode: ChoiceQuestionCardMode? = nil
@@ -230,8 +233,14 @@ struct ChatMessageRow: View {
                         .id(question.questionID)
                 }
                 if let question = message.songOrderQuestion, let songOrderMode, let projectID {
-                    SongOrderCard(question: question, media: songOrderMedia, projectID: projectID, mode: songOrderMode)
-                        .id(question.questionID)
+                    if let songTimeline {
+                        SongTimelineCard(question: question, media: songOrderMedia, projectID: projectID, mode: songOrderMode,
+                                         configuration: songTimeline, songDurationS: songDurationS)
+                            .id(question.questionID)
+                    } else {
+                        SongOrderCard(question: question, media: songOrderMedia, projectID: projectID, mode: songOrderMode)
+                            .id(question.questionID)
+                    }
                 }
                 if let question = message.choiceQuestion, let choiceQuestionMode {
                     ChoiceQuestionCard(question: question, mode: choiceQuestionMode)

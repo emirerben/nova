@@ -274,7 +274,7 @@ struct SongOrderCard: View {
 }
 
 /// The "?" on a take Kria isn't sure about.
-private struct UncertainBadge: View {
+struct UncertainBadge: View {
     var body: some View {
         Text("?")
             .font(KriaFont.body(12).weight(.bold)).foregroundStyle(KriaColor.ink)
@@ -286,7 +286,7 @@ private struct UncertainBadge: View {
 }
 
 /// Inline, looping preview of the take's original from the start. Plays only while a take is selected.
-private struct SongOrderPreview: View {
+struct SongOrderPreview: View {
     let mediaID: String
     let url: URL?
     let title: String
@@ -318,7 +318,7 @@ private struct SongOrderPreview: View {
     }
 }
 
-@MainActor private final class SongOrderPreviewModel: ObservableObject {
+@MainActor final class SongOrderPreviewModel: ObservableObject {
     let player = AVQueuePlayer()
     private var looper: AVPlayerLooper?
     private var isSessionActive = false

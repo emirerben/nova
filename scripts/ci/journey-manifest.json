@@ -100,6 +100,21 @@
         "src/apps/ios/Tests/KriaTests/SlidePostTests.swift",
         "src/apps/ios/Tests/Fixtures/SlidePostBindingRoundTrip.json"
       ]
+    },
+    {
+      "id": "kri-561-song-order",
+      "api_tests": "tests/pipeline/test_song_order_placements.py",
+      "xctests": [
+        "KriaTests/SongOrderTests/testSubmissionListsPlacedTakesByTimeThenTheTrayInCaptureOrderAndEveryTakeOnce",
+        "KriaTests/SongOrderTests/testOldServerPayloadWithNoNewFieldsStillParsesAndGivesATimelineWithDefaults",
+        "KriaTests/SongOrderTests/testExtendingThePreviousBlockBy099IsHiddenAndBy1sIsVisible"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/lipsync_montage.py",
+        "src/apps/api/app/schemas/user_song.py",
+        "src/apps/api/tests/pipeline/test_song_order_placements.py",
+        "src/apps/ios/Tests/KriaTests/SongOrderTests.swift"
+      ]
     }
   ]
 }

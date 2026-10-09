@@ -2415,6 +2415,40 @@ Flow:
    written before KRI-471 have no `place`: a confirmed `delta_s` pins, `None` is
    B-roll. A missing or stale (`SONG_ALIGNMENT_VERSION`) alignment is re-enqueued
    once per gate call.
+   **Song timeline answer (KRI-561).** With capability `song_order_placements` the
+   app shows the question as a horizontal song timeline (song plays; tap an empty
+   spot to hear that stretch and drop a clip there) instead of the reorder list. The
+   question additionally carries `song_duration_s`, `max_window_s` (120),
+   `first_line_s` and, per item, `duration_s` + `candidates[]` for EVERY take
+   (negative `delta_s` is valid: filmed before the song starts). The answer adds
+   `placements: [{media_id, delta_s}]` next to `ordered_media_ids` (which still names
+   every take once, so the exact-set checks and old readers are unchanged). A take in
+   `ordered_media_ids` but not in `placements` stays in the tray => `place="broll"`,
+   `reason="creator_unplaced"`. `resolve_creator_placements` maps each placement to
+   the same row shape as `resolve_uncertain_takes`: a drop within
+   `PLACEMENT_SNAP_S` (0.25 s) of one of the take's own candidates snaps to it (exact
+   delta and likelihood); otherwise it pins at the drop with likelihood 0. A take at
+   the assignment's own pick that the assignment was sure of stays `aligner`,
+   unconfirmed; everything else is `creator_position`, confirmed. No new
+   `position_basis` literal (rolling-deploy safe: `UserSongTake` is `extra=forbid`),
+   and never `creator_stack`. The planner applies placements BEFORE the "nothing to
+   ask" exit, so a later re-alignment cannot discard the layout.
+   `lipsync_montage._weight` gives a creator-confirmed take at least
+   `CREATOR_PLACED_WEIGHT` (0.5) when span selection must pick one side of a hole it
+   cannot fill. **Known limit:** an interior gap that neither neighbour footage nor
+   tray clips can fill still splits the montage (one side is dropped as
+   `gap_unfillable`); the card says so instead of promising a fill. Playback:
+   `GET /creation-threads/{id}/song-audio?generation=N` returns a 15-minute signed URL
+   pinned to the object generation (409 `song_changed` if the song was replaced or
+   removed; 404 when disabled). Kill switch `SONG_ORDER_TIMELINE_ENABLED=false` (api
+   restart) drops `song_order_placements` from capabilities and the song-audio route
+   404s: the app falls back to the reorder card. **Deploy order: API first**
+   (`SongOrderAnswerIn` is `extra=forbid`); the app only sends `placements` when the
+   capability is on. Guards: `tests/pipeline/test_song_order_placements.py` (end to
+   end through `plan_lipsync_montage`), `tests/kria/test_planner_song_order.py`,
+   `tests/kria/test_song_order_turns_postgres.py`,
+   `tests/routes/test_creation_threads_user_song.py`,
+   `tests/test_user_song_contracts.py` (old payloads stay byte-identical).
 5. **Render.** `_run_phone_unified_montage_job` branches on
    `all_candidates["user_song"]` (`gcs_path, generation, duration_s, sync`):
    - `background`: `plan_unified_montage(song_*)`. The total is capped at the song
@@ -2559,6 +2593,10 @@ Flags and rollout:
   policy refuses `user_song`, dispatch refuses with `user_song_unavailable`.
   Apply: `fly secrets set USER_SONG_MONTAGE_ENABLED=false --app nova-video` +
   restart (api + worker).
+- `SONG_ORDER_TIMELINE_ENABLED` (default `true`, KRI-561): off drops
+  `song_order_placements` from capabilities and 404s `song-audio`; the app shows the
+  reorder card. Apply: `fly secrets set SONG_ORDER_TIMELINE_ENABLED=false --app
+  nova-video` + restart (api).
 - `phone_user_song_supported()` additionally needs `musicBed` and `audioMix` in
   `PHONE_RENDER_VERIFIED_FEATURES` (both already in prod).
 - The affordance is offered only to clients at or above

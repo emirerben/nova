@@ -109,10 +109,13 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
             // sends the clip_question payload but does not advertise the capability (old-server fallback).
             if ["1", "history"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
-            // KRIA_CHAT_SONG_ORDER: "1" = server advertises media.song and song_order_questions (KRI-374);
-            // "legacy" = it still sends the song_order_question payload but advertises nothing (old-app fallback).
-            if ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" {
+            // KRIA_CHAT_SONG_ORDER: "1" = server advertises media.song, song_order_questions and
+            // song_order_placements (the song timeline, KRI-561); "list" = media.song and song_order_questions only
+            // (the vertical order list, an older server); "legacy" = it still sends the song_order_question payload
+            // but advertises nothing (old-app fallback).
+            if ["1", "list"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"]) {
                 capabilities["song_order_questions"] = true
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" { capabilities["song_order_placements"] = true }
                 capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]]
             }
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
@@ -187,6 +190,14 @@ final class CreationChatFixture: @unchecked Sendable {
         guard parts.count >= 2, var thread = threads[parts[1]] else { return response(["detail": "Fixture route missing"], status: 404) }
         let id = parts[1]
         if parts.count == 3, parts[2] == "brief" { return response(Self.fixtureBrief(threadID: id)) }
+        // KRI-561: the signed song URL. The fixture hands out a generated tone as a file URL (no network).
+        if parts.count == 3, parts[2] == "song-audio", ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" {
+            guard let url = SongTimelineFixture.audioURL() else { return response(["detail": "Fixture audio missing"], status: 404) }
+            let generation = request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
+                .queryItems?.first { $0.name == "generation" }?.value.flatMap(Int.init) ?? SongTimelineFixture.generation
+            return response(["url": url.absoluteString, "generation": generation, "duration_s": SongTimelineFixture.audioSeconds,
+                             "expires_at": "2099-01-01T00:00:00Z"])
+        }
         var state = thread["state"] as? [String: Any] ?? [:]
         var events = thread["events"] as? [[String: Any]] ?? []
         var revision = thread["revision"] as? Int ?? 0
@@ -349,20 +360,17 @@ final class CreationChatFixture: @unchecked Sendable {
                 if let order = body["song_order"] as? [String: Any] {
                     // Echo what the server received so the UI test can pin the structured payload.
                     let ids = (order["ordered_media_ids"] as? [String] ?? []).joined(separator: "+")
-                    append("assistant_response", text: "Got it. order[\(ids)] question[\(order["question_id"] ?? "")]")
+                    var echo = "Got it. order[\(ids)] question[\(order["question_id"] ?? "")]"
+                    if let placements = order["placements"] as? [[String: Any]] {
+                        let list = placements.map { "\($0["media_id"] ?? "")@" + String(format: "%.1f", $0["delta_s"] as? Double ?? .nan) }
+                        echo += " placements[\(list.joined(separator: ";"))]"
+                    }
+                    append("assistant_response", text: echo)
                 } else {
+                    let timeline = ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1"
                     append("assistant_question", text: "I couldn't place a few of your clips against the song. Check the order.", payload: [
                         "turn_id": turnID, "turn_value": "question",
-                        "song_order_question": [
-                            "question_id": "song-q-\(events.count)",
-                            "proposed_order": ["fixture-clip", "fixture-clip-2", "fixture-clip-3", "fixture-clip-4"],
-                            "items": [
-                                ["media_id": "fixture-clip", "status": "confident", "song_start_s": 4.0, "alternates": []],
-                                ["media_id": "fixture-clip-2", "status": "ambiguous", "song_start_s": 21.5, "alternates": [["delta_s": -8.0, "score": 0.4]]],
-                                ["media_id": "fixture-clip-3", "status": "unmatched", "alternates": []],
-                                ["media_id": "fixture-clip-4", "status": "confident", "song_start_s": 52.0, "alternates": []],
-                            ],
-                        ] as [String: Any],
+                        "song_order_question": SongTimelineFixture.question(id: "song-q-\(events.count)", timeline: timeline),
                     ])
                 }
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] != nil {
@@ -888,6 +896,63 @@ enum DeviceRenderUITestFixture {
     private struct Publisher: DeviceRenderPublishing {
         func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
         func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
+    }
+}
+
+/// KRI-561 (`KRIA_CHAT_SONG_ORDER=1`): the song-order question the server sends to a timeline-capable app, and a
+/// generated tone standing in for the signed song URL.
+enum SongTimelineFixture {
+    static let generation = 3
+    static let audioSeconds = 12.0
+
+    static func question(id: String, timeline: Bool) -> [String: Any] {
+        func item(_ mediaID: String, _ status: String, start: Double?, duration: Double, candidates: [(Double, Double)], reason: String? = nil) -> [String: Any] {
+            var fields: [String: Any] = ["media_id": mediaID, "status": status, "alternates": [[String: Any]]()]
+            if let start { fields["song_start_s"] = start }
+            guard timeline else { return fields }
+            fields["duration_s"] = duration
+            fields["candidates"] = candidates.map { ["delta_s": $0.0, "likelihood": $0.1] as [String: Any] }
+            if let reason { fields["reason"] = reason }
+            return fields
+        }
+        var question: [String: Any] = [
+            "question_id": id,
+            "proposed_order": ["fixture-clip", "fixture-clip-2", "fixture-clip-3", "fixture-clip-4"],
+            "items": [
+                item("fixture-clip", "confident", start: 4.0, duration: 8, candidates: [(4.0, 0.9)]),
+                { var fields = item("fixture-clip-2", "ambiguous", start: 21.5, duration: 8, candidates: [(21.5, 0.6), (40.0, 0.3)], reason: "tie")
+                  if !timeline { fields["alternates"] = [["delta_s": -8.0, "score": 0.4]] }
+                  return fields }(),
+                item("fixture-clip-3", "unmatched", start: nil, duration: 6, candidates: [(14.0, 0.4)], reason: "no_evidence"),
+                item("fixture-clip-4", "confident", start: 52.0, duration: 8, candidates: [(52.0, 0.8), (-2.0, 0.1)]),
+            ],
+        ]
+        if timeline {
+            question["song_duration_s"] = 90.0
+            question["max_window_s"] = 120.0
+            question["first_line_s"] = 4.0
+            question["song_generation"] = generation
+        }
+        return question
+    }
+
+    /// A 12 s mono 16-bit tone with a slow swell, written once to Caches.
+    static func audioURL() -> URL? {
+        let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("song-timeline-fixture.wav")
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+        let rate = 4000, count = Int(audioSeconds) * rate
+        var pcm = Data(capacity: count * 2)
+        for index in 0..<count {
+            let t = Double(index) / Double(rate)
+            let amplitude = 0.2 + 0.6 * abs(sin(2 * .pi * t / 3))
+            let sample = Int16(amplitude * sin(2 * .pi * 220 * t) * 20000)
+            withUnsafeBytes(of: sample.littleEndian) { pcm.append(contentsOf: $0) }
+        }
+        func le32(_ value: Int) -> Data { withUnsafeBytes(of: UInt32(value).littleEndian) { Data($0) } }
+        func le16(_ value: Int) -> Data { withUnsafeBytes(of: UInt16(value).littleEndian) { Data($0) } }
+        var wav = Data("RIFF".utf8) + le32(36 + pcm.count) + Data("WAVEfmt ".utf8) + le32(16) + le16(1) + le16(1)
+        wav += le32(rate) + le32(rate * 2) + le16(2) + le16(16) + Data("data".utf8) + le32(pcm.count) + pcm
+        return (try? wav.write(to: url, options: .atomic)) != nil ? url : nil
     }
 }
 #endif

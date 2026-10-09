@@ -20,6 +20,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var clipSelectionQuestions: Bool? = nil
     /// Server sends `song_order_question` payloads and accepts `song_order` on a turn (KRI-374). Nil/false = no order card.
     var songOrderQuestions: Bool? = nil
+    /// The server also sends take lengths and candidate positions with the question and accepts `placements` on the
+    /// answer, which turns the order card into the song timeline. Nil/false = the vertical order list.
+    var songOrderPlacements: Bool? = nil
     /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
     /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
     var choiceQuestions: Bool? = nil
@@ -40,6 +43,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostExtendedDeviceExportEnabled: Bool { slidePostExtendedDeviceExport == true }
     var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
     var songOrderQuestionsEnabled: Bool { songOrderQuestions == true }
+    /// Only meaningful together with `songOrderQuestionsEnabled`.
+    var songOrderPlacementsEnabled: Bool { songOrderPlacements == true }
     /// The server's limits for a creator-uploaded song (KRI-374). Nil hides every "Add your song" surface:
     /// the server only advertises it when the feature is on for this account and this app's protocol.
     var songLimit: CreationMediaLimit? { media?[CreationMediaRole.song.capabilityKey] }
@@ -59,6 +64,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case slidePostExtendedDeviceExport = "slide_post_extended_device_export"
         case clipSelectionQuestions = "clip_selection_questions"
         case songOrderQuestions = "song_order_questions"
+        case songOrderPlacements = "song_order_placements"
         case choiceQuestions = "choice_questions"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
         case livePlanReviewEnabled = "live_plan_review_enabled", livePlanReviewVersion = "live_plan_review_version"
@@ -83,6 +89,7 @@ extension CreationCapabilities {
         slidePostExtendedDeviceExport = try container.decodeIfPresent(Bool.self, forKey: .slidePostExtendedDeviceExport)
         clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
         songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)
+        songOrderPlacements = try container.decodeIfPresent(Bool.self, forKey: .songOrderPlacements)
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
         creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)
         minimumClientProtocol = try container.decodeIfPresent(Int.self, forKey: .minimumClientProtocol)

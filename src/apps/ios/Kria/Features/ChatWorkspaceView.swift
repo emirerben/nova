@@ -849,6 +849,8 @@ private struct CreationWorkspaceView: View {
                            clipSelectionMedia: CreationAttachedMedia.parse(threadState),
                            songOrderMode: songOrderMode(for: message),
                            songOrderMedia: CreationAttachedMedia.parse(threadState),
+                           songTimeline: songTimelineConfiguration,
+                           songDurationS: CreationAttachedMedia.song(threadState)?.durationS,
                            projectID: project.id,
                            choiceQuestionMode: choiceQuestionMode(for: message))
                 .id(entry.id)
@@ -893,6 +895,18 @@ private struct CreationWorkspaceView: View {
             }
         }
         return nil
+    }
+
+    /// The song timeline (instead of the vertical order list) when the server also advertises
+    /// `song_order_placements`; it plays the song from a signed URL fetched through the API.
+    private var songTimelineConfiguration: SongTimelineConfiguration? {
+        guard capabilities?.songOrderQuestionsEnabled == true, capabilities?.songOrderPlacementsEnabled == true else { return nil }
+        let api = model.api, threadID = project.id
+        return SongTimelineConfiguration { generation in
+            await SongAudioCache.load(threadID: threadID, generation: generation) {
+                try await api.songAudio(threadID: threadID, generation: generation)
+            }
+        }
     }
 
     /// Order card only when the server advertises `song_order_questions`. Interactive on the newest question
