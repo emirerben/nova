@@ -20,9 +20,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src/apps/api"))
 os.environ.setdefault("STORAGE_BUCKET", "nova-test")
-os.environ.setdefault(
-    "DATABASE_URL", "postgresql://postgres:postgres@localhost/nova_test"
-)
+os.environ.setdefault("DATABASE_URL", "postgresql://localhost/nova_test")
 
 import pytest
 
