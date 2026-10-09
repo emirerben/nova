@@ -286,6 +286,7 @@ jobs:
         run: |
           python3 scripts/ios/kri-524-creation-e2e.py test-results/kri-559/fixture
           python3 scripts/ios/kri-524-trim-save-e2e.py test-results/kri-559/trim-save
+          python3 scripts/ios/kri-524-trim-save-e2e.py test-results/kri-559/extend --extend
           python3 scripts/ci/journey-gate.py verify-input --fixture test-results/kri-559/fixture --head "$KRIA_JOURNEY_HEAD_SHA"
       - name: Generate iOS project and select simulator
         run: |
@@ -334,6 +335,18 @@ jobs:
             -resultBundlePath ../../../test-results/kri-559/trim-save/native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/trim-save/native.xcresult \
             > ../../../test-results/kri-559/trim-save/native-test-results.json
+      - name: Render delayed extension journey on the built iPhone simulator
+        working-directory: src/apps/ios
+        env:
+          TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/extend
+        run: |
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
+            -only-testing:KriaTests/DeviceMontageRenderE2ETests/testCompoundWordTrimSavedThenExportOnTheIPhone \
+            -resultBundlePath ../../../test-results/kri-559/extend/native.xcresult test-without-building
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/extend/native.xcresult \
+            > ../../../test-results/kri-559/extend/native-test-results.json
       - name: Record and validate immutable journey evidence
         env:
           KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}

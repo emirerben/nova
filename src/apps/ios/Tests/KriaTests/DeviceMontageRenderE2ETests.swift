@@ -168,17 +168,22 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         let recipe = status.request.recipe
 
         if let expectedWords = caseMeta["expected_words"] as? [String] {
-            // The compiler appends the two generated Location labels after
-            // the creation sequence.  Preserve their independent coverage
-            // while asserting the ordered word run at the front of the
-            // actual recipe.
-            let renderedWords = recipe.textLayers.prefix(expectedWords.count).map { $0.runs.map(\.text).joined() }
+            // Some saved edits interleave clip labels with the word sequence.
+            // Match stable IDs when supplied so labels retain independent coverage.
+            let expectedIDs = caseMeta["expected_word_ids"] as? [String]
+            let wordLayers = expectedIDs.map { ids in
+                recipe.textLayers.filter { ids.contains($0.id) }
+            } ?? Array(recipe.textLayers.prefix(expectedWords.count))
+            if let expectedIDs {
+                XCTAssertEqual(wordLayers.map(\.id), expectedIDs)
+            }
+            let renderedWords = wordLayers.map { $0.runs.map(\.text).joined() }
             XCTAssertEqual(renderedWords, expectedWords, "\(caseID): the exported recipe must retain each created word")
             XCTAssertEqual(
-                try XCTUnwrap(recipe.textLayers.prefix(expectedWords.count).map(\.end).max()),
+                try XCTUnwrap(wordLayers.map(\.end).max()),
                 try XCTUnwrap(caseMeta["expected_word_end_s"] as? Double),
                 accuracy: 1.0 / 30.0,
-                "\(caseID): the saved follow-up must halve the word sequence window"
+                "\(caseID): the saved follow-up must use the requested word sequence endpoint"
             )
             let provenance = try XCTUnwrap(caseMeta["model_transport_provenance"] as? [String: String])
             XCTAssertEqual(provenance["creation"], expectedCreationProvenance)

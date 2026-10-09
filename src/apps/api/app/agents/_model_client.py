@@ -17,6 +17,7 @@ inputs for the per-segment loop.
 from __future__ import annotations
 
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -43,6 +44,33 @@ _GEMINI_INVOKE_POOL = ThreadPoolExecutor(
     thread_name_prefix="gemini-invoke",
 )
 _GEMINI_INVOKE_SLOTS = BoundedSemaphore(_GEMINI_INVOKE_WORKERS)
+
+
+def _observe_late_gemini_result(future: Any, *, call_id: str, model: str, started: float) -> None:
+    """Retain diagnostics for abandoned calls without returning or applying an edit.
+
+    Never include request/response text or exception messages. The runtime keeps
+    the reservation outcome unknown; this evidence supports later reconciliation
+    without issuing another paid request or reviving an expired turn.
+    """
+    fields: dict[str, Any] = {
+        "provider_call_id": call_id,
+        "model": model,
+        "elapsed_ms": int((time.monotonic() - started) * 1000),
+    }
+    try:
+        response = future.result()
+        usage = getattr(response, "usage_metadata", None)
+        fields.update(
+            outcome="response",
+            provider_request_id=_provider_request_id(response),
+            tokens_in=int(getattr(usage, "prompt_token_count", 0) or 0),
+            tokens_out=int(getattr(usage, "candidates_token_count", 0) or 0),
+            tokens_thoughts=int(getattr(usage, "thoughts_token_count", 0) or 0),
+        )
+    except Exception as exc:  # noqa: BLE001 - diagnostics must not escape the callback
+        fields.update(outcome="error", error_class=type(exc).__name__)
+    log.info("gemini_provider_late_completion", **fields)
 
 
 @dataclass(slots=True)
@@ -216,6 +244,8 @@ class GeminiClient(ModelClient):
         if not _GEMINI_INVOKE_SLOTS.acquire(timeout=min(1.0, max(0.1, timeout_s))):
             raise TransientError("gemini concurrency limit reached")
         future = None
+        call_id = str(uuid.uuid4())
+        started = time.monotonic()
         try:
             future = _GEMINI_INVOKE_POOL.submit(
                 client.models.generate_content,
@@ -233,6 +263,19 @@ class GeminiClient(ModelClient):
                 raise TransientError(
                     f"gemini request cancelled before start after {timeout_s:.1f}s"
                 ) from exc
+            log.warning(
+                "gemini_provider_deadline_exceeded",
+                provider_call_id=call_id,
+                model=model,
+                timeout_s=timeout_s,
+                prompt_characters=len(prompt),
+                thinking_level=thinking_level,
+            )
+            future.add_done_callback(
+                lambda completed: _observe_late_gemini_result(
+                    completed, call_id=call_id, model=model, started=started
+                )
+            )
             raise ProviderOutcomeUnknownError(
                 f"gemini provider outcome unknown after {timeout_s:.1f}s"
             ) from exc

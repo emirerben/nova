@@ -2089,6 +2089,10 @@ class _ParseState:
         # KRI-219: a v2 selector op that matched nothing sets this; parse() turns
         # it into an honest clarification (never a silent no-op).
         self.selector_clarification: str | None = None
+        # A server-computed operation can be already satisfied while a sibling
+        # operation remains valid. Keep that distinction so the sibling is not
+        # discarded, while standalone no-op requests explain that nothing changed.
+        self.no_effect_clarifications: list[str] = []
         # Server-authored, fact-grounded sentences (which clips have no filming
         # time, which time zone hours are shown in). `parse` appends them to the
         # reply when ops were proposed and REPLACES the model's reply when a
@@ -3185,7 +3189,9 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         model=settings.edit_copilot_model,
         max_attempts=2,
         backoff_s=(2.0,),
-        timeout_s=40.0,
+        # Durable Kria turns supply a shared deadline and post-processing
+        # reserve. Stateless HTTP callers override this back to 40 seconds.
+        timeout_s=120.0,
         thinking_level="high",
         cost_per_1k_input_usd=0.002,
         cost_per_1k_output_usd=0.012,
@@ -3431,6 +3437,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         )
         if capacity_reply is None and state.selector_clarification:
             capacity_reply = state.selector_clarification
+        if capacity_reply is None and not ops and state.no_effect_clarifications:
+            no_effect_reply = no_effect_reply or state.no_effect_clarifications[-1]
         capacity_pending_actions: list[dict[str, Any]] = []
         capacity_context: dict[str, Any] | None = None
         if capacity_reply is not None:
@@ -3819,6 +3827,7 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
             return None
 
     clarification_before = state.selector_clarification
+    no_effect_count_before = len(state.no_effect_clarifications)
     parsed = _coerce_payload(name, payload, snapshot, state)
     if parsed is None:
         if state.selector_clarification not in (None, clarification_before):
@@ -3827,6 +3836,8 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
             # spurious invalid_value here made `_honest_outcome` report
             # "failed" ("couldn't build a valid draft change") and hid the
             # zero-match question (KRI-219 live battery, rewrite-labels-en).
+            return None
+        if len(state.no_effect_clarifications) > no_effect_count_before:
             return None
         if name == "set_edit_direction" and _guided_revision_identity(snapshot) is None:
             state.reject(

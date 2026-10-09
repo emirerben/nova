@@ -428,7 +428,9 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
                 length = end - start
                 new_end = new_total
                 new_start = max(0.0, new_total - length)
-            if new_end - new_start < _MIN_BAR_S:
+            # Keep already-authored short words short. The duration floor only
+            # protects bars that were at least this long before the edit.
+            if end - start >= _MIN_BAR_S and new_end - new_start < _MIN_BAR_S:
                 new_end = min(new_total, new_start + _MIN_BAR_S)
                 new_start = max(0.0, new_end - _MIN_BAR_S)
             updated["start_s"], updated["end_s"] = _round(new_start), _round(new_end)

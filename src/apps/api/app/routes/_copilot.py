@@ -299,6 +299,8 @@ async def run_copilot_turn(
     body: CopilotTurnBody,
     *,
     job_id: uuid.UUID,
+    deadline_monotonic: float | None = None,
+    timeout_override_s: float | None = 40.0,
 ) -> CopilotTurnResponse:
     """Run one stateless edit-copilot turn.
 
@@ -330,6 +332,8 @@ async def run_copilot_turn(
                 job_id=str(job_id),
                 request_id=_paid_request_id(body, job_id=job_id),
                 request_id_authoritative=bool(body.client_request_id),
+                deadline_monotonic=deadline_monotonic,
+                timeout_override_s=timeout_override_s,
             ),
         )
     except AiBudgetExceededError:
