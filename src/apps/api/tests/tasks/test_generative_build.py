@@ -3587,6 +3587,90 @@ def test_song_variant_calls_mix(monkeypatch, tmp_path):
     assert len(mix_calls) == 1  # song variant DOES mix the track audio
 
 
+def _render_song_or_original(monkeypatch, tmp_path, *, variant_id, track, level):
+    """Render one variant with a persisted `original_audio_level` in the spec."""
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+    import app.pipeline.music_recipe as mr
+    import app.tasks.template_orchestrate as to
+
+    monkeypatch.setattr(
+        mr,
+        "generate_music_recipe",
+        lambda td, **_kw: {
+            "slots": [{"position": 1, "target_duration_s": 2.0, "text_overlays": []}],
+            "beat_timestamps_s": [0.5, 1.0],
+        },
+        raising=False,
+    )
+    levels: list = []
+    stub_mix = to._mix_template_audio  # the _patch_render_helpers stub
+
+    def _mix(video, audio, output, tmpdir, **kw):
+        levels.append(kw.get("original_level"))
+        return stub_mix(video, audio, output, tmpdir, **kw)
+
+    monkeypatch.setattr(to, "_mix_template_audio", _mix)
+    vdir = tmp_path / "lvl"
+    vdir.mkdir()
+    spec = {
+        "variant_id": variant_id,
+        "rank": 1,
+        "text_mode": "none",
+        "track": track,
+        "original_audio_level": level,
+    }
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=1,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+    )
+    return res, levels
+
+
+def test_song_variant_passes_persisted_original_level_to_the_mix(monkeypatch, tmp_path):
+    res, levels = _render_song_or_original(
+        monkeypatch, tmp_path, variant_id="song_lyrics", track=_track(), level=0.3
+    )
+    assert res["ok"] is True
+    assert levels == [0.3]
+
+
+@pytest.mark.parametrize("raw,expected", [(7, 1.0), (-1, 0.0), ("junk", None), (True, None)])
+def test_song_variant_original_level_is_clamped_or_dropped(monkeypatch, tmp_path, raw, expected):
+    _, levels = _render_song_or_original(
+        monkeypatch, tmp_path, variant_id="song_lyrics", track=_track(), level=raw
+    )
+    assert levels == [expected]
+
+
+def test_original_audio_variant_applies_persisted_level(monkeypatch, tmp_path):
+    import app.pipeline.authored_timeline as at
+
+    applied: list = []
+
+    def _apply(video, output, level):
+        applied.append(level)
+        with open(output, "wb") as f:
+            f.write(b"\x00" * 16)
+        return output
+
+    monkeypatch.setattr(at, "_apply_original_audio_level", _apply)
+    res, _ = _render_song_or_original(
+        monkeypatch, tmp_path, variant_id="original_text", track=None, level=0.4
+    )
+    assert res["ok"] is True
+    assert applied == [0.4]
+
+
 def test_selected_music_window_drives_recipe_lyrics_preview_and_mix(monkeypatch, tmp_path):
     _patch_render_helpers(monkeypatch, [])
     import app.pipeline.music_recipe as mr

@@ -1,7 +1,9 @@
 """Editor ops v2, audio lane (KRI-219 Lane C).
 
 * ``set_mix`` is EXTENDED (not replaced): ``music_level`` keeps its exact
-  behaviour, ``original_level`` (device-rendered variants only) and
+  behaviour, ``original_level`` (the footage's own sound: honoured by the phone
+  compiler AND the cloud renderer; cloud voiceover variants refuse it at compile
+  time because their bed follows the voice-prominence slider) and
   ``music_gain_db`` (the smart background bed) are added.
 * ``add_sfx`` gets a real compile handler (the parser branch already existed
   and fails closed while ``snapshot.sfx.catalog`` is empty).
@@ -29,6 +31,7 @@ SPECS: list[OpSpec] = [
 ]
 
 MIX_FIELDS = ("music_level", "original_level", "music_gain_db")
+CLOUD_VOICEOVER_VARIANT_IDS = frozenset({"voiceover_only", "voiceover_music"})
 MIN_GAIN_DB = -40.0
 MAX_GAIN_DB = 0.0
 SFX_GAIN_RANGE = (0.0, 2.0)
@@ -68,16 +71,6 @@ def validate_set_mix(out: dict, snapshot: dict, state: Any) -> dict | None:
                 detail="this edit has no control for the footage's own sound level",
             )
             return None
-        if snapshot.get("render_destination") != "device":
-            # The server stores mix.original_level but its renderer ignores it
-            # ("not yet honored", generative_jobs.EditorCommitMix); only the
-            # phone compiler applies it. Say so instead of a silent no-op.
-            state.reject(
-                op="set_mix",
-                reason="capability_unavailable",
-                detail="I can only change original audio on phone-rendered edits",
-            )
-            return None
         out["original_level"] = max(0.0, min(1.0, level))
     if "music_gain_db" in out:
         gain = _num(out["music_gain_db"])
@@ -104,8 +97,12 @@ def _op_set_mix(state: Any, op: dict[str, Any]) -> None:
     if op.get("music_level") is not None:
         state.mix_level = float(op["music_level"])
     if op.get("original_level") is not None:
-        if state.variant.get("render_destination") != "device":
-            raise KriaEditorOpError("Original audio can only be changed on phone-rendered edits")
+        if state.variant.get("render_destination") != "device" and (
+            state.variant.get("variant_id") in CLOUD_VOICEOVER_VARIANT_IDS
+        ):
+            # The cloud voiceover mixer ducks the footage by (1 - voice mix); it has
+            # no independent footage level, so refuse instead of silently ignoring.
+            raise KriaEditorOpError("Original audio can't be changed separately on voiceover edits")
         from app.services.kria_editor_ops import _is_guided_native  # noqa: PLC0415
 
         if _is_guided_native(state.job, state.variant):

@@ -8,6 +8,7 @@
       "paths": [
         "src/apps/api/app/pipeline/guided_story.py",
         "src/apps/api/app/pipeline/phone_guided_plan.py",
+        "src/apps/api/app/pipeline/authored_timeline.py",
         "src/apps/api/app/agents/edit_copilot.py",
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/app/kria/editor_receipts.py",
