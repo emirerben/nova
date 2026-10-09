@@ -325,6 +325,9 @@ def test_degraded_thinking_level_table(model: str, level: str | None, expected: 
 
 
 def test_per_agent_timeout_is_enforced(capturing_client, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.agents import _model_client
     from app.agents._runtime import ProviderOutcomeUnknownError
 
     def slow_generate(**kwargs):  # noqa: ARG001
@@ -335,12 +338,16 @@ def test_per_agent_timeout_is_enforced(capturing_client, monkeypatch):
     # A running SDK call may still reach and bill the provider after our local
     # deadline. It must remain outcome-unknown so the runtime will not overlap
     # it with a retry.
-    with pytest.raises(ProviderOutcomeUnknownError, match="unknown after 0.1s"):
-        GeminiClient().invoke(
-            model="gemini-3.6-flash",
-            prompt="hi",
-            timeout_s=0.1,
-        )
+    # Join the fake provider and its late-result callback before pytest changes
+    # output capture for the next test. The real client remains nonblocking.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        monkeypatch.setattr(_model_client, "_GEMINI_INVOKE_POOL", pool)
+        with pytest.raises(ProviderOutcomeUnknownError, match="unknown after 0.1s"):
+            GeminiClient().invoke(
+                model="gemini-3.6-flash",
+                prompt="hi",
+                timeout_s=0.1,
+            )
 
 
 def test_matcher_spec_caps_thinking_budget():
