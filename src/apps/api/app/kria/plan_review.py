@@ -144,13 +144,17 @@ TEXT_SECTIONS = ("title", "clips", "captions", "overlays")
 
 # Op families (``snapshot["allowed_op_families"]``) per section (contract 4.4 layer 1).
 SECTION_FAMILIES: dict[str, frozenset[str]] = {
-    "title": frozenset({"title", "text"}),
+    # `render`: set_intro_layout. `motion`/`visual`: motion blocks and visual fade. `clip` under
+    # look is set_look_preset (a per-clip op by family); `caption` under look is the caption
+    # restyle half of set_caption_meta; `carousel`: set_carousel_moment. Layer 2 still drops
+    # every op of these families that does not belong to a flagged section.
+    "title": frozenset({"title", "text", "render"}),
     "clips": frozenset({"clip", "transition", "text"}),
     "captions": frozenset({"caption", "text"}),
     "music": frozenset({"music"}),
     "sfx": frozenset({"sfx"}),
-    "overlays": frozenset({"overlay", "visual_media", "text"}),
-    "look": frozenset({"style", "text", "effect"}),
+    "overlays": frozenset({"overlay", "visual_media", "text", "motion", "visual"}),
+    "look": frozenset({"style", "text", "effect", "clip", "caption", "carousel"}),
 }
 
 # EditorCommitRequest fields -> owning section(s). `text_elements` and `caption_meta` are
@@ -586,6 +590,12 @@ def lanes_in(data: dict[str, Any]) -> list[str]:
 class RepairReport:
     reverted_fields: list[str] = dataclasses.field(default_factory=list)
     reverted_bars: list[str] = dataclasses.field(default_factory=list)
+    # Sections whose change was undone (the user-facing "I left X alone" note reads this).
+    reverted_sections: list[str] = dataclasses.field(default_factory=list)
+
+    def add_section(self, section: str) -> None:
+        if section not in self.reverted_sections:
+            self.reverted_sections.append(section)
 
     def __bool__(self) -> bool:
         return bool(self.reverted_fields or self.reverted_bars)
@@ -614,6 +624,7 @@ def repair_payload(
         elif key in FIELD_SECTIONS and _lane_present(key, out[key]):
             if not (set(FIELD_SECTIONS[key]) & flagged):
                 report.reverted_fields.append(key)
+                report.add_section(FIELD_SECTIONS[key][0])
                 out.pop(key)
     meta = out.get("caption_meta")
     if isinstance(meta, dict):
@@ -622,6 +633,9 @@ def repair_payload(
         }
         if len(kept) != len(meta):
             report.reverted_fields.append("caption_meta")
+            for k in meta:
+                if k not in kept:
+                    report.add_section("captions" if k == "enabled" else "look")
         if kept and kept != {"font_set": False}:
             out["caption_meta"] = kept
         else:
@@ -632,6 +646,10 @@ def repair_payload(
             before["text_elements"], rows, flagged, scope, clip_bar_ids
         )
         report.reverted_bars.extend(reverted)
+        for section in _reverted_bar_sections(
+            before["text_elements"], rows, reverted, scope, clip_bar_ids
+        ):
+            report.add_section(section)
         if repaired == before["text_elements"]:
             out.pop("text_elements")
             if reverted:
@@ -665,6 +683,56 @@ def _repair_text_rows(
     return apply_row_restore(after, revert), sorted(revert)
 
 
+def _reverted_bar_sections(
+    before: list[dict[str, Any]],
+    after: list[dict[str, Any]],
+    reverted: list[str],
+    scope: list[str],
+    clip_bar_ids: frozenset[str],
+) -> list[str]:
+    b, a = _row_map(before) or {}, _row_map(after) or {}
+    return [
+        bar_change_section(b.get(rid), a.get(rid), scope, clip_bar_ids=clip_bar_ids)
+        for rid in reverted
+    ]
+
+
+def changed_sections(
+    data: dict[str, Any],
+    before: dict[str, Any],
+    scope: list[str],
+    *,
+    clip_bar_ids: frozenset[str] = frozenset(),
+) -> list[str]:
+    """Sections a (repaired) commit payload really changes, in SECTION_ORDER. Drives the draft
+    receipt, so it never claims a change layer 3 took back."""
+    found: set[str] = set()
+    for lane in lanes_in(data):
+        if lane == "text_elements":
+            b = _row_map(before.get("text_elements")) or {}
+            a = _row_map(data.get("text_elements")) or {}
+            for rid in row_diff(before.get("text_elements"), data.get("text_elements")) or {}:
+                found.add(
+                    bar_change_section(b.get(rid), a.get(rid), scope, clip_bar_ids=clip_bar_ids)
+                )
+        elif lane == "caption_meta":
+            found.update("captions" if k == "enabled" else "look" for k in data["caption_meta"])
+        elif lane in FIELD_SECTIONS:
+            found.add(FIELD_SECTIONS[lane][0])
+    return [s for s in SECTION_ORDER if s in found]
+
+
+def repair_note(report: RepairReport, already_left_alone: list[str]) -> str:
+    """ "I left title alone." for sections layer 3 took back (layer 2 already reported its own)."""
+    sections = [
+        s for s in SECTION_ORDER if s in report.reverted_sections and s not in already_left_alone
+    ]
+    if not sections:
+        return ""
+    phrase = scope_phrase(sections)
+    return say(en=f"I left {phrase} alone.", tr=f"{phrase.capitalize()} bölümüne dokunmadım.")
+
+
 def repair_compiled(
     compiled: Any,
     scope: list[str],
@@ -682,10 +750,23 @@ def repair_compiled(
     if not report:
         return compiled, report
     gone = set(report.reverted_bars)
+    # The receipt must not claim a change layer 3 took back: restate what is really left.
+    left = changed_sections(repaired, compiled.before, scope, clip_bar_ids=clip_bar_ids)
+    changes = (
+        [
+            say(
+                en=f"Updated {scope_phrase(left)}.",
+                tr=f"{scope_phrase(left).capitalize()} güncellendi.",
+            )
+        ]
+        if left
+        else []
+    )
     return (
         dataclasses.replace(
             compiled,
             payload=EditorCommitRequest.model_validate(repaired),
+            changes=changes,
             text_diff=[d for d in compiled.text_diff if str(d.get("id")) not in gone],
             before={k: v for k, v in compiled.before.items() if k not in report.reverted_fields}
             if report.reverted_fields
@@ -1404,6 +1485,7 @@ __all__ = [
     "apply_row_restore",
     "bar_change_section",
     "build_restore_record",
+    "changed_sections",
     "current_block",
     "edit_section",
     "filter_ops_to_scope",
@@ -1414,6 +1496,7 @@ __all__ = [
     "parse_ops_without_model",
     "record_sections",
     "repair_compiled",
+    "repair_note",
     "repair_payload",
     "restore_section",
     "row_diff",

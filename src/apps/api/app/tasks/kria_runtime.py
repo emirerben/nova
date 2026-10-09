@@ -635,6 +635,7 @@ def _complete_draft_turn(
     your_edits_snapshot: dict[str, Any] | None = None
     your_edits_hash = ""
     restore_record: dict[str, Any] | None = None  # KRI-442: pre-update lanes for Undo
+    scope_note = ""  # KRI-441: "I left X alone." for what layer 3 took back
     if apply_intent.tool_name == "draft.apply_strategy":
         changes = _strategy_changes(arguments)
         document = KriaDraftDocument(
@@ -817,6 +818,9 @@ def _complete_draft_turn(
                     compiled, scoped_fields["scope"], clip_bar_ids=clip_bar_ids
                 )
                 dropped = (plan.diagnostics or {}).get("scope_dropped") or []
+                scope_note = plan_review.repair_note(
+                    repair, [str(d.get("section")) for d in dropped]
+                )
                 if repair or dropped:
                     log.info(
                         "plan_review_scope_repaired",
@@ -901,6 +905,8 @@ def _complete_draft_turn(
         if document is None:
             raise RuntimeError("Kria produced an unsupported draft tool")
         reply_text = arguments.summary
+        if scope_note:
+            reply_text = f"{reply_text} {scope_note}".strip()
         requirement_receipts: list[dict[str, Any]] = []
         brief = None
         if planned.brief_route is not None:
@@ -1593,7 +1599,10 @@ def _answers_clip_question(source: Any) -> bool:
 def _scoped_turn_fields(source: Any) -> dict[str, Any] | None:
     """``{"scope": [...], "manual_edits": [...]}`` stored on a scoped turn's user_message."""
     payload = getattr(source, "payload", None)
-    if not settings.live_plan_review_enabled or not isinstance(payload, dict):
+    # Deliberately NOT gated on LIVE_PLAN_REVIEW_ENABLED: the flag was checked at submit. If it
+    # flipped off while the turn was queued, honouring the stored scope is safe; ignoring it
+    # would plan the creator's scoped ask as an unscoped re-plan.
+    if not isinstance(payload, dict):
         return None
     scope = payload.get("scope")
     if not isinstance(scope, list) or not scope:

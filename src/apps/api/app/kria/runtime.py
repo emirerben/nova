@@ -482,6 +482,9 @@ async def _validate_scoped_turn(
         try:
             clip_ids = frozenset(_clip_label_links(job, variant))
         except Exception:  # noqa: BLE001 - classification falls back to id prefixes
+            log.warning(
+                "plan_review_clip_label_links_failed", thread_id=str(thread.id), exc_info=True
+            )
             clip_ids = frozenset()
         for edit in body.manual_edits:
             try:

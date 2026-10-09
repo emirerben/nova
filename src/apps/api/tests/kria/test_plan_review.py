@@ -449,6 +449,49 @@ async def test_layer3_strips_every_lane_outside_the_scope_from_the_stored_draft(
             record["sections"]["captions"]["caption_cues"]["rows"]["cue-1"]["text"]
             == (CUES[0]["text"])
         )
+        # The receipt and the reply must not claim the retitle and the mix change that layer 3
+        # took back.
+        receipt = " ".join(drafts[-1]["snap"]["changes"]).lower()
+        assert "caption" in receipt
+        assert "retitle" not in receipt and "mix" not in receipt and "leaked" not in receipt
+        with sync_session() as db:
+            replies = (
+                db.execute(
+                    select(CreationThreadEvent.content).where(
+                        CreationThreadEvent.thread_id == thread_id,
+                        CreationThreadEvent.role == "assistant",
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert any("left" in (r or "") and "alone" in (r or "") for r in replies)
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_a_scope_stored_at_submit_still_holds_if_the_flag_flips_off_before_planning(
+    monkeypatch,
+) -> None:
+    """Flag on at submit, off before the worker plans: the stored scope must still be
+    enforced, never planned as an unscoped re-plan."""
+    user_id, thread_id, session_id = _seed_runtime_project()
+    _seed_job(user_id, session_id)
+    _planner_returns(
+        monkeypatch,
+        [
+            {"op": "edit_caption", "cue_index": 0, "text": "I whisk the matcha"},
+            {"op": "set_mix", "music_level": 0.2},
+        ],
+    )
+    try:
+        accepted = await _submit(user_id, thread_id, scope=["captions"])
+        monkeypatch.setattr(settings, "live_plan_review_enabled", False)
+        await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        payload = _head_payload(thread_id)
+        assert payload["caption_cues"][0]["text"] == "I whisk the matcha"
+        assert "mix" not in payload
     finally:
         await async_engine.dispose()
 
@@ -968,6 +1011,26 @@ def test_every_editor_op_has_a_section_or_is_explicitly_never_scoped() -> None:
         set(edit_copilot._VALID_OPS) | {spec.name for spec in lane_specs()} | set(REGISTRY.new_ops)
     )
     assert known - mapped == set()
+
+
+def test_every_op_of_a_section_is_reachable_with_that_sections_families() -> None:
+    """Layer 1 must not make a section's own op impossible (it was: set_look_preset under
+    `look`, motion blocks under `overlays`): the model would never see it and the creator's
+    flagged section would silently do nothing."""
+    from app.agents import edit_copilot
+
+    # Server-side ops with their own path / flag, not a family question.
+    exempt = {"apply_speech_cut_candidate", "apply_custom_effect"}
+    for section, ops in plan_review.SECTION_OPS.items():
+        snapshot = {
+            "allowed_op_families": sorted(plan_review.SECTION_FAMILIES[section]),
+            "editor_ops_version": 2,
+            "label_facts": True,
+        }
+        unreachable = sorted(
+            op for op in ops - exempt if not edit_copilot._family_allowed(op, snapshot)
+        )
+        assert unreachable == [], (section, unreachable)
 
 
 def test_text_bar_sections() -> None:
