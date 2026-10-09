@@ -39,6 +39,8 @@ struct NativeEditorView: View {
     /// Drives the compact bar, the preview taking the room above it and the header stepping away.
     @State private var textTypingLines: Int?
     @State private var keyboardVisible = false
+    /// The software keyboard's height as last seen on this device; the panel anchor is derived from it.
+    @AppStorage("kria.editor.softKeyboardHeight") private var storedKeyboardHeight: Double = 0
     /// KRI-170: the timeline handle and the panel handle are independent.
     /// `previewResize` is in points (positive shrinks the preview, negative
     /// grows it); `panelExpansion` is 0…1 and may lift the panel over the preview.
@@ -175,7 +177,14 @@ struct NativeEditorView: View {
                         .presentationDragIndicator(.visible)
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { note in
+                keyboardVisible = true
+                // A hardware keyboard only shows a thin shortcut bar; keep the last full-height reading.
+                if let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect, frame.height >= 200,
+                   abs(frame.height - storedKeyboardHeight) > 0.5 {
+                    storedKeyboardHeight = frame.height
+                }
+            }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
             // Sending from the conversation sheet must not dismiss it (only the
             // creator closes it); `conversationAcceptedID` is intentionally unused here.
@@ -251,7 +260,14 @@ struct NativeEditorView: View {
             shrinksPreviewWhileTyping: panel?.tool == .text,
             captionEditBarHeight: captionEditing ? CaptionEditBar.height(lineHeight: captionLineHeight, lines: captionEditLines(viewport: viewport)) : nil,
             textEditBarHeight: textEditing ? textTypingLines.map { TextEditBar.height(lines: $0) } : nil,
-            measuredHeaderHeight: textEditing ? 0 : (headerHeight > 0 ? headerHeight : nil)
+            anchoredPanelTop: panelIsOpen ? NativeEditorLayoutMetrics.panelAnchorTop(
+                screenHeight: UIScreen.main.bounds.height, safeAreaTop: viewport.safeAreaInsets.top,
+                keyboardHeight: storedKeyboardHeight > 0
+                    ? storedKeyboardHeight
+                    : NativeEditorLayoutMetrics.estimatedKeyboardHeight(screenHeight: UIScreen.main.bounds.height),
+                oneLineBar: TextEditBar.height(lines: 1)
+            ) : nil,
+            measuredHeaderHeight: panelIsOpen ? 0 : (headerHeight > 0 ? headerHeight : nil)
         )
         let showsTimeline = panel == nil
         let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
@@ -260,9 +276,9 @@ struct NativeEditorView: View {
         // preview.
         let previewHeight = metrics.previewHeight(resize: previewResize)
         VStack(spacing: 0) {
-            // KRI-508: while the Text panel's box has the keyboard the header steps up and away so
-            // the video gets the screen; it slides back when the keyboard goes down.
-            if !textEditing {
+            // KRI-508: while a tool panel is open the header steps up and away so the video gets the
+            // screen and the panel keeps one height across tabs; it slides back when the panel closes.
+            if !panelIsOpen {
                 NativeEditorProjectHeader(
                     title: project.workspaceTitle, session: session, exporter: exporter,
                     onBack: requestBack, onChat: conversation == nil ? requestBack : onBack,
@@ -333,7 +349,7 @@ struct NativeEditorView: View {
                         .onTapGesture { dismissSelectedClipContext() }
                 }
 
-            if !lineEditing { timelineResizeHandle(metrics: metrics) }
+            if !panelIsOpen { timelineResizeHandle(metrics: metrics) }
             connectedEditorArea(viewport: viewport, showsContext: showsContext, metrics: metrics, previewHeight: previewHeight)
                 // The panel may rise over the preview; paint and hit-test it
                 // above the preview and the timeline handle.
@@ -494,7 +510,8 @@ struct NativeEditorView: View {
                 .ignoresSafeArea(.container, edges: .bottom)
                 .allowsHitTesting(false)
 
-                if panelIsOpen && !keyboardVisible && !lineEditing {
+                // The transport row is there on every text tab, also while the box has the keyboard.
+                if panelIsOpen && !captionEditing && (!keyboardVisible || textEditing) {
                     // Stays pinned to the top of the area; a tall panel rises
                     // over it rather than dragging it along. Fixed to the
                     // area's height so the taller ZStack can't stretch it.
@@ -532,10 +549,10 @@ struct NativeEditorView: View {
                                     .environment(\.nativeEditorPanelResize, NativeEditorPanelResize(
                                         expansion: $panelExpansion, range: panelRange, dismiss: panelDismiss
                                     ))
-                                    .padding(.top, lineEditing ? 0 : 18)
+                                    .padding(.top, captionEditing ? 0 : 18)
                                     .overlay(alignment: .top) {
                                         // The band beside the grabber resizes too (KRI-235).
-                                        if !lineEditing {
+                                        if !captionEditing {
                                             Color.clear.frame(height: 18).contentShape(Rectangle())
                                                 .modifier(NativeEditorPanelResizeDrag(
                                                     expansion: $panelExpansion, range: panelRange, minimumDistance: 8, dismiss: panelDismiss
@@ -543,7 +560,7 @@ struct NativeEditorView: View {
                                         }
                                     }
                                     .overlay(alignment: .top) {
-                                        if !lineEditing {
+                                        if !captionEditing {
                                             NativeEditorPanelResizeGrabber(
                                                 expansion: $panelExpansion,
                                                 range: panelRange,

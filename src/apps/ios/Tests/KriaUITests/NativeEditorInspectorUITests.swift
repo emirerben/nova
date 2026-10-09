@@ -12,7 +12,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
         XCTAssertTrue(rail.waitForExistence(timeout: 20))
         let railBottom = rail.frame.maxY
-        let previewHeight = preview.frame.height
+        // KRI-508: opening a panel anchors it, so the preview is stable across tabs, not equal to browse.
+        var previewHeight: CGFloat?
         var panelFrame: CGRect?
         for tool in ["captions", "visuals", "sounds", "text", "captions"] {
             app.buttons["native-editor-tool-" + tool].tap()
@@ -26,7 +27,9 @@ final class NativeEditorInspectorUITests: XCTestCase {
             } else { panelFrame = frame }
             XCTAssertTrue(app.buttons["native-editor-tool-" + tool].isSelected)
             XCTAssertEqual(rail.frame.maxY, railBottom, accuracy: 2)
-            XCTAssertEqual(preview.frame.height, previewHeight, accuracy: 2)
+            if let previewHeight {
+                XCTAssertEqual(preview.frame.height, previewHeight, accuracy: 2, tool)
+            } else { previewHeight = preview.frame.height }
             // UIKit retains the backing scroll container in its inspection
             // tree. Covered editing controls must be absent or disabled.
             for id in ["native-editor-timeline-caption_cue-cue-paper", "native-editor-timeline-visual_block-paper-media"] {
@@ -85,7 +88,6 @@ final class NativeEditorInspectorUITests: XCTestCase {
             let initialPanel = panel.frame
             let initialPreview = preview.frame
             let railBottom = rail.frame.maxY
-            let headerY = app.buttons["native-editor-back"].frame.minY
             // Start on the visible capsule near the panel's top edge, not
             // merely somewhere inside its larger accessibility target.
             // Keep the original minimum expansion, then rise 40pt into the
@@ -101,11 +103,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
             XCTAssertEqual(preview.frame.height, initialPreview.height, accuracy: 2, tool)
             XCTAssertLessThan(panel.frame.minY, preview.frame.maxY, tool)
             XCTAssertTrue(handle.isHittable, tool)
-            // The transport stays put (it's covered, not dragged along) and the
-            // panel never reaches the header.
-            XCTAssertGreaterThanOrEqual(panel.frame.minY, app.buttons["native-editor-back"].frame.maxY, tool)
+            // The transport stays put (it's covered, not dragged along). The header is away while a
+            // panel is open (KRI-508), so the panel only has to stay on screen.
+            XCTAssertGreaterThanOrEqual(panel.frame.minY, app.windows.firstMatch.frame.minY, tool)
             XCTAssertEqual(rail.frame.maxY, railBottom, accuracy: 2, tool)
-            XCTAssertEqual(app.buttons["native-editor-back"].frame.minY, headerY, accuracy: 2, tool)
             let capture = XCTAttachment(screenshot: app.screenshot())
             capture.name = "expanded-visible-handle-" + tool
             capture.lifetime = .keepAlways
@@ -145,9 +146,6 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.buttons["native-editor-tool-sounds"].isHittable)
         preset.tap()
         app.buttons["Bold"].tap()
-        let handle = app.descendants(matching: .any)["native-editor-timeline-resize"].firstMatch
-        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -180)))
         app.buttons["Animation"].tap()
         let scroll = app.scrollViews["native-editor-text-inspector-scroll"]
         let toggle = app.buttons["native-editor-text-animation-preview-toggle"]
@@ -709,54 +707,6 @@ final class NativeEditorInspectorUITests: XCTestCase {
                       "the pulled-closed text is kept")
     }
 
-    func testPreviewResizeIsAvailableAcrossEditorPanels() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text", "-ui-testing-editor-analyzing-gallery"]
-        for tool in ["visuals", "captions", "text", "text-style", "text-animation"] {
-            app.launch()
-            let button = app.buttons["native-editor-tool-\(tool.hasPrefix("text") ? "text" : tool)"]
-            XCTAssertTrue(button.waitForExistence(timeout: 20))
-            button.tap()
-            if tool.hasPrefix("text-") {
-                let input = app.textViews["native-editor-new-text-input"]
-                XCTAssertTrue(input.waitForExistence(timeout: 5))
-                input.tap()
-                input.typeText("Resize test")
-                app.buttons["native-editor-text-done"].tap()
-                if tool == "text-animation" { app.buttons["Animation"].tap() }
-            }
-            let handle = app.descendants(matching: .any)["native-editor-timeline-resize"].firstMatch
-            let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
-            let header = app.buttons["native-editor-back"]
-            let panel = tool == "text"
-                ? app.textViews["native-editor-new-text-input"]
-                : app.scrollViews[tool.hasPrefix("text-") ? "native-editor-text-inspector-scroll" : "native-editor-\(tool)-scroll"]
-            XCTAssertTrue(handle.waitForExistence(timeout: 5), tool)
-            XCTAssertTrue(panel.waitForExistence(timeout: 5), tool)
-            XCTAssertTrue(handle.isHittable, tool)
-            // KRI-508: with the keyboard on the text box the compact bar owns the split (no handle);
-            // testSecondTapOpensEditTextWithKeyboardAndGrowingBox covers that state.
-            let originalHeight = preview.frame.height
-            let originalHeaderY = header.frame.minY
-            let originalPanelHeight = panel.frame.height
-            let originalBottom = panel.frame.maxY
-            let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -100)))
-            XCTAssertLessThan(preview.frame.height, originalHeight - 40, tool)
-            XCTAssertEqual(header.frame.minY, originalHeaderY, accuracy: 2, tool)
-            // KRI-170: the panel is independent of the preview — it never
-            // shrinks, and its bottom edge stays put.
-            XCTAssertGreaterThanOrEqual(panel.frame.height, originalPanelHeight - 1, tool)
-            XCTAssertEqual(panel.frame.maxY, originalBottom, accuracy: 2, tool)
-            let shrunkBy = originalHeight - preview.frame.height
-            let raised = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: shrunkBy)))
-            XCTAssertEqual(preview.frame.height, originalHeight, accuracy: 3, tool)
-            XCTAssertEqual(header.frame.minY, originalHeaderY, accuracy: 2, tool)
-            app.terminate()
-        }
-    }
-
     func testPreviewPreparationSurvivesLoadedViewTransition() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text", "-ui-testing-editor-delayed-source"]
@@ -1040,7 +990,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-start"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["Starts at 1:48"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song-start-locked"].firstMatch.exists)
-        XCTAssertFalse(app.buttons["native-editor-save"].isEnabled, "opening the controls is not an edit")
+        XCTAssertFalse(app.buttons["native-editor-save"].exists, "the header is away while Sounds is open")
 
         // Sliding the start window is one unsaved edit and moves the label.
         let bar = app.descendants(matching: .any)["native-editor-your-song-start-bar"].firstMatch
@@ -1056,7 +1006,6 @@ final class NativeEditorInspectorUITests: XCTestCase {
             .press(forDuration: 0.1, thenDragTo: bar.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)),
                    withVelocity: 100, thenHoldForDuration: 0.2)
         XCTAssertFalse(app.staticTexts["Starts at 1:48"].exists, "the label follows the drag")
-        XCTAssertTrue(app.buttons["native-editor-save"].isEnabled)
 
         let remove = app.buttons["native-editor-your-song-remove"]
         XCTAssertTrue(remove.exists)
@@ -1065,10 +1014,12 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-removed"].firstMatch.waitForExistence(timeout: 4))
         XCTAssertFalse(app.textFields["native-editor-music-track-input"].exists, "no catalog controls after removing the song")
         XCTAssertFalse(app.buttons["native-editor-add-music"].exists)
-        XCTAssertTrue(app.buttons["native-editor-save"].isEnabled)
 
-        // Undo lives on the timeline strip, behind the open Sounds panel.
+        // Undo lives on the timeline strip, behind the open Sounds panel. Closing the panel brings the
+        // header back, and Save shows the drag and the removal as unsaved edits.
         app.buttons["native-editor-sounds-done"].tap()
+        XCTAssertTrue(app.buttons["native-editor-save"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["native-editor-save"].isEnabled)
         app.buttons["native-editor-undo"].tap()
         app.buttons["native-editor-tool-sounds"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song"].firstMatch.waitForExistence(timeout: 4))
@@ -1091,7 +1042,9 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Lip-sync keeps the song where you filmed it."].exists)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song-start"].firstMatch.exists, "no start bar to drag")
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song-start-bar"].firstMatch.exists)
-        XCTAssertFalse(app.buttons["native-editor-save"].isEnabled)
+        app.buttons["native-editor-sounds-done"].tap()
+        XCTAssertTrue(app.buttons["native-editor-save"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["native-editor-save"].isEnabled, "opening the controls is not an edit")
     }
 
     /// The founder's debugging need: on a creator-song (lip-sync) video, Sounds carries an Original audio
@@ -1118,8 +1071,9 @@ final class NativeEditorInspectorUITests: XCTestCase {
         if !slider.isHittable { scroll.swipeUp() }
         slider.adjust(toNormalizedSliderPosition: 0.5)
         XCTAssertNotEqual(percent.label, "0%", "moving the slider changes the level")
-        XCTAssertTrue(app.buttons["native-editor-save"].isEnabled, "a level change is an unsaved edit")
         app.buttons["native-editor-sounds-done"].tap()
+        XCTAssertTrue(app.buttons["native-editor-save"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["native-editor-save"].isEnabled, "a level change is an unsaved edit")
 
         // The per-clip Audio button in the clip's context strip now flips that clip's sound.
         let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
@@ -1377,14 +1331,27 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-text-panel"].exists)
         text.tap()
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-panel"].waitForExistence(timeout: 3))
-        // KRI-508: the second tap opens Edit text with the keyboard up; Start/End wait behind Timing.
+        // KRI-508: the second tap opens Edit text with the keyboard up; Start/End sit under the box.
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-content"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.textFields["native-editor-text-time-start"].exists)
-        app.buttons["native-editor-text-timing"].tap()
-        XCTAssertTrue(app.textFields["native-editor-text-time-start"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["native-editor-text-timing"].exists, "there is no Timing button")
+        XCTAssertTrue(app.textFields["native-editor-text-time-start"].exists)
         XCTAssertTrue(app.textFields["native-editor-text-time-end"].exists)
         XCTAssertTrue(app.buttons["native-editor-text-inspector-done"].exists)
+    }
+
+    /// Waits until an element's frame stops changing (the panel grows up from the bottom as it opens).
+    private func waitUntilSettled(_ element: XCUIElement, timeout: TimeInterval = 6) {
+        var last = element.frame
+        var stableSince = Date()
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            let now = element.frame
+            if abs(now.minY - last.minY) > 0.5 || abs(now.height - last.height) > 0.5 { stableSince = Date() }
+            last = now
+            if Date().timeIntervalSince(stableSince) > 0.5 { return }
+        }
     }
 
     /// KRI-508: tapping a selected text opens Edit text with the keyboard. The box above the keyboard
@@ -1398,7 +1365,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let back = app.buttons["native-editor-back"]
         XCTAssertTrue(back.waitForExistence(timeout: 8))
         let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
-        let browseHeight = preview.frame.height
+        let panel = app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch
         let text = app.descendants(matching: .any)["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"]
         XCTAssertTrue(text.waitForExistence(timeout: 3))
         text.tap()
@@ -1413,7 +1380,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
             .matching(NSPredicate(format: "label == %@", "Edit text")).firstMatch
         XCTAssertTrue(editTab.isSelected, "an existing text opens on Edit text, not Style")
         XCTAssertTrue(back.waitForNonExistence(timeout: 3), "the header steps away so the video gets the screen")
-        XCTAssertGreaterThan(preview.frame.height, browseHeight, "the video grows into the freed room")
+        waitUntilSettled(panel)
 
         func waitFor(_ message: String, _ condition: () -> Bool) {
             let deadline = Date().addingTimeInterval(5)
@@ -1432,6 +1399,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         shot("text-edit-one-line")
         let oneLine = field.frame.height
         let previewOneLine = preview.frame.height
+        let panelTop = panel.frame.minY
         XCTAssertLessThan(oneLine, 60, "the box starts as one line")
         assertClearOfKeyboard("one line")
 
@@ -1444,11 +1412,80 @@ final class NativeEditorInspectorUITests: XCTestCase {
         waitFor("long words grow the box") { field.frame.height > twoLines + 10 }
         shot("text-edit-grown")
         assertClearOfKeyboard("long words grow the box")
+        // Past one line the bar rises and the video gives the room back, always above the keyboard.
         waitFor("the preview gives the room to the box") { preview.frame.height < previewOneLine - 10 }
+        XCTAssertLessThan(panel.frame.minY, panelTop, "the bar rises as the box grows")
 
         app.buttons["native-editor-text-inspector-done"].tap()
         XCTAssertTrue(back.waitForExistence(timeout: 3), "the header returns with Done")
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-panel"].waitForNonExistence(timeout: 3))
+    }
+
+    /// KRI-508: every tool panel starts at one height, and Edit text -> Style keeps its top edge
+    /// instead of dropping when the keyboard goes away. The header stays away while a panel is open.
+    func testPanelsShareOneTopAcrossTabsAndStyleKeepsTheEditTextTop() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text"]
+        app.launch()
+
+        let back = app.buttons["native-editor-back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 8))
+        func shot(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        func panelTop() -> CGFloat {
+            app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch.frame.minY
+        }
+        func settle(_ message: String, _ condition: () -> Bool) {
+            let deadline = Date().addingTimeInterval(5)
+            while !condition(), Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+            XCTAssertTrue(condition(), message)
+        }
+
+        let text = app.descendants(matching: .any)["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"]
+        XCTAssertTrue(text.waitForExistence(timeout: 3))
+        text.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-context"].waitForExistence(timeout: 3))
+        text.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        XCTAssertTrue(back.waitForNonExistence(timeout: 3))
+        waitUntilSettled(app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch)
+        let editTop = panelTop()
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let editPreview = preview.frame
+        let title = app.staticTexts["Text"].firstMatch
+        let editTitleY = title.frame.minY
+        shot("anchor-edit-text")
+
+        app.buttons["Style"].tap()
+        XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
+        waitUntilSettled(app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch)
+        settle("Style keeps the Edit text top edge") { abs(panelTop() - editTop) < 2 }
+        XCTAssertFalse(back.exists, "the header stays away on Style")
+        // The tab must not feel like it changed: the video, the title row and the tabs stay put.
+        XCTAssertEqual(preview.frame.minY, editPreview.minY, accuracy: 2)
+        XCTAssertEqual(preview.frame.height, editPreview.height, accuracy: 2, "the video keeps its size")
+        XCTAssertEqual(title.frame.minY, editTitleY, accuracy: 2, "the title row does not move")
+        shot("anchor-style")
+        let styleTop = panelTop()
+
+        app.buttons["native-editor-text-inspector-done"].tap()
+        XCTAssertTrue(back.waitForExistence(timeout: 3), "the header returns once the panel closes")
+        for tool in ["visuals", "captions"] {
+            let button = app.buttons["native-editor-tool-\(tool)"]
+            XCTAssertTrue(button.waitForExistence(timeout: 5), tool)
+            button.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch.waitForExistence(timeout: 5), tool)
+            settle("\(tool) opens at the same height as Style") { abs(panelTop() - styleTop) < 4 }
+            XCTAssertTrue(back.waitForNonExistence(timeout: 3), "\(tool) hides the header too")
+            shot("anchor-\(tool)")
+            button.tap()
+            XCTAssertTrue(back.waitForExistence(timeout: 3), tool)
+        }
     }
 
     func testCaptionSelectionOpensCaptionInspector() {
@@ -1569,17 +1606,21 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(field.value as? String, "Bu alan var mı?")
     }
 
-    // Value: protects=Save tapped mid-edit commits the open line and closes the bar; fails_when=beforeSave is dropped and the bar and keyboard stay up over a saved draft; why_new=no test saves with a line open; seam=none
-    func testSavingWithACaptionLineOpenCommitsItAndClosesTheBar() {
+    // Value: protects=approving a line mid-edit commits it, closes the bar and leaves Save enabled once the panel closes; fails_when=the approve button drops the edit or the bar and keyboard stay up; why_new=Save sits in the header, which is away while a panel is open (KRI-508); seam=none
+    func testApprovingACaptionLineCommitsItAndEnablesSaveOnceThePanelCloses() {
         let app = XCUIApplication()
         let field = openTalkingCaptionLine(app, row: "native-caption-0")
         field.typeText(" tamam")
-        app.buttons["native-editor-save"].tap()
+        XCTAssertFalse(app.buttons["native-editor-save"].exists, "the header is away while a panel is open")
+        app.buttons["native-editor-caption-edit-done"].tap()
         let closed = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: field)
         wait(for: [closed], timeout: 3)
         let row = app.descendants(matching: .any)["native-editor-caption-row-native-caption-0"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 3))
         XCTAssertTrue(row.label.contains("Bu alan var mı? tamam"), "the open line's edit was committed: \(row.label)")
+        app.buttons["native-editor-captions-done"].tap()
+        XCTAssertTrue(app.buttons["native-editor-save"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["native-editor-save"].isEnabled, "the committed line is an unsaved edit")
     }
 
     /// KRI-306: the header's video-shape button opens Vertical / Landscape and Black bars / Crop, enabled
@@ -1817,9 +1858,12 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let scroll = app.scrollViews["native-editor-captions-scroll"]
         XCTAssertTrue(scroll.waitForExistence(timeout: 5))
         let last = app.descendants(matching: .any)["native-editor-caption-row-stress-cue-30"].firstMatch
-        // The panel is short on a phone; a hand swipe moves roughly one viewport.
-        for _ in 0..<40 where !last.isHittable {
-            scroll.swipeUp(velocity: .fast)
+        // Small fixed hand drags: a fast swipe on the taller KRI-508 panel can jump past a row without
+        // ever leaving it fully on screen, so step by about two rows at a time.
+        for _ in 0..<80 where !last.isHittable {
+            let from = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+            from.press(forDuration: 0.05, thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+                .withOffset(CGVector(dx: 0, dy: -120)), withVelocity: .slow, thenHoldForDuration: 0.1)
         }
         XCTAssertTrue(last.isHittable, "caption list did not scroll to line 31")
     }
