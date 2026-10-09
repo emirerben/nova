@@ -39,6 +39,7 @@ from app.kria.device_render import (
     DeviceRetryBody,
     DeviceRetryOut,
 )
+from app.kria.plan_contract import PlanSnapshotOut
 from app.kria.recipes import EditRecipeV1
 from app.kria.registry import KRIA_TOOLS
 from app.routes.auth import (
@@ -125,6 +126,7 @@ API_MODELS = (
 )
 
 MOBILE_API_MODELS = (
+    PlanSnapshotOut,
     DeviceAssetDownloadBody,
     DeviceAssetDownloadOut,
     DeviceRenderStatus,
@@ -739,6 +741,14 @@ def mobile_openapi_json() -> str:
                     ],
                     "requestBody": _json_request(DraftWriteBody),
                     "responses": _json_responses(DraftSnapshotOut),
+                },
+            },
+            "/creation-threads/{thread_id}/plan": {
+                "parameters": [thread_id],
+                "get": {
+                    "operationId": "getCreationPlan",
+                    "security": bearer,
+                    "responses": _json_responses(PlanSnapshotOut),
                 },
             },
             "/creation-threads/{thread_id}/brief": {

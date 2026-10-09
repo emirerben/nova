@@ -55,6 +55,7 @@ from app.kria.media_sources import (
     is_analysis_proxy_path,
     lenient_capture_field,
 )
+from app.kria.plan_contract import CONTRACT_VERSION
 from app.kria.runtime import RuntimeFailure, read_delta
 from app.limiter import limiter
 from app.models import (
@@ -360,6 +361,8 @@ class CreationCapabilitiesOut(BaseModel):
     song_order_questions: bool = False
     # KRI-443: plan_block events follow Create and cancel-render is available.
     live_plan_review_enabled: bool = False
+    # KRI-439: 2 = structured payloads, GET /plan, scoped turns and undo; 1 = the feed only.
+    live_plan_review_version: int = 1
 
 
 class CreateBody(StrictBody):
@@ -3573,6 +3576,7 @@ async def capabilities(
         },
         "song_order_questions": song_available,
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
+        "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
     }
 
 

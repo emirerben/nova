@@ -25,6 +25,7 @@ from tests.tasks import test_phone_subtitled_narrated_dispatch as phone
 def sent(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     mock = MagicMock()
     monkeypatch.setattr(plan_blocks, "emit_plan_blocks", mock)
+    monkeypatch.setattr(plan_blocks, "emit_post_caption", MagicMock())
     monkeypatch.setattr(settings, "live_plan_review_enabled", True)
     return mock
 
@@ -34,11 +35,14 @@ def _only_emit(sent: MagicMock, job) -> dict[str, dict]:
     job_id, blocks = sent.call_args.args
     assert job_id == str(job.id)
     assert [b["section_id"] for b in blocks] == list(plan_blocks.SECTION_ORDER)
-    assert {b["state"] for b in blocks} == {"decided"}
-    return {b["section_id"]: b for b in blocks}
+    by_id = {b["section_id"]: b for b in blocks}
+    # post_caption is resolved right after by `emit_post_caption` (generated or skipped).
+    assert by_id.pop("post_caption")["state"] == "deciding"
+    assert {b["state"] for b in by_id.values()} == {"decided"}
+    return by_id
 
 
-def test_narrated_emits_seven_decided_blocks(monkeypatch, sent) -> None:
+def test_narrated_emits_decided_blocks(monkeypatch, sent) -> None:
     job, *_ = phone._setup_narrated(
         monkeypatch, extra_candidates={"creator_strategy": {"opening_title": "Cacio e pepe"}}
     )
@@ -52,6 +56,15 @@ def test_narrated_emits_seven_decided_blocks(monkeypatch, sent) -> None:
     assert by_id["music"]["summary"] == "Your voiceover"
     for section in ("sfx", "overlays", "look"):
         assert by_id[section]["skipped"] is True
+    # Contract v2 payloads ride along with the unchanged summaries.
+    assert by_id["title"]["payload"]["text"] == "Cacio e pepe"
+    assert by_id["title"]["payload"].get("bar_id")
+    clips = by_id["clips"]["payload"]
+    assert [c["index"] for c in clips["clips"]] == [0, 1, 2]
+    assert all(c["end_s"] > c["start_s"] for c in clips["clips"])
+    assert clips["clips"][-1].get("transition") is None  # nothing leaves the last clip
+    assert by_id["captions"]["payload"]["count"] == len(by_id["captions"]["payload"]["lines"])
+    assert by_id["music"]["payload"]["source"] == "voiceover"
 
 
 def test_narrated_without_a_title_skips_only_the_title(monkeypatch, sent) -> None:
@@ -63,7 +76,7 @@ def test_narrated_without_a_title_skips_only_the_title(monkeypatch, sent) -> Non
     assert by_id["clips"]["skipped"] is False
 
 
-def test_subtitled_emits_seven_decided_blocks(monkeypatch, sent) -> None:
+def test_subtitled_emits_decided_blocks(monkeypatch, sent) -> None:
     job, *_ = phone._setup_subtitled(monkeypatch)
     gb._run_generative_job(str(job.id))
 
@@ -74,7 +87,7 @@ def test_subtitled_emits_seven_decided_blocks(monkeypatch, sent) -> None:
     assert by_id["music"]["skipped"] is True
 
 
-def test_voiceover_montage_emits_seven_decided_blocks(monkeypatch, sent) -> None:
+def test_voiceover_montage_emits_decided_blocks(monkeypatch, sent) -> None:
     job, *_ = montage.setup(monkeypatch)
     gb._run_generative_job(str(job.id))
 

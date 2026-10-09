@@ -30,6 +30,8 @@ from app.kria.api_schemas import (
 from app.kria.contracts import CreativeBriefOut
 from app.kria.drafts import read_or_bootstrap_draft, undo_draft, write_draft
 from app.kria.http import KriaRuntimeRoute, problem_response
+from app.kria.plan_contract import PlanSnapshotOut
+from app.kria.plan_snapshot import read_plan_snapshot
 from app.kria.runtime import (
     RuntimeFailure,
     cancel_render,
@@ -396,6 +398,35 @@ async def get_runtime_draft(
     try:
         _runtime_enabled(user)
         return await read_or_bootstrap_draft(
+            db,
+            thread_id=_uuid(
+                thread_id, code="thread_not_found", message="Creation thread not found"
+            ),
+            creator_id=user.id,
+        )
+    except RuntimeFailure as failure:
+        await db.rollback()
+        return _problem(request, failure)
+
+
+@router.get(
+    "/{thread_id}/plan",
+    response_model=PlanSnapshotOut,
+    responses={404: {"model": KriaProblemOut}},
+)
+async def get_creation_plan(
+    request: Request,
+    thread_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PlanSnapshotOut | JSONResponse:
+    """Live plan & review (KRI-439): the reduced `plan_block` state for the latest job.
+
+    Read-only: no rate limit, no admission check, no locks, never bootstraps a draft.
+    """
+    try:
+        _runtime_enabled(user)
+        return await read_plan_snapshot(
             db,
             thread_id=_uuid(
                 thread_id, code="thread_not_found", message="Creation thread not found"

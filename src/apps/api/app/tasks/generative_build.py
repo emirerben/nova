@@ -71,10 +71,16 @@ from app.kria.plan_blocks import (
     blocks_from_guided_plan as _blocks_from_guided_plan,
 )
 from app.kria.plan_blocks import (
+    cloud_decision_blocks as _cloud_decision_blocks,
+)
+from app.kria.plan_blocks import (
     emit_phone_recipe_blocks as _emit_phone_plan_blocks,
 )
 from app.kria.plan_blocks import (
     emit_plan_blocks as _emit_plan_blocks,
+)
+from app.kria.plan_blocks import (
+    emit_post_caption as _emit_post_caption,
 )
 from app.kria.plan_blocks import (
     emit_skipped_remainder as _emit_plan_blocks_remainder,
@@ -3632,26 +3638,7 @@ def _run_generative_job_impl(
         else:
             pool.shutdown(wait=True)
 
-        _emit_plan_blocks(
-            job_id,
-            [
-                _plan_block("title", "decided", str(agent_text))
-                if agent_text
-                else _plan_block("title", "decided", "Not used", skipped=True),
-                _plan_block("look", "decided", str(style_set_id).replace("_", " ").capitalize())
-                if style_set_id
-                else _plan_block("look", "decided", "Not used", skipped=True),
-                _plan_block(
-                    "music",
-                    "decided",
-                    f"{best_track.title} · {best_track.artist}"
-                    if getattr(best_track, "artist", None)
-                    else str(best_track.title),
-                )
-                if best_track is not None and getattr(best_track, "title", None)
-                else _plan_block("music", "decided", "Not used", skipped=True),
-            ],
-        )
+        _emit_plan_blocks(job_id, _cloud_decision_blocks(agent_text, style_set_id, best_track))
         record_pipeline_event("reframe", "hdr_pretonemap_done", {"clips_converted": n_tonemapped})
         record_pipeline_event("overlay", "agent_text_done", {"has_text": bool(agent_text)})
         record_pipeline_event("overlay", "style_set_selected", {"style_set_id": style_set_id})
@@ -4654,6 +4641,10 @@ def _run_phone_guided_job(
         job.failure_reason = None
         db.commit()
 
+    # KRI-448: the pinned plan's blocks went out above with `post_caption` deciding; the
+    # request is committed and no lock is held, so resolve it now (best-effort, <= 8 s).
+    _emit_post_caption(job_id)
+
 
 def _resolve_phone_music_bed(decision: GenerativeVariantDecision) -> Any:
     """Bridge the sync worker to the (async-shaped) render-library catalog
@@ -5283,6 +5274,7 @@ def _run_phone_voiceover_montage_job(
             ),
             "music": matched_track_title or "Your voiceover",
             "music_detail": "Under your voiceover" if matched_track_title else None,
+            "music_track_id": decision.music_track_id if matched_track_title else None,
             "look": style_set_id if has_text_layers else None,
         },
     )
@@ -7577,8 +7569,12 @@ def _run_phone_subtitled_job(
         recipe,
         lambda: {
             "clip_count": 1 + len({cutaway.binding.media_id for cutaway in cutaways}),
-            "captions": len(cues or []),
-            **({"title": title_rows[0]["text"]} if title_rows else {}),
+            "captions": list(cues or []),
+            **(
+                {"title": title_rows[0]["text"], "title_bar_id": title_rows[0].get("id")}
+                if title_rows
+                else {}
+            ),
         },
     )
 
@@ -8722,16 +8718,24 @@ def _run_phone_narrated_job(
     _emit_phone_blocks_best_effort(
         job_id,
         recipe,
-        lambda: {
-            "title": (
-                opening_title
-                if narrated_title_text_elements(recipe, opening_title, end_s=opening_title_end_s)
-                else None
-            ),
-            "captions": len(cues or []),
-            "music": "Your voiceover",
-        },
+        lambda: _narrated_block_facts(recipe, opening_title, opening_title_end_s, cues),
     )
+
+
+def _narrated_block_facts(
+    recipe: Any, opening_title: Any, opening_title_end_s: Any, cues: Any
+) -> dict:
+    """Plan-block facts for the phone narrated writer (the title counts only when the
+    recipe carries it, and its bar id is the manual-edit target)."""
+    from app.pipeline.phone_narrated_plan import narrated_title_text_elements  # noqa: PLC0415
+
+    rows = narrated_title_text_elements(recipe, opening_title, end_s=opening_title_end_s)
+    return {
+        "title": opening_title if rows else None,
+        "title_bar_id": rows[0].get("id") if rows else None,
+        "captions": list(cues or []),
+        "music": "Your voiceover",
+    }
 
 
 def _guided_execution_plan(

@@ -3423,22 +3423,44 @@ def _finish_approval_dispatch(
                 },
             )
             if settings.live_plan_review_enabled:
-                # KRI-443: all seven sections start `waiting`, in the SAME transaction
-                # (and under the same thread lock) as `render_queued`.
+                # KRI-443: every section starts `waiting` (a scoped update copies the
+                # untouched ones from the previous job), in the SAME transaction (and
+                # under the same thread lock) as `render_queued`.
                 from app.kria.plan_blocks import (  # noqa: PLC0415
+                    dispatch_payload,
                     plan_block_payload,
                     waiting_blocks,
                 )
 
+                # The Celery task is already queued, so a feed problem must never fail
+                # this transaction: build the scoped payload inside a savepoint and fall
+                # back to the plain `waiting` event if anything goes wrong.
+                try:
+                    with db.begin_nested():
+                        plan_payload = dispatch_payload(
+                            db,
+                            thread,
+                            turn_id=str(turn.id),
+                            job_id=str(job_id),
+                            source_event_id=getattr(turn, "source_event_id", None),
+                        )
+                except Exception as exc:  # noqa: BLE001 - the feed must never fail a dispatch
+                    log.warning(
+                        "plan_dispatch_payload_failed",
+                        job_id=str(job_id),
+                        error_class=type(exc).__name__,
+                        error=str(exc)[:200],
+                    )
+                    plan_payload = plan_block_payload(
+                        turn_id=str(turn.id), job_id=str(job_id), blocks=waiting_blocks()
+                    )
                 _append_sync_event(
                     db,
                     thread,
                     role="system",
                     event_type="plan_block",
                     content=None,
-                    payload=plan_block_payload(
-                        turn_id=str(turn.id), job_id=str(job_id), blocks=waiting_blocks()
-                    ),
+                    payload=plan_payload,
                 )
             db.commit()
             return "dispatched", None

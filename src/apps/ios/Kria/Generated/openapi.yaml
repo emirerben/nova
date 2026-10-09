@@ -1051,6 +1051,11 @@
             "title": "Live Plan Review Enabled",
             "type": "boolean"
           },
+          "live_plan_review_version": {
+            "default": 1,
+            "title": "Live Plan Review Version",
+            "type": "integer"
+          },
           "media": {
             "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
           },
@@ -2061,6 +2066,34 @@
           "cursor_run"
         ],
         "title": "DiscreteRevealLine",
+        "type": "object"
+      },
+      "DraftHead": {
+        "properties": {
+          "can_undo": {
+            "title": "Can Undo",
+            "type": "boolean"
+          },
+          "draft_id": {
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "draft_revision": {
+            "title": "Draft Revision",
+            "type": "integer"
+          },
+          "etag": {
+            "title": "Etag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_id",
+          "draft_revision",
+          "etag",
+          "can_undo"
+        ],
+        "title": "DraftHead",
         "type": "object"
       },
       "DraftSnapshotOut": {
@@ -5719,6 +5752,196 @@
         "title": "PersonaResponse",
         "type": "object"
       },
+      "PlanBlockOut": {
+        "description": "One section. Identical shape inside `plan_block` events and GET /plan.",
+        "properties": {
+          "changed": {
+            "default": false,
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "decided_at": {
+            "default": null,
+            "nullable": true,
+            "title": "Decided At",
+            "type": "string"
+          },
+          "detail": {
+            "default": null,
+            "nullable": true,
+            "title": "Detail",
+            "type": "string"
+          },
+          "editable": {
+            "default": false,
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "intent": {
+            "default": false,
+            "title": "Intent",
+            "type": "boolean"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "previous": {
+            "$ref": "#/components/schemas/PreviousValue",
+            "default": null,
+            "nullable": true
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "section_id": {
+            "enum": [
+              "title",
+              "clips",
+              "captions",
+              "music",
+              "sfx",
+              "overlays",
+              "look",
+              "post_caption"
+            ],
+            "title": "Section Id",
+            "type": "string"
+          },
+          "skipped": {
+            "default": false,
+            "title": "Skipped",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "waiting",
+              "deciding",
+              "decided"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "summary": {
+            "default": null,
+            "nullable": true,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "state"
+        ],
+        "title": "PlanBlockOut",
+        "type": "object"
+      },
+      "PlanSnapshotOut": {
+        "properties": {
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/PlanBlockOut"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "decided_count": {
+            "title": "Decided Count",
+            "type": "integer"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/DraftHead",
+            "default": null,
+            "nullable": true
+          },
+          "job_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Job Id",
+            "type": "string"
+          },
+          "next_after_sequence": {
+            "title": "Next After Sequence",
+            "type": "integer"
+          },
+          "previous_job_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Previous Job Id",
+            "type": "string"
+          },
+          "scope": {
+            "default": null,
+            "items": {
+              "enum": [
+                "title",
+                "clips",
+                "captions",
+                "music",
+                "sfx",
+                "overlays",
+                "look",
+                "post_caption"
+              ],
+              "type": "string"
+            },
+            "nullable": true,
+            "title": "Scope",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "empty",
+              "planning",
+              "ready",
+              "updating",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "thread_revision": {
+            "title": "Thread Revision",
+            "type": "integer"
+          },
+          "total_count": {
+            "title": "Total Count",
+            "type": "integer"
+          },
+          "turn_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "update_summary": {
+            "$ref": "#/components/schemas/UpdateSummary",
+            "default": null,
+            "nullable": true
+          }
+        },
+        "required": [
+          "thread_id",
+          "thread_revision",
+          "status",
+          "decided_count",
+          "total_count",
+          "blocks",
+          "next_after_sequence"
+        ],
+        "title": "PlanSnapshotOut",
+        "type": "object"
+      },
       "PoolAssetOut": {
         "properties": {
           "aspect": {
@@ -6319,6 +6542,43 @@
           "stroke_width"
         ],
         "title": "PositionedTextRun",
+        "type": "object"
+      },
+      "PreviousValue": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "revision": {
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "skipped": {
+            "default": false,
+            "title": "Skipped",
+            "type": "boolean"
+          },
+          "summary": {
+            "default": null,
+            "nullable": true,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "job_id"
+        ],
+        "title": "PreviousValue",
         "type": "object"
       },
       "QuestionnaireBody": {
@@ -9085,6 +9345,48 @@
         "title": "TurnCancelled",
         "type": "object"
       },
+      "UpdateSummary": {
+        "properties": {
+          "changed_sections": {
+            "items": {
+              "enum": [
+                "title",
+                "clips",
+                "captions",
+                "music",
+                "sfx",
+                "overlays",
+                "look",
+                "post_caption"
+              ],
+              "type": "string"
+            },
+            "title": "Changed Sections",
+            "type": "array"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 400,
+            "title": "Text",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "job_id",
+          "text",
+          "changed_sections"
+        ],
+        "title": "UpdateSummary",
+        "type": "object"
+      },
       "UploadBody": {
         "additionalProperties": false,
         "properties": {
@@ -10692,6 +10994,48 @@
           }
         ]
       }
+    },
+    "/creation-threads/{thread_id}/plan": {
+      "get": {
+        "operationId": "getCreationPlan",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanSnapshotOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
     },
     "/creation-threads/{thread_id}/turns": {
       "parameters": [
