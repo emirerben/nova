@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.186.0] - 2026-10-09
+
+### Changed
+- test(ios): text accessibility UI tests follow the panel opening on Edit text (KRI-508) (#1508) <!-- release-pr: 1508 -->
+
 ## [0.78.185.0] - 2026-10-09
 
 ### Changed
