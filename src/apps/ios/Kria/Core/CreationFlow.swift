@@ -29,6 +29,11 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var minimumClientProtocol: Int? = nil
     /// KRI-443: server emits `plan_block` events after Create and accepts cancel-render. Missing = off (fails closed).
     var livePlanReviewEnabled: Bool? = nil
+    /// Live plan & review contract version: 2 = structured payloads, GET /plan, scoped turns and undo. Missing or 1 =
+    /// the feed only (no Review entry points).
+    var livePlanReviewVersion: Int? = nil
+    /// The Review view is offered only when the server is on AND speaks contract v2.
+    var livePlanReviewAvailable: Bool { livePlanReviewEnabled == true && (livePlanReviewVersion ?? 1) >= 2 }
     var editorStateTurnsEnabled: Bool { editorStateTurns == true }
     var slidePostRichTextEnabled: Bool { slidePostRichText == true }
     var slidePostChatEditEnabled: Bool { slidePostChatEdit == true }
@@ -56,7 +61,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case songOrderQuestions = "song_order_questions"
         case choiceQuestions = "choice_questions"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
-        case livePlanReviewEnabled = "live_plan_review_enabled"
+        case livePlanReviewEnabled = "live_plan_review_enabled", livePlanReviewVersion = "live_plan_review_version"
     }
 }
 
@@ -82,6 +87,7 @@ extension CreationCapabilities {
         creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)
         minimumClientProtocol = try container.decodeIfPresent(Int.self, forKey: .minimumClientProtocol)
         livePlanReviewEnabled = try container.decodeIfPresent(Bool.self, forKey: .livePlanReviewEnabled)
+        livePlanReviewVersion = try container.decodeIfPresent(Int.self, forKey: .livePlanReviewVersion)
     }
 }
 

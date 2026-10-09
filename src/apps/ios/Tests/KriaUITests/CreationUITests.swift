@@ -1251,13 +1251,15 @@ final class CreationUITests: XCTestCase {
     /// on the live feed.
     private func launchLivePlanFeed(
         reduceMotion: Bool, reduceTransparency: Bool = false, cancel: String? = nil, capability: Bool = true,
-        device: Bool = false, followup: Bool = false
+        device: Bool = false, followup: Bool = false, contractV2: Bool = false
     ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         if capability { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS"] = "1" }
+        // Live-plan contract v2: structured payloads, 8 sections (post_caption), Review entry points.
+        if contractV2 { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_VERSION"] = "2" }
         if followup { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] = "1" }
         if device {
             app.launchEnvironment["KRIA_CHAT_DEVICE_RENDER"] = "ready"
@@ -1319,13 +1321,63 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         XCTAssertTrue(planBlockValue(app, "overlays").contains("Not used"), "a skipped section counts as decided")
         review.tap()
-        for section in ["title", "clips", "captions", "music", "sfx", "overlays", "look"] {
+        for section in ["title", "clips", "captions", "music", "sfx", "look"] {
             XCTAssertTrue(app.descendants(matching: .any)["plan-feed.change.\(section)"].waitForExistence(timeout: 5), "\(section) expanded in review")
         }
+        XCTAssertFalse(app.descendants(matching: .any)["plan-feed.change.overlays"].exists, "a section that is not used has nothing to change")
+        XCTAssertFalse(app.buttons["plan-feed-review-cta"].exists, "an older server has no Review view, so no Review CTA")
         attach(app, "plan-feed-review")
         // ReadyStage is unchanged once the render finishes.
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 60))
         XCTAssertFalse(feed.exists)
+    }
+
+    /// Contract v2: structured payloads render rich cards, a malformed payload falls back to its summary, the 8th
+    /// section (post caption) shows, and the finished feed offers the ink + butter "Review your video" CTA.
+    func testLivePlanFeedRendersStructuredPayloadsAndOffersReview() {
+        let app = launchLivePlanFeed(reduceMotion: true, contractV2: true)
+        let feed = app.otherElements["plan-feed"]
+        XCTAssertTrue(feed.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["Planning your video"].waitForExistence(timeout: 10))
+        let stop = app.buttons["plan-feed-stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
+        XCTAssertFalse(app.buttons["plan-feed-review-cta"].exists, "no Review CTA while sections are still being decided")
+        XCTAssertFalse(app.buttons["Create this video"].exists || app.staticTexts["Create this video"].exists, "Create already happened")
+        XCTAssertTrue(eventually(timeout: 20) { self.planBlockValue(app, "title") == "deciding" || self.planBlockValue(app, "title").hasPrefix("decided") })
+        attach(app, "plan-feed-v2-deciding")
+        XCTAssertTrue(eventually(timeout: 30) { self.planBlockValue(app, "clips").hasPrefix("decided") })
+        attach(app, "plan-feed-v2-clips")
+
+        let title = app.staticTexts["plan-feed.title"]
+        XCTAssertTrue(eventually(timeout: 90) { title.label == "Plan ready · 8 of 8 decided" }, "post_caption is the 8th section")
+        XCTAssertEqual(app.descendants(matching: .any)["plan-feed.progress"].value as? String, "8 of 8 decided")
+        XCTAssertTrue(app.staticTexts["Your plan is ready"].exists)
+        XCTAssertTrue(self.planBlockValue(app, "sfx").contains("4 sound effects"), "a malformed payload falls back to the summary")
+        XCTAssertTrue(self.planBlockValue(app, "post_caption").contains("Slow summer days in Bodrum"))
+
+        let review = app.buttons["plan-feed-review-cta"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(review.frame.height, 48)
+        XCTAssertFalse(app.buttons["plan-feed.review"].exists, "v2 replaces the expand-all toggle with the Review CTA")
+        attach(app, "plan-feed-v2-ready")
+
+        // Opening a collapsed row shows its structured content.
+        app.buttons["plan-feed.block.captions"].tap()
+        let lines = app.descendants(matching: .any)["plan-feed.captions.captions"]
+        XCTAssertTrue(lines.waitForExistence(timeout: 5))
+        XCTAssertTrue(lines.label.contains("Slow mornings."))
+        XCTAssertTrue(app.descendants(matching: .any)["plan-feed.change.captions"].isEnabled, "Change is live on a v2 server")
+        attach(app, "plan-feed-v2-captions-open")
+        XCTAssertFalse(app.descendants(matching: .any)["plan-feed.change.post_caption"].exists, "a post caption is display only")
+    }
+
+    func testLivePlanFeedV2UnderReduceTransparency() {
+        let app = launchLivePlanFeed(reduceMotion: true, reduceTransparency: true, contractV2: true)
+        XCTAssertTrue(app.otherElements["plan-feed"].waitForExistence(timeout: 30))
+        XCTAssertTrue(eventually(timeout: 90) { app.staticTexts["plan-feed.title"].label == "Plan ready · 8 of 8 decided" })
+        XCTAssertTrue(app.buttons["plan-feed-review-cta"].waitForExistence(timeout: 5))
+        attach(app, "plan-feed-v2-reduced-transparency-ready")
     }
 
     func testReadyVideoFollowupWaitsWithoutReplayingPriorPlan() {
@@ -1387,7 +1439,7 @@ final class CreationUITests: XCTestCase {
 
     func testLivePlanFeedStopCancelsTheDeviceRender() {
         let app = launchLivePlanFeed(reduceMotion: true, device: true)
-        let stop = app.buttons["plan-feed.stop"]
+        let stop = app.buttons["plan-feed-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 30))
         XCTAssertFalse(app.staticTexts["This render can’t be stopped any more."].exists)
         stop.tap()
@@ -1405,7 +1457,7 @@ final class CreationUITests: XCTestCase {
 
     func testLivePlanFeedStopCancelsTheRender() {
         let app = launchLivePlanFeed(reduceMotion: true)
-        let stop = app.buttons["plan-feed.stop"]
+        let stop = app.buttons["plan-feed-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 30))
         XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
         XCTAssertTrue(eventually(timeout: 20) { self.planBlockValue(app, "title") != "" })
@@ -1417,11 +1469,11 @@ final class CreationUITests: XCTestCase {
 
     func testLivePlanFeedStopHidesWhenTheRenderCannotBeCancelled() {
         let app = launchLivePlanFeed(reduceMotion: true, cancel: "unavailable")
-        let stop = app.buttons["plan-feed.stop"]
+        let stop = app.buttons["plan-feed-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 30))
         stop.tap()
         XCTAssertTrue(app.staticTexts["plan-feed.stop-message"].waitForExistence(timeout: 10))
-        XCTAssertTrue(eventually(timeout: 5) { !app.buttons["plan-feed.stop"].exists })
+        XCTAssertTrue(eventually(timeout: 5) { !app.buttons["plan-feed-stop"].exists })
         XCTAssertTrue(app.otherElements["plan-feed"].exists, "the render carries on")
     }
 
