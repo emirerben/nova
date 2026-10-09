@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.200.0] - 2026-10-09
+
+### Changed
+- Fix iOS slide post save after binding number round-trip (#1523) <!-- release-pr: 1523 -->
+
 ## [0.78.199.0] - 2026-10-09
 
 ### Changed
