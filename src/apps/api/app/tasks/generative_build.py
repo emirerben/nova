@@ -5995,6 +5995,21 @@ def _run_phone_unified_montage_job(
                 visuals=visuals,
                 output_orientation=_creator_shape_orientation(all_candidates),
             )
+    # Complete the initial text lane before the canonical generation is pinned.
+    # This uses the request already bound to this job, never a newer thread message.
+    from app.agents._runtime import RunContext  # noqa: PLC0415
+    from app.services.creation_text_composition import compose_creation_text  # noqa: PLC0415
+
+    request = all_candidates.get("creator_request") or (
+        (all_candidates.get("brief") or {}).get("creator_request")
+        if isinstance(all_candidates.get("brief"), dict)
+        else ""
+    )
+    plan.snapshot = compose_creation_text(
+        plan.snapshot,
+        creator_request=str(request or ""),
+        ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
+    )
     record = plan.record()
     # KRI-544: which copies left the edit, readable by a requirement checker. Absent
     # (byte-identical record) when nothing was collapsed.

@@ -38,6 +38,11 @@ enum NativeEditorUITestFixtures {
     }
 
     static func fixture(arguments: [String]) -> Fixture {
+        if arguments.contains("-ui-testing-editor-captured-creation") {
+            // External captures are not built-in deterministic fixture shapes:
+            // they share source-preview behavior but require a supplied draft.
+            return Fixture(shape: .sourceText, draft: capturedCreation)
+        }
         let shape = Shape.allCases.first { arguments.contains("-ui-testing-editor-\($0.rawValue)") } ?? .twoText
         return Fixture(shape: shape, draft: draft(for: shape))
     }
@@ -414,6 +419,18 @@ enum NativeEditorUITestFixtures {
         }
         return draft(clips: clips, text: [], captions: false, music: false,
                      sections: ["timeline_slots": slotValues, "title": .string("Retimed fixture")])
+    }()
+
+    /// DEBUG-only bridge for simulator evidence. The path is supplied by the
+    /// repeatable fixture generator and must contain an `EditorDraft` whose
+    /// serverSnapshot is the persisted, compiler-produced server draft.
+    static let capturedCreation: EditorDraft = {
+        guard let path = ProcessInfo.processInfo.environment["KRIA_UI_FIXTURE_DRAFT"],
+              let data = FileManager.default.contents(atPath: path) else {
+            preconditionFailure("KRI-524 captured editor fixture requires KRIA_UI_FIXTURE_DRAFT")
+        }
+        do { return try JSONDecoder().decode(EditorDraft.self, from: data) }
+        catch { preconditionFailure("KRI-524 captured editor fixture is invalid: \(error)") }
     }()
 
     static let autoScrollExtend: EditorDraft = {

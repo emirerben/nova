@@ -1668,6 +1668,8 @@ def _dispatch_item_render(
     (cloud) source, or this flag left False, still refuses. False (default)
     keeps every other caller's gate byte-identical.
     """
+    if len(str(creator_request or "")) > 12_000:
+        raise ValueError("Creator request exceeds the safe limit")
     from app.agents._schemas.edit_format import (  # noqa: PLC0415
         coerce_edit_format,
         guided_edit_applicable,
@@ -2421,7 +2423,7 @@ def _dispatch_item_render(
             smart_captions=smart_context,
             creator_strategy=creator_strategy,
             creator_clip_order=creator_clip_order,
-            creator_request=str(creator_request or "")[:12000],
+            creator_request=str(creator_request or ""),
             creator_render_shape=creator_render_shape,
             **({"phone_sources": phone_sources} if phone_sources else {}),
             **({"render_on_device": True} if visuals_only_device else {}),

@@ -13,6 +13,10 @@ from pydantic.json_schema import SkipJsonSchema
 from app.kria.brief import CreativeBrief, render_brief_request
 
 
+class BriefBindingRequestTooLongError(ValueError):
+    """An approved request cannot retain its full source safely."""
+
+
 class BriefBinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -61,12 +65,24 @@ class BriefBinding(BaseModel):
         brief: CreativeBrief | None,
         *,
         latest_message: str = "",
+        full_creator_request: str | None = None,
         media_snapshot: dict | None = None,
         choice_answers: list[dict] | None = None,
     ) -> BriefBinding:
         snapshot = brief.model_copy(deep=True) if brief is not None else None
         state = "pinned" if snapshot is not None else "none"
-        request = render_brief_request(snapshot, latest_message=latest_message)
+        brief_request = render_brief_request(snapshot, latest_message=latest_message)
+        if full_creator_request is not None:
+            raw = full_creator_request.strip()
+            request = (
+                f"Full creator request (chronological):\n{raw}\n\n{brief_request}"
+                if raw and brief_request
+                else raw or brief_request
+            )
+        else:
+            request = brief_request
+        if len(request) > 12_000:
+            raise BriefBindingRequestTooLongError("Approved creator request exceeds the safe limit")
         media = copy.deepcopy(media_snapshot or {})
         answers = copy.deepcopy(list(choice_answers or []))
         return cls(

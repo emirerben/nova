@@ -26,13 +26,13 @@ from app.agents.main_creator import (
 from app.config import settings
 from tests.agents.test_main_creator_agent import _input, _manifest
 
-# (clip_intents_enabled, brief_enabled) -> sha256 of the KRI-525 v51 render without a song
-# (v50 plus the ranged-pin and pin-limit rules).
+# (clip_intents_enabled, brief_enabled) -> sha256 of the deliberate v53 no-song baseline.
+# v53 changes the brief-enabled renders; the other two combinations remain byte-identical.
 PRE_CHANGE_PROMPT_SHA = {
     (True, False): "07f44b572bc7bb2cfd8162bf5002c48252a11749358e6c883806cdca2255c27d",
-    (True, True): "3d7379ce7dc76ff2db3142bcf53846c06b8e78071bee93749ddb4d001892cbc7",
+    (True, True): "6f37087ec3f6ffb859cb730d3b0139c937df28c1350c992f573c20d28f2333ac",
     (False, False): "e7ca0a5ae3abcd2675f6066aa1109b979f235b134d441fb56e88c26a150c0868",
-    (False, True): "c2c2d0063ff148aacf51ed6a8be7abd161bb6471fff7a58752be2da50f1f1d82",
+    (False, True): "9fd0d7cc121dd80883ac7fb3aa386dffdf31edcbc5e4990c628a06bfff9b8dbd",
 }
 
 
@@ -102,7 +102,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-08-v52"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-08-v53"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

@@ -1048,6 +1048,12 @@ struct NativeEditorTemporaryVideo {
             installPlayer(url: initialPlaybackURL)
         }
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-captured-creation") {
+            // A file-backed fixture needs the same identity as an opened job.
+            // Keep the normal export readiness/dirty/revision checks in force.
+            jobID = draft.projectID
+            variantKey = "guided_story"
+        }
         // KRI-288: the API stub throws, so the Effects library would always be empty in UI tests.
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
             soundEffectCatalog = NativeEditorUITestFixtures.soundEffectCatalog

@@ -620,6 +620,13 @@ def _validated_scheduled_draft(
             creator_request=current.brief.creator_request if current else "",
         )
     validate_frame_schedule(snapshot)
+    if snapshot.text_composition is not None:
+        from app.pipeline.guided_story import compile_proposal_execution_plan
+
+        # Validate after server schedule/layout normalization, against exactly
+        # the snapshot that will be persisted. Unchanged scheduled saves must
+        # not fall back to the unscheduled compiler for this digest check.
+        compile_proposal_execution_plan(snapshot)
     return snapshot
 
 

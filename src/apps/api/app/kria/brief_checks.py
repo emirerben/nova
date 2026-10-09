@@ -3397,9 +3397,23 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         )
     else:
         found = any(_contains_text(t, wanted) for t in facts.texts)
-    # KRI-545: "chapter titles: Sabah, Üniversite, ..." is on screen as those names, each its
-    # own text on its clips, never as one line.
+    # Chapter lists are satisfied by their separate labels, not a joined title.
     if found or chapter_list(req.literal, facts.texts) is not None:
+        # Copy presence cannot certify independently requested visual/temporal behavior.
+        # Keep these explicit constraints unverified until their actual lane evidence is checked.
+        if set(req.facts or {}) & {
+            "animation",
+            "position",
+            "segmentation",
+            "sequence",
+            "timing",
+            "overlap",
+            "font_family",
+            "text_color",
+            "animation_phases",
+            "duration_s",
+        }:
+            return _receipt(req, "partial", _NO_CHECKER)
         return _receipt(req, "met", None)
     return _receipt(
         req,

@@ -1128,7 +1128,11 @@ def _wire_planner(monkeypatch, *, output, editor_plan, snapshot):  # noqa: ANN00
             pass
 
         def run(self, *_args, **_kwargs):  # noqa: ANN002, ANN003
-            return SimpleNamespace(brief_updates=list(output.brief_updates) if output else [])
+            return SimpleNamespace(
+                brief_updates=list(output.brief_updates) if output else [],
+                request_scope=getattr(output, "request_scope", None),
+                clarification=getattr(output, "clarification", None),
+            )
 
     monkeypatch.setattr(planner, "BriefExtractorAgent", FakeBriefExtractor)
     monkeypatch.setattr(planner, "default_client", lambda: object())
@@ -1223,6 +1227,7 @@ async def test_replan_strategy_request_reaches_the_planner_from_the_brief(
     output = SimpleNamespace(
         action=AskUser(**_ASK),
         brief_updates=[_upd("text", "per_clip", description="the landmark in each clip")],
+        request_scope="rebuild",
     )
     db, item, creator_id, _copilot, runs = _wire_planner(
         monkeypatch,

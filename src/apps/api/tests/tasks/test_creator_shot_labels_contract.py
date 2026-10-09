@@ -22,6 +22,7 @@ import pytest
 import app.tasks.edit_proposal_build as proposal_build
 from app.agents._runtime import SchemaError, TerminalError
 from app.agents._schemas.creator_agent import CreativeStrategy, CreatorRenderIntentEvidence
+from app.agents.edit_copilot import EditCopilotOutput
 from app.agents.edit_proposal import (
     MAX_GUIDED_DRAFT_BEATS,
     EditProposalAgent,
@@ -68,6 +69,20 @@ GENERIC_FALLBACK_COPY = {
     "A different angle on the moment.",
     "A final frame to remember.",
 }
+
+
+@pytest.fixture(autouse=True)
+def _stub_creation_text_composer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep proposal recovery tests offline while exercising their persisted text contract."""
+
+    monkeypatch.setattr(
+        "app.services.creation_text_composition.CreationTextComposer.run",
+        lambda *_args, **_kwargs: EditCopilotOutput(
+            intent="describe", confidence=1, reply="The planned text already satisfies the request."
+        ),
+    )
+
+
 # The exact prod media set: five portrait videos and one photo.
 BARCELONA_MEDIA = [
     ("ios-2850", "video", 10.05424, "public square with palm trees and people"),

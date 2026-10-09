@@ -55,6 +55,47 @@ def test_action_envelope_is_rejected_instead_of_being_treated_as_extraction() ->
         )
 
 
+def test_required_scope_rejects_missing_invalid_and_ambiguous_scope_payloads() -> None:
+    agent = BriefExtractorAgent(None)  # type: ignore[arg-type]
+    required = _input().model_copy(update={"require_request_scope": True})
+    for payload in (
+        {"brief_updates": []},
+        {"brief_updates": [], "request_scope": "retry"},
+        {"brief_updates": [], "request_scope": "clarify"},
+    ):
+        with pytest.raises(SchemaError):
+            agent.parse(json.dumps(payload), required)
+
+
+def test_scope_is_optional_for_legacy_direct_callers() -> None:
+    output = BriefExtractorAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps({"brief_updates": []}), _input()
+    )
+    assert output.request_scope is None
+
+
+def test_required_scope_accepts_edit_rebuild_and_clarification() -> None:
+    agent = BriefExtractorAgent(None)  # type: ignore[arg-type]
+    required = _input().model_copy(update={"require_request_scope": True})
+    edit = agent.parse(json.dumps({"brief_updates": [], "request_scope": "edit"}), required)
+    rebuild = agent.parse(json.dumps({"brief_updates": [], "request_scope": "rebuild"}), required)
+    clarify = agent.parse(
+        json.dumps(
+            {
+                "brief_updates": [],
+                "request_scope": "clarify",
+                "clarification": "Should I revise the title or remake the video?",
+            }
+        ),
+        required,
+    )
+    assert (edit.request_scope, rebuild.request_scope, clarify.clarification) == (
+        "edit",
+        "rebuild",
+        "Should I revise the title or remake the video?",
+    )
+
+
 def test_prompt_contains_only_brief_contract_and_current_request() -> None:
     prompt = BriefExtractorAgent(None).render_prompt(_input())  # type: ignore[arg-type]
     assert "brief_updates" in prompt
@@ -264,4 +305,5 @@ def test_extractor_prompt_teaches_style_intent_without_touching_the_main_planner
         BriefExtractionInput(creator_request="", user_message="x", conversation=[])
     )
     assert "style_intent" in prompt and "style_intent" not in _BRIEF_PROMPT_SECTION
-    assert BRIEF_EXTRACTOR_PROMPT_VERSION.endswith("-v5")
+    assert BRIEF_EXTRACTOR_PROMPT_VERSION == "2026-10-08-v7"
+    assert "request_scope" in prompt

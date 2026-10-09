@@ -1,0 +1,304 @@
+{
+  "provenance": {
+    "kind": "authored_synthetic_live_capture",
+    "model": "gemini-3.1-pro-preview",
+    "prompt_version": "2026-10-08-v6",
+    "rendered": false,
+    "attempts_per_case": 1,
+    "date": "2026-10-08"
+  },
+  "cases": [
+    {
+      "id": "title_retry",
+      "input": {
+        "creator_request": "",
+        "user_message": "Try again to split the opening title into words and fade each word in and out in sequence.",
+        "conversation": [],
+        "current_brief": {
+          "version": 0,
+          "requirements": []
+        },
+        "require_request_scope": true
+      },
+      "expected_scope": "edit",
+      "provenance": "authored_synthetic_live_capture",
+      "output": {
+        "brief_updates": [
+          {
+            "operation": "add",
+            "target_requirement_id": null,
+            "expected_version": null,
+            "kind": "text",
+            "scope": "title",
+            "literal": null,
+            "description": "split the opening title into words and fade each word in and out in sequence",
+            "facts": {
+              "animation": "fade"
+            }
+          }
+        ],
+        "request_scope": "edit",
+        "clarification": null
+      },
+      "pass": true,
+      "calls": [
+        {
+          "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": null,\n      \"description\": \"split the opening title into words and fade each word in and out in sequence\",\n      \"facts\": {\n        \"animation\": \"fade\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+          "model_used": "gemini-3.1-pro-preview"
+        }
+      ]
+    },
+    {
+      "id": "compound",
+      "input": {
+        "creator_request": "",
+        "user_message": "Give it another go: shrink the heading and lower the music. Keep the existing cut.",
+        "conversation": [],
+        "current_brief": {
+          "version": 0,
+          "requirements": []
+        },
+        "require_request_scope": true
+      },
+      "expected_scope": "edit",
+      "provenance": "authored_synthetic_live_capture",
+      "output": {
+        "brief_updates": [
+          {
+            "operation": "add",
+            "target_requirement_id": null,
+            "expected_version": null,
+            "kind": "style",
+            "scope": "title",
+            "literal": null,
+            "description": "shrink the heading",
+            "facts": {}
+          },
+          {
+            "operation": "add",
+            "target_requirement_id": null,
+            "expected_version": null,
+            "kind": "audio",
+            "scope": "global",
+            "literal": null,
+            "description": "lower the music volume",
+            "facts": {}
+          }
+        ],
+        "request_scope": "edit",
+        "clarification": null
+      },
+      "pass": true,
+      "calls": [
+        {
+          "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"title\",\n      \"literal\": null,\n      \"description\": \"shrink the heading\",\n      \"facts\": {}\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"audio\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"lower the music volume\",\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+          "model_used": "gemini-3.1-pro-preview"
+        }
+      ]
+    },
+    {
+      "id": "negative",
+      "input": {
+        "creator_request": "",
+        "user_message": "Do not rebuild the video. Retry the captions in a smaller font.",
+        "conversation": [],
+        "current_brief": {
+          "version": 0,
+          "requirements": []
+        },
+        "require_request_scope": true
+      },
+      "expected_scope": "edit",
+      "provenance": "authored_synthetic_live_capture",
+      "output": {
+        "brief_updates": [
+          {
+            "operation": "add",
+            "target_requirement_id": null,
+            "expected_version": null,
+            "kind": "style",
+            "scope": "global",
+            "literal": null,
+            "description": "smaller font for the captions",
+            "facts": {}
+          }
+        ],
+        "request_scope": "edit",
+        "clarification": null
+      },
+      "pass": true,
+      "calls": [
+        {
+          "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"smaller font for the captions\",\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+          "model_used": "gemini-3.1-pro-preview"
+        }
+      ]
+    },
+    {
+      "id": "rebuild",
+      "input": {
+        "creator_request": "",
+        "user_message": "Discard this cut and create a fresh video from all the clips.",
+        "conversation": [],
+        "current_brief": {
+          "version": 0,
+          "requirements": []
+        },
+        "require_request_scope": true
+      },
+      "expected_scope": "rebuild",
+      "provenance": "authored_synthetic_live_capture",
+      "output": {
+        "brief_updates": [],
+        "request_scope": "rebuild",
+        "clarification": null
+      },
+      "pass": true,
+      "calls": [
+        {
+          "raw_text": "{\n  \"brief_updates\": [],\n  \"request_scope\": \"rebuild\"\n}",
+          "model_used": "gemini-3.1-pro-preview"
+        }
+      ]
+    },
+    {
+      "id": "ambiguous",
+      "input": {
+        "creator_request": "",
+        "user_message": "Try again.",
+        "conversation": [],
+        "current_brief": {
+          "version": 0,
+          "requirements": []
+        },
+        "require_request_scope": true
+      },
+      "expected_scope": "clarify",
+      "provenance": "authored_synthetic_live_capture",
+      "output": {
+        "brief_updates": [],
+        "request_scope": "clarify",
+        "clarification": "Could you please specify what you would like to try again or change?"
+      },
+      "pass": true,
+      "calls": [
+        {
+          "raw_text": "{\n  \"brief_updates\": [],\n  \"request_scope\": \"clarify\",\n  \"clarification\": \"Could you please specify what you would like to try again or change?\"\n}",
+          "model_used": "gemini-3.1-pro-preview"
+        }
+      ]
+    },
+    {
+      "id": "turkish",
+      "input": {
+        "creator_request": "",
+        "user_message": "Başlığı tekrar küçült, videonun geri kalanını değiştirme.",
+        "conversation": [],
+        "current_brief": {
+          "version": 0,
+          "requirements": []
+        },
+        "require_request_scope": true
+      },
+      "expected_scope": "edit",
+      "provenance": "authored_synthetic_live_capture",
+      "output": {
+        "brief_updates": [
+          {
+            "operation": "add",
+            "target_requirement_id": null,
+            "expected_version": null,
+            "kind": "style",
+            "scope": "title",
+            "literal": null,
+            "description": "Başlığı tekrar küçült",
+            "facts": {}
+          }
+        ],
+        "request_scope": "edit",
+        "clarification": null
+      },
+      "pass": true,
+      "calls": [
+        {
+          "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"title\",\n      \"literal\": null,\n      \"description\": \"Başlığı tekrar küçült\",\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+          "model_used": "gemini-3.1-pro-preview"
+        }
+      ]
+    },
+    {
+      "id": "contextual_retry",
+      "input": {
+        "creator_request": "",
+        "user_message": "Try again.",
+        "conversation": [
+          {
+            "role": "user",
+            "content": "Make each title word fade in and out, one at a time."
+          },
+          {
+            "role": "assistant",
+            "content": "The edit failed; your title is unchanged."
+          }
+        ],
+        "current_brief": {
+          "version": 0,
+          "requirements": []
+        },
+        "require_request_scope": true
+      },
+      "expected_scope": "edit",
+      "provenance": "authored_synthetic_live_capture",
+      "output": {
+        "brief_updates": [],
+        "request_scope": "edit",
+        "clarification": null
+      },
+      "pass": true,
+      "calls": [
+        {
+          "raw_text": "{\n  \"brief_updates\": [],\n  \"request_scope\": \"edit\"\n}",
+          "model_used": "gemini-3.1-pro-preview"
+        }
+      ]
+    },
+    {
+      "id": "quoted_rebuild",
+      "input": {
+        "creator_request": "",
+        "user_message": "Change the title to \"rebuild the whole video\". Keep the cut as it is.",
+        "conversation": [],
+        "current_brief": {
+          "version": 0,
+          "requirements": []
+        },
+        "require_request_scope": true
+      },
+      "expected_scope": "edit",
+      "provenance": "authored_synthetic_live_capture",
+      "output": {
+        "brief_updates": [
+          {
+            "operation": "add",
+            "target_requirement_id": null,
+            "expected_version": null,
+            "kind": "text",
+            "scope": "title",
+            "literal": "rebuild the whole video",
+            "description": null,
+            "facts": {}
+          }
+        ],
+        "request_scope": "edit",
+        "clarification": null
+      },
+      "pass": true,
+      "calls": [
+        {
+          "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": \"rebuild the whole video\",\n      \"description\": null,\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+          "model_used": "gemini-3.1-pro-preview"
+        }
+      ]
+    }
+  ]
+}
