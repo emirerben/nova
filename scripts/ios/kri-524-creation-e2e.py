@@ -47,6 +47,13 @@ from app.services.creation_text_composition import (
     _lanes,
     compose_creation_text,
 )
+from app.services.cloud_render_contract import check_guided_plan_text
+from app.services.creator_render_contract import (
+    CONTRACT_FIELD,
+    CreatorRenderContract,
+    TextRequirement,
+    verify_phone_recipe,
+)
 from app.services.kria_editor_ops import apply_text_lane_ops
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding
@@ -88,7 +95,10 @@ def fingerprint(path: Path) -> tuple[str, int]:
 
 def captured_case() -> dict:
     data = json.loads(
-        (REPO / "src/apps/api/tests/fixtures/prompt_coverage/creation_composition.json").read_text()
+        (
+            REPO
+            / "src/apps/api/tests/fixtures/prompt_coverage/creation_composition.json"
+        ).read_text()
     )
     return next(case for case in data["cases"] if case["id"] == "words")
 
@@ -217,6 +227,21 @@ def main() -> None:
     composed = compose_from_capture(capture)
     before = compile_proposal_execution_plan(composed)
     after, retime_provenance = retime(before, capture["followup"])
+    # Production holds the approved wording constant while composition changes
+    # its representation. Exercise those gates before handing a fixture to iOS.
+    contract = CreatorRenderContract(
+        generation_id="kri-524-captured-server-draft",
+        original_audio="require",
+        exact_texts=(
+            TextRequirement(role="opening", text=TITLE),
+            TextRequirement(role="any", text=TITLE),
+        ),
+        order_required=True,
+        order_ids=("c0", "c1"),
+    ).rebind()
+    assembly = {CONTRACT_FIELD: contract.model_dump(mode="json")}
+    for candidate in (before, after):
+        check_guided_plan_text(assembly, candidates=None, plan=candidate)
     # Reload the persisted JSON boundary before compiler input, as production does.
     plan = GuidedStoryExecutionPlan.model_validate_json(json.dumps(after))
     for moment in plan.story_timeline:
@@ -245,17 +270,24 @@ def main() -> None:
     recipe = compile_phone_guided_plan(plan, tuple(bindings))
     settings.phone_render_verified_features = sorted(recipe.required_capabilities)
     validate_phone_pilot_recipe(recipe)
+    verify_phone_recipe(contract, recipe, source_audio={"c0": True, "c1": True})
     request = make_device_request(
         job_id=uuid.uuid4(),
         variant_id="creation_words_retimed",
         revision=1,
         recipe=recipe,
     )
-    status = DeviceRenderStatus(phase="awaiting_device", request=request).model_dump(mode="json")
-    (out / "status-creation-words-retimed.json").write_text(json.dumps(status, indent=2))
+    status = DeviceRenderStatus(phase="awaiting_device", request=request).model_dump(
+        mode="json"
+    )
+    (out / "status-creation-words-retimed.json").write_text(
+        json.dumps(status, indent=2)
+    )
     words = [row for row in after["text_elements"] if "::sequence-" in row["id"]]
     if [row["text"] for row in words] != TITLE.split():
-        raise ValueError("captured creation compiler did not preserve the requested words")
+        raise ValueError(
+            "captured creation compiler did not preserve the requested words"
+        )
     (out / "server-draft-before-retime.json").write_text(json.dumps(before, indent=2))
     (out / "server-draft-after-retime.json").write_text(json.dumps(after, indent=2))
     (out / "editor-draft.json").write_text(json.dumps(editor_fixture(after), indent=2))
@@ -327,7 +359,9 @@ def main() -> None:
             indent=2,
         )
     )
-    print(f"Wrote {out}; compiled {len(words)} retimed word layers from captured server draft.")
+    print(
+        f"Wrote {out}; compiled {len(words)} retimed word layers from captured server draft."
+    )
 
 
 if __name__ == "__main__":

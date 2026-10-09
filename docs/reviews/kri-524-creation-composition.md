@@ -124,5 +124,34 @@ The generator prints its output directory. Supply that directory as
 and `EditorUITests/testCapturedCreationWordsPlayReopenAndExport` using the
 simulator workflow in `docs/runbooks/ios-development.md`.
 
+## Oct 9 correction and verification update
+
+Post-deployment testing exposed a validation step missing from the earlier
+simulator harness. After PR #1499, retries with the same and new videos produced
+`phone_plan_unsupported`; all three captured production jobs failed at the
+same explicit gate, `missing confirmed on-screen text`. Those jobs were then
+replayed offline through the corrected validation path: 3/3 passed the
+guided and phone checks. The approved captures supplied `has_audio` metadata;
+no media was downloaded, so this is captured-job replay evidence, not a claim
+that the user's actual video rendered or that a new live Gemini call ran.
+
+The shared sequence-evidence matcher now requires the full ordered,
+contiguous wording, visible rows, and matching role/media. Guided receipts
+retain IDs and the root role, while the phone compiler preserves validated
+sequence IDs in its existing ID field; static IDs remain unchanged.
+Nested sequences remain fail-closed, and this verification covers the single
+creation composition pass only. No public schema, renderer, prompt, or
+database change was made.
+
+The affected API/replay checks passed (892 tests). Separately,
+`make verify-kria` passed with 2,311 tests and 6 skips. Two simulator checks passed using a newly
+generated corrected recipe against the already-built native binary: pixel
+checked native export, plus UI block/play/reopen and Photos export coverage.
+The strengthened `scripts/ios/kri-524-creation-e2e.py` now exercises the real
+text/audio/order contract gates that the earlier harness omitted. An
+independent review caught and removed a role-borrow bypass; final review had
+no blockers. No new model spend was incurred. The follow-up PR is pending and
+has not been deployed.
+
 Current verification counts, exact revision and check results are recorded in
 the PR evidence. Merge and deployment remain approval-gated.
