@@ -21,6 +21,20 @@ final class AppleTextAccessibilityUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(panel.frame.minX, viewport.minX)
         XCTAssertLessThanOrEqual(panel.frame.maxX, viewport.maxX)
 
+        // KRI-508: an existing text opens on Edit text with the keyboard up, and the one-line box
+        // must stay reachable (and inside the viewport) at this text size.
+        let content = app.descendants(matching: .any)["native-editor-text-content"].firstMatch
+        XCTAssertTrue(content.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        attachScreenshot(app, name: "Large text inspector edit")
+        XCTAssertTrue(content.isHittable, "the text box should remain reachable at accessibility text size")
+        XCTAssertGreaterThanOrEqual(content.frame.minX, viewport.minX)
+        XCTAssertLessThanOrEqual(content.frame.maxX, viewport.maxX)
+        XCTAssertLessThanOrEqual(content.frame.maxY, app.keyboards.firstMatch.frame.minY)
+        content.typeText(" accessible")
+        XCTAssertTrue((content.value as? String ?? "").contains("accessible"))
+
+        app.buttons["Style"].tap()
         let font = app.buttons["native-editor-text-font"]
         let alignRight = app.buttons["Align text right"]
         let size = app.textFields["native-editor-text-size"]
@@ -37,14 +51,6 @@ final class AppleTextAccessibilityUITests: XCTestCase {
         reveal(alignRight, in: inspector)
         alignRight.tap()
 
-        app.buttons["Edit text"].tap()
-        let content = app.descendants(matching: .any)["native-editor-text-content"].firstMatch
-        XCTAssertTrue(content.waitForExistence(timeout: 3))
-        content.tap()
-        content.typeText(" accessible")
-        XCTAssertTrue((content.value as? String ?? "").contains("accessible"))
-
-        app.buttons["Style"].tap()
         let color = app.buttons["Text color #E7DDF5"]
         reveal(color, in: inspector)
         attachScreenshot(app, name: "Large text inspector color")
@@ -65,6 +71,10 @@ final class AppleTextAccessibilityUITests: XCTestCase {
         timelineText.tap()
         timelineText.tap()
 
+        // KRI-508: the panel opens on Edit text; the font lives on Style.
+        let styleTab = app.buttons["Style"]
+        XCTAssertTrue(styleTab.waitForExistence(timeout: 3))
+        styleTab.tap()
         let font = app.buttons["native-editor-text-font"]
         reveal(font, in: app.scrollViews["native-editor-text-inspector-scroll"])
         XCTAssertTrue(font.waitForExistence(timeout: 3))
