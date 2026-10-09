@@ -1798,10 +1798,7 @@ def _dispatch_item_render(
             item_requires_native_device_only_sync,
         )
 
-        native_device_only = (
-            settings.ios_native_device_only_enabled
-            and item_requires_native_device_only_sync(session, item, plan.user_id)
-        )
+        native_device_only = item_requires_native_device_only_sync(session, item, plan.user_id)
         # The caller's zero-registered-pool-assets invariant was checked in a
         # SEPARATE transaction — re-assert it under THIS lock (the item row is
         # already FOR-UPDATE-locked by dispatch_item_render_for) before
@@ -1995,10 +1992,7 @@ def _dispatch_item_render(
         item_visuals_only_on_device_sync,
     )
 
-    native_device_only = (
-        settings.ios_native_device_only_enabled
-        and item_requires_native_device_only_sync(session, item, plan.user_id)
-    )
+    native_device_only = item_requires_native_device_only_sync(session, item, plan.user_id)
 
     visuals_only_device = (
         not item_clip_paths

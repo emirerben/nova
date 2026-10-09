@@ -81,8 +81,8 @@ def test_native_only_marker_survives_the_first_device_variant_write(monkeypatch)
     """The worker copies the marker forward while pinning its first recipe."""
     job, snapshot, _session, _planner, cloud = setup(monkeypatch)
     job.assembly_plan["native_device_only"] = True
-    monkeypatch.setattr(gb.settings, "phone_rendering_enabled", False)
-    monkeypatch.setattr(gb.settings, "ios_native_device_only_enabled", True)
+    monkeypatch.setattr(gb.settings, "phone_render_user_ids", [uuid.uuid4()])
+    monkeypatch.setattr(gb.settings, "ios_native_device_only_enabled", False)
 
     gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
 

@@ -3480,17 +3480,19 @@ def test_phone_gate_guided_approved_binds_sources(monkeypatch: pytest.MonkeyPatc
     assert result.outcome == "dispatched"
 
 
+@pytest.mark.parametrize("rollout_enabled", [True, False])
 def test_native_only_proxy_dispatch_bypasses_the_legacy_allowlist(
     monkeypatch: pytest.MonkeyPatch,
+    rollout_enabled: bool,
 ) -> None:
-    """A persisted native intent is enough to mint a device Job for a new account."""
+    """A persisted native intent keeps device dispatch even after rollback."""
     monkeypatch.setattr(
         "app.services.phone_destination.item_requires_native_device_only_sync",
         lambda *_args: True,
     )
     from app.config import settings
 
-    monkeypatch.setattr(settings, "ios_native_device_only_enabled", True)
+    monkeypatch.setattr(settings, "ios_native_device_only_enabled", rollout_enabled)
 
     result, _job, build, bind = _run_phone_dispatch(
         monkeypatch,

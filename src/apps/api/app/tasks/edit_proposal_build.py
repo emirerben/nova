@@ -1592,10 +1592,7 @@ def _run_draft_attempt(
                 item_requires_native_device_only_sync,
             )
 
-            native_device_only = (
-                settings.ios_native_device_only_enabled
-                and item_requires_native_device_only_sync(db, item, owner_id)
-            )
+            native_device_only = item_requires_native_device_only_sync(db, item, owner_id)
             assignments = [
                 dict(a)
                 for a in (item.clip_assignments or [])
@@ -1991,10 +1988,7 @@ def _run_draft_attempt(
                 assert owner_id is not None
                 fresh_pool = _pool_refs(db, item, owner_id)
                 fresh_visuals_only = item_visuals_only_on_device_sync(db, item, owner_id)
-                fresh_native_device_only = (
-                    settings.ios_native_device_only_enabled
-                    and item_requires_native_device_only_sync(db, item, owner_id)
-                )
+                fresh_native_device_only = item_requires_native_device_only_sync(db, item, owner_id)
                 fresh_media = phone_renderable_media(
                     clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths],
                     owner_id,
