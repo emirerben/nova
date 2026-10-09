@@ -328,14 +328,74 @@ def test_captured_faster_followup_preserves_words_styles_labels_and_source_windo
     assert max(timing_errors) <= tolerance
 
 
-def test_phone_export_recipe_contains_each_created_word(monkeypatch):
+@pytest.mark.parametrize("phrases", [False, True])
+@pytest.mark.parametrize(
+    "mutation", [None, "missing", "hidden", "gap", "reordered", "unrelated", "late", "duration"]
+)
+def test_created_sequence_survives_real_render_contract_gates(
+    monkeypatch, prod_profile, phrases, mutation
+):
+    """The model capture, persisted plan and real phone compiler must retain proof.
+
+    A layer count alone previously passed while every production job was refused.
+    Missing, hidden, reordered or unrelated fragments must still fail closed.
+    """
     from app.kria.media_sources import OriginalMediaDescriptor
     from app.pipeline.guided_story import GuidedStoryExecutionPlan
     from app.pipeline.phone_guided_plan import compile_phone_guided_plan
+    from app.services.cloud_render_contract import (
+        CloudRenderContractError,
+        check_guided_plan_text,
+    )
+    from app.services.creator_render_contract import (
+        CONTRACT_FIELD,
+        CreatorRenderContract,
+        CreatorRenderContractError,
+        TextRequirement,
+        verify_phone_recipe,
+    )
     from app.services.phone_sources import PhoneSourceBinding
 
-    snapshot = compose(monkeypatch, base_plan())
-    plan = GuidedStoryExecutionPlan.model_validate(compile_proposal_execution_plan(snapshot))
+    response = sequence_response()
+    if phrases:
+        response["ops"][1]["segments"] = [
+            "Join us",
+            "for our favorite bakery",
+            "and tea shop near the harbor",
+        ]
+    snapshot = compose(monkeypatch, base_plan(), response)
+    # Exercise the same saved JSON boundary as an approved generation.
+    saved = EditProposalSnapshot.model_validate_json(snapshot.model_dump_json())
+    compiled = compile_proposal_execution_plan(saved)
+    words = [row for row in compiled["text_elements"] if "::sequence-" in row["id"]]
+    if mutation == "missing":
+        compiled["text_elements"].remove(words[1])
+    elif mutation == "hidden":
+        compiled["editor_hidden_caption_ids"] = [words[1]["id"]]
+    elif mutation == "gap":
+        words[1]["start_s"] += 0.2
+    elif mutation == "reordered":
+        words[0]["text"], words[1]["text"] = words[1]["text"], words[0]["text"]
+    elif mutation == "unrelated":
+        words[1]["id"] = "unrelated-label"
+        words[1]["source_params"].pop("sequence_source_id", None)
+    elif mutation == "late":
+        for row in words:
+            row["start_s"] += 0.5
+            row["end_s"] += 0.5
+    contract = CreatorRenderContract(
+        generation_id="captured-creation",
+        exact_texts=(
+            TextRequirement(
+                role="opening", text=TITLE, duration_s=9 if mutation == "duration" else None
+            ),
+            TextRequirement(role="any", text=TITLE),
+        ),
+    ).rebind()
+    assembly = {CONTRACT_FIELD: contract.model_dump(mode="json")}
+    plan = GuidedStoryExecutionPlan.model_validate(
+        {key: value for key, value in compiled.items() if key != "editor_hidden_caption_ids"}
+    )
     bindings = tuple(
         PhoneSourceBinding(
             media_id=f"c{i}",
@@ -356,8 +416,21 @@ def test_phone_export_recipe_contains_each_created_word(monkeypatch):
     for row in plan.story_timeline:
         row.gcs_path = next(b.proxy_path for b in bindings if b.media_id == row.media_id)
     recipe = compile_phone_guided_plan(plan, bindings)
-    data = recipe.model_dump(mode="json")
-    assert len(data["text_layers"]) >= len(TITLE.split())
+    if mutation == "hidden":
+        hidden = next(layer for layer in recipe.text_layers if layer.id.endswith("::sequence-2"))
+        for run in hidden.runs:
+            run.fill.alpha = 0
+            run.stroke_width = 0
+            run.gradient = None
+            run.blur_layers = []
+    if mutation:
+        with pytest.raises(CloudRenderContractError):
+            check_guided_plan_text(assembly, candidates=None, plan=compiled)
+        with pytest.raises(CreatorRenderContractError):
+            verify_phone_recipe(contract, recipe)
+    else:
+        check_guided_plan_text(assembly, candidates=None, plan=compiled)
+        assert verify_phone_recipe(contract, recipe)
 
 
 def test_receipt_uses_compiled_text_not_superseded_base_labels(monkeypatch):

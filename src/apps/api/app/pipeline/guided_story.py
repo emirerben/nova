@@ -32,9 +32,7 @@ from app.pipeline.cloud_render_evidence import (
     picture_timeline,
     text_evidence_row,
 )
-from app.pipeline.cloud_render_evidence import (
-    duration_tolerance_s as render_duration_tolerance_s,
-)
+from app.pipeline.cloud_render_evidence import duration_tolerance_s as render_duration_tolerance_s
 from app.pipeline.duration_contract import (
     STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S,
     STRICT_MIXED_MEDIA_MAX_CFR_OVERRUN_S,
@@ -51,6 +49,7 @@ from app.pipeline.pinned_text import (
     top_pin_edge_from_rows,
 )
 from app.pipeline.probe import probe_video
+from app.pipeline.sequence_text_evidence import sequence_lineage, sequence_role
 from app.schemas.edit_proposal import (
     FAST_MONTAGE_TITLE_HOLD_S,
     GUIDED_STORY_MIN_MOMENT_S,
@@ -4229,11 +4228,15 @@ def _guided_source_audio_evidence(
 def _guided_text_role(element_id: str) -> TextRole:
     """The contract role a guided-compiler text element plays (by its own ids)."""
 
-    if element_id in _GUIDED_OPENING_TEXT_IDS:
+    lineage = sequence_lineage({"element_id": element_id})
+    if lineage is not None:
+        return sequence_role({"element_id": element_id})  # type: ignore[return-value]
+    source_id = lineage[0] if lineage is not None else element_id
+    if source_id in _GUIDED_OPENING_TEXT_IDS:
         return "opening"
-    if element_id in _GUIDED_CLOSING_TEXT_IDS:
+    if source_id in _GUIDED_CLOSING_TEXT_IDS:
         return "closing"
-    if element_id.startswith(_GUIDED_CLIP_TEXT_PREFIXES):
+    if source_id.startswith(_GUIDED_CLIP_TEXT_PREFIXES):
         return "clip"
     return "any"
 
@@ -4287,6 +4290,17 @@ def guided_text_evidence(
                 start_s=element.start_s,
                 end_s=element.end_s,
                 media_id=media_id,
+                element_id=element.id,
+                sequence_source_id=(
+                    sequence_lineage({"element_id": element.id})[0]
+                    if sequence_lineage({"element_id": element.id}) is not None
+                    else None
+                ),
+                sequence_ordinal=(
+                    sequence_lineage({"element_id": element.id})[1]
+                    if sequence_lineage({"element_id": element.id}) is not None
+                    else None
+                ),
             )
         )
     return rows
