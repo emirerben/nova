@@ -448,10 +448,8 @@ def test_web_footage_beside_the_visuals_stays_a_cloud_job(pilot, monkeypatch):
     assert result.outcome == "dispatched"
     assert "render_on_device" not in built[0]
     assert built[0]["clip_paths"] == [WEB_CLIP.gcs_path]
-    # The rule is decided on the item alone: footage means it is never consulted.
-    assert not any(
-        "creation_threads.state" in str(c.args[0]) for c in session.execute.call_args_list
-    )
+    # Device-only intent is checked even when this legacy web job has footage.
+    assert any("creation_threads.state" in str(c.args[0]) for c in session.execute.call_args_list)
 
 
 @pytest.mark.parametrize(

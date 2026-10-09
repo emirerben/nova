@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.kria.media_sources import is_device_render_job
 from app.models import Job
+from app.services.phone_destination import native_device_only_job
 
 log = structlog.get_logger()
 
@@ -40,15 +41,19 @@ _ACTIVE_CLOUD_STATUSES = frozenset(
 
 
 def cloud_render_is_blocked(job: object) -> bool:
-    """Return True only for a cloud-destination Job while execution is disabled."""
+    """Block cloud Jobs when execution is off or the project is native-only."""
 
-    return not settings.cloud_render_execution_enabled and not is_device_render_job(job)
+    cloud_destination = not is_device_render_job(job)
+    return cloud_destination and (
+        not settings.cloud_render_execution_enabled or native_device_only_job(job)
+    )
 
 
 def cloud_render_mutation_block_reason(
     job: object,
     *,
     variant: object | None = None,
+    native_client: bool = False,
 ) -> str | None:
     """Why a new render-affecting mutation must be rejected, if at all.
 
@@ -66,6 +71,14 @@ def cloud_render_mutation_block_reason(
         device_bound = is_device_render_job(job)
     if device_bound:
         return None
+    if native_device_only_job(job):
+        return "device_render_unsupported"
+    # The per-request native admission fence applies to legacy cloud Jobs as
+    # well.  Their old output remains readable, but an iPhone cannot mint a
+    # replacement cloud render after the native-only rollout starts.  Web
+    # callers intentionally do not enter this branch.
+    if native_client and settings.ios_native_device_only_enabled:
+        return "device_render_unsupported"
     if settings.ios_device_only_mode:
         return "device_render_unsupported"
     if not settings.cloud_render_execution_enabled:
@@ -111,7 +124,7 @@ async def block_cloud_render_before_publish(
     authoritative and no expensive replacement work reaches Redis.
     """
 
-    if settings.cloud_render_execution_enabled:
+    if settings.cloud_render_execution_enabled and not settings.ios_native_device_only_enabled:
         return False
     job = (
         await db.execute(
@@ -144,7 +157,7 @@ def block_cloud_render_before_publish_sync(
 ) -> bool:
     """Synchronous twin used by Celery-side orchestrator dispatch helpers."""
 
-    if settings.cloud_render_execution_enabled:
+    if settings.cloud_render_execution_enabled and not settings.ios_native_device_only_enabled:
         return False
     from app.database import sync_session  # noqa: PLC0415
 
@@ -174,7 +187,7 @@ def block_cloud_render_before_publish_sync(
 def block_cloud_render_task(job_id: str, *, task_name: str) -> bool:
     """Defense-in-depth task-entry guard for messages queued before cutover."""
 
-    if settings.cloud_render_execution_enabled:
+    if settings.cloud_render_execution_enabled and not settings.ios_native_device_only_enabled:
         return False
     try:
         job_uuid = uuid.UUID(str(job_id))

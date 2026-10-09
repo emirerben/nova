@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.auth import CurrentUser
+from app.auth import CurrentUser, NativeClient
 from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK
@@ -2229,6 +2229,7 @@ async def retry_failed_job(
     job_id: str,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClient = False,
 ) -> RetryJobResponse:
     """Retry a failed standalone first-cut job without duplicating its uploads."""
     try:
@@ -2266,7 +2267,7 @@ async def retry_failed_job(
             detail="Only a failed video can be retried.",
         )
 
-    block_reason = cloud_render_mutation_block_reason(locked_job)
+    block_reason = cloud_render_mutation_block_reason(locked_job, native_client=native_client)
     if block_reason is not None:
         raise HTTPException(
             status_code=(

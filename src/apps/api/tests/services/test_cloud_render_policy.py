@@ -23,8 +23,12 @@ from app.services.job_dispatch import (
 )
 
 
-def _job(*, status: str = "queued", device: bool = False, **extra):
+def _job(
+    *, status: str = "queued", device: bool = False, native_device_only: bool = False, **extra
+):
     assembly = {"_device_render_v1": {"variant_id": "v1"}} if device else {}
+    if native_device_only:
+        assembly["native_device_only"] = True
     return SimpleNamespace(
         id=uuid.uuid4(),
         status=status,
@@ -83,6 +87,17 @@ def test_exact_cloud_variant_cannot_hide_behind_device_job_marker(monkeypatch):
         )
         == "device_render_unsupported"
     )
+
+
+def test_native_device_only_marker_rejects_a_cloud_destination(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.cloud_render_policy.settings.cloud_render_execution_enabled", True
+    )
+
+    assert cloud_render_mutation_block_reason(_job(native_device_only=True)) == (
+        "device_render_unsupported"
+    )
+    assert cloud_render_mutation_block_reason(_job(device=True, native_device_only=True)) is None
 
 
 @pytest.mark.asyncio
@@ -220,6 +235,30 @@ def test_task_entry_guard_terminalizes_queued_cloud_job(monkeypatch):
     with patch("app.database.sync_session", return_value=context):
         assert block_cloud_render_task(str(job.id), task_name="render") is True
     assert job.status == "processing_failed"
+    session.commit.assert_called_once()
+
+
+def test_task_entry_guard_rejects_a_native_only_marker_on_a_cloud_job(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.cloud_render_policy.settings.cloud_render_execution_enabled", True
+    )
+    monkeypatch.setattr(
+        "app.services.cloud_render_policy.settings.ios_native_device_only_enabled", True
+    )
+    job = _job(native_device_only=True)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = job
+    write_result = MagicMock()
+    write_result.rowcount = 1
+    session = MagicMock()
+    session.execute.side_effect = [result, write_result]
+    session.refresh.side_effect = lambda instance: setattr(instance, "status", "processing_failed")
+    context = MagicMock()
+    context.__enter__.return_value = session
+    context.__exit__.return_value = False
+
+    with patch("app.database.sync_session", return_value=context):
+        assert block_cloud_render_task(str(job.id), task_name="render") is True
     session.commit.assert_called_once()
 
 

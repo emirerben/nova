@@ -617,6 +617,9 @@ struct NativeEditorTemporaryVideo {
     @Published private(set) var canEditText = true
     @Published private(set) var canEditCaptions = false
     @Published private(set) var canEditMix = false
+    /// A legacy cloud render remains playable after an account moves to device-only creation,
+    /// but accepting another editor mutation would require the unavailable cloud path.
+    @Published private(set) var cloudEditorUnavailableMessage: String?
     let operations: any EditorOperations
     @Published private(set) var rendersOnDevice = false
     /// True when the last source-preview failure cannot be fixed by retrying.
@@ -1397,6 +1400,7 @@ struct NativeEditorTemporaryVideo {
             let loadedDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
             draft = loadedDraft
             configureCapabilities(from: authoritativeVariant)
+            await applyCloudReadOnlyIfNeeded(api: api, variant: authoritativeVariant)
             cleanDocument = document; undoStack.removeAll(); redoStack.removeAll(); changedSections.removeAll(); explicitlyDirtySections.removeAll(); pendingRenderRetrySections.removeAll(); hasUnsavedChanges = false; saveState = .idle
             appliedChatDraftRevision = nil; chatStagedDocument = nil; chatStagedSections = []
             itemID = snapshot.itemID; variantKey = requestedVariantKey
@@ -1861,6 +1865,7 @@ struct NativeEditorTemporaryVideo {
             draft = loadedDraft
             legacyPromptSnapshot = loadedDraft.serverSnapshot
             configureCapabilities(from: variant)
+            await applyCloudReadOnlyIfNeeded(api: api, variant: variant)
             cleanDocument = document
             undoStack.removeAll()
             redoStack.removeAll()
@@ -3162,6 +3167,10 @@ struct NativeEditorTemporaryVideo {
         // 20 mirrors the server's `_MAX_CLIPS` pool cap — an early, friendly
         // no-op instead of a round trip that would 422 anyway.
         guard !isAddingClip else { return }
+        if let cloudEditorUnavailableMessage {
+            addClipError = cloudEditorUnavailableMessage
+            return
+        }
         // The sheet is already gone by now, so a silent return would drop the user's pick with no signal.
         guard !rendersOnDevice else {
             isAddingClip = true
@@ -3540,16 +3549,18 @@ struct NativeEditorTemporaryVideo {
     /// never save. Same reasoning as `visualImportUnavailableMessage`'s `rendersOnDevice`
     /// case, surfaced separately since the timeline and Visuals import gate independently.
     var addClipUnavailableMessage: String? {
-        rendersOnDevice && !canRegisterPhoneSources ? "Adding media isn’t available for this edit on this iPhone." : nil
+        if let cloudEditorUnavailableMessage { return cloudEditorUnavailableMessage }
+        return rendersOnDevice && !canRegisterPhoneSources ? "Adding media isn’t available for this edit on this iPhone." : nil
     }
 
     var canAddTimelineMedia: Bool {
-        (canEditTimeline || document.editorState == "empty") && draft.clips.count < Self.maxTimelineClips && (!rendersOnDevice || canRegisterPhoneSources)
+        cloudEditorUnavailableMessage == nil && (canEditTimeline || document.editorState == "empty") && draft.clips.count < Self.maxTimelineClips && (!rendersOnDevice || canRegisterPhoneSources)
     }
     /// KRI-166: why `canAddTimelineMedia` is false, for the quick-add menu's
     /// Video row (which otherwise just greys out). Mirrors the three
     /// conditions above; nil when adding is allowed.
     var addClipUnavailableReason: String? {
+        if let cloudEditorUnavailableMessage { return cloudEditorUnavailableMessage }
         if rendersOnDevice && !canRegisterPhoneSources { return "Adding media isn’t available for this edit on this iPhone." }
         if !canEditTimeline && document.editorState != "empty" { return "This edit’s timeline can’t be changed." }
         if draft.clips.count >= Self.maxTimelineClips { return "An edit can have up to \(Self.maxTimelineClips) clips." }
@@ -5267,6 +5278,7 @@ struct NativeEditorTemporaryVideo {
         }
     }
     private func canEditSection(_ section: EditorSection) -> Bool {
+        if cloudEditorUnavailableMessage != nil { return false }
         if let capability = capability(for: section) { return capability.editable }
         switch section {
         case .timeline: return canEditTimeline
@@ -5865,6 +5877,24 @@ struct NativeEditorTemporaryVideo {
         // Retain a generated frame from just inside the endpoint instead of
         // relying on VideoPlayer to keep its last surface after natural EOF.
         _ = requestScrubFrame(at: playbackDuration)
+    }
+
+    private func applyCloudReadOnlyIfNeeded(api: any KriaAPIClient, variant: [String: JSONValue]?) async {
+        guard variant != nil else {
+            cloudEditorUnavailableMessage = nil
+            return
+        }
+        let creationMode = (try? await api.creationCapabilities())?.creationMode
+        if creationMode == .deviceOnly, !rendersOnDevice {
+            let message = "This video was rendered in the cloud and can’t be changed on this iPhone. You can still play its existing video."
+            cloudEditorUnavailableMessage = message
+            canEditTimeline = false
+            canEditText = false
+            canEditCaptions = false
+            canEditMix = false
+        } else {
+            cloudEditorUnavailableMessage = nil
+        }
     }
 
     private func configureCapabilities(from variant: [String: JSONValue]?) {

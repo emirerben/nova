@@ -1299,7 +1299,11 @@ def _clear_blocked_variant_rerender(fn, self, job_id: str, args: tuple, kwargs: 
 
 def _phone_rendering_globally_available() -> bool:
     """Global compiler gate; per-user cohort validation happens at publish."""
-    return settings.ios_device_only_mode or settings.phone_rendering_enabled
+    return (
+        settings.ios_device_only_mode
+        or settings.ios_native_device_only_enabled
+        or settings.phone_rendering_enabled
+    )
 
 
 def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
@@ -4559,7 +4563,9 @@ def _run_phone_guided_job(
         if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
             return
         job = entry[0]
-        if not settings.phone_rendering_for(job.user_id):
+        from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+        if not phone_rendering_allowed_for_job(job):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if any(
@@ -5212,7 +5218,9 @@ def _run_phone_voiceover_montage_job(
         if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
             return
         job = entry[0]
-        if not settings.phone_rendering_for(job.user_id):
+        from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+        if not phone_rendering_allowed_for_job(job):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if current.get("creator_generation_id") != generation or current.get(
@@ -6083,7 +6091,9 @@ def _run_phone_unified_montage_job(
         ):
             return None
         job = entry_row[0]
-        if not settings.phone_rendering_for(job.user_id):
+        from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+        if not phone_rendering_allowed_for_job(job):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if current.get("creator_generation_id") != generation or current.get(
@@ -7455,7 +7465,9 @@ def _run_phone_subtitled_job(
         if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
             return
         job = entry[0]
-        if not settings.phone_rendering_for(job.user_id):
+        from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+        if not phone_rendering_allowed_for_job(job):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if current.get("creator_generation_id") != generation or current.get(
@@ -8606,7 +8618,9 @@ def _run_phone_narrated_job(
         if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
             return
         job = entry[0]
-        if not settings.phone_rendering_for(job.user_id):
+        from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+        if not phone_rendering_allowed_for_job(job):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if current.get("creator_generation_id") != generation or current.get(

@@ -23,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
 from app.auth import CurrentUser
-from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.device_render import (
@@ -241,7 +240,9 @@ async def get_device_render(
     if should_touch:
         touch_device_poll(job, variant_id, now)
         await db.commit()
-    if not settings.phone_rendering_for(user.id) and status.phase == "awaiting_device":
+    from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+    if not phone_rendering_allowed_for_job(job) and status.phase == "awaiting_device":
         return status.model_copy(
             update={
                 "phase": "needs_attention",
@@ -260,10 +261,12 @@ async def download_device_asset(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DeviceAssetDownloadOut:
-    if not settings.phone_rendering_for(user.id):
-        raise HTTPException(404, "Phone rendering is unavailable")
     user_id = user.id
     job = await _owned_job(db, user_id, job_id)
+    from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+    if not phone_rendering_allowed_for_job(job):
+        raise HTTPException(404, "Phone rendering is unavailable")
     record, status = _record(job, body.identity)
     manifest = getattr(status.request.recipe, "asset_manifest", None)
     asset = next((a for a in manifest.assets if a.id == body.asset_id), None) if manifest else None
@@ -603,9 +606,11 @@ async def reserve_device_export(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DeviceExportReservationOut:
-    if not settings.phone_rendering_for(user.id):
-        raise HTTPException(404, "Phone rendering is unavailable")
     job = await _owned_job(db, user.id, job_id)
+    from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+    if not phone_rendering_allowed_for_job(job):
+        raise HTTPException(404, "Phone rendering is unavailable")
     record, status = _record(job, body.identity)
     if status.phase not in {"awaiting_device", "syncing"}:
         raise HTTPException(409, "Render no longer accepts uploads")

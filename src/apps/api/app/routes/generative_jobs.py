@@ -48,7 +48,7 @@ from app.agents._schemas.text_element import (
     resolve_narrated_storyboard_rows,
 )
 from app.agents._schemas.visual_block import VisualBlock
-from app.auth import CurrentUser, CurrentUserOrSynthetic, ensure_job_owner
+from app.auth import CurrentUser, CurrentUserOrSynthetic, NativeClientOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
 from app.kria.draft_schemas import DraftSnapshotOut
@@ -2883,6 +2883,31 @@ def _require_render_affecting_mutation_allowed(
         )
 
     reason = cloud_render_mutation_block_reason(job, variant=variant)
+    if reason is None:
+        return
+    raise HTTPException(
+        status_code=(
+            status.HTTP_422_UNPROCESSABLE_ENTITY
+            if reason == "device_render_unsupported"
+            else status.HTTP_503_SERVICE_UNAVAILABLE
+        ),
+        detail=(
+            _DEVICE_RENDER_UNSUPPORTED_ERROR
+            if reason == "device_render_unsupported"
+            else _CLOUD_RENDER_DISABLED_ERROR
+        ),
+    )
+
+
+def _require_native_cloud_mutation_allowed(job: Job, native_client: bool) -> None:
+    """Keep legacy cloud Jobs readable but immutable to a native caller.
+
+    Device-bound Jobs use their own editor contract.  This guard only changes
+    a native request while the rollout is enabled, so the web editor retains
+    its existing cloud-render behavior.
+    """
+
+    reason = cloud_render_mutation_block_reason(job, native_client=native_client)
     if reason is None:
         return
     raise HTTPException(
@@ -7103,6 +7128,7 @@ def _phone_voiceover_editor_media_available(
     ``require_client`` is the rollout gate's app-build switch; Save passes
     ``False``.
     """
+    from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
     from app.services.phone_editor import (  # noqa: PLC0415
         is_phone_narrated_editor_variant,
         is_phone_voiceover_montage_editor_variant,
@@ -7123,7 +7149,7 @@ def _phone_voiceover_editor_media_available(
         return False
     if not (
         phone_voiceover_editor_media_supported(require_client=require_client)
-        and settings.phone_rendering_for(job.user_id)
+        and phone_rendering_allowed_for_job(job)
     ):
         return False
     try:
@@ -7138,6 +7164,7 @@ def _phone_editor_media_available(
     job: Job, variant: dict, *, require_client: bool | None = None
 ) -> bool:
     from app.config import settings
+    from app.services.phone_destination import phone_rendering_allowed_for_job
     from app.services.phone_editor_sources import authored_phone_sources_available
 
     if authored_phone_sources_available(job, variant):
@@ -7147,7 +7174,7 @@ def _phone_editor_media_available(
 
     return bool(
         settings.phone_editor_media_enabled
-        and settings.phone_rendering_for(job.user_id)
+        and phone_rendering_allowed_for_job(job)
         and settings.guided_story_editor_v2_enabled
         and settings.visual_blocks_enabled
         and variant.get("render_destination") == "device"
@@ -11651,11 +11678,17 @@ async def create_generative_upload_url(
     req: GenerativeUploadUrlRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeUploadUrlResponse:
     """Mint one just-in-time signed PUT URL for a generative clip/voiceover."""
     from app.auth import SYNTHETIC_USER_ID  # noqa: PLC0415
 
     kind = classify_slot_kind(req.filename, req.content_type)
+    if native_client and settings.ios_native_device_only_enabled and kind == "video":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_DEVICE_RENDER_UNSUPPORTED_ERROR,
+        )
     content_type = req.content_type.split(";", 1)[0].strip().lower()
     if not content_type:
         content_type = "application/octet-stream"
@@ -11776,8 +11809,14 @@ async def create_generative_job(
     req: CreateGenerativeJobRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Create a generative edit job (auto song + AI text, three variants)."""
+    if native_client and settings.ios_native_device_only_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_DEVICE_RENDER_UNSUPPORTED_ERROR,
+        )
     # Serialize reuse of persistent project media with the project-deletion
     # sweeper. Either this transaction commits the reference first and cleanup
     # preserves it, or cleanup deletes first and metadata validation fails.
@@ -11813,7 +11852,6 @@ async def create_generative_job(
     # content-plan per-item task. Prefixes were already validated by the request
     # schema; build_generative_job re-validates (cheap defense-in-depth).
     from app.agents._schemas.edit_format import DEFAULT_EDIT_FORMAT  # noqa: PLC0415
-    from app.config import settings  # noqa: PLC0415
     from app.models import Persona as PersonaRow  # noqa: PLC0415
     from app.services.generative_jobs import build_generative_job  # noqa: PLC0415
 
@@ -12181,9 +12219,11 @@ async def swap_song(
     req: SwapSongRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Re-render a variant against a different library song (async re-slot)."""
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     await dispatch_swap_song(job, variant_id, new_track_id=req.new_track_id, db=db)
     log.info(
         "generative_swap_song", job_id=str(job.id), variant_id=variant_id, track_id=req.new_track_id
@@ -12198,9 +12238,11 @@ async def retext(
     req: RetextRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Re-render a variant with user-supplied intro text, or remove the text."""
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     pending_publish = dispatch_retext(
         job, variant_id, text=req.text, remove=req.remove, publish=False
     )
@@ -12217,9 +12259,11 @@ async def set_variant_lyrics(
     req: LyricsSectionRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Toggle lyrics or replace lyric line overrides, then full re-render."""
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     enabled = req.enabled if "enabled" in req.model_fields_set else _UNSET
     line_overrides = req.line_overrides if "line_overrides" in req.model_fields_set else _UNSET
     await dispatch_set_lyrics(
@@ -12246,9 +12290,11 @@ async def set_variant_orientation(
     req: OrientationRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Set portrait/landscape output for one variant, then full re-render."""
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     await dispatch_set_orientation(
         db,
         job,
@@ -12273,6 +12319,7 @@ async def change_style(
     req: ChangeStyleRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Re-render a variant with a different curated text style set (async).
 
@@ -12280,6 +12327,7 @@ async def change_style(
     intro on the text variants and the lyric typography on the lyrics variant.
     """
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     pending_publish = dispatch_change_style(
         job, variant_id, style_set_id=req.style_set_id, publish=False
     )
@@ -12301,9 +12349,11 @@ async def set_intro_size(
     req: SetIntroSizeRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Re-render a variant with a user-pinned AI-intro font size (the ±size nudge)."""
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     pending_publish = dispatch_set_intro_size(
         job, variant_id, text_size_px=req.text_size_px, publish=False
     )
@@ -12327,9 +12377,11 @@ async def set_caption_position(
     req: CaptionPositionRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Set caption vertical position and reburn the captioned variant."""
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     # The dispatcher row-locks, commits the margin + gen mint, then enqueues
     # (R1-1 commit-before-enqueue) — no route-side commit needed.
     margin_v = await dispatch_set_caption_position(job.id, variant_id, y_frac=req.y_frac, db=db)
@@ -12352,9 +12404,11 @@ async def set_intro_timing(
     req: SetIntroTimingRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Re-render a variant with user-pinned intro overlay timing (drag the intro bar)."""
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     pending_publish = dispatch_set_intro_timing(
         job,
         variant_id,
@@ -12381,9 +12435,11 @@ async def patch_scene_timing(
     req: PatchSceneTimingRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Persist user-pinned scene timing overrides (applied on next re-render)."""
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     dispatch_patch_scene_timing(
         job,
         variant_id,
@@ -12406,6 +12462,7 @@ async def edit_variant(
     req: EditVariantRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Apply a whole instant-edit session (text + style + size) in ONE re-render.
 
@@ -12414,6 +12471,7 @@ async def edit_variant(
     /intro-size, which would enqueue one render each.
     """
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     # Tri-state (see EditVariantRequest.carousel_moment / dispatch_edit_variant):
     # absent from the request -> _UNSET (leave unchanged); explicit top-level
     # `null` -> None (remove); an object -> only the fields the client
@@ -12594,9 +12652,11 @@ async def edit_variant_timeline(
     req: TimelineEditRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Persist a user-edited clip timeline and re-render the variant from it."""
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     await dispatch_edit_timeline(job, variant_id, req, db=db)
     log.info(
         "generative_edit_timeline",
@@ -12613,9 +12673,11 @@ async def reset_variant_timeline(
     variant_id: str,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Discard the user timeline and re-render the variant from the AI timeline."""
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     await dispatch_reset_timeline(job, variant_id, db=db)
     log.info("generative_reset_timeline", job_id=str(job.id), variant_id=variant_id)
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
@@ -12627,6 +12689,7 @@ async def add_clip(
     req: AddClipRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> AddClipResponse:
     """Append one uploaded clip/photo to the job's shared footage pool.
 
@@ -12645,6 +12708,7 @@ async def add_clip(
     # it via the same `resolve_timeline_slots_for_edit`, so this pool-growth
     # step must accept every mode that editor-commit does.
     job = await _load_generative_job(job_id, db, current_user, allowed_modes=_READABLE_MODES)
+    _require_native_cloud_mutation_allowed(job, native_client)
     if getattr(job, "status", None) == "cancelled":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -12761,9 +12825,11 @@ async def set_mix(
     req: SetMixRequest,
     current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClientOrSynthetic = False,
 ) -> GenerativeJobResponse:
     """Re-render a voiceover variant at a new voice/bed mix (the mix slider)."""
     job = await _load_generative_job(job_id, db, current_user)
+    _require_native_cloud_mutation_allowed(job, native_client)
     pending_publish = dispatch_set_mix(job, variant_id, mix=req.mix, publish=False)
     await db.commit()
     await _publish_committed_variant_render(pending_publish, db)

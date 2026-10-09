@@ -4,6 +4,35 @@ This runbook retires new web and cloud video creation without deleting any
 Job, database row, or stored output. Authentication, account deletion, project
 history, signed playback, and the device upload/completion lifecycle stay live.
 
+## KRI-563: iPhone-only cloud refusal
+
+`IOS_NATIVE_DEVICE_ONLY_ENABLED` is a separate, default-off admission fence for
+new videos created in the iPhone app. When enabled, every authenticated native
+account receives `creation_mode=device_only` and the currently verified device
+rendering capabilities, regardless of the former phone pilot allowlist. Web
+creation remains in hybrid mode. An iPhone project that cannot render on the
+device keeps its draft and receives a typed refusal before cloud footage upload
+or Job creation. Existing cloud outputs remain readable and playable.
+
+Deploy the API, worker, and iOS contract changes together with this flag off.
+Before enabling it, verify the signed TestFlight build on an enrolled and a
+previously unenrolled account: offered formats, proxy upload, device export,
+published playback, editor controls, unsupported-format refusal, and an
+existing cloud video's playback. Check the sanitized runtime profile on both
+API and worker; their flag and verified feature lists must agree. Then enable
+`IOS_NATIVE_DEVICE_ONLY_ENABLED=true` on Fly and repeat those canaries. Audit
+new native Jobs for `render_destination=device` and check that no native cloud
+task starts. Stop rollout on any unsupported format being offered, missing
+voice/captions, stuck device export, or new native cloud render. Record UTC
+time, deployed SHA, build, Job IDs, and outcomes without media URLs or user IDs.
+
+This fence does not replace the broader `IOS_DEVICE_ONLY_MODE` / cloud executor
+cutover below. That rollout also retires web creation and has its own signed
+device, drain, and 24-hour hold points. Emergency rollback of the native-only
+fence is `fly secrets set IOS_NATIVE_DEVICE_ONLY_ENABLED=false --app nova-video`;
+new threads can then use the former native cloud route, so investigate the
+failure first. Existing stamped threads retain their source-upload fence.
+
 After Release 1 passes its own 24-hour acceptance window, Release 2 may
 reduce the topology. The eventual end state has exactly three managed
 `nova-video` process groups:

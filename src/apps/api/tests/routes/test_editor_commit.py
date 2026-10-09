@@ -4801,6 +4801,36 @@ def teardown_function() -> None:
     app.dependency_overrides.clear()
 
 
+def test_native_only_rollout_refuses_legacy_cloud_editor_commit_before_write(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.auth import is_native_client
+    from app.config import settings
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "ios_native_device_only_enabled", True)
+    user = _user()
+    job = _job()
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[is_native_client] = lambda: True
+    app.dependency_overrides[get_db] = lambda: db
+
+    response = client.post(
+        f"/plan-items/{item.id}/variants/song_text/editor-commit",
+        json={"base_generation": "2026-07-01T00:00:00Z"},
+        headers={
+            "Authorization": "Bearer test-native-session",
+            "X-Kria-Client-Protocol": str(settings.kria_minimum_client_protocol),
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "device_render_unsupported"
+    db.commit.assert_not_awaited()
+
+
 def test_guided_editor_route_preflights_before_title_validation(
     client: TestClient, monkeypatch
 ) -> None:

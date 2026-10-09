@@ -298,11 +298,11 @@ struct CreationAttachedMedia: Identifiable {
 /// the kinds this iPhone is verified to draw, and the iPhone downloads them
 /// again to render. Nothing in Visuals can pull a project to the cloud.
 enum ProjectUploadDestination: Equatable {
-    case phone, cloud, phoneVisuals(Set<VisualMediaKind>), checking, paused, mixed, visualsUnavailableOnPhone, voiceoverUnavailableOnPhone
+    case phone, cloud, phoneVisuals(Set<VisualMediaKind>), checking, paused, mixed, visualsUnavailableOnPhone, voiceoverUnavailableOnPhone, cloudProjectUnavailableOnPhone
     var canUpload: Bool {
         switch self {
         case .phone, .cloud, .phoneVisuals: true
-        case .checking, .paused, .mixed, .visualsUnavailableOnPhone, .voiceoverUnavailableOnPhone: false
+        case .checking, .paused, .mixed, .visualsUnavailableOnPhone, .voiceoverUnavailableOnPhone, .cloudProjectUnavailableOnPhone: false
         }
     }
     /// Visuals kinds the pickers may offer; nil means every kind (cloud projects).
@@ -321,6 +321,7 @@ enum ProjectUploadDestination: Equatable {
         case .mixed: "Some footage in this project was uploaded for a different kind of render. Remove the clips listed under Footage, then add them again to continue."
         case .visualsUnavailableOnPhone: "Visuals aren’t available yet for videos rendered on iPhone. Continue with your footage; Kria renders it on this iPhone."
         case .voiceoverUnavailableOnPhone: "Voiceover isn’t available yet for videos rendered on iPhone. Your project is saved."
+        case .cloudProjectUnavailableOnPhone: "This project has cloud footage, so it can’t be changed on this iPhone. You can still play its existing video."
         }
     }
 
@@ -328,7 +329,18 @@ enum ProjectUploadDestination: Equatable {
     /// videos once it verifies `visualVideos`. Until the account's capabilities
     /// have loaded nothing uploads: guessing `.cloud` would send full originals
     /// to the cloud and lock an iPhone account's project there.
-    static func resolve(capabilities: PhoneRenderingCapabilities?, capabilitiesLoaded: Bool = true, sourcePurposes: [String], role: CreationMediaRole) -> Self {
+    static func resolve(capabilities: PhoneRenderingCapabilities?, creationMode: CreationMode? = nil, capabilitiesLoaded: Bool = true, sourcePurposes: [String], role: CreationMediaRole) -> Self {
+        let known = Set(sourcePurposes)
+        let phone = UploadPurpose.analysisProxy.rawValue, cloud = UploadPurpose.cloudRenderSource.rawValue
+        if creationMode == .deviceOnly {
+            // A device-only account must wait for a definitive capability response. In particular,
+            // never use an existing cloud source as a reason to keep accepting cloud uploads.
+            guard capabilitiesLoaded else { return .checking }
+            // Audio has a separate, server-gated full-file contract and does not
+            // decide a video's render destination. Only an existing cloud video
+            // source makes the project unavailable for further edits here.
+            if known.contains(cloud) { return .cloudProjectUnavailableOnPhone }
+        }
         // KRI-374: a creator's song always uploads in full (the server needs the bytes for beats,
         // transcription and the render grant). It never joins the analysis-proxy contract, never
         // makes a project `.mixed`, and needs no `narrationAudio` verification: the song plays through
@@ -338,8 +350,6 @@ enum ProjectUploadDestination: Equatable {
             if Set(sourcePurposes).contains(UploadPurpose.cloudRenderSource.rawValue) { return .cloud }
             return capabilitiesLoaded ? .cloud : .checking
         }
-        let known = Set(sourcePurposes)
-        let phone = UploadPurpose.analysisProxy.rawValue, cloud = UploadPurpose.cloudRenderSource.rawValue
         guard known.isSubset(of: [phone, cloud]), known.count <= 1 else { return .mixed }
         if known.contains(cloud) { return .cloud }
         guard capabilitiesLoaded else { return .checking }
@@ -350,6 +360,7 @@ enum ProjectUploadDestination: Equatable {
         if known.contains(phone) {
             guard available else { return .paused }
         } else if !available {
+            if creationMode == .deviceOnly { return .paused }
             return .cloud
         }
         switch role {
