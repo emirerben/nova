@@ -3331,12 +3331,12 @@
         {
           "id": "guided-title",
           "start_s": 0.0,
-          "end_s": 0.2,
+          "end_s": 0.05,
           "segment_id": "s3"
         },
         {
           "id": "guided-closing-title",
-          "start_s": 0.3,
+          "start_s": 0.45,
           "end_s": 0.5,
           "segment_id": "s2"
         },

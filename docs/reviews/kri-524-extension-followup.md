@@ -35,7 +35,8 @@ outside the repository.
 - Existing short opening/closing text bars retain their authored duration during
   timeline changes. The 0.2-second protection only applies to bars that were
   already that long; the authored 0.15-second opening bar remains 0.15 seconds.
-  Interior source-time projection retains its existing frame rounding.
+  The phone’s local timing logic uses the same rule, covered by shared parity
+  vectors. Interior source-time projection retains its existing frame rounding.
 - Responses arriving after a final provider timeout produce correlated
   diagnostic metadata only, without prompt, response, or exception-body content.
   They cannot apply an edit, start another request, or settle an unknown cost
@@ -44,8 +45,9 @@ outside the repository.
   export using synthetic media. It retains separate native artifacts alongside
   the existing creation and trim journeys.
 
-No model, reasoning level, prompt wording, public API, database schema, or native
-product behavior changes. Save and revision/approval boundaries remain intact.
+No model, reasoning level, prompt wording, public API, database schema, or
+renderer capability changes. The native timing adjustment matches the server.
+Save and revision/approval boundaries remain intact.
 
 ## Evidence and limits
 
@@ -69,10 +71,16 @@ The required backend gate passed **2,318 tests, 6 skipped**. The final focused
 gate passed **639 tests**. CI policy passed **35 tests and 93 subtests**.
 The current branch's native compound export passed **1 test**, including rendered
 text, the five-second output, and source audio. The delayed transport is an
-authored deadline threshold, not a 55-second wall-clock wait.
+authored deadline threshold, not a 55-second wall-clock wait. Native parity and
+editor-session checks pass **15 tests**; the server vector checks pass **2 tests**.
 The captured operation shape is replayed with synthetic text/media; production
 input is replayed privately. Native export verifies rendered output separately
 from model behavior. CI builds the branch's native test binary before export.
 
 Deployment and the creator's actual follow-up remain unverified until this PR
 is approved, merged, and the deployed revision is checked.
+
+The first full CI run caught a stale cross-language timing vector after the
+short-bar correction. The phone’s matching rebase rule was updated before
+regenerating the vector; the tiny-timeline case now preserves its existing
+0.05-second opening and closing bars on both platforms.
