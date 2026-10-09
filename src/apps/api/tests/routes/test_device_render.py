@@ -122,11 +122,13 @@ def test_foreign_job_is_filtered_before_recipe_lookup(fixture):
 
 def test_kill_switch_blocks_new_upload_reservations(fixture, monkeypatch):
     monkeypatch.setattr(settings, "phone_rendering_enabled", False)
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
     response = fixture.client.post(
         f"/me/jobs/{fixture.job.id}/device-render/uploads",
         json={**body(fixture), "file_size_bytes": 12, "sha256": "a" * 64},
     )
     assert response.status_code == 404
+    routes._owned_job.assert_awaited_once()
     fixture.db.execute.assert_not_called()
 
 
