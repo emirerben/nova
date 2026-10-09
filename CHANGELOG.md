@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.192.0] - 2026-10-09
+
+### Changed
+- feat(ios): show live Gemini thought summaries in chat (KRI-557) (#1512) <!-- release-pr: 1512 -->
+
 ## [0.78.191.0] - 2026-10-09
 
 ### Fixed
