@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.194.0] - 2026-10-09
+
+### Fixed
+- fix(kria): name what an edit changed instead of "can't check" (KRI-558) (#1514) <!-- release-pr: 1514 -->
+
 ## [0.78.193.0] - 2026-10-09
 
 ### Changed
