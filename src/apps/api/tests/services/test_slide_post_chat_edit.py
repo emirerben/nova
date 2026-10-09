@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from app.agents import edit_copilot, editor_ops_v2
-from app.agents._runtime import ModelClient, TerminalError
+from app.agents._runtime import ModelClient, RunContext, TerminalError
 from app.agents.edit_copilot import (
     EditCopilotAgent,
     EditCopilotInput,
@@ -491,9 +491,11 @@ class _Stub:
     def __init__(self, output: EditCopilotOutput | Exception) -> None:
         self.output = output
         self.input: EditCopilotInput | None = None
+        self.ctx: RunContext | None = None
 
     def run(self, _input: EditCopilotInput, ctx: Any = None) -> EditCopilotOutput:
         self.input = _input
+        self.ctx = ctx
         if isinstance(self.output, Exception):
             raise self.output
         return self.output
@@ -595,6 +597,62 @@ async def test_run_no_op_result_is_no_effect(monkeypatch: pytest.MonkeyPatch) ->
     _patch_agent(monkeypatch, parsed)
     result = await _run(draft, assets)
     assert result.outcome == "no_effect" and result.draft is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing_cap, expected_cap", [(80.0, 40.0), (20.0, 20.0)])
+async def test_stateless_agent_cap_is_bounded_without_mutating_context(
+    monkeypatch: pytest.MonkeyPatch,
+    existing_cap: float,
+    expected_cap: float,
+) -> None:
+    assets = [_asset()]
+    draft = _draft(assets)
+    stub = _patch_agent(monkeypatch, _output([]))
+    original = RunContext(
+        job_id="job-1",
+        creator_id="creator-1",
+        request_id="request-1",
+        usage_purpose="live_eval",
+        timeout_override_s=existing_cap,
+    )
+
+    result = await run_slide_post_chat_edit(
+        draft=draft,
+        assets_by_id=_by_id(assets),
+        message="do it",
+        turns=[],
+        user_id=USER_ID,
+        server_version=7,
+        run_context=original,
+    )
+
+    assert result.outcome == "no_effect"
+    assert stub.ctx is not original
+    assert stub.ctx is not None
+    assert stub.ctx.timeout_override_s == expected_cap
+    assert stub.ctx.job_id == original.job_id
+    assert stub.ctx.creator_id == original.creator_id
+    assert stub.ctx.request_id == original.request_id
+    assert stub.ctx.usage_purpose == original.usage_purpose
+    assert original.timeout_override_s == existing_cap
+
+
+@pytest.mark.asyncio
+async def test_stateless_agent_default_cap_is_forty_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assets = [_asset()]
+    stub = _patch_agent(monkeypatch, _output([]))
+    await run_slide_post_chat_edit(
+        draft=_draft(assets),
+        assets_by_id=_by_id(assets),
+        message="do it",
+        turns=[],
+        user_id=USER_ID,
+        server_version=7,
+    )
+    assert stub.ctx is not None and stub.ctx.timeout_override_s == 40.0
 
 
 @pytest.mark.asyncio

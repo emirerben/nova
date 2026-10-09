@@ -1135,6 +1135,7 @@ async def _plan_editor_revision(
     # Release the read transaction before Copilot model I/O. The response is
     # derived only from the immutable snapshot and copied conversation rows.
     await db.rollback()
+    planner_deadline = turn_deadline.get()
     response = await run_copilot_turn(
         CopilotTurnBody(
             message=user_message,
@@ -1144,6 +1145,12 @@ async def _plan_editor_revision(
             client_contract_version=2,
         ),
         job_id=target.job_id,
+        deadline_monotonic=(
+            planner_deadline - _POST_UNDERSTANDING_RESERVE_S
+            if planner_deadline is not None
+            else None
+        ),
+        timeout_override_s=120.0,
     )
     if (
         response.ops

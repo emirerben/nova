@@ -10,6 +10,8 @@ set TEST_RUNNER_KRIA_E2E_DIR to the output directory for the Swift export test.
 # ruff: noqa: E402
 from __future__ import annotations
 
+import argparse
+import asyncio
 import hashlib
 import json
 import os
@@ -28,10 +30,19 @@ from app.kria.device_render import DeviceRenderStatus
 from app.services.device_render import device_status
 from app.services.phone_sources import PHONE_SOURCES_FIELD
 from tests.routes import test_compound_word_trim_save as replay
+from tests.routes.test_clip_extension_deadline import (
+    test_recorded_compound_extension_survives_parse_save_and_phone_recipe,
+)
 
 
 def main() -> None:
-    output = Path(sys.argv[1])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output", type=Path)
+    parser.add_argument(
+        "--extend", action="store_true", help="Replay the delayed extension follow-up"
+    )
+    args = parser.parse_args()
+    output = args.output
     output.mkdir(parents=True, exist_ok=True)
     source = output / "source.mp4"
     subprocess.run(
@@ -74,29 +85,41 @@ def main() -> None:
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(replay, "_guided_shape_job", fixture)
-        replay.test_twelve_explicit_words_survive_compound_trim_save_and_later_save(
-            monkeypatch
-        )
+        if args.extend:
+            asyncio.run(
+                test_recorded_compound_extension_survives_parse_save_and_phone_recipe(
+                    monkeypatch
+                )
+            )
+        else:
+            replay.test_twelve_explicit_words_survive_compound_trim_save_and_later_save(
+                monkeypatch
+            )
         request = device_status(jobs[0], "guided_story").request
         status = DeviceRenderStatus(phase="awaiting_device", request=request)
         (output / "status.json").write_text(status.model_dump_json(indent=2))
         features = sorted(request.recipe.required_capabilities)
         case = {
             "status_file": "status.json",
-            "duration_s": 4,
+            "duration_s": 5 if args.extend else 4,
             "required_capabilities": features,
             "drop_capability": "positionedText",
             "clips": [{"media_id": "source", "file": source.name}],
             "expected_words": "Join us for our favorite bakery and tea shop near the harbor".split(),
-            "expected_word_end_s": 2,
+            "expected_word_end_s": 3 if args.extend else 2,
+            "expected_word_ids": [
+                row.id for row in request.recipe.text_layers if "::sequence-" in row.id
+            ],
             "model_transport_provenance": {
                 "creation": "authored_editor_fixture",
-                "retime": "recorded_operation_shape",
+                "retime": "recorded_shape_delayed_transport"
+                if args.extend
+                else "recorded_operation_shape",
             },
             "samples": [
                 {
                     "name": "surviving_footage",
-                    "t": 3.5,
+                    "t": 4.5 if args.extend else 3.5,
                     "x": 80,
                     "y": 1800,
                     "rgb": [255, 0, 0],
@@ -105,20 +128,22 @@ def main() -> None:
             "caption_samples": [
                 {
                     "name": "word_visible",
-                    "t": 1.4,
+                    "t": 2.5 if args.extend else 1.4,
                     "region": [0, 900, 1080, 1900],
                     "expect_text": True,
                 },
                 {
                     "name": "words_finished",
-                    "t": 2.3,
+                    "t": 3.3 if args.extend else 2.3,
                     "region": [0, 900, 1080, 1900],
                     "expect_text": False,
                 },
             ],
             "audio_samples": [
                 {"name": f"clip_{index}", "t": t, "speaker_hz": 440, "muted_hz": 880}
-                for index, t in enumerate([1, 2.5, 3.5])
+                for index, t in enumerate(
+                    [1, 3.5, 4.5] if args.extend else [1, 2.5, 3.5]
+                )
             ],
         }
         (output / "e2e.json").write_text(

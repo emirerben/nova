@@ -24,7 +24,11 @@
         "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift",
         "src/apps/ios/Tests/Fixtures/KRI524CreationDraft.json",
         "scripts/ios/kri-524-creation-e2e.py",
-        "scripts/ios/kri-524-trim-save-e2e.py"
+        "scripts/ios/kri-524-trim-save-e2e.py",
+        "src/apps/api/app/agents/_model_client.py",
+        "src/apps/api/app/agents/_runtime.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/routes/_copilot.py"
       ]
     },
     {
