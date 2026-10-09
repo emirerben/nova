@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.196.0] - 2026-10-09
+
+### Changed
+- feat(live-plan): structured block payloads, revision/changed, post caption, GET /plan (KRI-439, KRI-447, KRI-448, KRI-453) (#1519) <!-- release-pr: 1519 -->
+
 ## [0.78.195.0] - 2026-10-09
 
 ### Changed
