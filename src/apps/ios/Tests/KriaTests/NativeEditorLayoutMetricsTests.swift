@@ -249,4 +249,35 @@ final class NativeEditorLayoutMetricsTests: XCTestCase {
         XCTAssertEqual(size.height, 360, accuracy: 0.01)
         XCTAssertEqual(size.width, 202.5, accuracy: 0.01)
     }
+
+    // MARK: KRI-508 text edit bar
+
+    private func textEditing(lines: Int, header: CGFloat? = 0) -> NativeEditorLayoutMetrics {
+        NativeEditorLayoutMetrics(
+            viewportSize: CGSize(width: 393, height: 520), safeAreaTop: 59, safeAreaBottom: 336,
+            topChromeHeight: 0, previewAspectRatio: 9.0 / 16,
+            keyboardVisible: true, isAccessibilitySize: false,
+            textEditBarHeight: TextEditBar.height(lines: lines), measuredHeaderHeight: header
+        )
+    }
+
+    func testTextEditBarPinsThePanelAboveTheKeyboardAndGrowsPerLine() {
+        let one = textEditing(lines: 1), two = textEditing(lines: 2)
+        let area: CGFloat = 520 - 0 - one.defaultPreviewHeight - 10
+        XCTAssertEqual(one.panelDefaultHeight(areaHeight: area), TextEditBar.height(lines: 1), accuracy: 0.001,
+                       "the panel is exactly the bar")
+        XCTAssertEqual(one.panelRange(areaHeight: area, previewHeight: one.defaultPreviewHeight), 0)
+        XCTAssertEqual(one.previewHeight(resize: 40), one.defaultPreviewHeight, accuracy: 0.001,
+                       "a stored timeline-handle resize does not shrink the preview under the bar")
+        XCTAssertEqual(one.defaultPreviewHeight - two.defaultPreviewHeight, TextEditBar.lineHeight, accuracy: 0.001,
+                       "each extra line takes one line height from the preview")
+        XCTAssertGreaterThan(one.defaultPreviewHeight, NativeEditorLayoutMetrics.typingPreviewHeight,
+                             "with the header away the video is larger than the old 120pt typing preview")
+    }
+
+    func testTextEditBarKeepsRoomForAKeyboardGap() {
+        // 12 top + 44 title row + 6 + 50 tabs + 6 + 8 + box + 10 bottom; the island adds 6 more.
+        XCTAssertEqual(TextEditBar.chromeHeight + TextEditBar.topPadding + TextEditBar.bottomPadding, 136)
+        XCTAssertGreaterThanOrEqual(TextEditBar.bottomPadding + NativeEditorIslandMetrics.bottomPadding, 16)
+    }
 }

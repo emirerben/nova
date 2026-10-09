@@ -18,6 +18,35 @@ struct NativeTextPanelConfiguration {
     var focusesContentOnAppear = false
     /// Called when the user switches tabs, so a host can mirror the selection.
     var onTabChange: ((NativeTextPanelTab) -> Void)?
+    /// KRI-508: set by the video editor. While the text box has the keyboard the panel collapses to
+    /// a one-line bar that grows with the words; the host gets the box's line count (`nil` when the
+    /// box has no keyboard) so it can give the room to the preview and hide its own chrome.
+    var onTypingChange: ((Int?) -> Void)?
+}
+
+/// Sizes of the Text panel while its box has the keyboard (KRI-508). The editor reserves
+/// `height(lines:)` and the panel draws exactly that, so both read the same constants.
+enum TextEditBar {
+    /// Room above the title row so the buttons clear the panel's 32pt rounded corner.
+    static let topPadding: CGFloat = 12
+    /// With the island's own 6pt this leaves 16pt between the box and the keyboard.
+    static let bottomPadding: CGFloat = 10
+    /// Title row (44) + its spacing (6) + tabs (44 + 2*3) + spacing before the box (6) + gap above it (8).
+    static let chromeHeight: CGFloat = 44 + 6 + 50 + 6 + 8
+    static let fieldInset: CGFloat = 16
+
+    static var lineHeight: CGFloat { ceil(UIFont.preferredFont(forTextStyle: .body).lineHeight) }
+
+    /// One more line than the caption editor: titles are short and multi-line.
+    static func maxLines(isAccessibilitySize: Bool, screenHeight: CGFloat, contentWidth: CGFloat) -> Int {
+        CaptionEditBar.fieldLineCount(
+            isAccessibilitySize: isAccessibilitySize, screenHeight: screenHeight, contentWidth: contentWidth
+        ) + 1
+    }
+    static func fieldHeight(lines: Int) -> CGFloat { CGFloat(max(1, lines)) * lineHeight + fieldInset }
+    static func height(lines: Int) -> CGFloat {
+        topPadding + chromeHeight + fieldHeight(lines: lines) + bottomPadding
+    }
 }
 
 struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
@@ -31,6 +60,8 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
     @State private var tab: Tab = .style
     @State private var phase: Phase = .entrance
     @State private var typing = false
+    /// Lines the wrapped words take in the box (KRI-508); the bar grows to fit up to the cap.
+    @State private var contentLines = 1
     @FocusState private var editingSize: Bool
     @State private var sizeInput = ""
     @State private var ownerUUID = UUID()
@@ -55,6 +86,16 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
     private var item: EditorTextElement? { session.textElement(id: id) }
     private let palette = ["#FFFFFF", "#30352C", "#FFF0A6", "#9BCAFF", "#E7DDF5"]
     private var usesAccessibilityLayout: Bool { dynamicTypeSize.isAccessibilitySize || panelContentWidth < 300 }
+    /// The video editor's panel while its box has the keyboard: a one-line bar that grows (KRI-508).
+    private var compactTyping: Bool { configuration.onTypingChange != nil && tab == .edit && typing && !embeddedAnimation }
+    private var maxBoxLines: Int {
+        TextEditBar.maxLines(isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
+                             screenHeight: UIScreen.main.bounds.height, contentWidth: panelContentWidth)
+    }
+    private var boxLines: Int { min(max(1, contentLines), maxBoxLines) }
+    private func reportTyping(_ isTyping: Bool) {
+        configuration.onTypingChange?(isTyping && tab == .edit && !embeddedAnimation ? boxLines : nil)
+    }
 
     @ViewBuilder var body: some View {
         if embeddedAnimation {
@@ -72,6 +113,15 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
                 HStack {
                     Text("Text").font(KriaFont.body(isConnectedPanel ? 18 : 15).weight(.semibold))
                     Spacer()
+                    if compactTyping && !configuration.hidesTiming {
+                        // The Start/End fields wait behind the keyboard: this lowers it to reach them.
+                        Button { typing = false } label: {
+                            Label("Timing", systemImage: "clock")
+                                .font(KriaFont.body(14).weight(.semibold))
+                                .frame(minWidth: 64, minHeight: 44)
+                        }
+                        .accessibilityIdentifier("native-editor-text-timing")
+                    }
                     if session.textDeletion(id: id).isAllowed {
                         Button {
                             performOutgoingCleanup()
@@ -101,11 +151,13 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
                     case .edit:
                         NativeExplicitLineTextEditor(text: Binding(
                             get: { item?.text ?? "" }, set: { session.updateTextContent(id: id, content: $0) }
-                        ), focused: $typing, identifier: configuration.contentIdentifier, configuration: textEditorConfiguration)
-                        .frame(minHeight: editorHeight)
-                        .padding(8)
+                        ), focused: $typing, identifier: configuration.contentIdentifier, configuration: textEditorConfiguration,
+                        onLineCount: configuration.onTypingChange == nil ? nil : { contentLines = $0 })
+                        .frame(minHeight: compactTyping ? nil : editorHeight)
+                        .frame(height: compactTyping ? TextEditBar.fieldHeight(lines: boxLines) : nil)
+                        .padding(compactTyping ? 0 : 8)
                         .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
-                        if configuration.hidesTiming {
+                        if configuration.hidesTiming || compactTyping {
                             EmptyView()
                         } else if usesAccessibilityLayout {
                             VStack(spacing: 8) {
@@ -128,7 +180,8 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
             .disabled(!session.canEdit(.text))
         }
         .padding(.horizontal, isConnectedPanel ? 24 : 16)
-        .padding(.bottom, 8)
+        .padding(.top, compactTyping ? TextEditBar.topPadding : 0)
+        .padding(.bottom, compactTyping ? TextEditBar.bottomPadding : 8)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(isConnectedPanel ? Color.clear : KriaColor.paper)
         .overlay(alignment: .top) {
@@ -139,6 +192,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
         .onChange(of: tab) { _, tab in
             configuration.onTabChange?(tab)
             commitSize(); editingSize = false; typing = tab == .edit
+            reportTyping(tab == .edit)
             if tab == .edit, let item {
                 session.beginTransaction()
                 session.updateTextContent(id: id, content: item.text)
@@ -149,15 +203,19 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
         }
         .onChange(of: typing) { _, value in
             if value { session.beginTransaction() } else { session.endTransaction() }
+            reportTyping(value)
         }
+        .onChange(of: contentLines) { _, _ in reportTyping(typing) }
         .onAppear {
             guard !embeddedAnimation else { return }
             if configuration.focusesContentOnAppear && tab == .edit { typing = true }
+            reportTyping(configuration.focusesContentOnAppear && tab == .edit)
             panelLifecycle?.register(owner: ownerUUID, prepareToClose: {
                 performOutgoingCleanup()
             })
         }
         .onDisappear {
+            configuration.onTypingChange?(nil)
             performOutgoingCleanup()
             panelLifecycle?.unregister(owner: ownerUUID)
         }
@@ -168,6 +226,8 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
     private var textEditorConfiguration: LineEditorConfiguration {
         var value = LineEditorConfiguration()
         value.maxLength = configuration.maxTextLength
+        // The video editor's box wraps and grows instead of scrolling sideways (KRI-508).
+        value.wrapsLines = configuration.onTypingChange != nil
         return value
     }
 
@@ -616,6 +676,8 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
     /// Changing this re-arms the editor for a different line: its undo history is
     /// cleared (so shake-to-undo can't edit the previous line) and the caret moves to the end.
     var lineID: String? = nil
+    /// Called with the lines the words take at the current width (wrapping editors only).
+    var onLineCount: ((Int) -> Void)? = nil
 
     func makeUIView(context: Context) -> ExplicitLineTextView {
         let view = ExplicitLineTextView()
@@ -639,6 +701,7 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
     func updateUIView(_ view: ExplicitLineTextView, context: Context) {
         context.coordinator.parent = self
         view.lineActions = actions
+        view.onLineCount = onLineCount
         if view.appliedConfiguration != configuration {
             let inputChanged = view.appliedConfiguration.returnKeyType != configuration.returnKeyType
                 || view.appliedConfiguration.preferredLanguage != configuration.preferredLanguage
@@ -666,6 +729,7 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             (textView as? ExplicitLineTextView)?.updateLineWidth()
             parent.text = textView.text
+            (textView as? ExplicitLineTextView)?.reportLineCount()
         }
         func textViewDidBeginEditing(_ textView: UITextView) { parent.focused.wrappedValue = true }
         func textViewDidEndEditing(_ textView: UITextView) { parent.focused.wrappedValue = false }
@@ -706,6 +770,8 @@ final class ExplicitLineTextView: UITextView {
     var appliedConfiguration = LineEditorConfiguration()
     var lineActions = LineEditorActions()
     var lineID: String?
+    var onLineCount: ((Int) -> Void)?
+    private var reportedLineCount = 0
     /// Set by Shift-Return so the one newline it inserts passes the Return intercept.
     var allowsNextNewline = false
 
@@ -716,6 +782,19 @@ final class ExplicitLineTextView: UITextView {
     override func layoutSubviews() {
         updateLineWidth()
         super.layoutSubviews()
+        reportLineCount()
+    }
+
+    /// Lines the words take at the current width, trailing newline included. Reported once per
+    /// change, after the layout pass, so the host can resize its bar without a feedback loop.
+    func reportLineCount() {
+        guard wrapsLines, onLineCount != nil, bounds.width > 0 else { return }
+        let lineHeight = (font ?? .systemFont(ofSize: 17)).lineHeight
+        let fit = sizeThatFits(CGSize(width: bounds.width, height: .greatestFiniteMagnitude)).height
+        let lines = max(1, Int(((fit - textContainerInset.top - textContainerInset.bottom) / lineHeight).rounded()))
+        guard lines != reportedLineCount else { return }
+        reportedLineCount = lines
+        DispatchQueue.main.async { [weak self] in self?.onLineCount?(lines) }
     }
 
     /// KRI-240: request the caption language's keyboard when one is installed.

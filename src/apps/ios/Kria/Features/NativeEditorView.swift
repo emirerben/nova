@@ -33,7 +33,11 @@ struct NativeEditorView: View {
     /// KRI-185: a block opened from the Text tab's list edits its words first and
     /// returns to that list; one opened from the timeline keeps the old behaviour.
     @State private var textEditOrigin: TextEditOrigin = .timeline
-    private enum TextEditOrigin { case timeline, list }
+    /// `.created`: a text just added from the Text tab, which still opens on Style.
+    private enum TextEditOrigin { case timeline, list, created }
+    /// KRI-508: lines in the Text panel's box while it has the keyboard; `nil` when it has none.
+    /// Drives the compact bar, the preview taking the room above it and the header stepping away.
+    @State private var textTypingLines: Int?
     @State private var keyboardVisible = false
     /// KRI-170: the timeline handle and the panel handle are independent.
     /// `previewResize` is in points (positive shrinks the preview, negative
@@ -49,12 +53,6 @@ struct NativeEditorView: View {
     @State private var fullscreenExpanded = false
     @State private var previewGlobalFrame: CGRect = .zero
     @State private var wasPlayingBeforeFullscreen = false
-    /// KRI-508 (plan 027 D2): a text a preview tap or drag selected. While it stays
-    /// selected and no panel is open, the preview grows so the text is easy to handle.
-    @State private var previewTextFocusID: String?
-    /// KRI-508: "Text removed · Undo" after typing a text empty, or why a title is locked.
-    @State private var previewNotice: NativeEditorPreviewNoticeState?
-    @ScaledMetric(relativeTo: .body) private var inlineBarRowHeight: CGFloat = 44
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
@@ -251,27 +249,20 @@ struct NativeEditorView: View {
             isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
             reservesSongReferencePreviewFloor: session.editorSongReferencePresentation != nil,
             shrinksPreviewWhileTyping: panel?.tool == .text,
-            captionEditBarHeight: captionEditing
-                ? CaptionEditBar.height(lineHeight: captionLineHeight, lines: captionEditLines(viewport: viewport))
-                : inlineTyping ? NativeTextInlineBar.height(rowHeight: inlineBarRowHeight) : nil,
-            // Typing on the video hides the project header: the video gets that room (KRI-508 D5).
-            measuredHeaderHeight: inlineTyping ? 0 : headerHeight > 0 ? headerHeight : nil
+            captionEditBarHeight: captionEditing ? CaptionEditBar.height(lineHeight: captionLineHeight, lines: captionEditLines(viewport: viewport)) : nil,
+            textEditBarHeight: textEditing ? textTypingLines.map { TextEditBar.height(lines: $0) } : nil,
+            measuredHeaderHeight: textEditing ? 0 : (headerHeight > 0 ? headerHeight : nil)
         )
+        let showsTimeline = panel == nil
+        let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
         // KRI-131: the context capsule now floats over the timeline instead
         // of pushing it up, so selecting a clip/text no longer shrinks the
-        // preview. KRI-508: a text selected on the preview grows it instead.
-        let previewHeight = textFocused
-            ? max(metrics.previewHeight(resize: previewResize), metrics.maxPreviewHeight)
-            : metrics.previewHeight(resize: previewResize)
-        let previewWidth = previewHeight * session.previewAspectRatio
-        let showsTimeline = panel == nil
-        let selectedTextID = session.selection?.kind == .text ? session.selection?.id : nil
-        // The actions sit next to the text when the preview can hold them, else in the island.
-        let pillShowsTextActions = selectedTextID != nil && !dynamicTypeSize.isAccessibilitySize
-            && NativeTextPillPlacement.fits(canvasWidth: previewWidth)
-        let showsContext = showsTimeline && ((selectedTextID != nil && !pillShowsTextActions) || session.selectedClipID != nil)
+        // preview.
+        let previewHeight = metrics.previewHeight(resize: previewResize)
         VStack(spacing: 0) {
-            if !inlineTyping {
+            // KRI-508: while the Text panel's box has the keyboard the header steps up and away so
+            // the video gets the screen; it slides back when the keyboard goes down.
+            if !textEditing {
                 NativeEditorProjectHeader(
                     title: project.workspaceTitle, session: session, exporter: exporter,
                     onBack: requestBack, onChat: conversation == nil ? requestBack : onBack,
@@ -281,6 +272,7 @@ struct NativeEditorView: View {
                     onVideoShape: { changePanel(to: nil); inspector = .videoShape }
                 )
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
+                .transition(shouldReduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             }
             VStack(spacing: 0) {
                 NativeEditorSaveBanner(session: session)
@@ -305,15 +297,9 @@ struct NativeEditorView: View {
             NativeVideoPreview(
                 session: session, onEmptyTap: handleEmptyPreviewTap,
                 onFindOriginals: { showsOriginalsRecovery = true },
-                onAddClip: { showsEmptyAddClip = true },
-                inlineTextID: inlineTextID,
-                textActions: pillShowsTextActions && showsTimeline ? selectedTextID.map(textActions(for:)) : nil,
-                onEditText: { beginInlineText($0) },
-                onTextFocus: { previewTextFocusID = $0 },
-                onInlineCommit: finishInlineText,
-                onLockedTextTap: { showNotice(.lockedTitle) }
+                onAddClip: { showsEmptyAddClip = true }
             )
-                .frame(width: previewWidth, height: previewHeight)
+                .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)
                 .clipped()
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { previewGlobalFrame = $0 }
                 .overlay {
@@ -331,23 +317,10 @@ struct NativeEditorView: View {
                     }
                 }
                 .accessibilityIdentifier("native-editor-preview")
-                .overlay(alignment: .bottom) {
-                    if let notice = previewNotice {
-                        previewNoticeView(notice)
-                            .padding(.horizontal, 12)
-                            .padding(.bottom, 12)
-                            .transition(.opacity)
-                    }
-                }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
-                .overlay(alignment: .leading) {
-                    if let id = inlineTextID {
-                        inlineSizeSlider(id: id, previewWidth: previewWidth, previewHeight: previewHeight, viewportWidth: viewport.size.width)
-                    }
-                }
                 .overlay(alignment: .bottomTrailing) {
-                    if conversation != nil, session.pendingText == nil, !editBarActive {
+                    if conversation != nil, session.pendingText == nil, !lineEditing {
                         KriaAIButton(identifier: "native-editor-conversation") { showsConversation = true }
                     }
                 }
@@ -357,10 +330,10 @@ struct NativeEditorView: View {
                 .background {
                     Color.clear
                         .contentShape(Rectangle())
-                        .onTapGesture { if inlineTyping { finishInlineText() } else { dismissSelectedContext() } }
+                        .onTapGesture { dismissSelectedClipContext() }
                 }
 
-            if !editBarActive { timelineResizeHandle(metrics: metrics) }
+            if !lineEditing { timelineResizeHandle(metrics: metrics) }
             connectedEditorArea(viewport: viewport, showsContext: showsContext, metrics: metrics, previewHeight: previewHeight)
                 // The panel may rise over the preview; paint and hit-test it
                 // above the preview and the timeline handle.
@@ -368,131 +341,23 @@ struct NativeEditorView: View {
         }
         .environment(\.nativeEditorConnectedPanel, true)
         .environment(\.nativeEditorPanelLifecycle, panelLifecycle)
-        .animation(shouldReduceMotion ? nil : .easeOut(duration: 0.22), value: textFocused)
-        .onChange(of: inlineTextID == nil) { _, gone in
-            // The text went away under the keyboard (an undo, a reload): leave typing.
-            if gone, case .textInline = panel { changePanel(to: nil) }
-        }
     }
 
     private var panelIsOpen: Bool { panel != nil }
 
-    // MARK: - KRI-508: text on the video
-
-    /// The text being typed on the video, while it still exists and can be edited.
-    private var inlineTextID: String? {
-        guard case .textInline(let id) = panel,
-              session.document.textElements.contains(where: { $0.id == id && !$0.isReadOnly }) else { return nil }
-        return id
+    /// KRI-508: the Text panel's box has the keyboard.
+    private var textEditing: Bool {
+        if case .text = panel { return textTypingLines != nil }
+        return false
     }
-
-    private var inlineTyping: Bool { inlineTextID != nil }
-
-    /// A bar rides the keyboard (a caption line, or text typed on the video): the
-    /// timeline handle, transport, tool rail and Kria button step aside.
-    private var editBarActive: Bool { captionEditing || inlineTyping }
-
-    private var textFocused: Bool {
-        guard panel == nil, let id = previewTextFocusID else { return false }
-        return session.selection == EditorSelection(kind: .text, id: id)
-    }
-
-    private func textActions(for id: String) -> NativePreviewTextActions {
-        NativePreviewTextActions(
-            onEdit: { beginInlineText(id) },
-            onStyle: {
-                selectedTextForActions = id
-                textEditOrigin = .timeline
-                changePanel(to: .text(id))
-            },
-            onDelete: { _ = session.deleteText(id: id) },
-            deleteBlockedReason: blockedReason(session.textDeletion(id: id))
-        )
-    }
-
-    /// Second tap on a selected text, "Edit text", or VoiceOver's Edit text: type on the video.
-    private func beginInlineText(_ id: String) {
-        guard session.canEdit(.text), let element = session.textElement(id: id), !element.isReadOnly,
-              !element.isCaption else { return }
-        if session.isPlaying { session.pausePlayback() }
-        // The words are typed where the text is drawn, so park inside its window.
-        let start = session.timelineProjection.projectBaseTime(element.startS)
-        let end = session.timelineProjection.projectBaseTime(element.endS)
-        if session.currentTime < start || session.currentTime >= end {
-            session.seek(to: max(start, min(end - 0.05, start + min(0.5, max(0, end - start) / 2))))
+    /// A line editor (caption or text) owns the screen: transport, tool rail and resize handles step aside.
+    private var lineEditing: Bool { captionEditing || textEditing }
+    /// The box grows a line at a time; the layout follows without a bounce.
+    private func setTextTypingLines(_ lines: Int?) {
+        guard lines != textTypingLines else { return }
+        withAnimation(shouldReduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.9)) {
+            textTypingLines = lines
         }
-        previewNotice = nil
-        selectedTextForActions = id
-        previewTextFocusID = id
-        changePanel(to: .textInline(id))
-        // Words, font, colour, background, alignment and size: one undo step.
-        session.beginTransaction()
-    }
-
-    /// Done, or a tap outside the field. Emptied text is removed, with Undo.
-    private func finishInlineText() {
-        guard case .textInline(let id) = panel else { return }
-        resignKeyboard()
-        let emptied = session.textElement(id: id)?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? false
-        let removed = emptied && session.deleteText(id: id)
-        session.endTransaction()
-        if emptied && !removed {
-            // A text that can't be removed keeps its words.
-            session.undo()
-        }
-        changePanel(to: nil)
-        if removed {
-            showNotice(.textRemoved(undoVersion: session.undoHistoryVersion))
-        } else {
-            previewTextFocusID = id
-        }
-    }
-
-    private func showNotice(_ kind: NativeEditorPreviewNoticeState.Kind) {
-        let notice = NativeEditorPreviewNoticeState(kind: kind)
-        withAnimation(shouldReduceMotion ? nil : .easeOut(duration: 0.18)) { previewNotice = notice }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-            guard previewNotice == notice else { return }
-            withAnimation(shouldReduceMotion ? nil : .easeOut(duration: 0.18)) { previewNotice = nil }
-        }
-    }
-
-    @ViewBuilder private func previewNoticeView(_ notice: NativeEditorPreviewNoticeState) -> some View {
-        switch notice.kind {
-        case .textRemoved(let version):
-            NativeEditorPreviewNotice(
-                message: "Text removed",
-                actionTitle: session.undoHistoryVersion == version ? "Undo" : nil,
-                action: {
-                    session.undo()
-                    previewNotice = nil
-                },
-                identifier: "native-editor-text-removed")
-        case .lockedTitle:
-            NativeEditorPreviewNotice(
-                message: "This title can't be edited here yet.",
-                actionTitle: conversation == nil ? nil : "Ask Kria",
-                action: {
-                    previewNotice = nil
-                    showsConversation = true
-                },
-                identifier: "native-editor-locked-text")
-        }
-    }
-
-    /// The size slider in the margin beside the preview while typing (over its edge when there is no margin).
-    @ViewBuilder private func inlineSizeSlider(id: String, previewWidth: CGFloat, previewHeight: CGFloat, viewportWidth: CGFloat) -> some View {
-        let margin = (viewportWidth - previewWidth) / 2
-        let track = max(96, min(200, previewHeight - 110))
-        let size = session.textElement(id: id).map(NativeEditorSession.textSize) ?? 72
-        NativeTextSizeSlider(size: size, onChange: { session.setTextSize(id: id, sizePX: $0) }, trackHeight: track)
-            .padding(.vertical, 6)
-            .background {
-                if margin < 60 {
-                    Capsule().fill(KriaColor.paper.opacity(0.85))
-                }
-            }
-            .padding(.leading, margin >= 60 ? max(4, (margin - 56) / 2) : 6)
     }
 
     /// KRI-240: a caption line is open in the caption editor (Variant A edit state).
@@ -525,7 +390,7 @@ struct NativeEditorView: View {
     /// the animation. Playback is restored on exit. At the end of the timeline
     /// `togglePlayback()` restarts from 0.
     private func enterFullscreen() {
-        guard !previewFullscreen, !keyboardVisible, !editBarActive, session.pendingText == nil,
+        guard !previewFullscreen, !keyboardVisible, !captionEditing, session.pendingText == nil,
               session.canDisplayCurrentPlayer else { return }
         wasPlayingBeforeFullscreen = session.isPlaying
         fullscreenExpanded = false
@@ -540,21 +405,20 @@ struct NativeEditorView: View {
         }
     }
 
-    /// An empty preview tap first closes a selected clip's or text's context
-    /// (KRI-508 D8). Once nothing is selected, the next tap retains the
-    /// established fullscreen behavior.
+    /// An empty preview tap first closes clip-only context. Once nothing is
+    /// selected, the next tap retains the established fullscreen behavior.
     private func handleEmptyPreviewTap() {
         if captionEditing {
             captionLoopRequest += 1
             return
         }
-        guard !dismissSelectedContext() else { return }
+        guard !dismissSelectedClipContext() else { return }
         enterFullscreen()
     }
 
     @discardableResult
-    private func dismissSelectedContext() -> Bool {
-        guard session.selection?.kind == .clip || session.selection?.kind == .text else { return false }
+    private func dismissSelectedClipContext() -> Bool {
+        guard session.selection?.kind == .clip else { return false }
         session.select(nil)
         return true
     }
@@ -630,7 +494,7 @@ struct NativeEditorView: View {
                 .ignoresSafeArea(.container, edges: .bottom)
                 .allowsHitTesting(false)
 
-                if panelIsOpen && !keyboardVisible && !editBarActive {
+                if panelIsOpen && !keyboardVisible && !lineEditing {
                     // Stays pinned to the top of the area; a tall panel rises
                     // over it rather than dragging it along. Fixed to the
                     // area's height so the taller ZStack can't stretch it.
@@ -644,7 +508,7 @@ struct NativeEditorView: View {
                         if showsContext {
                             if let selection = session.selection, selection.kind == .text {
                                 NativeEditorTextContextStrip(
-                                    onEdit: { beginInlineText(selection.id) },
+                                    onEdit: { changePanel(to: .text(selection.id)) },
                                     onDeselect: { session.select(nil) },
                                     onDelete: { session.deleteText(id: selection.id) },
                                     deleteBlockedReason: blockedReason(session.textDeletion(id: selection.id))
@@ -668,10 +532,10 @@ struct NativeEditorView: View {
                                     .environment(\.nativeEditorPanelResize, NativeEditorPanelResize(
                                         expansion: $panelExpansion, range: panelRange, dismiss: panelDismiss
                                     ))
-                                    .padding(.top, editBarActive ? 0 : 18)
+                                    .padding(.top, lineEditing ? 0 : 18)
                                     .overlay(alignment: .top) {
                                         // The band beside the grabber resizes too (KRI-235).
-                                        if !editBarActive {
+                                        if !lineEditing {
                                             Color.clear.frame(height: 18).contentShape(Rectangle())
                                                 .modifier(NativeEditorPanelResizeDrag(
                                                     expansion: $panelExpansion, range: panelRange, minimumDistance: 8, dismiss: panelDismiss
@@ -679,7 +543,7 @@ struct NativeEditorView: View {
                                         }
                                     }
                                     .overlay(alignment: .top) {
-                                        if !editBarActive {
+                                        if !lineEditing {
                                             NativeEditorPanelResizeGrabber(
                                                 expansion: $panelExpansion,
                                                 range: panelRange,
@@ -694,7 +558,7 @@ struct NativeEditorView: View {
                                     }
                                     .transition(panelTransition)
                             }
-                            if !keyboardVisible && !editBarActive {
+                            if !keyboardVisible && !lineEditing {
                                 NativeEditorToolRail(selected: panel?.tool, availableWidth: area.size.width - 24, connected: true, onSelect: selectTool)
                             }
                         }
@@ -733,13 +597,17 @@ struct NativeEditorView: View {
         case .textCreation:
             NativeTextCreationPanel(session: session, onDone: textCreated, onSelectBlock: { openTextBlock($0) })
         case .text(let id):
+            // KRI-508: an existing text opens on Edit text with the keyboard up; a text just created
+            // from the Text tab keeps opening on Style.
+            let startsOnEdit = textEditOrigin != .created
             NativeEditorTextPanel(
-                id: id, session: session, initialTab: textEditOrigin == .list ? .edit : .style,
+                id: id, session: session, initialTab: startsOnEdit ? .edit : .style,
+                configuration: NativeTextPanelConfiguration(
+                    focusesContentOnAppear: startsOnEdit,
+                    onTypingChange: { setTextTypingLines($0) }
+                ),
                 onDone: textEditingDone
             ).id(id)
-        case .textInline(let id):
-            NativeTextInlineBar(id: id, session: session, rowHeight: inlineBarRowHeight, onDone: finishInlineText)
-                .id(id)
         case .captions:
             NativeCaptionPanel(
                 session: session, editingCueID: $captionEditingCueID,
@@ -756,6 +624,7 @@ struct NativeEditorView: View {
 
     private func textCreated(_ selection: EditorSelection) {
         selectedTextForActions = selection.id
+        textEditOrigin = .created
         changePanel(to: .text(selection.id))
     }
 
@@ -772,7 +641,6 @@ struct NativeEditorView: View {
             // An empty draft returns nil and the pending-text observer closes the panel.
             if let selection = session.finishTextCreation() { textCreated(selection) }
         case .text: textEditingDone()
-        case .textInline: finishInlineText()
         case .captions, .visuals, .sounds: changePanel(to: nil)
         case nil: break
         }
@@ -794,8 +662,13 @@ struct NativeEditorView: View {
         inspector = nil
         if case .text = destination {} else { textEditOrigin = .timeline }
         if destination?.tool != .captions { captionEditingCueID = nil }
+        // An existing text opens with the keyboard, so the compact layout starts with the panel
+        // rather than a frame later (the panel then keeps it in step with the box).
+        var opensTyping = false
+        if case .text = destination, textEditOrigin != .created { opensTyping = true }
         withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
             panel = destination
+            textTypingLines = opensTyping ? 1 : nil
         }
     }
 
@@ -859,16 +732,11 @@ struct NativeEditorView: View {
 
     private func routeSelection() {
         guard !session.isDirectManipulating, !session.isTimingGestureActive else { return }
-        // KRI-508: the preview stays grown only while the text it grew for is selected.
-        if session.selection?.id != previewTextFocusID || session.selection?.kind != .text { previewTextFocusID = nil }
         guard let selection = session.selection else {
             if case .text = panel { changePanel(to: nil) }
-            if case .textInline = panel { finishInlineText() }
             selectedTextForActions = nil
             return
         }
-        // Typing on this text already (a VoiceOver "Edit text" selects it first).
-        if case .textInline(let id) = panel, selection.kind == .text, selection.id == id { return }
         if [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect].contains(selection.kind) {
             changePanel(to: .visuals)
             return
