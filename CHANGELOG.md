@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.197.0] - 2026-10-09
+
+### Changed
+- feat(ios): restyle live plan feed to Paper -B glass/butter design (KRI-450) (#1520) <!-- release-pr: 1520 -->
+
 ## [0.78.196.0] - 2026-10-09
 
 ### Changed
