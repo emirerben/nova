@@ -110,51 +110,25 @@ import XCTest
     func testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory() async throws {
         let saved = fixture()
         let proposal = SlidePostProposal(draft: try XCTUnwrap(saved.draft), baseVersion: 1, fallbackUsed: false, summary: "Review the order")
-        let phase = ThoughtStreamPhase()
-        NativeEditorURLProtocol.handler = { request in
-            if request.url!.path.hasSuffix("/thought-summaries") {
-                var requestID = ""
-                for item in URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? [] {
-                    if item.name == "client_request_id" { requestID = item.value ?? "" }
-                }
-                let completed = phase.finished
-                var summary: [String: Any] = [
-                    "id": "33333333-3333-3333-3333-333333333333",
-                    "client_request_id": requestID,
-                    "status": completed ? "completed" : "streaming",
-                    "text": completed ? "Compared the slide order." : "Comparing the slide order.",
-                    "started_at": "2026-10-09T08:00:00Z",
-                ]
-                if completed {
-                    summary["completed_at"] = "2026-10-09T08:00:02Z"
-                    summary["duration_ms"] = 2_000
-                }
-                return (200, try JSONSerialization.data(withJSONObject: ["client_request_id": requestID, "summaries": [summary]]))
-            }
-            if request.httpMethod == "POST" {
-                Thread.sleep(forTimeInterval: 0.35)
-                phase.finish()
-                return (200, try JSONEncoder().encode(proposal))
-            }
-            return (200, try JSONEncoder().encode(saved))
-        }
-        let api = NativeEditorTestSupport.api()
+        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(saved)) }
+        let api = ControlledThoughtProposalClient(proposal: proposal)
         let session = SlidePostSession(defaults: defaults)
-        await session.refresh(api: api, itemID: itemID)
+        await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
 
         let request = Task { await session.propose(api: api, itemID: itemID, instruction: "Lead with the landscape") }
-        for _ in 0..<40 where session.liveThoughtSummaries.first?.status != .streaming {
+        for _ in 0..<600 where session.liveThoughtSummaries.first?.status != .streaming {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertTrue(session.isProposing)
         XCTAssertEqual(session.liveThoughtSummaries.map(\.text), ["Comparing the slide order."])
         XCTAssertEqual(session.liveThoughtSummaries.first?.status, .streaming)
 
+        await api.finish()
         await request.value
         XCTAssertEqual(session.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
         XCTAssertEqual(session.proposalThoughtSummaries.first?.status, .completed)
         let reopened = SlidePostSession(defaults: defaults)
-        await reopened.refresh(api: api, itemID: itemID)
+        await reopened.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
         XCTAssertEqual(reopened.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
     }
     func testSaveSendsExpectedVersionAndNeverServerOwnedMetadata() async throws {
@@ -530,9 +504,34 @@ import XCTest
     }
 }
 
-private final class ThoughtStreamPhase: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value = false
-    var finished: Bool { lock.lock(); defer { lock.unlock() }; return value }
-    func finish() { lock.lock(); defer { lock.unlock() }; value = true }
+private actor ControlledThoughtProposalClient: SlidePostProposalClient {
+    let proposal: SlidePostProposal
+    private var finished = false
+    private var continuation: CheckedContinuation<SlidePostProposal, Never>?
+
+    init(proposal: SlidePostProposal) { self.proposal = proposal }
+
+    func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal {
+        if finished { return proposal }
+        return await withCheckedContinuation { continuation = $0 }
+    }
+
+    func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse {
+        KriaThoughtSummaryResponse(clientRequestID: clientRequestID, summaries: [
+            KriaThoughtSummary(
+                id: "33333333-3333-3333-3333-333333333333", clientRequestID: clientRequestID,
+                status: finished ? .completed : .streaming,
+                text: finished ? "Compared the slide order." : "Comparing the slide order.",
+                startedAt: Date(timeIntervalSince1970: 1_000),
+                completedAt: finished ? Date(timeIntervalSince1970: 1_002) : nil,
+                durationMS: finished ? 2_000 : nil
+            ),
+        ])
+    }
+
+    func finish() {
+        finished = true
+        continuation?.resume(returning: proposal)
+        continuation = nil
+    }
 }

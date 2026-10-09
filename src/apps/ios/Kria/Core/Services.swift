@@ -107,13 +107,18 @@ struct KeychainTokenStore: TokenStore, @unchecked Sendable {
 }
 struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { "Secure sign-in storage is unavailable." } }
 
-protocol KriaAPIClient: Sendable {
-    func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
+/// The two calls needed while a slide-post proposal is in flight. Keeping
+/// this narrow lets fixtures control the reply and live poll independently.
+protocol SlidePostProposalClient: Sendable {
+    func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal
     func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
+}
+
+protocol KriaAPIClient: SlidePostProposalClient, Sendable {
+    func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
     func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse
     func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse
     func slidePost(itemID: String) async throws -> SlidePostState
-    func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal
     func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse
     func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft
     func generateSlidePost(itemID: String, expectedVersion: Int) async throws

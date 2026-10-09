@@ -587,7 +587,7 @@ private struct SlidePostItemResponse: Decodable {
         selectedID = draft?.slides.first?.id
     }
 
-    func propose(api: any KriaAPIClient, itemID: String, instruction: String, platformProfile: String? = nil) async {
+    func propose(api: any SlidePostProposalClient, itemID: String, instruction: String, platformProfile: String? = nil) async {
         guard !isBusy else { return }
         // A never-saved draft is only the editor's starting point, so it does not block a proposal.
         guard !hasUnsavedChanges || state?.draft == nil else { error = "Save your slide edits before asking Kria for another direction."; return }
