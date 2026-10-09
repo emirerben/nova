@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.198.0] - 2026-10-09
+
+### Changed
+- feat(audio): server renderer honors mix.original_level (KRI-449) (#1518) <!-- release-pr: 1518 -->
+
 ## [0.78.197.0] - 2026-10-09
 
 ### Changed
