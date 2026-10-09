@@ -669,8 +669,10 @@ private struct CreationWorkspaceView: View {
 
     private var timelineUpdateToken: String {
         let feed = planFeed.paced(by: deviceBuildStage)
+        let liveThoughtToken = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
         return timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
             + "|feed\(feed.decidedCount)/\(feed.totalCount)"
+            + "|thoughts\(liveThoughtToken)"
     }
 
     private var streamingThoughtSummaries: [KriaThoughtSummary] {

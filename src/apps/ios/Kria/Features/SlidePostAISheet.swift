@@ -59,7 +59,8 @@ struct SlidePostAISheet: View {
     }
 
     private var updateToken: String {
-        "\(session.chat.map { $0.id.uuidString }.joined(separator: "|"))|\(session.liveThoughtSummaries.map(\.id).joined(separator: "|"))|\(session.proposalThoughtSummaries.map(\.id).joined(separator: "|"))|\(session.isChatting)|\(session.isBusy)|\(session.proposal != nil)|\(session.proposalRequestText ?? "")"
+        let liveThoughtToken = session.liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
+        return "\(session.chat.map { $0.id.uuidString }.joined(separator: "|"))|\(liveThoughtToken)|\(session.proposalThoughtSummaries.map(\.id).joined(separator: "|"))|\(session.isChatting)|\(session.isBusy)|\(session.proposal != nil)|\(session.proposalRequestText ?? "")"
     }
 
     // MARK: Conversation
