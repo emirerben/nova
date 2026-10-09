@@ -461,6 +461,8 @@ private struct CreationWorkspaceView: View {
     @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
     @State private var showsResult = false
+    /// Live plan & review: the "Review your video" sheet, opened from the feed's CTA / Change or the project.
+    @State private var reviewPresentation: ReviewPlanPresentation?
     @StateObject private var editorSession: NativeEditorSession
     @State private var conversationAcceptedID: UUID?
 
@@ -615,9 +617,113 @@ private struct CreationWorkspaceView: View {
         .id("plan-feed")
     }
 
-    /// Hook for the Review view (KRI-440). `section` is the card whose Change was tapped, nil for the CTA.
-    /// The Review sheet itself lands in the next lane; until then this is the single place it mounts.
-    private func openPlanReview(section: PlanSectionID?) {}
+    /// Opens the Review sheet (KRI-440). `section` is the card whose Change was tapped, nil for the CTA or the
+    /// project's Review row. The sheet starts from the feed's blocks so it shows at once, then loads the snapshot.
+    private func openPlanReview(section: PlanSectionID?) {
+        let seed = planFeed.isEmpty ? [] : planFeed.paced(by: deviceBuildStage).blocks
+        reviewPresentation = ReviewPlanPresentation(seed: seed, initialFlag: section)
+    }
+
+    private func reviewActions() -> ReviewPlanActions {
+        let api = model.api
+        let threadID = project.id
+        return ReviewPlanActions(
+            loadSnapshot: { try await api.planSnapshot(threadID: threadID) },
+            update: { scope, edits, message in try await submitReviewTurn(scope: scope, edits: edits, message: message) },
+            undoSection: { section, blockRevision, draftRevision in
+                try await undoReviewSection(section, blockRevision: blockRevision, draftRevision: draftRevision)
+            },
+            undoAll: { draftRevision in try await undoAllReview(draftRevision: draftRevision) }
+        )
+    }
+
+    /// "Update video": a turn scoped to the flagged sections (planned as editor operations only), then the
+    /// approval it produces is approved at once. Tapping Update video is the consent.
+    private func submitReviewTurn(scope: [PlanSectionID], edits: [ManualPlanEdit], message: String) async throws {
+        _ = try? await refreshDelta()
+        let startSequence = afterSequence
+        let accepted = try await model.api.submitScopedTurn(
+            threadID: project.id, message: message, expectedRevision: threadRevision,
+            clientEventID: UUID().uuidString, scope: scope, manualEdits: edits
+        )
+        threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
+        try await approveReviewDraft(turnID: accepted.turnID, afterSequence: startSequence)
+    }
+
+    private func undoReviewSection(_ section: PlanSectionID, blockRevision: Int, draftRevision: Int) async throws {
+        _ = try? await refreshDelta()
+        let startSequence = afterSequence
+        let result = try await model.api.undoPlanSection(
+            threadID: project.id, sectionID: section, expectedThreadRevision: threadRevision,
+            expectedBlockRevision: blockRevision, expectedDraftRevision: draftRevision
+        )
+        threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: result.threadRevision)
+        // A null successor turn means nothing was queued to render: there is no approval to wait for.
+        guard let turnID = result.turnID else { return }
+        try await approveReviewDraft(turnID: turnID, afterSequence: startSequence)
+    }
+
+    private func undoAllReview(draftRevision: Int) async throws {
+        _ = try? await refreshDelta()
+        let startSequence = afterSequence
+        _ = try await model.api.undoDraft(threadID: project.id, expectedRevision: draftRevision, render: true)
+        try await approveReviewDraft(turnID: "", afterSequence: startSequence)
+    }
+
+    /// Waits for the approval the review turn produces (matched by turn id, else the newest one after
+    /// `startSequence`) and approves it. A reply that is not an approval (Kria declined or found nothing to
+    /// change) ends the wait with its text.
+    private func approveReviewDraft(turnID: String, afterSequence startSequence: Int) async throws {
+        var repliesWithoutApproval = 0
+        for _ in 0..<150 {
+            _ = try? await refreshDelta()
+            let fresh = events.filter { $0.sequence > startSequence }
+            let request = fresh.last {
+                $0.eventType == "approval_requested"
+                    && (turnID.isEmpty || $0.payload?["turn_id"]?.stringValue == nil || $0.payload?["turn_id"]?.stringValue == turnID)
+            }
+            if let request, let approvalID = request.payload?["approval_id"]?.stringValue.flatMap(UUID.init(uuidString:)) {
+                try await approveReviewApproval(approvalID)
+                return
+            }
+            let reply = fresh.last {
+                $0.role == "assistant" && $0.eventType.hasPrefix("assistant")
+                    && (turnID.isEmpty || $0.payload?["turn_id"]?.stringValue == turnID)
+            }
+            if let reply {
+                repliesWithoutApproval += 1
+                if repliesWithoutApproval > 8 { throw ReviewPlanError.declined(reply.content ?? "") }
+            }
+            try await Task.sleep(for: .milliseconds(400))
+        }
+        throw ReviewPlanError.timedOut
+    }
+
+    private func approveReviewApproval(_ approvalID: UUID) async throws {
+        let snapshot = try await model.api.approval(threadID: project.id, approvalID: approvalID)
+        guard snapshot.status == "pending", let draftRevision = snapshot.draftRevision else { throw ReviewPlanError.timedOut }
+        func decide() async throws {
+            try await model.api.decideApproval(
+                threadID: project.id, approvalID: approvalID, decision: "approve",
+                expectedThreadRevision: threadRevision, expectedDraftRevision: draftRevision,
+                fingerprint: snapshot.approvalFingerprint, speechCleanupAware: true,
+                speechCleanupAnalysisID: nil, speechCleanupChoice: nil
+            )
+        }
+        do {
+            try await decide()
+        } catch let error as APIError where error.isConflict {
+            // The revision moved (every plan_block event bumps it): take the newest and try once more.
+            _ = try? await refreshDelta()
+            try await decide()
+        }
+        approval = nil
+        thinkingAnchor = afterSequence
+        thinkingTurnID = snapshot.turnID
+        thinkingSettlesOnJobStatus = true
+        isThinking = true
+        _ = try? await refreshDelta()
+    }
 
     /// Cancels the render behind the feed. Always sends the newest thread revision: every `plan_block`
     /// event bumps it, so the revision the feed was drawn with is usually stale.
@@ -1135,6 +1241,16 @@ private struct CreationWorkspaceView: View {
                 .environmentObject(model)
                 .presentationDetents([.large])
         }
+        .sheet(item: $reviewPresentation) { presentation in
+            ReviewPlanView(
+                seed: presentation.seed, initialFlag: presentation.initialFlag,
+                actions: reviewActions(),
+                close: { reviewPresentation = nil }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
+            .presentationBackground(KriaColor.paper)
+        }
         .fullScreenCover(isPresented: $showsResult) {
             // Chat <-> Editor is a switch, not a page rising from the bottom: the
             // editor cross-dissolves over the chat (see `WorkspaceCrossfade`).
@@ -1318,6 +1434,11 @@ private struct CreationWorkspaceView: View {
                 suggest: { prompt = $0 }
             )
             .id("ready")
+            if capabilities?.livePlanReviewAvailable == true, currentProject.runtimeVersion == 2,
+               let activeJob = fullThread?.activeJobID ?? currentProject.activeJobID?.uuidString {
+                ProjectReviewEntry(threadID: project.id, jobKey: activeJob, api: model.api) { openPlanReview(section: nil) }
+                    .id("project-review-entry")
+            }
             // Short creator-facing sentences about one-pass render decisions
             // (KRI-178), e.g. "Placed 9 of 10 moments you named." Only shown
             // once the job itself is in a ready/done state, mirroring the
