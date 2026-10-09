@@ -30,6 +30,45 @@
         "src/apps/api/app/kria/planner.py",
         "src/apps/api/app/routes/_copilot.py"
       ]
+    },
+    {
+      "id": "kri-557-thinking",
+      "api_tests": "tests/agents/test_thinking_budget.py",
+      "xctests": [
+        "KriaTests/ChatTimelineTests/testCompletedThoughtIsPlacedAfterItsUserRequestBeforeReply",
+        "KriaTests/SlidePostTests/testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory",
+        "KriaTests/SlidePostChatEditTests/testCompletedChatEditThoughtRemainsWithReplyAfterReopening"
+      ],
+      "paths": [
+        "src/apps/api/app/agents/_model_client.py",
+        "src/apps/api/app/agents/_runtime.py",
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/main.py",
+        "src/apps/api/app/migrations/versions/0116_thought_summaries.py",
+        "src/apps/api/app/models.py",
+        "src/apps/api/app/routes/_copilot.py",
+        "src/apps/api/app/routes/creation_threads.py",
+        "src/apps/api/app/routes/creator_agent.py",
+        "src/apps/api/app/routes/plan_items.py",
+        "src/apps/api/app/routes/thought_summaries.py",
+        "src/apps/api/app/services/thought_summaries.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/agents/test_thinking_budget.py",
+        "src/apps/api/tests/kria/test_runtime_tasks.py",
+        "src/apps/api/tests/services/test_thought_summaries.py",
+        "src/apps/api/tests/test_content_plan_schema.py",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Kria/Core/SlidePost.swift",
+        "src/apps/ios/Kria/Features/ChatTimeline.swift",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
+        "src/apps/ios/Kria/Features/SlidePostAISheet.swift",
+        "src/apps/ios/Kria/Features/ThoughtSummaryDisclosure.swift",
+        "src/apps/ios/Kria/Generated/openapi.yaml",
+        "src/apps/ios/Tests/KriaTests/ChatTimelineTests.swift",
+        "src/apps/ios/Tests/KriaTests/SlidePostChatEditTests.swift",
+        "src/apps/ios/Tests/KriaTests/SlidePostTests.swift"
+      ]
     }
   ]
 }

@@ -80,6 +80,47 @@ import XCTest
         }
     }
 
+    func testCompletedChatEditThoughtRemainsWithReplyAfterReopening() async throws {
+        let remote = state()
+        NativeEditorURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/thought-summaries") {
+                var requestID = ""
+                for item in URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? [] {
+                    if item.name == "client_request_id" { requestID = item.value ?? "" }
+                }
+                let payload: [String: Any] = [
+                    "client_request_id": requestID,
+                    "summaries": [[
+                        "id": "33333333-3333-3333-3333-333333333333",
+                        "client_request_id": requestID,
+                        "status": "completed",
+                        "text": "Checked the requested caption.",
+                        "started_at": "2026-10-09T08:00:00Z",
+                        "completed_at": "2026-10-09T08:00:02Z",
+                        "duration_ms": 2000,
+                    ]],
+                ]
+                return (200, try JSONSerialization.data(withJSONObject: payload))
+            }
+            if path.hasSuffix("/chat-edit") {
+                return (200, Data(#"{"outcome":"clarification","reply":"Which caption?","base_version":1}"#.utf8))
+            }
+            return (200, try JSONEncoder().encode(remote))
+        }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        await session.chatEdit(api: api, itemID: itemID, message: "Update the caption")
+        XCTAssertEqual(session.chat.last?.thoughts.map(\.text), ["Checked the requested caption."])
+        XCTAssertEqual(session.chat.last?.thoughts.first?.durationLabel, "Thought for 2s")
+
+        let reopened = SlidePostSession(defaults: defaults)
+        await reopened.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reopened.chat.last?.text, "Which caption?")
+        XCTAssertEqual(reopened.chat.last?.thoughts.map(\.text), ["Checked the requested caption."])
+    }
+
     func testEditedWithoutADraftIsNotStaged() async throws {
         let remote = state()
         serve(remote: remote) { try self.response("edited", reply: "Done.") }

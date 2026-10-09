@@ -246,8 +246,7 @@ jobs:
         run: python3 scripts/ci/api-tests.py "${{ matrix.shard }}"
 
   # KRI-559 executes only incident-corpus journeys selected by ci-changes.
-  # An affected source without a mapped fixture fails in the first step; a
-  # green KRI-524 sentinel must never stand in for an unrelated journey.
+  # An affected source without a mapped fixture fails in the first step.
   journey:
     needs: changes
     if: needs.changes.outputs.journey == 'true'
@@ -260,8 +259,13 @@ jobs:
           COVERAGE: ${{ needs.changes.outputs.journey_coverage }}
           JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
         run: |
-          test "$COVERAGE" = covered
-          test "$JOURNEY_IDS" = kri-524-creation
+          python3 - <<'PY'
+          import os
+          selected = os.environ["JOURNEY_IDS"].split(",")
+          allowed = {"kri-524-creation", "kri-557-thinking"}
+          if os.environ["COVERAGE"] != "covered" or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed:
+              raise SystemExit("Journey selection has an unmapped or invalid incident")
+          PY
       - name: Set up Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -277,10 +281,12 @@ jobs:
         working-directory: src/apps/api
         run: pip install -e '.[dev]'
       - name: Require FFmpeg for deterministic fixture media
+        if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         run: |
           command -v ffmpeg >/dev/null || brew install ffmpeg
           ffmpeg -version | head -n 1
       - name: Generate and verify offline server journey fixture
+        if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         env:
           KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}
         run: |
@@ -304,6 +310,7 @@ jobs:
           xcrun simctl boot "$(cat test-results/kri-559/simulator-id.txt)" || true
           xcrun simctl bootstatus "$(cat test-results/kri-559/simulator-id.txt)" -b
       - name: Render captured creation journey on iPhone simulator
+        if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
         env:
           TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/fixture
@@ -324,6 +331,7 @@ jobs:
             /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_INFO"
           } > ../../../test-results/kri-559/app-build.txt
       - name: Render trim-save journey on the built iPhone simulator
+        if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
         env:
           TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/trim-save
@@ -336,6 +344,7 @@ jobs:
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/trim-save/native.xcresult \
             > ../../../test-results/kri-559/trim-save/native-test-results.json
       - name: Render delayed extension journey on the built iPhone simulator
+        if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
         env:
           TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/extend
@@ -348,11 +357,39 @@ jobs:
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/extend/native.xcresult \
             > ../../../test-results/kri-559/extend/native-test-results.json
       - name: Record and validate immutable journey evidence
+        if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         env:
           KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}
         run: |
           python3 scripts/ci/journey-gate.py record-native --fixture test-results/kri-559/fixture --head "$KRIA_JOURNEY_HEAD_SHA" --xcresult test-results/kri-559/native.xcresult --test-results test-results/kri-559/native-test-results.json --render test-results/kri-559/fixture/frames/creation_words_retimed.mp4 --app-build test-results/kri-559/app-build.txt --output test-results/kri-559/journey-evidence.json
           python3 scripts/ci/journey-gate.py validate --evidence test-results/kri-559/journey-evidence.json --head "$KRIA_JOURNEY_HEAD_SHA"
+      - name: Verify Gemini thought streaming journey
+        if: contains(needs.changes.outputs.journey_ids, 'kri-557-thinking')
+        working-directory: src/apps/api
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/agents/test_thinking_budget.py -q | tee ../../../test-results/kri-559/thought-api-tests.log
+      - name: Verify native thought disclosure, live updates, and reopened history
+        if: contains(needs.changes.outputs.journey_ids, 'kri-557-thinking')
+        working-directory: src/apps/ios
+        run: |
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
+            -only-testing:KriaTests/ChatTimelineTests/testCompletedThoughtIsPlacedAfterItsUserRequestBeforeReply \
+            -only-testing:KriaTests/SlidePostTests/testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory \
+            -only-testing:KriaTests/SlidePostChatEditTests/testCompletedChatEditThoughtRemainsWithReplyAfterReopening \
+            -resultBundlePath ../../../test-results/kri-559/thought-native.xcresult test
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/thought-native.xcresult \
+            > ../../../test-results/kri-559/thought-native-test-results.json
+      - name: Require each native thought journey test to pass
+        if: contains(needs.changes.outputs.journey_ids, 'kri-557-thinking')
+        run: |
+          python3 scripts/ci/journey-gate.py verify-tests \
+            --test-results test-results/kri-559/thought-native-test-results.json \
+            --xctest ChatTimelineTests/testCompletedThoughtIsPlacedAfterItsUserRequestBeforeReply \
+            --xctest SlidePostTests/testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory \
+            --xctest SlidePostChatEditTests/testCompletedChatEditThoughtRemainsWithReplyAfterReopening
       - uses: actions/upload-artifact@v4
         if: always()
         with:

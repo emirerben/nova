@@ -36,7 +36,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, Protocol, TypeVar
 
 import structlog
 from pydantic import BaseModel, ValidationError
@@ -239,6 +239,11 @@ class AgentSpec:
     schema_retry_limit: int = 1
 
 
+class ThoughtSummaryAttemptPublisher(Protocol):
+    def begin_attempt(self) -> Callable[[str], None]: ...
+    def mark_model_success(self) -> None: ...
+
+
 @dataclass(slots=True)
 class RunContext:
     """Per-call binding. Threaded into structlog events for cross-agent correlation."""
@@ -265,6 +270,9 @@ class RunContext:
     reservation_approved: bool = False
     release_canary_id: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    # Interactive callers opt in to Gemini provider-marked thought summaries.
+    # This is kept out of normal traces and agent-run persistence.
+    thought_summary_callback: Callable[[str], None] | ThoughtSummaryAttemptPublisher | None = None
 
 
 @dataclass(slots=True)
@@ -543,6 +551,9 @@ class Agent(ABC, Generic[InputT, OutputT]):
                         output.model_dump() if hasattr(output, "model_dump") else None
                     ),
                 )
+                mark_success = getattr(ctx.thought_summary_callback, "mark_model_success", None)
+                if callable(mark_success):
+                    mark_success()
                 return output
             except RefusalError as exc:
                 # Refusing model probably won't yield to a different one — terminate.
@@ -767,7 +778,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                         f"{self.spec.name}: insufficient shared turn deadline budget "
                         "before provider call"
                     )
-                inv = self.client.invoke(
+                invoke_kwargs = dict(
                     model=model,
                     prompt=prompt,
                     media_uri=media,
@@ -778,6 +789,15 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     thinking_level=thinking_level,
                     timeout_s=provider_timeout_s,
                 )
+                # A publisher may mint a per-attempt closure. That closure
+                # carries an attempt generation so late chunks from a timed-out
+                # executor thread cannot update a replacement attempt.
+                if ctx.thought_summary_callback is not None:
+                    begin_attempt = getattr(ctx.thought_summary_callback, "begin_attempt", None)
+                    invoke_kwargs["thought_summary_callback"] = (
+                        begin_attempt() if callable(begin_attempt) else ctx.thought_summary_callback
+                    )
+                inv = self.client.invoke(**invoke_kwargs)
             except ProviderOutcomeUnknownError:
                 from app.services.ai_cost_control import mark_paid_call_unknown  # noqa: PLC0415
 
