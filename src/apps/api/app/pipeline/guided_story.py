@@ -2853,6 +2853,141 @@ def _project_source_bound_narration_labels(
     return projected
 
 
+def _project_context_label_text_elements(
+    labels: list[TextElement],
+    moments: list[dict[str, Any]],
+    *,
+    canonical_moments: list[dict[str, Any]],
+    moment_lineage: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    """Project server-owned context labels onto a revised output timeline.
+
+    Context labels are not editor text, so their persisted intervals are a
+    snapshot of the timeline that produced the approval. Project each label
+    through the canonical moments it actually covered, then through surviving
+    revision segments descended from those moments. This keeps compact labels
+    across several clips intact without borrowing them for newly inserted
+    sources.
+    """
+    if not labels or not moments:
+        return []
+    projected: list[dict[str, Any]] = []
+    canonical_by_id = {str(moment.get("moment_id")): moment for moment in canonical_moments}
+    revised_by_canonical: dict[str, list[dict[str, Any]]] = {}
+    for moment in moments:
+        for canonical_id in moment_lineage.get(str(moment.get("moment_id")), []):
+            revised_by_canonical.setdefault(canonical_id, []).append(moment)
+    for label_index, label in enumerate(labels):
+        try:
+            label_start = float(label.start_s)
+            label_end = float(label.end_s)
+        except (TypeError, ValueError):
+            continue
+        for canonical_id, canonical_moment in canonical_by_id.items():
+            canonical_start = float(canonical_moment.get("output_start_s") or 0.0)
+            canonical_end = float(canonical_moment.get("output_end_s") or 0.0)
+            covered_start = max(label_start, canonical_start)
+            covered_end = min(label_end, canonical_end)
+            if covered_end <= covered_start:
+                continue
+            canonical_duration = max(_FRAME_S, canonical_end - canonical_start)
+            has_canonical_source_window = (
+                canonical_moment.get("source_start_s") is not None
+                and canonical_moment.get("source_end_s") is not None
+            )
+            canonical_source_start = float(
+                canonical_moment.get("source_start_s")
+                if canonical_moment.get("source_start_s") is not None
+                else canonical_start
+            )
+            canonical_source_end = float(
+                canonical_moment.get("source_end_s")
+                if canonical_moment.get("source_end_s") is not None
+                else canonical_end
+            )
+            canonical_source_duration = max(_FRAME_S, canonical_source_end - canonical_source_start)
+            covered_source_start = (
+                canonical_source_start
+                + ((covered_start - canonical_start) / canonical_duration)
+                * canonical_source_duration
+            )
+            covered_source_end = (
+                canonical_source_start
+                + ((covered_end - canonical_start) / canonical_duration) * canonical_source_duration
+            )
+            for index, moment in enumerate(revised_by_canonical.get(canonical_id, [])):
+                revised_start = float(moment.get("output_start_s") or 0.0)
+                revised_end = float(moment.get("output_end_s") or 0.0)
+                revised_duration = max(0.0, revised_end - revised_start)
+                if revised_duration <= 0:
+                    continue
+                has_revised_source_window = (
+                    moment.get("source_start_s") is not None
+                    and moment.get("source_end_s") is not None
+                )
+                if not (has_canonical_source_window and has_revised_source_window):
+                    start_s = (
+                        revised_start
+                        + ((covered_start - canonical_start) / canonical_duration)
+                        * revised_duration
+                    )
+                    end_s = (
+                        revised_start
+                        + ((covered_end - canonical_start) / canonical_duration) * revised_duration
+                    )
+                else:
+                    revised_source_start = float(
+                        moment.get("source_start_s")
+                        if moment.get("source_start_s") is not None
+                        else revised_start
+                    )
+                    revised_source_end = float(
+                        moment.get("source_end_s")
+                        if moment.get("source_end_s") is not None
+                        else revised_end
+                    )
+                    revised_source_duration = max(
+                        _FRAME_S, revised_source_end - revised_source_start
+                    )
+                    source_overlap_start = max(covered_source_start, revised_source_start)
+                    source_overlap_end = min(covered_source_end, revised_source_end)
+                    if source_overlap_end <= source_overlap_start:
+                        continue
+                    start_s = (
+                        revised_start
+                        + ((source_overlap_start - revised_source_start) / revised_source_duration)
+                        * revised_duration
+                    )
+                    end_s = (
+                        revised_start
+                        + ((source_overlap_end - revised_source_start) / revised_source_duration)
+                        * revised_duration
+                    )
+                if end_s <= start_s:
+                    continue
+                source_clip_id = str(moment.get("media_id") or "")
+                params = dict(label.source_params or {})
+                source_params = {
+                    **params,
+                    "source": "context_sport",
+                    "source_clip_id": source_clip_id,
+                    "key": f"{source_clip_id}:{index}:{start_s:.3f}:{end_s:.3f}",
+                    "identity": f"context_sport:{source_clip_id}:{index}:{start_s:.3f}:{end_s:.3f}",
+                }
+                moment_id = str(moment.get("moment_id") or "")
+                projected.append(
+                    label.model_copy(
+                        update={
+                            "id": f"context-sport-{label_index}-{index}-{moment_id}",
+                            "start_s": start_s,
+                            "end_s": end_s,
+                            "source_params": source_params,
+                        }
+                    ).model_dump(mode="json", exclude_none=True)
+                )
+    return projected
+
+
 def compile_guided_runtime_plan(
     canonical_plan: object,
     guided_snapshot: object,
@@ -2959,6 +3094,7 @@ def compile_guided_runtime_plan(
             base_by_moment_id[moment.moment_id] = dumped
         moments: list[dict[str, Any]] = []
         beat_windows: list[dict[str, Any]] = []
+        moment_lineage: dict[str, list[str]] = {}
         for index, segment in enumerate(normalized_revision["segments"]):
             source = source_by_id.get(segment["media_id"])
             if source is None:
@@ -2994,6 +3130,13 @@ def compile_guided_runtime_plan(
             # deterministic for repeated media.
             beat_id = f"guided-edit-beat-{index}"
             moment_id = str(segment["segment_id"])
+            lineage = [
+                str(identity)
+                for identity in (segment.get("segment_id"), segment.get("parent_segment_id"))
+                if identity is not None and str(identity) in base_by_moment_id
+            ]
+            if lineage:
+                moment_lineage[moment_id] = lineage
             moments.append(
                 {
                     **base,
@@ -3367,6 +3510,19 @@ def compile_guided_runtime_plan(
                 )
             runtime_payload["context_label_text_elements"] = _compact_context_sport_text_elements(
                 context_elements
+            )
+        elif canonical.context_label_text_elements:
+            # Older approvals may retain only the materialized server labels,
+            # without the raw clip intents needed to rebuild them.  Still
+            # project those labels onto the revised timeline; carrying the
+            # canonical intervals here would make a trim render past EOF.
+            runtime_payload["context_label_text_elements"] = _project_context_label_text_elements(
+                canonical.context_label_text_elements,
+                moments,
+                canonical_moments=[
+                    moment.model_dump(mode="json") for moment in canonical.story_timeline
+                ],
+                moment_lineage=moment_lineage,
             )
         runtime = GuidedStoryExecutionPlan.model_validate(runtime_payload)
         return runtime.model_dump(mode="json", exclude_none=False)

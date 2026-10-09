@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -1496,6 +1497,8 @@ class _DraftState:
     # A handler may set this to replace the generic "Op name" change summary
     # (e.g. "Rewrite 5 texts"); compile_editor_ops consumes and clears it.
     summary: str | None = None
+    # Stable text IDs whose output windows were authored in this bundle.
+    explicit_text_ids: set[str] = field(default_factory=set)
     # Slide-post surface only (KRI-301): non-timeline outputs of the slides lane
     # (`cover_slide_id`, `caption`). Empty for every video compile.
     post: dict[str, Any] = field(default_factory=dict)
@@ -1561,10 +1564,60 @@ def _op_patch_text_style(state: _DraftState, op: dict[str, Any]) -> None:
 
 
 def _op_set_text_timing(state: _DraftState, op: dict[str, Any]) -> None:
-    state.text_bar(op.get("bar_index")).update(
-        {key: op[key] for key in ("start_s", "end_s") if key in op}
-    )
+    bar = state.text_bar(op.get("bar_index"))
+    updates = {}
+    for key in ("start_s", "end_s"):
+        if key in op:
+            value = float(op[key])
+            if not math.isfinite(value):
+                raise KriaEditorOpError("Text timing must be finite")
+            updates[key] = value
+    bar.update(updates)
+    if isinstance(bar.get("id"), str):
+        state.explicit_text_ids.add(bar["id"])
     state.changed.add("text")
+
+
+def _explicit_text_timing_ids(
+    initial_text: list[dict[str, Any]], current_text: list[dict[str, Any]]
+) -> set[str]:
+    """Find bars whose output window was authored by this bundle.
+
+    Stable IDs let text timing and timeline edits compose without making the
+    compiler infer intent from operation ordering. Newly added bars are
+    explicit by definition; existing bars are explicit only when their timing
+    differs from the pre-bundle snapshot (including a newly supplied bound).
+    """
+    before = {
+        str(row.get("id")): row for row in initial_text if isinstance(row, dict) and row.get("id")
+    }
+    explicit: set[str] = set()
+    for row in current_text:
+        bar_id = row.get("id") if isinstance(row, dict) else None
+        if not isinstance(bar_id, str) or not bar_id:
+            continue
+        previous = before.get(bar_id)
+        if previous is None or any(
+            row.get(key) != previous.get(key) for key in ("start_s", "end_s")
+        ):
+            explicit.add(bar_id)
+    return explicit
+
+
+def _text_ids(rows: list[dict[str, Any]]) -> set[str]:
+    return {
+        row["id"]
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]
+    }
+
+
+def _validate_timing_numbers(op: dict[str, Any]) -> None:
+    if op.get("op") not in {"set_text_timing", "set_texts_timing", "add_text"}:
+        return
+    for key in ("start_s", "end_s", "shift_s"):
+        if key in op and not math.isfinite(float(op[key])):
+            raise KriaEditorOpError("Text timing must be finite")
 
 
 def _op_add_text(state: _DraftState, op: dict[str, Any]) -> None:
@@ -1589,6 +1642,7 @@ def _op_add_text(state: _DraftState, op: dict[str, Any]) -> None:
             "position": "middle",
         }
     )
+    state.explicit_text_ids.add(str(state.text[-1]["id"]))
     state.changed.add("text")
 
 
@@ -2001,13 +2055,21 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         base_generation=variant_render_baseline(variant),
     )
     state.initial_slots = copy.deepcopy(state.slots)
+    initial_text = copy.deepcopy(state.text)
 
     for op in ops:
         name = str(op.get("op") or "")
         handler = _OP_HANDLERS.get(name)
         if handler is None:
             raise KriaEditorOpError(f"{name or 'Unknown operation'} is not portable to Kria yet")
+        _validate_timing_numbers(op)
+        before_ids = _text_ids(state.text)
         handler(state, op)
+        state.explicit_text_ids.update(_text_ids(state.text) - before_ids)
+        if name == "set_texts_timing":
+            state.explicit_text_ids.update(
+                value for value in op.get("target_ids", []) if isinstance(value, str)
+            )
         state.changes.append(state.summary or _summary(op))
         state.summary = None
 
@@ -2030,6 +2092,7 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         # Invariant: a guided payload carrying timeline_slots ALWAYS carries the
         # rebased text_elements, so the server treats text as authored and skips
         # its (right-biased, non-label-aware) own projection.
+        state.explicit_text_ids.update(_explicit_text_timing_ids(initial_text, state.text))
         rebase_guided_text(state, guided)
     request = EditorCommitRequest(
         guided_revision_number=int(guided["revision_number"]) if guided is not None else None,

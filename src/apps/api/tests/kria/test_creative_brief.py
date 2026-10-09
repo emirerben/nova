@@ -630,7 +630,7 @@ def test_typed_persistent_title_timing_uses_each_duration_fallback(
     assert check_requirement(req, facts).status == "met"
 
 
-def test_numeric_title_timing_keeps_numeric_duration_semantics() -> None:
+def test_numeric_title_timing_is_not_compared_to_whole_video_duration() -> None:
     req = _req(
         "timing", "title", description="Show the title for 2 seconds", facts={"duration_s": 2}
     )
@@ -640,7 +640,9 @@ def test_numeric_title_timing_keeps_numeric_duration_semantics() -> None:
             "text_elements": [{"id": "t", "role": "title", "text": "x", "start_s": 0, "end_s": 2}],
         }
     )
-    assert check_requirement(req, facts).reason == "This draft is about 12s; you asked for 2s."
+    result = check_requirement(req, facts)
+    assert result.status == "partial"
+    assert result.reason == "I can't verify this timing automatically."
 
 
 def test_title_persistence_ignores_labels_and_requires_named_targets() -> None:
