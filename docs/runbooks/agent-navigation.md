@@ -83,6 +83,11 @@ When changing a default, capability contract, deployment stage, or entrypoint,
 update the relevant runbook/map in the same PR. Date live-state claims and cite
 the observation and revision; an undated “dark rollout” label is not evidence.
 
+For journey verification, use [the KRI-559 baseline](../reviews/kri-559-journey-verification.md).
+Keep offline replay, live model, native output and production observations as
+separate evidence levels. Recheck evidence after a HEAD change, enforce the
+required render gate in CI, and record unknown test time or cost as `unknown`.
+
 ## Durable ticket handoff
 
 Use this compact record in the authorized ticket update or PR. If ticket writes

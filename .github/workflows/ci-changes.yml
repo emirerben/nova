@@ -15,6 +15,12 @@ on:
         value: ${{ jobs.select.outputs.ios_ui }}
       ios_ui_shards:
         value: ${{ jobs.select.outputs.ios_ui_shards }}
+      journey:
+        value: ${{ jobs.select.outputs.journey }}
+      journey_coverage:
+        value: ${{ jobs.select.outputs.journey_coverage }}
+      journey_ids:
+        value: ${{ jobs.select.outputs.journey_ids }}
 
 jobs:
   select:
@@ -28,6 +34,9 @@ jobs:
       ios_ui: ${{ steps.select.outputs.ios_ui }}
       ios_ui_groups: ${{ steps.select.outputs.ios_ui_groups }}
       ios_ui_shards: ${{ steps.select.outputs.ios_ui_shards }}
+      journey: ${{ steps.select.outputs.journey }}
+      journey_coverage: ${{ steps.select.outputs.journey_coverage }}
+      journey_ids: ${{ steps.select.outputs.journey_ids }}
     steps:
       - uses: actions/checkout@v4
         with:
