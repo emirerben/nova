@@ -17,6 +17,7 @@ from app.pipeline.cloud_render_evidence import (
     normalize_text,
     order_satisfied,
 )
+from app.pipeline.sequence_text_evidence import text_matches
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     CONTRACT_REQUIREMENTS,
@@ -530,16 +531,20 @@ def _verify_text(
         if texts is None:
             raise refuse("This edit couldn't verify confirmed on-screen text.")
         wanted = normalize_text(requirement.text)
-        matches = [row for row in texts if normalize_text(row.text) == wanted]
-        if requirement.role != "any":
-            matches = [row for row in matches if row.role == requirement.role]
+        matches = text_matches(
+            [row.model_dump(mode="json") for row in texts],
+            wanted,
+            role=requirement.role,
+            tolerance_s=tolerance,
+            allow_missing_role=False,
+        )
         if not matches:
             raise refuse("This edit is missing confirmed on-screen text.")
         if requirement.duration_s is not None:
             matches = [
                 row
                 for row in matches
-                if row.end_s - row.start_s + tolerance >= requirement.duration_s
+                if row["end_s"] - row["start_s"] + tolerance >= requirement.duration_s
             ]
             if not matches:
                 raise _decline(
@@ -553,7 +558,7 @@ def _verify_text(
                     evidence=True,
                 )
         if requirement.role == "opening":
-            matches = [row for row in matches if row.start_s <= tolerance]
+            matches = [row for row in matches if row["start_s"] <= tolerance]
         elif requirement.role == "closing":
             if not isinstance(duration_s, int | float) or isinstance(duration_s, bool):
                 raise refuse("This edit couldn't measure where its closing text sits.")
@@ -562,7 +567,7 @@ def _verify_text(
             slack = min(
                 _CLOSING_SLACK_CAP_S, max(tolerance, duration_tolerance_s(len(timeline or [])))
             )
-            matches = [row for row in matches if row.end_s >= float(duration_s) - slack]
+            matches = [row for row in matches if row["end_s"] >= float(duration_s) - slack]
         elif requirement.role == "clip":
             if timeline is None:
                 raise refuse("This edit couldn't verify which shot carries confirmed text.")
@@ -573,7 +578,9 @@ def _verify_text(
                 targets = [seg for seg in timeline if seg.media_id == requirement.media_id]
             if not targets or any(
                 not any(
-                    row.start_s >= seg.start_s - tolerance and row.end_s <= seg.end_s + tolerance
+                    row["start_s"] >= seg.start_s - tolerance
+                    and row["end_s"] <= seg.end_s + tolerance
+                    and (row.get("media_id") is None or row.get("media_id") == seg.media_id)
                     for row in matches
                 )
                 for seg in targets

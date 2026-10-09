@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.188.0] - 2026-10-09
+
+### Changed
+- fix(kria): verify composed titles across render validation (#1511) <!-- release-pr: 1511 -->
+
 ## [0.78.187.0] - 2026-10-09
 
 ### Changed
