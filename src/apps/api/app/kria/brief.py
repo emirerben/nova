@@ -44,6 +44,7 @@ from app.kria.brief_route import loose_text, wants_filming_time_text
 from app.kria.reply_language import detect_chat_language
 from app.models import CreativeBriefVersion
 from app.schemas.text_style_intent import normalize_title_animation
+from app.services.kria_editor_ops_diff import font_family_key
 
 RequirementKind = Literal["text", "order", "select", "timing", "audio", "style"]
 RequirementStatus = Literal["open", "met", "partial", "not_possible", "superseded"]
@@ -115,10 +116,37 @@ def _style_value(field: str, value: object) -> str | None:
     if field == "color":
         return text.upper() if _HEX_COLOR_RE.match(text) else None
     if field == "font_family":
-        if text in _ALLOWED_FONTS:
-            return text
-        return next((name for name in _ALLOWED_FONTS if name.casefold() == text.casefold()), None)
+        return resolve_font_name(text)
     return None
+
+
+def resolve_font_name(text: str) -> str | None:
+    """The registry font a creator's words name, else None (KRI-558).
+
+    An exact (case-insensitive) name wins, so "Inter Tight" is never read as "Inter". A
+    family word ("inter") resolves to the family's plain face; a leading part of one name
+    ("alte haas") resolves only when exactly one family starts that way. Anything ambiguous
+    names no font, so a wrong guess can never decide a verdict.
+    """
+    wanted = re.sub(r"[\s_\-]+", " ", text.strip().casefold())
+    if not wanted:
+        return None
+    if text in _ALLOWED_FONTS:
+        return text
+    exact = next(
+        (n for n in sorted(_ALLOWED_FONTS) if n.casefold() == text.strip().casefold()), None
+    )
+    if exact:
+        return exact
+    key = font_family_key(wanted)
+    family = sorted((n for n in _ALLOWED_FONTS if font_family_key(n) == key), key=len)
+    if family:
+        return family[0]
+    starts: dict[str | None, str] = {}
+    for name in sorted(_ALLOWED_FONTS, key=lambda n: (len(n), n)):
+        if re.sub(r"[\s_\-]+", " ", name.casefold()).startswith(wanted + " "):
+            starts.setdefault(font_family_key(name), name)
+    return next(iter(starts.values())) if len(starts) == 1 else None
 
 
 def normalize_style_intent(raw: object) -> dict[str, Any] | None:

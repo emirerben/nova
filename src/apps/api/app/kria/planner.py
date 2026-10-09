@@ -15,7 +15,7 @@ import re
 import time
 import unicodedata
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from typing import Any
@@ -709,7 +709,12 @@ def _safe_diagnostics(status: str, diagnostics: dict[str, Any] | None) -> dict[s
 
 
 def adapt_editor_action(
-    *, reply: str, ops: list[dict], request_render: bool = False
+    *,
+    reply: str,
+    ops: list[dict],
+    request_render: bool = False,
+    unmet_requests: Sequence[Mapping[str, str]] = (),
+    notes: str | None = None,
 ) -> KriaTurnPlan:
     """Draft edits are reversible; rendering is a distinct, policy-gated action."""
     if not ops:
@@ -740,7 +745,24 @@ def adapt_editor_action(
             "intent_id": "apply-editor-ops",
             "tool_name": "draft.apply_editor_ops",
             "tool_version": 1,
-            "arguments": {"operations": ops, "summary": reply},
+            "arguments": {
+                "operations": ops,
+                "summary": reply,
+                **(
+                    {
+                        "unmet_requests": [
+                            {
+                                "request": str(item.get("request") or "")[:160],
+                                "reason": str(item.get("reason") or "")[:200],
+                            }
+                            for item in list(unmet_requests)[:6]
+                        ]
+                    }
+                    if unmet_requests
+                    else {}
+                ),
+                **({"notes": notes.strip()[:600]} if notes and notes.strip() else {}),
+            },
         },
     ]
     if request_render:
@@ -1172,6 +1194,8 @@ async def _plan_editor_revision(
             # This portable operation invokes server speech processing; ordinary
             # text/timeline/mix edits stay drafts until an explicit Save.
             request_render=any(op.get("op") == "apply_speech_cut_candidate" for op in response.ops),
+            unmet_requests=getattr(response, "unmet_requests", None) or (),
+            notes=getattr(response, "reply_notes", None) or None,
         )
     if response.outcome in {"unsupported", "no_effect"} and is_overlay_display_ask(user_message):
         # KRI-297: a display-mode change (full-screen overlays) is not an in-place
@@ -2140,8 +2164,8 @@ async def _serve_unextracted_edit(
     The edit copilot reads the whole ledger plus the message and its ops are compiled
     deterministically into a reversible draft, so a result made ONLY of in-place text ops
     (the KRI-219 fast-path set) is served. Request preservation (KRI-459) holds because the
-    creator's full message is recorded as one requirement that no checker can judge, so it
-    stays visible as "can't check automatically" instead of being dropped.
+    creator's full message is recorded as one requirement, so it stays visible instead of
+    being dropped; the turn's receipt then names what the ops changed (KRI-558).
 
     Returns None whenever that is not the case (a re-plan cue, a long message, no editor
     target, the copilot asking a question or proposing structural ops): the caller then

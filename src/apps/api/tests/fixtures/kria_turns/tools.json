@@ -3379,9 +3379,44 @@
   "tools": [
     {
       "argument_schema": {
+        "$defs": {
+          "EditorUnmetRequest": {
+            "additionalProperties": false,
+            "description": "A part of the creator's message the copilot did not turn into an operation (KRI-558).",
+            "properties": {
+              "reason": {
+                "default": "",
+                "maxLength": 200,
+                "title": "Reason",
+                "type": "string"
+              },
+              "request": {
+                "default": "",
+                "maxLength": 160,
+                "title": "Request",
+                "type": "string"
+              }
+            },
+            "title": "EditorUnmetRequest",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "description": "Portable EditCopilot operations; target and generation pins are server-owned.",
         "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 600,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Notes"
+          },
           "operations": {
             "items": {
               "additionalProperties": true,
@@ -3397,6 +3432,14 @@
             "minLength": 1,
             "title": "Summary",
             "type": "string"
+          },
+          "unmet_requests": {
+            "items": {
+              "$ref": "#/$defs/EditorUnmetRequest"
+            },
+            "maxItems": 6,
+            "title": "Unmet Requests",
+            "type": "array"
           }
         },
         "required": [

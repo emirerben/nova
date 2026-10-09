@@ -225,7 +225,8 @@ def test_per_clip_receipt_without_clip_ownership_stays_unchecked() -> None:
         [receipt],
         summary="Labeled every clip.",
     )
-    assert "couldn't verify" in reply.lower()
+    assert "have a look at these in the video" in reply.lower()
+    assert "verify" not in reply.lower()
     assert "Labeled every clip." not in reply
 
 

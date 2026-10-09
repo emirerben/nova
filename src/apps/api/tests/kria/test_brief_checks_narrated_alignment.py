@@ -123,8 +123,9 @@ def test_the_render_ready_reply_lists_done_lines():
     assert "Done: End on the sunset valley" in text
     assert "Done: Show the balloons while talking about the balloons (The balloons clips" in text
     assert "Done: Provide English subtitles" in text
-    assert "Couldn't verify: Skip the quad bike clip" in text
-    assert text.count("Couldn't verify") == 1
+    # KRI-558: the one ask no check decided is pointed at, never reported as a failure.
+    assert "Have a look at these in the video:\n- Skip the quad bike clip" in text
+    assert "verify" not in text.lower()
 
 
 def test_a_last_clip_that_is_not_last_is_not_possible_and_names_where_it_ended_up():

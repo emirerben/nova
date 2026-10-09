@@ -92,6 +92,12 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "receipt wording for the approved brief requirements",
         None,
     ),
+    "kria/editor_receipts.py": (
+        "plan_time",
+        "editor-turn receipt wording: quotes the turn's stated requirement back beside what "
+        "the ops changed; it runs on the draft before any render and decides nothing",
+        None,
+    ),
     "routes/admin_plan_items.py": ("plan_time", "admin debug payload", None),
     "routes/creation_threads.py": ("plan_time", "render-shape projection / repair", None),
     "routes/creator_agent.py": (
