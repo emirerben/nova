@@ -280,4 +280,31 @@ final class NativeEditorLayoutMetricsTests: XCTestCase {
         XCTAssertEqual(TextEditBar.chromeHeight + TextEditBar.topPadding + TextEditBar.bottomPadding, 136)
         XCTAssertGreaterThanOrEqual(TextEditBar.bottomPadding + NativeEditorIslandMetrics.bottomPadding, 16)
     }
+
+    func testAnchoredPanelStartsAtTheAnchorForEveryPanelAndFillsDownToTheBottom() {
+        let top = NativeEditorLayoutMetrics.panelAnchorTop(screenHeight: 874, safeAreaTop: 59, isAccessibilitySize: false)
+        XCTAssertEqual(top, 874 * 0.41 - 59, accuracy: 0.001)
+        let metrics = NativeEditorLayoutMetrics(
+            viewportSize: CGSize(width: 393, height: 874 - 59 - 34), safeAreaTop: 59, safeAreaBottom: 34,
+            topChromeHeight: 0, previewAspectRatio: 9.0 / 16,
+            keyboardVisible: false, isAccessibilitySize: false,
+            anchoredPanelTop: top, measuredHeaderHeight: 0
+        )
+        let preview = metrics.previewHeight(resize: 80)
+        XCTAssertEqual(preview, metrics.defaultPreviewHeight, accuracy: 0.001, "a stored handle resize cannot move the anchor")
+        // The panel is what is left under the preview + its padding + the transport row.
+        let area = 874 - 59 - 34 - (preview + NativeEditorLayoutMetrics.previewVerticalPadding)
+        let panel = metrics.panelDefaultHeight(areaHeight: area)
+        XCTAssertEqual(panel + NativeEditorIslandMetrics.bottomPadding + NativeEditorLayoutMetrics.transportHeight, area, accuracy: 0.001,
+                       "the panel fills the room under the anchor instead of stopping at the old cap")
+        XCTAssertEqual(preview + NativeEditorLayoutMetrics.previewVerticalPadding + NativeEditorLayoutMetrics.transportHeight, top, accuracy: 0.001,
+                       "preview + padding + transport row end exactly at the anchor")
+        XCTAssertGreaterThan(panel, NativeEditorLayoutMetrics.defaultPanelCap, "taller than the old 284pt cap")
+    }
+
+    func testAccessibilitySizesAnchorHigherToGivePanelsRoom() {
+        let normal = NativeEditorLayoutMetrics.panelAnchorTop(screenHeight: 852, safeAreaTop: 59, isAccessibilitySize: false)
+        let large = NativeEditorLayoutMetrics.panelAnchorTop(screenHeight: 852, safeAreaTop: 59, isAccessibilitySize: true)
+        XCTAssertLessThan(large, normal)
+    }
 }

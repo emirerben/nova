@@ -87,8 +87,27 @@ struct NativeEditorLayoutMetrics: Equatable {
     /// height (chrome + a box that grows line by line) and the preview takes the space above,
     /// the same split the caption edit bar uses. `nil` everywhere else.
     var textEditBarHeight: CGFloat? = nil
+    /// KRI-508: while any tool panel is open its top edge sits at this y (from the top of the editor
+    /// column), the same height the Edit text bar starts at, so Edit text -> Style and every tool tab
+    /// share one panel height. The preview takes what is left above it. `nil` with no panel open.
+    var anchoredPanelTop: CGFloat? = nil
     /// The project header's measured height (falls back to `headerHeight`).
     var measuredHeaderHeight: CGFloat? = nil
+
+    /// Panels start 41% of the way down the screen (28% at accessibility sizes, which need the room).
+    static func panelAnchorTop(screenHeight: CGFloat, safeAreaTop: CGFloat, isAccessibilitySize: Bool) -> CGFloat {
+        max(0, screenHeight * (isAccessibilitySize ? 0.28 : 0.41) - safeAreaTop)
+    }
+
+    /// Preview height that leaves the panel exactly at the anchor, with the transport above it
+    /// when it shows (it hides behind the keyboard).
+    private func anchoredPreviewHeight(top: CGFloat) -> CGFloat {
+        let transport = keyboardVisible ? 0 : Self.transportHeight
+        let fill = top - (measuredHeaderHeight ?? Self.headerHeight) - topChromeHeight
+            - Self.previewVerticalPadding - transport
+        let widthBound = (viewportSize.width - 32) / max(0.01, previewAspectRatio)
+        return max(Self.minPreviewHeight, min(fill, widthBound))
+    }
 
     /// The bar a line editor (caption or text) pins above the keyboard.
     private var lineEditBarHeight: CGFloat? { captionEditBarHeight ?? textEditBarHeight }
@@ -109,6 +128,7 @@ struct NativeEditorLayoutMetrics: Equatable {
     /// The size the preview has always started at (unchanged by KRI-170).
     var defaultPreviewHeight: CGFloat {
         if let bar = lineEditBarHeight { return captionEditPreviewHeight(bar: bar) }
+        if let top = anchoredPanelTop { return anchoredPreviewHeight(top: top) }
         let portrait = isAccessibilitySize ? 150 : min(284, max(150, referenceHeight * 0.34))
         // Banners and the posting-song bar share this fixed-height column;
         // their measured height comes out of the preview so the timeline and
@@ -130,7 +150,7 @@ struct NativeEditorLayoutMetrics: Equatable {
     /// never while the keyboard is up.
     var maxPreviewHeight: CGFloat {
         let base = defaultPreviewHeight
-        guard !keyboardVisible, !editsCaptionLine else { return base }
+        guard !keyboardVisible, !editsCaptionLine, anchoredPanelTop == nil else { return base }
         let minBelow = NativeEditorIslandMetrics.bottomClearance(showsContext: false, safeAreaBottom: 0)
             + Self.minTimelineStrip
         let spaceBound = viewportSize.height - Self.headerHeight - topChromeHeight
@@ -149,7 +169,7 @@ struct NativeEditorLayoutMetrics: Equatable {
     func previewHeight(resize: CGFloat) -> CGFloat {
         // An open caption line owns the split: a size left over from an earlier
         // timeline-handle drag must not shrink the preview under the bar.
-        if editsCaptionLine { return defaultPreviewHeight }
+        if editsCaptionLine || anchoredPanelTop != nil { return defaultPreviewHeight }
         return min(maxPreviewHeight, max(Self.minPreviewHeight, defaultPreviewHeight - resize))
     }
 
@@ -161,7 +181,9 @@ struct NativeEditorLayoutMetrics: Equatable {
 
     func panelDefaultHeight(areaHeight: CGFloat) -> CGFloat {
         let budget = panelBudget(areaHeight: areaHeight)
-        return keyboardVisible || isAccessibilitySize || editsCaptionLine ? budget : min(budget, Self.defaultPanelCap)
+        // An anchored panel fills the room under its anchor instead of stopping at the old cap.
+        return keyboardVisible || isAccessibilitySize || editsCaptionLine || anchoredPanelTop != nil
+            ? budget : min(budget, Self.defaultPanelCap)
     }
 
     /// The panel may rise over the transport and the preview, up to the
@@ -178,8 +200,10 @@ struct NativeEditorLayoutMetrics: Equatable {
         // up) -- add it back only in that case, or the ceiling overshoots the
         // header by one `transportHeight`.
         let reclaimedTransport = keyboardVisible ? 0 : Self.transportHeight
+        // No timeline handle sits between the preview and an anchored panel.
+        let handle = anchoredPanelTop == nil ? Self.resizeHandleHeight : 0
         return budget + reclaimedTransport + previewHeight
-            + Self.previewVerticalPadding + Self.resizeHandleHeight
+            + Self.previewVerticalPadding + handle
     }
 
     func panelHeight(areaHeight: CGFloat, previewHeight: CGFloat, expansion: CGFloat) -> CGFloat {

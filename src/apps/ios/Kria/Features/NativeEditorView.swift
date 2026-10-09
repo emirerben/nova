@@ -251,7 +251,11 @@ struct NativeEditorView: View {
             shrinksPreviewWhileTyping: panel?.tool == .text,
             captionEditBarHeight: captionEditing ? CaptionEditBar.height(lineHeight: captionLineHeight, lines: captionEditLines(viewport: viewport)) : nil,
             textEditBarHeight: textEditing ? textTypingLines.map { TextEditBar.height(lines: $0) } : nil,
-            measuredHeaderHeight: textEditing ? 0 : (headerHeight > 0 ? headerHeight : nil)
+            anchoredPanelTop: panelIsOpen ? NativeEditorLayoutMetrics.panelAnchorTop(
+                screenHeight: UIScreen.main.bounds.height, safeAreaTop: viewport.safeAreaInsets.top,
+                isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+            ) : nil,
+            measuredHeaderHeight: panelIsOpen ? 0 : (headerHeight > 0 ? headerHeight : nil)
         )
         let showsTimeline = panel == nil
         let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
@@ -260,9 +264,9 @@ struct NativeEditorView: View {
         // preview.
         let previewHeight = metrics.previewHeight(resize: previewResize)
         VStack(spacing: 0) {
-            // KRI-508: while the Text panel's box has the keyboard the header steps up and away so
-            // the video gets the screen; it slides back when the keyboard goes down.
-            if !textEditing {
+            // KRI-508: while a tool panel is open the header steps up and away so the video gets the
+            // screen and the panel keeps one height across tabs; it slides back when the panel closes.
+            if !panelIsOpen {
                 NativeEditorProjectHeader(
                     title: project.workspaceTitle, session: session, exporter: exporter,
                     onBack: requestBack, onChat: conversation == nil ? requestBack : onBack,
@@ -333,7 +337,7 @@ struct NativeEditorView: View {
                         .onTapGesture { dismissSelectedClipContext() }
                 }
 
-            if !lineEditing { timelineResizeHandle(metrics: metrics) }
+            if !panelIsOpen { timelineResizeHandle(metrics: metrics) }
             connectedEditorArea(viewport: viewport, showsContext: showsContext, metrics: metrics, previewHeight: previewHeight)
                 // The panel may rise over the preview; paint and hit-test it
                 // above the preview and the timeline handle.
