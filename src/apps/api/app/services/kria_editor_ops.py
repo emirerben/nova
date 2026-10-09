@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any, NamedTuple
 
+import structlog
+
 from app.agents._schemas.text_element import (
     _ALLOWED_FONTS,
     CAPTION_CUE_SOURCE,
@@ -44,6 +46,12 @@ from app.routes.generative_jobs import (
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.services.clip_facts import assignment_facts, facts_for_prompt
 from app.services.editor_limits import MAX_EDITOR_OPS
+from app.services.kria_editor_ops_diff import (
+    EditorDiff,
+    diff_compiled_state,
+    snapshot_before,
+    speech_cut_diff,
+)
 from app.services.phone_voiceover_timeline import is_phone_voiceover_family_variant
 
 _IMAGE_SUFFIXES = {".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"}
@@ -113,6 +121,9 @@ _TEXT_STYLE_FIELDS = {
 }
 
 
+log = structlog.get_logger(__name__)
+
+
 class KriaEditorOpError(ValueError):
     """A parsed operation cannot be represented by the portable Save contract."""
 
@@ -124,6 +135,8 @@ class CompiledEditorDraft:
     # KRI-218: [{id, clip_id|None, role, before|None, after|None}] for every text
     # whose wording changed / was added / was removed (receipts read this).
     text_diff: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-558: what the bundle changed, lane by lane (receipts name these changes).
+    diff: EditorDiff = field(default_factory=EditorDiff)
 
 
 def is_caption_text_bar(row: dict[str, Any]) -> bool:
@@ -2026,6 +2039,7 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
                 "expected_revision": cut_revision(variant),
             },
             changes=["Apply reviewed speech cut"],
+            diff=speech_cut_diff(),
         )
 
     # Storyboard bars carry their burned look, the same rows the editor shows,
@@ -2056,6 +2070,11 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
     )
     state.initial_slots = copy.deepcopy(state.slots)
     initial_text = copy.deepcopy(state.text)
+    try:
+        before = snapshot_before(state)
+    except Exception:  # noqa: BLE001 - the diff only informs receipts; it must never block a draft
+        log.warning("kria_editor_diff_snapshot_failed", exc_info=True)
+        before = None
 
     for op in ops:
         name = str(op.get("op") or "")
@@ -2135,10 +2154,22 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         from app.services.kria_editor_ops_text import compute_text_diff  # noqa: PLC0415
 
         text_diff = compute_text_diff(job, variant, state.text)
+    try:
+        diff = (
+            diff_compiled_state(
+                job, variant, before, state, text_diff, [str(op.get("op") or "") for op in ops]
+            )
+            if before is not None
+            else EditorDiff(unavailable=True)
+        )
+    except Exception:  # noqa: BLE001
+        log.warning("kria_editor_diff_failed", exc_info=True)
+        diff = EditorDiff(unavailable=True)
     return CompiledEditorDraft(
         payload=request,
         changes=list(dict.fromkeys(state.changes))[:3],
         text_diff=text_diff,
+        diff=diff,
     )
 
 

@@ -37,8 +37,20 @@ from app.kria.brief_route import (
 )
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.kria.reply_language import current_reply_language, say
+from app.kria.style_asks import (
+    clip_length_ask,
+    derive_style_ask,
+    text_look_facts,
+    value_matches,
+)
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
+from app.schemas.text_style_intent import (
+    LABEL_ANCHORS,
+    normalize_label_position,
+    normalize_title_animation,
+)
 from app.services.clip_facts import CAPTURE_ORDER_KEYS
+from app.services.kria_editor_ops_diff import effective_entrance
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
@@ -138,6 +150,14 @@ class TextStyleRow:
     text_case: str | None = None
     font_family: str | None = None
     color: str | None = None
+    # KRI-558: where the row sits and what it says, so a label-corner or "the Lisbon text"
+    # ask can be judged. ``position`` is the named spot; x/y only mean something for "custom".
+    size_px: float | None = None
+    position: str | None = None
+    x_frac: float | None = None
+    y_frac: float | None = None
+    clip_id: str | None = None
+    text: str = ""
 
 
 @dataclass(frozen=True)
@@ -238,6 +258,13 @@ class PlanFacts:
     # Per-row style of the saved non-caption text rows (KRI-543). None means the text lane
     # was not available (a draft or render), which keeps a style ask unchecked.
     text_styles: tuple[TextStyleRow, ...] | None = None
+    # KRI-558: on an editor turn, the ids of the text rows the creator's ops changed. A style
+    # ask that names no target ("…to all of them") is judged on exactly these rows. None =
+    # not an editor turn (a draft or a render judges every row).
+    anaphora_rows: tuple[str, ...] | None = None
+    # KRI-558: each clip's output length in screen order (removed clips left out). None =
+    # unknown, which keeps a per-clip length ask unjudged (never a false failure).
+    clip_output_durations: tuple[float, ...] | None = None
     # The strategy's edit format, and how many video clips it renders (None when
     # the footage list was not available to count).
     edit_format: str | None = None
@@ -761,12 +788,8 @@ _ALIGNMENTS = frozenset({"left", "center", "right"})
 
 def _row_entrance(row: Mapping[str, Any]) -> str | None:
     """The entrance a saved row plays: explicit phases win, else the legacy effect's."""
-    phases = row.get("animation_phases")
-    if isinstance(phases, Mapping):
-        entrance = phases.get("entrance")
-        return entrance if entrance in _ENTRANCES else None
-    effect = row.get("effect")
-    return _LEGACY_EFFECT_ENTRANCE.get(effect) if effect is not None else "none"
+    entrance = effective_entrance(row)
+    return entrance if entrance in _ENTRANCES else None
 
 
 def _row_choice(
@@ -776,6 +799,16 @@ def _row_choice(
     if value is None:
         return default
     return value if value in allowed else None
+
+
+def _row_clip_id(row: Mapping[str, Any]) -> str | None:
+    """The clip a label row belongs to: its ``clip_id``, else the media id in its row id."""
+    clip = row.get("clip_id")
+    if isinstance(clip, str) and clip:
+        return clip
+    row_id = str(row.get("id") or "")
+    prefix = "clip-label-media-"
+    return row_id[len(prefix) :] or None if row_id.startswith(prefix) else None
 
 
 def _text_style_rows(rows: Iterable[Any]) -> tuple[TextStyleRow, ...]:
@@ -831,6 +864,12 @@ def _text_style_rows(rows: Iterable[Any]) -> tuple[TextStyleRow, ...]:
                 text_case=_row_choice(row, "text_case", _TEXT_CASES, "none"),
                 font_family=font if isinstance(font, str) and font else None,
                 color=color.upper() if isinstance(color, str) and _HEX_COLOR.match(color) else None,
+                size_px=_finite_number(row.get("size_px")),
+                position=row.get("position") if isinstance(row.get("position"), str) else None,
+                x_frac=_finite_number(row.get("x_frac")),
+                y_frac=_finite_number(row.get("y_frac")),
+                clip_id=_row_clip_id(row),
+                text=str(row.get("text") or ""),
             )
         )
     return tuple(out)
@@ -938,7 +977,44 @@ def plan_facts_from_editor_payload(
             if isinstance(payload, Mapping) and isinstance(payload.get("text_elements"), list)
             else None
         ),
+        clip_output_durations=_editor_clip_durations(payload),
     )
+
+
+def _editor_clip_durations(payload: Mapping[str, Any]) -> tuple[float, ...] | None:
+    """Each kept clip's output length in order, or None when any slot cannot say (KRI-558)."""
+    slots = payload.get("timeline_slots") if isinstance(payload, Mapping) else None
+    if not isinstance(slots, list) or not slots:
+        return None
+    out: list[float] = []
+    for slot in slots:
+        if not isinstance(slot, Mapping):
+            return None
+        if slot.get("removed"):
+            continue
+        duration = _finite_number(slot.get("duration_s"))
+        if duration is None or duration <= 0:
+            return None
+        rate = _finite_number(slot.get("playback_rate"))
+        out.append(duration / (rate if rate and rate > 0 else 1.0))
+    return tuple(out) or None
+
+
+def _rendered_clip_durations(variant: Mapping[str, Any]) -> tuple[float, ...] | None:
+    """Each main-picture clip's length on the finished timeline, in screen order."""
+    rows = variant.get("story_timeline")
+    spans: list[tuple[float, float]] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, Mapping) or row.get("lane", "clip") != "clip":
+            continue
+        start, end = (
+            _finite_number(row.get("output_start_s")),
+            _finite_number(row.get("output_end_s")),
+        )
+        if start is None or end is None or end <= start:
+            return None
+        spans.append((start, end - start))
+    return tuple(length for _start, length in sorted(spans)) or None
 
 
 # Receipt reasons that mean the spoken trigger itself never played in the creator's voice
@@ -1026,6 +1102,9 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     elif variant.get("resolved_archetype") == "narrated":
         changes["audio_strategy"] = "voiceover"
     changes.update(_rendered_speech_facts(variant))
+    rendered = _rendered_clip_durations(variant)
+    if rendered is not None:
+        changes["clip_output_durations"] = rendered
     return dataclasses.replace(base, **changes) if changes else base
 
 
@@ -2914,30 +2993,50 @@ def _style_intent(req: BriefRequirement) -> dict[str, Any] | None:
     return normalize_style_intent(req.facts.get("style_intent"))
 
 
+_TARGET_KIND = {"title": "title", "labels": "label"}
+
+
+def _row_value(row: TextStyleRow, field_name: str) -> str | None:
+    return getattr(row, field_name, None)
+
+
 def _check_style(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     # A changed text lane proves a mutation, not that the requested fields, targets, or
-    # animation relationships were satisfied (KRI-524). Only a closed-vocabulary
-    # `style_intent` is compared, and only against rows whose saved value is known.
-    intent = _style_intent(req)
-    if intent is None or facts.text_styles is None:
+    # animation relationships were satisfied (KRI-524). A value is compared only when the
+    # ask resolves to a typed value (`derive_style_ask`: the structured intent, the facts the
+    # extractor filled, or the creator's own unambiguous words), and only against rows whose
+    # saved value is known.
+    ask = derive_style_ask(req)
+    if ask is None or facts.text_styles is None:
         return _receipt(req, "partial", _NO_CHECKER)
-    target = intent.get("target")
     rows = [
         row
         for row in facts.text_styles
-        if target in (None, "all_text") or row.kind == {"title": "title", "labels": "label"}[target]
+        if ask.target in (None, "all_text") or row.kind == _TARGET_KIND[ask.target]
     ]
-    wanted = {item["field"]: item["value"] for item in intent["set"]}
-    if not rows or any(getattr(row, field) is None for row in rows for field in wanted):
+    if ask.target is None and facts.anaphora_rows is not None:
+        # "…to all of them" on an editor turn means the texts this turn touched.
+        touched = set(facts.anaphora_rows)
+        rows = [row for row in rows if row.id in touched]
+    verdicts = [
+        value_matches(name, value, _row_value(row, name))
+        for row in rows
+        for name, value in ask.wanted.items()
+    ]
+    if not rows or None in verdicts:
         return _receipt(req, "partial", _CANT_CHECK_STYLE)
-    off = [row for row in rows if any(getattr(row, f) != v for f, v in wanted.items())]
+    off = [
+        row
+        for row in rows
+        if any(value_matches(n, v, _row_value(row, n)) is False for n, v in ask.wanted.items())
+    ]
     if not off:
         return _receipt(req, "met", None)
-    if target is None:
+    if ask.target is None:
         # "…to all of them" may mean a subset: a mismatch is not evidence of a miss.
         return _receipt(req, "partial", _CANT_CHECK_STYLE)
-    names_en = ", ".join(_STYLE_FIELD_NAMES[f][0] for f in wanted)
-    names_tr = ", ".join(_STYLE_FIELD_NAMES[f][1] for f in wanted)
+    names_en = ", ".join(_STYLE_FIELD_NAMES[f][0] for f in ask.wanted)
+    names_tr = ", ".join(_STYLE_FIELD_NAMES[f][1] for f in ask.wanted)
     return _receipt(
         req,
         "partial",
@@ -2948,7 +3047,174 @@ def _check_style(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     )
 
 
+def _row_at(row: TextStyleRow, x: float, y: float) -> bool | None:
+    """Whether a label row sits at an anchor; None when the row does not say where it is."""
+    if row.position == "custom" and row.x_frac is not None and row.y_frac is not None:
+        return abs(row.x_frac - x) <= 0.06 and abs(row.y_frac - y) <= 0.08
+    named = {0.12: "top", 0.5: "middle", 0.78: "bottom"}.get(y)
+    if row.position in ("top", "middle", "bottom") and named is not None:
+        return row.position == named and abs(x - 0.5) <= 0.06
+    return None
+
+
+def _look_rows(req: BriefRequirement, facts: PlanFacts) -> list[TextStyleRow]:
+    rows = list(facts.text_styles or ())
+    if req.scope == "title":
+        return [row for row in rows if row.kind == "title"]
+    if req.scope == "per_clip":
+        return [row for row in rows if row.kind == "label"]
+    if req.scope.startswith("clip:"):
+        target = _scope_clip_id(req, [row.clip_id for row in rows if row.clip_id])
+        return [row for row in rows if row.kind == "label" and target and row.clip_id == target]
+    if req.literal:
+        wanted = _fold(req.literal)
+        return [row for row in rows if _contains_text(row.text, wanted)]
+    return rows
+
+
+def check_text_look(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """Judge a TEXT requirement's look facts (title animation, label corner, font, colour).
+
+    None when there is nothing to compare or a row does not say, so a record or draft that
+    has no text lane never judges (and never blocks a render) on a look it cannot see.
+    """
+    look = text_look_facts(req)
+    if not look or facts.text_styles is None:
+        return None
+    rows = _look_rows(req, facts)
+    if not rows:
+        return None
+    misses: list[str] = []
+    judged = 0
+    undecided = False  # a fact we cannot read never hides a miss we already found
+    for key, value in look.items():
+        if key == "animation":
+            wanted = normalize_title_animation(value)
+            haves = [row.entrance for row in rows]
+            label = ("animation", "animasyon")
+            fails = [h != wanted for h in haves] if wanted else []
+        elif key == "position":
+            spot = normalize_label_position(value)
+            if spot is None:
+                continue
+            x, y, _align = LABEL_ANCHORS[spot]
+            haves = [_row_at(row, x, y) for row in rows]
+            label = ("position", "konum")
+            fails = [h is False for h in haves]
+        elif key in ("font_family", "text_color"):
+            ask = derive_style_ask(
+                BriefRequirement(
+                    id=req.id, kind="style", scope="global", description="", facts={key: value}
+                )
+            )
+            if ask is None:
+                continue
+            name, wanted_value = next(iter(ask.wanted.items()))
+            verdicts = [value_matches(name, wanted_value, _row_value(row, name)) for row in rows]
+            haves = verdicts
+            label = ("font", "yazı tipi") if key == "font_family" else ("colour", "renk")
+            fails = [v is False for v in verdicts]
+        else:
+            continue
+        if not fails or any(h is None for h in haves):
+            undecided = True
+            continue
+        judged += 1
+        if any(fails):
+            misses.append(
+                say(
+                    en=f"{sum(fails)} of {len(rows)} don't have the requested {label[0]}",
+                    tr=f"{len(rows)} yazıdan {sum(fails)} tanesinde istenen {label[1]} yok",
+                )
+            )
+    if misses:
+        return _receipt(req, "partial", "; ".join(misses))
+    if not judged or undecided:
+        return None
+    return _receipt(req, "met", None)
+
+
+_STATUS_RANK = {"met": 0, "partial": 1, "not_possible": 2}
+
+
+def combine_receipts(first: RequirementReceipt, second: RequirementReceipt) -> RequirementReceipt:
+    """The weaker of two verdicts on one requirement, with both reasons (KRI-558)."""
+    worst = max((first, second), key=lambda r: _STATUS_RANK[r.status])
+    reasons = [r.reason for r in (first, second) if r.reason and r.status != "met"]
+    return worst.model_copy(update={"reason": "; ".join(dict.fromkeys(reasons))[:300] or None})
+
+
+def _with_text_look(
+    req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
+) -> RequirementReceipt:
+    """Add the look check to a text requirement's presence check (KRI-558)."""
+    if not text_look_facts(req) or base.status != "met":
+        return base
+    look = check_text_look(req, facts)
+    if look is None:
+        # The words are there; whether they look as asked is not visible here (a record or
+        # a draft). A presence check alone never certifies the look (KRI-524).
+        return _receipt(req, "partial", _NO_CHECKER)
+    return combine_receipts(base, look)
+
+
+def _check_clip_lengths(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """ "Make all clips 1 second except the first and last": judged on the clip lengths."""
+    ask = clip_length_ask(req)
+    durations = facts.clip_output_durations
+    if ask is None or not durations:
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    seconds, skip_first, skip_last = ask
+    rows = list(durations)
+    if skip_first:
+        rows = rows[1:]
+    if skip_last:
+        rows = rows[:-1]
+    if not rows:
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    tolerance = max(0.1, 0.1 * seconds)
+    off = [length for length in rows if abs(length - seconds) > tolerance]
+    if not off:
+        return _receipt(req, "met", None)
+    shown = ", ".join(f"{length:.1f}s" for length in off[:3])
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en=f"{len(off)} of {len(rows)} clips aren't {seconds:g}s ({shown})",
+            tr=f"{len(rows)} klipten {len(off)} tanesi {seconds:g} sn değil ({shown})",
+        ),
+    )
+
+
+def describe_text_look(req: BriefRequirement, facts: PlanFacts) -> str | None:
+    """What the video's texts actually use, for an ask no value check could decide."""
+    ask = derive_style_ask(req)
+    if ask is None or not facts.text_styles:
+        return None
+    rows = [
+        row
+        for row in facts.text_styles
+        if ask.target in (None, "all_text") or row.kind == _TARGET_KIND[ask.target]
+    ]
+    parts = []
+    for name in ask.wanted:
+        counts: dict[str, int] = {}
+        for row in rows:
+            value = _row_value(row, name)
+            if value:
+                counts[value] = counts.get(value, 0) + 1
+        if counts:
+            shown = ", ".join(f"{v} ×{n}" if n > 1 else v for v, n in counts.items())
+            field_name = say(en=_STYLE_FIELD_NAMES[name][0], tr=_STYLE_FIELD_NAMES[name][1])
+            parts.append(f"{field_name}: {shown}")
+    return "; ".join(parts)[:300] or None
+
+
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if clip_length_ask(req) is not None:
+        # KRI-558: a per-clip length is judged on the clips, never against the total length.
+        return _check_clip_lengths(req, facts)
     if _wants_whole_take(req):
         return _check_whole_take(req, facts)
     target = req.facts.get("duration_s")
@@ -3406,15 +3672,12 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     if found or chapter_list(req.literal, facts.texts) is not None:
         # Copy presence cannot certify independently requested visual/temporal behavior.
         # Keep these explicit constraints unverified until their actual lane evidence is checked.
+        # (animation, position, font_family and text_color are judged by `check_text_look`.)
         if set(req.facts or {}) & {
-            "animation",
-            "position",
             "segmentation",
             "sequence",
             "timing",
             "overlap",
-            "font_family",
-            "text_color",
             "animation_phases",
             "duration_s",
         }:
@@ -3498,7 +3761,14 @@ def judged_at_render(req: BriefRequirement) -> bool:
     plan is laid out, and a duplicate file is told by the upload fingerprints. The
     render-ready review judges them again even when the record carries a receipt.
     """
-    return _wants_one_of_duplicates(req) or _wants_closing_speech(req)
+    return (
+        _wants_one_of_duplicates(req)
+        or _wants_closing_speech(req)
+        # KRI-558: a look (title animation, label corner, font, colour) and a per-clip length
+        # are read off the finished text lane and timeline, which a plan record never has.
+        or bool(text_look_facts(req))
+        or clip_length_ask(req) is not None
+    )
 
 
 _CLIP_ID_PART_RE = re.compile(r"[^0-9A-Za-z]+")
@@ -3657,7 +3927,7 @@ def _has_checker(req: BriefRequirement) -> bool:
             or _wants_beats(req)
             or _wants_clip_timing(req)
         )
-    if _style_intent(req) is not None:
+    if derive_style_ask(req) is not None:
         return True
     if req.kind in _BEAT_KINDS:
         return (
@@ -3694,11 +3964,11 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
             return _check_closing_speech(req, facts)
     if req.kind == "text":
         if req.scope == "per_clip" or req.scope.startswith("clip:"):
-            return _check_per_clip_text(req, facts)
+            return _with_text_look(req, facts, _check_per_clip_text(req, facts))
         if req.literal:
-            return _check_literal_text(req, facts)
+            return _with_text_look(req, facts, _check_literal_text(req, facts))
         if req.scope == "title":
-            return _check_title(req, facts)
+            return _with_text_look(req, facts, _check_title(req, facts))
     elif req.kind == "order":
         return _check_order(req, facts)
     elif req.kind == "timing":
@@ -3858,6 +4128,9 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     stored before these stopped being written still exist, so every reader of
     stored receipts filters through this too.
     """
+    if req is not None and receipt.verification == "checked" and receipt.stage == "applied":
+        # KRI-558: a change proven by the before/after edit diff, not by a value check.
+        return receipt.reason not in _NEUTRAL_REASONS
     return (
         req is not None
         and receipt.verification != "unchecked"
@@ -3994,7 +4267,6 @@ def reply_from_receipts(
     summary: str | None = None,
     notices: Sequence[str] = (),
     outcomes: Sequence[Mapping[str, Any]] = (),
-    edit_applied: bool = False,
 ) -> str:
     """Compose the creator-facing reply from receipts only.
 
@@ -4005,11 +4277,10 @@ def reply_from_receipts(
     An unjudged receipt (stored before ``build_receipts`` dropped them) gets no
     line and never turns the reply into a failure notice.
 
-    ``edit_applied`` (KRI-534) is set only by an editor-operations turn, whose compiled
-    draft already exists. When nothing failed and the only open items are requirements
-    no checker can judge, say what happened ("Updated your edit") and which requirements
-    the creator should look at, instead of the alarming "I couldn't verify every change".
-    The model's own summary is still never echoed.
+    Requirements no checker could judge (``unchecked``) are never reported as a failure
+    (KRI-558): the reply lists them under "Have a look at these in the video", and an
+    editor turn never reaches that branch because its changes are named from the edit diff
+    (`kria.editor_receipts`).
     """
     by_id = {req.id: req for req in brief.requirements}
     judged = [r for r in receipts if is_judged(by_id.get(r.requirement_id), r)]
@@ -4053,34 +4324,15 @@ def reply_from_receipts(
             )
         )
     body = "\n".join(f"- {line}" for line in lines)
-    if unchecked and edit_applied and not failed and all(r.status == "met" for r in judged):
-        names = [by_id[r.requirement_id].text() for r in unchecked]
-        if len(names) == 1:
-            ask = say(
-                en=f"I can't check this automatically, so have a look: {names[0]}",
-                tr=f"Bunu otomatik olarak kontrol edemiyorum, bir göz at: {names[0]}",
-            )
-        else:
-            ask = say(
-                en="I can't check these automatically, so have a look:\n",
-                tr="Şunları otomatik olarak kontrol edemiyorum, bir göz at:\n",
-            ) + "\n".join(f"- {name}" for name in names)
-        done = say(en="Updated your edit.", tr="Düzenlemeni güncelledim.")
-        text = "\n".join(part for part in (done, body, ask) if part)
-        if notices:
-            text += "\n" + " ".join(notices)
-    elif unchecked:
-        unchecked_lines = []
+    if unchecked:
+        look_lines = []
         for receipt in unchecked:
-            verify = say(en="Couldn't verify", tr="Doğrulayamadım")
-            line = f"{verify}: {by_id[receipt.requirement_id].text()}"
-            if receipt.reason:
+            line = f"- {by_id[receipt.requirement_id].text()}"
+            if receipt.reason and receipt.reason not in _NEUTRAL_REASONS:
                 line += f" ({_loc(receipt.reason).rstrip('.')})"
-            unchecked_lines.append(f"- {line}")
-        text = say(
-            en="I couldn't verify every requested change:\n",
-            tr="İstediğin değişikliklerin hepsini doğrulayamadım:\n",
-        ) + "\n".join([*unchecked_lines, *([body] if body else [])])
+            look_lines.append(line)
+        header = say(en="Have a look at these in the video:", tr="Bunlara videoda bir göz at:")
+        text = "\n".join(part for part in (body, header, "\n".join(look_lines)) if part)
         if notices:
             text += "\n" + " ".join(notices)
     elif failed or any(r.status != "met" for r in judged):

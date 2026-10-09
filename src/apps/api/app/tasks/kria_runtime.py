@@ -35,6 +35,7 @@ from app.kria.brief_binding import BriefBindingRequestTooLongError
 from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
     build_receipts,
+    describe_text_look,
     is_judged,
     judged_at_render,
     needs_creator_choice,
@@ -47,6 +48,11 @@ from app.kria.brief_checks import (
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
+from app.kria.editor_receipts import (
+    bind_editor_receipts,
+    reply_from_diff,
+    reply_from_editor_receipts,
+)
 from app.kria.language import is_paraphrase_only
 from app.kria.planner import (
     PlannedKriaTurn,
@@ -112,6 +118,7 @@ from app.services.kria_editor_ops import (
     parse_editor_state,
     resolve_editor_base,
 )
+from app.services.kria_editor_ops_diff import describe_diff
 from app.services.thought_summaries import (
     ThoughtSummaryPublisher,
     bind_thought_publisher,
@@ -622,6 +629,7 @@ def _complete_draft_turn(
     snapshot_hash = ""
     # Editor-state provenance (set only when a client state rode this turn).
     state_trace: dict[str, Any] = {}
+    editor_diff_trace: list[dict[str, Any]] = []
     state_id: str | None = None
     your_edits_snapshot: dict[str, Any] | None = None
     your_edits_hash = ""
@@ -797,6 +805,7 @@ def _complete_draft_turn(
                 raise RuntimeError("Save the current draft before applying speech processing")
             compiled = compile_editor_ops(job, editor_base.projected, arguments.operations)
             changes = compiled.changes
+            editor_diff_trace = compiled.diff.to_json()
             state_id = (
                 client_state.client_state_id if editor_base.source == "client_state" else None
             )
@@ -883,56 +892,74 @@ def _complete_draft_turn(
                     )
                 else:
                     # Editor operations verify only the requirements stated in
-                    # this very turn, against literal text in the editor payload.
+                    # this very turn, against what the ops changed (KRI-558).
                     facts = plan_facts_from_editor_payload(
                         document.editor_payload, document.editor_text_diff, changes
                     )
+                    facts = replace(facts, anaphora_rows=compiled.diff.changed_text_ids())
                     checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
+                editor_turn = apply_intent.tool_name == "draft.apply_editor_ops"
                 if checked:
+                    bound_writer = settings.brief_binding_for(thread.creator_id)
                     receipts = build_receipts(
                         checked,
                         facts,
-                        include_unchecked=settings.brief_binding_for(thread.creator_id),
+                        include_unchecked=editor_turn or bound_writer,
+                        # Listing unchecked asks must not switch on the strict order verdicts
+                        # of a creator whose writer is not brief-bound.
+                        strict_order=bound_writer,
                     )
+                    bound = False
+                    if editor_turn and not compiled.diff.unavailable:
+                        try:
+                            bound_receipts, unbound = bind_editor_receipts(
+                                checked,
+                                receipts,
+                                compiled.diff,
+                                facts.text_styles or (),
+                                unmet=[item.model_dump() for item in arguments.unmet_requests],
+                            )
+                            reply_text = reply_from_editor_receipts(
+                                checked,
+                                bound_receipts,
+                                unbound=describe_diff(
+                                    unbound, live_text_count=compiled.diff.live_text_count, limit=2
+                                ),
+                                notices=planned.policy_notices,
+                                notes=arguments.notes,
+                            )
+                            receipts, bound = bound_receipts, True
+                        except Exception:  # noqa: BLE001 - receipts must never fail a good edit
+                            log.exception("kria_editor_receipts_failed", turn_id=str(turn.id))
+                    if not bound:
+                        # A first draft has no finished video yet: a request only the render
+                        # can show is said nothing about now (the render-ready review judges
+                        # it), never "couldn't verify" (KRI-558). (An editor turn whose receipts
+                        # could not be bound keeps its open items, listed calmly.)
+                        if not editor_turn:
+                            receipts = [r for r in receipts if r.verification != "unchecked"]
+                        reply_text = reply_from_receipts(
+                            CreativeBrief(version=brief.version, requirements=checked),
+                            receipts,
+                            summary=arguments.summary,
+                            notices=planned.policy_notices,
+                        )
                     requirement_receipts = [r.model_dump(mode="json") for r in receipts]
-                    reply_text = reply_from_receipts(
-                        CreativeBrief(version=brief.version, requirements=checked),
-                        receipts,
-                        summary=arguments.summary,
-                        notices=planned.policy_notices,
-                        # KRI-534: compiled editor ops already produced the draft.
-                        edit_applied=apply_intent.tool_name == "draft.apply_editor_ops",
+                elif editor_turn:
+                    phrases = describe_diff(
+                        compiled.diff.entries, live_text_count=compiled.diff.live_text_count
                     )
-        # KRI-529: list the untouched requirements only when a NEW cut is drafted (the
-        # approval moment). An editor turn reports on what it was asked, instead of a
-        # fresh "still needs an output check" chip for every earlier requirement.
+                    if phrases:
+                        reply_text = reply_from_diff(
+                            phrases, notices=planned.policy_notices, notes=arguments.notes
+                        )
         if (
             settings.brief_binding_for(thread.creator_id)
-            and brief is not None
-            and apply_intent.tool_name == "draft.apply_strategy"
-        ):
-            from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
-
-            checked_ids = {receipt["requirement_id"] for receipt in requirement_receipts}
-            requirement_receipts.extend(
-                RequirementReceipt(
-                    requirement_id=req.id,
-                    status="partial",
-                    verification="unchecked",
-                    stage="understood",
-                    reason=say(
-                        en="This requirement still needs an output check.",
-                        tr="Bu isteğin videoda hâlâ kontrol edilmesi gerekiyor.",
-                    ),
-                    target_media_ids=[req.scope.split(":", 1)[1]]
-                    if req.scope.startswith("clip:")
-                    else [],
-                ).model_dump(mode="json")
-                for req in brief.live()
-                if req.id not in checked_ids
-            )
-        if settings.brief_binding_for(thread.creator_id) and any(
-            needs_creator_choice(receipt) for receipt in requirement_receipts
+            and any(needs_creator_choice(receipt) for receipt in requirement_receipts)
+            # KRI-558: an editor draft that really changed something is kept, and its
+            # Partly / Couldn't lines say what is missing. Only an edit that changed
+            # nothing falls back to the "different approach?" question.
+            and (apply_intent.tool_name == "draft.apply_strategy" or compiled.diff.empty())
         ):
             # Do not replace a creator's current draft with a known partial edit.
             # Roll back the speculative draft/brief work, then persist the request
@@ -1119,7 +1146,12 @@ def _complete_draft_turn(
             group_order=0,
             target_thread_id=thread.id,
             status="completed",
-            result={"snapshot_hash": snapshot_hash, "changes": changes, **state_trace},
+            result={
+                "snapshot_hash": snapshot_hash,
+                "changes": changes,
+                **({"editor_diff": editor_diff_trace} if editor_diff_trace else {}),
+                **state_trace,
+            },
             started_at=datetime.now(UTC),
             completed_at=datetime.now(UTC),
         )
@@ -3974,6 +4006,16 @@ def _approved_generation_review(
     )
     order = {req_id: index for index, req_id in enumerate(live)}
     receipts.sort(key=lambda receipt: order.get(receipt.requirement_id, len(order)))
+    # KRI-558: an ask no check could decide says what the finished video holds, never
+    # "I can't verify this one automatically".
+    receipts = [
+        receipt.model_copy(
+            update={"reason": describe_text_look(live[receipt.requirement_id], facts)}
+        )
+        if receipt.verification == "unchecked" and receipt.requirement_id in live
+        else receipt
+        for receipt in receipts
+    ]
     receipts = [
         receipt.model_copy(
             update={

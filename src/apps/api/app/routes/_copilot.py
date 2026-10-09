@@ -75,6 +75,9 @@ class CopilotTurnResponse(BaseModel):
     pending_actions: list[dict] = []
     # KRI-186: parts of the message that did not become an op (see the agent).
     unmet_requests: list[dict[str, str]] = []
+    # KRI-558: the agent's server-authored notes (time zone, missing filming times), kept apart
+    # from `reply` so a receipt-built reply can still carry them.
+    reply_notes: str = ""
 
 
 # Edit verbs a reply uses to claim the draft changed. Stem-based so past and
@@ -370,4 +373,5 @@ async def run_copilot_turn(
         ),
         pending_actions=(output.pending_actions if outcome == "clarification" else []),
         unmet_requests=output.unmet_requests,
+        reply_notes=output.reply_notes,
     )

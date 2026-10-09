@@ -386,7 +386,8 @@ def test_a_record_of_another_generation_is_never_read():
         assert receipts["r1"]["verification"] == "unchecked"
         assert receipts["r3"]["verification"] == "unchecked"
         assert receipts["r4"]["verification"] == "unchecked"
-        assert _line(text, f"Doğrulayamadım: {R1}")
+        assert "Bunlara videoda bir göz at:" in text
+        assert _line(text, f"- {R1}")
         assert receipts["r2"]["status"] == "met"
         assert receipts["r5"]["status"] == "met"
 
@@ -398,7 +399,8 @@ def test_an_editor_turn_keeps_the_exact_generation_match():
 
     for req_id in ("r1", "r3", "r4"):
         assert receipts[req_id]["verification"] == "unchecked"
-    assert _line(text, f"Doğrulayamadım: {R1}")
+    assert "Bunlara videoda bir göz at:" in text
+    assert _line(text, f"- {R1}")
 
 
 def test_another_variants_published_attempt_is_not_this_ones():
@@ -451,3 +453,90 @@ def test_the_variant_is_not_mutated():
     before = copy.deepcopy(variant)
     _review(_job(), variant)
     assert variant == before
+
+
+# ---------------------------------------------------------------------------------------
+# KRI-558: the look, font and per-clip length of the prod Lisbon brief are judged on the
+# finished video, not left as "I couldn't verify every requested change".
+# ---------------------------------------------------------------------------------------
+
+
+def _lisbon_brief() -> CreativeBrief:
+    return CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r2",
+                kind="text",
+                scope="title",
+                description="title with a typewriter hook",
+                literal=TITLE,
+                facts={"animation": "typewriter"},
+            ),
+            BriefRequirement(
+                id="r4", kind="style", scope="global", description="use inter font and white"
+            ),
+            BriefRequirement(
+                id="r5",
+                kind="timing",
+                scope="global",
+                description="make all clips 1 second long except the first and the last one",
+                literal="1",
+            ),
+        ],
+    )
+
+
+def _lisbon_cuts(middle_s: float = 1.0):
+    ends = [3.0, *[middle_s] * (len(CUTS) - 2), 2.5]
+    return [
+        (media_id, sha, 0.0, end) for (media_id, sha, _s, _e), end in zip(CUTS, ends, strict=True)
+    ]
+
+
+def _lisbon_variant(cuts, *, entrance="typewriter") -> dict:
+    return _variant(
+        cuts,
+        text_elements=[
+            {
+                "id": "guided-title",
+                "role": "title",
+                "text": TITLE,
+                "start_s": 0.0,
+                "end_s": 3.0,
+                "font_family": "Inter-Bold",
+                "color": "#FFFFFF",
+                "animation_phases": {
+                    "entrance": entrance,
+                    "exit": "none",
+                    "loop": "none",
+                    "speed": 1,
+                },
+            }
+        ],
+    )
+
+
+def test_the_render_review_judges_title_animation_font_colour_and_clip_lengths():
+    cuts = _lisbon_cuts()
+    # The plan record judged these asks "met"/"unchecked" without seeing the finished video;
+    # the look and the per-clip length are re-judged here, from the render.
+    text, receipts = _review(_job(sources=cuts), _lisbon_variant(cuts), _lisbon_brief(), lang="en")
+    for req_id in ("r2", "r4", "r5"):
+        assert (receipts[req_id]["status"], receipts[req_id]["verification"]) == (
+            "met",
+            "checked",
+        ), req_id
+    assert "verify" not in text.lower() and "have a look" not in text.lower()
+
+
+def test_the_render_review_names_what_the_video_got_wrong():
+    cuts = _lisbon_cuts(middle_s=2.0)
+    text, receipts = _review(
+        _job(sources=cuts), _lisbon_variant(cuts, entrance="fade"), _lisbon_brief(), lang="en"
+    )
+    assert receipts["r2"]["status"] == "partial" and "animation" in receipts["r2"]["reason"]
+    assert receipts["r5"]["status"] == "partial"
+    assert "10 of 10 clips aren't 1s" in receipts["r5"]["reason"]
+    assert receipts["r4"]["status"] == "met"
+    assert "Partly:" in text and "verify" not in text.lower()
