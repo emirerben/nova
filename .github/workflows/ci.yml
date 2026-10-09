@@ -330,6 +330,7 @@ jobs:
             /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_INFO"
           } > ../../../test-results/kri-559/app-build.txt
       - name: Render trim-save journey on the built iPhone simulator
+        if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
         env:
           TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/trim-save
