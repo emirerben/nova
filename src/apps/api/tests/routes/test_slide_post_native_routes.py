@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import json
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -61,6 +63,38 @@ def _roundtripped_binding_payload() -> tuple[SlidePostDraft, dict]:
     payload = binding.model_dump(mode="json")
     payload["media_snapshot"]["draft"]["slides"][0]["edits"]["texts"][0]["shadow_opacity"] = 1
     return draft, payload
+
+
+def test_ios_binding_fixture_replays_chat_and_save_roundtrip() -> None:
+    fixture = (
+        Path(__file__).resolve().parents[3] / "ios/Tests/Fixtures/SlidePostBindingRoundTrip.json"
+    )
+    server_draft = json.loads(fixture.read_text())
+    assert SlidePostDraft.model_validate(server_draft).brief_binding is not None
+
+    # The native JSONValue encoder turns the server's 1.0 into JSON 1 without
+    # changing the server-issued digest. Exercise the exact shared fixture that
+    # the iOS XCTest sends through both request encoders.
+    client_draft = copy.deepcopy(server_draft)
+    client_draft["brief_binding"]["media_snapshot"]["draft"]["slides"][0]["edits"]["texts"][0][
+        "shadow_opacity"
+    ] = 1
+    chat = plan_items.SlidePostChatEditBody.model_validate(
+        {"message": "Keep the title.", "expected_version": 2, "draft": client_draft}
+    )
+    save = plan_items.SlidePostDraftBody.model_validate(
+        {
+            **{
+                key: client_draft[key]
+                for key in ("platform_profile", "slides", "cover_index", "caption", "brief_binding")
+            },
+            "expected_version": 2,
+        }
+    )
+    expected_digest = server_draft["brief_binding"]["digest"]
+    assert chat.draft is not None and chat.draft.brief_binding is not None
+    assert chat.draft.brief_binding.digest == expected_digest
+    assert save.brief_binding is not None and save.brief_binding.digest == expected_digest
 
 
 def test_slide_post_binding_accepts_native_numeric_roundtrip_in_both_request_models() -> None:

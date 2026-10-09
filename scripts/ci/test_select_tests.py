@@ -510,6 +510,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-557-thinking"),
             ),
             (
+                "src/apps/api/app/schemas/slide_post.py",
+                (True, "covered", "slide-post-binding-recovery"),
+            ),
+            (
+                "src/apps/api/app/routes/plan_items.py",
+                (True, "covered", "kri-557-thinking,slide-post-binding-recovery"),
+            ),
+            (
                 "src/apps/api/app/kria/planner.py.backup",
                 (True, "gap", ""),
             ),
