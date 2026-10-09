@@ -110,7 +110,35 @@ import XCTest
     func testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory() async throws {
         let saved = fixture()
         let proposal = SlidePostProposal(draft: try XCTUnwrap(saved.draft), baseVersion: 1, fallbackUsed: false, summary: "Review the order")
-        let api = StreamingThoughtSlidePostAPI(saved: saved, proposal: proposal)
+        let phase = ThoughtStreamPhase()
+        NativeEditorURLProtocol.handler = { request in
+            if request.url!.path.hasSuffix("/thought-summaries") {
+                var requestID = ""
+                for item in URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? [] {
+                    if item.name == "client_request_id" { requestID = item.value ?? "" }
+                }
+                let completed = phase.finished
+                var summary: [String: Any] = [
+                    "id": "33333333-3333-3333-3333-333333333333",
+                    "client_request_id": requestID,
+                    "status": completed ? "completed" : "streaming",
+                    "text": completed ? "Compared the slide order." : "Comparing the slide order.",
+                    "started_at": "2026-10-09T08:00:00Z",
+                ]
+                if completed {
+                    summary["completed_at"] = "2026-10-09T08:00:02Z"
+                    summary["duration_ms"] = 2_000
+                }
+                return (200, try JSONSerialization.data(withJSONObject: ["client_request_id": requestID, "summaries": [summary]]))
+            }
+            if request.httpMethod == "POST" {
+                Thread.sleep(forTimeInterval: 0.35)
+                phase.finish()
+                return (200, try JSONEncoder().encode(proposal))
+            }
+            return (200, try JSONEncoder().encode(saved))
+        }
+        let api = NativeEditorTestSupport.api()
         let session = SlidePostSession(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
 
@@ -502,34 +530,9 @@ import XCTest
     }
 }
 
-private actor StreamingThoughtSlidePostAPI: KriaAPIClient {
-    let saved: SlidePostState
-    let proposal: SlidePostProposal
-    private var finished = false
-
-    init(saved: SlidePostState, proposal: SlidePostProposal) {
-        self.saved = saved; self.proposal = proposal
-    }
-
-    func slidePost(itemID: String) async throws -> SlidePostState { saved }
-
-    func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal {
-        try await Task.sleep(for: .milliseconds(250))
-        finished = true
-        return proposal
-    }
-
-    func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse {
-        KriaThoughtSummaryResponse(clientRequestID: clientRequestID, summaries: [
-            KriaThoughtSummary(
-                id: "33333333-3333-3333-3333-333333333333",
-                clientRequestID: clientRequestID,
-                status: finished ? .completed : .streaming,
-                text: finished ? "Compared the slide order." : "Comparing the slide order.",
-                startedAt: Date(timeIntervalSince1970: 1_000),
-                completedAt: finished ? Date(timeIntervalSince1970: 1_002) : nil,
-                durationMS: finished ? 2_000 : nil
-            ),
-        ])
-    }
+private final class ThoughtStreamPhase: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    var finished: Bool { lock.lock(); defer { lock.unlock() }; return value }
+    func finish() { lock.lock(); defer { lock.unlock() }; value = true }
 }
