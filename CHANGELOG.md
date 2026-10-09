@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.199.0] - 2026-10-09
+
+### Changed
+- feat(ios): Review your video sheet - scoped update, Updated state, undo, manual edits (KRI-440, KRI-444, KRI-445, KRI-451) (#1521) <!-- release-pr: 1521 -->
+
 ## [0.78.198.0] - 2026-10-09
 
 ### Changed
