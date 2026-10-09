@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.185.0] - 2026-10-09
+
+### Changed
+- fix(kria): preserve requests through retries and creation text composition (KRI-524) (#1499) <!-- release-pr: 1499 -->
+
 ## [0.78.184.0] - 2026-10-08
 
 ### Changed
