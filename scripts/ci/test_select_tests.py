@@ -530,6 +530,34 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-561-song-order"),
             ),
             (
+                "src/apps/api/app/kria/speaker_framing_ask.py",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_recipe_shared.py",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_speaker_framing.py",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_subtitled_plan.py",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_subtitled_title.py",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
+                "src/apps/api/app/pipeline/render_geometry.py",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
+                "src/apps/ios/Tests/Fixtures/KRI547SpeakerFaceFill.json",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
                 "src/apps/api/app/kria/planner.py.backup",
                 (True, "gap", ""),
             ),
