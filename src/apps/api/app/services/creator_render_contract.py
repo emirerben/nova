@@ -23,6 +23,7 @@ from app.kria.brief import CreativeBrief
 from app.kria.brief_route import chapter_list
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
+from app.kria.reply_language import say
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import voice_tail_slack_s
 from app.pipeline.sequence_text_evidence import text_matches
@@ -673,6 +674,31 @@ def _normal(value: object) -> str:
     return " ".join(unicodedata.normalize("NFC", str(value)).split())
 
 
+def _label_intent_media_ids(resolved_intents: object, literal: str) -> tuple[str, ...]:
+    """Clips a resolved ``label`` clip intent prints ``literal`` on, in listed order.
+
+    The resolver stores the creator's words on each assignment (``value``); an older
+    row may carry them only on the intent (``creator_text``). Either way the label lane
+    burns exactly that text on exactly those clips, so they are the verifiable placement
+    of a described-shot text.
+    """
+    wanted = _normal(literal)
+    ids: list[str] = []
+    for intent in resolved_intents if isinstance(resolved_intents, Sequence) else ():
+        if not isinstance(intent, Mapping) or intent.get("op") != "label":
+            continue
+        if str(intent.get("status") or "resolved") != "resolved":
+            continue
+        for row in intent.get("assignments") or []:
+            if not isinstance(row, Mapping):
+                continue
+            media_id = str(row.get("media_id") or "")
+            value = row.get("value") or intent.get("creator_text")
+            if media_id and value and _normal(value) == wanted and media_id not in ids:
+                ids.append(media_id)
+    return tuple(ids)
+
+
 def _json_value(value: object) -> object:
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
@@ -1056,8 +1082,34 @@ def build_render_contract(
                     elif chosen is not None and chosen in matching:
                         shot_index = chosen
                     else:
+                        # "Mutfak on the kitchen clip" normally travels as a resolved
+                        # `label` clip intent (the resolver matched the words to a clip and
+                        # the label lane burns them there), not as positional
+                        # `shot_labels`. Pin those clips; refusing was a dead end (Tigre
+                        # M1, 2026-10-10: every room label hit this with no planner miss).
+                        placed_ids = _label_intent_media_ids(
+                            raw.get("resolved_clip_intents"), requirement.literal
+                        )
+                        if placed_ids:
+                            texts.extend(
+                                TextRequirement(
+                                    role="clip", text=requirement.literal, media_id=media_id
+                                )
+                                for media_id in placed_ids
+                            )
+                            continue
                         unresolved.append(
-                            "I need an explicit shot assignment for the confirmed text."
+                            say(
+                                en=(
+                                    f'I couldn\'t tell which clip "{requirement.literal}" '
+                                    "goes on, so I can't confirm that text."
+                                ),
+                                tr=(
+                                    f'"{requirement.literal}" yazısının hangi klibe '
+                                    "gideceğini anlayamadım, o yüzden bu yazıyı "
+                                    "doğrulayamıyorum."
+                                ),
+                            )
                         )
                 role: Literal["opening", "closing", "any", "clip"] = (
                     "clip"
