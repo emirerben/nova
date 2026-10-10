@@ -149,10 +149,15 @@ import KriaMediaEngine
         for x in 0..<width {
             let i = (row * width + x) * 4
             let rgb = [Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2])]
-            let nearest = palette.indices.min { a, b in
-                zip(palette[a], rgb).map { ($0 - $1) * ($0 - $1) }.reduce(0, +) <
-                    zip(palette[b], rgb).map { ($0 - $1) * ($0 - $1) }.reduce(0, +)
-            }!
+            var nearest = 0
+            var nearestDistance = Int.max
+            for (index, colour) in palette.enumerated() {
+                let distance = Self.squaredDistance(colour, rgb)
+                if distance < nearestDistance {
+                    nearest = index
+                    nearestDistance = distance
+                }
+            }
             let band = nearest == bands.count ? -1 : nearest
             if let lastRun = runs.last, lastRun.band == band, lastRun.end == x {
                 runs[runs.count - 1].end = x + 1
@@ -165,6 +170,17 @@ import KriaMediaEngine
             if let lastRun = merged.last, lastRun.band == run.band { merged[merged.count - 1].end = run.end } else { merged.append(run) }
         }
         return merged
+    }
+
+    /// Squared RGB distance, written as a plain loop: the zip/map/reduce form
+    /// timed out Xcode's type checker on the CI runner.
+    private static func squaredDistance(_ a: [Int], _ b: [Int]) -> Int {
+        var total = 0
+        for channel in 0..<min(a.count, b.count) {
+            let difference = a[channel] - b[channel]
+            total += difference * difference
+        }
+        return total
     }
 
     private func rgba(_ image: CGImage) throws -> [UInt8] {
