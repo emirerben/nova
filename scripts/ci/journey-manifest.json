@@ -118,6 +118,23 @@
         "src/apps/api/app/schemas/guided_edit_revision.py",
         "src/apps/api/tests/routes/test_phone_song_editor_commit.py"
       ]
+    },
+    {
+      "id": "kri-548-caption-watermark",
+      "api_tests": "tests/pipeline/test_phone_captions.py tests/pipeline/test_phone_caption_watermark_fixture.py tests/kria/test_portable_text_layout.py",
+      "xctests": [
+        "KriaTests/CaptionWatermarkClearanceTests/testServerRebrokenKadikoyCaptionsExportClearOfTheWatermark",
+        "KriaTests/CaptionWatermarkClearanceTests/testProdUnbrokenKadikoyCaptionsInkTheWatermarkCorner"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/phone_captions.py",
+        "src/apps/api/app/pipeline/portable_text_layout.py",
+        "src/apps/api/tests/pipeline/test_phone_captions.py",
+        "src/apps/api/tests/pipeline/test_phone_caption_watermark_fixture.py",
+        "src/apps/api/tests/kria/test_portable_text_layout.py",
+        "src/apps/ios/Tests/KriaTests/CaptionWatermarkClearanceTests.swift",
+        "src/apps/ios/Tests/Fixtures/KRI548CaptionWatermark.json"
+      ]
     }
   ]
 }

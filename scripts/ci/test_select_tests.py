@@ -530,6 +530,18 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-561-song-order"),
             ),
             (
+                "src/apps/api/app/pipeline/phone_captions.py",
+                (True, "covered", "kri-548-caption-watermark"),
+            ),
+            (
+                "src/apps/api/app/pipeline/portable_text_layout.py",
+                (True, "covered", "kri-548-caption-watermark"),
+            ),
+            (
+                "src/apps/ios/Tests/Fixtures/KRI548CaptionWatermark.json",
+                (True, "covered", "kri-548-caption-watermark"),
+            ),
+            (
                 "src/apps/api/app/kria/planner.py.backup",
                 (True, "gap", ""),
             ),
