@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.204.0] - 2026-10-10
+
+### Changed
+- feat(kria): trim the creator's song start and end in the editor (KRI-561) (#1526) <!-- release-pr: 1526 -->
+
 ## [0.78.203.0] - 2026-10-09
 
 ### Changed
