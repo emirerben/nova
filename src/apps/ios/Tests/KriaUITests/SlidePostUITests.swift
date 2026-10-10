@@ -876,6 +876,10 @@ import XCTest
     }
 
     func testTappingEmptyCanvasInBrowseDoesNothingAndInTextModeDeselects() {
+        // Simulator idle detection after a preview tap can take over three minutes,
+        // even when the interaction and assertions pass. Keep the longer limit
+        // scoped to this test; the rest of the UI suite retains 180 seconds.
+        executionTimeAllowance = 300
         let app = openRichWorkspace()
         addText(app, "Athens")
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
