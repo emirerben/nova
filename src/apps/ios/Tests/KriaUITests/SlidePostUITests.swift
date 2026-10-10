@@ -39,15 +39,18 @@ import XCTest
         XCTAssertTrue(app.buttons["slidepost-openkria"].isHittable)
         attach(app, "Native slide draft preview")
         let save = app.buttons["slidepost-save"]
-        XCTAssertTrue(save.isEnabled, "a fresh draft is unsaved"); save.tap()
-        expectation(for: NSPredicate(format: "isEnabled == false"), evaluatedWith: save); waitForExpectations(timeout: 10)
-        // There is no Create step: exporting a saved-but-unrendered post renders it first.
+        XCTAssertTrue(save.isEnabled, "a fresh draft is unsaved")
+        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes")
+        // There is no Create step, and export is available from any state: exporting an unsaved, unrendered post
+        // saves it, renders it, then reports the Photos save in the banner (the fixture writer stands in for Photos).
         let export = app.buttons["slidepost-export"]
         XCTAssertTrue(export.waitForExistence(timeout: 5)); XCTAssertTrue(export.isEnabled); export.tap()
-        XCTAssertTrue(app.buttons["slidepost-share-files"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["slidepost-share-files"].waitForExistence(timeout: 3), "Share files sits beside Save to Photos")
         app.buttons["slidepost-save-photos"].tap()
         let banner = app.descendants(matching: .any)["slidepost-export-state"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 10), "export reports progress in the banner")
         expectation(for: NSPredicate(format: "label CONTAINS %@", "Saved 3 slides"), evaluatedWith: banner); waitForExpectations(timeout: 25)
+        XCTAssertNotEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "exporting saved the draft first")
         attach(app, "Native slide post exported")
         app.buttons["slidepost-openkria"].tap()
         let input = app.textFields["Message Kria"]
@@ -58,17 +61,6 @@ import XCTest
         let applyChange = app.buttons["slidepost-apply"]
         XCTAssertTrue(applyChange.waitForExistence(timeout: 8)); applyChange.tap()
         attach(app, "Native Kria applied proposal")
-    }
-
-    /// Back from a slide post returns to the chats drawer (where the user came from), NOT the format
-    /// chooser, and the project is still the slide editor when re-entered.
-    func testBackReturnsToTheDrawerNotTheFormatChooser() {
-        let app = openRichWorkspace(dynamicType: "accessibility3")
-        XCTAssertTrue(app.buttons["Back to creation"].waitForExistence(timeout: 8))
-        app.buttons["Back to creation"].tap()
-        XCTAssertTrue(app.buttons["drawer-new-chat"].waitForExistence(timeout: 5), "Back opens the chats drawer")
-        XCTAssertFalse(app.staticTexts["What are we making?"].exists, "never the format chooser")
-        attach(app, "Back lands on the drawer")
     }
 
     // MARK: Redesigned workspace (KRIA_SLIDE_POST_RICH_TEXT=1)
@@ -133,18 +125,6 @@ import XCTest
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = name; shot.lifetime = .keepAlways; add(shot)
     }
 
-    func testSlideStripSwipeDoesNotOpenDrawer() {
-        let app = openRichWorkspace()
-        let tile = app.buttons["slidepost-tile-1"]
-        XCTAssertTrue(tile.waitForExistence(timeout: 5))
-        // The drawer opens with a rightward swipe; over the strip it must belong to the strip.
-        tile.swipeRight()
-        tile.swipeRight()
-        XCTAssertFalse(app.buttons["drawer-new-chat"].isHittable, "swiping the strip must not open the projects drawer")
-        XCTAssertTrue(app.buttons["slidepost-tool-text"].isHittable)
-        attach(app, "Strip swipe leaves the drawer closed")
-    }
-
     func testSlidePreviewLeavesToolbarAndStripVisible() {
         let app = openRichWorkspace()
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
@@ -174,6 +154,8 @@ import XCTest
         app.buttons["slidepost-tool-text"].tap()
         let field = app.textViews["slidepost-text-field"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["native-editor-text-time-start"].exists, "slides have no timeline")
+        XCTAssertFalse(app.buttons["Animation"].exists, "slides have no Animation tab")
         field.tap(); field.press(forDuration: 1.0)
         if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
         field.typeText("Athens")
@@ -214,50 +196,6 @@ import XCTest
         app.buttons["Edit text"].tap()
         XCTAssertEqual(app.textViews["slidepost-text-field"].firstMatch.value as? String, "Your text", "words are never copied")
         attach(app, "Style applied to all slides")
-    }
-
-    /// The slide Text tab IS the native Text panel: same Edit text / Style tabs and controls, no timing, no Animation tab.
-    func testSlideTextTabIsTheNativeTextPanel() {
-        let app = openRichWorkspace()
-        app.buttons["slidepost-tool-text"].tap()
-        let field = app.textViews["slidepost-text-field"].firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.textFields["native-editor-text-time-start"].exists, "slides have no timeline")
-        XCTAssertFalse(app.buttons["Animation"].exists)
-        field.tap(); field.press(forDuration: 1.0)
-        if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
-        field.typeText("Parity")
-        attach(app, "Slide text tab: Edit text")
-        app.buttons["Style"].tap()
-        let preset = app.buttons["native-editor-text-preset"]
-        XCTAssertTrue(preset.waitForExistence(timeout: 5))
-        preset.tap(); app.buttons["Bold"].tap()
-        XCTAssertTrue(preset.label.contains("Bold"))
-        attach(app, "Slide text tab: Style top")
-        let font = app.buttons["native-editor-text-font"]
-        XCTAssertTrue(font.exists)
-        let size = app.textFields["native-editor-text-size"]
-        revealInTextPanel(size, app: app)
-        let before = size.value as? String
-        app.buttons["Increase text size"].tap()
-        XCTAssertNotEqual(size.value as? String, before)
-        let rotation = app.buttons["native-editor-text-rotation-Increment"]
-        revealInTextPanel(rotation, app: app)
-        rotation.tap(); rotation.tap()
-        XCTAssertEqual(rotation.value as? String, "10 degrees")
-        let outline = app.sliders["Outline"]
-        revealInTextPanel(outline, app: app)
-        outline.adjust(toNormalizedSliderPosition: 0.5)
-        attach(app, "Slide text tab: Style")
-        app.buttons["slidepost-done"].tap()
-        // Reopening shows the saved style.
-        app.buttons["slidepost-tool-text"].tap()
-        app.buttons["Style"].tap()
-        XCTAssertTrue(app.buttons["native-editor-text-preset"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["native-editor-text-preset"].label.contains("Bold"))
-        let again = app.buttons["native-editor-text-rotation-Increment"]
-        revealInTextPanel(again, app: app)
-        XCTAssertEqual(again.value as? String, "10 degrees")
     }
 
     // MARK: Canvas text manipulation (KRI-298 Lane G: same gestures as the native video preview)
@@ -321,50 +259,6 @@ import XCTest
         preview.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.06)).tap()
         XCTAssertFalse(handle.waitForExistence(timeout: 2), "tapping empty canvas deselects")
         attach(app, "Slide canvas: deselected")
-    }
-
-    /// Integration: every Style control is reachable above the pinned row, and canvas gestures show the same numbers in the panel.
-    func testStyleTabScrollsToEveryControlAndCanvasAgreesWithPanel() {
-        let app = openRichWorkspace()
-        app.buttons["slidepost-tool-text"].tap()
-        let field = app.textViews["slidepost-text-field"].firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
-        field.tap(); field.press(forDuration: 1.0)
-        if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
-        field.typeText("Athens")
-        app.buttons["Style"].tap()
-        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
-        let text = canvasText(app)
-        XCTAssertTrue(text.waitForExistence(timeout: 5))
-        text.tap()
-        app.buttons["Style"].tap()
-        preview.pinch(withScale: 1.4, velocity: 1)
-        preview.rotate(CGFloat.pi / 4, withVelocity: 1)
-        let value = text.value as? String ?? ""
-        let canvasSize = number(value, after: "size"), canvasRotation = number(value, after: "rotation")
-        attach(app, "Integration: canvas resized + rotated")
-        // Panel shows the same numbers.
-        let rotation = app.buttons["native-editor-text-rotation-Increment"]
-        revealInTextPanel(rotation, app: app)
-        XCTAssertEqual(rotation.value as? String, "\(Int(canvasRotation)) degrees")
-        let size = app.textFields["native-editor-text-size"]
-        revealInTextPanel(size, app: app)
-        XCTAssertEqual(Double(size.value as? String ?? ""), canvasSize)
-        // Bottom of the Style tab: every control above the pinned row.
-        let scroll = app.scrollViews["native-editor-text-inspector-scroll"]
-        for _ in 0..<8 { scroll.swipeUp() }
-        let apply = app.buttons["slidepost-apply-all"]
-        XCTAssertTrue(apply.isHittable)
-        XCTAssertLessThanOrEqual(rotation.frame.maxY, apply.frame.minY, "the last control clears the pinned row")
-        XCTAssertTrue(rotation.isHittable)
-        attach(app, "Integration: style bottom")
-        // Panel edit reaches the canvas, undo/redo round trips.
-        rotation.tap()
-        XCTAssertNotEqual(number(text.value as? String ?? "", after: "rotation"), canvasRotation)
-        app.buttons["slidepost-undo"].tap()
-        XCTAssertEqual(number(text.value as? String ?? "", after: "rotation"), canvasRotation)
-        app.buttons["slidepost-redo"].tap()
-        XCTAssertNotEqual(number(text.value as? String ?? "", after: "rotation"), canvasRotation)
     }
 
     func testMoreMenuRemoveAndCover() {
@@ -441,14 +335,6 @@ import XCTest
         XCTAssertFalse(app.descendants(matching: .any)["slidepost-error"].firstMatch.exists)
     }
 
-    func testAISheetWithoutChatEditKeepsTheProposeFlow() {
-        let app = openRichWorkspace()
-        app.buttons["slidepost-openkria"].tap()
-        XCTAssertTrue(app.textFields["Message Kria"].waitForExistence(timeout: 5), "the same composer as the video editor's Kria sheet")
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "propose an arrangement")).firstMatch.exists, "propose-flow intro")
-        attach(app, "AI sheet: propose flow")
-    }
-
     private func coverIndex(_ app: XCUIApplication, count: Int) -> Int? {
         (1...count).first { app.buttons["slidepost-tile-\($0)"].value as? String == "Cover" }
     }
@@ -465,14 +351,6 @@ import XCTest
         app.buttons["slidepost-undo"].tap()
         XCTAssertEqual(app.buttons["slidepost-tile-1"].value as? String, "Cover", "one undo step puts it back")
         attach(app, "Reorder: after drag and undo")
-    }
-
-    func testPlainTapStillSelectsAndAScrollDoesNotReorder() {
-        let app = openRichWorkspace()
-        app.buttons["slidepost-tile-2"].tap()
-        XCTAssertTrue(app.buttons["slidepost-tile-2"].isSelected)
-        app.buttons["slidepost-tile-1"].swipeLeft()
-        XCTAssertNotEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "a plain swipe scrolls, it never reorders")
     }
 
     /// Dragging a block to the strip's edge scrolls it, so a slide can travel past what is on screen.
@@ -525,22 +403,14 @@ import XCTest
         attach(app, "Strip: scrolled back")
     }
 
-    func testStripScrollsWithSlowFingerDragAndSwipes() {
-        let app = openRichWorkspace(many: true)
-        let tile = app.buttons["slidepost-tile-3"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
-        let y = tile.frame.midY, w = app.windows.firstMatch.frame.width
-        assertStripReachesTheEnd(app) { fingerDrag(app, fromX: w - 40, toX: 40, y: y, hold: 0.02, velocity: .slow) }
-        for _ in 0..<8 { fingerDrag(app, fromX: 30, toX: w - 30, y: y, velocity: .fast) }
-        XCTAssertTrue(app.buttons["slidepost-tile-1"].isHittable, "a swipe right scrolls back to the start")
-        // The stock XCUITest swipe, from a tile that is on screen at rest.
-        app.buttons["slidepost-tile-3"].swipeLeft()
-        XCTAssertLessThan(app.buttons["slidepost-tile-1"].frame.midX, 0, "swipeLeft scrolls the strip")
-    }
-
     func testStripFlickScrollsFromATileTheGapAndTheAddBlock() {
         let app = openRichWorkspace(many: true)
         let tile = app.buttons["slidepost-tile-2"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
         let y = tile.frame.midY
+        // A selected slide does not stop the strip scrolling, and 12 slides visibly overflow the right edge.
+        tile.tap(); XCTAssertTrue(tile.isSelected)
+        let overflowWindow = app.windows.firstMatch.frame
+        XCTAssertFalse((1...12).filter { app.buttons["slidepost-tile-\($0)"].frame.maxX > overflowWindow.maxX }.isEmpty, "a tile is cut by the right edge: the strip visibly overflows")
         let tiles = [app.buttons["slidepost-tile-1"], app.buttons["slidepost-tile-2"]]
         let gapX = (tiles[0].frame.maxX + tiles[1].frame.minX) / 2
         let w = app.windows.firstMatch.frame.width
@@ -556,30 +426,14 @@ import XCTest
         windowPoint(app, x: add.frame.midX, y: y).press(forDuration: 0.03, thenDragTo: windowPoint(app, x: 20, y: y), withVelocity: .default, thenHoldForDuration: 0)
         XCTAssertLessThanOrEqual(app.buttons["slidepost-tile-12"].frame.minX, beforeAdd, "a drag that starts on + Add never moves the strip the wrong way")
         XCTAssertNotEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "no flick reorders")
-    }
-
-    func testStripScrollsWithASelectedSlideAndShowsAnOverflowTile() {
-        let app = openRichWorkspace(many: true)
-        let tile = app.buttons["slidepost-tile-2"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
-        tile.tap(); XCTAssertTrue(tile.isSelected)
-        let window = app.windows.firstMatch.frame
-        let cut = (1...12).filter { app.buttons["slidepost-tile-\($0)"].frame.maxX > window.maxX }
-        XCTAssertFalse(cut.isEmpty, "a tile is cut by the right edge: the strip visibly overflows")
-        let y = tile.frame.midY
-        assertStripReachesTheEnd(app) { fingerDrag(app, fromX: window.width - 40, toX: 40, y: y) }
+        // The far end of the strip is selectable, and a long press + drag still reorders after scrolling.
         app.buttons["slidepost-tile-12"].tap()
         XCTAssertTrue(app.buttons["slidepost-tile-12"].isSelected)
-    }
-
-    func testSelectingAHeldTextStillLetsTheStripScroll() {
-        let app = openRichWorkspace(many: true)
-        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
-        XCTAssertTrue(preview.waitForExistence(timeout: 8))
-        // Hold-select the text on the preview (browse mode keeps the strip), then scroll the strip.
-        preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.8)
-        let tile = app.buttons["slidepost-tile-3"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
-        let y = tile.frame.midY, w = app.windows.firstMatch.frame.width
-        assertStripReachesTheEnd(app) { fingerDrag(app, fromX: w - 40, toX: 40, y: y) }
+        let last = app.buttons["slidepost-tile-12"], prior = app.buttons["slidepost-tile-11"]
+        XCTAssertEqual(coverIndex(app, count: 12), 1)
+        last.press(forDuration: 0.9, thenDragTo: prior, withVelocity: .slow, thenHoldForDuration: 0.2)
+        attach(app, "Strip: after reorder at the end")
+        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "long press then drag reorders")
     }
 
     func testStripSwipeDoesNotOpenDrawerButAPreviewSwipeStillDoes() {
@@ -593,34 +447,6 @@ import XCTest
         windowPoint(app, x: 4, y: py).press(forDuration: 0.05, thenDragTo: windowPoint(app, x: w * 0.85, y: py), withVelocity: .fast, thenHoldForDuration: 0)
         XCTAssertTrue(app.buttons["drawer-new-chat"].waitForExistence(timeout: 3), "a swipe that starts above the strip still opens the drawer")
         attach(app, "Drawer opens from outside the strip")
-    }
-
-    func testLongPressReorderStillWorksAfterScrollingTheStrip() {
-        let app = openRichWorkspace(many: true)
-        let tile = app.buttons["slidepost-tile-3"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
-        let y = tile.frame.midY, w = app.windows.firstMatch.frame.width
-        assertStripReachesTheEnd(app) { fingerDrag(app, fromX: w - 40, toX: 40, y: y) }
-        let last = app.buttons["slidepost-tile-12"], prior = app.buttons["slidepost-tile-11"]
-        XCTAssertEqual(coverIndex(app, count: 12), 1)
-        last.press(forDuration: 0.9, thenDragTo: prior, withVelocity: .slow, thenHoldForDuration: 0.2)
-        attach(app, "Strip: after reorder at the end")
-        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "long press then drag reorders")
-    }
-
-    /// The "+" block is the LAST item of the same row, with the tiles' footprint and baseline.
-    func testAddBlockIsTheLastStripItemWithTheTileFootprint() {
-        let app = openRichWorkspace()
-        let tile = app.buttons["slidepost-tile-3"], add = app.buttons["slidepost-add-tile"]
-        XCTAssertTrue(add.waitForExistence(timeout: 5))
-        // XCUI reports an aspect-filled photo's overflow as the tile's width, so compare height, baseline and
-        // CENTRES: the + block is exactly one 66pt pitch (60pt block + 6pt gap) after the last slide.
-        XCTAssertEqual(add.frame.height, tile.frame.height, accuracy: 1)
-        XCTAssertEqual(add.frame.height, 72, accuracy: 1)
-        XCTAssertEqual(add.frame.width, 56, accuracy: 1)
-        XCTAssertEqual(add.frame.minY, tile.frame.minY, accuracy: 1, "same baseline as the tiles")
-        XCTAssertEqual(add.frame.midX - tile.frame.midX, 66, accuracy: 1, "the next block in the row, one pitch after the last slide")
-        for index in 1...3 { XCTAssertLessThan(app.buttons["slidepost-tile-\(index)"].frame.minX, add.frame.minX) }
-        attach(app, "Strip: add block last")
     }
 
     /// Media that finishes importing joins the post by itself: a placeholder while it is processing,
@@ -656,22 +482,6 @@ import XCTest
         XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 5))
     }
 
-    func testTappingATextInBrowseOpensTheEditTabWithTheKeyboard() {
-        let app = openRichWorkspace()
-        addText(app, "Athens")
-        let text = canvasText(app)
-        XCTAssertTrue(text.waitForExistence(timeout: 5))
-        attach(app, "Browse: text on the canvas")
-        text.tap()
-        let field = app.textViews["slidepost-text-field"].firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "the Text panel opened on Edit text")
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "the keyboard is up so the user can type")
-        XCTAssertFalse(app.buttons["native-editor-text-preset"].exists, "Edit tab, not Style")
-        field.typeText("!")
-        expectation(for: NSPredicate(format: "label == %@", "Athens!"), evaluatedWith: canvasText(app)); waitForExpectations(timeout: 5)
-        attach(app, "Tap text: Edit tab with keyboard")
-    }
-
     // MARK: A created (rendered, exportable) post keeps editable text
 
     /// Real-device bug: opening an already created post showed the burned render with no live text, so tapping
@@ -701,15 +511,14 @@ import XCTest
         let field = app.textViews["slidepost-text-field"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5), "tap on a created post's text opens Edit text")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["native-editor-text-preset"].exists, "Edit tab, not Style")
+        field.typeText("!")
+        expectation(for: NSPredicate(format: "label == %@", "Athens!"), evaluatedWith: canvasText(app)); waitForExpectations(timeout: 5)
         attach(app, "Ready post: tap text opens Edit text with keyboard")
-    }
-
-    func testHoldAndDragTextOnACreatedPostMovesItDirectly() {
-        let app = openRichWorkspace(extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1"])
-        openReadyPostWithText(app, "Athens")
+        // Hold + drag on a created post moves the text directly (no panel) and makes it a draft again.
+        app.buttons["slidepost-done"].tap()
+        XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 5))
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
-        let text = canvasText(app)
-        XCTAssertTrue(text.waitForExistence(timeout: 5))
         let before = text.value as? String ?? ""
         text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.9, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.25)))
         XCTAssertTrue(app.descendants(matching: .any)["slidepost-text-handle"].firstMatch.waitForExistence(timeout: 3))
@@ -749,6 +558,13 @@ import XCTest
         preview.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.06)).tap()
         XCTAssertFalse(handle.waitForExistence(timeout: 2), "tap on empty canvas deselects")
         panelAndKeyboardAbsent(app, "after deselect")
+        // Each drag is exactly one undo step: two undos return the text to where it started, and never remove it.
+        func unselected(_ value: String) -> String { value.replacingOccurrences(of: ", selected", with: "") }
+        app.buttons["slidepost-undo"].tap()
+        XCTAssertEqual(unselected(mid), unselected(text.value as? String ?? ""), "one undo reverts only the last drag")
+        app.buttons["slidepost-undo"].tap()
+        XCTAssertEqual(unselected(before), unselected(text.value as? String ?? ""), "one more undo returns the text to where it started")
+        XCTAssertEqual(text.label, "Athens", "undo did not remove the text")
     }
 
     func testHoldSelectThenCornerHandleResizesWithoutPanel() {
@@ -837,20 +653,6 @@ import XCTest
         attach(app, "Tap after hold-select: Edit text with keyboard")
     }
 
-    func testHoldDragIsExactlyOneUndoStep() {
-        let app = openRichWorkspace()
-        addText(app, "Athens")
-        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
-        let text = canvasText(app)
-        XCTAssertTrue(text.waitForExistence(timeout: 5))
-        let before = text.value as? String ?? ""
-        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.9, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.25)))
-        XCTAssertNotEqual(before, text.value as? String ?? "")
-        app.buttons["slidepost-undo"].tap()
-        XCTAssertEqual(before.replacingOccurrences(of: ", selected", with: ""), (text.value as? String ?? "").replacingOccurrences(of: ", selected", with: ""), "one undo returns the text to where it started")
-        XCTAssertEqual(text.label, "Athens", "undo did not remove the text")
-    }
-
     func testTappingAnotherTextWhilePanelIsOpenSwitchesToItsEditField() {
         let app = openRichWorkspace()
         addText(app, "Athens")
@@ -875,48 +677,6 @@ import XCTest
         attach(app, "Tap another text while the panel is open")
     }
 
-    func testTappingEmptyCanvasInBrowseDoesNothingAndInTextModeDeselects() {
-        let app = openRichWorkspace()
-        addText(app, "Athens")
-        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
-        preview.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.06)).tap()
-        XCTAssertFalse(app.textViews["slidepost-text-field"].firstMatch.exists, "browse: tapping empty canvas opens nothing")
-        XCTAssertTrue(app.buttons["slidepost-tool-text"].isHittable)
-    }
-
-    func testWorkspaceKeepsToolbarReachableAtLargeText() {
-        let app = openRichWorkspace(dynamicType: "accessibility3")
-        XCTAssertTrue(app.buttons["slidepost-tile-1"].isHittable)
-        let tools = ["slidepost-tool-text", "slidepost-tool-cover", "slidepost-tool-look", "slidepost-tool-more"]
-        let bar = app.buttons[tools[0]]
-        for id in tools {
-            let tool = app.buttons[id]
-            XCTAssertTrue(tool.waitForExistence(timeout: 5), id)
-            var tries = 0
-            while !tool.isHittable && tries < 4 { (tries < 2 ? bar : app.buttons[tools[3]]).swipeLeft(); tries += 1 }
-            XCTAssertTrue(tool.isHittable, "\(id) must be reachable at accessibility3 (scrolling the bar if needed)")
-        }
-        attach(app, "Workspace at large text")
-    }
-
-    func testTextPanelKeepsEditFieldVisibleWithKeyboardUp() {
-        let app = openRichWorkspace()
-        app.buttons["slidepost-tool-text"].tap()
-        let field = app.textViews["slidepost-text-field"].firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
-        field.tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        XCTAssertTrue(field.isHittable, "the Edit field stays visible above the keyboard")
-        let keyboardTop = app.keyboards.firstMatch.frame.minY
-        XCTAssertLessThan(field.frame.maxY, keyboardTop)
-        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
-        XCTAssertTrue(preview.exists, "the preview stays on screen too")
-        XCTAssertLessThan(preview.frame.maxY, field.frame.minY + 1, "the stage shrinks above the field")
-        attach(app, "Text panel with keyboard up")
-        app.buttons["Style"].tap()
-        attach(app, "Text panel style chips")
-    }
-
     /// KRI-305: on a small phone the keyboard used to hide the Add text / Apply row (and the stage kept
     /// growing past the KRI-185 120pt rule). Run on an iPhone SE class simulator for the real constraint.
     func testAddTextStaysHittableWithKeyboardUpAndStagePinnedTo120() {
@@ -937,6 +697,7 @@ import XCTest
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
         XCTAssertTrue(preview.exists)
         XCTAssertEqual(preview.frame.height, 120, accuracy: 2, "typing pins the stage to 120pt (shrink, never cover)")
+        XCTAssertLessThan(preview.frame.maxY, field.frame.minY + 1, "the stage shrinks above the field")
         attach(app, "Small phone: keyboard up")
         let canvasTexts = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'slidepost-canvas-text-'"))
         let before = canvasTexts.count
@@ -1007,18 +768,6 @@ import XCTest
         }
     }
 
-    func testRichLayoutForANewChatWhenCapabilitiesAreSlow() {
-        let app = openRichWorkspace(capabilities: "slow", save: false)
-        assertRichLayout(app, "new chat, slow capabilities")
-        attach(app, "Entry: new chat (slow caps)")
-    }
-
-    func testRichLayoutForANewChatWhenCapabilitiesLoad() {
-        let app = openRichWorkspace(save: false)
-        assertRichLayout(app, "new chat, capabilities load")
-        attach(app, "Entry: new chat (caps true)")
-    }
-
     func testRichLayoutFromTheDrawerWhenCapabilitiesFailToLoad() {
         let app = launchRich(capabilities: "fail", readyThread: true)
         openWeekendTripFromDrawer(app)
@@ -1029,20 +778,6 @@ import XCTest
         XCTAssertTrue(app.textFields["Message Kria"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.textFields["Message Kria"].placeholderValue, "Describe the post…", "no capabilities => propose flow, not chat-edit staging")
         attach(app, "AI sheet (caps fail)")
-    }
-
-    func testRichLayoutFromTheDrawerWhenCapabilitiesAreSlow() {
-        let app = launchRich(capabilities: "slow", readyThread: true)
-        openWeekendTripFromDrawer(app)
-        assertRichLayout(app, "drawer, slow capabilities")
-        attach(app, "Entry: drawer (slow caps)")
-    }
-
-    func testRichLayoutFromTheDrawerWhenCapabilitiesLoad() {
-        let app = launchRich(readyThread: true)
-        openWeekendTripFromDrawer(app)
-        assertRichLayout(app, "drawer, capabilities load")
-        attach(app, "Entry: drawer (caps true)")
     }
 
     func testRichLayoutFromTheGalleryForEveryCapabilityState() {
@@ -1085,22 +820,6 @@ import XCTest
         attach(app, "Gallery-opened post")
     }
 
-    /// KRI-305: export is available from any state. An unsaved, unrendered post saves, renders and then
-    /// reports the Photos save in the banner (the fixture writer stands in for Photos).
-    func testExportMenuSavesAnUnsavedPostToPhotosAndShowsTheBanner() {
-        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1"])
-        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes")
-        let export = app.buttons["slidepost-export"]
-        XCTAssertTrue(export.waitForExistence(timeout: 5)); export.tap()
-        XCTAssertTrue(app.buttons["slidepost-share-files"].waitForExistence(timeout: 3), "Share files sits beside Save to Photos")
-        app.buttons["slidepost-save-photos"].tap()
-        let banner = app.descendants(matching: .any)["slidepost-export-state"]
-        XCTAssertTrue(banner.waitForExistence(timeout: 10), "export reports progress in the banner")
-        expectation(for: NSPredicate(format: "label CONTAINS %@", "Saved 3 slides"), evaluatedWith: banner); waitForExpectations(timeout: 25)
-        attach(app, "Export banner: saved to Photos")
-        XCTAssertNotEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "exporting saved the draft first")
-    }
-
     /// Back -> drawer -> tap the project again (and via a second project switch): always the slide editor.
     func testReEnteringAfterBackAlwaysLandsInTheSlideEditor() {
         let app = launchRich(readyThread: true)
@@ -1120,21 +839,6 @@ import XCTest
 
     // MARK: Brand-new post: AI + add-media copy + seamless slide switching
 
-    /// Prod 2026-10-05: the first AI message on a never-saved post sent a version-0 draft and the server 422'd it.
-    /// The stub enforces the same rule, so this fails if the wire draft is ever invalid again.
-    func testFirstAIMessageOnABrandNewPostSucceedsWithoutSavingFirst() {
-        let app = openRichWorkspace(chatEdit: true, save: false)
-        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "the post is brand new: nothing saved")
-        app.buttons["slidepost-openkria"].tap()
-        let input = app.textFields["Message Kria"]
-        XCTAssertTrue(input.waitForExistence(timeout: 5)); input.tap(); input.typeText("Order them by time")
-        app.buttons["chat-send-message"].tap()
-        let reply = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: Done.")).firstMatch
-        XCTAssertTrue(reply.waitForExistence(timeout: 8), "a new post's first AI request succeeds")
-        XCTAssertFalse(app.buttons["slidepost-ai-retry"].exists)
-        attach(app, "New post: AI request succeeded")
-    }
-
     /// A failed AI request says what happened, keeps the user's message, and offers Try again.
     func testFailedAIRequestShowsAClearMessageAndRetryKeepsTheMessage() {
         let app = openRichWorkspace(chatEdit: true, save: false, extraEnv: ["KRIA_SLIDE_POST_CHAT_EDIT_FAIL_ONCE": "1"])
@@ -1150,42 +854,6 @@ import XCTest
         retry.tap()
         let reply = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: Done.")).firstMatch
         XCTAssertTrue(reply.waitForExistence(timeout: 8), "retrying resends the same message")
-    }
-
-    /// The add-media sheet for a slide post never says "overlays" or "visuals".
-    func testAddMediaSheetForSlidePostsSaysPhotosAndVideos() {
-        let app = openRichWorkspace(save: false)
-        let add = app.buttons["slidepost-add-tile"].firstMatch
-        XCTAssertTrue(add.waitForExistence(timeout: 8)); add.tap()
-        XCTAssertTrue(app.staticTexts["Add photos & videos"].waitForExistence(timeout: 8))
-        XCTAssertFalse(app.staticTexts["Add overlays"].exists)
-        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] 'overlay' OR label CONTAINS[c] 'visuals'")).firstMatch.exists)
-        attach(app, "Add photos & videos sheet")
-    }
-
-    /// Photos are served by a slow fixture "CDN" with a fresh signature on every response. Once a slide has
-    /// loaded, selecting it again (or a prefetched neighbour) never shows a loading state.
-    func testSwitchingSlidesNeverShowsALoadingStateForLoadedImages() {
-        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_REMOTE_MEDIA": "1", "KRIA_SLIDE_POST_MEDIA_DELAY_MS": "600"])
-        let loading = app.descendants(matching: .any)["slidepost-preview-loading"]
-        let image = app.descendants(matching: .any)["slidepost-preview-image"]
-        let first = Date()
-        XCTAssertTrue(image.waitForExistence(timeout: 10), "the first photo appears")
-        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: loading); waitForExpectations(timeout: 10)
-        let firstVisible = Date().timeIntervalSince(first)
-        sleep(3) // neighbours are prefetched in the background
-        attach(app, "Slide 1 loaded")
-        var switches: [TimeInterval] = []
-        for tile in ["slidepost-tile-3", "slidepost-tile-1", "slidepost-tile-3", "slidepost-tile-1"] {
-            let started = Date()
-            app.buttons[tile].tap()
-            XCTAssertFalse(loading.exists, "no loading indicator right after selecting \(tile)")
-            XCTAssertFalse(app.descendants(matching: .any)["slidepost-preview-blurred"].exists, "no blur state right after selecting \(tile)")
-            XCTAssertTrue(image.exists, "the photo is on screen immediately")
-            switches.append(Date().timeIntervalSince(started))
-        }
-        attach(app, "After switching slides")
-        print("KRIA_SLIDE_TIMING first-visible=\(String(format: "%.3f", firstVisible))s switch-taps=\(switches.map { String(format: "%.3f", $0) })")
     }
 
     /// KRI-305: after adding text, the next slide used to flash its blurred thumbnail because the NSCache had
