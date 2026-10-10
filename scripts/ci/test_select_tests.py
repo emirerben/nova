@@ -132,6 +132,36 @@ class GateTests(unittest.TestCase):
             needs["changes"]["result"] = result
             with self.assertRaises(ValueError):
                 ci.gate(needs, "web", "suite")
+
+    def test_required_journey_gate_accepts_only_selected_success_or_explicit_skip(self):
+        for selected, result in (("true", "success"), ("false", "skipped")):
+            needs = {
+                "changes": {"result": "success", "outputs": {"journey": selected}},
+                "journey": {"result": result},
+                # test-api has other dependencies; they must not weaken this gate.
+                "test-api-suite": {"result": "success"},
+            }
+            ci.gate(needs, "journey", "journey")
+        for selected, result in (
+            ("true", "skipped"),
+            ("false", "success"),
+            (None, "skipped"),
+        ):
+            needs = {
+                "changes": {"result": "success", "outputs": {"journey": selected}},
+                "journey": {"result": result},
+            }
+            with self.assertRaises(ValueError):
+                ci.gate(needs, "journey", "journey")
+        ci.gate(
+            {
+                "changes": {"result": "success", "outputs": {"api": "true"}},
+                "test-api-suite": {"result": "success"},
+                "journey": {"result": "skipped"},
+            },
+            "api",
+            "test-api-suite",
+        )
         for needs in (
             {},
             {"changes": {"result": "success"}},
@@ -228,7 +258,9 @@ class GateTests(unittest.TestCase):
             }
 
         maximum = str(ci.ui_tests.MAX_SHARDS)
-        invalid = [("true", s) for s in (None, "", "0", "x", "1/2", str(int(maximum) + 1))]
+        invalid = [
+            ("true", s) for s in (None, "", "0", "x", "1/2", str(int(maximum) + 1))
+        ]
         # A UI-less run is one build/unit leg; extra legs would only repeat it.
         invalid += [("false", "2"), ("false", maximum)]
         for ui, shards in invalid:
@@ -243,7 +275,9 @@ class GateTests(unittest.TestCase):
     def test_ui_shards_follow_the_executed_selection(self):
         # Non-PR events run the full suite on every leg the workflow defines.
         self.assertEqual(ci.ui_shards("push", "full"), ci.ui_tests.MAX_SHARDS)
-        self.assertEqual(ci.ui_shards("workflow_dispatch", "full"), ci.ui_tests.MAX_SHARDS)
+        self.assertEqual(
+            ci.ui_shards("workflow_dispatch", "full"), ci.ui_tests.MAX_SHARDS
+        )
         # A PR that wants full coverage executes only the smoke tripwire.
         self.assertEqual(ci.ui_shards("pull_request", "full"), 1)
         self.assertEqual(ci.ui_shards("pull_request", "none"), 1)
@@ -457,6 +491,83 @@ class GitDiffTests(unittest.TestCase):
     def test_empty_diff_runs_all(self):
         self.assertEqual(ci.selection("pull_request", self.base, self.base)[0], ALL)
 
+    def test_journey_manifest_coverage_is_explicit_and_fail_closed(self):
+        cases = (
+            (
+                "src/apps/api/app/pipeline/guided_story.py",
+                (True, "covered", "kri-524-creation"),
+            ),
+            (
+                "src/apps/api/app/services/cloud_render_contract.py",
+                (True, "covered", "kri-524-creation"),
+            ),
+            (
+                "src/apps/api/app/kria/planner.py",
+                (True, "covered", "kri-524-creation,kri-557-thinking"),
+            ),
+            (
+                "src/apps/ios/Kria/Features/ThoughtSummaryDisclosure.swift",
+                (True, "covered", "kri-557-thinking"),
+            ),
+            (
+                "src/apps/api/app/schemas/slide_post.py",
+                (True, "covered", "slide-post-binding-recovery"),
+            ),
+            (
+                "src/apps/api/app/routes/plan_items.py",
+                (True, "covered", "kri-557-thinking,slide-post-binding-recovery"),
+            ),
+            (
+                "src/apps/api/app/schemas/user_song.py",
+                (True, "covered", "kri-561-song-order"),
+            ),
+            (
+                "src/apps/api/app/pipeline/lipsync_montage.py",
+                (True, "covered", "kri-561-song-order"),
+            ),
+            (
+                "src/apps/api/app/schemas/guided_edit_revision.py",
+                (True, "covered", "kri-561-song-order"),
+            ),
+            (
+                "src/apps/api/app/kria/planner.py.backup",
+                (True, "gap", ""),
+            ),
+            # This has journey impact but no incident-corpus repro mapping.
+            (
+                "src/apps/api/app/pipeline/unmapped_future_compiler.py",
+                (True, "gap", ""),
+            ),
+            ("docs/runbooks/ci.md", (False, "not_applicable", "")),
+        )
+        for path, expected in cases:
+            with self.subTest(path=path):
+                self.write(path, "changed")
+                self.assertEqual(
+                    ci.journey_details("pull_request", self.base, self.commit()),
+                    expected,
+                )
+                self.base = self.git("rev-parse", "HEAD")
+
+    def test_journey_selects_each_affected_incident_without_borrowing_another(self):
+        self.write("src/apps/api/app/pipeline/guided_story.py", "changed")
+        self.write("src/apps/ios/Kria/Core/Services.swift", "changed")
+        self.assertEqual(
+            ci.journey_details("pull_request", self.base, self.commit()),
+            (True, "covered", "kri-524-creation,kri-557-thinking"),
+        )
+
+    def test_journey_diff_errors_and_empty_diff_are_coverage_gaps(self):
+        self.assertEqual(
+            ci.journey_details("pull_request", self.base, self.base), (True, "gap", "")
+        )
+        with patch.object(
+            ci, "git", side_effect=subprocess.CalledProcessError(1, "git")
+        ):
+            self.assertEqual(
+                ci.journey_details("pull_request", "bad", "bad"), (True, "gap", "")
+            )
+
     def test_cli_outputs_and_summary(self):
         self.write("src/apps/ios/new.swift", "test")
         head = self.commit()
@@ -480,7 +591,7 @@ class GitDiffTests(unittest.TestCase):
         self.assertEqual(
             output.read_text(),
             "web=false\napi=false\nios=true\nios_ui=true\nios_ui_groups=full\n"
-            "ios_ui_shards=1\n",
+            "ios_ui_shards=1\njourney=false\njourney_coverage=not_applicable\njourney_ids=\n",
         )
         self.assertIn("ios: run", summary.read_text())
         self.assertIn("iOS UI groups: full (1 native leg)", summary.read_text())

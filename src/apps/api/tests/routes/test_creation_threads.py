@@ -198,6 +198,28 @@ async def test_device_only_capabilities_hide_cloud_only_slide_format(
 
 
 @pytest.mark.asyncio
+async def test_native_only_capabilities_are_device_only_without_changing_the_web_picker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import phone_rollout
+
+    monkeypatch.setattr(settings, "ios_native_device_only_enabled", True)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [uuid.uuid4()])
+    monkeypatch.setattr(
+        phone_rollout, "phone_render_supported_formats", lambda: frozenset({"montage"})
+    )
+
+    native = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=True)
+    web = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=False)
+
+    assert native["creation_mode"] == "device_only"
+    assert [entry["id"] for entry in native["formats"]] == ["montage"]
+    assert web["creation_mode"] == "hybrid"
+    assert "slides" in {entry["id"] for entry in web["formats"]}
+
+
+@pytest.mark.asyncio
 async def test_new_thread_provisions_renderable_minimal_persona() -> None:
     """A chat project can dispatch before onboarding has generated a persona."""
 
@@ -2384,6 +2406,88 @@ async def test_upload_reservation_is_signed_for_opaque_media_id(
     )
     assert result[0].media_id == "clip-1.mp4"
     assert result[0].gcs_path.endswith("/clip-1.mp4")
+
+
+@pytest.mark.asyncio
+async def test_native_only_rejects_cloud_video_before_creating_a_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        state={"native_device_only": True, "render_destination_intent": "device"},
+    )
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    db = Mock()
+
+    with pytest.raises(HTTPException) as failure:
+        await upload_urls(
+            _request(),
+            str(thread.id),
+            UploadBody(
+                files=[
+                    UploadFile(
+                        filename="clip.mp4",
+                        content_type="video/mp4",
+                        file_size_bytes=10,
+                        client_upload_id="clip-1",
+                    )
+                ]
+            ),
+            user,
+            db,
+        )
+
+    assert failure.value.status_code == 422
+    assert failure.value.detail == "This iPhone project requires an on-device video source."
+    db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_native_only_rejects_a_preflag_cloud_video_reservation_on_attach(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_plan_item_id=uuid.uuid4(),
+        state={"native_device_only": True, "render_destination_intent": "device"},
+    )
+    item = SimpleNamespace(edit_format="montage", clip_gcs_paths=[])
+    reservation = SimpleNamespace(upload_contract={"purpose": "cloud_render_source"})
+    result = Mock()
+    result.scalars.return_value.all.return_value = [reservation]
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+    db.execute = AsyncMock(return_value=result)
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_reject_input_mutation_while_rendering", AsyncMock())
+
+    with pytest.raises(HTTPException) as failure:
+        await attach_media(
+            _request(),
+            str(thread.id),
+            AttachBody(
+                media=[MediaInput(media_id="clip-1.mp4", kind="video")],
+                client_event_id="attach-1",
+                expected_revision=0,
+            ),
+            user,
+            db,
+        )
+
+    assert failure.value.status_code == 422
+    assert failure.value.detail == "This iPhone project requires an on-device video source."
 
 
 @pytest.mark.asyncio

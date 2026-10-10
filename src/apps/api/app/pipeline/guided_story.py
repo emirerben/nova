@@ -32,9 +32,7 @@ from app.pipeline.cloud_render_evidence import (
     picture_timeline,
     text_evidence_row,
 )
-from app.pipeline.cloud_render_evidence import (
-    duration_tolerance_s as render_duration_tolerance_s,
-)
+from app.pipeline.cloud_render_evidence import duration_tolerance_s as render_duration_tolerance_s
 from app.pipeline.duration_contract import (
     STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S,
     STRICT_MIXED_MEDIA_MAX_CFR_OVERRUN_S,
@@ -51,6 +49,7 @@ from app.pipeline.pinned_text import (
     top_pin_edge_from_rows,
 )
 from app.pipeline.probe import probe_video
+from app.pipeline.sequence_text_evidence import sequence_lineage, sequence_role
 from app.schemas.edit_proposal import (
     FAST_MONTAGE_TITLE_HOLD_S,
     GUIDED_STORY_MIN_MOMENT_S,
@@ -323,14 +322,14 @@ class GuidedStoryExecutionPlan(BaseModel):
             song = self.user_song
             if abs(song.window_duration_s - float(self.resolved_duration_s)) > 0.001:
                 # KRI-457: a background song that runs out before the video does simply
-                # stops, so its window may be shorter than the video, but only because
-                # it ends where the song ends. Lip-sync windows stay exactly the video.
-                runs_out = (
-                    song.mode == "background"
-                    and song.window_duration_s < float(self.resolved_duration_s)
-                    and abs(song.window_end_s - song.duration_s) <= 0.001
+                # stops, so its window may be shorter than the video, because it ends where
+                # the song ends. Lip-sync windows stay exactly the video.
+                # KRI-561: ... or because the creator stopped it earlier in the editor, so any
+                # shorter background window is valid; a LONGER one never is.
+                shorter_background = song.mode == "background" and song.window_duration_s < float(
+                    self.resolved_duration_s
                 )
-                if not runs_out:
+                if not shorter_background:
                     raise ValueError("the song window must cover the resolved video duration")
         if (self.song_reference is None) != (self.song_reference_track_duration_s is None):
             raise ValueError("song reference requires its pinned catalog duration")
@@ -2119,7 +2118,7 @@ def _compile_scheduled_execution_plan(
     return compiled.model_dump(mode="json", exclude_none=False)
 
 
-def _compile_execution_plan_version(
+def _compile_base_execution_plan_version(
     guided_snapshot: object,
     *,
     track: dict[str, Any] | None,
@@ -2180,7 +2179,11 @@ def _compile_execution_plan_version(
             track=track,
             video_media_ids={ref.media_id for ref in snapshot.media if ref.kind == "video"},
             mixed_media_timing=snapshot.mixed_media_timing,
-            preserve_exact_cadence=snapshot.montage_cadence is not None,
+            # Text composition is pinned against these source/output windows.
+            # A later catalog-track choice must not move its approved boundaries.
+            preserve_exact_cadence=(
+                snapshot.montage_cadence is not None or snapshot.text_composition is not None
+            ),
         )
         for cut, (start_s, end_s, beat_time_s) in zip(
             snapshot.fast_cuts, output_windows, strict=True
@@ -2517,6 +2520,19 @@ def _compile_execution_plan_version(
     return compiled.model_dump(mode="json", exclude_none=False)
 
 
+def _compile_execution_plan_version(guided_snapshot, *, track, compiler_version):
+    """Compile the base and replay its pinned text program without model I/O."""
+    plan = _compile_base_execution_plan_version(
+        guided_snapshot, track=track, compiler_version=compiler_version
+    )
+    _, _, snapshot = validate_guided_snapshot(guided_snapshot)
+    if snapshot.text_composition is not None:
+        from app.services.creation_text_composition import replay_text_composition
+
+        plan = replay_text_composition(plan, snapshot.text_composition)
+    return plan
+
+
 def compile_execution_plan(
     guided_snapshot: object,
     *,
@@ -2837,6 +2853,141 @@ def _project_source_bound_narration_labels(
     return projected
 
 
+def _project_context_label_text_elements(
+    labels: list[TextElement],
+    moments: list[dict[str, Any]],
+    *,
+    canonical_moments: list[dict[str, Any]],
+    moment_lineage: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    """Project server-owned context labels onto a revised output timeline.
+
+    Context labels are not editor text, so their persisted intervals are a
+    snapshot of the timeline that produced the approval. Project each label
+    through the canonical moments it actually covered, then through surviving
+    revision segments descended from those moments. This keeps compact labels
+    across several clips intact without borrowing them for newly inserted
+    sources.
+    """
+    if not labels or not moments:
+        return []
+    projected: list[dict[str, Any]] = []
+    canonical_by_id = {str(moment.get("moment_id")): moment for moment in canonical_moments}
+    revised_by_canonical: dict[str, list[dict[str, Any]]] = {}
+    for moment in moments:
+        for canonical_id in moment_lineage.get(str(moment.get("moment_id")), []):
+            revised_by_canonical.setdefault(canonical_id, []).append(moment)
+    for label_index, label in enumerate(labels):
+        try:
+            label_start = float(label.start_s)
+            label_end = float(label.end_s)
+        except (TypeError, ValueError):
+            continue
+        for canonical_id, canonical_moment in canonical_by_id.items():
+            canonical_start = float(canonical_moment.get("output_start_s") or 0.0)
+            canonical_end = float(canonical_moment.get("output_end_s") or 0.0)
+            covered_start = max(label_start, canonical_start)
+            covered_end = min(label_end, canonical_end)
+            if covered_end <= covered_start:
+                continue
+            canonical_duration = max(_FRAME_S, canonical_end - canonical_start)
+            has_canonical_source_window = (
+                canonical_moment.get("source_start_s") is not None
+                and canonical_moment.get("source_end_s") is not None
+            )
+            canonical_source_start = float(
+                canonical_moment.get("source_start_s")
+                if canonical_moment.get("source_start_s") is not None
+                else canonical_start
+            )
+            canonical_source_end = float(
+                canonical_moment.get("source_end_s")
+                if canonical_moment.get("source_end_s") is not None
+                else canonical_end
+            )
+            canonical_source_duration = max(_FRAME_S, canonical_source_end - canonical_source_start)
+            covered_source_start = (
+                canonical_source_start
+                + ((covered_start - canonical_start) / canonical_duration)
+                * canonical_source_duration
+            )
+            covered_source_end = (
+                canonical_source_start
+                + ((covered_end - canonical_start) / canonical_duration) * canonical_source_duration
+            )
+            for index, moment in enumerate(revised_by_canonical.get(canonical_id, [])):
+                revised_start = float(moment.get("output_start_s") or 0.0)
+                revised_end = float(moment.get("output_end_s") or 0.0)
+                revised_duration = max(0.0, revised_end - revised_start)
+                if revised_duration <= 0:
+                    continue
+                has_revised_source_window = (
+                    moment.get("source_start_s") is not None
+                    and moment.get("source_end_s") is not None
+                )
+                if not (has_canonical_source_window and has_revised_source_window):
+                    start_s = (
+                        revised_start
+                        + ((covered_start - canonical_start) / canonical_duration)
+                        * revised_duration
+                    )
+                    end_s = (
+                        revised_start
+                        + ((covered_end - canonical_start) / canonical_duration) * revised_duration
+                    )
+                else:
+                    revised_source_start = float(
+                        moment.get("source_start_s")
+                        if moment.get("source_start_s") is not None
+                        else revised_start
+                    )
+                    revised_source_end = float(
+                        moment.get("source_end_s")
+                        if moment.get("source_end_s") is not None
+                        else revised_end
+                    )
+                    revised_source_duration = max(
+                        _FRAME_S, revised_source_end - revised_source_start
+                    )
+                    source_overlap_start = max(covered_source_start, revised_source_start)
+                    source_overlap_end = min(covered_source_end, revised_source_end)
+                    if source_overlap_end <= source_overlap_start:
+                        continue
+                    start_s = (
+                        revised_start
+                        + ((source_overlap_start - revised_source_start) / revised_source_duration)
+                        * revised_duration
+                    )
+                    end_s = (
+                        revised_start
+                        + ((source_overlap_end - revised_source_start) / revised_source_duration)
+                        * revised_duration
+                    )
+                if end_s <= start_s:
+                    continue
+                source_clip_id = str(moment.get("media_id") or "")
+                params = dict(label.source_params or {})
+                source_params = {
+                    **params,
+                    "source": "context_sport",
+                    "source_clip_id": source_clip_id,
+                    "key": f"{source_clip_id}:{index}:{start_s:.3f}:{end_s:.3f}",
+                    "identity": f"context_sport:{source_clip_id}:{index}:{start_s:.3f}:{end_s:.3f}",
+                }
+                moment_id = str(moment.get("moment_id") or "")
+                projected.append(
+                    label.model_copy(
+                        update={
+                            "id": f"context-sport-{label_index}-{index}-{moment_id}",
+                            "start_s": start_s,
+                            "end_s": end_s,
+                            "source_params": source_params,
+                        }
+                    ).model_dump(mode="json", exclude_none=True)
+                )
+    return projected
+
+
 def compile_guided_runtime_plan(
     canonical_plan: object,
     guided_snapshot: object,
@@ -2943,6 +3094,7 @@ def compile_guided_runtime_plan(
             base_by_moment_id[moment.moment_id] = dumped
         moments: list[dict[str, Any]] = []
         beat_windows: list[dict[str, Any]] = []
+        moment_lineage: dict[str, list[str]] = {}
         for index, segment in enumerate(normalized_revision["segments"]):
             source = source_by_id.get(segment["media_id"])
             if source is None:
@@ -2978,6 +3130,13 @@ def compile_guided_runtime_plan(
             # deterministic for repeated media.
             beat_id = f"guided-edit-beat-{index}"
             moment_id = str(segment["segment_id"])
+            lineage = [
+                str(identity)
+                for identity in (segment.get("segment_id"), segment.get("parent_segment_id"))
+                if identity is not None and str(identity) in base_by_moment_id
+            ]
+            if lineage:
+                moment_lineage[moment_id] = lineage
             moments.append(
                 {
                     **base,
@@ -3203,6 +3362,14 @@ def compile_guided_runtime_plan(
                     song_row["window_start_s"] = round(new_start, 3)
             if "volume" in song_edit:
                 song_row["volume"] = float(song_edit["volume"])
+            creator_end = song_edit.get("window_end_s")
+            if creator_end is not None and song_row.get("mode") == "lipsync":
+                # A lip-sync song is trimmed by cutting the video (the song start follows
+                # the cuts); an explicit end would take the footage off the song.
+                raise GuidedStoryError(
+                    USER_SONG_LIPSYNC_LOCKED,
+                    "Lip-sync keeps the song where you filmed it.",
+                )
             # KRI-374: the song window follows the video's length, so a trim or extension
             # re-windows the song from the SAME start (the per-take deltas are untouched;
             # the song stays the master clock). Always recomputed from the start and the NEW
@@ -3212,21 +3379,28 @@ def compile_guided_runtime_plan(
                 if moments
                 else None
             )
-            if (
-                song_row.get("mode") == "lipsync"
-                and opener is not None
-                and canonical.story_timeline
-                and str(opener.get("media_id")) == str(canonical.story_timeline[0].media_id)
-            ):
-                # Trimming the head of the opening cut must carry the song with it, or the
-                # singer drifts off the audio by the trim (job 5a7f6c88: 0.3 s). Only the take
-                # the plan opened with can do this; a reorder keeps the pinned window and is
-                # refused by the take resync as before.
+            if song_row.get("mode") == "lipsync" and moments:
                 from app.pipeline.lipsync_montage import (  # noqa: PLC0415
                     window_start_for_first_cut_head,
+                    window_start_from_pinned_cuts,
                 )
 
-                head_start = window_start_for_first_cut_head(song_row, moments)
+                # KRI-561: a song trim in the editor drops or head-trims the opening cuts and
+                # ripples the rest, so the start follows ALL pinned cuts (the first cut may
+                # be gone). Cuts that disagree (a reorder) return None and fall back to the
+                # opener rule below, then to the take resync's refusal, as before.
+                head_start = window_start_from_pinned_cuts(song_row, moments)
+                if (
+                    head_start is None
+                    and opener is not None
+                    and canonical.story_timeline
+                    and str(opener.get("media_id")) == str(canonical.story_timeline[0].media_id)
+                ):
+                    # Trimming the head of the opening cut must carry the song with it, or the
+                    # singer drifts off the audio by the trim (job 5a7f6c88: 0.3 s). Only the
+                    # take the plan opened with can do this; a reorder keeps the pinned window
+                    # and is refused by the take resync as before.
+                    head_start = window_start_for_first_cut_head(song_row, moments)
                 if head_start is not None:
                     song_row["window_start_s"] = head_start
             song_duration_s = float(song_row["duration_s"])
@@ -3253,6 +3427,18 @@ def compile_guided_runtime_plan(
                         "Slide it earlier.",
                     )
                 window_end = min(window_end, song_duration_s)
+                if creator_end is not None:
+                    # KRI-561: the creator stopped the music here (absolute song time, so it
+                    # survives a later video-length edit). It must still leave a playable bit.
+                    if float(creator_end) < float(song_row["window_start_s"]) + (
+                        MIN_PLAYABLE_SONG_S - 1e-3
+                    ):
+                        raise GuidedStoryError(
+                            USER_SONG_WINDOW_OUT_OF_RANGE,
+                            "That end point leaves less than a second of your song. "
+                            "Slide it later.",
+                        )
+                    window_end = min(window_end, round(float(creator_end), 3))
             song_row["window_end_s"] = window_end
         # A timeline revision can split, reorder, or reuse sources. Rebuild
         # grounded clip labels against its output windows so a label never leaks
@@ -3351,6 +3537,19 @@ def compile_guided_runtime_plan(
                 )
             runtime_payload["context_label_text_elements"] = _compact_context_sport_text_elements(
                 context_elements
+            )
+        elif canonical.context_label_text_elements:
+            # Older approvals may retain only the materialized server labels,
+            # without the raw clip intents needed to rebuild them.  Still
+            # project those labels onto the revised timeline; carrying the
+            # canonical intervals here would make a trim render past EOF.
+            runtime_payload["context_label_text_elements"] = _project_context_label_text_elements(
+                canonical.context_label_text_elements,
+                moments,
+                canonical_moments=[
+                    moment.model_dump(mode="json") for moment in canonical.story_timeline
+                ],
+                moment_lineage=moment_lineage,
             )
         runtime = GuidedStoryExecutionPlan.model_validate(runtime_payload)
         return runtime.model_dump(mode="json", exclude_none=False)
@@ -4212,11 +4411,15 @@ def _guided_source_audio_evidence(
 def _guided_text_role(element_id: str) -> TextRole:
     """The contract role a guided-compiler text element plays (by its own ids)."""
 
-    if element_id in _GUIDED_OPENING_TEXT_IDS:
+    lineage = sequence_lineage({"element_id": element_id})
+    if lineage is not None:
+        return sequence_role({"element_id": element_id})  # type: ignore[return-value]
+    source_id = lineage[0] if lineage is not None else element_id
+    if source_id in _GUIDED_OPENING_TEXT_IDS:
         return "opening"
-    if element_id in _GUIDED_CLOSING_TEXT_IDS:
+    if source_id in _GUIDED_CLOSING_TEXT_IDS:
         return "closing"
-    if element_id.startswith(_GUIDED_CLIP_TEXT_PREFIXES):
+    if source_id.startswith(_GUIDED_CLIP_TEXT_PREFIXES):
         return "clip"
     return "any"
 
@@ -4270,6 +4473,17 @@ def guided_text_evidence(
                 start_s=element.start_s,
                 end_s=element.end_s,
                 media_id=media_id,
+                element_id=element.id,
+                sequence_source_id=(
+                    sequence_lineage({"element_id": element.id})[0]
+                    if sequence_lineage({"element_id": element.id}) is not None
+                    else None
+                ),
+                sequence_ordinal=(
+                    sequence_lineage({"element_id": element.id})[1]
+                    if sequence_lineage({"element_id": element.id}) is not None
+                    else None
+                ),
             )
         )
     return rows

@@ -10,9 +10,12 @@ from app.services import phone_destination as destination
 from app.services.creator_sessions import CREATOR_VISIBLE_ASSET_STATES
 from app.services.phone_destination import (
     DEVICE_INTENT_KEY,
+    NATIVE_DEVICE_ONLY_INTENT_KEY,
     has_device_intent,
+    has_native_device_only_intent,
     item_visuals_only_on_device,
     item_visuals_only_on_device_sync,
+    phone_rendering_allowed_for_job,
     visuals_only_on_device,
     with_device_intent,
 )
@@ -122,6 +125,30 @@ def test_stamp_tolerates_a_thread_without_state(pilot):
     assert with_device_intent(None, native_client=True, user_id=USER) == {
         DEVICE_INTENT_KEY: "device"
     }
+
+
+def test_native_device_only_stamps_an_account_outside_the_legacy_allowlist(monkeypatch):
+    monkeypatch.setattr(settings, "ios_native_device_only_enabled", True)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [USER])
+
+    stamped = with_device_intent({"media": []}, native_client=True, user_id=OTHER)
+
+    assert stamped == {
+        "media": [],
+        DEVICE_INTENT_KEY: "device",
+        NATIVE_DEVICE_ONLY_INTENT_KEY: True,
+    }
+    assert has_native_device_only_intent(stamped)
+    assert with_device_intent({"media": []}, native_client=False, user_id=OTHER) is None
+
+
+def test_native_device_only_job_survives_the_legacy_allowlist(monkeypatch):
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [USER])
+    job = SimpleNamespace(user_id=OTHER, assembly_plan={"native_device_only": True})
+
+    assert phone_rendering_allowed_for_job(job)
 
 
 def item(**changes):

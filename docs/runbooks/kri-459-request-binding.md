@@ -59,16 +59,63 @@ A strategy draft (new cut) lists every live requirement, so unjudged ones show a
 `partial` / `unchecked` ("still needs an output check"). An editor-operations turn
 receipts only the requirements stated in that turn; it no longer re-lists earlier
 ones, which put a yellow chip on every unrelated requirement after each chat edit.
-iOS draws `verification == "unchecked"` as a neutral "Not checked yet" chip, never
-the yellow "Partly done" one (this also covers events stored before the change).
+iOS draws `verification == "unchecked"` as a neutral "Have a look" chip (KRI-558; "Not
+checked yet" before), never the yellow "Partly done" one (this also covers events stored
+before the change).
+
+## Checking style asks (KRI-543)
+
+A `style` requirement about existing text can carry `facts.style_intent`, written by the
+brief extractor (prompt v5) only for what the creator named:
+`{"set": [{"field", "value"}], "target"?: "all_text" | "title" | "labels"}`.
+
+- Fields and values are a closed vocabulary that mirrors `TextElement`: `entrance`
+  (none/fade/pop/slide/typewriter), `alignment`, `text_case`, `font_family`, and a literal
+  `#RRGGBB` `color`. `brief.normalize_style_intent` validates it; a malformed intent is
+  dropped (the requirement stays unchecked), never a schema error. It is not a sticky fact.
+- `_check_style` compares it with the saved non-caption text rows (`PlanFacts.text_styles`,
+  typed title/label/text by the editor's own `classify`). All eligible rows hold every value
+  -> `met`. An explicit `target` with a mismatch -> a judged `partial`. Anything unknown
+  (unset font/color, no matching rows, a draft turn) or a mismatch with no `target` ("…to all
+  of them") stays unchecked, so "some text field changed" still never counts as met (KRI-524).
+- Measure the green rate after deploy: style receipts with `verification == "checked"` versus
+  `unchecked` in `scripts/admin.py --prod GET creation-threads/<id>/events`. Invest in target
+  resolution only if the anaphoric asks dominate.
+
+## The AI says what it changed (KRI-558)
+
+An editor turn no longer ends in "can't check" / "couldn't verify". `compile_editor_ops`
+keeps a before/after diff of the bundle (`services/kria_editor_ops_diff.py`, on
+`CompiledEditorDraft.diff`; per lane and field, on effective values, so a legacy
+`effect: fade-in` and `animation_phases.entrance == "fade"` are one entrance). Each
+requirement of the turn is then bound to it (`kria/editor_receipts.py`):
+
+- A requirement is `met` (`verification: checked`, `stage: applied`) when the diff holds a
+  change in the dimension its words/facts name ("font", "smaller", "fade", "align"…), on the
+  target it names (title / labels / a text named by its words), in the direction it asks. The
+  reason is the change ("Added a fade-in animation to both texts"). Each named dimension is
+  its own sub-ask: "Inter font and white" needs both changes.
+- A readable value that contradicts the ask (`style_asks.derive_style_ask`: the structured
+  intent, the extractor's facts, or the creator's own unambiguous words) still wins and is
+  `partial`. A change in the wrong field / text / direction is `partial` or `not_possible`
+  and says what changed instead. A requirement that names no dimension may only take the
+  entries no other requirement claimed (KRI-524: "some text field changed" never proves it).
+- The copilot's `unmet_requests` and `reply_notes` ride on `draft.apply_editor_ops`
+  (`unmet_requests`, `notes`) so a declined part is reported as `not_possible`.
+- Reply: `Done: <change>.` for one requirement, `- Done / Partly / Couldn't` lines for
+  several, then `Also changed: …` for unclaimed changes. An edit that changed nothing falls
+  back to the existing "different approach?" question; one that changed something is kept.
+- First drafts say nothing about asks only the render can show (no "couldn't verify", no
+  "still needs an output check" chips). The render-ready review judges title animation, label
+  corner, font/colour and per-clip lengths (`judged_at_render`, `check_text_look`,
+  `_check_clip_lengths`) from the finished text lane and timeline; what is still undecided
+  is listed under "Have a look at these in the video" with what the video holds.
+- Debug: `draft_execution.result["editor_diff"]` holds the diff (first 24 entries) for a turn.
 
 ## Editor-turn reply and extraction failures (KRI-534, KRI-536)
 
-- An editor-operations turn whose only open items are requirements no checker can
-  judge (for example a style ask) replies "Updated your edit." followed by "I can't
-  check this automatically, so have a look: <request>". It never echoes the model's
-  summary. A judged miss keeps the "I couldn't verify every requested change" wording,
-  and drafts, renders and the post-render review keep it too.
+- (Superseded by KRI-558 above: an applied edit names its changes.) An editor-operations
+  turn used to reply "Updated your edit." plus "I can't check this automatically".
 - When requirement extraction fails on a rendered follow-up, the turn is served by the
   edit copilot only if the message is one short text ask (a single sentence with no
   "and"/"also"/comma, no re-plan cue) and the copilot answers with in-place text ops

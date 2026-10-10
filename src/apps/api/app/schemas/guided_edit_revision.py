@@ -176,6 +176,13 @@ class GuidedEditorUserSong(BaseModel):
 
     volume: float = Field(default=1.0, ge=0.0, le=1.0, allow_inf_nan=False)
     window_start_s: float | None = Field(default=None, ge=0.0, allow_inf_nan=False)
+    # KRI-561: where the creator stops a BACKGROUND song, in absolute song seconds, so it
+    # survives later video-length edits (the effective end is
+    # ``min(window_end_s, start + video, song end)``). Omitted when unset: a revision saved
+    # before this field existed serializes, and hashes, exactly as before.
+    window_end_s: float | None = Field(
+        default=None, gt=0.0, allow_inf_nan=False, exclude_if=lambda value: value is None
+    )
     removed: bool = False
 
 

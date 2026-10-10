@@ -249,4 +249,54 @@ final class NativeEditorLayoutMetricsTests: XCTestCase {
         XCTAssertEqual(size.height, 360, accuracy: 0.01)
         XCTAssertEqual(size.width, 202.5, accuracy: 0.01)
     }
+
+    // MARK: KRI-508 anchored panels
+
+    func testAnchoredPanelStartsAtTheAnchorForEveryPanelAndFillsDownToTheBottom() {
+        let top = NativeEditorLayoutMetrics.panelAnchorTop(
+            screenHeight: 874, safeAreaTop: 59, keyboardHeight: 336, oneLineBar: TextEditBar.height(lines: 1)
+        )
+        // The anchor is where a one-line Edit text bar starts above the keyboard.
+        XCTAssertEqual(top, 874 - 59 - 336 - NativeEditorIslandMetrics.bottomPadding - TextEditBar.height(lines: 1), accuracy: 0.001)
+        let metrics = NativeEditorLayoutMetrics(
+            viewportSize: CGSize(width: 393, height: 874 - 59 - 34), safeAreaTop: 59, safeAreaBottom: 34,
+            topChromeHeight: 0, previewAspectRatio: 9.0 / 16,
+            keyboardVisible: false, isAccessibilitySize: false,
+            anchoredPanelTop: top, measuredHeaderHeight: 0
+        )
+        let preview = metrics.previewHeight(resize: 80)
+        XCTAssertEqual(preview, metrics.defaultPreviewHeight, accuracy: 0.001, "a stored handle resize cannot move the anchor")
+        // The panel is what is left under the preview + its padding + the transport row.
+        let area = 874 - 59 - 34 - (preview + NativeEditorLayoutMetrics.previewVerticalPadding)
+        let panel = metrics.panelDefaultHeight(areaHeight: area)
+        XCTAssertEqual(panel + NativeEditorIslandMetrics.bottomPadding + NativeEditorLayoutMetrics.transportHeight, area, accuracy: 0.001,
+                       "the panel fills the room under the anchor instead of stopping at the old cap")
+        XCTAssertEqual(preview + NativeEditorLayoutMetrics.previewVerticalPadding + NativeEditorLayoutMetrics.transportHeight, top, accuracy: 0.001,
+                       "preview + padding + transport row end exactly at the anchor")
+        XCTAssertGreaterThan(panel, NativeEditorLayoutMetrics.defaultPanelCap, "taller than the old 284pt cap")
+    }
+
+    func testTextBarTopMatchesTheAnchorSoStyleDoesNotMove() {
+        // Edit text (keyboard up): the bar sits on the keyboard and keeps the transport row above it.
+        let keyboard: CGFloat = 336, screen: CGFloat = 874, safeTop: CGFloat = 59
+        let viewportHeight = screen - safeTop - keyboard
+        let anchor = NativeEditorLayoutMetrics.panelAnchorTop(
+            screenHeight: screen, safeAreaTop: safeTop, keyboardHeight: keyboard, oneLineBar: TextEditBar.height(lines: 1)
+        )
+        let typing = NativeEditorLayoutMetrics(
+            viewportSize: CGSize(width: 393, height: viewportHeight), safeAreaTop: safeTop, safeAreaBottom: 0,
+            topChromeHeight: 0, previewAspectRatio: 9.0 / 16, keyboardVisible: true, isAccessibilitySize: false,
+            textEditBarHeight: TextEditBar.height(lines: 1), measuredHeaderHeight: 0
+        )
+        let preview = typing.defaultPreviewHeight
+        let panelTop = preview + NativeEditorLayoutMetrics.previewVerticalPadding + NativeEditorLayoutMetrics.transportHeight
+        XCTAssertEqual(panelTop, anchor, accuracy: 0.5, "the one-line Edit text bar starts exactly at the anchor")
+        // Style (no keyboard) anchors the same preview and the same panel top.
+        let style = NativeEditorLayoutMetrics(
+            viewportSize: CGSize(width: 393, height: screen - safeTop - 34), safeAreaTop: safeTop, safeAreaBottom: 34,
+            topChromeHeight: 0, previewAspectRatio: 9.0 / 16, keyboardVisible: false, isAccessibilitySize: false,
+            anchoredPanelTop: anchor, measuredHeaderHeight: 0
+        )
+        XCTAssertEqual(style.defaultPreviewHeight, preview, accuracy: 0.5, "the video keeps its size from Edit text to Style")
+    }
 }

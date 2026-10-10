@@ -31,19 +31,28 @@ from app.kria.brief import (
     persist_brief_version_sync,
     render_brief_request,
 )
+from app.kria.brief_binding import BriefBindingRequestTooLongError
 from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
     build_receipts,
+    describe_text_look,
     is_judged,
+    judged_at_render,
     needs_creator_choice,
     plan_facts_from_editor_payload,
     plan_facts_from_phone_variant,
+    plan_facts_from_rendered_montage,
     plan_facts_from_strategy,
     reply_from_receipts,
     requirements_to_check_at_draft,
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
+from app.kria.editor_receipts import (
+    bind_editor_receipts,
+    reply_from_diff,
+    reply_from_editor_receipts,
+)
 from app.kria.language import is_paraphrase_only
 from app.kria.planner import (
     PlannedKriaTurn,
@@ -103,11 +112,18 @@ from app.services.kria_editor_ops import (
     EditorStateReplyError,
     EditorStateSpeechCutError,
     KriaEditorOpError,
+    _clip_label_links,
     compile_editor_ops,
     editor_state_has_lanes,
     merge_editor_draft,
     parse_editor_state,
     resolve_editor_base,
+)
+from app.services.kria_editor_ops_diff import describe_diff
+from app.services.thought_summaries import (
+    ThoughtSummaryPublisher,
+    bind_thought_publisher,
+    publisher_for_creation,
 )
 from app.worker import celery_app
 
@@ -128,6 +144,30 @@ class _Completion:
     successor_turn_id: str | None = None
     requeue_turn_id: str | None = None
     response_only: bool = False
+
+
+class ApprovedCreatorRequestTooLongError(ValueError):
+    """The approval fence cannot retain every creator instruction safely."""
+
+
+def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> str | None:  # noqa: ANN001
+    """Pin every creator instruction visible to the approved source turn."""
+    messages = [
+        str(content).strip()
+        for (content,) in db.execute(
+            select(CreationThreadEvent.content)
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.role == "user",
+                CreationThreadEvent.sequence <= through_sequence,
+                CreationThreadEvent.content.is_not(None),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        ).all()
+        if str(content).strip()
+    ]
+    request = "\n".join(messages)
+    return request if len(request) <= 12_000 else None
 
 
 @dataclass(frozen=True)
@@ -590,9 +630,12 @@ def _complete_draft_turn(
     snapshot_hash = ""
     # Editor-state provenance (set only when a client state rode this turn).
     state_trace: dict[str, Any] = {}
+    editor_diff_trace: list[dict[str, Any]] = []
     state_id: str | None = None
     your_edits_snapshot: dict[str, Any] | None = None
     your_edits_hash = ""
+    restore_record: dict[str, Any] | None = None  # KRI-442: pre-update lanes for Undo
+    scope_note = ""  # KRI-441: "I left X alone." for what layer 3 took back
     if apply_intent.tool_name == "draft.apply_strategy":
         changes = _strategy_changes(arguments)
         document = KriaDraftDocument(
@@ -764,7 +807,63 @@ def _complete_draft_turn(
             elif wants_speech_cut and prior_payload:
                 raise RuntimeError("Save the current draft before applying speech processing")
             compiled = compile_editor_ops(job, editor_base.projected, arguments.operations)
+            scoped_fields = _scoped_turn_fields(db.get(CreationThreadEvent, turn.source_event_id))
+            if scoped_fields is not None:
+                # KRI-441 layer 3: whatever the model or a manual edit slipped outside the
+                # flagged sections is stripped from the compiled draft, never failed.
+                from app.kria import plan_review  # noqa: PLC0415
+
+                clip_bar_ids = frozenset(_clip_label_links(job, editor_base.projected))
+                compiled, repair = plan_review.repair_compiled(
+                    compiled, scoped_fields["scope"], clip_bar_ids=clip_bar_ids
+                )
+                dropped = (plan.diagnostics or {}).get("scope_dropped") or []
+                scope_note = plan_review.repair_note(
+                    repair, [str(d.get("section")) for d in dropped]
+                )
+                if repair or dropped:
+                    log.info(
+                        "plan_review_scope_repaired",
+                        thread_id=str(thread.id),
+                        turn_id=str(turn.id),
+                        dropped_ops=[d.get("op") for d in dropped],
+                        reverted_fields=[*repair.reverted_fields, *repair.reverted_bars],
+                    )
+                if isinstance(compiled.payload, EditorCommitRequest):
+                    repaired_data = compiled.payload.model_dump(mode="json", exclude_none=True)
+                    if not plan_review.lanes_in(repaired_data):
+                        raise KriaEditorOpError(
+                            say(
+                                en="that would only change sections you did not flag",
+                                tr="bu yalnızca işaretlemediğin bölümleri değiştirirdi",
+                            )
+                        )
+                    restore_record = plan_review.build_restore_record(
+                        repaired_data,
+                        compiled.before,
+                        scoped_fields["scope"],
+                        turn_id=str(turn.id),
+                        base_job_id=str(job.id),
+                        clip_bar_ids=clip_bar_ids,
+                    )
+                if head is None and not (
+                    editor_base.source == "client_state" and editor_state_has_lanes(client_state)
+                ):
+                    # A baseline revision under the update, so "Undo all" has a parent.
+                    from app.kria.drafts import _editor_snapshot  # noqa: PLC0415
+
+                    baseline = KriaDraftDocument(
+                        kind="editor",
+                        intent="Before update",
+                        edit_format=str(item.edit_format or "montage"),
+                        editor_payload=_editor_snapshot(
+                            dict(editor_base.projected), canonical_generation_id
+                        ),
+                        changes=[],
+                    )
+                    your_edits_snapshot, your_edits_hash = canonical_snapshot(baseline)
             changes = compiled.changes
+            editor_diff_trace = compiled.diff.to_json()
             state_id = (
                 client_state.client_state_id if editor_base.source == "client_state" else None
             )
@@ -806,6 +905,8 @@ def _complete_draft_turn(
         if document is None:
             raise RuntimeError("Kria produced an unsupported draft tool")
         reply_text = arguments.summary
+        if scope_note:
+            reply_text = f"{reply_text} {scope_note}".strip()
         requirement_receipts: list[dict[str, Any]] = []
         brief = None
         if planned.brief_route is not None:
@@ -851,56 +952,74 @@ def _complete_draft_turn(
                     )
                 else:
                     # Editor operations verify only the requirements stated in
-                    # this very turn, against literal text in the editor payload.
+                    # this very turn, against what the ops changed (KRI-558).
                     facts = plan_facts_from_editor_payload(
                         document.editor_payload, document.editor_text_diff, changes
                     )
+                    facts = replace(facts, anaphora_rows=compiled.diff.changed_text_ids())
                     checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
+                editor_turn = apply_intent.tool_name == "draft.apply_editor_ops"
                 if checked:
+                    bound_writer = settings.brief_binding_for(thread.creator_id)
                     receipts = build_receipts(
                         checked,
                         facts,
-                        include_unchecked=settings.brief_binding_for(thread.creator_id),
+                        include_unchecked=editor_turn or bound_writer,
+                        # Listing unchecked asks must not switch on the strict order verdicts
+                        # of a creator whose writer is not brief-bound.
+                        strict_order=bound_writer,
                     )
+                    bound = False
+                    if editor_turn and not compiled.diff.unavailable:
+                        try:
+                            bound_receipts, unbound = bind_editor_receipts(
+                                checked,
+                                receipts,
+                                compiled.diff,
+                                facts.text_styles or (),
+                                unmet=[item.model_dump() for item in arguments.unmet_requests],
+                            )
+                            reply_text = reply_from_editor_receipts(
+                                checked,
+                                bound_receipts,
+                                unbound=describe_diff(
+                                    unbound, live_text_count=compiled.diff.live_text_count, limit=2
+                                ),
+                                notices=planned.policy_notices,
+                                notes=arguments.notes,
+                            )
+                            receipts, bound = bound_receipts, True
+                        except Exception:  # noqa: BLE001 - receipts must never fail a good edit
+                            log.exception("kria_editor_receipts_failed", turn_id=str(turn.id))
+                    if not bound:
+                        # A first draft has no finished video yet: a request only the render
+                        # can show is said nothing about now (the render-ready review judges
+                        # it), never "couldn't verify" (KRI-558). (An editor turn whose receipts
+                        # could not be bound keeps its open items, listed calmly.)
+                        if not editor_turn:
+                            receipts = [r for r in receipts if r.verification != "unchecked"]
+                        reply_text = reply_from_receipts(
+                            CreativeBrief(version=brief.version, requirements=checked),
+                            receipts,
+                            summary=arguments.summary,
+                            notices=planned.policy_notices,
+                        )
                     requirement_receipts = [r.model_dump(mode="json") for r in receipts]
-                    reply_text = reply_from_receipts(
-                        CreativeBrief(version=brief.version, requirements=checked),
-                        receipts,
-                        summary=arguments.summary,
-                        notices=planned.policy_notices,
-                        # KRI-534: compiled editor ops already produced the draft.
-                        edit_applied=apply_intent.tool_name == "draft.apply_editor_ops",
+                elif editor_turn:
+                    phrases = describe_diff(
+                        compiled.diff.entries, live_text_count=compiled.diff.live_text_count
                     )
-        # KRI-529: list the untouched requirements only when a NEW cut is drafted (the
-        # approval moment). An editor turn reports on what it was asked, instead of a
-        # fresh "still needs an output check" chip for every earlier requirement.
+                    if phrases:
+                        reply_text = reply_from_diff(
+                            phrases, notices=planned.policy_notices, notes=arguments.notes
+                        )
         if (
             settings.brief_binding_for(thread.creator_id)
-            and brief is not None
-            and apply_intent.tool_name == "draft.apply_strategy"
-        ):
-            from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
-
-            checked_ids = {receipt["requirement_id"] for receipt in requirement_receipts}
-            requirement_receipts.extend(
-                RequirementReceipt(
-                    requirement_id=req.id,
-                    status="partial",
-                    verification="unchecked",
-                    stage="understood",
-                    reason=say(
-                        en="This requirement still needs an output check.",
-                        tr="Bu isteğin videoda hâlâ kontrol edilmesi gerekiyor.",
-                    ),
-                    target_media_ids=[req.scope.split(":", 1)[1]]
-                    if req.scope.startswith("clip:")
-                    else [],
-                ).model_dump(mode="json")
-                for req in brief.live()
-                if req.id not in checked_ids
-            )
-        if settings.brief_binding_for(thread.creator_id) and any(
-            needs_creator_choice(receipt) for receipt in requirement_receipts
+            and any(needs_creator_choice(receipt) for receipt in requirement_receipts)
+            # KRI-558: an editor draft that really changed something is kept, and its
+            # Partly / Couldn't lines say what is missing. Only an edit that changed
+            # nothing falls back to the "different approach?" question.
+            and (apply_intent.tool_name == "draft.apply_strategy" or compiled.diff.empty())
         ):
             # Do not replace a creator's current draft with a known partial edit.
             # Roll back the speculative draft/brief work, then persist the request
@@ -1013,6 +1132,17 @@ def _complete_draft_turn(
                 if choice_gate:
                     brief = answered_brief(brief, document.strategy)
             source_event = db.get(CreationThreadEvent, turn.source_event_id)
+            full_request = (
+                _full_creator_request_sync(
+                    db,
+                    thread_id=thread.id,
+                    through_sequence=int(source_event.sequence),
+                )
+                if source_event is not None
+                else None
+            )
+            if source_event is not None and full_request is None:
+                raise ApprovedCreatorRequestTooLongError
             coverage = dict(planned.brief_coverage or {})
             coverage["enforced_ids"] = [
                 r["requirement_id"]
@@ -1032,6 +1162,7 @@ def _complete_draft_turn(
                         latest_message=str(source_event.content or "")
                         if source_event
                         else document.intent,
+                        full_creator_request=full_request,
                         media_snapshot=planned.media_snapshot
                         if planned.media_snapshot is not None
                         else snapshot_media(item),
@@ -1075,7 +1206,13 @@ def _complete_draft_turn(
             group_order=0,
             target_thread_id=thread.id,
             status="completed",
-            result={"snapshot_hash": snapshot_hash, "changes": changes, **state_trace},
+            result={
+                "snapshot_hash": snapshot_hash,
+                "changes": changes,
+                **({"editor_diff": editor_diff_trace} if editor_diff_trace else {}),
+                **state_trace,
+                **({"plan_review_before": restore_record} if restore_record else {}),
+            },
             started_at=datetime.now(UTC),
             completed_at=datetime.now(UTC),
         )
@@ -1315,6 +1452,7 @@ async def _plan_with_live_agent(
     lease_epoch: int,
     editor_state: dict[str, Any] | None = None,
     answers_clip_question: bool = False,
+    thought_publisher: ThoughtSummaryPublisher | None = None,
 ) -> PlannedKriaTurn:
     stop = asyncio.Event()
 
@@ -1355,17 +1493,37 @@ async def _plan_with_live_agent(
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
             parsed_state = parse_editor_state(editor_state)
-            return await plan_live_turn(
-                db,
-                thread_id=uuid.UUID(str(snapshot["thread_id"])),
-                item_id=uuid.UUID(str(snapshot["item_id"])),
-                creator_id=uuid.UUID(str(snapshot["creator_id"])),
-                user_message=user_message,
-                # Only passed when present so the no-state call is byte-identical.
-                **({"editor_state": parsed_state} if parsed_state is not None else {}),
-                # KRI-282: a clip-picker answer must re-plan, never take the copilot path.
-                **({"answers_clip_question": True} if answers_clip_question else {}),
-            )
+            live_scope = snapshot.get("live_scope")
+            scoped: dict[str, Any] = {}
+            if isinstance(live_scope, dict):
+                from app.kria.plan_contract import ManualEdit  # noqa: PLC0415
+
+                scoped = {
+                    "scope": list(live_scope["scope"]),
+                    "manual_edits": [
+                        ManualEdit.model_validate(e) for e in live_scope["manual_edits"]
+                    ],
+                }
+                log.info(
+                    "plan_review_scope_applied",
+                    thread_id=str(snapshot["thread_id"]),
+                    turn_id=str(turn_id),
+                    scope=scoped["scope"],
+                    manual_edit_count=len(scoped["manual_edits"]),
+                )
+            with bind_thought_publisher(thought_publisher):
+                return await plan_live_turn(
+                    db,
+                    thread_id=uuid.UUID(str(snapshot["thread_id"])),
+                    item_id=uuid.UUID(str(snapshot["item_id"])),
+                    creator_id=uuid.UUID(str(snapshot["creator_id"])),
+                    user_message=user_message,
+                    # Only passed when present so the no-state call is byte-identical.
+                    **({"editor_state": parsed_state} if parsed_state is not None else {}),
+                    # KRI-282: a clip-picker answer must re-plan, never take the copilot path.
+                    **({"answers_clip_question": True} if answers_clip_question else {}),
+                    **scoped,
+                )
     finally:
         turn_deadline.reset(deadline)
         stop.set()
@@ -1438,6 +1596,26 @@ def _answers_clip_question(source: Any) -> bool:
     )
 
 
+def _scoped_turn_fields(source: Any) -> dict[str, Any] | None:
+    """``{"scope": [...], "manual_edits": [...]}`` stored on a scoped turn's user_message."""
+    payload = getattr(source, "payload", None)
+    # Deliberately NOT gated on LIVE_PLAN_REVIEW_ENABLED: the flag was checked at submit. If it
+    # flipped off while the turn was queued, honouring the stored scope is safe; ignoring it
+    # would plan the creator's scoped ask as an unscoped re-plan.
+    if not isinstance(payload, dict):
+        return None
+    scope = payload.get("scope")
+    if not isinstance(scope, list) or not scope:
+        return None
+    edits = payload.get("manual_edits")
+    return {
+        "scope": [str(s) for s in scope],
+        "manual_edits": [e for e in edits if isinstance(e, dict)]
+        if isinstance(edits, list)
+        else [],
+    }
+
+
 def _stored_editor_state(turn: Any) -> dict[str, Any] | None:
     state = getattr(turn, "editor_state", None)
     return state if isinstance(state, dict) else None
@@ -1483,8 +1661,13 @@ def _claim(
         source = db.get(CreationThreadEvent, turn.source_event_id)
         if thread is None or source is None:
             return None
+        claimed_snapshot = {**_snapshot(thread), "client_request_id": turn.client_event_id}
+        live_scope = _scoped_turn_fields(source)
+        if live_scope is not None:
+            # KRI-441: rides the snapshot dict so the claim tuple keeps its shape.
+            claimed_snapshot["live_scope"] = live_scope
         return (
-            _snapshot(thread),
+            claimed_snapshot,
             str(source.content or ""),
             int(turn.lease_epoch),
             int(thread.revision),
@@ -1874,6 +2057,15 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
     # KRI-520: every reply this turn writes (model prompts, server copy, failures)
     # follows the chat's language; released in the `finally` below.
     language_token = bind_reply_language(snapshot.get("reply_language"))
+    thought_publisher = (
+        publisher_for_creation(
+            creator_id=uuid.UUID(str(snapshot["creator_id"])),
+            thread_id=uuid.UUID(str(snapshot["thread_id"])),
+            client_request_id=str(snapshot["client_request_id"]),
+        )
+        if snapshot.get("client_request_id")
+        else None
+    )
     try:
         if settings.main_creator_agent_enabled and snapshot.get("item_id"):
             planned = asyncio.run(
@@ -1883,6 +2075,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     turn_id=identifier,
                     lease_owner=lease_owner,
                     lease_epoch=lease_epoch,
+                    thought_publisher=thought_publisher,
                     **({"editor_state": editor_state} if editor_state else {}),
                     **({"answers_clip_question": True} if answers_clip_question else {}),
                 )
@@ -1958,6 +2151,33 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         claimed_thread_revision=claimed_thread_revision,
                         plan=planned.plan,
                     )
+                except (ApprovedCreatorRequestTooLongError, BriefBindingRequestTooLongError):
+                    planned = replace(
+                        planned,
+                        plan=KriaTurnPlan(
+                            mode="respond",
+                            turn_value="recovery",
+                            response=say(
+                                en=(
+                                    "Your full edit request is too long to preserve safely. "
+                                    "Nothing was changed; please start a new request with "
+                                    "the key directions."
+                                ),
+                                tr=(
+                                    "Tam düzenleme isteğin güvenle korumak için çok uzun. "
+                                    "Hiçbir şey değişmedi; önemli yönergelerle yeni bir "
+                                    "istek başlat."
+                                ),
+                            ),
+                        ),
+                    )
+                    completion = _complete_response_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        plan=planned.plan,
+                    )
             if not completion.committed:
                 if completion.requeue_turn_id is not None:
                     run_kria_turn.apply_async(
@@ -1967,6 +2187,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     )
                     return {"turn_id": turn_id, "status": "requeued"}
                 return {"turn_id": turn_id, "status": "ignored"}
+            if thought_publisher is not None:
+                thought_publisher.complete()
             if planned.defer_brief:
                 try:
                     extract_kria_brief.apply_async(
@@ -2088,6 +2310,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             )
         raise
     finally:
+        if thought_publisher is not None:
+            thought_publisher.fail()
         release_reply_language(language_token)
 
 
@@ -3304,23 +3528,80 @@ def _finish_approval_dispatch(
                 },
             )
             if settings.live_plan_review_enabled:
-                # KRI-443: all seven sections start `waiting`, in the SAME transaction
-                # (and under the same thread lock) as `render_queued`.
+                # KRI-443: every section starts `waiting` (a scoped update copies the
+                # untouched ones from the previous job), in the SAME transaction (and
+                # under the same thread lock) as `render_queued`.
                 from app.kria.plan_blocks import (  # noqa: PLC0415
+                    dispatch_payload,
                     plan_block_payload,
                     waiting_blocks,
                 )
 
+                # The Celery task is already queued, so a feed problem must never fail
+                # this transaction: build the scoped payload inside a savepoint and fall
+                # back to the plain `waiting` event if anything goes wrong.
+                try:
+                    with db.begin_nested():
+                        plan_payload = dispatch_payload(
+                            db,
+                            thread,
+                            turn_id=str(turn.id),
+                            job_id=str(job_id),
+                            source_event_id=getattr(turn, "source_event_id", None),
+                        )
+                except Exception as exc:  # noqa: BLE001 - the feed must never fail a dispatch
+                    log.warning(
+                        "plan_dispatch_payload_failed",
+                        job_id=str(job_id),
+                        error_class=type(exc).__name__,
+                        error=str(exc)[:200],
+                    )
+                    plan_payload = plan_block_payload(
+                        turn_id=str(turn.id), job_id=str(job_id), blocks=waiting_blocks()
+                    )
                 _append_sync_event(
                     db,
                     thread,
                     role="system",
                     event_type="plan_block",
                     content=None,
-                    payload=plan_block_payload(
-                        turn_id=str(turn.id), job_id=str(job_id), blocks=waiting_blocks()
-                    ),
+                    payload=plan_payload,
                 )
+                scoped_fields = (
+                    _scoped_turn_fields(db.get(CreationThreadEvent, turn.source_event_id))
+                    if getattr(claim, "draft_kind", "strategy") == "editor"
+                    else None
+                )
+                if scoped_fields is not None:
+                    # KRI-441/442: a scoped editor update (or a section undo) re-renders the
+                    # SAME Job, which the previous-job bookkeeping cannot see, so the
+                    # changed sections are written here from the freshly committed variant.
+                    try:
+                        with db.begin_nested():
+                            from app.kria import plan_review  # noqa: PLC0415
+
+                            job_row = db.get(Job, uuid.UUID(str(job_id)))
+                            variant_row = (
+                                _find_variant(job_row, claim.target_variant_id)
+                                if job_row is not None
+                                else None
+                            )
+                            if variant_row is not None:
+                                plan_review.emit_scoped_update_feed(
+                                    db,
+                                    thread,
+                                    turn_id=str(turn.id),
+                                    job=job_row,
+                                    variant=variant_row,
+                                    scope=scoped_fields["scope"],
+                                )
+                    except Exception as exc:  # noqa: BLE001 - the feed must never fail a dispatch
+                        log.warning(
+                            "plan_scoped_update_feed_failed",
+                            job_id=str(job_id),
+                            error_class=type(exc).__name__,
+                            error=str(exc)[:200],
+                        )
             db.commit()
             return "dispatched", None
 
@@ -3748,6 +4029,72 @@ def _voice_behind_footage_note(job: Job) -> str:
     return " ".join(sentences)
 
 
+def _plan_record_generations(job: Job, variant: dict) -> set[str | None]:
+    """The generations whose plan records describe this variant's finished output.
+
+    A cloud render (and a pending phone variant) carries the approved generation itself.
+    A published phone export carries the phone's upload attempt id instead (KRI-546), so
+    the approved generation is read off that variant's device record: the generation its
+    recipe was checked against when this very attempt was published. An editor Save pins
+    its own generation there, so the original plan's records are never read for it.
+    """
+    generation = str(variant.get("render_generation_id") or "") or None
+    accepted: set[str | None] = {generation}
+    records = (job.assembly_plan or {}).get(DEVICE_RENDER_FIELD)
+    record = (
+        records.get(str(variant.get("variant_id") or "")) if isinstance(records, dict) else None
+    )
+    if (
+        generation is not None
+        and variant.get("render_destination") == "device"
+        and isinstance(record, dict)
+        and str(record.get("published_attempt") or "") == generation
+    ):
+        pinned = record.get("requirement_generation")
+        if isinstance(pinned, str) and pinned:
+            accepted.add(pinned)
+    return accepted
+
+
+def _source_fingerprints(job: Job) -> dict[str, str]:
+    """Each added clip's media id -> the sha256 of its original upload (KRI-546).
+
+    Read from the job's phone source bindings and Visuals bindings (the fingerprints a
+    phone export is checked against), then the approved media snapshot's upload receipts.
+    A media id with two different fingerprints is left out, so it is never judged.
+    """
+    from app.services.phone_sources import (  # noqa: PLC0415
+        PHONE_SOURCES_FIELD,
+        PHONE_VISUALS_FIELD,
+    )
+
+    plan = job.assembly_plan or {}
+    found: dict[str, str] = {}
+    conflicted: set[str] = set()
+
+    def take(media_id: object, sha: object) -> None:
+        if not isinstance(media_id, str) or not media_id or not isinstance(sha, str) or not sha:
+            return
+        if found.setdefault(media_id, sha) != sha:
+            conflicted.add(media_id)
+
+    for row in plan.get(PHONE_SOURCES_FIELD) or []:
+        if isinstance(row, dict) and isinstance(row.get("original"), dict):
+            take(row.get("media_id"), row["original"].get("sha256"))
+    for row in plan.get(PHONE_VISUALS_FIELD) or []:
+        if isinstance(row, dict):
+            take(row.get("media_id"), row.get("sha256"))
+    binding = plan.get("creator_brief_binding")
+    snapshot = binding.get("media_snapshot") if isinstance(binding, dict) else None
+    for row in (snapshot.get("clip_assignments") if isinstance(snapshot, dict) else None) or []:
+        contract = row.get("upload_contract") if isinstance(row, dict) else None
+        proxy = contract.get("proxy") if isinstance(contract, dict) else None
+        original = proxy.get("original") if isinstance(proxy, dict) else None
+        if isinstance(original, dict):
+            take(row.get("media_id"), original.get("sha256"))
+    return {media_id: sha for media_id, sha in found.items() if media_id not in conflicted}
+
+
 def _approved_generation_review(
     db: Any,
     thread: CreationThread,
@@ -3770,30 +4117,67 @@ def _approved_generation_review(
     if brief is None or not brief.live():
         return default_text, []
     generation = str(variant.get("render_generation_id") or "") or None
+    # An editor turn changed the cut those records describe: it keeps the exact id match.
+    accepted = (
+        {generation}
+        if (execution.result or {}).get("editor_prep") is not None
+        else _plan_record_generations(job, variant)
+    )
     receipts = []
+    montage: dict | None = None
     for record_key in ("unified_montage", NARRATED_ALIGNMENT_FIELD):
         record = (job.assembly_plan or {}).get(record_key) or {}
-        if (
-            record.get("generation_id") != generation
-            or record.get("brief_version") != brief.version
-        ):
+        record_generation = record.get("generation_id")
+        if record_generation not in accepted or record.get("brief_version") != brief.version:
             continue
+        if record_key == "unified_montage":
+            montage = record
         for row in record.get("requirement_receipts") or []:
             try:
                 receipt = RequirementReceipt.model_validate(row)
             except ValueError:
                 continue
-            if receipt.brief_version == brief.version and receipt.generation_id == generation:
+            if (
+                receipt.brief_version == brief.version
+                and receipt.generation_id == record_generation
+            ):
                 receipts.append(receipt)
+    live = {req.id: req for req in brief.live()}
+    if montage is not None:
+        # KRI-546: a finished phone montage. Its plan record judged order, text and length
+        # when it was laid out; what the record left unjudged, and the asks only the
+        # finished edit can show (a held closing line, a repeated file), are judged here.
+        facts = plan_facts_from_rendered_montage(
+            variant, montage, fingerprints=_source_fingerprints(job)
+        )
+        receipts = [
+            receipt
+            for receipt in receipts
+            if is_judged(live.get(receipt.requirement_id), receipt)
+            and not judged_at_render(live[receipt.requirement_id])
+        ]
+    else:
+        # KRI-537: the variant's phone_beat_receipt and voiceover_bed_level are the render's
+        # evidence for pop-in and mix asks; the text-lane facts alone cannot see them.
+        facts = plan_facts_from_phone_variant(variant)
     known = {receipt.requirement_id for receipt in receipts}
-    # KRI-537: the variant's phone_beat_receipt and voiceover_bed_level are the render's
-    # evidence for pop-in and mix asks; the text-lane facts alone cannot see them.
-    facts = plan_facts_from_phone_variant(variant)
     receipts.extend(
         build_receipts(
             [req for req in brief.live() if req.id not in known], facts, include_unchecked=True
         )
     )
+    order = {req_id: index for index, req_id in enumerate(live)}
+    receipts.sort(key=lambda receipt: order.get(receipt.requirement_id, len(order)))
+    # KRI-558: an ask no check could decide says what the finished video holds, never
+    # "I can't verify this one automatically".
+    receipts = [
+        receipt.model_copy(
+            update={"reason": describe_text_look(live[receipt.requirement_id], facts)}
+        )
+        if receipt.verification == "unchecked" and receipt.requirement_id in live
+        else receipt
+        for receipt in receipts
+    ]
     receipts = [
         receipt.model_copy(
             update={

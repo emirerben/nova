@@ -663,6 +663,25 @@ Rollback: `fly secrets set PHONE_SPEAKER_FACE_FILL_ENABLED=false --app nova-vide
 `tests/pipeline/test_phone_subtitled_plan.py` and
 `tests/routes/test_phone_subtitled_editor_commit.py`.
 
+### Phone Montage render-ready receipts (KRI-546)
+
+A published phone export carries the phone's upload attempt id as `render_generation_id`,
+while the plan records (`unified_montage`, `narrated_alignment`) carry the approved
+`creator_generation_id`, so the review used to drop them and answer "Couldn't verify" for
+an order the plan had already judged. `_plan_record_generations` now also accepts the
+`requirement_generation` of the variant's device record when its `published_attempt` is
+this variant's id (an editor turn keeps the exact match). For a matched `unified_montage`
+the facts are `plan_facts_from_rendered_montage`: the variant's facts plus the record's
+order facts, the finished `story_timeline` order, the held `closing_speech` (met only when
+that clip is the last cut, the cut covers the line and `source_audio_preserved` is not
+false) and duplicate files by the original uploads' sha256 (`_source_fingerprints`: phone
+source / Visuals bindings, then the binding's media snapshot). The record's judged
+receipts stand; its unjudged ones, and every "keep one of a repeated video" or "end on X's
+own spoken line" ask (`judged_at_render`), are judged from those facts. Drafts and every
+other plan keep "can't verify" for both asks. Guards:
+`tests/tasks/test_montage_render_ready_review.py`,
+`tests/kria/test_brief_montage_render_asks.py`.
+
 ### Narrated render receipts (KRI-533)
 
 A phone Voiceover draft used to list every order / timing / caption-language ask as

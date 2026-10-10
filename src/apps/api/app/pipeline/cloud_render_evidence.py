@@ -67,6 +67,11 @@ class CloudTextEvidence(BaseModel):
     start_s: float = Field(ge=0)
     end_s: float = Field(gt=0)
     media_id: str | None = None
+    # Internal lineage used to prove compiler-owned text sequences. Optional so
+    # receipts written by older workers remain valid.
+    element_id: str | None = None
+    sequence_source_id: str | None = None
+    sequence_ordinal: int | None = Field(default=None, ge=1)
 
 
 def normalize_text(value: object) -> str:
@@ -127,6 +132,9 @@ def text_evidence_row(
     start_s: float,
     end_s: float,
     media_id: str | None = None,
+    element_id: str | None = None,
+    sequence_source_id: str | None = None,
+    sequence_ordinal: int | None = None,
 ) -> dict[str, Any]:
     return CloudTextEvidence(
         role=role,
@@ -134,6 +142,9 @@ def text_evidence_row(
         start_s=round(float(start_s), 3),
         end_s=round(float(end_s), 3),
         media_id=media_id,
+        element_id=element_id,
+        sequence_source_id=sequence_source_id,
+        sequence_ordinal=sequence_ordinal,
     ).model_dump(mode="json", exclude_none=True)
 
 

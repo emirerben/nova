@@ -6326,6 +6326,31 @@ def _probe_duration(path: str) -> float:
         return 30.0  # safe fallback
 
 
+def _footage_level_under_song(video_path: str, original_level: float | None) -> float | None:
+    """The clamped footage level to mix UNDER a song, or None to keep replacing.
+
+    None when the creator set no level (or 0 = muted, which the replace path
+    already delivers) or the video has no audio stream to mix.
+    """
+    if original_level is None or isinstance(original_level, bool):
+        return None
+    try:
+        level = max(0.0, min(1.0, float(original_level)))
+    except (TypeError, ValueError):
+        return None
+    if not level > 0.0:
+        return None
+    try:
+        from app.pipeline.probe import probe_video  # noqa: PLC0415
+
+        if not probe_video(video_path).has_audio:
+            return None
+    except Exception as exc:  # noqa: BLE001 - probe failure => historical replace
+        log.warning("original_level_probe_failed", error=str(exc))
+        return None
+    return level
+
+
 def _mix_template_audio(
     video_path: str,
     audio_gcs_path: str,
@@ -6340,8 +6365,14 @@ def _mix_template_audio(
     force_video_duration: bool = False,
     target_video_duration_s: float | None = None,
     audio_gain: float = 1.0,
+    original_level: float | None = None,
 ) -> None:
     """Replace assembled video's audio with template music track.
+
+    ``original_level`` (0..1, the editor's ``mix.original_level``): when set above
+    zero and the video carries audio, the footage's own sound plays UNDER the track
+    at that level instead of being dropped. ``None`` / ``0`` keep the historical
+    replace behaviour exactly (same ffmpeg command).
 
     Non-fatal by default if anything fails — falls back to copying video_path →
     output_path. Set require_audio=True for song variants where shipping a
@@ -6484,6 +6515,41 @@ def _mix_template_audio(
         "-y",
         output_path,
     ]
+    footage_level = _footage_level_under_song(video_path, original_level)
+    if footage_level is not None:
+        # Footage sound under the song: the song chain is unchanged, the clips'
+        # own audio joins it at the creator's level, and the shared fade +
+        # loudnorm run on the SUM (so the ratio is what the creator set).
+        mix_graph = (
+            f"[1:a]{(window_filter + gain_filter).rstrip(',') or 'anull'}[song];"
+            f"[0:a]volume={footage_level:.4f}[footage];"
+            "[song][footage]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,"
+            f"afade=t=out:st={fade_start}:d=0.5,"
+            f"loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11[aout]"
+        )
+        cmd = [
+            "ffmpeg",
+            "-i",
+            video_path,
+            "-stream_loop",
+            "-1",
+            *(["-ss", f"{safe_offset:.3f}"] if safe_offset > 0 else []),
+            "-i",
+            audio_local,
+            "-filter_complex",
+            mix_graph,
+            "-map",
+            "0:v",
+            "-map",
+            "[aout]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            *(["-t", f"{use_duration:.3f}"] if use_duration > 0 else []),
+            "-y",
+            output_path,
+        ]
     result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
     if result.returncode != 0:
         stderr = result.stderr.decode()[:200]

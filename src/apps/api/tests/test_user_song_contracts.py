@@ -56,3 +56,57 @@ def test_phone_user_song_supported_needs_flag_and_capabilities(monkeypatch):
     monkeypatch.setattr(settings, "phone_render_verified_features", ["musicBed", "audioMix"])
     monkeypatch.setattr(settings, "user_song_montage_enabled", False)
     assert phone_user_song_supported() is False
+
+
+def test_song_order_payloads_written_before_the_timeline_stay_byte_identical():
+    """KRI-561: every new question/answer field is omitted when unset, so stored events
+    (and request digests) from before the timeline card serialize exactly as before."""
+    from app.schemas.user_song import (  # noqa: PLC0415
+        SongOrderAnswerIn,
+        SongOrderItem,
+        SongOrderQuestion,
+    )
+
+    question = SongOrderQuestion(
+        question_id="q",
+        proposed_order=["a"],
+        items=[SongOrderItem(media_id="a", status="confident", song_start_s=1.0)],
+        song_generation=2,
+    )
+    assert question.model_dump(mode="json") == {
+        "question_id": "q",
+        "proposed_order": ["a"],
+        "items": [{"media_id": "a", "status": "confident", "song_start_s": 1.0, "alternates": []}],
+        "song_generation": 2,
+    }
+    assert SongOrderAnswerIn(question_id="q", ordered_media_ids=["a"]).model_dump(mode="json") == {
+        "question_id": "q",
+        "ordered_media_ids": ["a"],
+    }
+
+
+def test_a_question_with_the_new_fields_still_parses_for_older_readers_of_the_event():
+    from app.schemas.user_song import SongOrderQuestion  # noqa: PLC0415
+
+    raw = {
+        "question_id": "q",
+        "proposed_order": ["a"],
+        "items": [
+            {
+                "media_id": "a",
+                "status": "ambiguous",
+                "song_start_s": -2.5,
+                "alternates": [],
+                "duration_s": 9.0,
+                "candidates": [{"delta_s": -2.5, "likelihood": 0.4}],
+            }
+        ],
+        "song_duration_s": 90.0,
+        "max_window_s": 120.0,
+        "first_line_s": 2.0,
+    }
+    parsed = SongOrderQuestion.model_validate(raw)
+    assert parsed.items[0].candidates[0].delta_s == -2.5
+    assert parsed.model_dump(mode="json")["items"][0]["candidates"] == [
+        {"delta_s": -2.5, "likelihood": 0.4}
+    ]

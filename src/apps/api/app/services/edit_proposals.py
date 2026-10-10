@@ -429,7 +429,11 @@ def expire_proposal_attempt(item: PlanItem, *, generation_attempt_id: str) -> bo
 
 
 def renders_on_phone(
-    media: list[MediaRef], owner_id: object, *, visuals_only_device: bool = False
+    media: list[MediaRef],
+    owner_id: object,
+    *,
+    visuals_only_device: bool = False,
+    native_device_only: bool = False,
 ) -> bool:
     """Proxy sources mark a phone item exactly as the render dispatch gate does.
 
@@ -440,7 +444,7 @@ def renders_on_phone(
 
     from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
 
-    if not settings.phone_rendering_for(owner_id):
+    if not (settings.phone_rendering_for(owner_id) or native_device_only):
         return False
     if any(is_analysis_proxy_path(ref.gcs_path) for ref in media):
         return True
@@ -448,7 +452,11 @@ def renders_on_phone(
 
 
 def phone_renderable_media(
-    media: list[MediaRef], owner_id: object, *, visuals_only_device: bool = False
+    media: list[MediaRef],
+    owner_id: object,
+    *,
+    visuals_only_device: bool = False,
+    native_device_only: bool = False,
 ) -> list[MediaRef]:
     """Keep a phone item's plan to media the iPhone can draw (KRI-121).
 
@@ -467,7 +475,12 @@ def phone_renderable_media(
         phone_composable_video,
     )
 
-    if not renders_on_phone(media, owner_id, visuals_only_device=visuals_only_device):
+    if not renders_on_phone(
+        media,
+        owner_id,
+        visuals_only_device=visuals_only_device,
+        native_device_only=native_device_only,
+    ):
         return media
     verified = settings.phone_render_verified_features
     drawable = {
@@ -494,7 +507,11 @@ def phone_renderable_media(
 
 
 def phone_story_layouts(
-    snapshot: EditProposalSnapshot, owner_id: object, *, visuals_only_device: bool = False
+    snapshot: EditProposalSnapshot,
+    owner_id: object,
+    *,
+    visuals_only_device: bool = False,
+    native_device_only: bool = False,
 ) -> EditProposalSnapshot:
     """Keep a phone item's video moments fullscreen, the only way the iPhone draws video.
 
@@ -508,7 +525,12 @@ def phone_story_layouts(
     would change the approved story's timing and text instead.
     """
 
-    on_phone = renders_on_phone(snapshot.media, owner_id, visuals_only_device=visuals_only_device)
+    on_phone = renders_on_phone(
+        snapshot.media,
+        owner_id,
+        visuals_only_device=visuals_only_device,
+        native_device_only=native_device_only,
+    )
     images = {ref.media_id for ref in snapshot.media if ref.kind == "image"}
     beats = [
         beat.model_copy(update={"layout": "fullscreen"})
@@ -620,6 +642,13 @@ def _validated_scheduled_draft(
             creator_request=current.brief.creator_request if current else "",
         )
     validate_frame_schedule(snapshot)
+    if snapshot.text_composition is not None:
+        from app.pipeline.guided_story import compile_proposal_execution_plan
+
+        # Validate after server schedule/layout normalization, against exactly
+        # the snapshot that will be persisted. Unchanged scheduled saves must
+        # not fall back to the unscheduled compiler for this digest check.
+        compile_proposal_execution_plan(snapshot)
     return snapshot
 
 

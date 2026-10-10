@@ -56,11 +56,10 @@ def test_original_level_accepted_on_device_and_clamped() -> None:
     assert parsed == {"op": "set_mix", "original_level": 1.0}
 
 
-def test_original_level_rejected_honestly_off_device() -> None:
-    parsed, state = _parse({"op": "set_mix", "original_level": 0}, _snap())
-    assert parsed is None
-    assert state.rejection_reasons[0]["reason"] == "capability_unavailable"
-    assert "phone-rendered" in state.rejection_reasons[0]["detail"]
+def test_original_level_accepted_on_cloud_renders_too() -> None:
+    """The cloud renderer honours the footage level (song variants + original audio)."""
+    parsed, _ = _parse({"op": "set_mix", "original_level": 0.3}, _snap())
+    assert parsed == {"op": "set_mix", "original_level": 0.3}
 
 
 def test_original_level_rejected_on_guided_native_device_snapshot() -> None:
@@ -139,12 +138,15 @@ def test_compile_set_mix_music_level_payload_identical_to_before() -> None:
     assert payload.background_music is None
 
 
-def test_compile_original_level_device_only() -> None:
-    variant = {**_variant(), "render_destination": "device"}
-    payload = _compile([{"op": "set_mix", "original_level": 0.0}], variant).payload
+def test_compile_original_level_device_and_cloud_but_not_cloud_voiceover() -> None:
+    device = {**_variant(), "render_destination": "device"}
+    payload = _compile([{"op": "set_mix", "original_level": 0.0}], device).payload
     assert payload.mix.original_level == 0.0 and payload.mix.music_level is None
-    with pytest.raises(KriaEditorOpError, match="phone-rendered"):
-        _compile([{"op": "set_mix", "original_level": 0.0}])
+    payload = _compile([{"op": "set_mix", "original_level": 0.4}]).payload
+    assert payload.mix.original_level == 0.4
+    voiceover = {**_variant(), "variant_id": "voiceover_only"}
+    with pytest.raises(KriaEditorOpError, match="voiceover"):
+        _compile([{"op": "set_mix", "original_level": 0.4}], voiceover)
 
 
 def test_compile_music_gain_db_sends_current_track_and_gain() -> None:

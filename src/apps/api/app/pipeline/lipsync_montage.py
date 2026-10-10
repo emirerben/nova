@@ -212,6 +212,41 @@ def window_start_for_first_cut_head(
     return round(derived, 3)
 
 
+def window_start_from_pinned_cuts(
+    user_song: Mapping[str, Any], moments: Sequence[Mapping[str, Any]]
+) -> float | None:
+    """The song window start that keeps EVERY pinned take on the song after an edit (KRI-561).
+
+    ``source_start - output_start == window_start - delta`` holds for every cut of a pinned take,
+    so each cut votes for ``delta + source_start - output_start``. When the creator trims the song
+    in the editor (drops the opening cuts, or head-trims the first one) the whole video ripples,
+    and all the votes move together to the new start. Returns that start when every pinned cut
+    agrees within a frame, it differs from the current window start by more than a frame and it is
+    not negative; ``None`` (keep the pinned window) otherwise, including when the cuts DISAGREE
+    (a reorder or a retime), which the take resync then refuses as before.
+    """
+    if user_song.get("mode") != "lipsync" or not moments:
+        return None
+    takes = user_song.get("takes") or {}
+    votes: list[float] = []
+    for moment in moments:
+        take = takes.get(str(moment.get("media_id")))
+        if not isinstance(take, Mapping) or take.get("delta_s") is None:
+            continue  # B-roll and unpinned footage do not vote
+        votes.append(
+            float(take["delta_s"])
+            + float(moment.get("source_start_s") or 0.0)
+            - float(moment.get("output_start_s") or 0.0)
+        )
+    if not votes or max(votes) - min(votes) > HEAD_TRIM_TOLERANCE_S:
+        return None
+    derived = sum(votes) / len(votes)
+    current = float(user_song["window_start_s"])
+    if abs(derived - current) <= HEAD_TRIM_TOLERANCE_S or derived < 0:
+        return None
+    return round(derived, 3)
+
+
 def resync_lipsync_moments(
     plan: Any, *, source_durations: Mapping[str, float] | None = None
 ) -> Any:
@@ -649,9 +684,18 @@ def _media_ref(clip: UnifiedClip) -> MediaRef:
     )
 
 
+# KRI-561: a take the creator placed on the song timeline counts at least this much toward a
+# span, however weak its measured likelihood (a drop in an empty gap has none). Their layout
+# then wins span selection instead of being dropped as ``gap_unfillable`` behind a sure take.
+CREATOR_PLACED_WEIGHT = 0.5
+
+
 def _weight(block: _Block) -> float:
     """How much a placed block counts toward a span: its likelihood, never zero."""
-    return max(block.placed.likelihood, 0.05) if block.placed is not None else 0.0
+    if block.placed is None:
+        return 0.0
+    floor = CREATOR_PLACED_WEIGHT if block.placed.confirmed else 0.05
+    return max(block.placed.likelihood, floor)
 
 
 def _covered_ms(blocks: Sequence[_Block]) -> float:

@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # Admission-only rollout fence.  Rendering remains controlled by its own
     # phone capability gates so this can safely retire web creation first.
     ios_device_only_mode: bool = False
+    # Native-only rollout fence. Unlike IOS_DEVICE_ONLY_MODE this never retires
+    # web creation: it binds only projects created through the iPhone client to
+    # the device renderer, regardless of the legacy phone allowlist.
+    ios_native_device_only_enabled: bool = False
     kria_minimum_client_protocol: int = 2
     # Executor behavior is intentionally owned by the render pipeline; this
     # setting only declares the rollout control plane default.
@@ -619,6 +623,12 @@ class Settings(BaseSettings):
     # `fly machine restart <id>`. Needs `musicBed` + `audioMix` in
     # PHONE_RENDER_VERIFIED_FEATURES (both already verified in prod).
     user_song_montage_enabled: bool = True
+    # KRI-561: the song-order question is answered on a horizontal song timeline (play the
+    # song, drop clips onto song time) instead of the vertical reorder list. Kill switch:
+    # `fly secrets set SONG_ORDER_TIMELINE_ENABLED=false` + restart (api): capabilities drop
+    # `song_order_placements` and the app falls back to the reorder card. Only effective
+    # while USER_SONG_MONTAGE_ENABLED holds.
+    song_order_timeline_enabled: bool = True
     # KRI-443: live plan block feed. After Create on a v2 thread, the render emits
     # `plan_block` events into CreationThreadEvent (read via GET /delta), and
     # POST /creation-threads/{id}/turns/{turn}/cancel-render is enabled. Default
@@ -1696,6 +1706,10 @@ class Settings(BaseSettings):
     # 404s. Capability `slide_post_chat_edit`. Apply: `fly secrets set
     # SLIDE_POST_CHAT_EDIT_ENABLED=true --app nova-video` + restart (api).
     slide_post_chat_edit_enabled: bool = False
+    # KRI-557: provider-marked Gemini thought summaries for native creation and
+    # slide-post calls. Deploy dark; enable after production canary with
+    # THOUGHT_SUMMARIES_ENABLED=true for API and Celery processes after canary.
+    thought_summaries_enabled: bool = False
     # KRI-482: keep extended phone slide exports off until physical-device parity passes.
     # False routes video/look slides through the existing server renderer.
     slide_post_extended_device_export_enabled: bool = False

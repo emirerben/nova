@@ -452,7 +452,7 @@ class UnifiedMontagePlan:
             if self.snapshot.pinned_texts
             else {}
         )
-        return {
+        record = {
             "version": 1,
             "brief_version": self.brief_version,
             "clip_ids": list(self.clip_ids),
@@ -487,6 +487,40 @@ class UnifiedMontagePlan:
             **song,
             **speech,
         }
+
+        if self.snapshot.text_composition is not None:
+            from app.pipeline.guided_story import compile_proposal_execution_plan
+
+            texts = compile_proposal_execution_plan(self.snapshot)["text_elements"]
+
+            def wording(source_id: str) -> str | None:
+                rows = [
+                    row
+                    for row in texts
+                    if row["id"] == source_id
+                    or (row.get("source_params") or {}).get("sequence_source_id") == source_id
+                ]
+                return (
+                    " ".join(row["text"] for row in sorted(rows, key=lambda row: row["start_s"]))
+                    or None
+                )
+
+            record["title"] = wording("guided-title")
+            actual_labels = []
+            for label in record["labels"]:
+                cut = next(
+                    (
+                        cut
+                        for cut in self.snapshot.fast_cuts or []
+                        if cut.media_id == label["media_id"]
+                    ),
+                    None,
+                )
+                text = wording(f"clip-label-{cut.cut_id}") if cut else None
+                if text is not None:
+                    actual_labels.append({**label, "text": text})
+            record["labels"] = actual_labels
+        return record
 
     def guided_edit(self, *, generation_attempt_id: str | None = None) -> dict[str, Any]:
         """The immutable ``assembly_plan["guided_edit"]`` payload for this plan."""

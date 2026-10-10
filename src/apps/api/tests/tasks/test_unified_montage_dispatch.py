@@ -1217,3 +1217,56 @@ def test_a_wordless_title_next_to_another_blocker_keeps_the_generic_ask_but_hone
     assert "Should I try again or simplify this request?" in message
     # The title's own way forward is not lost behind the generic ask.
     assert message.endswith('For the title, tell me the words or say "continue without a title".')
+
+
+def test_initial_creation_composes_full_request_before_pinning_phone_plan(harness, monkeypatch):
+    import json
+
+    from app.agents.edit_copilot import EditCopilotAgent
+
+    job, snapshot, *_ = harness(brief=None)
+    title = "Morning coffee by the river"
+    job.all_candidates["creator_request"] = (
+        f"Title: {title}. Show separate words one after another with fade in and out."
+    )
+    job.all_candidates["creator_strategy"]["opening_title"] = title
+    seen = []
+
+    def run(self, input, *, ctx=None):
+        seen.append(input.utterance)
+        return self.parse(
+            json.dumps(
+                {
+                    "intent": "edit",
+                    "confidence": 0.99,
+                    "reply": "Prepared",
+                    "ops": [
+                        {
+                            "op": "replace_text_sequence",
+                            "selector": {"ids": ["guided-title"]},
+                            "segments": title.split(),
+                            "patch": {
+                                "animation_phases": {
+                                    "entrance": "fade",
+                                    "exit": "fade",
+                                    "loop": "none",
+                                    "speed": 1,
+                                }
+                            },
+                        }
+                    ],
+                }
+            ),
+            input,
+        )
+
+    monkeypatch.setattr(EditCopilotAgent, "run", run)
+    result = gb._run_phone_unified_montage_job(
+        str(job.id), snapshot, job.all_candidates, ownership_epoch=3
+    )
+    assert seen == [job.all_candidates["creator_request"]]
+    assert result["guided_edit"]["approved_proposal"]["text_composition"]
+    compiled = compile_execution_plan(result["guided_edit"], track=None)
+    assert [
+        row["text"] for row in compiled["text_elements"] if "::sequence-" in row["id"]
+    ] == title.split()

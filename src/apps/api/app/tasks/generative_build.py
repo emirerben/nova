@@ -71,10 +71,16 @@ from app.kria.plan_blocks import (
     blocks_from_guided_plan as _blocks_from_guided_plan,
 )
 from app.kria.plan_blocks import (
+    cloud_decision_blocks as _cloud_decision_blocks,
+)
+from app.kria.plan_blocks import (
     emit_phone_recipe_blocks as _emit_phone_plan_blocks,
 )
 from app.kria.plan_blocks import (
     emit_plan_blocks as _emit_plan_blocks,
+)
+from app.kria.plan_blocks import (
+    emit_post_caption as _emit_post_caption,
 )
 from app.kria.plan_blocks import (
     emit_skipped_remainder as _emit_plan_blocks_remainder,
@@ -1293,7 +1299,11 @@ def _clear_blocked_variant_rerender(fn, self, job_id: str, args: tuple, kwargs: 
 
 def _phone_rendering_globally_available() -> bool:
     """Global compiler gate; per-user cohort validation happens at publish."""
-    return settings.ios_device_only_mode or settings.phone_rendering_enabled
+    return (
+        settings.ios_device_only_mode
+        or settings.ios_native_device_only_enabled
+        or settings.phone_rendering_enabled
+    )
 
 
 def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
@@ -3632,26 +3642,7 @@ def _run_generative_job_impl(
         else:
             pool.shutdown(wait=True)
 
-        _emit_plan_blocks(
-            job_id,
-            [
-                _plan_block("title", "decided", str(agent_text))
-                if agent_text
-                else _plan_block("title", "decided", "Not used", skipped=True),
-                _plan_block("look", "decided", str(style_set_id).replace("_", " ").capitalize())
-                if style_set_id
-                else _plan_block("look", "decided", "Not used", skipped=True),
-                _plan_block(
-                    "music",
-                    "decided",
-                    f"{best_track.title} · {best_track.artist}"
-                    if getattr(best_track, "artist", None)
-                    else str(best_track.title),
-                )
-                if best_track is not None and getattr(best_track, "title", None)
-                else _plan_block("music", "decided", "Not used", skipped=True),
-            ],
-        )
+        _emit_plan_blocks(job_id, _cloud_decision_blocks(agent_text, style_set_id, best_track))
         record_pipeline_event("reframe", "hdr_pretonemap_done", {"clips_converted": n_tonemapped})
         record_pipeline_event("overlay", "agent_text_done", {"has_text": bool(agent_text)})
         record_pipeline_event("overlay", "style_set_selected", {"style_set_id": style_set_id})
@@ -4572,7 +4563,9 @@ def _run_phone_guided_job(
         if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
             return
         job = entry[0]
-        if not settings.phone_rendering_for(job.user_id):
+        from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+        if not phone_rendering_allowed_for_job(job):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if any(
@@ -4653,6 +4646,10 @@ def _run_phone_guided_job(
         job.error_detail = None
         job.failure_reason = None
         db.commit()
+
+    # KRI-448: the pinned plan's blocks went out above with `post_caption` deciding; the
+    # request is committed and no lock is held, so resolve it now (best-effort, <= 8 s).
+    _emit_post_caption(job_id)
 
 
 def _resolve_phone_music_bed(decision: GenerativeVariantDecision) -> Any:
@@ -5221,7 +5218,9 @@ def _run_phone_voiceover_montage_job(
         if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
             return
         job = entry[0]
-        if not settings.phone_rendering_for(job.user_id):
+        from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+        if not phone_rendering_allowed_for_job(job):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if current.get("creator_generation_id") != generation or current.get(
@@ -5283,6 +5282,7 @@ def _run_phone_voiceover_montage_job(
             ),
             "music": matched_track_title or "Your voiceover",
             "music_detail": "Under your voiceover" if matched_track_title else None,
+            "music_track_id": decision.music_track_id if matched_track_title else None,
             "look": style_set_id if has_text_layers else None,
         },
     )
@@ -5995,6 +5995,21 @@ def _run_phone_unified_montage_job(
                 visuals=visuals,
                 output_orientation=_creator_shape_orientation(all_candidates),
             )
+    # Complete the initial text lane before the canonical generation is pinned.
+    # This uses the request already bound to this job, never a newer thread message.
+    from app.agents._runtime import RunContext  # noqa: PLC0415
+    from app.services.creation_text_composition import compose_creation_text  # noqa: PLC0415
+
+    request = all_candidates.get("creator_request") or (
+        (all_candidates.get("brief") or {}).get("creator_request")
+        if isinstance(all_candidates.get("brief"), dict)
+        else ""
+    )
+    plan.snapshot = compose_creation_text(
+        plan.snapshot,
+        creator_request=str(request or ""),
+        ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
+    )
     record = plan.record()
     # KRI-544: which copies left the edit, readable by a requirement checker. Absent
     # (byte-identical record) when nothing was collapsed.
@@ -6076,7 +6091,9 @@ def _run_phone_unified_montage_job(
         ):
             return None
         job = entry_row[0]
-        if not settings.phone_rendering_for(job.user_id):
+        from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+        if not phone_rendering_allowed_for_job(job):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if current.get("creator_generation_id") != generation or current.get(
@@ -7492,7 +7509,9 @@ def _run_phone_subtitled_job(
         if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
             return
         job = entry[0]
-        if not settings.phone_rendering_for(job.user_id):
+        from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+        if not phone_rendering_allowed_for_job(job):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if current.get("creator_generation_id") != generation or current.get(
@@ -7614,8 +7633,12 @@ def _run_phone_subtitled_job(
         recipe,
         lambda: {
             "clip_count": 1 + len({cutaway.binding.media_id for cutaway in cutaways}),
-            "captions": len(cues or []),
-            **({"title": title_rows[0]["text"]} if title_rows else {}),
+            "captions": list(cues or []),
+            **(
+                {"title": title_rows[0]["text"], "title_bar_id": title_rows[0].get("id")}
+                if title_rows
+                else {}
+            ),
         },
     )
 
@@ -8720,7 +8743,9 @@ def _run_phone_narrated_job(
         if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
             return
         job = entry[0]
-        if not settings.phone_rendering_for(job.user_id):
+        from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+        if not phone_rendering_allowed_for_job(job):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if current.get("creator_generation_id") != generation or current.get(
@@ -8832,16 +8857,24 @@ def _run_phone_narrated_job(
     _emit_phone_blocks_best_effort(
         job_id,
         recipe,
-        lambda: {
-            "title": (
-                opening_title
-                if narrated_title_text_elements(recipe, opening_title, end_s=opening_title_end_s)
-                else None
-            ),
-            "captions": len(cues or []),
-            "music": "Your voiceover",
-        },
+        lambda: _narrated_block_facts(recipe, opening_title, opening_title_end_s, cues),
     )
+
+
+def _narrated_block_facts(
+    recipe: Any, opening_title: Any, opening_title_end_s: Any, cues: Any
+) -> dict:
+    """Plan-block facts for the phone narrated writer (the title counts only when the
+    recipe carries it, and its bar id is the manual-edit target)."""
+    from app.pipeline.phone_narrated_plan import narrated_title_text_elements  # noqa: PLC0415
+
+    rows = narrated_title_text_elements(recipe, opening_title, end_s=opening_title_end_s)
+    return {
+        "title": opening_title if rows else None,
+        "title_bar_id": rows[0].get("id") if rows else None,
+        "captions": list(cues or []),
+        "music": "Your voiceover",
+    }
 
 
 def _guided_execution_plan(
@@ -17960,6 +17993,11 @@ def _run_regenerate_variant(
                 resolved_mix = _VOICEOVER_ONLY_DEFAULT_MIX
             spec["voiceover_gcs_path"] = voiceover_gcs_path
             spec["mix"] = resolved_mix
+        # The footage's own sound level (editor `mix.original_level`) is persisted
+        # on the variant by the editor commit; a re-render must honour it. Absent
+        # => the historical behaviour (song replaces, original keeps full level).
+        if existing.get("original_audio_level") is not None:
+            spec["original_audio_level"] = existing["original_audio_level"]
         if regen_cloud_evidence is not None:
             # Contract-bound job: the re-render reports receipt evidence too.
             spec["cloud_evidence_ctx"] = regen_cloud_evidence
@@ -21796,6 +21834,9 @@ def _process_generative_variant(
     voiceover_local: str | None = decision.extras["voiceover_local"]
     voiceover_target_s: float = decision.extras["voiceover_target_s"]
     mix: float = decision.extras["mix"]
+    original_audio_level: float | None = _coerce_original_audio_level(
+        spec.get("original_audio_level")
+    )
     masonry_requested: bool = decision.extras["masonry_requested"]
     resolved_montage_preset: str = decision.extras["resolved_montage_preset"]
     effective_available_footage_s: float = decision.extras["effective_available_footage_s"]
@@ -22061,11 +22102,24 @@ def _process_generative_variant(
                 else None
             ),
             require_audio=True,
+            # Creator-set footage level: footage plays UNDER the song. None (the
+            # default) keeps the song-replaces-source behaviour byte-identical.
+            original_level=original_audio_level,
         )
     else:
         # Original-audio variant: KEEP the clips' source audio — skip the mix.
         # `_assemble_clips` already muxed source audio into assembled.mp4.
         audio_mixed_path = assembled_path
+        if original_audio_level is not None and abs(original_audio_level - 1.0) > 1e-6:
+            from app.pipeline.authored_timeline import (  # noqa: PLC0415
+                _apply_original_audio_level,
+            )
+
+            audio_mixed_path = _apply_original_audio_level(
+                assembled_path,
+                os.path.join(variant_dir, "audio_original_level.mp4"),
+                original_audio_level,
+            )
     _record_render_subphase(
         job_id,
         "render_variants",
@@ -22529,6 +22583,19 @@ def _finish_generative_variant_failure(
         "error": err,
         "error_class": _classify_error(exc),
     }
+
+
+def _coerce_original_audio_level(value: Any) -> float | None:
+    """Clamp a persisted `original_audio_level` to 0..1; unset/garbage => None."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        level = float(value)
+    except (TypeError, ValueError):
+        return None
+    if level != level:  # NaN
+        return None
+    return max(0.0, min(1.0, level))
 
 
 def _render_generative_variant(**kwargs: Any) -> dict[str, Any]:

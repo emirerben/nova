@@ -6,11 +6,12 @@ every label bar sat ~0.53 s early against its linked slot window.
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
 
-from app.agents.edit_copilot import _parse_op, _ParseState
+from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput, _parse_op, _ParseState
 from app.services.kria_editor_ops import (
     KriaEditorOpError,
     build_editor_snapshot,
@@ -80,7 +81,8 @@ def test_already_aligned_is_an_honest_noop(guided) -> None:
     job, variant, _rev = guided
     parsed, state = _parse(variant, job)
     assert parsed is None
-    assert "already line up" in (state.selector_clarification or "")
+    assert any("already line up" in message for message in state.no_effect_clarifications)
+    assert state.selector_clarification is None
     assert not state.rejection_reasons
 
 
@@ -130,7 +132,7 @@ def test_within_tolerance_is_left_alone(guided) -> None:
     job, variant, _rev = guided
     _skew(variant, ["m1"], by=0.04)
     parsed, state = _parse(variant, job)
-    assert parsed is None and state.selector_clarification
+    assert parsed is None and state.no_effect_clarifications
 
 
 def test_unknown_selector_and_no_labels(guided) -> None:
@@ -162,6 +164,77 @@ def test_same_bundle_timeline_op_leaves_realign_to_the_rebase(guided) -> None:
     assert rows["clip-label-media-m1"]["end_s"] > rows["clip-label-media-m1"]["start_s"]
 
 
+def test_already_aligned_auxiliary_does_not_cancel_timeline_edit(guided) -> None:
+    job, variant, _revision = guided
+
+    # Parse the composed response in one pass: the already-satisfied label
+    # operation must not turn the valid duration edit into a clarification.
+    agent = EditCopilotAgent.__new__(EditCopilotAgent)
+    output = agent.parse(
+        '{"intent":"edit","confidence":0.99,"reply":"Done","ops":['
+        '{"op":"set_clip_duration","slot_index":0,"duration_s":3.0},'
+        '{"op":"realign_labels"}]}',
+        EditCopilotInput(
+            utterance="make the first clip three seconds and keep labels aligned",
+            variant_snapshot=build_editor_snapshot(job, variant),
+        ),
+    )
+    assert output.ops == [{"op": "set_clip_duration", "slot_index": 0, "duration_s": 3.0}]
+    assert output.outcome == "proposed"
+    assert output.needs_clarification is False
+    assert output.reply == "Done"
+    compiled = compile_editor_ops(job, variant, output.ops)
+    rows = _compiled_rows(compiled)
+    assert rows["clip-label-media-m0"]["end_s"] == pytest.approx(3.0, abs=1e-3)
+
+
+@pytest.mark.parametrize(
+    "ops",
+    [
+        [
+            {"op": "set_clip_duration", "slot_index": 0, "duration_s": 3.0},
+            {"op": "realign_labels", "selector": {"group": "title"}},
+            {"op": "realign_labels"},
+        ],
+        [
+            {"op": "realign_labels"},
+            {"op": "realign_labels", "selector": {"group": "title"}},
+            {"op": "set_clip_duration", "slot_index": 0, "duration_s": 3.0},
+        ],
+    ],
+)
+def test_genuine_ambiguity_survives_no_effect_in_any_order(guided, ops) -> None:
+    job, variant, _revision = guided
+    agent = EditCopilotAgent.__new__(EditCopilotAgent)
+    output = agent.parse(
+        json.dumps({"intent": "edit", "confidence": 0.99, "reply": "Done", "ops": ops}),
+        EditCopilotInput(
+            utterance="change the duration and align the labels",
+            variant_snapshot=build_editor_snapshot(job, variant),
+        ),
+    )
+    assert output.ops == []
+    assert output.needs_clarification is True
+    assert output.outcome == "clarification"
+    assert "no clip labels" in output.reply.lower()
+
+
+def test_standalone_ambiguous_realign_remains_clarification(guided) -> None:
+    job, variant, _revision = guided
+    agent = EditCopilotAgent.__new__(EditCopilotAgent)
+    output = agent.parse(
+        '{"intent":"edit","confidence":0.99,"reply":"Done","ops":['
+        '{"op":"realign_labels","selector":{"group":"title"}}]}',
+        EditCopilotInput(
+            utterance="align the title",
+            variant_snapshot=build_editor_snapshot(job, variant),
+        ),
+    )
+    assert output.ops == []
+    assert output.needs_clarification is True
+    assert output.outcome == "clarification"
+
+
 def test_label_each_clip_alignment_ask_gets_plain_reply(guided) -> None:
     from app.agents.edit_copilot import _LABEL_ALIGNMENT_NOT_WORDING
 
@@ -185,3 +258,32 @@ def test_label_each_clip_alignment_ask_gets_plain_reply(guided) -> None:
     assert state.rejection_reasons[0]["detail"] == (
         "The labels you edited by hand were kept, and no other clip needs a label."
     )
+
+
+@pytest.mark.parametrize("kind", ["rewrite_text", "replace_text_sequence"])
+@pytest.mark.parametrize("with_edit", [False, True])
+def test_already_satisfied_text_operations_have_independent_outcomes(guided, kind, with_edit):
+    job, variant, _revision = guided
+    unchanged = _row(variant, "guided-title")["text"]
+    auxiliary = {"op": kind, "selector": {"ids": ["guided-title"]}}
+    auxiliary.update({"text": unchanged} if kind == "rewrite_text" else {"segments": [unchanged]})
+    duration = {"op": "set_clip_duration", "slot_index": 0, "duration_s": 3.0}
+    output = EditCopilotAgent(None).parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "confidence": 0.99,
+                "reply": "Prepared the edit.",
+                "ops": [auxiliary, duration] if with_edit else [auxiliary],
+            }
+        ),
+        EditCopilotInput(
+            utterance="Keep this wording and extend the opening.",
+            variant_snapshot=build_editor_snapshot(job, variant),
+        ),
+    )
+    assert output.ops == ([duration] if with_edit else [])
+    assert output.outcome == ("proposed" if with_edit else "no_effect")
+    assert not output.needs_clarification
+    if not with_edit:
+        assert output.reply != "Prepared the edit."

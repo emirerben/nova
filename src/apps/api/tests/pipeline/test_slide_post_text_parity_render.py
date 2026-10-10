@@ -207,6 +207,24 @@ class TestParityRender:
         assert height(line_spacing=2.5) > base * 1.4
         assert height(line_spacing=0.6) < base
 
+    def test_wrap_lines_false_keeps_a_long_line_on_one_line(self, tmp_path, canvas):
+        text = "one long line the user typed on a single line"
+        wrapped = _opaque_bbox(_render(tmp_path, canvas, text=text, size_px=100))
+        single = _opaque_bbox(_render(tmp_path, canvas, text=text, size_px=100, wrap_lines=False))
+        one_line = _opaque_bbox(_render(tmp_path, canvas, text="lyp", size_px=100))
+        assert wrapped[3] - wrapped[1] > 1.6 * (one_line[3] - one_line[1])
+        assert single[3] - single[1] < 1.6 * (one_line[3] - one_line[1])
+        # unset and wrap_lines=True are the legacy auto-wrap, pixel for pixel
+        assert _h(_render(tmp_path, canvas, text=text, size_px=100, wrap_lines=True)) == _h(
+            _render(tmp_path, canvas, text=text, size_px=100)
+        )
+
+    def test_wrap_lines_false_still_honors_explicit_newlines(self, tmp_path, canvas):
+        kw = dict(size_px=100, wrap_lines=False)
+        one_line = _opaque_bbox(_render(tmp_path, canvas, text="lyp", **kw))
+        two = _opaque_bbox(_render(tmp_path, canvas, text="lyp\nlyp", **kw))
+        assert two[3] - two[1] > 1.6 * (one_line[3] - one_line[1])
+
     def test_default_spacing_values_match_unset(self, tmp_path, canvas):
         # line_spacing=1.15 is the renderer default => identical pixels
         assert _h(

@@ -28,6 +28,7 @@ PARITY_KEYS = (
     "text_case",
     "letter_spacing",
     "line_spacing",
+    "wrap_lines",
 )
 
 

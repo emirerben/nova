@@ -75,6 +75,9 @@ class CopilotTurnResponse(BaseModel):
     pending_actions: list[dict] = []
     # KRI-186: parts of the message that did not become an op (see the agent).
     unmet_requests: list[dict[str, str]] = []
+    # KRI-558: the agent's server-authored notes (time zone, missing filming times), kept apart
+    # from `reply` so a receipt-built reply can still carry them.
+    reply_notes: str = ""
 
 
 # Edit verbs a reply uses to claim the draft changed. Stem-based so past and
@@ -299,6 +302,8 @@ async def run_copilot_turn(
     body: CopilotTurnBody,
     *,
     job_id: uuid.UUID,
+    deadline_monotonic: float | None = None,
+    timeout_override_s: float | None = 40.0,
 ) -> CopilotTurnResponse:
     """Run one stateless edit-copilot turn.
 
@@ -322,6 +327,8 @@ async def run_copilot_turn(
         reply_language=current_reply_language(),
     )
 
+    from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
+
     try:
         output: EditCopilotOutput = await asyncio.to_thread(
             EditCopilotAgent(default_client()).run,
@@ -330,6 +337,9 @@ async def run_copilot_turn(
                 job_id=str(job_id),
                 request_id=_paid_request_id(body, job_id=job_id),
                 request_id_authoritative=bool(body.client_request_id),
+                deadline_monotonic=deadline_monotonic,
+                timeout_override_s=timeout_override_s,
+                thought_summary_callback=current_thought_publisher(),
             ),
         )
     except AiBudgetExceededError:
@@ -367,4 +377,5 @@ async def run_copilot_turn(
         ),
         pending_actions=(output.pending_actions if outcome == "clarification" else []),
         unmet_requests=output.unmet_requests,
+        reply_notes=output.reply_notes,
     )

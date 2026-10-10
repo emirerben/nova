@@ -122,11 +122,13 @@ def test_foreign_job_is_filtered_before_recipe_lookup(fixture):
 
 def test_kill_switch_blocks_new_upload_reservations(fixture, monkeypatch):
     monkeypatch.setattr(settings, "phone_rendering_enabled", False)
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
     response = fixture.client.post(
         f"/me/jobs/{fixture.job.id}/device-render/uploads",
         json={**body(fixture), "file_size_bytes": 12, "sha256": "a" * 64},
     )
     assert response.status_code == 404
+    routes._owned_job.assert_awaited_once()
     fixture.db.execute.assert_not_called()
 
 
@@ -616,9 +618,23 @@ def test_visual_download_requires_phone_rendering_for_the_user(fixture, monkeypa
     response = download_asset(fixture, asset_id=asset.id)
     assert response.status_code == 404
     assert response.json()["detail"] == "Phone rendering is unavailable"
-    routes._owned_job.assert_not_awaited()
+    # The persisted Job marker may keep an in-flight device render alive after
+    # a rollout rollback, so eligibility is decided only after ownership load.
+    routes._owned_job.assert_awaited_once()
     fixture.db.get.assert_not_awaited()
     signer.assert_not_called()
+
+
+def test_native_only_device_job_downloads_assets_outside_the_legacy_cohort(fixture, monkeypatch):
+    asset, _, signer = visual_recipe(fixture, monkeypatch)
+    fixture.job.assembly_plan["native_device_only"] = True
+    monkeypatch.setattr(settings, "phone_render_user_ids", [uuid.uuid4()])
+    monkeypatch.setattr(settings, "ios_native_device_only_enabled", True)
+
+    response = download_asset(fixture, asset_id=asset.id)
+
+    assert response.status_code == 200
+    signer.assert_called_once()
 
 
 def voiceover_recipe(fixture, monkeypatch, *, item_id=None):

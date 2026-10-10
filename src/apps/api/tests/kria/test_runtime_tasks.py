@@ -542,6 +542,7 @@ def test_claim_owns_pending_turn_with_database_time_and_returns_trusted_snapshot
         completed_at=None,
         thread_id=uuid.uuid4(),
         source_event_id=uuid.uuid4(),
+        client_event_id="request-7",
     )
     thread = SimpleNamespace(
         revision=7,
@@ -568,6 +569,7 @@ def test_claim_owns_pending_turn_with_database_time_and_returns_trusted_snapshot
             "edit_format": "montage",
             "strongest_moment": "whisking",
             "editorial_decision": None,
+            "client_request_id": "request-7",
         },
         "Open with the whisk",
         1,

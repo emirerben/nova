@@ -41,12 +41,20 @@ from app.schemas.user_song import (
     AlignmentAlternate,
     SongAlignment,
     SongOrderAnswerIn,
+    SongOrderCandidate,
     SongOrderItem,
     SongOrderQuestion,
     TakeAlignment,
 )
 
 MAX_ALTERNATES_PER_ITEM = 4
+# KRI-561: a timeline drop within this of one of a take's own candidates snaps to it, so the
+# lips land exactly where the aligner measured them (matches take_assignment's distinct-
+# position distance).
+PLACEMENT_SNAP_S = 0.25
+# A creator-placed position that equals the assignment's own pick (take_assignment treats
+# two deltas this close as the same position).
+_SAME_PICK_S = 0.05
 # Two song positions closer than this are the same position.
 _POSITION_EPS_S = 1e-3
 
@@ -212,6 +220,7 @@ def build_song_order_question(
     song_generation: int | None = None,
     durations: Mapping[str, float] | None = None,
     song_duration_s: float | None = None,
+    first_line_s: float | None = None,
 ) -> SongOrderQuestion:
     """The question for ``media_ids`` (the current takes, in their stored order).
 
@@ -271,7 +280,25 @@ def build_song_order_question(
     for media_id in positioned:
         order.append(media_id)
         order.extend(after.get(media_id, []))
+    # KRI-561: the timeline card sizes each block by its take length and snaps a drag to the
+    # take's own candidate positions (confident takes included).
+    for media_id, item in items.items():
+        item.duration_s = _duration_s(
+            _take_for(alignment, media_id), (durations or {}).get(media_id)
+        )
+        cands = _take_for(alignment, media_id).candidates_or_legacy()
+        item.candidates = [
+            SongOrderCandidate(
+                delta_s=c.delta_s,
+                likelihood=c.likelihood,
+                match_start_s=c.match_start_s,
+                match_end_s=c.match_end_s,
+            )
+            for c in sorted(cands, key=lambda c: -c.likelihood)[:MAX_ALTERNATES_PER_ITEM]
+        ]
     ordered = [items[m] for m in order]
+    from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S  # noqa: PLC0415
+
     return SongOrderQuestion(
         question_id=question_id or str(uuid.uuid4()),
         proposed_order=order,
@@ -279,6 +306,13 @@ def build_song_order_question(
         song_generation=(
             song_generation if song_generation is not None else alignment.song_generation
         ),
+        song_duration_s=(
+            float(song_duration_s)
+            if isinstance(song_duration_s, (int, float)) and song_duration_s > 0
+            else None
+        ),
+        max_window_s=float(MAX_PROPOSAL_DURATION_S),
+        first_line_s=first_line_s,
     )
 
 
@@ -358,6 +392,13 @@ class SongOrderFold:
 
     question_id: str | None = None
     ordered_media_ids: tuple[str, ...] = ()
+    # KRI-561: (media_id, delta_s) the creator put on the timeline. Empty for a plain
+    # reorder answer (old app / legacy card), which keeps the pre-timeline behaviour.
+    placements: tuple[tuple[str, float], ...] = ()
+    # True when the answer carried a valid ``placements`` list, even an EMPTY one: the
+    # creator arranged the timeline, so "nothing placed" (every take left in the tray) is
+    # their decision, not a missing field.
+    arranged: bool = False
 
     def __bool__(self) -> bool:
         return bool(self.ordered_media_ids)
@@ -398,8 +439,35 @@ def fold_song_orders(events: Iterable[Event], song_generation: int | None = None
             continue
         if not _same_generation(question, song_generation):
             continue
-        folded = SongOrderFold(question.question_id, tuple(str(m) for m in ordered))
+        arranged = _folded_placements(answer.get("placements"), question)
+        folded = SongOrderFold(
+            question.question_id,
+            tuple(str(m) for m in ordered),
+            arranged or (),
+            arranged is not None,
+        )
     return folded
+
+
+def _folded_placements(
+    raw: Any, question: SongOrderQuestion
+) -> tuple[tuple[str, float], ...] | None:
+    """The answer's placements; ``None`` when absent or malformed (the order alone counts)."""
+    if not isinstance(raw, list):
+        return None
+    allowed = set(question.proposed_order)
+    out: list[tuple[str, float]] = []
+    seen: set[str] = set()
+    for row in raw:
+        media_id = row.get("media_id") if isinstance(row, dict) else None
+        delta = _finite(row.get("delta_s")) if isinstance(row, dict) else None
+        if not isinstance(media_id, str) or media_id not in allowed or media_id in seen:
+            return None
+        if delta is None:
+            return None
+        seen.add(media_id)
+        out.append((media_id, delta))
+    return tuple(out)
 
 
 def thread_keeps_lipsync(events: Iterable[Event], song_generation: int | None) -> bool:
@@ -452,6 +520,28 @@ def validate_song_order_answer(
         raise SongOrderError(
             INVALID_CODE, "That order must include exactly the takes I asked about."
         )
+    _validate_placements(answer, open_question)
+
+
+def _validate_placements(answer: SongOrderAnswerIn, question: SongOrderQuestion) -> None:
+    """KRI-561: placements name distinct takes from the question and sit on the song."""
+    if not answer.placements:
+        return
+    asked = set(question.proposed_order)
+    durations = {i.media_id: i.duration_s for i in question.items}
+    seen: set[str] = set()
+    for placement in answer.placements:
+        if placement.media_id in seen:
+            raise SongOrderError(INVALID_CODE, "That arrangement places the same take twice.")
+        if placement.media_id not in asked:
+            raise SongOrderError(
+                INVALID_CODE, "That arrangement includes a take I did not ask about."
+            )
+        seen.add(placement.media_id)
+        song_s = question.song_duration_s
+        take_s = durations.get(placement.media_id) or _DEFAULT_TAKE_S
+        if song_s is not None and not (-take_s < placement.delta_s < song_s):
+            raise SongOrderError(INVALID_CODE, "That arrangement puts a take outside the song.")
 
 
 # -- Resolving uncertain takes -------------------------------------------------
@@ -500,6 +590,66 @@ def resolve_uncertain_takes(
         if choice.reason:
             row["reason"] = choice.reason
         out[media_id] = row
+    return out
+
+
+def resolve_creator_placements(
+    alignment: SongAlignment,
+    confirmed_order: Sequence[str],
+    placements: Sequence[tuple[str, float]],
+    durations: Mapping[str, float] | None = None,
+    song_duration_s: float | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Rows for every take from the creator's timeline arrangement (KRI-561).
+
+    Same row shape as ``resolve_uncertain_takes`` so ``resolved_song_takes_payload`` and
+    ``apply_resolved_song_takes`` need no change. For each placed take:
+
+    * a candidate of the take within ``PLACEMENT_SNAP_S`` of the creator's drop wins (its exact
+      delta and likelihood), so the lips land where the aligner measured them;
+    * otherwise the take is pinned at the creator's delta with likelihood 0 (approximate sync);
+    * the position is ``aligner``/unconfirmed only when it equals the assignment's own pick for a
+      take the assignment was sure about (the creator did not decide it); everything else is
+      ``creator_position`` and confirmed.
+
+    A take in ``confirmed_order`` with no placement stays in the tray: ``place="broll"``
+    (muted background footage), never positioned by song time.
+    """
+    ids = list(dict.fromkeys(confirmed_order))
+    placed = dict(placements)
+    assignment = assign_for_question(alignment, ids, durations, song_duration_s)
+    out: dict[str, dict[str, Any]] = {}
+    for index, media_id in enumerate(ids):
+        if media_id not in placed:
+            out[media_id] = {
+                "order_index": index,
+                "delta_s": None,
+                "place": "broll",
+                "position_basis": "creator_stack",
+                "confirmed_by_creator": True,
+                "likelihood": 0.0,
+                "status": "unmatched",
+                "reason": "creator_unplaced",
+            }
+            continue
+        drop = placed[media_id]
+        cands = _take_for(alignment, media_id).candidates_or_legacy()
+        near = [c for c in cands if abs(c.delta_s - drop) <= PLACEMENT_SNAP_S + 1e-9]
+        snapped = min(near, key=lambda c: (abs(c.delta_s - drop), -c.likelihood), default=None)
+        delta = snapped.delta_s if snapped is not None else drop
+        likelihood = float(snapped.likelihood) if snapped is not None else 0.0
+        claim = assignment.placed.get(media_id)
+        own_pick = claim is not None and abs(claim.delta_ms / 1000 - delta) <= _SAME_PICK_S
+        creator_decided = not (own_pick and media_id not in assignment.ask)
+        out[media_id] = {
+            "order_index": index,
+            "delta_s": delta,
+            "place": "pinned",
+            "position_basis": "creator_position" if creator_decided else "aligner",
+            "confirmed_by_creator": creator_decided,
+            "likelihood": round(likelihood, 4),
+            "status": "confident",
+        }
     return out
 
 

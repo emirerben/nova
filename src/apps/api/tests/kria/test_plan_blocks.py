@@ -28,7 +28,7 @@ def _runtime_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
 # ── pure helpers ─────────────────────────────────────────────────────────────
 
 
-def test_waiting_blocks_cover_all_seven_sections_in_display_order() -> None:
+def test_waiting_blocks_cover_all_eight_sections_in_display_order() -> None:
     blocks = plan_blocks.waiting_blocks()
     assert [b["section_id"] for b in blocks] == [
         "title",
@@ -38,6 +38,7 @@ def test_waiting_blocks_cover_all_seven_sections_in_display_order() -> None:
         "sfx",
         "overlays",
         "look",
+        "post_caption",
     ]
     assert {b["state"] for b in blocks} == {"waiting"}
     assert all(b["decided_at"] is None and b["skipped"] is False for b in blocks)
@@ -54,7 +55,7 @@ def test_waiting_blocks_cover_all_seven_sections_in_display_order() -> None:
 
 def test_block_rejects_unknown_section_or_state() -> None:
     with pytest.raises(ValueError):
-        plan_blocks.block("post_caption", "waiting")
+        plan_blocks.block("bogus", "waiting")
     with pytest.raises(ValueError):
         plan_blocks.block("title", "done")
 
@@ -273,15 +274,16 @@ def test_blocks_from_phone_recipe_reports_seven_decided_sections_from_the_recipe
     # Talking cutaways count as clips, not overlays.
     assert by_id["overlays"]["summary"] == "1 overlay"
     assert by_id["look"]["summary"] == "Editorial clean"
-    assert not any(b["skipped"] for b in blocks)
+    # post_caption is resolved later by `emit_post_caption`; flag off it is simply unused.
+    assert not any(b["skipped"] for b in blocks if b["section_id"] != "post_caption")
 
 
 def test_blocks_from_phone_recipe_marks_unused_sections_not_used() -> None:
     blocks = plan_blocks.blocks_from_phone_recipe(_phone_recipe(clips=1))
     by_id = {b["section_id"]: b for b in blocks}
-    assert len(blocks) == 7 and {b["state"] for b in blocks} == {"decided"}
+    assert len(blocks) == 8 and {b["state"] for b in blocks} == {"decided"}
     assert by_id["clips"]["summary"] == "1 clip \u00b7 4s" and not by_id["clips"]["skipped"]
-    for section in ("title", "captions", "music", "sfx", "overlays", "look"):
+    for section in ("title", "captions", "music", "sfx", "overlays", "look", "post_caption"):
         assert by_id[section]["skipped"] is True and by_id[section]["summary"] == "Not used"
 
 
@@ -308,7 +310,7 @@ def test_emit_phone_recipe_blocks_never_raises_and_is_silent_with_the_flag_off(
 
     monkeypatch.setattr(settings, "live_plan_review_enabled", True)
     plan_blocks.emit_phone_recipe_blocks("job", object(), captions=2)  # no tracks -> still 7 blocks
-    assert len(sent.call_args.args[1]) == 7
+    assert len(sent.call_args.args[1]) == 8
     sent.side_effect = RuntimeError("feed down")
     plan_blocks.emit_phone_recipe_blocks("job", _phone_recipe())
     plan_blocks.emit_phone_recipe_blocks("job", _phone_recipe(), captions="not-a-number")
@@ -386,7 +388,7 @@ def test_emit_appends_one_system_event_and_locks_only_the_thread(
     job = _job("processing")
     thread = SimpleNamespace(id=uuid.uuid4(), runtime_version=2)
     turn_id = uuid.uuid4()
-    db = _SyncDb(job, [_Res(thread.id), _Res(turn_id), _Res(thread)])
+    db = _SyncDb(job, [_Res(thread.id), _Res(turn_id), _Res(thread), _Res(many=[])])
     appended: list = []
 
     def append(_db, _thread, **kwargs):  # noqa: ANN001, ANN202
@@ -437,6 +439,9 @@ def test_finalize_sweep_marks_only_undecided_sections_skipped(
     captured: list = []
     with (
         _patch_sessions(db),
+        patch.object(plan_blocks, "_enrich_from_variant", lambda j: None),
+        patch.object(plan_blocks, "emit_post_caption", lambda j: None),
+        patch.object(plan_blocks, "_emit_update_summary", lambda j: None),
         patch.object(plan_blocks, "emit_plan_blocks", lambda j, b: captured.append((j, b))),
     ):
         plan_blocks.emit_skipped_remainder(job.id)
@@ -448,6 +453,7 @@ def test_finalize_sweep_marks_only_undecided_sections_skipped(
         "sfx",
         "overlays",
         "look",
+        "post_caption",
     ]
     assert all(b["state"] == "decided" and b["skipped"] is True for b in blocks)
 
@@ -461,6 +467,9 @@ def test_finalize_sweep_is_silent_when_the_feed_never_started(
     captured: list = []
     with (
         _patch_sessions(db),
+        patch.object(plan_blocks, "_enrich_from_variant", lambda j: None),
+        patch.object(plan_blocks, "emit_post_caption", lambda j: None),
+        patch.object(plan_blocks, "_emit_update_summary", lambda j: None),
         patch.object(plan_blocks, "emit_plan_blocks", lambda j, b: captured.append(b)),
     ):
         plan_blocks.emit_skipped_remainder(job.id)
@@ -486,6 +495,7 @@ def _finish(*, flag: bool, monkeypatch: pytest.MonkeyPatch) -> tuple[list, list]
         _Res(None),
         _Res(None),
         *(_Res(r) for r in (session, turn, approval, execution, thread)),
+        _Res(many=[]),  # dispatch_payload: the thread's earlier plan_block events
     ]
     order: list = []
 
@@ -495,6 +505,10 @@ def _finish(*, flag: bool, monkeypatch: pytest.MonkeyPatch) -> tuple[list, list]
 
         def commit(self) -> None:
             order.append("commit")
+
+        @contextmanager
+        def begin_nested(self):  # noqa: ANN201
+            yield
 
     @contextmanager
     def sessions():  # noqa: ANN202
@@ -536,7 +550,22 @@ def test_waiting_blocks_share_the_render_queued_transaction(
     assert waiting["role"] == "system"
     assert waiting["payload"]["turn_id"] == events[0]["payload"]["turn_id"]
     assert waiting["payload"]["job_id"] == events[0]["payload"]["job_id"]
-    assert [b["state"] for b in waiting["payload"]["blocks"]] == ["waiting"] * 7
+    assert [b["state"] for b in waiting["payload"]["blocks"]] == ["waiting"] * 8
+
+
+def test_a_broken_scoped_payload_never_fails_the_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Celery task is already queued: the feed falls back to plain `waiting` blocks and
+    the dispatch still commits."""
+
+    def boom(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
+        raise RuntimeError("feed problem")
+
+    monkeypatch.setattr(plan_blocks, "dispatch_payload", boom)
+    events, order = _finish(flag=True, monkeypatch=monkeypatch)
+    assert order == ["render_queued", "plan_block", "commit"]
+    assert [b["state"] for b in events[1]["payload"]["blocks"]] == ["waiting"] * 8
 
 
 def test_flag_off_emits_no_plan_block_events(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -796,3 +825,271 @@ async def test_capabilities_expose_the_flag(flag: bool, monkeypatch: pytest.Monk
     body = await capabilities(SimpleNamespace(id=uuid.uuid4()))
     assert body["live_plan_review_enabled"] is flag
     assert CreationCapabilitiesOut.model_validate(body).live_plan_review_enabled is flag
+    # Contract v2 (payloads, GET /plan) is advertised only with the flag on; 1 = feed only.
+    assert body["live_plan_review_version"] == (2 if flag else 1)
+
+
+# ── contract v2: structured payloads, transitions, revision (KRI-439/447/448) ─
+
+
+def _moment(i: int, *, kind: str = "video", transition=None, duration: float = 2.0) -> dict:
+    return {
+        "moment_id": f"m{i}",
+        "media_id": f"media-{i}",
+        "topic": "Opening shot of the harbour at sunrise, wide" if i == 0 else f"Beat {i}",
+        "kind": kind,
+        "gcs_path": f"u/{i}.mp4",
+        "source_start_s": 1.0,
+        "source_end_s": 1.0 + duration,
+        "output_start_s": i * duration,
+        "output_end_s": (i + 1) * duration,
+        "duration_s": duration,
+        "transition_after": transition,
+        "look_preset": "golden_hour" if i == 0 else "none",
+    }
+
+
+def _guided_plan(clips: int = 3) -> dict:
+    return {
+        "story_timeline": [
+            _moment(0, transition="flash"),
+            _moment(1, transition="dip_to_black", kind="image"),
+            *[_moment(i) for i in range(2, clips)],
+        ],
+        "resolved_duration_s": 2.0 * clips,
+        "transition_policy": {"type": "crossfade", "duration_s": 0.4},
+        "text_elements": [
+            {"id": "guided-title-1", "text": "Day in Athens", "start_s": 0, "end_s": 3},
+            {"id": "clip-label-m1", "text": "Plaka", "start_s": 2.0, "end_s": 4.0},
+        ],
+        "narration_label_text_elements": [
+            {"id": "nl-1", "text": "Morning light", "start_s": 0.5, "end_s": 1.5}
+        ],
+        "context_label_text_elements": [],
+        "music": {"track_id": "t1", "title": "Song", "level": 0.6, "start_s": 12.0},
+        "editor_original_level": 0.3,
+        "editor_sound_effects": [{"id": "s1", "label": "Whoosh", "at_s": 2.0, "gain": 1.0}],
+        "editor_media_overlays": [
+            {"id": "o1", "kind": "image", "start_s": 1, "end_s": 2, "display_mode": "pip"}
+        ],
+        "typography": {"style_id": "guided_story_v2", "font": "Fraunces"},
+    }
+
+
+@pytest.fixture
+def flag_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "live_plan_review_enabled", True)
+    monkeypatch.setattr(
+        "app.kria.plan_payloads.lookup_track_meta",
+        lambda tid: {"title": "Song", "artist": "Artist", "bpm": 120.0},
+    )
+
+
+def test_guided_payloads_carry_transitions_in_the_shared_vocabulary(flag_on) -> None:
+    by_id = {b["section_id"]: b for b in plan_blocks.blocks_from_guided_plan(_guided_plan())}
+    clips = by_id["clips"]["payload"]["clips"]
+    # `transition` LEAVES the clip: per-moment value wins, the policy fills the rest, last is null.
+    assert [c.get("transition") for c in clips] == ["whip", "fade", None]
+    assert clips[0]["role"] == "Opening shot of the harbour at sunrise, w"[:40]
+    assert clips[1]["kind"] == "image" and clips[1]["label"] == "Plaka"
+    assert (clips[0]["start_s"], clips[0]["end_s"]) == (0.0, 2.0)
+    assert by_id["clips"]["summary"] == "3 clips · 6s"  # old clients unchanged
+    policy_plan = _guided_plan()
+    policy_plan["story_timeline"][0]["transition_after"] = None
+    first = plan_blocks.decided_block(policy_plan, "clips")["payload"]["clips"][0]
+    assert first["transition"] == "dissolve" and first["transition_duration_s"] == 0.4
+
+
+def test_unmapped_transition_is_null_never_a_guess(flag_on) -> None:
+    plan = _guided_plan()
+    plan["story_timeline"][0]["transition_after"] = "wipe_left"
+    assert plan_blocks.decided_block(plan, "clips")["payload"]["clips"][0].get("transition") is None
+
+
+def test_guided_payloads_for_every_section(flag_on) -> None:
+    by_id = {b["section_id"]: b for b in plan_blocks.blocks_from_guided_plan(_guided_plan())}
+    assert by_id["title"]["payload"] == {"text": "Day in Athens", "bar_id": "guided-title-1"}
+    caption_ids = [line["id"] for line in by_id["captions"]["payload"]["lines"]]
+    assert caption_ids == ["nl-1"]
+    music = by_id["music"]["payload"]
+    assert (music["source"], music["artist"], music["bpm"], music["start_s"]) == (
+        "catalog",
+        "Artist",
+        120.0,
+        12.0,
+    )
+    assert music["mix"] == {"music_level": 0.6, "original_level": 0.3}
+    assert by_id["sfx"]["payload"]["items"][0]["at_s"] == 2.0
+    assert by_id["overlays"]["payload"]["items"][0]["kind"] == "image"
+    chips = by_id["look"]["payload"]["chips"]
+    assert "Guided story v2" in chips and "Fraunces titles" in chips and "Golden hour" in chips
+    # post_caption: no copy on the plan yet -> waits for emit_post_caption.
+    assert by_id["post_caption"]["state"] == "deciding"
+    with_copy = {**_guided_plan(), "post_caption": {"text": "Athens!", "hashtags": ["#a", "b"]}}
+    block = plan_blocks.blocks_from_guided_plan(with_copy)[-1]
+    assert block["payload"] == {"text": "Athens!", "hashtags": ["a", "b"], "platform": "tiktok"}
+
+
+def test_flag_off_blocks_are_byte_identical_to_v1(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "live_plan_review_enabled", False)
+    blocks = plan_blocks.blocks_from_guided_plan(_guided_plan())
+    assert all("payload" not in b and "revision" not in b for b in blocks)
+    assert all(
+        set(b) == {"section_id", "state", "summary", "detail", "intent", "skipped", "decided_at"}
+        for b in blocks
+    )
+    assert plan_blocks.plan_block_payload(turn_id=None, job_id="j", blocks=[]) == {
+        "turn_id": None,
+        "job_id": "j",
+        "blocks": [],
+    }
+
+
+def test_payload_caps_truncate_lists_and_never_raise(flag_on) -> None:
+    plan = _guided_plan(clips=45)
+    plan["narration_label_text_elements"] = [
+        {"id": f"n{i}", "text": "x" * 190, "start_s": i, "end_s": i + 1} for i in range(120)
+    ]
+    plan["editor_sound_effects"] = [{"id": f"s{i}", "at_s": i} for i in range(80)]
+    by_id = {b["section_id"]: b for b in plan_blocks.blocks_from_guided_plan(plan)}
+    import json
+
+    assert len(by_id["clips"]["payload"]["clips"]) == 40
+    assert by_id["clips"]["summary"].startswith("45 clips")
+    captions = by_id["captions"]["payload"]
+    assert len(captions["lines"]) <= 40 and captions["truncated"] is True
+    assert captions["count"] == 120  # the real total survives the truncation
+    assert by_id["sfx"]["payload"]["count"] == 80 and len(by_id["sfx"]["payload"]["items"]) == 30
+    for entry in by_id.values():
+        assert len(json.dumps(entry.get("payload") or {}).encode()) <= 16 * 1024
+    # Garbage in: no payload, the summary block survives.
+    broken = {**_guided_plan(), "story_timeline": [{"output_start_s": "x"}]}
+    assert plan_blocks.decided_block(broken, "clips")["state"] == "decided"
+
+
+def _ev(job: str, *blocks: dict, **extra) -> dict:
+    return {"job_id": job, "blocks": list(blocks), **extra}
+
+
+def test_revision_changed_previous_across_two_jobs() -> None:
+    b = plan_blocks.block
+    first = plan_blocks.annotate_blocks(
+        [b("title", "decided", "Hi", payload={"text": "Hi"}), b("clips", "waiting")], [], "j1"
+    )
+    assert (first[0]["revision"], first[0]["changed"], "previous" in first[0]) == (1, False, False)
+    assert first[1]["revision"] == 0
+    history = [_ev("j1", *first)]
+    # A re-render that decides the SAME value keeps the revision.
+    same = plan_blocks.annotate_blocks(
+        [b("title", "decided", "Hi", payload={"text": "Hi"})], history, "j2"
+    )
+    assert (same[0]["revision"], same[0]["changed"]) == (1, False)
+    # A different value bumps it and remembers what it replaced.
+    new = plan_blocks.annotate_blocks(
+        [b("title", "decided", "Bye", payload={"text": "Bye"})], history, "j2"
+    )[0]
+    assert (new["revision"], new["changed"]) == (2, True)
+    assert new["previous"] == {
+        "revision": 1,
+        "job_id": "j1",
+        "summary": "Hi",
+        "payload": {"text": "Hi"},
+        "skipped": False,
+    }
+    # waiting / deciding carry the revision of the value they will replace.
+    deciding = plan_blocks.annotate_blocks([b("title", "deciding")], history, "j2")[0]
+    assert deciding["revision"] == 1 and deciding["changed"] is False
+    # Without payloads the comparison falls back to summary + skipped.
+    skipped = plan_blocks.annotate_blocks(
+        [b("title", "decided", "Not used", skipped=True)], history, "j2"
+    )[0]
+    assert skipped["changed"] is True and skipped["previous"]["skipped"] is False
+    # A fill-in within the same job never lowers an already-bumped revision.
+    history.append(_ev("j2", new))
+    again = plan_blocks.annotate_blocks(
+        [b("title", "decided", "Hi", payload={"text": "Hi"})], history, "j2"
+    )[0]
+    assert again["revision"] == 2 and again["changed"] is True
+
+
+def test_legacy_decided_blocks_count_as_revision_one() -> None:
+    legacy = _ev("j1", plan_blocks.block("music", "decided", "Song"))
+    out = plan_blocks.annotate_blocks(
+        [plan_blocks.block("music", "decided", "Other")], [legacy], "j2"
+    )[0]
+    assert out["revision"] == 2 and out["previous"]["revision"] == 1
+
+
+def test_server_reducer_is_forward_only_and_higher_revision_wins() -> None:
+    b = plan_blocks.block
+    old = {**b("title", "decided", "Hi", payload={"text": "Hi"}), "revision": 1}
+    newer = {**b("title", "decided", "Bye", payload={"text": "Bye"}), "revision": 2}
+    reduced = plan_blocks.reduce_job_blocks(
+        [
+            _ev("j", newer),
+            _ev("j", {**b("title", "deciding"), "revision": 2}),  # forward-only: ignored
+            _ev("j", old),  # lower revision: ignored
+            _ev("other", {**b("title", "decided", "Z"), "revision": 9}),
+        ],
+        "j",
+    )
+    assert reduced["title"]["summary"] == "Bye"
+    fill = plan_blocks.reduce_job_blocks(
+        [
+            _ev("j", {**b("clips", "decided", "3 clips", payload={"clips": []}), "revision": 1}),
+            _ev("j", {**b("clips", "decided"), "revision": 1}),
+        ],
+        "j",
+    )
+    assert fill["clips"]["summary"] == "3 clips" and fill["clips"]["payload"] == {"clips": []}
+
+
+def test_update_summary_text_is_deterministic_and_localized() -> None:
+    assert plan_blocks.update_summary_text(["music", "captions"]) == "Updated captions and music."
+    assert plan_blocks.update_summary_text(["title", "look", "sfx"]).startswith(
+        "Updated title, sound effects and look"
+    )
+    from app.kria.reply_language import reply_language_for
+
+    with reply_language_for("tr"):
+        assert "güncelledim" in plan_blocks.update_summary_text(["music"])
+
+
+def test_cloud_decision_blocks_keep_summaries_and_add_payloads(flag_on) -> None:
+    track = SimpleNamespace(id="t1", title="Song", artist="Artist")
+    title, look, music = plan_blocks.cloud_decision_blocks("Hello", "editorial_serif", track)
+    assert (title["summary"], look["summary"], music["summary"]) == (
+        "Hello",
+        "Editorial serif",
+        "Song · Artist",
+    )
+    assert title["payload"] == {"text": "Hello"}
+    assert music["payload"]["bpm"] == 120.0 and music["payload"]["source"] == "catalog"
+    empty = plan_blocks.cloud_decision_blocks(None, None, None)
+    assert all(b["skipped"] and "payload" not in b for b in empty)
+
+
+def test_variant_payloads_for_the_cloud_path(flag_on) -> None:
+    from app.kria import plan_payloads
+
+    variant = {
+        "duration_s": 9.0,
+        "ai_timeline": {
+            "slots": [
+                {"order": 1, "duration_s": 4.0, "in_s": 2.0, "slot_type": "cutaway"},
+                {"order": 0, "duration_s": 5.0, "in_s": 0.0, "slot_type": "hero"},
+            ]
+        },
+        "caption_cues": [{"text": "hello", "start_s": 0.2, "end_s": 1.0}],
+        "text_elements": [{"id": "t1", "text": "Intro", "start_s": 0, "end_s": 2}],
+        "sound_effects": [{"id": "s1", "at_s": 3.0}],
+        "style_set_id": "editorial_serif",
+    }
+    raws = plan_payloads.finalized(plan_payloads.variant_raws(variant))
+    assert [(c["start_s"], c["end_s"], c["role"]) for c in raws["clips"]["clips"]] == [
+        (0.0, 5.0, "hero"),
+        (5.0, 9.0, "cutaway"),
+    ]
+    assert raws["captions"]["lines"][0]["id"] == "cue-0"  # cues without an id get cue-<index>
+    assert raws["title"]["text"] == "Intro" and raws["sfx"]["count"] == 1
+    assert raws["music"] is None and raws["overlays"] is None

@@ -55,6 +55,7 @@ from app.kria.media_sources import (
     is_analysis_proxy_path,
     lenient_capture_field,
 )
+from app.kria.plan_contract import CONTRACT_VERSION
 from app.kria.runtime import RuntimeFailure, read_delta
 from app.limiter import limiter
 from app.models import (
@@ -120,6 +121,7 @@ from app.services.job_storage_paths import (
 )
 from app.services.phone_destination import (
     has_device_intent,
+    has_native_device_only_intent,
     item_visuals_only_on_device,
     with_device_intent,
 )
@@ -358,8 +360,14 @@ class CreationCapabilitiesOut(BaseModel):
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
     song_order_questions: bool = False
+    # KRI-561: the app may answer a song-order question with timeline `placements` and fetch
+    # the song for playback from GET /{thread_id}/song-audio. False (or absent) = the app
+    # keeps the reorder-only card and never sends `placements` (an old API would 422 it).
+    song_order_placements: bool = False
     # KRI-443: plan_block events follow Create and cancel-render is available.
     live_plan_review_enabled: bool = False
+    # KRI-439: 2 = structured payloads, GET /plan, scoped turns and undo; 1 = the feed only.
+    live_plan_review_version: int = 1
 
 
 class CreateBody(StrictBody):
@@ -747,7 +755,7 @@ def _client_id(value: str) -> str:
     return value.strip()
 
 
-def _available_formats() -> dict[str, str]:
+def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web") -> dict[str, str]:
     available = {"montage": "montage"}
     if settings.narrated_archetype_enabled:
         available["narrated"] = "narrated_planned"
@@ -755,11 +763,15 @@ def _available_formats() -> dict[str, str]:
         available["talking_to_camera"] = "subtitled"
     if settings.slide_posts_enabled:
         available["slides"] = "slides"
-    if settings.ios_device_only_mode:
+    if settings.ios_device_only_mode or native_mode != "web":
         from app.services.phone_rollout import phone_render_supported_formats  # noqa: PLC0415
 
         supported = phone_render_supported_formats()
-        available = {key: value for key, value in available.items() if value in supported}
+        available = {
+            key: value
+            for key, value in available.items()
+            if value in supported or (native_mode == "pilot" and value == "slides")
+        }
     return available
 
 
@@ -779,7 +791,11 @@ def _media_path(user_id: uuid.UUID, thread_id: uuid.UUID, media_id: str) -> str:
 
 
 async def _device_ready_visual_count(
-    db: AsyncSession, item_id: uuid.UUID, creator_id: uuid.UUID
+    db: AsyncSession,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    *,
+    native_device_only: bool = False,
 ) -> int:
     """Visuals the iPhone can render from right now (KRI-121).
 
@@ -792,7 +808,7 @@ async def _device_ready_visual_count(
     from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
 
     drawable_kinds = phone_drawable_visual_kinds()
-    if not settings.phone_rendering_for(creator_id) or not drawable_kinds:
+    if not (settings.phone_rendering_for(creator_id) or native_device_only) or not drawable_kinds:
         return 0
     return int(
         (
@@ -3181,7 +3197,10 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
             clip_count=len(item.clip_gcs_paths or []),
             visual_count=visual_count,
             device_ready_visual_count=await _device_ready_visual_count(
-                db, item.id, thread.creator_id
+                db,
+                item.id,
+                thread.creator_id,
+                native_device_only=bool((thread.state or {}).get("native_device_only") is True),
             ),
         )
     public_state = dict(thread.state or {})
@@ -3431,7 +3450,7 @@ async def _agent_message(
     return await _link_creator_session(db, thread_id, owner_id, uuid.UUID(result.id))
 
 
-def _user_song_enabled(user_id: object) -> bool:
+def _user_song_enabled(user_id: object, *, native_device_only: bool = False) -> bool:
     """Server-side admission for a creator-uploaded song (KRI-374).
 
     Phone-only: the cloud renderer never plays a user song, and the kill switch
@@ -3440,10 +3459,15 @@ def _user_song_enabled(user_id: object) -> bool:
 
     from app.services.phone_rollout import phone_user_song_supported  # noqa: PLC0415
 
-    return bool(settings.phone_rendering_for(user_id) and phone_user_song_supported())
+    return bool(
+        (settings.phone_rendering_for(user_id) or native_device_only)
+        and phone_user_song_supported()
+    )
 
 
-def _user_song_available(user_id: object, client_protocol: int | None) -> bool:
+def _user_song_available(
+    user_id: object, client_protocol: int | None, *, native_device_only: bool = False
+) -> bool:
     """Should capabilities OFFER the song affordance to THIS client?
 
     The protocol gate keeps an app build that cannot decode the ``"song"`` render
@@ -3452,9 +3476,78 @@ def _user_song_available(user_id: object, client_protocol: int | None) -> bool:
     """
 
     return bool(
-        _user_song_enabled(user_id)
+        _user_song_enabled(user_id, native_device_only=native_device_only)
         and client_protocol is not None
         and client_protocol >= settings.kria_minimum_client_protocol
+    )
+
+
+class SongAudioOut(BaseModel):
+    """A short-lived playable URL for the thread's song (KRI-561)."""
+
+    url: str
+    generation: int
+    duration_s: float | None = None
+    expires_at: datetime
+
+
+_SONG_AUDIO_URL_TTL_MIN = 15
+
+
+@router.get("/{thread_id}/song-audio", response_model=SongAudioOut)
+@limiter.limit("30/minute")
+async def get_song_audio(
+    request: Request,
+    thread_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    response: Response,
+    generation: Annotated[int | None, Query(ge=0)] = None,
+) -> SongAudioOut:
+    """Sign the creator's own song so the song-order timeline can play it (KRI-561).
+
+    Before a render job exists the only signed song URL was job-bound
+    (`device_render._song_download_url`), so the order question could not play the song.
+    This is bound to the owner's thread instead: ownership comes from `_load`, the item is
+    the thread's active plan item, and the URL pins the exact object generation (a replaced
+    or removed song fails closed with 409 `song_changed`).
+    """
+    response.headers["Cache-Control"] = "no-store"
+    if not (settings.user_song_montage_enabled and settings.song_order_timeline_enabled):
+        raise RuntimeFailure(404, "song_audio_unavailable", "Song preview unavailable")
+    thread = await _load(thread_id, user, db)
+    if not _user_song_enabled(user.id) or not thread.active_plan_item_id:
+        raise RuntimeFailure(404, "song_audio_unavailable", "Song preview unavailable")
+    item = await db.get(PlanItem, thread.active_plan_item_id, populate_existing=True)
+    path = getattr(item, "song_gcs_path", None) if item is not None else None
+    item_generation = getattr(item, "song_generation", None) if item is not None else None
+    if (
+        item is None
+        or getattr(item, "audio_mode", None) != "song"
+        or not path
+        or item_generation is None
+        or (generation is not None and int(generation) != int(item_generation))
+    ):
+        raise RuntimeFailure(409, "song_changed", "Your song changed. Refresh and try again.")
+    duration_s = getattr(item, "song_duration_s", None)
+    pinned = int(item_generation)
+    await db.rollback()  # no connection pinned across the signing call
+    try:
+        url = await asyncio.to_thread(
+            storage.signed_get_url_for_generation,
+            str(path),
+            generation=str(pinned),
+            expiration_minutes=_SONG_AUDIO_URL_TTL_MIN,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise RuntimeFailure(
+            409, "song_changed", "Your song changed. Refresh and try again."
+        ) from exc
+    return SongAudioOut(
+        url=url,
+        generation=pinned,
+        duration_s=float(duration_s) if isinstance(duration_s, (int, float)) else None,
+        expires_at=datetime.now(UTC) + timedelta(minutes=_SONG_AUDIO_URL_TTL_MIN),
     )
 
 
@@ -3464,40 +3557,19 @@ async def capabilities(
     native_client: NativeClient = False,
     client_protocol: KriaClientProtocol = None,
 ) -> dict[str, Any]:
-    phone_enabled = settings.phone_rendering_for(user.id)
-    song_available = _user_song_available(user.id, client_protocol)
-    formats = _available_formats()
-    if settings.ios_device_only_mode or (phone_enabled and native_client):
-        # The app on a pilot account renders every project on the iPhone, and
-        # only these formats can; offering the others would end in a refusal
-        # after the creator has already uploaded footage. The web keeps them
-        # all. `phone_render_supported_formats()` is the settings-aware single
-        # source of truth (KRI-132): once `phone_subtitled_rendering_enabled`/
-        # `phone_narrated_rendering_enabled` are rolled out, "Talking to
-        # camera" and "Narrated" appear here too, not just Montage. This is a
-        # FORMAT-level filter only -- the per-item nuances (subtitled's
-        # one-clip requirement, narrated's voiceover-vs-self-narration split)
-        # are enforced later, once the item actually has clips, by the
-        # `phone_format:{format}` manifest capability and the dispatch gate.
-        from app.services.phone_rollout import (  # noqa: PLC0415
-            phone_render_supported_formats,
-        )
-
-        supported_now = phone_render_supported_formats()
-        # In hybrid mode, `slides` is exempt from this filter even though it's never in
-        # `phone_render_supported_formats()`. A slide post has no clip
-        # pipeline at all -- its media lives exclusively in the
-        # `PlanItemAsset` pool (see the `upload-urls` fence above) and its
-        # render always dispatches to the cloud slides renderer
-        # (`content_plan_build.py` / `slide_build.py`), never through the
-        # phone dispatch gate this filter exists to protect. Dropping it
-        # here would just hide a working, cloud-only format from a phone
-        # account for no reason.
-        formats = {
-            key: value
-            for key, value in formats.items()
-            if value in supported_now or (not settings.ios_device_only_mode and value == "slides")
-        }
+    native_device_only = bool(native_client and settings.ios_native_device_only_enabled)
+    phone_enabled = settings.phone_rendering_for(user.id) or native_device_only
+    song_available = _user_song_available(
+        user.id, client_protocol, native_device_only=native_device_only
+    )
+    native_mode: Literal["web", "pilot", "strict"] = (
+        "strict"
+        if settings.ios_device_only_mode or native_device_only
+        else "pilot"
+        if native_client and phone_enabled
+        else "web"
+    )
+    formats = _available_formats(native_mode=native_mode)
     return {
         # A pilot account is offered v2 only once `KRIA_RUNTIME_V2_PHONE_ENABLED`
         # covers it (KRI-187): a v2 approval then reaches a device job via
@@ -3530,7 +3602,9 @@ async def capabilities(
         "slide_post_chat_edit": bool(
             settings.slide_post_chat_edit_enabled and settings.slide_post_rich_text_enabled
         ),
-        "creation_mode": "device_only" if settings.ios_device_only_mode else "hybrid",
+        "creation_mode": (
+            "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"
+        ),
         "minimum_client_protocol": settings.kria_minimum_client_protocol,
         "formats": [
             {
@@ -3572,7 +3646,9 @@ async def capabilities(
             ),
         },
         "song_order_questions": song_available,
+        "song_order_placements": bool(song_available and settings.song_order_timeline_enabled),
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
+        "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
     }
 
 
@@ -3692,7 +3768,18 @@ async def create_thread(
         event_type="format_prompt",
         role="assistant",
         content="What are we making? Pick a format and we’ll shape it together.",
-        payload={"kind": "select_format", "formats": _available_formats()},
+        payload={
+            "kind": "select_format",
+            "formats": _available_formats(
+                native_mode=(
+                    "strict"
+                    if has_native_device_only_intent(thread.state)
+                    else "pilot"
+                    if has_device_intent(thread.state)
+                    else "web"
+                )
+            ),
+        },
     )
     if body.message:
         await _append(
@@ -4149,6 +4236,18 @@ async def message_thread(
         return await _response(db, await _load(thread_id, user, db, creator_id=owner_id))
     if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
+    from app.services.thought_summaries import (  # noqa: PLC0415
+        bind_thought_publisher,
+        publisher_for_creation,
+    )
+
+    def _thought_publisher():  # noqa: ANN202 - optional request-scoped publisher
+        return publisher_for_creation(
+            creator_id=user.id,
+            thread_id=thread.id,
+            client_request_id=body.client_event_id,
+        )
+
     # Editor actions own their user-message admission so the model call can
     # release locks without committing an incomplete idempotency receipt.
     from app.services import creation_editor_actions  # noqa: PLC0415
@@ -4158,11 +4257,17 @@ async def message_thread(
     )
 
     if thread.active_job_id and is_visual_removal_request(body.message):
+        thoughts = _thought_publisher()
         try:
-            thread = await execute_visual_removal(db, thread, body, user)
+            with bind_thought_publisher(thoughts):
+                thread = await execute_visual_removal(db, thread, body, user)
         except Exception:
+            if thoughts is not None:
+                await asyncio.to_thread(thoughts.fail)
             await db.rollback()
             raise
+        if thoughts is not None:
+            await asyncio.to_thread(thoughts.complete)
         return await _response(db, thread)
 
     _stamp_device_intent(thread, user, native_client)
@@ -4275,17 +4380,33 @@ async def message_thread(
             and current_job.status in creation_editor_actions.POST_RENDER_EDIT_JOB_STATUSES
             and not creator_agent._is_refresh_retry_message(body.message)
         ):
-            copilot_result = await creation_editor_actions.execute_copilot_edit(
-                db, thread, body, user, job=current_job
-            )
+            thoughts = _thought_publisher()
+            try:
+                with bind_thought_publisher(thoughts):
+                    copilot_result = await creation_editor_actions.execute_copilot_edit(
+                        db, thread, body, user, job=current_job
+                    )
+            except Exception:
+                if thoughts is not None:
+                    await asyncio.to_thread(thoughts.fail)
+                raise
             if copilot_result is not None:
-                thread = copilot_result["thread"]
-                await db.commit()
-                await db.refresh(thread)
-                await creation_editor_actions.finalize_copilot_edit_render(
-                    db, thread, user, copilot_result
-                )
+                try:
+                    thread = copilot_result["thread"]
+                    await db.commit()
+                    await db.refresh(thread)
+                    await creation_editor_actions.finalize_copilot_edit_render(
+                        db, thread, user, copilot_result
+                    )
+                except Exception:
+                    if thoughts is not None:
+                        await asyncio.to_thread(thoughts.fail)
+                    raise
+                if thoughts is not None:
+                    await asyncio.to_thread(thoughts.complete)
                 return await _response(db, thread)
+            if thoughts is not None:
+                await asyncio.to_thread(thoughts.fail)
             # Copilot reports this needs different footage/direction/format
             # than an in-place edit can address -- fall through to the Main
             # Creator planning turn below, unchanged.
@@ -4300,7 +4421,18 @@ async def message_thread(
                 event_type="format_prompt",
                 role="assistant",
                 content="Choose a format and I’ll shape the edit around it.",
-                payload={"kind": "select_format", "formats": _available_formats()},
+                payload={
+                    "kind": "select_format",
+                    "formats": _available_formats(
+                        native_mode=(
+                            "strict"
+                            if has_native_device_only_intent(thread.state)
+                            else "pilot"
+                            if has_device_intent(thread.state)
+                            else "web"
+                        )
+                    ),
+                },
             )
         await db.commit()
         await db.refresh(thread)
@@ -4343,13 +4475,29 @@ async def message_thread(
     # controller may reject a stale session/manifest with HTTP 409; rolling
     # back here prevents a message that never produced a turn from being
     # committed and duplicated on client replay.
+    thoughts = _thought_publisher()
     try:
-        thread = await _agent_message(request, thread, body, user, db)
+        with bind_thought_publisher(thoughts):
+            thread = await _agent_message(request, thread, body, user, db)
+        await db.commit()
+        await db.refresh(thread)
+        if thoughts is not None:
+            session = (
+                await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
+                if thread.active_creator_agent_session_id
+                else None
+            )
+            if session is not None:
+                await db.refresh(session)
+            if session is not None and session.last_error is not None:
+                await asyncio.to_thread(thoughts.fail)
+            else:
+                await asyncio.to_thread(thoughts.complete)
     except Exception:
+        if thoughts is not None:
+            await asyncio.to_thread(thoughts.fail)
         await db.rollback()
         raise
-    await db.commit()
-    await db.refresh(thread)
     return await _response(db, thread)
 
 
@@ -4453,7 +4601,15 @@ async def action_thread(
         )
         if selected not in _PAPER_FORMATS:
             raise HTTPException(status_code=422, detail="Unknown creation format")
-        formats = _available_formats()
+        formats = _available_formats(
+            native_mode=(
+                "strict"
+                if has_native_device_only_intent(thread.state)
+                else "pilot"
+                if has_device_intent(thread.state)
+                else "web"
+            )
+        )
         if selected not in formats:
             raise HTTPException(status_code=409, detail="That format is unavailable")
         edit_format = formats[selected]
@@ -4859,7 +5015,18 @@ async def action_thread(
         planned_format = (session.active_plan or {}).get("edit_format")
         picked_format = state.get("edit_format")
         format_mismatch = body.action != "revise" and (
-            planned_format not in set(_available_formats().values())
+            planned_format
+            not in set(
+                _available_formats(
+                    native_mode=(
+                        "strict"
+                        if has_native_device_only_intent(thread.state)
+                        else "pilot"
+                        if has_device_intent(thread.state)
+                        else "web"
+                    )
+                ).values()
+            )
             or planned_format != picked_format
         )
         if (
@@ -5346,9 +5513,11 @@ async def upload_urls(
     body: UploadBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
 ) -> list[UploadTarget]:
     _ = request
     thread = await _load(thread_id, user, db, lock=True)
+    _stamp_device_intent(thread, user, native_client)
     if thread.status != "active":
         _reject_media(
             "creation_thread.upload_urls.rejected",
@@ -5434,7 +5603,12 @@ async def upload_urls(
             )
         elif content_type.startswith("audio/"):
             if file.role == "song":
-                if not _user_song_enabled(user.id):
+                if not _user_song_enabled(
+                    user.id,
+                    native_device_only=has_native_device_only_intent(
+                        getattr(thread, "state", None)
+                    ),
+                ):
                     _reject_media(
                         "creation_thread.upload_urls.rejected",
                         404,
@@ -5469,6 +5643,18 @@ async def upload_urls(
                 file_size_bytes=file.file_size_bytes,
             )
         contract = file.upload_contract
+        if (
+            has_native_device_only_intent(getattr(thread, "state", None))
+            and content_type.startswith("video/")
+            and contract.purpose == "cloud_render_source"
+        ):
+            _reject_media(
+                "creation_thread.upload_urls.rejected",
+                422,
+                "This iPhone project requires an on-device video source.",
+                reason="device_render_unsupported",
+                thread_id=str(thread.id),
+            )
         if file.client_upload_id.startswith(PROXY_MEDIA_PREFIX):
             _reject_media(
                 "creation_thread.upload_urls.rejected",
@@ -5478,7 +5664,9 @@ async def upload_urls(
                 thread_id=str(thread.id),
             )
         if contract.purpose == "analysis_proxy":
-            if not settings.phone_rendering_for(user.id):
+            if not (
+                settings.phone_rendering_for(user.id) or has_native_device_only_intent(thread.state)
+            ):
                 _reject_media(
                     "creation_thread.upload_urls.rejected",
                     404,
@@ -5710,6 +5898,16 @@ async def attach_media(
             reason="slide_post_fence",
             thread_id=str(thread.id),
         )
+    if has_native_device_only_intent(getattr(thread, "state", None)) and any(
+        media.kind == "video" and not is_analysis_proxy_path(media.media_id) for media in body.media
+    ):
+        _reject_media(
+            "creation_thread.attach_media.rejected",
+            422,
+            "This iPhone project requires an on-device video source.",
+            reason="device_render_unsupported",
+            thread_id=str(thread.id),
+        )
     existing_state = dict(getattr(thread, "state", None) or {})
     existing_media = [entry for entry in existing_state.get("media", []) if isinstance(entry, dict)]
     existing_media_ids = {str(entry.get("media_id")) for entry in existing_media}
@@ -5742,7 +5940,10 @@ async def attach_media(
     requested_voiceovers = sum(
         1 for source in body.media if source.kind == "audio" and source.role != "song"
     )
-    if requested_songs and not _user_song_enabled(user.id):
+    if requested_songs and not _user_song_enabled(
+        user.id,
+        native_device_only=has_native_device_only_intent(thread.state),
+    ):
         _reject_media(
             "creation_thread.attach_media.rejected",
             404,

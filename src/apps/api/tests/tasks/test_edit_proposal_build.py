@@ -2004,6 +2004,15 @@ def test_alternating_matches_acceptance_survives_specialist_worker_and_receipt(
         lambda *_a, **_kw: (_ for _ in ()).throw(TerminalError("force deterministic fallback")),
     )
 
+    from app.agents.edit_copilot import EditCopilotOutput
+
+    monkeypatch.setattr(
+        "app.services.creation_text_composition.CreationTextComposer.run",
+        lambda *_a, **_kw: EditCopilotOutput(
+            intent="describe", confidence=1, reply="No text changes requested."
+        ),
+    )
+
     proposal_build._run_draft_attempt(
         SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, False
     )

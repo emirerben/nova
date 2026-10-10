@@ -23,7 +23,7 @@ import asyncio
 import re
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 import structlog
@@ -664,8 +664,18 @@ async def run_slide_post_chat_edit(
     )
 
     try:
+        # This surface is a stateless HTTP-style caller. Keep its historical
+        # 40-second cap even though durable Kria callers may use the agent's
+        # larger timeout. Copy the context so cost/request attribution and any
+        # caller-owned stricter cap remain intact.
+        agent_context = replace(
+            run_context or RunContext(),
+            timeout_override_s=min(40.0, run_context.timeout_override_s)
+            if run_context is not None and run_context.timeout_override_s is not None
+            else 40.0,
+        )
         output = await asyncio.to_thread(
-            EditCopilotAgent(default_client()).run, agent_input, ctx=run_context
+            EditCopilotAgent(default_client()).run, agent_input, ctx=agent_context
         )
     except TerminalError as exc:
         log.warning("slide_post_chat_edit.agent_failed", error=str(exc)[:300])
