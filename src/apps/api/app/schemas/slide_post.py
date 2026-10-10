@@ -21,10 +21,18 @@ is resolved to bytes at render time.
 
 from __future__ import annotations
 
+import copy
 import uuid
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from app.kria.brief_binding import BriefBinding
 from app.pipeline.look_presets import LookPreset
@@ -72,6 +80,7 @@ _PARITY_STYLE_FIELDS = (
     "text_case",
     "letter_spacing",
     "line_spacing",
+    "wrap_lines",
 )
 
 
@@ -127,6 +136,9 @@ class SlideTextElement(BaseModel):
     text_case: Literal["none", "upper", "lower", "title"] | None = None
     letter_spacing: float | None = None  # em, clamped to [-0.05, 0.5]
     line_spacing: float | None = None  # multiplier, clamped to [0.5, 3.0]
+    # False = only explicit newlines break lines (the video editor's KRI-508 contract);
+    # None = legacy auto-wrap at max_width_frac.
+    wrap_lines: bool | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_parity_fields(self, handler):
@@ -283,6 +295,11 @@ class SlidePostDraft(BaseModel):
     # edits. Optional keeps legacy draft readers and rollback payloads valid.
     brief_binding: BriefBinding | None = None
 
+    @field_validator("brief_binding", mode="before")
+    @classmethod
+    def _canonicalize_binding_snapshot(cls, value: object) -> object:
+        return canonicalize_slide_post_brief_binding(value)
+
     @model_validator(mode="after")
     def _validate_cover_and_ids(self) -> SlidePostDraft:
         if self.slides:
@@ -294,6 +311,33 @@ class SlidePostDraft(BaseModel):
         elif self.cover_index != 0:
             raise ValueError("cover_index must be 0 when there are no slides")
         return self
+
+
+def canonicalize_slide_post_brief_binding(value: object) -> object:
+    """Normalize a client-round-tripped slide snapshot before digest verification.
+
+    Native JSON decoding represents every number as ``Double``.  A server-minted
+    snapshot can therefore return with equivalent values such as ``1`` in place
+    of a schema's ``1.0``.  Canonicalize only the embedded slide draft so the
+    binding retains its original server digest; all other binding fields remain
+    covered by the normal immutable binding validation.
+    """
+    if not isinstance(value, dict):
+        return value
+
+    payload: dict[str, Any] = copy.deepcopy(value)
+    snapshot = payload.get("media_snapshot")
+    if not isinstance(snapshot, dict):
+        return value
+    snapshot_draft = snapshot.get("draft")
+    if not isinstance(snapshot_draft, dict):
+        return value
+    try:
+        draft = SlidePostDraft.model_validate(snapshot_draft)
+    except ValidationError:
+        return value
+    snapshot["draft"] = draft.model_dump(mode="json", exclude={"brief_binding"})
+    return payload
 
 
 def parse_slide_post(value: object) -> SlidePostDraft | None:

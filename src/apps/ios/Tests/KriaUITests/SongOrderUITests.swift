@@ -32,12 +32,19 @@ final class SongOrderUITests: XCTestCase {
 
     private func bringIntoView(_ element: XCUIElement, in app: XCUIApplication) {
         let conversation = app.descendants(matching: .any)["Conversation history"].firstMatch
-        for _ in 0..<8 where !element.isHittable { conversation.swipeUp(velocity: .slow) }
-        XCTAssertTrue(element.isHittable, "\(element.identifier) must be on screen before it is tapped")
+        // The composer floats over the bottom of the conversation, so an element can report hittable while its
+        // centre still sits under the composer pill and the tap lands there. Scroll until it clears the composer.
+        let composer = app.buttons["chat-send-message"]
+        func isClearOfComposer() -> Bool {
+            element.isHittable && (!composer.exists || element.frame.maxY <= composer.frame.minY)
+        }
+        for _ in 0..<8 where !isClearOfComposer() { conversation.swipeUp(velocity: .slow) }
+        XCTAssertTrue(isClearOfComposer(), "\(element.identifier) must be on screen, above the composer, before it is tapped")
     }
 
+    /// "list" = the server advertises song_order_questions but not song_order_placements: the vertical order list.
     func testOrderCardShowsBadgesReordersAndSendsTheConfirmedOrder() {
-        let app = launch(songOrder: "1")
+        let app = launch(songOrder: "list")
         sendClips(app)
         let card = app.descendants(matching: .any)["song-order-card"]
         XCTAssertTrue(card.waitForExistence(timeout: 15))
@@ -69,6 +76,69 @@ final class SongOrderUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["song-order-answered"].waitForExistence(timeout: 5), "the card collapses once answered")
         XCTAssertTrue(app.descendants(matching: .any)["song-order-answered"].label.contains("Order confirmed"), "the stored message echoed the song_order")
         XCTAssertFalse(app.buttons["song-order-use"].exists)
+    }
+
+    /// KRI-561: with `song_order_placements` the same question is the song timeline.
+    func testTimelineFillsAnEmptySpotFromTheTrayAndSendsPlacements() {
+        let app = launch(songOrder: "1")
+        sendClips(app)
+        XCTAssertTrue(app.descendants(matching: .any)["song-timeline-card"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.descendants(matching: .any)["song-order-card"].exists, "the timeline replaces the vertical list")
+        let first = app.buttons["song-timeline-block-fixture-clip"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        XCTAssertTrue(first.label.contains("Clip 1, starts at 0:04"), first.label)
+        XCTAssertTrue(app.buttons["song-timeline-block-fixture-clip-4"].exists)
+        XCTAssertTrue(app.buttons["song-timeline-tray-fixture-clip-3"].exists, "the unplaced clip waits in the tray")
+        let gap = app.buttons["song-timeline-gap-0"]
+        XCTAssertTrue(gap.exists)
+        XCTAssertTrue(gap.label.contains("Empty spot 0:12 to 0:22"), gap.label)
+        XCTAssertEqual(app.descendants(matching: .any)["song-timeline-footer-note"].label, "Clips in the tray will fill empty spots where they fit.")
+        XCTAssertFalse(app.descendants(matching: .any)["song-timeline-audio-note"].exists, "the song downloaded")
+        XCTAssertFalse(app.buttons["song-timeline-reset"].exists)
+
+        bringIntoView(gap, in: app)
+        gap.tap()
+        let pick = app.buttons["song-timeline-pick-fixture-clip-3"]
+        XCTAssertTrue(pick.waitForExistence(timeout: 5))
+        pick.tap()
+        XCTAssertTrue(app.buttons["song-timeline-block-fixture-clip-3"].waitForExistence(timeout: 5), "the clip is on the song now")
+        XCTAssertFalse(app.buttons["song-timeline-tray-fixture-clip-3"].exists)
+        XCTAssertTrue(app.buttons["song-timeline-reset"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["song-timeline-footer-note"].label.hasPrefix("Empty spots can't be filled"), "two small spots remain and the tray is empty")
+
+        bringIntoView(app.buttons["song-timeline-use"], in: app)
+        app.buttons["song-timeline-use"].tap()
+        XCTAssertTrue(app.staticTexts["You: Use this arrangement: clip 1 at 0:04, clip 3 at 0:14, clip 2 at 0:22, clip 4 at 0:52"].waitForExistence(timeout: 10))
+        let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@",
+            "order[fixture-clip+fixture-clip-3+fixture-clip-2+fixture-clip-4]",
+            "placements[fixture-clip@4.0;fixture-clip-3@14.0;fixture-clip-2@21.5;fixture-clip-4@52.0]")).firstMatch
+        XCTAssertTrue(echo.waitForExistence(timeout: 10), "server received ordered_media_ids and placements")
+        let answered = app.descendants(matching: .any)["song-timeline-answered"]
+        XCTAssertTrue(answered.waitForExistence(timeout: 5), "the card collapses once answered")
+        XCTAssertTrue(answered.label.contains("Arrangement confirmed"), answered.label)
+        XCTAssertFalse(app.buttons["song-timeline-use"].exists)
+    }
+
+    func testTimelineMovesABlockToTheTrayAndResetBringsItBack() {
+        let app = launch(songOrder: "1")
+        sendClips(app)
+        let block = app.buttons["song-timeline-block-fixture-clip"]
+        XCTAssertTrue(block.waitForExistence(timeout: 15))
+        bringIntoView(block, in: app)
+        block.tap()
+        let toTray = app.buttons["song-timeline-to-tray"]
+        XCTAssertTrue(toTray.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["song-order-preview"].waitForExistence(timeout: 3), "the take preview (or its off-device note) is shown")
+        toTray.tap()
+        XCTAssertTrue(app.buttons["song-timeline-tray-fixture-clip"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["song-timeline-block-fixture-clip"].exists)
+        let reset = app.buttons["song-timeline-reset"]
+        XCTAssertTrue(reset.exists)
+        bringIntoView(reset, in: app)
+        reset.tap()
+        XCTAssertTrue(app.buttons["song-timeline-block-fixture-clip"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["song-timeline-tray-fixture-clip"].exists)
+        XCTAssertFalse(reset.exists)
     }
 
     func testOrderQuestionFallsBackToTextWhenServerDoesNotAdvertiseIt() {

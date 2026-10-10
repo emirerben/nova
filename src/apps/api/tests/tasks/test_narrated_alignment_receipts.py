@@ -139,8 +139,8 @@ def test_the_render_ready_review_lists_the_record_receipts(monkeypatch):
     assert "Done: End on the sunset valley" in text
     assert "Done: Show the balloons while talking about the balloons (The balloons clips" in text
     assert "Done: Provide English subtitles translated from the Turkish voiceover" in text
-    assert "Couldn't verify: Skip the quad bike" in text
-    assert text.count("Couldn't verify") == 1
+    assert "Have a look at these in the video:\n- Skip the quad bike" in text
+    assert "verify" not in text.lower()
     by_id = {row["requirement_id"]: row for row in payload}
     assert by_id["r3"]["verification"] == "checked" and by_id["r4"]["verification"] == "unchecked"
 

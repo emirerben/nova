@@ -116,6 +116,7 @@ def editor_visual_bindings(variant: dict) -> tuple[PhoneVisualBinding, ...]:
 def authored_phone_sources_available(job: Any, variant: dict) -> bool:
     """Source admission for saved empty/authored device edits, never cloud fallback."""
     from app.config import settings
+    from app.services.phone_destination import phone_rendering_allowed_for_job
 
     return bool(
         variant.get("render_destination") == "device"
@@ -124,7 +125,7 @@ def authored_phone_sources_available(job: Any, variant: dict) -> bool:
             or variant.get("editor_timeline_mode") == "authored"
         )
         and settings.phone_editor_media_enabled
-        and settings.phone_rendering_for(job.user_id)
+        and phone_rendering_allowed_for_job(job)
         and {"stillImages", "visualVideos", "visualBlocks", "alphaOverlay", "audioMix"}.issubset(
             settings.phone_render_verified_features
         )

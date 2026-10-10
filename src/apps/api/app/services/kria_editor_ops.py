@@ -12,11 +12,14 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any, NamedTuple
+
+import structlog
 
 from app.agents._schemas.text_element import (
     _ALLOWED_FONTS,
@@ -43,6 +46,12 @@ from app.routes.generative_jobs import (
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.services.clip_facts import assignment_facts, facts_for_prompt
 from app.services.editor_limits import MAX_EDITOR_OPS
+from app.services.kria_editor_ops_diff import (
+    EditorDiff,
+    diff_compiled_state,
+    snapshot_before,
+    speech_cut_diff,
+)
 from app.services.phone_voiceover_timeline import is_phone_voiceover_family_variant
 
 _IMAGE_SUFFIXES = {".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"}
@@ -112,6 +121,9 @@ _TEXT_STYLE_FIELDS = {
 }
 
 
+log = structlog.get_logger(__name__)
+
+
 class KriaEditorOpError(ValueError):
     """A parsed operation cannot be represented by the portable Save contract."""
 
@@ -123,6 +135,12 @@ class CompiledEditorDraft:
     # KRI-218: [{id, clip_id|None, role, before|None, after|None}] for every text
     # whose wording changed / was added / was removed (receipts read this).
     text_diff: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-558: what the bundle changed, lane by lane (receipts name these changes).
+    diff: EditorDiff = field(default_factory=EditorDiff)
+    # KRI-442: the pre-op value of every lane this bundle changed, in COMMIT shape (the
+    # same shape `payload` carries), so a live-plan section Undo can put it back. Empty
+    # for a speech cut. Never read by the draft/render path itself.
+    before: dict[str, Any] = field(default_factory=dict)
 
 
 def is_caption_text_bar(row: dict[str, Any]) -> bool:
@@ -1496,6 +1514,8 @@ class _DraftState:
     # A handler may set this to replace the generic "Op name" change summary
     # (e.g. "Rewrite 5 texts"); compile_editor_ops consumes and clears it.
     summary: str | None = None
+    # Stable text IDs whose output windows were authored in this bundle.
+    explicit_text_ids: set[str] = field(default_factory=set)
     # Slide-post surface only (KRI-301): non-timeline outputs of the slides lane
     # (`cover_slide_id`, `caption`). Empty for every video compile.
     post: dict[str, Any] = field(default_factory=dict)
@@ -1561,10 +1581,60 @@ def _op_patch_text_style(state: _DraftState, op: dict[str, Any]) -> None:
 
 
 def _op_set_text_timing(state: _DraftState, op: dict[str, Any]) -> None:
-    state.text_bar(op.get("bar_index")).update(
-        {key: op[key] for key in ("start_s", "end_s") if key in op}
-    )
+    bar = state.text_bar(op.get("bar_index"))
+    updates = {}
+    for key in ("start_s", "end_s"):
+        if key in op:
+            value = float(op[key])
+            if not math.isfinite(value):
+                raise KriaEditorOpError("Text timing must be finite")
+            updates[key] = value
+    bar.update(updates)
+    if isinstance(bar.get("id"), str):
+        state.explicit_text_ids.add(bar["id"])
     state.changed.add("text")
+
+
+def _explicit_text_timing_ids(
+    initial_text: list[dict[str, Any]], current_text: list[dict[str, Any]]
+) -> set[str]:
+    """Find bars whose output window was authored by this bundle.
+
+    Stable IDs let text timing and timeline edits compose without making the
+    compiler infer intent from operation ordering. Newly added bars are
+    explicit by definition; existing bars are explicit only when their timing
+    differs from the pre-bundle snapshot (including a newly supplied bound).
+    """
+    before = {
+        str(row.get("id")): row for row in initial_text if isinstance(row, dict) and row.get("id")
+    }
+    explicit: set[str] = set()
+    for row in current_text:
+        bar_id = row.get("id") if isinstance(row, dict) else None
+        if not isinstance(bar_id, str) or not bar_id:
+            continue
+        previous = before.get(bar_id)
+        if previous is None or any(
+            row.get(key) != previous.get(key) for key in ("start_s", "end_s")
+        ):
+            explicit.add(bar_id)
+    return explicit
+
+
+def _text_ids(rows: list[dict[str, Any]]) -> set[str]:
+    return {
+        row["id"]
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]
+    }
+
+
+def _validate_timing_numbers(op: dict[str, Any]) -> None:
+    if op.get("op") not in {"set_text_timing", "set_texts_timing", "add_text"}:
+        return
+    for key in ("start_s", "end_s", "shift_s"):
+        if key in op and not math.isfinite(float(op[key])):
+            raise KriaEditorOpError("Text timing must be finite")
 
 
 def _op_add_text(state: _DraftState, op: dict[str, Any]) -> None:
@@ -1589,6 +1659,7 @@ def _op_add_text(state: _DraftState, op: dict[str, Any]) -> None:
             "position": "middle",
         }
     )
+    state.explicit_text_ids.add(str(state.text[-1]["id"]))
     state.changed.add("text")
 
 
@@ -1972,6 +2043,7 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
                 "expected_revision": cut_revision(variant),
             },
             changes=["Apply reviewed speech cut"],
+            diff=speech_cut_diff(),
         )
 
     # Storyboard bars carry their burned look, the same rows the editor shows,
@@ -2001,13 +2073,30 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         base_generation=variant_render_baseline(variant),
     )
     state.initial_slots = copy.deepcopy(state.slots)
+    initial_text = copy.deepcopy(state.text)
+    try:
+        before = snapshot_before(state)
+    except Exception:  # noqa: BLE001 - the diff only informs receipts; it must never block a draft
+        log.warning("kria_editor_diff_snapshot_failed", exc_info=True)
+        before = None
+    before_text = copy.deepcopy(state.text)
+    before_captions = copy.deepcopy(state.captions)
+    before_camera = copy.deepcopy(state.camera_effects)
+    before_sfx = copy.deepcopy(state.sound_effects)
 
     for op in ops:
         name = str(op.get("op") or "")
         handler = _OP_HANDLERS.get(name)
         if handler is None:
             raise KriaEditorOpError(f"{name or 'Unknown operation'} is not portable to Kria yet")
+        _validate_timing_numbers(op)
+        before_ids = _text_ids(state.text)
         handler(state, op)
+        state.explicit_text_ids.update(_text_ids(state.text) - before_ids)
+        if name == "set_texts_timing":
+            state.explicit_text_ids.update(
+                value for value in op.get("target_ids", []) if isinstance(value, str)
+            )
         state.changes.append(state.summary or _summary(op))
         state.summary = None
 
@@ -2030,6 +2119,7 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         # Invariant: a guided payload carrying timeline_slots ALWAYS carries the
         # rebased text_elements, so the server treats text as authored and skips
         # its (right-biased, non-label-aware) own projection.
+        state.explicit_text_ids.update(_explicit_text_timing_ids(initial_text, state.text))
         rebase_guided_text(state, guided)
     request = EditorCommitRequest(
         guided_revision_number=int(guided["revision_number"]) if guided is not None else None,
@@ -2072,11 +2162,86 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         from app.services.kria_editor_ops_text import compute_text_diff  # noqa: PLC0415
 
         text_diff = compute_text_diff(job, variant, state.text)
+    try:
+        diff = (
+            diff_compiled_state(
+                job, variant, before, state, text_diff, [str(op.get("op") or "") for op in ops]
+            )
+            if before is not None
+            else EditorDiff(unavailable=True)
+        )
+    except Exception:  # noqa: BLE001
+        log.warning("kria_editor_diff_failed", exc_info=True)
+        diff = EditorDiff(unavailable=True)
     return CompiledEditorDraft(
         payload=request,
         changes=list(dict.fromkeys(state.changes))[:3],
         text_diff=text_diff,
+        diff=diff,
+        before=_before_lanes(
+            state,
+            variant,
+            text=before_text,
+            captions=before_captions,
+            camera_effects=before_camera,
+            sound_effects=before_sfx,
+        ),
     )
+
+
+def _before_lanes(
+    state: _DraftState,
+    variant: dict[str, Any],
+    *,
+    text: list[dict[str, Any]],
+    captions: list[dict[str, Any]],
+    camera_effects: list[dict[str, Any]],
+    sound_effects: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Pre-op lane values for the lanes this bundle changed (commit shape)."""
+    changed = state.changed
+    before: dict[str, Any] = {}
+    if "text" in changed:
+        before["text_elements"] = text
+    if "captions" in changed:
+        before["caption_cues"] = captions
+    if "caption_meta" in changed:
+        before["caption_meta"] = {
+            key: variant.get("captions_enabled", True)
+            if key == "enabled"
+            else variant.get(f"caption_{key}")
+            for key in state.caption_patch
+            if key != "font_set"
+        }
+    if "timeline" in changed:
+        before["timeline_slots"] = [
+            row.model_dump(mode="json", exclude_none=True)
+            for row in _timeline_models(state.initial_slots)
+        ]
+    if "camera_effects" in changed:
+        before["camera_effects"] = camera_effects
+    if "sound_effects" in changed:
+        before["sound_effects"] = sound_effects
+    if "mix" in changed:
+        mix: dict[str, Any] = {}
+        if state.mix_level is not None and variant.get("mix") is not None:
+            mix["music_level"] = variant["mix"]
+        if state.original_level is not None and variant.get("original_audio_level") is not None:
+            mix["original_level"] = variant["original_audio_level"]
+        if mix:
+            before["mix"] = mix
+    if state.music_gain_db is not None and state.background_track_id:
+        treatment = variant.get("smart_music_treatment")
+        gain = treatment.get("gain_db") if isinstance(treatment, dict) else None
+        if gain is not None:
+            before["background_music"] = {"track_id": state.background_track_id, "gain_db": gain}
+    if "music" in changed:
+        before["music_track_id"] = variant.get("music_track_id")
+    if "title" in changed and isinstance(variant.get("intro_text"), str):
+        before["title"] = variant["intro_text"]
+    if state.visual_blocks is not None:
+        before["visual_blocks"] = copy.deepcopy(variant.get("visual_blocks") or [])
+    return before
 
 
 def apply_text_lane_ops(

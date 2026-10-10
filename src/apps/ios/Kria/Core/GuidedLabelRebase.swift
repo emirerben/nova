@@ -173,7 +173,7 @@ enum GuidedLabelRebase {
             } else {
                 newEnd = newTotal; newStart = max(0, newTotal - (end - start))
             }
-            if newEnd - newStart < minBarS {
+            if end - start >= minBarS && newEnd - newStart < minBarS {
                 newEnd = min(newTotal, newStart + minBarS)
                 newStart = max(0, newEnd - minBarS)
             }

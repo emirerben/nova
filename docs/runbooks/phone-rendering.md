@@ -6,6 +6,12 @@ enabling the currently supported path for their own account after the physical
 pilot. Full style parity, long exports, thermal and recovery qualification remain
 open in the [coverage ledger](../reviews/kri-29/coverage.md).
 
+KRI-563 adds a separate default-off native-only creation fence. When
+`IOS_NATIVE_DEVICE_ONLY_ENABLED=true`, new iPhone videos use the verified phone
+path for every native account, regardless of this pilot allowlist; unsupported
+edits are refused. Web creation and existing cloud playback retain their own
+contracts. See [the native-only rollout steps](ios-device-only-runtime.md#kri-563-iphone-only-cloud-refusal).
+
 ## Account pilot configuration
 
 Deploy the account-gating backend before enabling it. Set `PHONE_RENDER_USER_IDS`
@@ -2409,6 +2415,40 @@ Flow:
    written before KRI-471 have no `place`: a confirmed `delta_s` pins, `None` is
    B-roll. A missing or stale (`SONG_ALIGNMENT_VERSION`) alignment is re-enqueued
    once per gate call.
+   **Song timeline answer (KRI-561).** With capability `song_order_placements` the
+   app shows the question as a horizontal song timeline (song plays; tap an empty
+   spot to hear that stretch and drop a clip there) instead of the reorder list. The
+   question additionally carries `song_duration_s`, `max_window_s` (120),
+   `first_line_s` and, per item, `duration_s` + `candidates[]` for EVERY take
+   (negative `delta_s` is valid: filmed before the song starts). The answer adds
+   `placements: [{media_id, delta_s}]` next to `ordered_media_ids` (which still names
+   every take once, so the exact-set checks and old readers are unchanged). A take in
+   `ordered_media_ids` but not in `placements` stays in the tray => `place="broll"`,
+   `reason="creator_unplaced"`. `resolve_creator_placements` maps each placement to
+   the same row shape as `resolve_uncertain_takes`: a drop within
+   `PLACEMENT_SNAP_S` (0.25 s) of one of the take's own candidates snaps to it (exact
+   delta and likelihood); otherwise it pins at the drop with likelihood 0. A take at
+   the assignment's own pick that the assignment was sure of stays `aligner`,
+   unconfirmed; everything else is `creator_position`, confirmed. No new
+   `position_basis` literal (rolling-deploy safe: `UserSongTake` is `extra=forbid`),
+   and never `creator_stack`. The planner applies placements BEFORE the "nothing to
+   ask" exit, so a later re-alignment cannot discard the layout.
+   `lipsync_montage._weight` gives a creator-confirmed take at least
+   `CREATOR_PLACED_WEIGHT` (0.5) when span selection must pick one side of a hole it
+   cannot fill. **Known limit:** an interior gap that neither neighbour footage nor
+   tray clips can fill still splits the montage (one side is dropped as
+   `gap_unfillable`); the card says so instead of promising a fill. Playback:
+   `GET /creation-threads/{id}/song-audio?generation=N` returns a 15-minute signed URL
+   pinned to the object generation (409 `song_changed` if the song was replaced or
+   removed; 404 when disabled). Kill switch `SONG_ORDER_TIMELINE_ENABLED=false` (api
+   restart) drops `song_order_placements` from capabilities and the song-audio route
+   404s: the app falls back to the reorder card. **Deploy order: API first**
+   (`SongOrderAnswerIn` is `extra=forbid`); the app only sends `placements` when the
+   capability is on. Guards: `tests/pipeline/test_song_order_placements.py` (end to
+   end through `plan_lipsync_montage`), `tests/kria/test_planner_song_order.py`,
+   `tests/kria/test_song_order_turns_postgres.py`,
+   `tests/routes/test_creation_threads_user_song.py`,
+   `tests/test_user_song_contracts.py` (old payloads stay byte-identical).
 5. **Render.** `_run_phone_unified_montage_job` branches on
    `all_candidates["user_song"]` (`gcs_path, generation, duration_s, sync`):
    - `background`: `plan_unified_montage(song_*)`. The total is capped at the song
@@ -2496,9 +2536,9 @@ Rolling deploy: API before worker (the worker reads the new plan fields; an olde
 ignores them).
 
 Editor song controls (KRI-428): the Sounds tab edits the creator's own song through
-one Save section, `user_song: {volume?, window_start_s?, removed}` (all optional,
-`extra="forbid"`). Capabilities appear only while the variant's CURRENT plan has a
-song: `user_song: {volume, window, remove}`, each an `operation()` entry. The
+one Save section, `user_song: {volume?, window_start_s?, window_end_s?, removed}` (all
+optional, `extra="forbid"`). Capabilities appear only while the variant's CURRENT plan
+has a song: `user_song: {volume, window, remove, trim}`, each an `operation()` entry. The
 choices live on the guided revision (`GuidedEditorRevision.user_song`, omitted when
 unset so older revisions keep their state hash) and are replayed by
 `compile_guided_runtime_plan` onto the immutable approved plan on every Save.
@@ -2512,9 +2552,9 @@ unset so older revisions keep their state hash) and are replayed by
   shortening shrinks it and extending grows it again. A background song plays while
   it has time left and simply STOPS at its end (no start shift, no loop, no error;
   the phone lane fades out at the clip's real end). `UserSongPlan.window` may
-  therefore be shorter than the video, and the plan validator allows that only for a
-  background song whose window ends at the song's end (everything else keeps
-  window == video). Only a start leaving under `MIN_PLAYABLE_SONG_S` (1.0 s; max
+  therefore be shorter than the video: the plan validator allows any SHORTER window
+  for a background song (the song ran out, or the creator stopped it, KRI-561),
+  never a longer one; everything else (lip-sync) keeps window == video. Only a start leaving under `MIN_PLAYABLE_SONG_S` (1.0 s; max
   start = song duration - 1.0, shared with iOS) is `422 user_song_window_out_of_range`
   ("That start point leaves less than a second of your song. Slide it earlier.").
   `variants[].user_song.window_end_s` reports the REAL window. Lip-sync is unchanged:
@@ -2526,6 +2566,31 @@ unset so older revisions keep their state hash) and are replayed by
   user_song_lipsync_locked`; echoing the unchanged start is fine, and volume still
   works. `removed: true` wins over every other field in the section (a moved start on a
   lip-sync song is then a plain removal).
+- **End point (KRI-561).** Background only: `window_end_s` is where the creator stops
+  the music, in ABSOLUTE song seconds, stored on the revision
+  (`GuidedEditorUserSong.window_end_s`, omitted when unset so older revisions keep
+  their state hash) and replayed on every Save as
+  `window_end = min(start + video, song end, creator end)`: it survives later
+  video-length edits, a shorter video still wins, and moving the start later keeps the
+  same end. It must leave `MIN_PLAYABLE_SONG_S` after the start (checked against a
+  start moved in the same Save): else `422 user_song_window_out_of_range`. Sending the
+  song's own duration clears it. A lip-sync song has no end field (`422
+  user_song_lipsync_locked`). When the end stops the music before both the video and
+  the song end, `compile_phone_guided_plan` fades it out over 1.5 s (a song that
+  merely runs out keeps 0.5 s). The projection does not say whether an end was set:
+  the app infers it (`window_end_s` earlier than `min(start + video, song end)`).
+- **Lip-sync trim (KRI-561).** A lip-sync song is trimmed by CUTTING THE VIDEO in the
+  editor (drop the opening/closing cuts, head/tail-trim the straddlers). The server
+  derives the song start from the cuts: each cut on a pinned take votes
+  `delta + source_start - output_start` (the sync invariant
+  `source_start - output_start == window_start - delta`);
+  `lipsync_montage.window_start_from_pinned_cuts` moves `window_start` there when all
+  votes agree within a frame, and the end is always `start + video`. Cuts that
+  DISAGREE (a reorder, a retime) return None and fall back to the old first-cut-head
+  rule and then the take resync's refusal. `variants[].user_song.takes`
+  (`{media_id: delta_s}`, lip-sync only) lets the app mirror the formula for its
+  preview. Capability `user_song.trim` (both modes) gates the app's trim UI; older
+  servers lack it and the app keeps the single start bar / lip-sync lock.
 - **Remove.** Both modes. The song and its track go away and the camera's own sound
   returns at its normal level (a lip-sync take then plays the creator singing). This
   is per-edit: `PlanItem.song_*` stays, so a chat re-plan can bring the song back.
@@ -2539,7 +2604,9 @@ unset so older revisions keep their state hash) and are replayed by
 
 Deploy skew: `GuidedEditorRevision` is `extra="forbid"`, so deploy the API first, and do
 not roll the API back once any song edit has been saved (older code cannot load a
-revision carrying `user_song`).
+revision carrying `user_song`); the same holds for a saved `window_end_s` (KRI-561), and
+api + worker must roll together so no old pod validates a background window shorter than
+the video (the validator relaxation is what lets it through).
 
 Guards: `tests/routes/test_phone_song_editor_commit.py` (KRI-428 block; drives the
 real `prepare_editor_commit` -> `prepare_phone_editor_commit` ->
@@ -2553,6 +2620,10 @@ Flags and rollout:
   policy refuses `user_song`, dispatch refuses with `user_song_unavailable`.
   Apply: `fly secrets set USER_SONG_MONTAGE_ENABLED=false --app nova-video` +
   restart (api + worker).
+- `SONG_ORDER_TIMELINE_ENABLED` (default `true`, KRI-561): off drops
+  `song_order_placements` from capabilities and 404s `song-audio`; the app shows the
+  reorder card. Apply: `fly secrets set SONG_ORDER_TIMELINE_ENABLED=false --app
+  nova-video` + restart (api).
 - `phone_user_song_supported()` additionally needs `musicBed` and `audioMix` in
   `PHONE_RENDER_VERIFIED_FEATURES` (both already in prod).
 - The affordance is offered only to clients at or above

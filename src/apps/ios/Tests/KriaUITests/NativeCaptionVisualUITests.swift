@@ -14,9 +14,6 @@ final class NativeCaptionVisualUITests: XCTestCase {
         let field = app.textFields["native-editor-new-card-text"]
         let editor = input.exists ? input : field
         XCTAssertTrue(editor.waitForExistence(timeout: 5))
-        let handle = app.descendants(matching: .any)["native-editor-timeline-resize"].firstMatch
-        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -180)))
         app.scrollViews["native-editor-visuals-scroll"].swipeUp()
         editor.tap()
         editor.typeText("Keep this card draft")

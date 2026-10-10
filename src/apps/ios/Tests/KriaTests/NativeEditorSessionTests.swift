@@ -611,10 +611,217 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(Anchor.startShift(savedClipIndex: nil, savedInS: nil, currentClipIndex: 0, currentInS: 0), 0)
     }
 
+
+    // MARK: KRI-561 song trim
+
+    private static let trimCaps = ["volume": true, "window": true, "remove": true, "trim": true]
+
+    /// A background song 10...30 s over a 20 s video; the saved window follows the video (no creator end).
+    private func backgroundTrimSession(trim: Bool = true, trimEditable: Bool = true) async throws -> (NativeEditorSession, EditorCommitSpy) {
+        var caps = Self.allSongCaps
+        if trim { caps["trim"] = trimEditable }
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: caps, songDuration: 200, videoDuration: 20) { variant in
+            variant["user_song"] = .object(["title": .string("Midnight Drive"), "mode": .string("background"), "duration_s": .number(200),
+                                            "window_start_s": .number(10), "window_end_s": .number(30)])
+        }
+        return (session, fake)
+    }
+
+    func testEndHandleClampsClearsAtTheNaturalEndAndCommitsOnlyWhatChanged() async throws {
+        let (session, fake) = try await backgroundTrimSession()
+        let initial = try XCTUnwrap(session.yourSongControls)
+        XCTAssertTrue(initial.trimOffered)
+        XCTAssertTrue(initial.canTrim)
+        XCTAssertEqual(initial.endS, 30, accuracy: 1e-9)
+        XCTAssertFalse(initial.hasCreatorEnd)
+
+        session.setUserSongEnd(10.2)
+        XCTAssertEqual(session.document.userSong?.windowEndS ?? 0, 11, accuracy: 1e-9, "never closer than a second to the start")
+        session.setUserSongEnd(1_000)
+        XCTAssertNil(session.document.userSong, "dragged back to the natural end: nothing to send")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        session.setUserSongEnd(29.999)
+        XCTAssertNil(session.document.userSong, "within rounding of the natural end is the natural end")
+
+        session.setUserSongEnd(25)
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(windowEndS: 25))
+        XCTAssertEqual(session.yourSongControls?.endS ?? 0, 25, accuracy: 1e-9)
+        XCTAssertEqual(session.yourSongControls?.hasCreatorEnd, true)
+        XCTAssertEqual(session.yourSong?.window, "Plays 0:10 – 0:25")
+
+        // Moving the start later keeps the end, and cannot pass it: at most a second before.
+        session.setUserSongStart(40)
+        XCTAssertEqual(session.document.userSong?.windowStartS ?? 0, 24, accuracy: 1e-9)
+        XCTAssertEqual(session.document.userSong?.windowEndS ?? 0, 25, accuracy: 1e-9)
+        session.setUserSongStart(12)
+        XCTAssertEqual(session.yourSongControls?.startS ?? 0, 12, accuracy: 1e-9)
+        XCTAssertEqual(session.yourSongControls?.endS ?? 0, 25, accuracy: 1e-9)
+
+        // The end can't pass where the video would stop it (start + video).
+        session.setUserSongEnd(500)
+        XCTAssertNil(session.document.userSong?.windowEndS, "past the natural end clears it")
+
+        session.setUserSongEnd(25)
+        fake.commitResponse = okResponse("generation-2")
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(windowStartS: 12, windowEndS: 25))
+        XCTAssertNil(session.document.userSong)
+        XCTAssertEqual(session.yourSongControls?.endS ?? 0, 25, accuracy: 1e-9, "the saved end is the baseline")
+
+        // Dragging back to the saved end is no change; dragging to the natural end now CLEARS the saved one.
+        session.setUserSongEnd(25)
+        XCTAssertNil(session.document.userSong)
+        session.setUserSongEnd(1_000)
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(windowEndS: 200), "the song's own length is how the wire clears it")
+        fake.commitResponse = okResponse("generation-3")
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(windowEndS: 200))
+        XCTAssertEqual(session.yourSongControls?.hasCreatorEnd, false)
+        XCTAssertEqual(session.yourSongControls?.endS ?? 0, 32, accuracy: 1e-9, "start 12 + the 20 s video")
+    }
+
+    func testEndEditIsOneUndoStepAndASavedEndSurvivesALongerVideo() async throws {
+        let (session, _) = try await backgroundTrimSession()
+        session.beginSongEndDrag()
+        session.moveSongEnd(15)
+        session.moveSongEnd(18)
+        session.endSongEndDrag()
+        XCTAssertEqual(session.document.userSong?.windowEndS ?? 0, 18, accuracy: 1e-9)
+        session.undo()
+        XCTAssertNil(session.document.userSong, "the whole drag is one undo step")
+        XCTAssertFalse(session.canUndo)
+        // A video made longer than the creator's end keeps it: the end is absolute.
+        session.setUserSongEnd(18)
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 25)
+        XCTAssertEqual(session.yourSongControls?.endS ?? 0, 18, accuracy: 1e-9)
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 5)
+        XCTAssertEqual(session.yourSongControls?.endS ?? 0, 15, accuracy: 1e-9, "a shorter video still wins")
+    }
+
+    func testWithoutTheTrimCapabilityTheOldControlsStayAndTheEndCannotBeEdited() async throws {
+        let (session, _) = try await backgroundTrimSession(trim: false)
+        let controls = try XCTUnwrap(session.yourSongControls)
+        XCTAssertFalse(controls.trimOffered, "an older server: today's single-handle bar")
+        XCTAssertFalse(controls.canTrim)
+        XCTAssertTrue(controls.canEditStart)
+        session.setUserSongEnd(20)
+        XCTAssertNil(session.document.userSong)
+        XCTAssertFalse(session.applyLipsyncSongTrim(start: 11, end: 20))
+
+        let (closed, _) = try await backgroundTrimSession(trimEditable: false)
+        XCTAssertEqual(closed.yourSongControls?.trimOffered, true)
+        XCTAssertEqual(closed.yourSongControls?.canTrim, false, "offered but closed: shown, not editable")
+        closed.setUserSongEnd(20)
+        XCTAssertNil(closed.document.userSong)
+    }
+
+    func testBackgroundPreviewStopsAtTheCreatorEndAndFollowsTheStart() async throws {
+        let (session, _, sourceURL) = try await userSongSession(mode: "background", caps: Self.trimCaps, songDuration: 200, videoDuration: 2)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        func songClip() throws -> TimelineClip { try XCTUnwrap(session.displayedSourcePreviewRecipe?.tracks.first { $0.id == "song" }?.clips.first) }
+        // The song file is 4 s and the bed plays it from second 1 for the 2 s video; the creator stops it at 2.
+        session.setUserSongEnd(2)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try songClip().sourceDuration, 1, accuracy: 0.01, "plays 1...2 only")
+        XCTAssertEqual(try XCTUnwrap(try songClip().audioFadeOut), 0.5, accuracy: 0.01, "capped at half the length")
+    }
+
+    // Lip-sync: four 2.5 s cuts, take k filmed from second k, so delta_k = 100 + 1.5 k puts every cut on song second 100.
+    private func lipsyncTrimSession(trim: Bool = true, withPool: Bool = true) async throws -> (NativeEditorSession, EditorCommitSpy, URL) {
+        let pool = NativeEditorSourcePool(clips: (0..<4).map { index in
+            .init(clipIndex: index, nativeSource: NativeTimelineSource(mediaID: "take-\(index)", sourceURL: nil, original: nil, localRequired: false))
+        }, baseGeneration: "generation-1")
+        var caps: [String: Bool] = ["volume": true, "window": false, "remove": true]
+        if trim { caps["trim"] = true }
+        return try await userSongSession(mode: "lipsync", caps: caps, songDuration: 200, videoDuration: 10, pool: withPool ? pool : nil) { variant in
+            variant["user_song"] = .object(["title": .string("Midnight Drive"), "mode": .string("lipsync"), "duration_s": .number(200),
+                "window_start_s": .number(100), "window_end_s": .number(110),
+                "takes": .object(Dictionary(uniqueKeysWithValues: (0..<4).map { ("take-\($0)", JSONValue.number(100 + 1.5 * Double($0))) }))])
+            variant["user_timeline"] = .object(["slots": .array((0..<4).map { index in
+                .object(["slot_id": .string("slot-\(index)"), "clip_index": .number(Double(index)), "in_s": .number(Double(index)),
+                         "duration_s": .number(2.5), "source_duration_s": .number(30), "removed": .bool(false)])
+            })])
+        }
+    }
+
+    func testLipsyncTrimDropsOutsideCutsInOneUndoStepAndTheSongFollowsTheSinger() async throws {
+        let (session, fake, sourceURL) = try await lipsyncTrimSession()
+        let controls = try XCTUnwrap(session.yourSongControls)
+        XCTAssertTrue(controls.trimOffered)
+        XCTAssertTrue(controls.canTrim)
+        XCTAssertFalse(controls.canEditStart, "the start itself stays a derived value")
+        XCTAssertEqual(controls.startS, 100, accuracy: 1e-9)
+        XCTAssertEqual(controls.endS, 110, accuracy: 1e-9)
+        let before = session.document
+
+        XCTAssertTrue(session.applyLipsyncSongTrim(start: 102.5, end: 107.5))
+        XCTAssertEqual(session.document.clips.map(\.id), ["slot-1", "slot-2"])
+        XCTAssertEqual(session.document.clips.map(\.inS), [1, 2], "kept cuts keep their footage windows")
+        XCTAssertEqual(session.document.clips.map(\.durationS), [2.5, 2.5])
+        XCTAssertEqual(session.document.deletions.map(\.id).sorted(), ["slot-0", "slot-3"])
+        XCTAssertNil(session.document.userSong, "a lip-sync trim edits the video, not a song field")
+        XCTAssertEqual(session.duration, 5, accuracy: 1e-6)
+        let after = try XCTUnwrap(session.yourSongControls)
+        XCTAssertEqual(after.startS, 102.5, accuracy: 1e-6, "the song start follows the cuts")
+        XCTAssertEqual(after.endS, 107.5, accuracy: 1e-6)
+        XCTAssertEqual(session.yourSong?.window, "Plays 1:43 – 1:48")
+
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let start = try XCTUnwrap(session.displayedSourcePreviewRecipe?.tracks.first { $0.id == "song" }?.clips.first).sourceStart
+        // The harness's pinned recipe plays its 4 s song file from second 1; the trim moves that start by the 2.5 s the cuts moved.
+        XCTAssertEqual(start, 1 + 2.5, accuracy: 0.01, "and so does the preview's song, so it stays on the singer")
+
+        session.undo()
+        XCTAssertEqual(session.document.clips, before.clips)
+        XCTAssertEqual(session.document.deletions, before.deletions)
+        XCTAssertEqual(session.document.tombstones, before.tombstones)
+        XCTAssertFalse(session.canUndo, "cuts and window came back in ONE step")
+        XCTAssertEqual(session.yourSongControls?.startS ?? 0, 100, accuracy: 1e-6)
+        XCTAssertFalse(session.hasUnsavedChanges)
+
+        // Save sends the cuts and deletions, and never a song window for a lip-sync song.
+        XCTAssertTrue(session.applyLipsyncSongTrim(start: 101, end: 109))
+        fake.commitResponse = okResponse("generation-2")
+        await session.save()
+        let request = try XCTUnwrap(fake.lastRequest)
+        XCTAssertNil(request.userSong, "never window_start_s / window_end_s for lip-sync")
+        XCTAssertEqual(request.timelineSlots?.count, 4)
+    }
+
+    func testLipsyncTrimStraddlesKeepsTheSingerOnTheSongAndRefusesTooShort() async throws {
+        let (session, _, _) = try await lipsyncTrimSession()
+        XCTAssertFalse(session.applyLipsyncSongTrim(start: 104, end: 106.5), "2.5 s is under the 3 s minimum")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertTrue(session.applyLipsyncSongTrim(start: 101, end: 109))
+        XCTAssertEqual(session.document.clips.count, 4, "both edge cuts straddle, nothing is dropped")
+        XCTAssertEqual(session.document.clips.first?.inS ?? 0, 1, accuracy: 1e-9, "the head cut lost its first second")
+        XCTAssertEqual(session.document.clips.first?.durationS ?? 0, 1.5, accuracy: 1e-9)
+        XCTAssertEqual(session.document.clips.last?.durationS ?? 0, 1.5, accuracy: 1e-9)
+        XCTAssertEqual(session.yourSongControls?.startS ?? 0, 101, accuracy: 1e-6)
+        XCTAssertEqual(session.yourSongControls?.endS ?? 0, 109, accuracy: 1e-6)
+        // The range is the current window: asking for more does nothing.
+        XCTAssertFalse(session.applyLipsyncSongTrim(start: 90, end: 200))
+        XCTAssertEqual(session.yourSongControls?.startS ?? 0, 101, accuracy: 1e-6)
+    }
+
+    func testLipsyncTrimNeedsTheTrimCapabilityAndFallsBackToTheFirstCutWithoutTakes() async throws {
+        let (old, _, _) = try await lipsyncTrimSession(trim: false)
+        XCTAssertEqual(old.yourSongControls?.trimOffered, false)
+        XCTAssertFalse(old.applyLipsyncSongTrim(start: 102.5, end: 107.5))
+        XCTAssertTrue(old.document.deletions.isEmpty)
+
+        // Without the source pool no take's offset is known: the first cut's head is the anchor, as before.
+        let (noPool, _, _) = try await lipsyncTrimSession(withPool: false)
+        XCTAssertTrue(noPool.applyLipsyncSongTrim(start: 101, end: 109))
+        XCTAssertEqual(noPool.yourSongControls?.startS ?? 0, 101, accuracy: 1e-6, "the head cut moved a second, so does the song")
+    }
+
     /// A background or lip-sync creator-song edit on a device recipe whose song file is 4s long and whose
     /// bed plays 1s...3s of it; `caps` are the nested `user_song.{volume,window,remove}` editable flags.
     private func userSongSession(mode: String, caps: [String: Bool], songDuration: Double = 200, videoDuration: Double = 2,
-                                 originalAudio: Bool = false, savedOriginalLevel: Double? = nil) async throws -> (NativeEditorSession, EditorCommitSpy, URL) {
+                                 originalAudio: Bool = false, savedOriginalLevel: Double? = nil,
+                                 pool: NativeEditorSourcePool? = nil,
+                                 editVariant: ((inout [String: JSONValue]) -> Void)? = nil) async throws -> (NativeEditorSession, EditorCommitSpy, URL) {
         let threadID = UUID(), jobID = UUID()
         let wav = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).wav")
         addTeardownBlock { try? FileManager.default.removeItem(at: wav) }
@@ -644,6 +851,7 @@ final class NativeEditorSessionTests: XCTestCase {
             authoritative["resolved_archetype"] = .string("guided_story")
             authoritative["original_audio_level"] = .number(savedOriginalLevel)
         }
+        editVariant?(&authoritative)
         authoritative["editor_capabilities"] = .object([
             "timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false),
             "original_audio": .object(["editable": .bool(originalAudio)]),
@@ -659,7 +867,7 @@ final class NativeEditorSessionTests: XCTestCase {
                 snapshot: [:], canUndo: false, createdAt: .now),
             authoritativeVariant: authoritative
         )
-        fake.sourcePoolResult = NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")
+        fake.sourcePoolResult = pool ?? NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")
         fake.deviceRenderResponse = DeviceRenderStatusResponse(phase: "published", request: request, publishedGeneration: "generation-1")
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: threadID)
@@ -1398,6 +1606,19 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNotNil(device.addClipUnavailableReason)
         let (cloud, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
         XCTAssertEqual(cloud.canAddTimelineMedia, cloud.addClipUnavailableReason == nil)
+    }
+
+    func testDeviceOnlyModeMakesLegacyCloudEditorPlaybackOnly() async throws {
+        let (session, fake) = await Self.footageSession(destination: "cloud", operationsEditable: true)
+        fake.creationMode = .deviceOnly
+        await session.load(api: fake, threadID: UUID())
+
+        let message = try XCTUnwrap(session.cloudEditorUnavailableMessage)
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("still play"))
+        XCTAssertFalse(session.canEditTimeline)
+        XCTAssertFalse(session.canEditText)
+        XCTAssertFalse(session.canAddTimelineMedia)
+        XCTAssertEqual(session.addClipUnavailableReason, message)
     }
 
     // KRI-166: the cap is 50 (matching server + creation), not the old 20 — an
@@ -4917,6 +5138,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     private var sourcePoolContinuation: CheckedContinuation<Void, Never>?
     private var sourcePoolResumeRequested = false
     var phoneDestination = false
+    var creationMode: CreationMode?
     /// What `editorSource` polls return (nil ⇒ the default unsupported error).
     var editorSourceResponse: EditorSourceRegistrationResponse?
     var deviceFetchCount = 0
@@ -4953,6 +5175,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
         self.suspendNextCommit = suspendNextCommit
     }
     func projects() async throws -> [ProjectSummary] { throw APIError.unsupported }
+    func creationCapabilities() async throws -> CreationCapabilities { CreationCapabilities(formats: [], creationMode: creationMode) }
     func project(threadID: UUID) async throws -> CreationThread {
         projectCallCount += 1
         guard let refreshedThread else { throw APIError.unsupported }

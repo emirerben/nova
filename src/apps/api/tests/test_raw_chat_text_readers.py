@@ -92,6 +92,18 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "receipt wording for the approved brief requirements",
         None,
     ),
+    "kria/editor_receipts.py": (
+        "plan_time",
+        "editor-turn receipt wording: quotes the turn's stated requirement back beside what "
+        "the ops changed; it runs on the draft before any render and decides nothing",
+        None,
+    ),
+    "kria/plan_review.py": (
+        "carry",
+        "a section undo mints a render-only turn whose creator_request is the fixed undo "
+        "reply; it carries no creator words and decides nothing",
+        frozenset({"_mint_restore_turn"}),
+    ),
     "routes/admin_plan_items.py": ("plan_time", "admin debug payload", None),
     "routes/creation_threads.py": ("plan_time", "render-shape projection / repair", None),
     "routes/creator_agent.py": (
@@ -108,6 +120,12 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "services/edit_direction_planner.py": ("plan_time", "direction snapshot planning", None),
     "services/edit_proposals.py": ("plan_time", "scheduled draft validation", None),
     "services/proposal_planning.py": ("plan_time", "proposal snapshot planning", None),
+    "services/creation_text_composition.py": (
+        "plan_time",
+        "uses the bound request as text-composer model context before the initial snapshot is "
+        "persisted for creator approval",
+        None,
+    ),
     "services/slide_post_chat_edit.py": ("plan_time", "slide chat edit (own plan)", None),
     "tasks/edit_proposal_build.py": ("plan_time", "guided proposal drafting", None),
     # --- carry -----------------------------------------------------------------------------------

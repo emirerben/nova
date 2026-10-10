@@ -39,9 +39,12 @@ from pydantic import (
 )
 from sqlalchemy import func, select
 
+from app.agents._schemas.text_element import _ALLOWED_FONTS, _HEX_COLOR_RE
 from app.kria.brief_route import loose_text, wants_filming_time_text
 from app.kria.reply_language import detect_chat_language
 from app.models import CreativeBriefVersion
+from app.schemas.text_style_intent import normalize_title_animation
+from app.services.kria_editor_ops_diff import font_family_key
 
 RequirementKind = Literal["text", "order", "select", "timing", "audio", "style"]
 RequirementStatus = Literal["open", "met", "partial", "not_possible", "superseded"]
@@ -73,6 +76,106 @@ def _shot_key(description: str) -> str:
     creator's own spelling.
     """
     return _EDGE_PUNCT.sub("", loose_text(_LIST_MARKER.sub("", description)))
+
+
+# KRI-543: the structured style intent a creator's words resolve to, so a style ask can be
+# checked against the saved text rows instead of staying "can't verify". Closed vocabulary;
+# anything outside it is dropped (the requirement then stays unchecked), never raised.
+STYLE_INTENT_TARGETS = frozenset({"all_text", "title", "labels"})
+_STYLE_TEXT_CASE_ALIASES = {
+    "none": "none",
+    "normal": "none",
+    "original": "none",
+    "upper": "upper",
+    "uppercase": "upper",
+    "upper case": "upper",
+    "all caps": "upper",
+    "lower": "lower",
+    "lowercase": "lower",
+    "lower case": "lower",
+    "title": "title",
+    "titlecase": "title",
+    "title case": "title",
+    "capitalize": "title",
+    "capitalized": "title",
+}
+_STYLE_ALIGNMENTS = {"left": "left", "center": "center", "centre": "center", "right": "right"}
+
+
+def _style_value(field: str, value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    folded = re.sub(r"[\s_\-]+", " ", text.casefold())
+    if field == "entrance":
+        return "none" if folded == "none" else normalize_title_animation(text)
+    if field == "alignment":
+        return _STYLE_ALIGNMENTS.get(folded)
+    if field == "text_case":
+        return _STYLE_TEXT_CASE_ALIASES.get(folded)
+    if field == "color":
+        return text.upper() if _HEX_COLOR_RE.match(text) else None
+    if field == "font_family":
+        return resolve_font_name(text)
+    return None
+
+
+def resolve_font_name(text: str) -> str | None:
+    """The registry font a creator's words name, else None (KRI-558).
+
+    An exact (case-insensitive) name wins, so "Inter Tight" is never read as "Inter". A
+    family word ("inter") resolves to the family's plain face; a leading part of one name
+    ("alte haas") resolves only when exactly one family starts that way. Anything ambiguous
+    names no font, so a wrong guess can never decide a verdict.
+    """
+    wanted = re.sub(r"[\s_\-]+", " ", text.strip().casefold())
+    if not wanted:
+        return None
+    if text in _ALLOWED_FONTS:
+        return text
+    exact = next(
+        (n for n in sorted(_ALLOWED_FONTS) if n.casefold() == text.strip().casefold()), None
+    )
+    if exact:
+        return exact
+    key = font_family_key(wanted)
+    family = sorted((n for n in _ALLOWED_FONTS if font_family_key(n) == key), key=len)
+    if family:
+        return family[0]
+    starts: dict[str | None, str] = {}
+    for name in sorted(_ALLOWED_FONTS, key=lambda n: (len(n), n)):
+        if re.sub(r"[\s_\-]+", " ", name.casefold()).startswith(wanted + " "):
+            starts.setdefault(font_family_key(name), name)
+    return next(iter(starts.values())) if len(starts) == 1 else None
+
+
+def normalize_style_intent(raw: object) -> dict[str, Any] | None:
+    """The canonical ``facts["style_intent"]``, or None when it is not well formed.
+
+    Shape: ``{"set": [{"field", "value"}, ...], "target"?: all_text|title|labels}``. One value
+    per field, no other keys (ids are never accepted), every value from the closed
+    vocabulary of the matching ``TextElement`` field. Pure; never raises.
+    """
+    if not isinstance(raw, dict) or not set(raw) <= {"set", "target"}:
+        return None
+    items = raw.get("set")
+    if not isinstance(items, list) or not items:
+        return None
+    resolved: dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict) or set(item) != {"field", "value"}:
+            return None
+        field = item["field"]
+        value = _style_value(field, item["value"]) if isinstance(field, str) else None
+        if value is None or resolved.setdefault(field, value) != value:
+            return None
+    target = raw.get("target")
+    if target is not None and target not in STYLE_INTENT_TARGETS:
+        return None
+    out: dict[str, Any] = {"set": [{"field": f, "value": v} for f, v in resolved.items()]}
+    if target is not None:
+        out["target"] = target
+    return out
 
 
 class _BriefModel(BaseModel):
@@ -118,6 +221,10 @@ class BriefUpdate(_BriefModel):
             raise ValueError("facts must be JSON serializable") from None
         if len(encoded.encode("utf-8")) > _MAX_FACTS_BYTES:
             raise ValueError(f"facts exceed {_MAX_FACTS_BYTES} bytes")
+        if "style_intent" in value:
+            facts = {k: v for k, v in value.items() if k != "style_intent"}
+            intent = normalize_style_intent(value["style_intent"])
+            return {**facts, "style_intent": intent} if intent else facts
         return value
 
     @model_validator(mode="after")
@@ -710,12 +817,18 @@ def route_requirements(
     current_plan: CurrentPlanShape | None,
     *,
     message: str | None = None,
+    full_replan: bool | None = None,
 ) -> Route:
-    """Deterministic scope router. See the module docstring for the rules."""
+    """Deterministic scope router. See the module docstring for the rules.
+
+    ``full_replan=False`` is a semantic extractor verdict and suppresses the
+    legacy message regex. ``None`` preserves the historical fallback for callers
+    that do not have a semantic verdict yet.
+    """
     reqs = list(new_reqs)
     if current_plan is None or not current_plan.has_render:
         return "replan"
-    if message and wants_full_replan(message):
+    if full_replan is True or (full_replan is None and message and wants_full_replan(message)):
         return "replan"
     if not reqs:
         return "editor_ops"

@@ -479,13 +479,17 @@ async def offer_for_item(
     render destination resolved (one unlocked Job read)."""
     from app.config import settings  # noqa: PLC0415
     from app.models import Job  # noqa: PLC0415
+    from app.services.phone_destination import item_requires_native_device_only  # noqa: PLC0415
 
     job_id = getattr(item, "current_job_id", None)
     job = await db.get(Job, job_id) if job_id is not None else None
+    native_device_only = False
+    if settings.ios_native_device_only_enabled:
+        native_device_only = await item_requires_native_device_only(db, item, creator_id)
     return creation_offer(
         item,
         strategy,
         previous_orientation=previous_ready_orientation(job),
-        device_render=bool(settings.phone_rendering_for(creator_id)),
+        device_render=bool(settings.phone_rendering_for(creator_id) or native_device_only),
         creator_request=creator_request,
     )

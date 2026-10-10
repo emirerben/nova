@@ -71,7 +71,7 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # KRI-519: reaction beats on an iPhone Voiceover edit, worded for the voiceover (v51).
 # KRI-525/526: pins may carry `start_s`/`end_s` or `clip`; the 4-line / 120-character limits are
 # taught so an over-long ask becomes a question, not a schema failure (v52).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-08-v52"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-08-v53"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -327,6 +327,14 @@ creative context; it does NOT ask to group or order clips. "Come up with creativ
 turn those descriptive facts into operations. Use that context when proposing `action`, but emit
 no `brief_updates` for it. Only add a requirement when the creator asks the output to do something
 with the material or supplies exact on-screen copy.
+
+Preserve EVERY independently requested behavior, including modifiers and relationships between
+parts of a compound request. An entrance animation does not describe segmentation, ordering,
+overlap, duration, or when one text replaces another. Keep these instructions in the requirement's
+complete description and structured facts; if they need separate verification, record a separate
+style or timing requirement as well. Never shorten a compound request to the one field the
+strategy happens to expose. Descriptions may retain behavior requiring composition of operations.
+Do not duplicate an opening hook as a per-clip caption unless the creator requests both.
 
 When a real requirement is present, ALWAYS record the structured facts that belong to it, even
 when the same words also sit in a title or sentence: a distance, activity, start point, or end

@@ -201,7 +201,8 @@ def _coerce_rewrite_text(name: str, payload: dict, snapshot: dict, state: Any) -
             return None
         results.append(new)
     if all(new == by_id[bar_id]["text"] for bar_id, new in zip(matched, results, strict=True)):
-        _clarify(state, f"Those already read “{results[0]}”, so I left them as they are.")
+        message = f"Those already read “{results[0]}”, so I left them as they are."
+        state.no_effect_clarifications.append(message)
         return None
     return {**out, "selector": selector, "target_ids": matched, "expected_count": len(matched)}
 
@@ -271,7 +272,8 @@ def _coerce_replace_text_sequence(
         state.invalid_value()
         return None
     if len(clean_segments) == 1 and "patch" not in payload:
-        _clarify(state, "That would leave the current text unchanged as one segment.")
+        message = "That would leave the current text unchanged as one segment."
+        state.no_effect_clarifications.append(message)
         return None
     out = {
         "selector": selector,
@@ -362,10 +364,8 @@ def _coerce_realign_labels(name: str, payload: dict, snapshot: dict, state: Any)
     ]
     plan = plan_label_realign(labels, slots)
     if not plan:
-        _clarify(
-            state,
-            "The labels already line up with their clips, so I left them as they are.",
-        )
+        message = "The labels already line up with their clips, so I left them as they are."
+        state.no_effect_clarifications.append(message)
         return None
     return {
         "selector": selector,

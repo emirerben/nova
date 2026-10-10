@@ -406,6 +406,32 @@ private actor RetryGate {
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: ["future"], role: .clip), .mixed)
     }
 
+    func testDeviceOnlyAccountsNeverChooseCloudUploads() {
+        let cloud = UploadPurpose.cloudRenderSource.rawValue
+
+        // Missing or insufficient local capabilities retain the draft and tell the
+        // creator to try again; they must never switch a new project to cloud.
+        for capabilities in [nil, PhoneRenderingCapabilities.disabled] {
+            XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: capabilities, creationMode: .deviceOnly, sourcePurposes: [], role: .clip), .paused)
+            XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: capabilities, creationMode: .deviceOnly, sourcePurposes: [], role: .visual), .paused)
+        }
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, creationMode: .deviceOnly, sourcePurposes: [], role: .clip), .phone)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, creationMode: .deviceOnly, sourcePurposes: [], role: .visual), .phoneVisuals([.image, .video]))
+
+        // Existing cloud projects stay playable, but this iPhone cannot add or
+        // replace their media after the account moves to device-only creation.
+        let existingCloud = ProjectUploadDestination.resolve(capabilities: enabled, creationMode: .deviceOnly, sourcePurposes: [cloud], role: .clip)
+        XCTAssertEqual(existingCloud, .cloudProjectUnavailableOnPhone)
+        XCTAssertFalse(existingCloud.canUpload)
+        XCTAssertTrue(existingCloud.message?.localizedCaseInsensitiveContains("still play") ?? false)
+
+        // Audio uses a separately server-gated full-file contract and does not
+        // choose the video's render destination. Device-only accounts keep it.
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, creationMode: .deviceOnly, sourcePurposes: [], role: .voiceover), .phone)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, creationMode: .deviceOnly, sourcePurposes: [], role: .song), .cloud)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: nil, creationMode: .deviceOnly, capabilitiesLoaded: false, sourcePurposes: [cloud], role: .clip), .checking)
+    }
+
     /// KRI-121: accounts that render on iPhone keep every project on iPhone.
     /// Visuals take the kinds this iPhone is verified to draw (`stillImages`
     /// photos, `visualVideos` videos); before that the sheet says so without

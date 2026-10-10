@@ -58,7 +58,8 @@ def test_unchecked_receipt_suppresses_generic_success_summary() -> None:
 
     reply = reply_from_receipts(brief, [unchecked], summary="Everything is ready.")
     assert "Everything is ready" not in reply
-    assert "couldn't verify" in reply.casefold()
+    assert "have a look at these in the video" in reply.casefold()
+    assert "verify" not in reply.casefold()
     assert req.text() in reply
 
 

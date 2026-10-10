@@ -201,6 +201,7 @@ def compile_phone_guided_plan(
         _tag_guided_text_overlays,
     )
     from app.pipeline.portable_text_layout import compile_text_overlay
+    from app.pipeline.sequence_text_evidence import sequence_lineage
 
     for lane, capability in _UNSUPPORTED_PHONE_LANE_CAPABILITY.items():
         if lane == "editor_visual_blocks" and allow_editor_media:
@@ -614,11 +615,13 @@ def compile_phone_guided_plan(
     )
     layers = []
     ordered_overlays = []
+    source_elements_by_id = {}
     for lane, elements in (
         ("text", [element for element in caption_elements if element.id not in hidden_caption_ids]),
         ("context", plan.context_label_text_elements),
         ("narration", plan.narration_label_text_elements),
     ):
+        source_elements_by_id.update({element.id: element for element in elements})
         overlays = build_overlays_from_text_elements(
             elements, video_duration_s=plan.resolved_duration_s, independent_box_alignment=True
         )
@@ -650,8 +653,21 @@ def compile_phone_guided_plan(
             raise UnsupportedPhonePlan(
                 "sequence effect needs composite-stream parity", reason="sequence_effect"
             )
+        source_id = overlay.get("element_id")
+        source_element = source_elements_by_id.get(source_id)
+        lineage = (
+            sequence_lineage(
+                {"element_id": source_element.id, "source_params": source_element.source_params}
+            )
+            if source_element is not None
+            else None
+        )
+        # Sequence children need their compiler-owned lineage in the portable
+        # recipe so the phone contract can compose them. Ordinary layers retain
+        # their historical positional ids.
+        compiled_layer_id = f"text-{source_id}" if lineage is not None else layer_id
         layer, font = compile_text_overlay(
-            overlay, layer_id=layer_id, canvas=canvas, dissolve_seed=101 + index * 37
+            overlay, layer_id=compiled_layer_id, canvas=canvas, dissolve_seed=101 + index * 37
         )
         if font is not None:
             manifest[font.id] = font
@@ -814,6 +830,15 @@ def compile_phone_guided_plan(
         lipsync = user_song.mode == "lipsync"
         fade_in = song.fade_in_s if song.fade_in_s is not None else (0.05 if lipsync else 0.5)
         fade_out = song.fade_out_s if song.fade_out_s is not None else (0.3 if lipsync else 0.5)
+        if (
+            not lipsync
+            and song.fade_out_s is None
+            and song_duration_s < compiled_duration - 0.05
+            and song_start_s + song_duration_s < song.duration_s - 0.05
+        ):
+            # KRI-561: the creator stopped the music before both the video and the song end,
+            # so it fades out instead of cutting dead (a song that simply runs out keeps 0.5 s).
+            fade_out = 1.5
         tracks.append(
             TimelineTrack(
                 id=USER_SONG_TRACK_ID,

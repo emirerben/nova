@@ -669,12 +669,15 @@ def test_the_song_capabilities_lock_the_start_for_lipsync_only():
         "volume": {"editable": True, "reason": None},
         "window": {"editable": True, "reason": None},
         "remove": {"editable": True, "reason": None},
+        "trim": {"editable": True, "reason": None},
     }
     job, _result = lipsync_job()
     caps = gj._editor_capabilities(job, job.assembly_plan["variants"][0])["user_song"]
     assert caps["volume"]["editable"] is True
     assert caps["remove"]["editable"] is True
     assert caps["window"] == {"editable": False, "reason": "user_song_lipsync_locked"}
+    # KRI-561: trimming works in both modes (lip-sync trims by cutting the video).
+    assert caps["trim"] == {"editable": True, "reason": None}
 
 
 def test_a_projection_carries_the_volume_and_defaults_to_full():
@@ -879,3 +882,260 @@ def test_a_sub_frame_head_difference_keeps_the_pinned_song_start():
     window = _song_clip(_recipe(job)).source_start
     _trim_first_head(job, 0.02)
     assert _song_clip(_recipe(job)).source_start == pytest.approx(window)
+
+
+# ── KRI-561: trim the song (start + end) in the editor ──────────────────────────────────
+
+
+def _slots_commit(job, *, drop_first=0, shorten_last_by=0.0):
+    """Re-send the timeline as the editor does after cutting: drop opening cuts and/or shorten
+    the last one. Every kept cut keeps its own footage window (the video ripples)."""
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    sources = [source["media_id"] for source in revision["sources"]]
+    kept = revision["segments"][drop_first:]
+    slots = []
+    for index, segment in enumerate(kept):
+        duration = segment["duration_s"]
+        if index == len(kept) - 1:
+            duration = round(duration - shorten_last_by, 6)
+        slots.append(
+            gj.TimelineSlotEdit(
+                slot_id=segment["segment_id"],
+                clip_index=sources.index(segment["media_id"]),
+                in_s=segment["source_start_s"],
+                duration_s=duration,
+            )
+        )
+    payload = gj.EditorCommitRequest(
+        base_generation=gj.variant_render_baseline(variant),
+        guided_revision_number=revision["revision_number"],
+        timeline_slots=slots,
+    )
+    return gj.prepare_editor_commit(job, "guided_story", payload)
+
+
+def _first_kept_pinned_start(result, job, *, drop_first):
+    """The song time the first KEPT cut sits at: delta + its footage start."""
+    variant = job.assembly_plan["variants"][0]
+    segment = gj._guided_v2_revision(job, variant)["segments"][drop_first]
+    return result.user_song.takes[segment["media_id"]].delta_s + segment["source_start_s"]
+
+
+def _recipe_sync_errors(job, result):
+    """Every pinned lip-sync cut in the committed recipe, against the committed song start."""
+    recipe = _recipe(job)
+    window = _song_clip(recipe).source_start
+    cut_media = {cut.cut_id: cut.media_id for cut in result.snapshot.fast_cuts}
+    errors = []
+    for clip in next(t for t in recipe.tracks if t.kind == "video").clips:
+        pinned = result.user_song.takes.get(cut_media.get(clip.id))
+        if pinned is None:
+            continue
+        errors.append(
+            lipsync_sync_error_s(
+                output_start_s=clip.timeline_start,
+                source_start_s=clip.source_start,
+                delta_s=pinned.delta_s,
+                window_start_s=window,
+            )
+        )
+    return errors
+
+
+def test_cutting_the_opening_lipsync_take_moves_the_song_start_onto_the_next_take():
+    """Trim the song's start = drop the opening cuts: the song must start where the new
+    first cut sits in the song, or every remaining take drifts off the audio."""
+    job, result = lipsync_job()
+    old_start = _song_clip(_recipe(job)).source_start
+    expected = _first_kept_pinned_start(result, job, drop_first=1)
+    assert expected > old_start + 1  # a real trim, not a frame
+    _slots_commit(job, drop_first=1)
+    recipe = _recipe(job)
+    assert _song_clip(recipe).source_start == pytest.approx(expected, abs=0.01)
+    errors = _recipe_sync_errors(job, result)
+    assert errors and max(errors) <= 0.002
+    saved = _saved_song(job)
+    assert saved["window_start_s"] == pytest.approx(expected, abs=0.01)
+    # The song now plays exactly as long as the shorter video.
+    assert saved["window_end_s"] - saved["window_start_s"] == pytest.approx(
+        _video_length(job), abs=0.01
+    )
+
+
+def test_cutting_the_tail_of_a_lipsync_video_ends_the_song_with_it_and_keeps_the_start():
+    job, result = lipsync_job()
+    start = _song_clip(_recipe(job)).source_start
+    length = _video_length(job)
+    _slots_commit(job, shorten_last_by=4.0)
+    recipe = _recipe(job)
+    clip = _song_clip(recipe)
+    assert clip.source_start == pytest.approx(start, abs=0.01)
+    assert clip.source_duration == pytest.approx(length - 4.0, abs=0.1)
+    assert max(_recipe_sync_errors(job, result)) <= 0.002
+    saved = _saved_song(job)
+    assert saved["window_end_s"] - saved["window_start_s"] == pytest.approx(
+        _video_length(job), abs=0.01
+    )
+
+
+def test_cutting_both_ends_of_a_lipsync_video_keeps_every_remaining_take_in_sync():
+    job, result = lipsync_job()
+    expected = _first_kept_pinned_start(result, job, drop_first=1)
+    _slots_commit(job, drop_first=1, shorten_last_by=3.0)
+    assert _song_clip(_recipe(job)).source_start == pytest.approx(expected, abs=0.01)
+    assert max(_recipe_sync_errors(job, result)) <= 0.002
+
+
+def test_a_lipsync_song_has_no_end_field_it_is_trimmed_by_cutting_the_video():
+    job, result = lipsync_job()
+    before = device_status(job, "guided_story").request
+    with pytest.raises(HTTPException) as caught:
+        _song_save(job, window_end_s=result.user_song.window_end_s - 3.0)
+    assert caught.value.status_code == 422
+    assert caught.value.detail["code"] == "user_song_lipsync_locked"
+    assert device_status(job, "guided_story").request == before
+
+
+def test_a_reordered_lipsync_video_is_still_refused_rather_than_sent_off_the_song():
+    """Cuts that DISAGREE about the song start (a reorder) must not be 'fixed' by the new
+    start derivation; the take resync still refuses them."""
+    job, _result = lipsync_job()
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    sources = [source["media_id"] for source in revision["sources"]]
+    swapped = list(reversed(revision["segments"]))
+    slots = [
+        gj.TimelineSlotEdit(
+            slot_id=segment["segment_id"],
+            clip_index=sources.index(segment["media_id"]),
+            in_s=segment["source_start_s"],
+            duration_s=segment["duration_s"],
+        )
+        for segment in swapped
+    ]
+    payload = gj.EditorCommitRequest(
+        base_generation=gj.variant_render_baseline(variant),
+        guided_revision_number=revision["revision_number"],
+        timeline_slots=slots,
+    )
+    with pytest.raises(HTTPException) as caught:
+        gj.prepare_editor_commit(job, "guided_story", payload)
+    assert caught.value.status_code == 422
+
+
+def _long_background_job(total_s=24):
+    """A background montage lengthened past the song's start so an end point can sit inside it."""
+    job, result = background_job()
+    _set_total(job, total_s)
+    return job, result
+
+
+def _saved_or_plan_start(job):
+    return _projection(job)["window_start_s"]
+
+
+def test_a_background_end_point_stops_the_music_early_and_fades_it_out():
+    job, _result = _long_background_job()
+    start = _saved_or_plan_start(job)
+    end = start + 10.0
+    assert _video_length(job) > 20
+    _song_save(job, window_end_s=end)
+    clip = _song_clip(_recipe(job))
+    assert clip.source_start == pytest.approx(start)
+    assert clip.source_duration == pytest.approx(10.0, abs=0.01)
+    assert clip.source_duration < _recipe(job).duration - 5
+    # The music fades out instead of cutting dead (a song that merely runs out keeps 0.5 s).
+    assert clip.audio_fade_out == pytest.approx(1.5)
+    assert _saved_song(job)["window_end_s"] == pytest.approx(end, abs=0.01)
+    assert _projection(job)["window_end_s"] == pytest.approx(end, abs=0.01)
+
+
+def test_a_song_that_simply_runs_out_keeps_the_short_fade():
+    """No creator end: the long fade is only for music the creator stopped early."""
+    job, _result = _long_background_job()
+    start = _saved_or_plan_start(job)
+    _song_save(job, window_start_s=SONG_DURATION_S - 5.0)
+    clip = _song_clip(_recipe(job))
+    assert clip.source_duration == pytest.approx(5.0, abs=0.01)
+    assert clip.audio_fade_out == pytest.approx(0.5)
+    assert start < SONG_DURATION_S - 5.0
+
+
+def test_a_background_end_point_survives_a_longer_video_and_a_moved_start():
+    job, _result = _long_background_job()
+    start = _saved_or_plan_start(job)
+    end = start + 8.0
+    _song_save(job, window_end_s=end)
+    # The video grows: the creator's end stays (it is absolute song time).
+    _set_total(job, _video_length(job) + 6)
+    clip = _song_clip(_recipe(job))
+    assert clip.source_duration == pytest.approx(8.0, abs=0.01)
+    # Moving the start later keeps the SAME end, so the music plays for less time.
+    _song_save(job, window_start_s=start + 3.0)
+    clip = _song_clip(_recipe(job))
+    assert clip.source_start == pytest.approx(start + 3.0)
+    assert clip.source_duration == pytest.approx(5.0, abs=0.01)
+
+
+def test_a_shorter_video_still_wins_over_a_later_end_point():
+    job, _result = _long_background_job()
+    start = _saved_or_plan_start(job)
+    _song_save(job, window_end_s=start + 20.0)
+    _set_total(job, 8)
+    clip = _song_clip(_recipe(job))
+    assert clip.source_duration <= _recipe(job).duration + 1e-3
+    assert _saved_song(job)["window_end_s"] == pytest.approx(start + _video_length(job), abs=0.01)
+
+
+def test_the_songs_own_length_clears_a_background_end_point():
+    job, _result = _long_background_job()
+    start = _saved_or_plan_start(job)
+    _song_save(job, window_end_s=start + 8.0)
+    assert _song_clip(_recipe(job)).source_duration == pytest.approx(8.0, abs=0.01)
+    _song_save(job, window_end_s=SONG_DURATION_S)
+    clip = _song_clip(_recipe(job))
+    assert clip.source_duration == pytest.approx(
+        min(_video_length(job), SONG_DURATION_S - start), abs=0.01
+    )
+
+
+@pytest.mark.parametrize("gap", [0.0, 0.5, 0.99])
+def test_an_end_point_that_leaves_under_a_second_of_song_is_refused(gap):
+    job, _result = background_job()
+    start = _saved_or_plan_start(job)
+    before = device_status(job, "guided_story").request
+    with pytest.raises(HTTPException) as caught:
+        _song_save(job, window_end_s=start + gap if gap else start + 0.01)
+    assert caught.value.status_code == 422
+    assert caught.value.detail["code"] == "user_song_window_out_of_range"
+    assert device_status(job, "guided_story").request == before
+
+
+def test_an_end_point_is_checked_against_a_start_moved_in_the_same_save():
+    job, _result = background_job()
+    start = _saved_or_plan_start(job)
+    # End 5 s after the OLD start is fine alone, but not once the start moves past it.
+    with pytest.raises(HTTPException) as caught:
+        _song_save(job, window_start_s=start + 10.0, window_end_s=start + 5.0)
+    assert caught.value.detail["code"] == "user_song_window_out_of_range"
+
+
+def test_the_projection_lists_lipsync_take_offsets_and_nothing_for_background():
+    job, result = lipsync_job()
+    takes = _projection(job)["takes"]
+    assert takes == {m: pytest.approx(t.delta_s) for m, t in result.user_song.takes.items()}
+    job, _result = background_job()
+    assert "takes" not in _projection(job)
+
+
+def test_the_revision_keeps_its_exact_shape_when_no_end_point_is_set():
+    """A revision saved before KRI-561 must serialize (and hash) byte-identically."""
+    from app.schemas.guided_edit_revision import GuidedEditorUserSong  # noqa: PLC0415
+
+    assert GuidedEditorUserSong().model_dump(mode="json") == {
+        "volume": 1.0,
+        "window_start_s": None,
+        "removed": False,
+    }
+    assert GuidedEditorUserSong(window_end_s=42.5).model_dump(mode="json")["window_end_s"] == 42.5

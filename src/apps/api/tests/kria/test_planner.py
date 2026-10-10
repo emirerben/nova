@@ -277,18 +277,24 @@ async def test_editor_revision_copies_orm_values_before_releasing_read_transacti
         lambda *_args, **_kwargs: {"allowed_op_families": ["trim_output_start"]},
     )
     monkeypatch.setattr(planner, "run_copilot_turn", copilot)
+    deadline_token = planner.turn_deadline.set(100.0)
 
-    result = await _plan_editor_revision(
-        db,
-        thread_id=uuid.uuid4(),
-        item=item,
-        user_message="Make it faster",
-    )
+    try:
+        result = await _plan_editor_revision(
+            db,
+            thread_id=uuid.uuid4(),
+            item=item,
+            user_message="Make it faster",
+        )
+    finally:
+        planner.turn_deadline.reset(deadline_token)
 
     assert result is not None
     assert result.turn_value == "question"
     assert copilot.await_args.args[0].turns == [{"role": "user", "content": "Tighten the opening"}]
     assert copilot.await_args.kwargs["job_id"] == job_id
+    assert copilot.await_args.kwargs["deadline_monotonic"] == 80.0
+    assert copilot.await_args.kwargs["timeout_override_s"] == 120.0
 
 
 @pytest.mark.asyncio

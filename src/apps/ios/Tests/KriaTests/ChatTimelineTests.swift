@@ -205,6 +205,23 @@ final class ChatTimelineTests: XCTestCase {
         XCTAssertEqual(BackgroundUploadCoordinator.inProgressRecords([record(failed: false)]).count, 1)
     }
 
+    func testCompletedThoughtIsPlacedAfterItsUserRequestBeforeReply() {
+        let thought = KriaThoughtSummary(
+            id: "thought-1", clientRequestID: "request-1", status: .completed,
+            text: "I matched the pace to the clip.", startedAt: .now, durationMS: 1200
+        )
+        let entries = ChatTimeline.build(
+            events: [
+                event(id: "user", sequence: 4, role: "user", type: "user_message", content: "Make it quicker", clientEventID: "request-1"),
+                event(id: "reply", sequence: 5, role: "assistant", type: "assistant_response", content: "Done"),
+            ], pending: [], stage: nil, thoughtSummaries: ["request-1": [thought]]
+        )
+
+        XCTAssertEqual(entries.map(\.id), ["user", "thought-request-1", "reply"])
+        if case .thoughts(let summaries) = entries[1].content { XCTAssertEqual(summaries, [thought]) }
+        else { XCTFail("Expected thought disclosure between request and reply") }
+    }
+
     private func event(
         id: String,
         sequence: Int,

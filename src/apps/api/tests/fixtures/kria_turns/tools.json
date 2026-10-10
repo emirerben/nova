@@ -577,6 +577,11 @@
           "minimum": 0,
           "title": "Expected Draft Revision",
           "type": "integer"
+        },
+        "render": {
+          "default": false,
+          "title": "Render",
+          "type": "boolean"
         }
       },
       "required": [
@@ -694,6 +699,78 @@
         "problem"
       ],
       "title": "KriaProblemOut",
+      "type": "object"
+    },
+    "PlanSectionUndoBody": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_block_revision": {
+          "minimum": 1,
+          "title": "Expected Block Revision",
+          "type": "integer"
+        },
+        "expected_draft_revision": {
+          "minimum": 0,
+          "title": "Expected Draft Revision",
+          "type": "integer"
+        },
+        "expected_thread_revision": {
+          "minimum": 0,
+          "title": "Expected Thread Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "expected_thread_revision",
+        "expected_block_revision",
+        "expected_draft_revision"
+      ],
+      "title": "PlanSectionUndoBody",
+      "type": "object"
+    },
+    "PlanSectionUndoOut": {
+      "properties": {
+        "draft_revision": {
+          "title": "Draft Revision",
+          "type": "integer"
+        },
+        "section_id": {
+          "enum": [
+            "title",
+            "clips",
+            "captions",
+            "music",
+            "sfx",
+            "overlays",
+            "look",
+            "post_caption"
+          ],
+          "title": "Section Id",
+          "type": "string"
+        },
+        "thread_revision": {
+          "title": "Thread Revision",
+          "type": "integer"
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Id"
+        }
+      },
+      "required": [
+        "section_id",
+        "thread_revision",
+        "draft_revision"
+      ],
+      "title": "PlanSectionUndoOut",
       "type": "object"
     },
     "SubmitTurnBody": {
@@ -1339,7 +1416,7 @@
           "type": "object"
         },
         "EditorCommitMix": {
-          "description": "Editor mix section. `music_level` maps onto the existing per-variant `mix`\nsemantics (voice/bed balance \u2014 voiceover variants only). `original_level` is the\nfootage's own sound level: persisted on every variant, and honored by the phone\nrenderer for guided-story edits (including creator-song videos, where it plays WITH\nthe song; unset keeps the song video's camera silent).",
+          "description": "Editor mix section. `music_level` maps onto the existing per-variant `mix`\nsemantics (voice/bed balance \u2014 voiceover variants only). `original_level` is the\nfootage's own sound level: persisted on every variant, and honored by the phone\nrenderer for guided-story edits (including creator-song videos, where it plays WITH\nthe song; unset keeps the song video's camera silent) and by the cloud renderer for\nsong variants (footage plays UNDER the song) and original-audio variants (footage\nvolume). Cloud voiceover variants refuse it (422 original_audio_voiceover_unsupported).",
           "properties": {
             "music_level": {
               "anyOf": [
@@ -1418,6 +1495,19 @@
               ],
               "default": null,
               "title": "Volume"
+            },
+            "window_end_s": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Window End S"
             },
             "window_start_s": {
               "anyOf": [
@@ -2224,6 +2314,93 @@
           "title": "LyricsSectionRequest",
           "type": "object"
         },
+        "ManualEdit": {
+          "additionalProperties": false,
+          "description": "A deterministic edit: no model call. v1 = title text, caption line text, sound mix.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "rewrite_text",
+                "set_mix"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "music_gain_db": {
+              "anyOf": [
+                {
+                  "maximum": 0,
+                  "minimum": -40,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Music Gain Db"
+            },
+            "music_level": {
+              "anyOf": [
+                {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Music Level"
+            },
+            "original_level": {
+              "anyOf": [
+                {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Original Level"
+            },
+            "target_id": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Target Id"
+            },
+            "text": {
+              "anyOf": [
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Text"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "title": "ManualEdit",
+          "type": "object"
+        },
         "MediaBlock": {
           "description": "User-authored image/video layer composed below text and captions.",
           "properties": {
@@ -2645,7 +2822,7 @@
         },
         "SongOrderAnswerIn": {
           "additionalProperties": false,
-          "description": "The creator's answer: the order they confirmed.",
+          "description": "The creator's answer: the order they confirmed.\n\n``placements`` (KRI-561, timeline card) lists the takes the creator put on the song with\nthe song time they chose; a take in ``ordered_media_ids`` but not in ``placements`` was\nleft in the tray (muted background footage). ``ordered_media_ids`` still names EVERY\ntake once, so old readers and the exact-set checks are unchanged.",
           "properties": {
             "ordered_media_ids": {
               "items": {
@@ -2654,6 +2831,21 @@
               "minItems": 1,
               "title": "Ordered Media Ids",
               "type": "array"
+            },
+            "placements": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/SongOrderPlacementIn"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Placements"
             },
             "question_id": {
               "title": "Question Id",
@@ -2665,6 +2857,26 @@
             "ordered_media_ids"
           ],
           "title": "SongOrderAnswerIn",
+          "type": "object"
+        },
+        "SongOrderPlacementIn": {
+          "additionalProperties": false,
+          "description": "One take the creator put on the song timeline (KRI-561): its song start is ``delta_s``.",
+          "properties": {
+            "delta_s": {
+              "title": "Delta S",
+              "type": "number"
+            },
+            "media_id": {
+              "title": "Media Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "media_id",
+            "delta_s"
+          ],
+          "title": "SongOrderPlacementIn",
           "type": "object"
         },
         "SourceCrop": {
@@ -3098,11 +3310,43 @@
           "title": "Expected Thread Revision",
           "type": "integer"
         },
+        "manual_edits": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ManualEdit"
+              },
+              "maxItems": 12,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manual Edits"
+        },
         "message": {
           "maxLength": 4000,
           "minLength": 1,
           "title": "Message",
           "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
         },
         "song_order": {
           "anyOf": [
@@ -3379,9 +3623,44 @@
   "tools": [
     {
       "argument_schema": {
+        "$defs": {
+          "EditorUnmetRequest": {
+            "additionalProperties": false,
+            "description": "A part of the creator's message the copilot did not turn into an operation (KRI-558).",
+            "properties": {
+              "reason": {
+                "default": "",
+                "maxLength": 200,
+                "title": "Reason",
+                "type": "string"
+              },
+              "request": {
+                "default": "",
+                "maxLength": 160,
+                "title": "Request",
+                "type": "string"
+              }
+            },
+            "title": "EditorUnmetRequest",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "description": "Portable EditCopilot operations; target and generation pins are server-owned.",
         "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 600,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Notes"
+          },
           "operations": {
             "items": {
               "additionalProperties": true,
@@ -3397,6 +3676,14 @@
             "minLength": 1,
             "title": "Summary",
             "type": "string"
+          },
+          "unmet_requests": {
+            "items": {
+              "$ref": "#/$defs/EditorUnmetRequest"
+            },
+            "maxItems": 6,
+            "title": "Unmet Requests",
+            "type": "array"
           }
         },
         "required": [

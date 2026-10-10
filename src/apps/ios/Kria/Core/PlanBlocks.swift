@@ -7,6 +7,7 @@ import KriaMediaEngine
 
 enum PlanSectionID: String, CaseIterable, Sendable {
     case title, clips, captions, music, sfx, overlays, look
+    case postCaption = "post_caption"
 
     /// Fixed display order of the feed.
     var order: Int { Self.allCases.firstIndex(of: self) ?? 0 }
@@ -20,8 +21,12 @@ enum PlanSectionID: String, CaseIterable, Sendable {
         case .sfx: "Sound effects"
         case .overlays: "Overlays"
         case .look: "Look"
+        case .postCaption: "Post caption"
         }
     }
+
+    /// Display-only in v2: a post caption can be neither flagged nor edited (contract section 2).
+    var isScopable: Bool { self != .postCaption }
 
     var systemImage: String {
         switch self {
@@ -32,6 +37,7 @@ enum PlanSectionID: String, CaseIterable, Sendable {
         case .sfx: "speaker.wave.2"
         case .overlays: "photo.on.rectangle"
         case .look: "sparkles"
+        case .postCaption: "text.bubble"
         }
     }
 }
@@ -61,6 +67,14 @@ struct PlanBlock: Equatable, Identifiable, Sendable {
     var intent: Bool
     var skipped: Bool
     var decidedAt: Date?
+    /// Live plan & review contract v2 (KRI-439). All defaulted, so an old server's blocks decode as before.
+    var revision: Int = 0
+    var changed: Bool = false
+    /// Structured section content; nil = missing or malformed, and the UI renders from `summary`/`detail`.
+    var payload: PlanBlockPayload? = nil
+    var previous: PlanPreviousValue? = nil
+    /// Set by `GET /plan` only.
+    var editable: Bool = false
 
     var id: String { section.rawValue }
 
@@ -82,6 +96,9 @@ struct PlanBlockFeedState: Equatable, Sendable {
     private(set) var lastSequence = -1
     /// Section decided by the newest event that decided one, so the feed can glow and expand it.
     private(set) var newestDecided: PlanSectionID?
+    /// Non-nil for a scoped update render (the sections the creator flagged).
+    private(set) var scope: [PlanSectionID]?
+    private(set) var previousJobID: String?
 
     static let empty = PlanBlockFeedState()
 
@@ -119,26 +136,28 @@ struct PlanBlockFeedState: Equatable, Sendable {
         }
         if let turn = payload["turn_id"]?.stringValue, !turn.isEmpty { turnID = turn }
         lastSequence = max(lastSequence, event.sequence)
+        if let rawScope = payload["scope"]?.arrayValue {
+            scope = rawScope.compactMap { $0.stringValue.flatMap(PlanSectionID.init(rawValue:)) }
+        }
+        if let previousJob = payload["previous_job_id"]?.stringValue, !previousJob.isEmpty { previousJobID = previousJob }
         for raw in payload["blocks"]?.arrayValue ?? [] {
-            guard case .object(let fields) = raw,
-                  let section = fields["section_id"]?.stringValue.flatMap(PlanSectionID.init(rawValue:)),
-                  let incomingState = fields["state"]?.stringValue.flatMap(PlanBlockState.init(wire:))
-            else { continue }
-            let incoming = PlanBlock(
-                section: section,
-                state: incomingState,
-                summary: fields["summary"]?.stringValue,
-                detail: fields["detail"]?.stringValue,
-                intent: fields["intent"]?.boolValue ?? false,
-                skipped: fields["skipped"]?.boolValue ?? false,
-                decidedAt: fields["decided_at"]?.stringValue.flatMap(Self.parseDate)
-            )
+            guard case .object(let fields) = raw, let incoming = PlanBlock(json: fields) else { continue }
             merge(incoming)
         }
     }
 
     private mutating func merge(_ incoming: PlanBlock) {
         guard var current = blocksBySection[incoming.section] else {
+            blocksBySection[incoming.section] = incoming
+            if incoming.state == .decided { newestDecided = incoming.section }
+            return
+        }
+        // A lower revision is an older value: ignore it whatever its state.
+        if incoming.revision < current.revision { return }
+        if incoming.revision > current.revision {
+            // A newer value replaces the whole block (summary, detail, payload, previous, changed, skipped),
+            // but a section still never moves backwards in state.
+            guard incoming.state >= current.state else { return }
             blocksBySection[incoming.section] = incoming
             if incoming.state == .decided { newestDecided = incoming.section }
             return
@@ -151,6 +170,9 @@ struct PlanBlockFeedState: Equatable, Sendable {
             // Same state: let a later event fill in or refine text, never blank it out.
             if let summary = incoming.summary { current.summary = summary }
             if let detail = incoming.detail { current.detail = detail }
+            if let payload = incoming.payload { current.payload = payload }
+            if let previous = incoming.previous { current.previous = previous }
+            current.changed = current.changed || incoming.changed
             current.intent = incoming.intent
             current.skipped = current.skipped || incoming.skipped
             current.decidedAt = incoming.decidedAt ?? current.decidedAt
@@ -158,7 +180,53 @@ struct PlanBlockFeedState: Equatable, Sendable {
         }
     }
 
-    private static func parseDate(_ value: String) -> Date? {
+}
+
+extension JSONValue {
+    /// Numbers arrive as `Double`; a whole one reads as an `Int`.
+    var planInt: Int? {
+        guard case .number(let value) = self, value.isFinite, value == value.rounded(), abs(value) < 1e9 else { return nil }
+        return Int(value)
+    }
+}
+
+extension PlanBlock {
+    /// The ONE constructor for a wire block: the feed reducer and `PlanSnapshot` both use it, so event and
+    /// snapshot blocks parse alike. Never throws on payload content: a malformed `payload` becomes nil and
+    /// the UI falls back to `summary`/`detail`. Returns nil only for an unknown `section_id` or `state`.
+    init?(json fields: [String: JSONValue]) {
+        guard let section = fields["section_id"]?.stringValue.flatMap(PlanSectionID.init(rawValue:)),
+              let state = fields["state"]?.stringValue.flatMap(PlanBlockState.init(wire:))
+        else { return nil }
+        self.init(
+            section: section,
+            state: state,
+            summary: fields["summary"]?.stringValue,
+            detail: fields["detail"]?.stringValue,
+            intent: fields["intent"]?.boolValue ?? false,
+            skipped: fields["skipped"]?.boolValue ?? false,
+            decidedAt: fields["decided_at"]?.stringValue.flatMap(Self.parseDate),
+            revision: fields["revision"]?.planInt ?? 0,
+            changed: fields["changed"]?.boolValue ?? false,
+            payload: PlanBlockPayload.decode(section: section, json: fields["payload"]),
+            previous: Self.previous(from: fields["previous"], section: section),
+            editable: fields["editable"]?.boolValue ?? false
+        )
+    }
+
+    private static func previous(from json: JSONValue?, section: PlanSectionID) -> PlanPreviousValue? {
+        guard case .object(let fields)? = json,
+              let revision = fields["revision"]?.planInt,
+              let jobID = fields["job_id"]?.stringValue
+        else { return nil }
+        return PlanPreviousValue(
+            revision: revision, jobID: jobID, summary: fields["summary"]?.stringValue,
+            payload: PlanBlockPayload.decode(section: section, json: fields["payload"]),
+            skipped: fields["skipped"]?.boolValue ?? false
+        )
+    }
+
+    static func parseDate(_ value: String) -> Date? {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let date = fractional.date(from: value) { return date }
@@ -192,7 +260,7 @@ enum DeviceBuildStage: Equatable, Sendable {
 
 /// The order the device works through the sections while it builds, which is the order the cloud reports
 /// them in (`render_execution_plan`): clips, music bed, overlays, text (title + captions + look), sound effects.
-private let deviceWorkOrder: [PlanSectionID] = [.clips, .music, .overlays, .title, .captions, .look, .sfx]
+private let deviceWorkOrder: [PlanSectionID] = [.clips, .music, .overlays, .title, .captions, .look, .sfx, .postCaption]
 
 extension PlanBlockFeedState {
     /// Displayed state of each section = min(server state, what the device has reached). The server stays the

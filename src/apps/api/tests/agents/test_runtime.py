@@ -6,6 +6,7 @@ Every retry/refusal/schema/fallback path is exercised against the MockModelClien
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -66,6 +67,226 @@ def test_transient_retry_succeeds(sample_agent: SampleAgent, mock_client: MockMo
     out = sample_agent.run(SampleInput(topic="x"))
     assert out.answer == "ok"
     assert len(mock_client.invocations) == 3
+
+
+def test_deadline_clamps_provider_timeout_without_changing_model_budget(
+    sample_agent: SampleAgent, mock_client: MockModelClient, monkeypatch
+) -> None:
+    mock_client.queue("gemini-2.5-flash", {"answer": "ok", "score": 70})
+    monkeypatch.setattr("app.agents._runtime.time.monotonic", lambda: 100.0)
+
+    out = sample_agent.run(
+        SampleInput(topic="x"),
+        ctx=RunContext(deadline_monotonic=112.0, timeout_override_s=120.0),
+    )
+
+    assert out.answer == "ok"
+    assert mock_client.invocations[0]["timeout_s"] == 12.0
+
+
+def test_deadline_exhaustion_stops_retry_before_provider_call(
+    sample_agent: SampleAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Clock:
+        now = 100.0
+
+    clock = Clock()
+
+    class FailingClient(MockModelClient):
+        def invoke(self, **kwargs):  # noqa: ANN003
+            try:
+                return super().invoke(**kwargs)
+            finally:
+                clock.now += 13.0
+
+    mock_client = FailingClient()
+    mock_client.queue("gemini-2.5-flash", TransientError("503"))
+    monkeypatch.setattr("app.agents._runtime.time.monotonic", lambda: clock.now)
+
+    with pytest.raises(TerminalError, match="deadline"):
+        SampleAgent(mock_client).run(
+            SampleInput(topic="x"),
+            ctx=RunContext(deadline_monotonic=112.0),
+        )
+
+    assert len(mock_client.invocations) == 1
+
+
+def test_durable_budget_allows_response_longer_than_stateless_cap(
+    sample_agent: SampleAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Clock:
+        now = 0.0
+
+    clock = Clock()
+
+    class SlowClient(MockModelClient):
+        def invoke(self, **kwargs):  # noqa: ANN003
+            result = super().invoke(**kwargs)
+            clock.now += 45.0
+            return result
+
+    class DurableSampleAgent(SampleAgent):
+        spec = replace(SampleAgent.spec, timeout_s=120.0)
+
+    client = SlowClient()
+    client.queue("gemini-2.5-flash", {"answer": "durable", "score": 80})
+    monkeypatch.setattr("app.agents._runtime.time.monotonic", lambda: clock.now)
+
+    result = DurableSampleAgent(client).run(
+        SampleInput(topic="x"),
+        ctx=RunContext(deadline_monotonic=100.0, timeout_override_s=120.0),
+    )
+
+    assert result.answer == "durable"
+    assert client.invocations[0]["timeout_s"] == 100.0
+    assert clock.now == 45.0
+
+
+def test_schema_retry_uses_remaining_shared_budget(
+    sample_agent: SampleAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Clock:
+        now = 0.0
+
+    clock = Clock()
+
+    class ParsingClient(MockModelClient):
+        def invoke(self, **kwargs):  # noqa: ANN003
+            result = super().invoke(**kwargs)
+            clock.now += 2.0
+            return result
+
+    client = ParsingClient()
+    client.queue(
+        "gemini-2.5-flash",
+        {"answer": "bad", "score": 101},
+        {"answer": "fixed", "score": 80},
+    )
+    monkeypatch.setattr("app.agents._runtime.time.monotonic", lambda: clock.now)
+
+    result = SampleAgent(client).run(
+        SampleInput(topic="x"), ctx=RunContext(deadline_monotonic=5.0, timeout_override_s=120.0)
+    )
+
+    assert result.answer == "fixed"
+    assert [call["timeout_s"] for call in client.invocations] == [5.0, 3.0]
+
+
+def test_deadline_minimum_budget_rejects_before_provider_and_logs_terminal(
+    sample_agent: SampleAgent,
+    mock_client: MockModelClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[dict] = []
+    monkeypatch.setattr("app.agents._runtime.time.monotonic", lambda: 0.0)
+    monkeypatch.setattr(
+        "app.agents._runtime.log.info", lambda _event, **kwargs: events.append(kwargs)
+    )
+    mock_client.queue("gemini-2.5-flash", {"answer": "never", "score": 80})
+
+    def reserve(*_args, **_kwargs):  # noqa: ANN001, ANN002
+        pytest.fail("reservation must not start")
+
+    monkeypatch.setattr("app.services.ai_cost_control.reserve_paid_call", reserve)
+
+    with pytest.raises(TerminalError, match="deadline"):
+        sample_agent.run(SampleInput(topic="x"), ctx=RunContext(deadline_monotonic=0.5))
+
+    assert mock_client.invocations == []
+    assert any(event.get("outcome") == "terminal_transient" for event in events)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_deadline_values_fail_before_provider(
+    sample_agent: SampleAgent,
+    mock_client: MockModelClient,
+    value: float,
+) -> None:
+    mock_client.queue("gemini-2.5-flash", {"answer": "never", "score": 80})
+
+    with pytest.raises(TerminalError, match="finite"):
+        sample_agent.run(SampleInput(topic="x"), ctx=RunContext(deadline_monotonic=value))
+
+    assert mock_client.invocations == []
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), 0.0])
+def test_invalid_timeout_override_fails_before_provider(
+    sample_agent: SampleAgent,
+    mock_client: MockModelClient,
+    value: float,
+) -> None:
+    mock_client.queue("gemini-2.5-flash", {"answer": "never", "score": 80})
+
+    with pytest.raises(TerminalError, match="timeout override"):
+        sample_agent.run(SampleInput(topic="x"), ctx=RunContext(timeout_override_s=value))
+
+    assert mock_client.invocations == []
+
+
+def test_small_timeout_override_rejects_after_budget_reservation(
+    sample_agent: SampleAgent, mock_client: MockModelClient
+) -> None:
+    mock_client.queue("gemini-2.5-flash", {"answer": "never", "score": 80})
+
+    with pytest.raises(TerminalError, match="insufficient"):
+        sample_agent.run(SampleInput(topic="x"), ctx=RunContext(timeout_override_s=0.5))
+
+    assert mock_client.invocations == []
+
+
+def test_budget_depletion_after_reservation_releases_without_provider(
+    sample_agent: SampleAgent,
+    mock_client: MockModelClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Clock:
+        now = 0.0
+
+    clock = Clock()
+    receipt = SimpleNamespace(
+        id="reservation-1",
+        environment="production",
+        usage_purpose="production",
+        estimated_cost_usd=0.01,
+        price_version="test",
+    )
+    released: list[object] = []
+
+    def reserve(*_args, **_kwargs):  # noqa: ANN001, ANN002
+        clock.now = 1.5
+        return receipt
+
+    monkeypatch.setattr("app.agents._runtime.time.monotonic", lambda: clock.now)
+    monkeypatch.setattr("app.services.ai_cost_control.reserve_paid_call", reserve)
+    monkeypatch.setattr(
+        "app.services.ai_cost_control.mark_paid_call_started", lambda _receipt: None
+    )
+    monkeypatch.setattr(
+        "app.services.ai_cost_control.release_paid_call", lambda value: released.append(value)
+    )
+    mock_client.queue("gemini-2.5-flash", {"answer": "never", "score": 80})
+
+    with pytest.raises(TerminalError, match="insufficient"):
+        sample_agent.run(SampleInput(topic="x"), ctx=RunContext(deadline_monotonic=2.0))
+
+    assert mock_client.invocations == []
+    assert released == [receipt]
+
+
+def test_provider_outcome_unknown_is_terminal_without_fallback(
+    sample_agent: SampleAgent, mock_client: MockModelClient
+) -> None:
+    agent = type(sample_agent)(mock_client)
+    agent.spec = replace(agent.spec, max_attempts=2, fallback_models=("gemini-2.5-pro",))
+    mock_client.queue("gemini-2.5-flash", ProviderOutcomeUnknownError("unknown"))
+    mock_client.queue("gemini-2.5-pro", {"answer": "fallback", "score": 80})
+
+    with pytest.raises(ProviderOutcomeUnknownError):
+        agent.run(SampleInput(topic="x"))
+
+    assert [call["model"] for call in mock_client.invocations] == ["gemini-2.5-flash"]
 
 
 def test_transient_exhausts_to_fallback(

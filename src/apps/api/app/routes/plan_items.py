@@ -40,7 +40,7 @@ from app.agents._runtime import (
 )
 from app.agents._schemas.edit_format import coerce_edit_format, guided_edit_applicable
 from app.agents.music_matcher import _sanitize_text
-from app.auth import SYNTHETIC_USER_ID, CurrentUser
+from app.auth import SYNTHETIC_USER_ID, CurrentUser, NativeClient
 from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK
@@ -177,6 +177,7 @@ from app.schemas.slide_post import (
     SlidePostDraft,
     SlideRef,
     bump_slide_post_version,
+    canonicalize_slide_post_brief_binding,
     merge_legacy_text_edits,
     parse_slide_post,
 )
@@ -4103,8 +4104,9 @@ async def update_item_edit_proposal(
     _require_guided_edit()
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
     _require_guided_edit_applicable(item)
-    from app.pipeline.guided_story import GuidedStoryError
+    from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
     from app.schemas.edit_proposal import canonical_media_digest  # noqa: PLC0415
+    from app.services.creation_text_composition import CreationTextCompositionError  # noqa: PLC0415
     from app.services.edit_proposals import (  # noqa: PLC0415
         ProposalConflictError,
         mark_edit_proposal_stale,
@@ -4136,6 +4138,10 @@ async def update_item_edit_proposal(
                 **body.snapshot.model_dump(mode="json"),
                 "media": [ref.model_dump(mode="json") for ref in current.draft.media],
                 "frame_schedule": None,
+                # The composition program is server-authored and intentionally
+                # absent from older/public full-snapshot clients. Never let a
+                # save erase it or replace its pinned base digest.
+                "text_composition": current.draft.text_composition,
             }
         )
         if (
@@ -4168,6 +4174,11 @@ async def update_item_edit_proposal(
         )
     except ProposalConflictError as exc:
         raise _proposal_service_conflict(exc) from exc
+    except CreationTextCompositionError as exc:
+        raise _proposal_http_conflict(
+            "proposal_replan_required",
+            "Ask Kria to replan the changed text layout or timing.",
+        ) from exc
     except (ValueError, GuidedStoryError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -4263,6 +4274,11 @@ class SlidePostDraftBody(BaseModel):
     # Optional for the web editor's legacy payload. Native always supplies it.
     expected_version: int | None = Field(default=None, ge=0)
 
+    @field_validator("brief_binding", mode="before")
+    @classmethod
+    def _canonicalize_binding_snapshot(cls, value: object) -> object:
+        return canonicalize_slide_post_brief_binding(value)
+
 
 class SlidePostComposeBody(BaseModel):
     """POST /{item_id}/slide-post/compose request. `asset_ids` omitted or
@@ -4277,6 +4293,7 @@ class SlidePostProposeBody(BaseModel):
     platform_profile: str
     asset_ids: list[str] | None = None
     instruction: str = Field(min_length=1, max_length=2000)
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class SlidePostChatTurn(BaseModel):
@@ -4733,20 +4750,34 @@ async def propose_slide_post(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Add at least one ready photo or video to this item first.",
         )
-    composed = await propose_slide_post_draft(
-        item=item,
-        assets=assets,
-        platform_profile=platform_profile,
-        previous_version=base_version,
-        current_draft=current,
-        instruction=body.instruction,
-        run_context=_creator_run_context(
-            request,
-            creator_id=user.id,
-            request_id=_paid_agent_request_id("slide-post-propose", str(item.id), body),
-        ),
+    from app.services.thought_summaries import publisher_for_slide_post  # noqa: PLC0415
+
+    thoughts = publisher_for_slide_post(
+        creator_id=user.id,
+        plan_item_id=item.id,
+        client_request_id=body.client_request_id,
     )
-    return SlidePostProposalResponse(
+    run_context = _creator_run_context(
+        request,
+        creator_id=user.id,
+        request_id=_paid_agent_request_id("slide-post-propose", str(item.id), body),
+    )
+    run_context.thought_summary_callback = thoughts
+    try:
+        composed = await propose_slide_post_draft(
+            item=item,
+            assets=assets,
+            platform_profile=platform_profile,
+            previous_version=base_version,
+            current_draft=current,
+            instruction=body.instruction,
+            run_context=run_context,
+        )
+    except Exception:
+        if thoughts is not None:
+            await asyncio.to_thread(thoughts.fail)
+        raise
+    result = SlidePostProposalResponse(
         draft=composed.draft,
         base_version=base_version,
         fallback_used=composed.fallback_used,
@@ -4756,6 +4787,9 @@ async def propose_slide_post(
             else "Kria proposed an order, cover, and caption. Review before saving."
         ),
     )
+    if thoughts is not None:
+        await asyncio.to_thread(thoughts.fail if composed.fallback_used else thoughts.complete)
+    return result
 
 
 @router.post("/{item_id}/slide-post/chat-edit", response_model=SlidePostChatEditResponse)
@@ -4860,25 +4894,42 @@ async def chat_edit_slide_post(
                 ),
                 base_version=server_version,
             )
-    return await run_slide_post_chat_edit(
-        draft=draft,
-        assets_by_id={asset.id: asset for asset in owned_assets},
-        message=body.message,
-        turns=[t.model_dump() for t in body.turns],
-        user_id=user.id,
-        server_version=server_version,
-        brief_binding=brief_binding,
-        run_context=_creator_run_context(
-            request,
-            creator_id=user.id,
-            request_id=_paid_agent_request_id(
-                "slide-post-chat-edit",
-                str(item.id),
-                body,
-                client_request_id=body.client_request_id,
-            ),
+    from app.services.thought_summaries import publisher_for_slide_post  # noqa: PLC0415
+
+    thoughts = publisher_for_slide_post(
+        creator_id=user.id,
+        plan_item_id=item.id,
+        client_request_id=body.client_request_id,
+    )
+    run_context = _creator_run_context(
+        request,
+        creator_id=user.id,
+        request_id=_paid_agent_request_id(
+            "slide-post-chat-edit",
+            str(item.id),
+            body,
+            client_request_id=body.client_request_id,
         ),
     )
+    run_context.thought_summary_callback = thoughts
+    try:
+        result = await run_slide_post_chat_edit(
+            draft=draft,
+            assets_by_id={asset.id: asset for asset in owned_assets},
+            message=body.message,
+            turns=[t.model_dump() for t in body.turns],
+            user_id=user.id,
+            server_version=server_version,
+            brief_binding=brief_binding,
+            run_context=run_context,
+        )
+    except Exception:
+        if thoughts is not None:
+            await asyncio.to_thread(thoughts.fail)
+        raise
+    if thoughts is not None:
+        await asyncio.to_thread(thoughts.fail if result.outcome == "failed" else thoughts.complete)
+    return result
 
 
 @router.post("/{item_id}/slide-post/generate", response_model=PlanItemResponse)
@@ -5146,12 +5197,20 @@ async def generate_item(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     body: GenerateItemBody | None = Body(default=None),
+    native_client: NativeClient = False,
 ) -> PlanItemResponse:
     """Enqueue a render from attached clips or an approved guided story."""
     item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    if native_client and settings.ios_native_device_only_enabled:
+        from app.services.phone_destination import item_requires_native_device_only  # noqa: PLC0415
+
+        if not await item_requires_native_device_only(db, item, user.id):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="device_render_unsupported",
+            )
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS  # noqa: PLC0415
-    from app.config import settings  # noqa: PLC0415
 
     # These two validations are hard business rules independent of guided-edit
     # state and MUST run before auto-design gets a chance to intercept the
@@ -7121,10 +7180,11 @@ async def editor_commit_item(
     body: EditorCommitRequest,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClient = False,
 ) -> EditorCommitResponse:
     """Route wrapper: logs every 422 (detail + payload section keys, no content)."""
     try:
-        return await _editor_commit_item(item_id, variant_id, body, user, db)
+        return await _editor_commit_item(item_id, variant_id, body, user, db, native_client)
     except HTTPException as exc:
         if exc.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY:
             log.warning(
@@ -7144,6 +7204,7 @@ async def _editor_commit_item(
     body: EditorCommitRequest,
     user: CurrentUser,
     db: AsyncSession,
+    native_client: bool = False,
 ) -> EditorCommitResponse:
     """Transactional editor Save (E2): all sections in ONE commit + ONE render kick.
 
@@ -7191,6 +7252,20 @@ async def _editor_commit_item(
     )
     if not isinstance(locked_variant, dict):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    from app.services.cloud_render_policy import cloud_render_mutation_block_reason  # noqa: PLC0415
+
+    block_reason = cloud_render_mutation_block_reason(
+        locked_job, variant=locked_variant, native_client=native_client
+    )
+    if block_reason is not None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_422_UNPROCESSABLE_ENTITY
+                if block_reason == "device_render_unsupported"
+                else status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail=block_reason,
+        )
     # An all-removed timeline does not enter the normal nonempty validator, so
     # enforce the same compare-and-fail fence before creating its draft.
     if body.base_generation != variant_render_baseline(locked_variant):

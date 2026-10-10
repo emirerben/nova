@@ -20,6 +20,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var clipSelectionQuestions: Bool? = nil
     /// Server sends `song_order_question` payloads and accepts `song_order` on a turn (KRI-374). Nil/false = no order card.
     var songOrderQuestions: Bool? = nil
+    /// The server also sends take lengths and candidate positions with the question and accepts `placements` on the
+    /// answer, which turns the order card into the song timeline. Nil/false = the vertical order list.
+    var songOrderPlacements: Bool? = nil
     /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
     /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
     var choiceQuestions: Bool? = nil
@@ -29,12 +32,19 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var minimumClientProtocol: Int? = nil
     /// KRI-443: server emits `plan_block` events after Create and accepts cancel-render. Missing = off (fails closed).
     var livePlanReviewEnabled: Bool? = nil
+    /// Live plan & review contract version: 2 = structured payloads, GET /plan, scoped turns and undo. Missing or 1 =
+    /// the feed only (no Review entry points).
+    var livePlanReviewVersion: Int? = nil
+    /// The Review view is offered only when the server is on AND speaks contract v2.
+    var livePlanReviewAvailable: Bool { livePlanReviewEnabled == true && (livePlanReviewVersion ?? 1) >= 2 }
     var editorStateTurnsEnabled: Bool { editorStateTurns == true }
     var slidePostRichTextEnabled: Bool { slidePostRichText == true }
     var slidePostChatEditEnabled: Bool { slidePostChatEdit == true }
     var slidePostExtendedDeviceExportEnabled: Bool { slidePostExtendedDeviceExport == true }
     var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
     var songOrderQuestionsEnabled: Bool { songOrderQuestions == true }
+    /// Only meaningful together with `songOrderQuestionsEnabled`.
+    var songOrderPlacementsEnabled: Bool { songOrderPlacements == true }
     /// The server's limits for a creator-uploaded song (KRI-374). Nil hides every "Add your song" surface:
     /// the server only advertises it when the feature is on for this account and this app's protocol.
     var songLimit: CreationMediaLimit? { media?[CreationMediaRole.song.capabilityKey] }
@@ -54,9 +64,10 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case slidePostExtendedDeviceExport = "slide_post_extended_device_export"
         case clipSelectionQuestions = "clip_selection_questions"
         case songOrderQuestions = "song_order_questions"
+        case songOrderPlacements = "song_order_placements"
         case choiceQuestions = "choice_questions"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
-        case livePlanReviewEnabled = "live_plan_review_enabled"
+        case livePlanReviewEnabled = "live_plan_review_enabled", livePlanReviewVersion = "live_plan_review_version"
     }
 }
 
@@ -78,10 +89,12 @@ extension CreationCapabilities {
         slidePostExtendedDeviceExport = try container.decodeIfPresent(Bool.self, forKey: .slidePostExtendedDeviceExport)
         clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
         songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)
+        songOrderPlacements = try container.decodeIfPresent(Bool.self, forKey: .songOrderPlacements)
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
         creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)
         minimumClientProtocol = try container.decodeIfPresent(Int.self, forKey: .minimumClientProtocol)
         livePlanReviewEnabled = try container.decodeIfPresent(Bool.self, forKey: .livePlanReviewEnabled)
+        livePlanReviewVersion = try container.decodeIfPresent(Int.self, forKey: .livePlanReviewVersion)
     }
 }
 
@@ -292,11 +305,11 @@ struct CreationAttachedMedia: Identifiable {
 /// the kinds this iPhone is verified to draw, and the iPhone downloads them
 /// again to render. Nothing in Visuals can pull a project to the cloud.
 enum ProjectUploadDestination: Equatable {
-    case phone, cloud, phoneVisuals(Set<VisualMediaKind>), checking, paused, mixed, visualsUnavailableOnPhone, voiceoverUnavailableOnPhone
+    case phone, cloud, phoneVisuals(Set<VisualMediaKind>), checking, paused, mixed, visualsUnavailableOnPhone, voiceoverUnavailableOnPhone, cloudProjectUnavailableOnPhone
     var canUpload: Bool {
         switch self {
         case .phone, .cloud, .phoneVisuals: true
-        case .checking, .paused, .mixed, .visualsUnavailableOnPhone, .voiceoverUnavailableOnPhone: false
+        case .checking, .paused, .mixed, .visualsUnavailableOnPhone, .voiceoverUnavailableOnPhone, .cloudProjectUnavailableOnPhone: false
         }
     }
     /// Visuals kinds the pickers may offer; nil means every kind (cloud projects).
@@ -315,6 +328,7 @@ enum ProjectUploadDestination: Equatable {
         case .mixed: "Some footage in this project was uploaded for a different kind of render. Remove the clips listed under Footage, then add them again to continue."
         case .visualsUnavailableOnPhone: "Visuals aren’t available yet for videos rendered on iPhone. Continue with your footage; Kria renders it on this iPhone."
         case .voiceoverUnavailableOnPhone: "Voiceover isn’t available yet for videos rendered on iPhone. Your project is saved."
+        case .cloudProjectUnavailableOnPhone: "This project has cloud footage, so it can’t be changed on this iPhone. You can still play its existing video."
         }
     }
 
@@ -322,7 +336,18 @@ enum ProjectUploadDestination: Equatable {
     /// videos once it verifies `visualVideos`. Until the account's capabilities
     /// have loaded nothing uploads: guessing `.cloud` would send full originals
     /// to the cloud and lock an iPhone account's project there.
-    static func resolve(capabilities: PhoneRenderingCapabilities?, capabilitiesLoaded: Bool = true, sourcePurposes: [String], role: CreationMediaRole) -> Self {
+    static func resolve(capabilities: PhoneRenderingCapabilities?, creationMode: CreationMode? = nil, capabilitiesLoaded: Bool = true, sourcePurposes: [String], role: CreationMediaRole) -> Self {
+        let known = Set(sourcePurposes)
+        let phone = UploadPurpose.analysisProxy.rawValue, cloud = UploadPurpose.cloudRenderSource.rawValue
+        if creationMode == .deviceOnly {
+            // A device-only account must wait for a definitive capability response. In particular,
+            // never use an existing cloud source as a reason to keep accepting cloud uploads.
+            guard capabilitiesLoaded else { return .checking }
+            // Audio has a separate, server-gated full-file contract and does not
+            // decide a video's render destination. Only an existing cloud video
+            // source makes the project unavailable for further edits here.
+            if known.contains(cloud) { return .cloudProjectUnavailableOnPhone }
+        }
         // KRI-374: a creator's song always uploads in full (the server needs the bytes for beats,
         // transcription and the render grant). It never joins the analysis-proxy contract, never
         // makes a project `.mixed`, and needs no `narrationAudio` verification: the song plays through
@@ -332,8 +357,6 @@ enum ProjectUploadDestination: Equatable {
             if Set(sourcePurposes).contains(UploadPurpose.cloudRenderSource.rawValue) { return .cloud }
             return capabilitiesLoaded ? .cloud : .checking
         }
-        let known = Set(sourcePurposes)
-        let phone = UploadPurpose.analysisProxy.rawValue, cloud = UploadPurpose.cloudRenderSource.rawValue
         guard known.isSubset(of: [phone, cloud]), known.count <= 1 else { return .mixed }
         if known.contains(cloud) { return .cloud }
         guard capabilitiesLoaded else { return .checking }
@@ -344,6 +367,7 @@ enum ProjectUploadDestination: Equatable {
         if known.contains(phone) {
             guard available else { return .paused }
         } else if !available {
+            if creationMode == .deviceOnly { return .paused }
             return .cloud
         }
         switch role {

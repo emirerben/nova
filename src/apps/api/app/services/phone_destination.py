@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 
 DEVICE_INTENT_KEY = "render_destination_intent"
 DEVICE_INTENT = "device"
+NATIVE_DEVICE_ONLY_INTENT_KEY = "native_device_only"
+NATIVE_DEVICE_ONLY_JOB_FIELD = "native_device_only"
 
 # Same membership as creator_sessions.CREATOR_VISIBLE_ASSET_STATES: a Visual
 # counts from the moment it is registered, so the destination cannot flip (and
@@ -55,6 +57,15 @@ def has_device_intent(thread_state: object) -> bool:
     )
 
 
+def has_native_device_only_intent(thread_state: object) -> bool:
+    """Whether this thread was created by the native-only rollout."""
+
+    return (
+        isinstance(thread_state, Mapping)
+        and thread_state.get(NATIVE_DEVICE_ONLY_INTENT_KEY) is True
+    )
+
+
 def with_device_intent(
     thread_state: Mapping[str, Any] | None, *, native_client: bool, user_id: object
 ) -> dict[str, Any] | None:
@@ -64,11 +75,55 @@ def with_device_intent(
     never stamps; an account outside the pilot never stamps either.
     """
 
-    if not native_client or not settings.phone_rendering_for(user_id):
+    native_device_only = native_client and settings.ios_native_device_only_enabled
+    if not native_client or not (native_device_only or settings.phone_rendering_for(user_id)):
         return None
-    if has_device_intent(thread_state):
+    if has_device_intent(thread_state) and (
+        not native_device_only or has_native_device_only_intent(thread_state)
+    ):
         return None
-    return {**(thread_state or {}), DEVICE_INTENT_KEY: DEVICE_INTENT}
+    stamped = {**(thread_state or {}), DEVICE_INTENT_KEY: DEVICE_INTENT}
+    if native_device_only:
+        stamped[NATIVE_DEVICE_ONLY_INTENT_KEY] = True
+    return stamped
+
+
+def item_requires_native_device_only_sync(
+    session: Session, item: PlanItem, owner_id: object
+) -> bool:
+    """Read the persisted native-only intent for this item in task-side dispatch."""
+
+    return any(
+        has_native_device_only_intent(state)
+        for state in session.execute(_thread_states_query(item.id, owner_id)).scalars()
+    )
+
+
+async def item_requires_native_device_only(
+    db: AsyncSession, item: PlanItem, owner_id: object
+) -> bool:
+    """Async route counterpart to the task-side persisted intent lookup."""
+
+    return any(
+        has_native_device_only_intent(state)
+        for state in (await db.execute(_thread_states_query(item.id, owner_id))).scalars()
+    )
+
+
+def native_device_only_job(job: object) -> bool:
+    assembly_plan = getattr(job, "assembly_plan", None)
+    return (
+        isinstance(assembly_plan, Mapping)
+        and assembly_plan.get(NATIVE_DEVICE_ONLY_JOB_FIELD) is True
+    )
+
+
+def phone_rendering_allowed_for_job(job: object) -> bool:
+    """Allow a persisted native-only Job through the same worker gates as the cohort."""
+
+    return bool(
+        settings.phone_rendering_for(getattr(job, "user_id", None)) or native_device_only_job(job)
+    )
 
 
 def visuals_only_on_device(
@@ -88,7 +143,9 @@ def visuals_only_on_device(
     such a project is already a phone project through its proxies.
     """
 
-    if not settings.phone_rendering_for(user_id) or not has_device_intent(thread_state):
+    if not (
+        settings.phone_rendering_for(user_id) or has_native_device_only_intent(thread_state)
+    ) or not has_device_intent(thread_state):
         return False
     # KRI-118 L1 item 4 (investigated, left unchanged): `_run_phone_guided_job`
     # (generative_build.py) and `compile_phone_guided_plan` clearly DO support
@@ -142,12 +199,7 @@ def _could_apply(item: PlanItem, owner_id: object) -> bool:
     """Cheap, query-free half of the rule; most items stop here."""
 
     has_clip_sources, has_voiceover = _item_inputs(item)
-    return (
-        bool(settings.phone_rendering_for(owner_id))
-        and bool(phone_drawable_visual_kinds())
-        and not has_clip_sources
-        and not has_voiceover
-    )
+    return bool(phone_drawable_visual_kinds()) and not has_clip_sources and not has_voiceover
 
 
 def _thread_states_query(item_id: uuid.UUID, owner_id: object):  # noqa: ANN202
@@ -206,7 +258,11 @@ async def item_visuals_only_on_device(
         if thread_state is not None
         else list((await db.execute(_thread_states_query(item.id, owner_id))).scalars())
     )
-    if not any(has_device_intent(state) for state in states):
+    if not any(
+        has_device_intent(state)
+        and (settings.phone_rendering_for(owner_id) or has_native_device_only_intent(state))
+        for state in states
+    ):
         return False
     kinds = list((await db.execute(_pool_kinds_query(item.id, owner_id))).scalars())
     return _decide(item, owner_id, states, kinds)
@@ -218,7 +274,11 @@ def item_visuals_only_on_device_sync(session: Session, item: PlanItem, owner_id:
     if not _could_apply(item, owner_id):
         return False
     states = list(session.execute(_thread_states_query(item.id, owner_id)).scalars())
-    if not any(has_device_intent(state) for state in states):
+    if not any(
+        has_device_intent(state)
+        and (settings.phone_rendering_for(owner_id) or has_native_device_only_intent(state))
+        for state in states
+    ):
         return False
     kinds = list(session.execute(_pool_kinds_query(item.id, owner_id)).scalars())
     return _decide(item, owner_id, states, kinds)

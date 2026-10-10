@@ -20,6 +20,42 @@ def client() -> Iterator[TestClient]:
         settings.ios_device_only_mode = original_mode
 
 
+@pytest.fixture
+def native_only_client() -> Iterator[TestClient]:
+    old_mode = settings.ios_device_only_mode
+    old_native_mode = settings.ios_native_device_only_enabled
+    settings.ios_device_only_mode = False
+    settings.ios_native_device_only_enabled = True
+    try:
+        with TestClient(app, raise_server_exceptions=False) as test_client:
+            yield test_client
+    finally:
+        settings.ios_device_only_mode = old_mode
+        settings.ios_native_device_only_enabled = old_native_mode
+
+
+@pytest.mark.parametrize("path", ["/music-jobs", "/template-jobs", "/content-plans"])
+def test_native_only_rollout_blocks_legacy_cloud_job_creation(
+    native_only_client: TestClient, path: str
+) -> None:
+    response = native_only_client.post(
+        path,
+        headers={
+            "Authorization": "Bearer not-a-real-jwt",
+            "X-Kria-Client-Protocol": str(settings.kria_minimum_client_protocol),
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["problem"]["code"] == "device_render_unsupported"
+
+
+def test_native_only_rollout_keeps_web_creation_routing(
+    native_only_client: TestClient,
+) -> None:
+    response = native_only_client.post("/uploads/not-a-route")
+    assert response.status_code == 404
+
+
 def test_flag_off_leaves_legacy_mutation_routing_unchanged() -> None:
     original_mode = settings.ios_device_only_mode
     settings.ios_device_only_mode = False

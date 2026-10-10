@@ -348,7 +348,9 @@ def run_phone_speech_montage_job(
         ):
             return True
         job = entry[0]
-        if not settings.phone_rendering_for(job.user_id):
+        from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+        if not phone_rendering_allowed_for_job(job):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if (
@@ -714,7 +716,9 @@ def run_phone_voice_behind_footage_job(
         ):
             return True
         job = entry[0]
-        if not settings.phone_rendering_for(job.user_id):
+        from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+        if not phone_rendering_allowed_for_job(job):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if (

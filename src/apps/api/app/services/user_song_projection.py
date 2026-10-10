@@ -16,7 +16,7 @@ import os
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.user_song import UserSongPlan
 
@@ -33,6 +33,10 @@ class UserSongOut(BaseModel):
     window_start_s: float
     window_end_s: float
     volume: float = 1.0
+    # KRI-561: each pinned lip-sync take's song offset (media_id -> delta_s), so the editor can
+    # keep the song start on the footage when the creator trims the video. Omitted when empty
+    # (background songs, older plans), so those responses stay byte-identical.
+    takes: dict[str, float] = Field(default_factory=dict, exclude_if=lambda value: not value)
 
 
 def user_song_title(filename: str | None) -> str | None:
@@ -85,6 +89,9 @@ def user_song_for_variant(
         window_start_s=song.window_start_s,
         window_end_s=song.window_end_s,
         volume=song.volume,
+        takes={media_id: take.delta_s for media_id, take in song.takes.items()}
+        if song.mode == "lipsync"
+        else {},
     ).model_dump(mode="json")
 
 
