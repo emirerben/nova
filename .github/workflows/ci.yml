@@ -419,7 +419,8 @@ jobs:
         working-directory: src/apps/api
         run: |
           set -o pipefail
-          python3 -m pytest tests/pipeline/test_song_order_placements.py -q \
+          python3 -m pytest tests/pipeline/test_song_order_placements.py \
+            tests/routes/test_phone_song_editor_commit.py -q \
             | tee ../../../test-results/kri-559/song-order-api-tests.log
       - name: Verify native song-timeline submission, parsing and tiling
         if: contains(needs.changes.outputs.journey_ids, 'kri-561-song-order')

@@ -88,6 +88,7 @@ from app.schemas.guided_edit_revision import (
     validate_guided_revision_lane_identities,
 )
 from app.schemas.montage_preset import MASONRY_MONTAGE_PRESET, is_collage_montage_preset
+from app.schemas.user_song import MIN_PLAYABLE_SONG_S
 from app.services.cloud_render_policy import cloud_render_mutation_block_reason
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
@@ -1170,6 +1171,9 @@ class EditorCommitUserSong(BaseModel):
 
     volume: float | None = Field(None, ge=0.0, le=1.0, allow_inf_nan=False)
     window_start_s: float | None = Field(None, ge=0.0, allow_inf_nan=False)
+    # KRI-561: where a BACKGROUND song stops (absolute song seconds). The song's own length
+    # means "no end set". A lip-sync song is trimmed by cutting the video instead.
+    window_end_s: float | None = Field(None, gt=0.0, allow_inf_nan=False)
     removed: bool = False
 
 
@@ -7347,6 +7351,11 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
                         background, None if background else "user_song_lipsync_locked"
                     ),
                     "remove": operation(),
+                    # KRI-561: start/end handles in both modes. Background moves the bed's
+                    # in/out points; lip-sync trims by cutting the video (the app edits
+                    # clips; the server follows the song start). Absent on older servers, so
+                    # the app keeps its single-handle bar / lip-sync lock.
+                    "trim": operation(),
                 }
             reference_only = variant.get("music_playback_mode") == "reference_only"
             music_operations = {
@@ -9606,6 +9615,30 @@ def _merge_user_song_edit(
                 )
         else:
             merged["window_start_s"] = float(edit.window_start_s)
+    if edit.window_end_s is not None:
+        if song["mode"] == "lipsync":
+            # A lip-sync song is the master clock and its length is the video's: the end
+            # moves by cutting the video, never by a field.
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "user_song_lipsync_locked",
+                reason="Lip-sync keeps the song where you filmed it.",
+            )
+        end = float(edit.window_end_s)
+        # The saved revision stores an unset start as an explicit None.
+        saved_start = merged.get("window_start_s")
+        start = float(song["window_start_s"] if saved_start is None else saved_start)
+        duration = float(song["duration_s"])
+        if end >= duration - 1e-3:
+            merged.pop("window_end_s", None)  # the song's own end = no end set
+        elif end < start + MIN_PLAYABLE_SONG_S - 1e-3:
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "user_song_window_out_of_range",
+                reason="That end point leaves less than a second of your song.",
+            )
+        else:
+            merged["window_end_s"] = round(end, 3)
     return merged
 
 

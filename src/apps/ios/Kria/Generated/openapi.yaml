@@ -3054,6 +3054,14 @@
             "title": "Volume",
             "type": "number"
           },
+          "window_end_s": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Window End S",
+            "type": "number"
+          },
           "window_start_s": {
             "default": null,
             "minimum": 0.0,

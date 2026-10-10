@@ -663,16 +663,19 @@ struct EditorCommitMusicWindow: Codable, Equatable, Sendable {
 }
 
 /// The creator's own song (KRI-428). Sent only when the user_song section changed:
-/// `volume` 0...1 and `window_start_s` are omitted when untouched; `removed`
-/// falls the edit back to the camera audio.
+/// `volume` 0...1, `window_start_s` and `window_end_s` are omitted when untouched; `removed`
+/// falls the edit back to the camera audio. `window_end_s` (KRI-561, background only) is where the music
+/// stops in absolute song seconds; the song's own length clears it. A lip-sync song is trimmed by cutting
+/// the video instead and never sends an end.
 struct EditorCommitUserSong: Codable, Equatable, Sendable {
     var volume: Double?
     var windowStartS: Double?
+    var windowEndS: Double?
     var removed: Bool
-    init(volume: Double? = nil, windowStartS: Double? = nil, removed: Bool = false) {
-        self.volume = volume; self.windowStartS = windowStartS; self.removed = removed
+    init(volume: Double? = nil, windowStartS: Double? = nil, windowEndS: Double? = nil, removed: Bool = false) {
+        self.volume = volume; self.windowStartS = windowStartS; self.windowEndS = windowEndS; self.removed = removed
     }
-    private enum CodingKeys: String, CodingKey { case volume; case windowStartS = "window_start_s"; case removed }
+    private enum CodingKeys: String, CodingKey { case volume; case windowStartS = "window_start_s"; case windowEndS = "window_end_s"; case removed }
 }
 
 struct EditorCommitBackgroundMusic: Codable, Equatable, Sendable {

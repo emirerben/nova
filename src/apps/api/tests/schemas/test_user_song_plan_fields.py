@@ -213,14 +213,19 @@ def test_a_stored_plan_whose_window_equals_the_video_still_validates():
         GuidedStoryExecutionPlan.model_validate(_runtime_plan(mode))
 
 
-def test_a_background_window_may_be_shorter_than_the_video_only_at_the_song_end():
+def test_a_background_window_may_be_shorter_than_the_video_but_never_longer():
+    """KRI-457: a song that runs out ends early. KRI-561: so does one the creator stopped."""
     plan = _runtime_plan("background")
     song = plan["user_song"]
     song["window_start_s"] = song["duration_s"] - plan["resolved_duration_s"] + 2.0
     song["window_end_s"] = song["duration_s"]
     GuidedStoryExecutionPlan.model_validate(plan)
-    # Shorter than the video but NOT ending where the song ends: still refused.
+    # Stopped by the creator before the song ends: valid.
     song["window_end_s"] = song["duration_s"] - 1.0
+    GuidedStoryExecutionPlan.model_validate(plan)
+    # A window LONGER than the video never is.
+    song["window_start_s"] = 0.0
+    song["window_end_s"] = plan["resolved_duration_s"] + 3.0
     with pytest.raises(ValidationError, match="song window must cover"):
         GuidedStoryExecutionPlan.model_validate(plan)
 

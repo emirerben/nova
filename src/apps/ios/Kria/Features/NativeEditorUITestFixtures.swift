@@ -19,6 +19,8 @@ enum NativeEditorUITestFixtures {
         case guidedText = "guided-text"
         case talkingCaptions = "talking-captions"
         case retimedClips = "retimed-clips"
+        /// Four 2.5 s cuts on four takes (KRI-561): a lip-sync song trim visibly drops cuts.
+        case songTrim = "song-trim"
     }
 
     /// Three catalog sounds in two categories; nil preview URLs keep UI tests off the network.
@@ -62,6 +64,7 @@ enum NativeEditorUITestFixtures {
         case .guidedText: guidedText
         case .talkingCaptions: talkingCaptions
         case .retimedClips: retimedClips
+        case .songTrim: songTrim
         }
     }
 
@@ -88,8 +91,8 @@ enum NativeEditorUITestFixtures {
         ])
     ]
 
-    /// The same montage with a lip-sync song (`-ui-testing-editor-user-song-lipsync`): the start is locked,
-    /// volume and remove stay editable.
+    /// The same montage with a lip-sync song (`-ui-testing-editor-user-song-lipsync`): the start is locked
+    /// (or, with `user_song.trim`, trimmed by cutting the video), volume and remove stay editable.
     static let userSongLipSyncVariant: [String: JSONValue] = {
         var variant = userSongVariant
         var song = variant["user_song"]?.objectValue ?? [:]
@@ -98,9 +101,39 @@ enum NativeEditorUITestFixtures {
         return variant
     }()
 
-    /// The `user_song.*` capabilities the server advertises for a creator-song variant.
-    static func userSongCapabilities(lipSync: Bool) -> [String: EditorCapability] {
-        [
+    /// A background song over the `song-trim` shape: a short 40 s song so the two trim handles sit well apart on
+    /// the bar (10 s of video between 0:10 and 0:20).
+    static let userSongBackgroundTrimVariant: [String: JSONValue] = {
+        var variant = userSongVariant
+        var song = variant["user_song"]?.objectValue ?? [:]
+        song["duration_s"] = .number(40)
+        song["window_start_s"] = .number(10)
+        song["window_end_s"] = .number(20)
+        variant["user_song"] = .object(song)
+        variant["duration_s"] = .number(10)
+        return variant
+    }()
+
+    /// A lip-sync song over the `song-trim` shape: the four takes sit in song order, 2.5 s apart, so every cut
+    /// votes for the same song start (108 s) and the window is exactly the 10 s video.
+    static let userSongLipSyncTrimVariant: [String: JSONValue] = {
+        var variant = userSongLipSyncVariant
+        var song = variant["user_song"]?.objectValue ?? [:]
+        song["window_end_s"] = .number(118)
+        song["takes"] = .object(["take-10": .number(108), "take-11": .number(110.5),
+                                 "take-12": .number(113), "take-13": .number(115.5)])
+        variant["user_song"] = .object(song)
+        variant["duration_s"] = .number(10)
+        return variant
+    }()
+
+    /// The delta of each take by the clip index the `song-trim` shape gives it (the source pool's job on a real load).
+    static let songTrimTakeDeltas: [Int: Double] = [10: 108, 11: 110.5, 12: 113, 13: 115.5]
+
+    /// The `user_song.*` capabilities the server advertises for a creator-song variant. `trim` is the
+    /// KRI-561 capability; an older server omits it (`trim: false`) and keeps the single-handle bar / lock.
+    static func userSongCapabilities(lipSync: Bool, trim: Bool = true) -> [String: EditorCapability] {
+        var capabilities: [String: EditorCapability] = [
             "user_song.volume": EditorCapability(editable: true),
             "user_song.window": lipSync
                 ? EditorCapability(editable: false, reason: "user_song_lipsync_locked")
@@ -110,7 +143,17 @@ enum NativeEditorUITestFixtures {
             "original_audio": EditorCapability(editable: true),
             "clips.audio": EditorCapability(editable: true),
         ]
+        if trim { capabilities["user_song.trim"] = EditorCapability(editable: true) }
+        return capabilities
     }
+
+    static let songTrim: EditorDraft = {
+        let clips = (0..<4).map { clip(10 + $0, start: Double($0) * 2.5, duration: 2.5, sourceDuration: 12) }
+        return draft(clips: clips, text: [], captions: false, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "title": .string("Song trim fixture"),
+        ])
+    }()
 
     static let legacyVisuals: EditorDraft = {
         var value = captionVisuals
