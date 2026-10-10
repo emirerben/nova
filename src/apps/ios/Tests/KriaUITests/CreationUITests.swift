@@ -173,12 +173,22 @@ final class CreationUITests: XCTestCase {
         let count = app.staticTexts["gallery-count"]
         // Slide across three tiles: all selected, numbered in touch order.
         tile0.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(forDuration: 0.1, thenDragTo: tile2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+            .press(
+                forDuration: 0.1,
+                thenDragTo: tile2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.1
+            )
         XCTAssertTrue(eventually { count.label.hasPrefix("3 of") }, count.label)
         XCTAssertEqual(tile1.value as? String, "Selected, 2")
         // A slide that starts on a selected tile deselects.
         tile1.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(forDuration: 0.1, thenDragTo: tile2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+            .press(
+                forDuration: 0.1,
+                thenDragTo: tile2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.1
+            )
         XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
         XCTAssertEqual(tile0.value as? String, "Selected, 1")
         // Tap toggles one tile.
