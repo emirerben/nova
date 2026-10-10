@@ -397,8 +397,9 @@ private struct SlidePostBlockSizeKey: PreferenceKey {
 }
 
 /// Wraps its child at `maxWidth` (nil = never wrap: only the creator's own line breaks apply) but reports
-/// the child's own (widest-line) width, so the measured block hugs the glyphs the way the native preview's selection does. `.frame(maxWidth:)` would
-/// instead grow to the full wrap width and draw a selection box far wider than the text.
+/// the child's own (widest-line) width, so the measured block hugs the glyphs the way the native
+/// preview's selection does. `.frame(maxWidth:)` would instead grow to the full wrap width and draw a
+/// selection box far wider than the text.
 private struct SlidePostHuggingWidth: ViewModifier {
     let maxWidth: CGFloat?
     func body(content: Content) -> some View { HuggingLayout(maxWidth: maxWidth) { content } }
