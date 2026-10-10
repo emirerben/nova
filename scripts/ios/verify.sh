@@ -73,10 +73,15 @@ run_ui() {
   # The serial UI suite flakes under simulator/runner contention. Retry inside
   # xcodebuild itself (fail-closed after 3 attempts total); ui_tests.py verify
   # reports any test that only passed on retry as flaky instead of hiding it.
+  # Bound a stalled UI test so its retries and shard coverage report finish
+  # before the macOS job deadline instead of cancelling the release gate.
   local xcodebuild_status=0
   timed "UI execution ($label)" xcodebuild "${COMMON_ARGS[@]}" \
     -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
     -parallel-testing-enabled NO "${filters[@]}" \
+    -test-timeouts-enabled YES \
+    -default-test-execution-time-allowance 180 \
+    -maximum-test-execution-time-allowance 180 \
     -retry-tests-on-failure -test-iterations 3 \
     -resultBundlePath "$RESULT_DIR/ui.xcresult" test-without-building 2>&1 | tee "$RESULT_DIR/ui.log" \
     || xcodebuild_status=$?
