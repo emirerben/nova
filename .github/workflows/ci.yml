@@ -262,7 +262,7 @@ jobs:
           python3 - <<'PY'
           import os
           selected = os.environ["JOURNEY_IDS"].split(",")
-          allowed = {"kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order"}
+          allowed = {"kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark"}
           if os.environ["COVERAGE"] != "covered" or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed:
               raise SystemExit("Journey selection has an unmapped or invalid incident")
           PY
@@ -443,6 +443,34 @@ jobs:
             --xctest SongOrderTests/testSubmissionListsPlacedTakesByTimeThenTheTrayInCaptureOrderAndEveryTakeOnce \
             --xctest SongOrderTests/testOldServerPayloadWithNoNewFieldsStillParsesAndGivesATimelineWithDefaults \
             --xctest SongOrderTests/testExtendingThePreviousBlockBy099IsHiddenAndBy1sIsVisible
+      - name: Verify watermark-aware caption compile and its device fixture
+        if: contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
+        working-directory: src/apps/api
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/pipeline/test_phone_captions.py \
+            tests/pipeline/test_phone_caption_watermark_fixture.py \
+            tests/kria/test_portable_text_layout.py -q \
+            | tee ../../../test-results/kri-559/caption-watermark-api-tests.log
+      - name: Export server-compiled captions under the watermark on the iPhone simulator
+        if: contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
+        working-directory: src/apps/ios
+        run: |
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
+            -only-testing:KriaTests/CaptionWatermarkClearanceTests/testServerRebrokenKadikoyCaptionsExportClearOfTheWatermark \
+            -only-testing:KriaTests/CaptionWatermarkClearanceTests/testProdUnbrokenKadikoyCaptionsInkTheWatermarkCorner \
+            -resultBundlePath ../../../test-results/kri-559/caption-watermark-native.xcresult test
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/caption-watermark-native.xcresult \
+            > ../../../test-results/kri-559/caption-watermark-native-test-results.json
+      - name: Require native caption-watermark journey tests to pass
+        if: contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
+        run: |
+          python3 scripts/ci/journey-gate.py verify-tests \
+            --test-results test-results/kri-559/caption-watermark-native-test-results.json \
+            --xctest CaptionWatermarkClearanceTests/testServerRebrokenKadikoyCaptionsExportClearOfTheWatermark \
+            --xctest CaptionWatermarkClearanceTests/testProdUnbrokenKadikoyCaptionsInkTheWatermarkCorner
       - uses: actions/upload-artifact@v4
         if: always()
         with:
