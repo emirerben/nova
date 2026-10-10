@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.206.0] - 2026-10-10
+
+### Changed
+- fix(kria): judge caption language and name spelling on a finished phone render (KRI-549) (#1504) <!-- release-pr: 1504 -->
+
 ## [0.78.205.0] - 2026-10-10
 
 ### Changed
