@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.207.0] - 2026-10-10
+
+### Changed
+- fix(ios): unblock signed TestFlight gate for device-only rollout (KRI-563) (#1528) <!-- release-pr: 1528 -->
+
 ## [0.78.206.0] - 2026-10-10
 
 ### Changed
