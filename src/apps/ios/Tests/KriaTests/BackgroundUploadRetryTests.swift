@@ -76,7 +76,11 @@ import UIKit
 
         let accepted = await coordinator.enqueue(fileURL: source, projectID: projectID, source: .photos, consentGiven: true, purpose: .cloudRenderSource, role: .visual, itemID: "item-1", recordID: recordID)
         XCTAssertTrue(accepted)
-        for _ in 0..<100 where ClipCaptureStore.shared.capture(for: recordID) != nil { try await Task.sleep(for: .milliseconds(50)) }
+        // Background URLSession's completion callback can arrive several seconds
+        // after enqueue on a busy CI simulator. Keep polling for the actual
+        // attach result instead of treating a five-second scheduling delay as
+        // a privacy-cleanup failure.
+        for _ in 0..<400 where ClipCaptureStore.shared.capture(for: recordID) != nil { try await Task.sleep(for: .milliseconds(50)) }
 
         XCTAssertNil(ClipCaptureStore.shared.capture(for: recordID), "removed once the visual is registered with the server")
         XCTAssertTrue(coordinator.records.isEmpty)
