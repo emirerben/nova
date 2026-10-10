@@ -78,14 +78,19 @@ def matches_conversation_revision(thread: CreationThread, expected_revision: int
     )
 
 
+# Events the live plan feed appends on its own; they carry no conversation content.
+_FEED_EVENT_TYPES = frozenset({"plan_block", "plan_update_summary"})
+
+
 async def conversation_revision_matches(
     db: AsyncSession, thread: CreationThread, expected_revision: int
 ) -> bool:
     """`matches_conversation_revision`, also tolerating live plan-block events.
 
     While a render runs, `plan_block` events bump the thread revision on their
-    own (KRI-443). They carry no conversation content, so a client that has not
-    yet polled them must not 409. Any other event in the gap is a real change.
+    own (KRI-443), as does the scoped-update summary line. They carry no conversation
+    content, so a client that has not yet polled them must not 409. Any other event in the
+    gap is a real change.
     """
     if matches_conversation_revision(thread, expected_revision):
         return True
@@ -104,7 +109,7 @@ async def conversation_revision_matches(
         .scalars()
         .all()
     )
-    return bool(rows) and all(kind == "plan_block" for kind in rows)
+    return bool(rows) and all(kind in _FEED_EVENT_TYPES for kind in rows)
 
 
 def start_title_generation(thread_id: uuid.UUID) -> None:

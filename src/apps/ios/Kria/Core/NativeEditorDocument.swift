@@ -126,10 +126,13 @@ struct EditorRevision: Codable, Equatable, Sendable {
 struct EditorUserSongState: Equatable, Sendable {
     var volume: Double?
     var windowStartS: Double?
+    /// KRI-561: where a background song stops, in absolute song seconds. The song's own length means
+    /// "no end set" (what the server reads as clearing it). Nil = as the server has it.
+    var windowEndS: Double?
     var removed = false
 
-    init(volume: Double? = nil, windowStartS: Double? = nil, removed: Bool = false) {
-        self.volume = volume; self.windowStartS = windowStartS; self.removed = removed
+    init(volume: Double? = nil, windowStartS: Double? = nil, windowEndS: Double? = nil, removed: Bool = false) {
+        self.volume = volume; self.windowStartS = windowStartS; self.windowEndS = windowEndS; self.removed = removed
     }
 
     /// `edit` laid over `base`: a removal wins, otherwise each set field overrides.
@@ -137,14 +140,15 @@ struct EditorUserSongState: Equatable, Sendable {
         guard let edit else { return base }
         guard let base else { return edit }
         if edit.removed || base.removed { return EditorUserSongState(removed: true) }
-        return EditorUserSongState(volume: edit.volume ?? base.volume, windowStartS: edit.windowStartS ?? base.windowStartS)
+        return EditorUserSongState(volume: edit.volume ?? base.volume, windowStartS: edit.windowStartS ?? base.windowStartS,
+                                   windowEndS: edit.windowEndS ?? base.windowEndS)
     }
 
-    var isEmpty: Bool { volume == nil && windowStartS == nil && !removed }
+    var isEmpty: Bool { volume == nil && windowStartS == nil && windowEndS == nil && !removed }
 
     /// The commit body: a removal carries nothing else.
     var commit: EditorCommitUserSong {
-        removed ? EditorCommitUserSong(removed: true) : EditorCommitUserSong(volume: volume, windowStartS: windowStartS)
+        removed ? EditorCommitUserSong(removed: true) : EditorCommitUserSong(volume: volume, windowStartS: windowStartS, windowEndS: windowEndS)
     }
 }
 

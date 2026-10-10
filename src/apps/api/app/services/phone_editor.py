@@ -362,7 +362,9 @@ def prepare_phone_editor_commit(
     prep = prepare(staged)
     if not prep["has_render_section"]:
         return {**prep, "render_destination": "device"}
-    if not settings.phone_rendering_for(job.user_id):
+    from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
+
+    if not phone_rendering_allowed_for_job(job):
         raise HTTPException(422, detail={"code": "phone_rendering_unavailable"})
     try:
         _rebind_editor_render_contract(

@@ -25,6 +25,7 @@ from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import voice_tail_slack_s
+from app.pipeline.sequence_text_evidence import text_matches
 from app.services.choice_questions import (
     ATTACHMENT_ORDER_KEY,
     CAPTURE_ORDER_KEYS,
@@ -1670,9 +1671,9 @@ def verify_phone_recipe(
                 lines[-1].append(text)
         return "\n".join("".join(line) for line in lines)
 
-    def text_layers() -> list[tuple[str, float, float]]:
+    def text_layers() -> list[tuple[str, str, float, float]]:
         return [
-            (_normal(_layer_text(layer)), layer.start, layer.end)
+            (layer.id, _normal(_layer_text(layer)), layer.start, layer.end)
             for layer in recipe.text_layers
             if layer.runs
             and all(
@@ -1688,13 +1689,23 @@ def verify_phone_recipe(
         ]
 
     rendered = text_layers()
+    rendered_evidence = [
+        {"element_id": layer_id, "text": text, "start_s": start, "end_s": end}
+        for layer_id, text, start, end in rendered
+    ]
     for requirement in contract.exact_texts:
-        matches = [row for row in rendered if row[0] == _normal(requirement.text)]
+        matches = text_matches(
+            rendered_evidence,
+            requirement.text,
+            role=requirement.role,
+            tolerance_s=frame,
+        )
         if (
             not matches
             and requirement.role == "any"
             and requirement.duration_s is None
-            and chapter_list(requirement.text, [row[0] for row in rendered]) is not None
+            and chapter_list(requirement.text, [row["text"] for row in rendered_evidence])
+            is not None
         ):
             # KRI-545: a brief literal that lists chapter names ("Sabah, Üniversite, Akşam")
             # is drawn as those names, each its own label layer on its clips, never as one
@@ -1707,7 +1718,11 @@ def verify_phone_recipe(
                 field_path=text_field_path(requirement),
             )
         if requirement.duration_s is not None:
-            matches = [row for row in matches if row[2] - row[1] + frame >= requirement.duration_s]
+            matches = [
+                row
+                for row in matches
+                if row["end_s"] - row["start_s"] + frame >= requirement.duration_s
+            ]
             if not matches:
                 raise _phone_decline(
                     "exact_texts",
@@ -1719,9 +1734,9 @@ def verify_phone_recipe(
                     ),
                 )
         if requirement.role == "opening":
-            matches = [row for row in matches if row[1] <= frame]
+            matches = [row for row in matches if row["start_s"] <= frame]
         elif requirement.role == "closing":
-            matches = [row for row in matches if row[2] >= recipe.duration - frame]
+            matches = [row for row in matches if row["end_s"] >= recipe.duration - frame]
         elif requirement.role == "clip":
             targets = picture
             if requirement.shot_index is not None:
@@ -1735,13 +1750,13 @@ def verify_phone_recipe(
                 ]
             if not targets or any(
                 not any(
-                    start >= clip.timeline_start - frame
-                    and end
+                    row["start_s"] >= clip.timeline_start - frame
+                    and row["end_s"]
                     <= clip.timeline_start
                     + clip.source_duration / clip.rate
                     + (clip.hold_duration or 0)
                     + frame
-                    for _text, start, end in matches
+                    for row in matches
                 )
                 for clip in targets
             ):

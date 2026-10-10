@@ -2,6 +2,81 @@ import XCTest
 
 @MainActor
 final class EditorUITests: XCTestCase {
+    /// KRI-524: the DEBUG host reads the server-produced, retimed creation
+    /// draft from disk. This proves the native editor can open all twelve
+    /// word bars, play the source preview, reopen the same saved draft, and
+    /// send the rendered file to the dedicated simulator Photos library.
+    func testCapturedCreationWordsPlayReopenAndExport() {
+        let fixture = ProcessInfo.processInfo.environment["KRIA_UI_FIXTURE_DRAFT"]
+            ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Fixtures/KRI524CreationDraft.json").path
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-captured-creation", "-ui-testing-editor-color-cuts"]
+        app.launchEnvironment["KRIA_UI_FIXTURE_DRAFT"] = fixture
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 20))
+        app.buttons["native-editor-tool-text"].tap()
+        let list = app.descendants(matching: .any)["native-editor-text-list"].firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 5))
+        for index in 1...12 {
+            let row = app.descendants(matching: .any)["native-editor-text-row-guided-title::sequence-\(index)"].firstMatch
+            XCTAssertTrue(row.exists, "server-produced word bar \(index) is available after retime")
+        }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "KRI-524 captured twelve word bars"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["native-editor-text-cancel"].tap()
+
+        let play = app.buttons["native-editor-play-pause"]
+        XCTAssertTrue(play.waitForExistence(timeout: 5))
+        let clock = app.staticTexts["native-editor-current-time"]
+        XCTAssertEqual(clock.value as? String, "0:00.0")
+        play.tap()
+        let advanced = expectation(for: NSPredicate(format: "value != %@", "0:00.0"), evaluatedWith: clock)
+        wait(for: [advanced], timeout: 5)
+
+        // Reopening must again use the captured server draft, not a static
+        // Swift word fixture.
+        app.terminate(); app.launch()
+        XCTAssertTrue(preview.waitForExistence(timeout: 20))
+        app.buttons["native-editor-tool-text"].tap()
+        XCTAssertTrue(list.waitForExistence(timeout: 5))
+        for index in 1...12 {
+            XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-row-guided-title::sequence-\(index)"].firstMatch.exists)
+        }
+        app.buttons["native-editor-text-cancel"].tap()
+        app.buttons["native-editor-export"].tap()
+        let save = app.buttons["Save to Photos"]
+        XCTAssertTrue(save.waitForExistence(timeout: 15))
+        save.tap()
+        let exported = app.descendants(matching: .any)["native-editor-export-state"].firstMatch
+        XCTAssertTrue(exported.waitForExistence(timeout: 30))
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let deadline = Date().addingTimeInterval(45)
+        var saved = false
+        while Date() < deadline {
+            let alert = springboard.alerts.firstMatch
+            if alert.exists, alert.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "Photos")).count > 0,
+               alert.buttons["Allow"].exists {
+                alert.buttons["Allow"].tap()
+            }
+            if exported.exists, exported.label.contains("Saved to Photos") {
+                saved = true
+                let receipt = XCTAttachment(screenshot: app.screenshot())
+                receipt.name = "KRI-524 native export saved to simulator Photos"
+                receipt.lifetime = .keepAlways
+                add(receipt)
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        XCTAssertTrue(saved, "Export never reached Saved to Photos: \(exported.debugDescription)")
+    }
+
     func testDeletingFinalClipShowsEmptyCanvasAndUndoRestoresPlayback() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text"]
@@ -258,13 +333,12 @@ final class EditorUITests: XCTestCase {
         let text = app.descendants(matching: .any)["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"]
         XCTAssertTrue(text.waitForExistence(timeout: 3))
         text.tap()
-        // KRI-508: "Edit text" types on the video itself.
-        app.buttons["native-editor-text-edit-action"].firstMatch.tap()
-        let input = app.textViews["native-editor-inline-text-field"]
+        app.buttons["Edit text"].tap()
+        let input = app.descendants(matching: .any)["native-editor-text-content"]
         XCTAssertTrue(input.waitForExistence(timeout: 3))
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        input.tap()
         input.typeText(" that becomes a much longer multi-line title without changing the cut")
-        app.buttons["native-editor-inline-text-done"].tap()
+        app.buttons["native-editor-text-inspector-done"].tap()
 
         let updatedText = app.descendants(matching: .any)["native-editor-preview-text-00000000-0000-4000-8000-000000000100"]
         expectation(

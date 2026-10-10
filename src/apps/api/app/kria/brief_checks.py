@@ -9,8 +9,9 @@ and never labels an unchecked ask "Partly".
 
 Checks implemented: per-clip text coverage, ordering vs the requested key,
 duration within +/-10%, literal on-screen text, "keep my whole take" on a
-single-clip subtitled edit, and word-triggered pop-ins (reaction beats) plus the
-closing shot on a phone Talking edit.
+single-clip subtitled edit, word-triggered pop-ins (reaction beats) plus the
+closing shot on a phone Talking edit, and (KRI-546) a finished phone montage's
+held closing line and repeated video files.
 """
 
 from __future__ import annotations
@@ -18,12 +19,13 @@ from __future__ import annotations
 import dataclasses
 import math
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
-from app.kria.brief import BriefRequirement, CreativeBrief
+from app.kria.brief import BriefRequirement, CreativeBrief, normalize_style_intent
 from app.kria.brief_route import (
     END_KEYS,
     START_KEYS,
@@ -36,8 +38,20 @@ from app.kria.brief_route import (
 )
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.kria.reply_language import current_reply_language, say
+from app.kria.style_asks import (
+    clip_length_ask,
+    derive_style_ask,
+    text_look_facts,
+    value_matches,
+)
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
+from app.schemas.text_style_intent import (
+    LABEL_ANCHORS,
+    normalize_label_position,
+    normalize_title_animation,
+)
 from app.services.clip_facts import CAPTURE_ORDER_KEYS
+from app.services.kria_editor_ops_diff import effective_entrance
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
@@ -122,6 +136,46 @@ class NarratedStepFact:
 
 
 @dataclass(frozen=True)
+class TextStyleRow:
+    """One non-caption on-screen text row's style as saved (KRI-543).
+
+    ``kind`` is the editor's own title/label/text classification. A style field is None
+    when the saved row does not say (an unset font or color falls back to a renderer
+    default we do not read), so a check on it stays "can't verify" instead of guessing.
+    """
+
+    id: str
+    kind: str = "text"
+    entrance: str | None = None
+    alignment: str | None = None
+    text_case: str | None = None
+    font_family: str | None = None
+    color: str | None = None
+    # KRI-558: where the row sits and what it says, so a label-corner or "the Lisbon text"
+    # ask can be judged. ``position`` is the named spot; x/y only mean something for "custom".
+    size_px: float | None = None
+    position: str | None = None
+    x_frac: float | None = None
+    y_frac: float | None = None
+    clip_id: str | None = None
+    text: str = ""
+
+
+@dataclass(frozen=True)
+class ClosingSpeechFact:
+    """The spoken line a finished phone montage holds whole on its closing clip (KRI-546).
+
+    Read off the plan record (`unified_montage.closing_speech`, recorded only when the
+    creator's own "last" ask seated the clip, it speaks and the camera audio is kept) and
+    confirmed against the finished timeline: the clip is last and its cut covers the line.
+    """
+
+    media_id: str
+    start_s: float
+    end_s: float
+
+
+@dataclass(frozen=True)
 class PlanFacts:
     """What a drafted plan verifiably contains. Missing facts stay None/empty."""
 
@@ -202,6 +256,16 @@ class PlanFacts:
     # was not available and must remain unchecked.
     text_spans: tuple[tuple[str, str, float, float], ...] = ()
     text_timing_incomplete: bool = False
+    # Per-row style of the saved non-caption text rows (KRI-543). None means the text lane
+    # was not available (a draft or render), which keeps a style ask unchecked.
+    text_styles: tuple[TextStyleRow, ...] | None = None
+    # KRI-558: on an editor turn, the ids of the text rows the creator's ops changed. A style
+    # ask that names no target ("…to all of them") is judged on exactly these rows. None =
+    # not an editor turn (a draft or a render judges every row).
+    anaphora_rows: tuple[str, ...] | None = None
+    # KRI-558: each clip's output length in screen order (removed clips left out). None =
+    # unknown, which keeps a per-clip length ask unjudged (never a false failure).
+    clip_output_durations: tuple[float, ...] | None = None
     # The strategy's edit format, and how many video clips it renders (None when
     # the footage list was not available to count).
     edit_format: str | None = None
@@ -252,6 +316,27 @@ class PlanFacts:
     # The language the rendered captions are in, and the language that was spoken.
     caption_language: str | None = None
     spoken_language: str | None = None
+    # KRI-549: the caption lines a finished phone render shows (its `caption_cues` text, in
+    # order); () = it shows none. None = unknown (a draft, an editor edit, a cloud render).
+    caption_texts: tuple[str, ...] | None = None
+    # KRI-546: a finished phone unified montage, judged from its plan record and the render
+    # together (`plan_facts_from_rendered_montage`). Only there do the closing-line and
+    # duplicate-video checks below judge anything; every other plan keeps today's answers.
+    rendered_montage: bool = False
+    # The closing clip's whole spoken line, held by the plan and confirmed on the finished
+    # timeline. None = no line was held (or the render does not show it held).
+    closing_speech: ClosingSpeechFact | None = None
+    # False when the render records that the clips' own sound was dropped; None = unknown.
+    source_audio_kept: bool | None = None
+    # Every clip the creator added to this edit (footage and Visuals), whether or not the
+    # edit used it, so "that clip isn't in the edit" is told apart from an unknown clip id.
+    source_clip_ids: tuple[str, ...] = ()
+    # The finished edit's clips (1-based, in screen order) that play the same original file
+    # (same upload fingerprint), one group per file shown more than once; and how many extra
+    # copies the creator's own uploads held. None = some clip had no fingerprint, so
+    # nothing about duplicates is claimed.
+    duplicate_clip_positions: tuple[tuple[int, ...], ...] | None = None
+    source_duplicate_copies: int | None = None
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -694,6 +779,109 @@ def _editor_payload_duration(payload: Mapping[str, Any]) -> float | None:
     return total or None
 
 
+_LEGACY_EFFECT_ENTRANCE = {
+    "static": "none",
+    "none": "none",
+    "fade-in": "fade",
+    "pop-in": "pop",
+    "slide-in": "slide",
+    "typewriter": "typewriter",
+}
+_HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_ENTRANCES = frozenset({"none", "fade", "pop", "slide", "typewriter"})
+_TEXT_CASES = frozenset({"none", "upper", "lower", "title"})
+_ALIGNMENTS = frozenset({"left", "center", "right"})
+
+
+def _row_entrance(row: Mapping[str, Any]) -> str | None:
+    """The entrance a saved row plays: explicit phases win, else the legacy effect's."""
+    entrance = effective_entrance(row)
+    return entrance if entrance in _ENTRANCES else None
+
+
+def _row_choice(
+    row: Mapping[str, Any], key: str, allowed: frozenset[str], default: str
+) -> str | None:
+    value = row.get(key)
+    if value is None:
+        return default
+    return value if value in allowed else None
+
+
+def _row_clip_id(row: Mapping[str, Any]) -> str | None:
+    """The clip a label row belongs to: its ``clip_id``, else the media id in its row id."""
+    clip = row.get("clip_id")
+    if isinstance(clip, str) and clip:
+        return clip
+    row_id = str(row.get("id") or "")
+    prefix = "clip-label-media-"
+    return row_id[len(prefix) :] or None if row_id.startswith(prefix) else None
+
+
+def _text_style_rows(rows: Iterable[Any]) -> tuple[TextStyleRow, ...]:
+    """Style of the editor's live, non-caption text rows, typed by the editor's own classifier."""
+    from app.services.kria_editor_ops import is_caption_text_bar  # noqa: PLC0415
+    from app.services.kria_editor_ops_text import classify  # noqa: PLC0415
+
+    live = [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and isinstance(row.get("id"), str)
+        and isinstance(row.get("text"), str)
+        and row["text"].strip()
+        and not row.get("removed")
+        and row.get("role") != "lyric_line"
+        and not is_caption_text_bar(dict(row))
+    ]
+    bars = []
+    for index, row in enumerate(live):
+        params = row.get("source_params")
+        source = row.get("sequence_source_id")
+        if not isinstance(source, str) and isinstance(params, Mapping):
+            source = params.get("sequence_source_id")
+        clip = row.get("clip_id")
+        start = row.get("start_s")
+        bars.append(
+            {
+                "index": index,
+                "id": row["id"],
+                "text": str(row.get("text") or ""),
+                "role": row.get("role"),
+                "sequence_source_id": source if isinstance(source, str) else None,
+                "clip_id": clip if isinstance(clip, str) and clip else None,
+                "removed": False,
+                "start_s": float(start)
+                if isinstance(start, (int, float)) and not isinstance(start, bool)
+                else None,
+                "caption": False,
+            }
+        )
+    kinds = classify(bars)
+    out = []
+    for row in live:
+        color = row.get("color")
+        font = row.get("font_family")
+        out.append(
+            TextStyleRow(
+                id=row["id"],
+                kind=kinds.get(row["id"], "text"),
+                entrance=_row_entrance(row),
+                alignment=_row_choice(row, "alignment", _ALIGNMENTS, "center"),
+                text_case=_row_choice(row, "text_case", _TEXT_CASES, "none"),
+                font_family=font if isinstance(font, str) and font else None,
+                color=color.upper() if isinstance(color, str) and _HEX_COLOR.match(color) else None,
+                size_px=_finite_number(row.get("size_px")),
+                position=row.get("position") if isinstance(row.get("position"), str) else None,
+                x_frac=_finite_number(row.get("x_frac")),
+                y_frac=_finite_number(row.get("y_frac")),
+                clip_id=_row_clip_id(row),
+                text=str(row.get("text") or ""),
+            )
+        )
+    return tuple(out)
+
+
 def plan_facts_from_editor_payload(
     payload: Mapping[str, Any] | None,
     text_diff: Iterable[Mapping[str, Any]] | None = None,
@@ -791,7 +979,49 @@ def plan_facts_from_editor_payload(
         title=title,
         text_spans=tuple(text_spans),
         text_timing_incomplete=text_timing_incomplete,
+        text_styles=(
+            _text_style_rows(payload["text_elements"])
+            if isinstance(payload, Mapping) and isinstance(payload.get("text_elements"), list)
+            else None
+        ),
+        clip_output_durations=_editor_clip_durations(payload),
     )
+
+
+def _editor_clip_durations(payload: Mapping[str, Any]) -> tuple[float, ...] | None:
+    """Each kept clip's output length in order, or None when any slot cannot say (KRI-558)."""
+    slots = payload.get("timeline_slots") if isinstance(payload, Mapping) else None
+    if not isinstance(slots, list) or not slots:
+        return None
+    out: list[float] = []
+    for slot in slots:
+        if not isinstance(slot, Mapping):
+            return None
+        if slot.get("removed"):
+            continue
+        duration = _finite_number(slot.get("duration_s"))
+        if duration is None or duration <= 0:
+            return None
+        rate = _finite_number(slot.get("playback_rate"))
+        out.append(duration / (rate if rate and rate > 0 else 1.0))
+    return tuple(out) or None
+
+
+def _rendered_clip_durations(variant: Mapping[str, Any]) -> tuple[float, ...] | None:
+    """Each main-picture clip's length on the finished timeline, in screen order."""
+    rows = variant.get("story_timeline")
+    spans: list[tuple[float, float]] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, Mapping) or row.get("lane", "clip") != "clip":
+            continue
+        start, end = (
+            _finite_number(row.get("output_start_s")),
+            _finite_number(row.get("output_end_s")),
+        )
+        if start is None or end is None or end <= start:
+            return None
+        spans.append((start, end - start))
+    return tuple(length for _start, length in sorted(spans)) or None
 
 
 # Receipt reasons that mean the spoken trigger itself never played in the creator's voice
@@ -907,6 +1137,10 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     elif variant.get("resolved_archetype") == "narrated":
         changes["audio_strategy"] = "voiceover"
     changes.update(_rendered_speech_facts(variant))
+    changes.update(_rendered_caption_facts(variant))
+    rendered = _rendered_clip_durations(variant)
+    if rendered is not None:
+        changes["clip_output_durations"] = rendered
     return dataclasses.replace(base, **changes) if changes else base
 
 
@@ -944,6 +1178,161 @@ def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         facts["speech_cleanup_enabled"] = False
         facts["speech_cleanup_outcome"] = "not_run"
     return facts
+
+
+def _rendered_caption_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    """The caption lines and their language off a rendered Voiceover/Talking variant (KRI-549).
+
+    Both phone writers persist ``caption_cues`` (one ``text`` per line) and
+    ``caption_language``. A device render with no cues shows no captions; a cloud render
+    fills them later, so their absence stays unknown. Captions the creator turned off
+    (``captions_enabled: false``) are not on screen, so nothing is read from them.
+    """
+    if _RENDERED_EDIT_FORMATS.get(str(variant.get("resolved_archetype") or "")) is None:
+        return {}
+    if variant.get("captions_enabled") is False:
+        return {}
+    cues = variant.get("caption_cues")
+    texts = tuple(
+        " ".join(str(cue.get("text") or "").split())
+        for cue in (cues if isinstance(cues, list) else ())
+        if isinstance(cue, Mapping)
+    )
+    texts = tuple(text for text in texts if text)
+    if not texts:
+        return {"caption_texts": ()} if variant.get("render_destination") == "device" else {}
+    facts: dict[str, Any] = {"caption_texts": texts}
+    language = variant.get("caption_language")
+    if isinstance(language, str) and language.strip():
+        facts["caption_language"] = language.strip()
+    return facts
+
+
+# KRI-546: the order facts a unified montage's plan record holds, laid over a finished
+# variant's facts so an order ask is judged at render-ready exactly as the plan was.
+_MONTAGE_ORDER_FIELDS = (
+    "ordering_basis",
+    "ordering_fallback_clip_ids",
+    "ordering_choice",
+    "sequence_statuses",
+    "sequence_unmet",
+    "sequence_absent",
+    "sequence_spots_met",
+    "route_start",
+    "route_end",
+    "first_endpoint",
+    "last_endpoint",
+)
+# How far a finished cut may start after / end before the held line and still hold it: the
+# timeline is rounded to milliseconds and one frame at 30 fps is ~0.033 s.
+_HELD_LINE_TOLERANCE_S = 0.05
+
+
+def _rendered_clip_cuts(
+    variant: Mapping[str, Any],
+) -> list[tuple[str, float | None, float | None]]:
+    """The finished edit's main-picture cuts in screen order: (media id, source start, end)."""
+    rows = variant.get("story_timeline")
+    cuts: list[tuple[float, int, str, float | None, float | None]] = []
+    for index, row in enumerate(rows if isinstance(rows, list) else []):
+        if not isinstance(row, Mapping) or row.get("lane", "clip") != "clip":
+            continue
+        media_id = row.get("media_id")
+        if not isinstance(media_id, str) or not media_id:
+            continue
+        at = _finite_number(row.get("output_start_s"))
+        cuts.append(
+            (
+                at if at is not None else math.inf,
+                index,
+                media_id,
+                _finite_number(row.get("source_start_s")),
+                _finite_number(row.get("source_end_s")),
+            )
+        )
+    cuts.sort(key=lambda cut: (cut[0], cut[1]))
+    return [(media_id, start, end) for _at, _index, media_id, start, end in cuts]
+
+
+def _same_file_positions(
+    ids: Sequence[str], fingerprints: Mapping[str, str]
+) -> tuple[tuple[int, ...], ...] | None:
+    """1-based positions in ``ids`` that play the same original file, one group per file
+    shown more than once (two cuts of one clip count too); None when a clip is unhashed."""
+    if not ids or any(not fingerprints.get(media_id) for media_id in ids):
+        return None
+    by_file: dict[str, list[int]] = {}
+    for position, media_id in enumerate(ids, start=1):
+        by_file.setdefault(fingerprints[media_id], []).append(position)
+    return tuple(tuple(group) for group in by_file.values() if len(group) > 1)
+
+
+def _held_closing_line(
+    record: Mapping[str, Any],
+    clip_ids: Sequence[str],
+    last_cut: tuple[str, float | None, float | None] | None,
+) -> ClosingSpeechFact | None:
+    """The record's held closing line when the finished edit really ends on it, else None."""
+    speech = record.get("closing_speech")
+    if not isinstance(speech, Mapping) or not clip_ids:
+        return None
+    media_id = str(speech.get("media_id") or "")
+    start = _finite_number(speech.get("source_start_s"))
+    end = _finite_number(speech.get("source_end_s"))
+    if not media_id or start is None or end is None or end <= start or clip_ids[-1] != media_id:
+        return None
+    if last_cut is not None:
+        # A finished timeline must show the closing cut covering the whole line.
+        cut_start, cut_end = last_cut[1], last_cut[2]
+        if (
+            cut_start is None
+            or cut_end is None
+            or cut_start > start + _HELD_LINE_TOLERANCE_S
+            or cut_end < end - _HELD_LINE_TOLERANCE_S
+        ):
+            return None
+    return ClosingSpeechFact(media_id=media_id, start_s=start, end_s=end)
+
+
+def plan_facts_from_rendered_montage(
+    variant: Mapping[str, Any] | None,
+    record: Mapping[str, Any] | None,
+    *,
+    fingerprints: Mapping[str, str] | None = None,
+) -> PlanFacts:
+    """Facts off a finished phone unified montage (KRI-546).
+
+    The variant's own facts (`plan_facts_from_phone_variant`: on-screen text, length) plus
+    what only the plan record and the finished timeline together show: how the clips were
+    ordered, whether the closing clip's spoken line plays whole in its own sound, and which
+    clips came from the same original file. ``fingerprints`` maps each media id the creator
+    added to the sha256 of its original upload; without it nothing about duplicates is
+    claimed. Pass only the record of the generation this variant rendered.
+    """
+    facts = plan_facts_from_phone_variant(variant)
+    if not isinstance(variant, Mapping) or not isinstance(record, Mapping):
+        return facts
+    plan = plan_facts_from_unified_montage(record)
+    cuts = _rendered_clip_cuts(variant)
+    clip_ids = tuple(media_id for media_id, _start, _end in cuts) or plan.clip_ids
+    prints = {
+        str(media_id): str(sha)
+        for media_id, sha in (fingerprints or {}).items()
+        if isinstance(media_id, str) and media_id and isinstance(sha, str) and sha
+    }
+    kept = variant.get("source_audio_preserved")
+    return dataclasses.replace(
+        facts,
+        **{name: getattr(plan, name) for name in _MONTAGE_ORDER_FIELDS},
+        clip_ids=clip_ids,
+        rendered_output=True,
+        rendered_montage=True,
+        closing_speech=_held_closing_line(record, clip_ids, cuts[-1] if cuts else None),
+        source_audio_kept=kept if isinstance(kept, bool) else None,
+        source_clip_ids=tuple(prints),
+        duplicate_clip_positions=_same_file_positions(clip_ids, prints) if prints else None,
+        source_duplicate_copies=len(prints) - len(set(prints.values())) if prints else None,
+    )
 
 
 def _receipt(
@@ -1944,6 +2333,7 @@ _CANT_CHECK_TIMING = "I can't verify this timing automatically."
 _CANT_CHECK_CLEANUP = "I can't check the speech cleanup on this draft yet."
 _CANT_CHECK_CAPTIONS = "I can't check the captions on this draft yet."
 _NO_CHECKER = "I can't verify this one automatically yet."
+_CANT_CHECK_STYLE = "I can't check this text style automatically."
 _CANT_CHECK_MIX = "I can't check the sound mix on this draft yet."
 # Start of the reason on a "mute the footage sound" ask the voiceover mix cannot fully meet
 # (the footage sound is a quiet bed under the voice, never off): a limit of the format.
@@ -1998,6 +2388,7 @@ _REASON_TR: dict[str, str] = {
     _CANT_CHECK_CLEANUP: "Bu taslakta konuşma temizliğini henüz kontrol edemiyorum.",
     _CANT_CHECK_CAPTIONS: "Bu taslaktaki altyazıları henüz kontrol edemiyorum.",
     _NO_CHECKER: "Bunu henüz otomatik olarak doğrulayamıyorum.",
+    _CANT_CHECK_STYLE: "Bu yazı stilini otomatik olarak kontrol edemiyorum.",
     _CANT_CHECK_MIX: "Bu taslakta ses karışımını henüz kontrol edemiyorum.",
     _BED_STILL_PLAYS: "Çekim sesi hâlâ çalıyor",
     _CLEANUP_PLANNED: "Konuşma temizliği uzun duraklamaları keser",
@@ -2050,6 +2441,7 @@ _NEUTRAL_EN = frozenset(
         _CANT_CHECK_CLEANUP,
         _CANT_CHECK_CAPTIONS,
         _CANT_CHECK_MIX,
+        _CANT_CHECK_STYLE,
         _NO_CHECKER,
     }
 )
@@ -2684,14 +3076,244 @@ def _check_voice_bed(req: BriefRequirement, facts: PlanFacts) -> RequirementRece
     )
 
 
+_STYLE_FIELD_NAMES = {
+    "entrance": ("entrance animation", "giriş animasyonu"),
+    "alignment": ("alignment", "hizalama"),
+    "text_case": ("letter case", "harf biçimi"),
+    "font_family": ("font", "yazı tipi"),
+    "color": ("color", "renk"),
+}
+
+
+def _style_intent(req: BriefRequirement) -> dict[str, Any] | None:
+    """The well-formed structured style intent of a style requirement, else None (KRI-543)."""
+    if req.kind != "style":
+        return None
+    return normalize_style_intent(req.facts.get("style_intent"))
+
+
+_TARGET_KIND = {"title": "title", "labels": "label"}
+
+
+def _row_value(row: TextStyleRow, field_name: str) -> str | None:
+    return getattr(row, field_name, None)
+
+
 def _check_style(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    # A changed text lane proves a mutation, not that the requested fields,
-    # targets, or animation relationships were satisfied. Until the requirement
-    # carries independently checkable style intent, retain an unchecked receipt.
-    return _receipt(req, "partial", _NO_CHECKER)
+    # A changed text lane proves a mutation, not that the requested fields, targets, or
+    # animation relationships were satisfied (KRI-524). A value is compared only when the
+    # ask resolves to a typed value (`derive_style_ask`: the structured intent, the facts the
+    # extractor filled, or the creator's own unambiguous words), and only against rows whose
+    # saved value is known.
+    ask = derive_style_ask(req)
+    if ask is None or facts.text_styles is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    rows = [
+        row
+        for row in facts.text_styles
+        if ask.target in (None, "all_text") or row.kind == _TARGET_KIND[ask.target]
+    ]
+    if ask.target is None and facts.anaphora_rows is not None:
+        # "…to all of them" on an editor turn means the texts this turn touched.
+        touched = set(facts.anaphora_rows)
+        rows = [row for row in rows if row.id in touched]
+    verdicts = [
+        value_matches(name, value, _row_value(row, name))
+        for row in rows
+        for name, value in ask.wanted.items()
+    ]
+    if not rows or None in verdicts:
+        return _receipt(req, "partial", _CANT_CHECK_STYLE)
+    off = [
+        row
+        for row in rows
+        if any(value_matches(n, v, _row_value(row, n)) is False for n, v in ask.wanted.items())
+    ]
+    if not off:
+        return _receipt(req, "met", None)
+    if ask.target is None:
+        # "…to all of them" may mean a subset: a mismatch is not evidence of a miss.
+        return _receipt(req, "partial", _CANT_CHECK_STYLE)
+    names_en = ", ".join(_STYLE_FIELD_NAMES[f][0] for f in ask.wanted)
+    names_tr = ", ".join(_STYLE_FIELD_NAMES[f][1] for f in ask.wanted)
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en=f"{len(off)} of {len(rows)} texts don't have the requested {names_en} yet",
+            tr=f"{len(rows)} metinden {len(off)} tanesinde istenen {names_tr} henüz yok",
+        ),
+    )
+
+
+def _row_at(row: TextStyleRow, x: float, y: float) -> bool | None:
+    """Whether a label row sits at an anchor; None when the row does not say where it is."""
+    if row.position == "custom" and row.x_frac is not None and row.y_frac is not None:
+        return abs(row.x_frac - x) <= 0.06 and abs(row.y_frac - y) <= 0.08
+    named = {0.12: "top", 0.5: "middle", 0.78: "bottom"}.get(y)
+    if row.position in ("top", "middle", "bottom") and named is not None:
+        return row.position == named and abs(x - 0.5) <= 0.06
+    return None
+
+
+def _look_rows(req: BriefRequirement, facts: PlanFacts) -> list[TextStyleRow]:
+    rows = list(facts.text_styles or ())
+    if req.scope == "title":
+        return [row for row in rows if row.kind == "title"]
+    if req.scope == "per_clip":
+        return [row for row in rows if row.kind == "label"]
+    if req.scope.startswith("clip:"):
+        target = _scope_clip_id(req, [row.clip_id for row in rows if row.clip_id])
+        return [row for row in rows if row.kind == "label" and target and row.clip_id == target]
+    if req.literal:
+        wanted = _fold(req.literal)
+        return [row for row in rows if _contains_text(row.text, wanted)]
+    return rows
+
+
+def check_text_look(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """Judge a TEXT requirement's look facts (title animation, label corner, font, colour).
+
+    None when there is nothing to compare or a row does not say, so a record or draft that
+    has no text lane never judges (and never blocks a render) on a look it cannot see.
+    """
+    look = text_look_facts(req)
+    if not look or facts.text_styles is None:
+        return None
+    rows = _look_rows(req, facts)
+    if not rows:
+        return None
+    misses: list[str] = []
+    judged = 0
+    undecided = False  # a fact we cannot read never hides a miss we already found
+    for key, value in look.items():
+        if key == "animation":
+            wanted = normalize_title_animation(value)
+            haves = [row.entrance for row in rows]
+            label = ("animation", "animasyon")
+            fails = [h != wanted for h in haves] if wanted else []
+        elif key == "position":
+            spot = normalize_label_position(value)
+            if spot is None:
+                continue
+            x, y, _align = LABEL_ANCHORS[spot]
+            haves = [_row_at(row, x, y) for row in rows]
+            label = ("position", "konum")
+            fails = [h is False for h in haves]
+        elif key in ("font_family", "text_color"):
+            ask = derive_style_ask(
+                BriefRequirement(
+                    id=req.id, kind="style", scope="global", description="", facts={key: value}
+                )
+            )
+            if ask is None:
+                continue
+            name, wanted_value = next(iter(ask.wanted.items()))
+            verdicts = [value_matches(name, wanted_value, _row_value(row, name)) for row in rows]
+            haves = verdicts
+            label = ("font", "yazı tipi") if key == "font_family" else ("colour", "renk")
+            fails = [v is False for v in verdicts]
+        else:
+            continue
+        if not fails or any(h is None for h in haves):
+            undecided = True
+            continue
+        judged += 1
+        if any(fails):
+            misses.append(
+                say(
+                    en=f"{sum(fails)} of {len(rows)} don't have the requested {label[0]}",
+                    tr=f"{len(rows)} yazıdan {sum(fails)} tanesinde istenen {label[1]} yok",
+                )
+            )
+    if misses:
+        return _receipt(req, "partial", "; ".join(misses))
+    if not judged or undecided:
+        return None
+    return _receipt(req, "met", None)
+
+
+_STATUS_RANK = {"met": 0, "partial": 1, "not_possible": 2}
+
+
+def combine_receipts(first: RequirementReceipt, second: RequirementReceipt) -> RequirementReceipt:
+    """The weaker of two verdicts on one requirement, with both reasons (KRI-558)."""
+    worst = max((first, second), key=lambda r: _STATUS_RANK[r.status])
+    reasons = [r.reason for r in (first, second) if r.reason and r.status != "met"]
+    return worst.model_copy(update={"reason": "; ".join(dict.fromkeys(reasons))[:300] or None})
+
+
+def _with_text_look(
+    req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
+) -> RequirementReceipt:
+    """Add the look check to a text requirement's presence check (KRI-558)."""
+    if not text_look_facts(req) or base.status != "met":
+        return base
+    look = check_text_look(req, facts)
+    if look is None:
+        # The words are there; whether they look as asked is not visible here (a record or
+        # a draft). A presence check alone never certifies the look (KRI-524).
+        return _receipt(req, "partial", _NO_CHECKER)
+    return combine_receipts(base, look)
+
+
+def _check_clip_lengths(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """ "Make all clips 1 second except the first and last": judged on the clip lengths."""
+    ask = clip_length_ask(req)
+    durations = facts.clip_output_durations
+    if ask is None or not durations:
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    seconds, skip_first, skip_last = ask
+    rows = list(durations)
+    if skip_first:
+        rows = rows[1:]
+    if skip_last:
+        rows = rows[:-1]
+    if not rows:
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    tolerance = max(0.1, 0.1 * seconds)
+    off = [length for length in rows if abs(length - seconds) > tolerance]
+    if not off:
+        return _receipt(req, "met", None)
+    shown = ", ".join(f"{length:.1f}s" for length in off[:3])
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en=f"{len(off)} of {len(rows)} clips aren't {seconds:g}s ({shown})",
+            tr=f"{len(rows)} klipten {len(off)} tanesi {seconds:g} sn değil ({shown})",
+        ),
+    )
+
+
+def describe_text_look(req: BriefRequirement, facts: PlanFacts) -> str | None:
+    """What the video's texts actually use, for an ask no value check could decide."""
+    ask = derive_style_ask(req)
+    if ask is None or not facts.text_styles:
+        return None
+    rows = [
+        row
+        for row in facts.text_styles
+        if ask.target in (None, "all_text") or row.kind == _TARGET_KIND[ask.target]
+    ]
+    parts = []
+    for name in ask.wanted:
+        counts: dict[str, int] = {}
+        for row in rows:
+            value = _row_value(row, name)
+            if value:
+                counts[value] = counts.get(value, 0) + 1
+        if counts:
+            shown = ", ".join(f"{v} ×{n}" if n > 1 else v for v, n in counts.items())
+            field_name = say(en=_STYLE_FIELD_NAMES[name][0], tr=_STYLE_FIELD_NAMES[name][1])
+            parts.append(f"{field_name}: {shown}")
+    return "; ".join(parts)[:300] or None
 
 
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if clip_length_ask(req) is not None:
+        # KRI-558: a per-clip length is judged on the clips, never against the total length.
+        return _check_clip_lengths(req, facts)
     if _wants_whole_take(req):
         return _check_whole_take(req, facts)
     target = req.facts.get("duration_s")
@@ -2723,6 +3345,11 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
     if not isinstance(target, (int, float)) or target <= 0:
         if facts.narrated_steps is not None:
             return _check_narrated_timing(req, facts)
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    if req.scope != "global":
+        # The total edit length cannot establish a clip or text duration. Until
+        # that requirement has resolved target windows, report missing evidence
+        # instead of rejecting a valid edit (or falsely passing an equal total).
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
     if facts.edit_format == "subtitled":
         # KRI-142: the Talking renderers keep the whole take (minus any speech
@@ -3043,6 +3670,408 @@ def asks_caption_language(req: BriefRequirement) -> bool:
     return _wants_captions(req) and _requested_caption_language(req) is not None
 
 
+# ------------------------------------------------------------- caption words (KRI-549)
+# "altyazılar Türkçe olsun; Moda, Bahariye, Yeldeğirmeni ve Kadıköy doğru yazılsın" on a
+# finished phone render: the language is judged against the variant's `caption_language`
+# and each name the creator asked to be spelled right against the caption lines it shows.
+# A name is read only from a capitalized list right next to a spelling cue (the creator's
+# own spelling). Anything less certain stays unchecked: a false "Done" is worse than
+# "can't check".
+
+# Wordings the stricter `_CAPTION_LANGUAGE_PATTERNS` miss ("captions should be in English",
+# "altyazılar da Türkçe", "altyazıları Türkçeye çevir"); run on `loose_text`.
+_LOOSE_CAPTION_LANGUAGE_PATTERNS = (
+    re.compile(rf"\b{_CAPTION_WORD}\s+(?:\w+\s+){{0,3}}?(?:in|into)\s+({_LANG_ALT})\b"),
+    re.compile(rf"\baltyazi\w*\s+(?:\w+\s+){{0,2}}?({_LANG_ALT})\w*"),
+)
+# A spelling cue in the creator's own words (case kept, so the names stay readable). After
+# "spell"/"spelling (of)" the names follow ("spell A and B right"); after any other cue
+# they come first ("A ve B doğru yazılsın", "A and B spelled right"). A colon list
+# ("spelling the names exactly: A, B") always follows.
+_SPELL_CUE_RE = re.compile(
+    r"\b(?P<after>spell(?:ing)?(?:\s+of)?)\b"
+    r"|\b(?:spelled|spelt|spells)\b"
+    r"|\b(?:do[gğ]ru|d[uü]zg[uü]n|hatas[ıi]z)\s+(?:bir\s+)?yaz\w*"
+    r"|\byaz[ıi]m\w*|\bimla\w*",
+    re.IGNORECASE,
+)
+_SPELL_CLAUSE_SPLIT_RE = re.compile(r"[;\n!?]+|\.(?=\s|$)")
+# Words (inner apostrophes and hyphens kept: "Kadıköy'ü", "Yel-Değirmeni") and list commas.
+_NAME_TOKEN_RE = re.compile(r"[^\W_](?:[\w'’\-]*[^\W_])?|[,&]")
+_NAME_JOINERS = frozenset({"and", "ve", "ile", "&", "plus"})
+_NAME_PARTICLES = frozenset(
+    {"de", "da", "del", "della", "di", "du", "la", "le", "van", "von", "der", "den", "al", "el"}
+)
+# Capitalized words that open a sentence or name the captions, never a name to spell.
+_NOT_NAMES = frozenset(
+    "make please ensure also and the all keep write check use i my names"
+    " lutfen ayrica ve tum butun ben benim yaz isimler isimleri".split()
+)
+_MAX_NAME_GAP = 3  # words allowed between a name list and its cue ("A and B are spelled")
+_MAX_SPELLED_NAMES = 12
+# Caption look, size or place (`_CAPTION_DETAIL_RE` without the language words and without a
+# bare "right", which "spell it right" uses): such an ask stays with `_check_captions`.
+_CAPTION_LOOK_RE = re.compile(
+    r"\b(colou?rs?|yellow|white|red|blue|green|black|pink|orange|purple|lime|font|bold|italic"
+    r"|sizes?|bigger|big|small|smaller|larger|huge|tiny|top|bottom|middle|cent(er|re)"
+    r"|higher|lower|outline|shadow|stroke|uppercase|lowercase|caps)\b"
+    r"|\b(on|to|at) the (left|right)\b|\b(left|right)[- ](side|aligned|corner)\b"
+    r"|\brenk|\bsari\b|\bbeyaz\b|\bbüyük|\bküçük|\büst|\balt(ta|a)\b|\bsol(da|a)\b"
+    r"|\bsağ(da|a)\b|\byazi tipi|\bkalin"
+)
+# Caption words: letters/digits joined by apostrophes ("Kadıköy'de"); hyphens and spaces split.
+_CAPTION_TOKEN_RE = re.compile(r"[^\W_]+(?:['’][^\W_]+)*")
+_APOSTROPHE_RE = re.compile(r"['’]")
+# A Turkish case/possessive ending glued onto a name without its apostrophe ("Kadıköyde",
+# "Modanın"), on `loose_text` letters. Only checked on a capitalized word of a long enough
+# name, so "modası" (fashion) or "Adana" never reads as a misspelled Moda or Ada.
+_GLUED_SUFFIX_RE = re.compile(r"[nys]?(?:[dt][ae](?:n|ki)?|[ae]|[iu]n?|l[ae]r\w{0,4}|l[iu]|l[ae])")
+_MIN_GLUED_NAME = 4
+
+
+def _asked_caption_language(req: BriefRequirement) -> str | None:
+    """`_requested_caption_language`, plus a few looser wordings of the same ask."""
+    found = _requested_caption_language(req)
+    if found is not None:
+        return found
+    wording = loose_text(_req_text(req))
+    for pattern in _LOOSE_CAPTION_LANGUAGE_PATTERNS:
+        match = pattern.search(wording)
+        if match:
+            return _LANGUAGE_WORDS[match.group(1)]
+    return None
+
+
+def _capitalized(token: str) -> bool:
+    return token[:1].isupper()
+
+
+def _name_lists(text: str) -> tuple[list[str], list[tuple[int, int, list[str]]]]:
+    """``text``'s tokens and its capitalized name lists as (first token, last token, names).
+
+    A name is a run of capitalized words (a lowercase particle may join two: "Rio de
+    Janeiro"); names joined by commas, "and", "ve", "ile" or "&" form one list.
+    """
+    tokens = _NAME_TOKEN_RE.findall(text)
+    chunks: list[tuple[int, int, str]] = []
+    i = 0
+    while i < len(tokens):
+        if not _capitalized(tokens[i]):
+            i += 1
+            continue
+        words, j = [tokens[i]], i + 1
+        # A word with an apostrophe ends its name ("Kadıköy'ü Moda" is two names).
+        while j < len(tokens) and not _APOSTROPHE_RE.search(words[-1]):
+            if _capitalized(tokens[j]):
+                words.append(tokens[j])
+                j += 1
+            elif (
+                tokens[j].casefold() in _NAME_PARTICLES
+                and j + 1 < len(tokens)
+                and _capitalized(tokens[j + 1])
+            ):
+                words.extend(tokens[j : j + 2])
+                j += 2
+            else:
+                break
+        chunks.append((i, j - 1, " ".join(words)))
+        i = j
+    lists: list[tuple[int, int, list[str]]] = []
+    for start, end, name in chunks:
+        between = [token.casefold() for token in tokens[lists[-1][1] + 1 : start]] if lists else []
+        joined = bool(lists) and (
+            between == [","]
+            or (
+                len(between) in (1, 2)
+                and between[-1] in _NAME_JOINERS
+                and between[:-1] in ([], [","])
+            )
+        )
+        if joined:
+            lists[-1] = (lists[-1][0], end, [*lists[-1][2], name])
+        else:
+            lists.append((start, end, [name]))
+    return tokens, lists
+
+
+def _word_count(tokens: Sequence[str]) -> int:
+    return sum(1 for token in tokens if token not in {",", "&"})
+
+
+def _list_before(text: str, max_gap: int = _MAX_NAME_GAP) -> list[str]:
+    tokens, lists = _name_lists(text)
+    if lists and _word_count(tokens[lists[-1][1] + 1 :]) <= max_gap:
+        return lists[-1][2]
+    return []
+
+
+def _list_after(text: str, max_gap: int = _MAX_NAME_GAP) -> list[str]:
+    tokens, lists = _name_lists(text)
+    if lists and _word_count(tokens[: lists[0][0]]) <= max_gap:
+        return lists[0][2]
+    return []
+
+
+def _clean_name(name: str) -> str | None:
+    """The name without a case ending ("Kadıköy'ü" -> "Kadıköy"), or None for a non-name."""
+    words = _APOSTROPHE_RE.split(name, maxsplit=1)[0].split()
+    while words and loose_text(words[0]) in _NOT_NAMES:
+        words = words[1:]
+    if not words:
+        return None
+    core = loose_text(" ".join(words))
+    if core in _LANGUAGE_WORDS or _CAPTION_RE.search(core):
+        return None
+    return " ".join(words)
+
+
+def _names_near_cue(clause: str, cue: re.Match[str]) -> list[str]:
+    before, after = clause[: cue.start()], clause[cue.end() :]
+    found: list[str] = []
+    if ":" in after:
+        found = _list_after(after.split(":", 1)[1], max_gap=1)
+    if not found:
+        order = (
+            ((_list_after, after), (_list_before, before))
+            if cue.group("after")
+            else ((_list_before, before), (_list_after, after))
+        )
+        for pick, text in order:
+            found = pick(text)
+            if found:
+                break
+    return [name for name in map(_clean_name, found) if name]
+
+
+def _spelled_names(req: BriefRequirement) -> tuple[str, ...] | None:
+    """The names a requirement asks to be spelled right, as the creator wrote them.
+
+    None when the wording has no spelling cue; () when it has one but no capitalized
+    name list sits next to it (then nothing about spelling can be claimed).
+    """
+    text = unicodedata.normalize("NFC", " ".join(x for x in (req.description, req.literal) if x))
+    cued = False
+    names: list[str] = []
+    for clause in _SPELL_CLAUSE_SPLIT_RE.split(text):
+        for cue in _SPELL_CUE_RE.finditer(clause):
+            cued = True
+            names.extend(_names_near_cue(clause, cue))
+    if not cued:
+        return None
+    return tuple(dict.fromkeys(names))[:_MAX_SPELLED_NAMES]
+
+
+def _asks_spelling(req: BriefRequirement) -> bool:
+    return _spelled_names(req) is not None or bool(_SPELLING_RE.search(_loose_req(req)))
+
+
+def _caption_words_ask(req: BriefRequirement) -> bool:
+    """A captions ask about their language and/or how names are spelled, and nothing about
+    their look or place (`_check_captions` keeps those)."""
+    if _wants_no_captions(req):
+        return False
+    if _asked_caption_language(req) is None and not _asks_spelling(req):
+        return False
+    look = _req_text(req)
+    for name in _spelled_names(req) or ():
+        look = look.replace(_fold(name), " ")
+    return not _CAPTION_LOOK_RE.search(look)
+
+
+def _judges_caption_words(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """True when a finished render's caption lines can settle this captions ask."""
+    return facts.caption_texts is not None and _wants_captions(req) and _caption_words_ask(req)
+
+
+def _spelling_key(value: str, *, turkish: bool) -> str:
+    """Case-free, whitespace-collapsed text that keeps every letter ("İ" -> "i"; in Turkish
+    "I" -> "ı"), so "KADIKÖY" equals "Kadıköy" but "Kadikoy" does not."""
+    text = unicodedata.normalize("NFC", value).replace("İ", "i")
+    if turkish:
+        text = text.replace("I", "ı")
+    return " ".join(text.casefold().split())
+
+
+def _squash(value: str) -> str:
+    """Letters only, diacritic-free: "Yel-Değirmeni" == "yeldegirmeni"."""
+    return re.sub(r"[\W_]+", "", loose_text(value))
+
+
+def _caption_spelling(name: str, captions: str, *, turkish: bool) -> tuple[bool, str | None]:
+    """(``name`` appears as written, the first other spelling of it in ``captions``).
+
+    A Turkish ending after an apostrophe is allowed ("Kadıköy'de"). Another spelling is the
+    same letters with other accents, spacing or hyphens ("Kadikoy", "yel değirmeni"), or
+    the name with an ending glued on without its apostrophe ("Kadıköyde").
+    """
+    want = _squash(name)
+    if not want:
+        return False, None
+    want_key = _spelling_key(name, turkish=turkish)
+    name_words = len(re.split(r"[\s\-]+", name.strip()))
+    tokens = list(_CAPTION_TOKEN_RE.finditer(captions))
+    exact = False
+    other: str | None = None
+    for i in range(len(tokens)):
+        for size in range(1, name_words + 2):
+            window = tokens[i : i + size]
+            if len(window) < size:
+                break
+            if size > 1:
+                # A name never runs past a case ending or punctuation ("Moda'da, deniz").
+                gap = captions[window[-2].end() : window[-1].start()]
+                if _APOSTROPHE_RE.search(window[-2].group()) or not re.fullmatch(r"[\s\-]+", gap):
+                    break
+            last = window[-1].group()
+            base = _APOSTROPHE_RE.split(last, maxsplit=1)[0]
+            shown = captions[window[0].start() : window[-1].start() + len(base)]
+            squashed = _squash(shown)
+            if squashed == want:
+                if _spelling_key(shown, turkish=turkish) == want_key:
+                    exact = True
+                elif other is None:
+                    other = shown
+            elif (
+                other is None
+                and size == name_words
+                and base == last
+                and len(want) >= _MIN_GLUED_NAME
+                and _capitalized(shown)
+                and squashed.startswith(want)
+                and _GLUED_SUFFIX_RE.fullmatch(squashed[len(want) :])
+            ):
+                other = shown
+    return exact, other
+
+
+def _and_names(names: Sequence[str]) -> str:
+    items = list(dict.fromkeys(names))
+    if len(items) <= 1 or len(items) > _MAX_NAMED_IN_REASON:
+        return _names(items)
+    head = ", ".join(items[:-1])
+    return say(en=f"{head} and {items[-1]}", tr=f"{head} ve {items[-1]}")
+
+
+def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """A captions ask about their language and the spelling of names, on a finished render.
+
+    The language is judged against the render's ``caption_language``, each name against
+    the caption lines. Met only when every part holds; a wrong language or a different
+    spelling is an honest miss naming it, a name the captions never show is "Partly"
+    with that reason, and a part with nothing to judge it by leaves the ask unchecked.
+    """
+    lines = facts.caption_texts or ()
+    if not lines:
+        return _receipt(
+            req, "partial", say(en="This video has no captions.", tr="Bu videoda altyazı yok.")
+        )
+    done: list[str] = []
+    misses: list[str] = []
+    unsure: list[str] = []
+    rendered = str(facts.caption_language or "").casefold().split("-")[0]
+    asked = _asked_caption_language(req)
+    if asked is not None:
+        if not rendered:
+            unsure.append(
+                say(
+                    en="I couldn't check which language the captions are in.",
+                    tr="Altyazıların dilini kontrol edemedim.",
+                )
+            )
+        elif rendered != asked:
+            misses.append(
+                say(
+                    en=(
+                        f"The captions are in {_language_name(rendered)}, "
+                        f"not {_language_name(asked)}."
+                    ),
+                    tr=(
+                        f"Altyazılar {_language_name(asked)} değil, {_language_name(rendered)} "
+                        "olarak çıktı."
+                    ),
+                )
+            )
+        else:
+            done.append(
+                say(
+                    en=f"The captions are in {_language_name(rendered)}.",
+                    tr=f"Altyazılar {_language_name(rendered)}.",
+                )
+            )
+    if _wants_word_captions(req) and facts.caption_style not in {"karaoke", "kinetic"}:
+        misses.append(
+            say(
+                en="Captions are on as full sentences, not word by word.",
+                tr="Altyazılar kelime kelime değil, tam cümleler olarak açık.",
+            )
+        )
+    names = _spelled_names(req)
+    if _asks_spelling(req):
+        if not names:
+            unsure.append(
+                say(
+                    en="I couldn't tell which words to check the spelling of.",
+                    tr="Yazımını kontrol edeceğim kelimeleri ayırt edemedim.",
+                )
+            )
+        else:
+            captions = " ".join(lines)
+            turkish = rendered == "tr" or (not rendered and bool(re.search("[ıİşŞğĞ]", captions)))
+            spelled: list[str] = []
+            wrong: list[tuple[str, str]] = []
+            absent: list[str] = []
+            for name in names:
+                exact, other = _caption_spelling(name, captions, turkish=turkish)
+                if other is not None:
+                    wrong.append((name, other))
+                elif exact:
+                    spelled.append(name)
+                else:
+                    absent.append(name)
+            if wrong:
+                misses.append(
+                    say(
+                        en="The captions write "
+                        + ", ".join(f'"{other}" for {name}' for name, other in wrong)
+                        + ". You can fix that in the editor.",
+                        tr="Altyazılarda "
+                        + ", ".join(f'{name} yerine "{other}"' for name, other in wrong)
+                        + " yazıyor. Bunu editörde düzeltebilirsin.",
+                    )
+                )
+            if absent:
+                one = len(absent) == 1
+                misses.append(
+                    say(
+                        en=(
+                            f"{_and_names(absent)} {'doesn' if one else 'don'}'t appear in "
+                            f"the captions, so I couldn't check {'its' if one else 'their'} "
+                            "spelling."
+                        ),
+                        tr=(
+                            f"Altyazılarda {_and_names(absent)} geçmiyor, o yüzden "
+                            f"{'yazımını' if one else 'yazımlarını'} kontrol edemedim."
+                        ),
+                    )
+                )
+            if spelled:
+                one = len(spelled) == 1
+                done.append(
+                    say(
+                        en=(
+                            f"{_and_names(spelled)} {'is' if one else 'are'} spelled as you "
+                            f"wrote {'it' if one else 'them'}."
+                        ),
+                        tr=f"{_and_names(spelled)} yazdığın gibi yazılmış.",
+                    )
+                )
+    if misses:
+        return _receipt(req, "partial", " ".join([*misses, *unsure, *done]))
+    if unsure:
+        return _receipt(req, "partial", " ".join([*unsure, *done]), verification="unchecked")
+    return _receipt(req, "met", " ".join(done) or None)
+
+
 _TITLE_SOURCES_THE_CREATOR_OWNS = frozenset({"creator", "brief"})
 
 
@@ -3140,9 +4169,20 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         )
     else:
         found = any(_contains_text(t, wanted) for t in facts.texts)
-    # KRI-545: "chapter titles: Sabah, Üniversite, ..." is on screen as those names, each its
-    # own text on its clips, never as one line.
+    # Chapter lists are satisfied by their separate labels, not a joined title.
     if found or chapter_list(req.literal, facts.texts) is not None:
+        # Copy presence cannot certify independently requested visual/temporal behavior.
+        # Keep these explicit constraints unverified until their actual lane evidence is checked.
+        # (animation, position, font_family and text_color are judged by `check_text_look`.)
+        if set(req.facts or {}) & {
+            "segmentation",
+            "sequence",
+            "timing",
+            "overlap",
+            "animation_phases",
+            "duration_s",
+        }:
+            return _receipt(req, "partial", _NO_CHECKER)
         return _receipt(req, "met", None)
     return _receipt(
         req,
@@ -3151,9 +4191,227 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     )
 
 
+# KRI-546: two asks a finished phone montage can settle from its own evidence. Patterns run
+# on `_loose_req` output (folded, no diacritics, punctuation as spaces: "don't" -> "don t").
+_MEDIA_NOUN = (
+    r"(?:videos?|clips?|shots?|footage|files?|uploads?|video\w*|klip\w*|cekim\w*|dosya\w*)"
+)
+# "If the same video is there twice, use one" / "aynı videodan iki tane varsa birini kullan":
+# a copy is named AND only one should stay, so "use the same clip at the start and the end"
+# never reads as a duplicate ask.
+_SAME_FILE_RE = re.compile(
+    r"\bduplicat\w*|\bde ?dup\w*|\bkopya\w*|\byinelen\w*|\btekrar ?(?:eden|lanan)\b"
+    rf"|\bsame {_MEDIA_NOUN}|\b(?:two|2) of the same\b"
+    rf"|\b{_MEDIA_NOUN} (?:that )?(?:is|are) the same\b|\bayni {_MEDIA_NOUN}"
+)
+_KEEP_ONE_RE = re.compile(
+    r"\b(?:remove|drop|skip|delete|cut|avoid|exclude|leave out|get rid of|no|without|don t"
+    r"|do not|never|once|single)\b|\b(?:only|just|keep|use|leave) (?:one|a single)\b"
+    r"|\bone (?:of (?:them|each|the)|copy)\b"
+    r"|\bbiri(?:ni|sini)?\b|\btek\b|\bsadece\b|\byalnizca\b|\bcikar(?:t|in|tin|sin|tsin)?\b"
+    r"|\bsil(?:in|sin)?\b|\bkullanma(?:yin|sin)?\b|\bolmasin\b|\bbir (?:kere|kez)\b"
+)
+# "End on Elif's sentence to the camera, in her own voice" / "en sonda Elif'in kameraya
+# söylediği cümleyi kendi sesiyle kullan": the closing clip's own spoken line.
+_ENDING_RE = re.compile(
+    r"\b(?:finish|end|close|wrap up|wrap) (?:on|with)\b|\bending (?:on|with)\b"
+    r"|\bat the (?:very )?end\b|\bin the end\b|\blast\b|\bclosing\b"
+    r"|\ben son\w*|\bsonda\b|\bsonunda\b|\bsona\b|\bkapanis\w*|\bbitir\w*|\bbitsin\b"
+)
+_OWN_SPEECH_RE = re.compile(
+    r"\bown (?:voice|sound|audio|words)\b|\b(?:her|his|their|my|your) voice\b"
+    r"|\b(?:sentence|says|said|saying|speaks|speaking|talks|talking)\b|\bto (?:the )?camera\b"
+    r"|\bkendi ses\w*|\bcumle\w*|\bsoyledi\w*|\bsoyler\w*|\bkonus\w*|\bdedi\w*|\bkameraya\b"
+)
+# A closing photo, sticker or song, a muted ending or a voiceover is a different ask.
+_NOT_OWN_SPEECH_RE = re.compile(
+    r"\bmute\w*|\bsilent\b|\bno sound\b|\bwithout (?:sound|audio)\b|\bsessiz\w*|\bkapat\w*"
+    r"|\bvoice ?over\b|\bnarrat\w*|\bseslendirme\w*|\bdis ses\w*"
+    r"|\bmusic\b|\bsong\b|\bmuzik\w*|\bsarki\w*"
+    r"|\b(?:photo|picture|image|pic|sticker|stamp|badge|logo|emoji)s?\b"
+    r"|\bfotograf\w*|\bresim\w*|\bgorsel\w*|\bcikartma\w*"
+)
+
+
+def _wants_one_of_duplicates(req: BriefRequirement) -> bool:
+    """ "If the same video is there twice, use one": keep a single copy of a repeated file."""
+    if req.kind not in ("select", "style"):
+        return False
+    text = _loose_req(req)
+    return bool(_SAME_FILE_RE.search(text) and _KEEP_ONE_RE.search(text))
+
+
+def _wants_closing_speech(req: BriefRequirement) -> bool:
+    """ "End on X's sentence in her own voice": the last clip plays its own spoken line."""
+    if req.kind not in (*_BEAT_KINDS, "order"):
+        return False
+    text = _loose_req(req)
+    if _NOT_OWN_SPEECH_RE.search(text) or not _OWN_SPEECH_RE.search(text):
+        return False
+    return bool(
+        _ENDING_RE.search(text)
+        or req.facts.get("last_clip")
+        or str(req.facts.get("position") or "").casefold() == "last"
+    )
+
+
+def judged_at_render(req: BriefRequirement) -> bool:
+    """True for an ask only a finished phone montage's evidence settles (KRI-546).
+
+    A unified montage's plan record cannot see these: a closing line is held while the
+    plan is laid out, and a duplicate file is told by the upload fingerprints. The
+    render-ready review judges them again even when the record carries a receipt.
+    """
+    return (
+        _wants_one_of_duplicates(req)
+        or _wants_closing_speech(req)
+        # KRI-558: a look (title animation, label corner, font, colour) and a per-clip length
+        # are read off the finished text lane and timeline, which a plan record never has.
+        or bool(text_look_facts(req))
+        or clip_length_ask(req) is not None
+    )
+
+
+_CLIP_ID_PART_RE = re.compile(r"[^0-9A-Za-z]+")
+
+
+def _scope_clip_id(req: BriefRequirement, ids: Iterable[str]) -> str | None:
+    """The clip a ``clip:<id>`` scope names among ``ids``, else None.
+
+    The brief may name a clip by a short form of its id ("F0CECCF8" for
+    "analysis-proxy-ios-F0CECCF8-5871-....mp4"): a whole id part of 6+ letters and digits
+    that exactly one clip carries counts; anything ambiguous names no clip.
+    """
+    if not req.scope.startswith("clip:"):
+        return None
+    token = req.scope.split(":", 1)[1].strip()
+    known = list(dict.fromkeys(ids))
+    if token in known:
+        return token
+    if len(token) < 6 or not token.isalnum():
+        return None
+    folded = token.casefold()
+    hits = [
+        media_id
+        for media_id in known
+        if folded in {part.casefold() for part in _CLIP_ID_PART_RE.split(media_id)}
+    ]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _clip_numbers(positions: Sequence[int]) -> str:
+    """[2, 3] -> "clips 2 and 3" / "2. ve 3. klipler"."""
+    shown = [str(p) for p in positions]
+    head, tail = shown[:-1], shown[-1]
+    return say(
+        en=f"clips {', '.join(head)} and {tail}" if head else f"clip {tail}",
+        tr=(f"{', '.join(f'{p}.' for p in head)} ve {tail}. klipler" if head else f"{tail}. klip"),
+    )
+
+
+def _check_duplicates(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Judge "keep one of a repeated video" on the finished edit's clips (KRI-546).
+
+    Met only when no two clips of the edit come from the same original file (same upload
+    fingerprint). Without a fingerprint for every clip nothing is claimed.
+    """
+    groups = facts.duplicate_clip_positions
+    if not facts.rendered_montage or groups is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if not groups:
+        return _receipt(
+            req,
+            "met",
+            say(
+                en="No two clips in the edit come from the same video file",
+                tr="Düzenlemedeki hiçbir klip aynı video dosyasından gelmiyor",
+            ),
+        )
+    where = "; ".join(_clip_numbers(group) for group in groups)
+    extra = sum(len(group) - 1 for group in groups)
+    return _receipt(
+        req,
+        # Some uploaded copies were left out but not all: partly done. None were: not done.
+        "partial" if (facts.source_duplicate_copies or 0) > extra else "not_possible",
+        say(
+            en=f"The same video is in the edit more than once: {where}",
+            tr=f"Aynı video düzenlemede birden fazla kez var: {where}",
+        ),
+    )
+
+
+def _check_closing_speech(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Judge "end on X's spoken line in her own voice" on a finished montage (KRI-546).
+
+    Met only when the clip the creator named (or, unnamed, the clip their own "last" ask
+    seated) ends the edit and the plan held its whole spoken line with the camera audio
+    kept, as the finished timeline shows.
+    """
+    ids = facts.clip_ids
+    if not facts.rendered_montage or not ids:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if req.scope.startswith("clip:"):
+        target = _scope_clip_id(req, (*ids, *facts.source_clip_ids))
+        if target is None:
+            return _receipt(req, "partial", _NO_CHECKER)
+        if target not in ids:
+            return _receipt(
+                req,
+                "not_possible",
+                say(en="That clip isn't in the edit", tr="O klip düzenlemede yok"),
+            )
+        if ids[-1] != target:
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en="That clip is in the edit, but not at the end",
+                    tr="O klip düzenlemede var ama sonda değil",
+                ),
+            )
+    elif facts.closing_speech is None and "last" not in (facts.sequence_spots_met or ()):
+        # Unnamed, and no "last" ask of the creator's landed: nothing says which clip.
+        return _receipt(req, "partial", _NO_CHECKER)
+    if facts.source_audio_kept is False:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="The video ends on that clip, but the clips' own sound is off",
+                tr="Video o klipte bitiyor ama kliplerin kendi sesi kapalı",
+            ),
+        )
+    if facts.closing_speech is None or facts.closing_speech.media_id != ids[-1]:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    "The video ends on that clip, but I couldn't confirm its whole spoken "
+                    "line plays in its own sound"
+                ),
+                tr=(
+                    "Video o klipte bitiyor ama cümlenin tamamının klibin kendi sesiyle "
+                    "duyulduğunu doğrulayamadım"
+                ),
+            ),
+        )
+    return _receipt(
+        req,
+        "met",
+        say(
+            en="The video ends on that clip's whole spoken line, in its own sound",
+            tr="Video, o klipteki cümlenin tamamıyla ve klibin kendi sesiyle bitiyor",
+        ),
+    )
+
+
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
     if _wants_cleanup(req) or _wants_captions(req):
+        return True
+    if judged_at_render(req):
+        # Neutral (`_NO_CHECKER`) anywhere but a finished phone montage (KRI-546).
         return True
     if req.kind == "text":
         return bool(
@@ -3170,6 +4428,8 @@ def _has_checker(req: BriefRequirement) -> bool:
             or _wants_beats(req)
             or _wants_clip_timing(req)
         )
+    if derive_style_ask(req) is not None:
+        return True
     if req.kind in _BEAT_KINDS:
         return (
             _wants_beats(req)
@@ -3191,13 +4451,25 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         # edit: the cleanup ask owns the sentence; the length it names is judged
         # inside it. Elsewhere the sentence takes its kind's usual path.
         return _check_speech_cleanup(req, facts)
+    if facts.rendered_montage:
+        # KRI-546: a finished phone montage shows which files repeat and whether the
+        # closing clip's own line plays whole; every other plan keeps its usual path.
+        if _wants_one_of_duplicates(req):
+            return _check_duplicates(req, facts)
+        if _wants_closing_speech(req):
+            if req.kind == "order":
+                # "End on Elif saying it": the seat is an order verdict first.
+                seated = _check_order(req, facts)
+                if seated.status != "met":
+                    return seated
+            return _check_closing_speech(req, facts)
     if req.kind == "text":
         if req.scope == "per_clip" or req.scope.startswith("clip:"):
-            return _check_per_clip_text(req, facts)
+            return _with_text_look(req, facts, _check_per_clip_text(req, facts))
         if req.literal:
-            return _check_literal_text(req, facts)
+            return _with_text_look(req, facts, _check_literal_text(req, facts))
         if req.scope == "title":
-            return _check_title(req, facts)
+            return _with_text_look(req, facts, _check_title(req, facts))
     elif req.kind == "order":
         return _check_order(req, facts)
     elif req.kind == "timing":
@@ -3222,6 +4494,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_reaction_beats(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_bed_under_voice(req) or _wants_bed_muted(req)):
         return _check_voice_bed(req, facts)
+    if _judges_caption_words(req, facts):  # KRI-549: language / names on a finished render
+        return _check_caption_words(req, facts)
     if _wants_captions(req):
         return _check_captions(req, facts)
     return _receipt(req, "partial", _NO_CHECKER)
@@ -3308,6 +4582,40 @@ def _settled_by_narrated_render(req: BriefRequirement, strategy: Mapping[str, An
     return req.kind == "style" and asks_caption_language(req)
 
 
+# KRI-549: formats the phone Talking writer (`_run_phone_subtitled_job`) renders when the
+# creator's own speech is the spine (a self-narrated Voiceover item lands there too).
+_PHONE_CAPTION_FORMATS = frozenset({"subtitled", "talking_head", *NARRATED_EDIT_FORMATS})
+
+
+def defers_caption_words_to_phone_render(
+    *,
+    creator_id: object,
+    edit_format: object,
+    audio_strategy: object,
+    clip_paths: Iterable[object] = (),
+) -> bool:
+    """True when this draft renders through the phone Talking writer (KRI-549).
+
+    That writer persists every caption line and the captions' language on the variant, so
+    the render-ready review judges a caption-language or name-spelling ask a text-free draft
+    cannot. Mirrors the dispatch gate: phone clips, an enrolled account, phone `subtitled`
+    rendering on, and no voiceover lane (a recorded voiceover goes to the Voiceover writer).
+    A draft the gate then refuses never renders, so leaving the ask to the render costs
+    nothing there.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+    from app.services.phone_rollout import phone_render_supported_formats  # noqa: PLC0415
+
+    return bool(
+        str(edit_format or "") in _PHONE_CAPTION_FORMATS
+        and str(audio_strategy or "") != "voiceover"
+        and any(is_analysis_proxy_path(str(path)) for path in clip_paths or ())
+        and settings.phone_rendering_for(creator_id)
+        and "subtitled" in phone_render_supported_formats()
+    )
+
+
 def requirements_to_check_at_draft(
     requirements: Iterable[BriefRequirement],
     *,
@@ -3322,7 +4630,8 @@ def requirements_to_check_at_draft(
     `timing`) it is left out, so the draft reply is the plain summary instead of a
     premature failure notice; the render's own receipts (met / partial / not possible,
     plus guessed names) follow. A phone Voiceover draft likewise leaves its first/last
-    order, clip-timing and caption-language asks to the render's record (KRI-533).
+    order, clip-timing and caption-language asks to the render's record (KRI-533), and a
+    phone Talking draft its caption-language / name-spelling asks (KRI-549).
     Otherwise this is the unchanged, full list.
     """
     strategy = strategy or {}
@@ -3340,11 +4649,18 @@ def requirements_to_check_at_draft(
         audio_strategy=strategy.get("audio_strategy"),
         clip_paths=clip_paths,
     )
+    phone_captions = defers_caption_words_to_phone_render(
+        creator_id=creator_id,
+        edit_format=edit_format,
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths,
+    )
     return [
         req
         for req in requirements
         if not (defers and req.kind in UNIFIED_SETTLED_KINDS)
         and not (narrated and _settled_by_narrated_render(req, strategy))
+        and not (phone_captions and _wants_captions(req) and _caption_words_ask(req))
     ]
 
 
@@ -3357,6 +4673,9 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     stored before these stopped being written still exist, so every reader of
     stored receipts filters through this too.
     """
+    if req is not None and receipt.verification == "checked" and receipt.stage == "applied":
+        # KRI-558: a change proven by the before/after edit diff, not by a value check.
+        return receipt.reason not in _NEUTRAL_REASONS
     return (
         req is not None
         and receipt.verification != "unchecked"
@@ -3493,7 +4812,6 @@ def reply_from_receipts(
     summary: str | None = None,
     notices: Sequence[str] = (),
     outcomes: Sequence[Mapping[str, Any]] = (),
-    edit_applied: bool = False,
 ) -> str:
     """Compose the creator-facing reply from receipts only.
 
@@ -3504,11 +4822,10 @@ def reply_from_receipts(
     An unjudged receipt (stored before ``build_receipts`` dropped them) gets no
     line and never turns the reply into a failure notice.
 
-    ``edit_applied`` (KRI-534) is set only by an editor-operations turn, whose compiled
-    draft already exists. When nothing failed and the only open items are requirements
-    no checker can judge, say what happened ("Updated your edit") and which requirements
-    the creator should look at, instead of the alarming "I couldn't verify every change".
-    The model's own summary is still never echoed.
+    Requirements no checker could judge (``unchecked``) are never reported as a failure
+    (KRI-558): the reply lists them under "Have a look at these in the video", and an
+    editor turn never reaches that branch because its changes are named from the edit diff
+    (`kria.editor_receipts`).
     """
     by_id = {req.id: req for req in brief.requirements}
     judged = [r for r in receipts if is_judged(by_id.get(r.requirement_id), r)]
@@ -3552,34 +4869,15 @@ def reply_from_receipts(
             )
         )
     body = "\n".join(f"- {line}" for line in lines)
-    if unchecked and edit_applied and not failed and all(r.status == "met" for r in judged):
-        names = [by_id[r.requirement_id].text() for r in unchecked]
-        if len(names) == 1:
-            ask = say(
-                en=f"I can't check this automatically, so have a look: {names[0]}",
-                tr=f"Bunu otomatik olarak kontrol edemiyorum, bir göz at: {names[0]}",
-            )
-        else:
-            ask = say(
-                en="I can't check these automatically, so have a look:\n",
-                tr="Şunları otomatik olarak kontrol edemiyorum, bir göz at:\n",
-            ) + "\n".join(f"- {name}" for name in names)
-        done = say(en="Updated your edit.", tr="Düzenlemeni güncelledim.")
-        text = "\n".join(part for part in (done, body, ask) if part)
-        if notices:
-            text += "\n" + " ".join(notices)
-    elif unchecked:
-        unchecked_lines = []
+    if unchecked:
+        look_lines = []
         for receipt in unchecked:
-            verify = say(en="Couldn't verify", tr="Doğrulayamadım")
-            line = f"{verify}: {by_id[receipt.requirement_id].text()}"
-            if receipt.reason:
+            line = f"- {by_id[receipt.requirement_id].text()}"
+            if receipt.reason and receipt.reason not in _NEUTRAL_REASONS:
                 line += f" ({_loc(receipt.reason).rstrip('.')})"
-            unchecked_lines.append(f"- {line}")
-        text = say(
-            en="I couldn't verify every requested change:\n",
-            tr="İstediğin değişikliklerin hepsini doğrulayamadım:\n",
-        ) + "\n".join([*unchecked_lines, *([body] if body else [])])
+            look_lines.append(line)
+        header = say(en="Have a look at these in the video:", tr="Bunlara videoda bir göz at:")
+        text = "\n".join(part for part in (body, header, "\n".join(look_lines)) if part)
         if notices:
             text += "\n" + " ".join(notices)
     elif failed or any(r.status != "met" for r in judged):
@@ -3602,12 +4900,14 @@ def reply_from_receipts(
 __all__ = [
     "UNIFIED_SETTLED_KINDS",
     "BeatFact",
+    "ClosingSpeechFact",
     "NO_TITLE_REASON",
     "RenderBlockRecovery",
     "NARRATED_ALIGNED_BASES",
     "NARRATED_ALIGNMENT_FIELD",
     "NarratedStepFact",
     "asks_caption_language",
+    "defers_caption_words_to_phone_render",
     "defers_to_narrated_render",
     "defers_to_unified_montage",
     "requirements_to_check_at_draft",
@@ -3617,11 +4917,13 @@ __all__ = [
     "is_format_limit",
     "is_judged",
     "is_no_title_reason",
+    "judged_at_render",
     "needs_creator_choice",
     "SpeechSectionFact",
     "plan_facts_from_editor_payload",
     "plan_facts_from_narrated_alignment",
     "plan_facts_from_phone_variant",
+    "plan_facts_from_rendered_montage",
     "plan_facts_from_speech_montage",
     "plan_facts_from_strategy",
     "plan_facts_from_unified_montage",

@@ -355,6 +355,10 @@ struct NativeEditorTemporaryVideo {
                 self.isRestoringVideoAfterAudition = false
             },
             activateAudioSession: { [weak self] in self?.activatePreviewAudio() }))
+    #if DEBUG
+    /// UI-test fixtures have no source pool; this stands in for the takes' offsets by clip index.
+    private var fixtureLipsyncDeltas: [Int: Double] = [:]
+    #endif
     /// Re-maps unsaved song edits (in the document and its undo history) onto the song as just saved.
     private var userSongRebase: (EditorUserSongState?) -> EditorUserSongState? = { $0 }
     /// The acknowledged volume / start a render retry sends again (a removal is never resent).
@@ -389,17 +393,30 @@ struct NativeEditorTemporaryVideo {
     /// Acknowledged plus unsaved edits, with a pending start re-clamped to the CURRENT video length
     /// (the video may have grown since the start was set).
     private var effectiveUserSongState: EditorUserSongState? {
-        guard var state = EditorUserSongState.merged(acknowledgedUserSong, document.userSong) else { return nil }
-        if !state.removed, let start = state.windowStartS, let song = baseUserSong, let limit = maxUserSongStart(for: song) {
-            state.windowStartS = min(start, limit)
-        }
+        guard let state = EditorUserSongState.merged(acknowledgedUserSong, document.userSong) else { return nil }
+        return reclamped(state)
+    }
+    /// A pending start re-clamped to the song as it is NOW: it must leave a second of song, and (KRI-561) a
+    /// second before the creator's end, so the server never refuses it.
+    private func reclamped(_ state: EditorUserSongState) -> EditorUserSongState {
+        var state = state
+        guard !state.removed, let song = baseUserSong, var start = state.windowStartS else { return state }
+        if let limit = maxUserSongStart(for: song) { start = min(start, limit) }
+        let context = EditorUserSongState.merged(acknowledgedUserSong, state) ?? state
+        if let end = song.creatorEnd(applying: context) { start = min(start, max(0, end - NativeUserSong.minPlayableS)) }
+        state.windowStartS = start
         return state
     }
-    /// The song as the editor currently shows it: saved values plus unsaved volume / start edits.
+    /// The song as the editor currently shows it: saved values plus unsaved volume / start / end edits.
+    /// A lip-sync window follows the singer: where the cuts now put the song start (`lipsyncSongStartShift`).
     var effectiveUserSong: NativeUserSong? {
         guard let base = baseUserSong else { return nil }
-        return base.applying(effectiveUserSongState, videoLength: currentVideoLength(for: base))
+        let anchored = base.mode == .lipsync ? base.shifted(by: lipsyncSongStartShift) : base
+        return anchored.applying(effectiveUserSongState, videoLength: currentVideoLength(for: base))
     }
+    /// KRI-561: the server offers (and the edit allows) trimming the song.
+    private var songTrimOffered: Bool { document.capabilities["user_song.trim"] != nil }
+    private var songTrimEditable: Bool { document.capabilities["user_song.trim"]?.editable == true }
     /// The creator removed the song, saved or not.
     var userSongRemoved: Bool {
         (acknowledgedUserSong?.removed == true || document.userSong?.removed == true)
@@ -453,37 +470,76 @@ struct NativeEditorTemporaryVideo {
     private var effectiveSongBed: NativeEditorSongBed? {
         guard let bed = deviceSongBed, !userSongRemoved else { return nil }
         let shift = lipsyncSongStartShift
-        guard let edit = effectiveUserSongState else {
-            guard shift != 0 else { return bed }
+        let state = effectiveUserSongState
+        // The creator's end (background only) is absolute song time, so it needs no start arithmetic.
+        let end = baseUserSong.flatMap { $0.mode == .background ? $0.creatorEnd(applying: state) : nil }
+        guard let edit = state else {
+            guard shift != 0 || end != nil else { return bed }
             return NativeEditorSongBed(assetID: bed.assetID, sourceStart: max(0, bed.sourceStart + shift),
                                        sourceDuration: bed.sourceDuration, volume: bed.volume,
-                                       fadeIn: bed.fadeIn, fadeOut: bed.fadeOut)
+                                       fadeIn: bed.fadeIn, fadeOut: bed.fadeOut, endS: end)
         }
         return NativeEditorSongBed(assetID: bed.assetID, sourceStart: max(0, (edit.windowStartS ?? bed.sourceStart) + shift),
                                    sourceDuration: bed.sourceDuration, volume: edit.volume ?? bed.volume,
-                                   fadeIn: bed.fadeIn, fadeOut: bed.fadeOut)
+                                   fadeIn: bed.fadeIn, fadeOut: bed.fadeOut, endS: end)
     }
 
-    /// Lip-sync only: how far the first cut's head moved since the last Save (see `NativeLipsyncSongAnchor`).
+    /// Lip-sync only: how far the cuts moved the song start since the last Save. Every pinned take votes for
+    /// `delta + source_start - output_start` (what the server derives on Save), so a head trim, a dropped
+    /// cut or a song trim all keep the singer on the song. Without the takes' offsets (an older server, or
+    /// the source pool not loaded yet) the first cut's head is the fallback (`NativeLipsyncSongAnchor`).
     private var lipsyncSongStartShift: Double {
         guard baseUserSong?.mode == .lipsync else { return 0 }
+        let deltas = lipsyncDeltaByClipIndex
+        if !deltas.isEmpty,
+           let current = NativeLipsyncSongAnchor.derivedStart(cuts: NativeLipsyncSongTrim.cuts(of: document.clips), deltaByClipIndex: deltas),
+           let saved = NativeLipsyncSongAnchor.derivedStart(cuts: NativeLipsyncSongTrim.cuts(of: cleanDocument.clips), deltaByClipIndex: deltas) {
+            let shift = current - saved
+            return abs(shift) > NativeLipsyncSongAnchor.frameTolerance ? shift : 0
+        }
         func head(_ document: EditorDocument) -> EditorTimelineSlot? { document.clips.first { !$0.removed } }
         let saved = head(cleanDocument), current = head(document)
         return NativeLipsyncSongAnchor.startShift(savedClipIndex: saved?.clipIndex, savedInS: saved?.inS,
                                                   currentClipIndex: current?.clipIndex, currentInS: current?.inS)
     }
+    /// Each pinned take's song offset, by the clip index the timeline uses for it.
+    private var lipsyncDeltaByClipIndex: [Int: Double] {
+        #if DEBUG
+        if !fixtureLipsyncDeltas.isEmpty { return fixtureLipsyncDeltas }
+        #endif
+        guard let takes = baseUserSong?.takes, !takes.isEmpty, let pool = sourcePool ?? originalsRecoveryPool else { return [:] }
+        var result: [Int: Double] = [:]
+        for clip in pool.clips {
+            if let mediaID = clip.nativeSource?.mediaID, let delta = takes[mediaID] { result[clip.clipIndex] = delta }
+        }
+        return result
+    }
     /// The Sounds-tab controls for the song, nil for a server that sends no `user_song`.
     var yourSongControls: NativeEditorYourSongControls? {
         guard !userSongRemoved, let song = effectiveUserSong else { return nil }
         let videoLength = currentVideoLength(for: song)
+        // Background: the whole song. Lip-sync: the window as last saved; the handles only move inward
+        // (the footage outside the current window is gone, Undo brings it back).
+        let saved = savedUserSong
+        let bar: (Double, Double) = song.mode == .background
+            ? (0, song.durationS ?? 0)
+            : (min(saved?.windowStartS ?? song.windowStartS, song.windowStartS), max(saved?.windowEndS ?? song.windowEndS, song.windowEndS))
+        let latestStart = baseUserSong.flatMap(maxUserSongStart(for:))
         return NativeEditorYourSongControls(
             mode: song.mode, volume: song.volume, startS: song.windowStartS, windowLengthS: song.windowLengthS,
             songDurationS: song.durationS,
-            maxStartS: baseUserSong.flatMap(maxUserSongStart(for:)),
+            maxStartS: song.mode == .background
+                ? song.creatorEndS.map { end in min(latestStart ?? .infinity, max(0, end - NativeUserSong.minPlayableS)) } ?? latestStart
+                : latestStart,
             songEndsBeforeVideo: song.windowLengthS < videoLength - 0.001,
             canEditVolume: canEditOperation(["user_song.volume"], section: .userSong),
             canEditStart: song.mode == .background && canEditOperation(["user_song.window"], section: .userSong),
-            canRemove: canEditOperation(["user_song.remove"], section: .userSong))
+            canRemove: canEditOperation(["user_song.remove"], section: .userSong),
+            trimOffered: songTrimOffered,
+            canTrim: songTrimOffered && songTrimEditable && cloudEditorUnavailableMessage == nil
+                && (song.mode == .lipsync ? canEditSection(.timeline) : true),
+            endS: song.windowEndS, hasCreatorEnd: song.creatorEndS != nil, videoLengthS: videoLength,
+            barStartS: bar.0, barEndS: bar.1)
     }
     private func updateUserSong(_ body: (inout EditorUserSongState, NativeUserSong) -> Void) {
         guard let saved = savedUserSong, document.userSong?.removed != true else { return }
@@ -507,7 +563,26 @@ struct NativeEditorTemporaryVideo {
         // Round first, clamp after: rounding up past the limit would be rejected by the server.
         var start = (max(0, value) * 100).rounded() / 100
         if let song = baseUserSong, let limit = maxUserSongStart(for: song) { start = min(start, limit) }
+        // KRI-561: moving the start later keeps the creator's end, so it must leave a second before it.
+        if let end = effectiveUserSong?.creatorEndS { start = min(start, max(0, end - NativeUserSong.minPlayableS)) }
         updateUserSong { state, saved in state.windowStartS = abs(start - saved.windowStartS) < 0.0005 ? nil : start }
+    }
+    /// Where a BACKGROUND song stops (KRI-561), in seconds into the file. At least a second after the start,
+    /// at most where the video or the song would stop anyway: dragging the handle back to that natural end
+    /// clears the creator's end (the song's own length on the wire). An edit equal to the saved end clears
+    /// itself.
+    func setUserSongEnd(_ value: Double) {
+        guard value.isFinite, savedUserSong?.mode == .background, songTrimEditable, cloudEditorUnavailableMessage == nil,
+              let song = effectiveUserSong, let duration = song.durationS else { return }
+        let natural = min(song.windowStartS + currentVideoLength(for: song), duration)
+        let lowest = min(song.windowStartS + NativeUserSong.minPlayableS, natural)
+        let end = min(max((value * 100).rounded() / 100, lowest), natural)
+        let clears = end >= natural - 0.005
+        updateUserSong { state, saved in
+            let savedEnd = saved.creatorEndS
+            let same = clears ? savedEnd == nil : savedEnd.map { abs($0 - end) < 0.0005 } ?? false
+            state.windowEndS = same ? nil : (clears ? duration : end)
+        }
     }
     /// A start-bar drag began: one undo step, no preview rebuilds until it ends, and the song plays from
     /// the chosen start so the creator hears what they pick (KRI-432).
@@ -532,6 +607,61 @@ struct NativeEditorTemporaryVideo {
         isSongStartDragActive = false
         flushDeferredSourcePreviewUpdate()
         songAudition.end()
+    }
+
+    /// The end handle moved (same drag transaction as the start): plays the last stretch before the end so
+    /// the creator hears where the music stops.
+    func beginSongEndDrag() { beginSongStartDrag() }
+    func moveSongEnd(_ value: Double) {
+        setUserSongEnd(value)
+        guard songAudition.isActive, let song = effectiveUserSong, let url = userSongAudioURL else { return }
+        let length = min(Self.songEndAuditionS, song.windowLengthS)
+        songAudition.update(SongAuditionRequest(url: url, start: max(song.windowStartS, song.windowEndS - length), length: length,
+                                                volume: Float(song.volume)))
+    }
+    func endSongEndDrag() { endSongStartDrag() }
+    private static let songEndAuditionS = 3.0
+
+    /// Lip-sync: plays the song from the dragged range while a handle is held (nothing changes until release).
+    func previewLipsyncSongTrim(start: Double, end: Double) {
+        guard songAudition.isActive, let song = effectiveUserSong, song.mode == .lipsync, let url = userSongAudioURL,
+              start.isFinite, end.isFinite else { return }
+        let from = min(max(start, song.windowStartS), song.windowEndS)
+        songAudition.update(SongAuditionRequest(url: url, start: from, length: max(0.1, min(end, song.windowEndS) - from),
+                                                volume: Float(song.volume)))
+    }
+
+    /// Lip-sync trim (KRI-561): keeps the stretch of the video that plays the song range `[start, end]` (song
+    /// seconds, inside the current window). Cuts outside it are dropped like a clip removal, the cuts on its
+    /// edges lose their head / tail like a clip trim, and the rest ripples left; one undo step. The song start
+    /// then follows the cuts (`lipsyncSongStartShift`), here and on the server. Returns whether anything changed.
+    @discardableResult
+    func applyLipsyncSongTrim(start: Double, end: Double) -> Bool {
+        guard start.isFinite, end.isFinite, songTrimEditable, canEditSection(.timeline),
+              let song = effectiveUserSong, song.mode == .lipsync else { return false }
+        let from = min(max(start, song.windowStartS), song.windowEndS)
+        let to = min(max(end, from), song.windowEndS)
+        guard let plan = NativeLipsyncSongTrim.plan(slots: document.clips, t0: from - song.windowStartS, t1: to - song.windowStartS,
+                                                    minimumClipS: minimumClipDuration) else { return false }
+        let before = document
+        transactDocument(section: .timeline) { doc in
+            for kept in plan.kept where kept.trimmed {
+                doc.clips[kept.index].inS = kept.inS
+                doc.clips[kept.index].durationS = kept.durationS
+                doc.clips[kept.index].durationBeats = nil
+            }
+            let removedSlots = plan.dropped.sorted().map { doc.clips[$0] }
+            for slot in removedSlots {
+                // A locally-added cut has no server-side predecessor to suppress (same rule as a clip removal).
+                if let id = slot.id, cleanDocument.clips.contains(where: { $0.id == id }) {
+                    let deletion = EditorDeletion(kind: "clip", id: id)
+                    if !doc.deletions.contains(deletion) { doc.deletions.append(deletion) }
+                }
+            }
+            for index in plan.dropped.sorted(by: >) { doc.clips.remove(at: index) }
+            doc.tombstones.append(contentsOf: removedSlots.map { var slot = $0; slot.removed = true; return slot })
+        }
+        return document != before
     }
 
     /// Drops the song for this edit; camera audio plays again. Undoable until Save.
@@ -617,6 +747,9 @@ struct NativeEditorTemporaryVideo {
     @Published private(set) var canEditText = true
     @Published private(set) var canEditCaptions = false
     @Published private(set) var canEditMix = false
+    /// A legacy cloud render remains playable after an account moves to device-only creation,
+    /// but accepting another editor mutation would require the unavailable cloud path.
+    @Published private(set) var cloudEditorUnavailableMessage: String?
     let operations: any EditorOperations
     @Published private(set) var rendersOnDevice = false
     /// True when the last source-preview failure cannot be fixed by retrying.
@@ -1048,6 +1181,12 @@ struct NativeEditorTemporaryVideo {
             installPlayer(url: initialPlaybackURL)
         }
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-captured-creation") {
+            // A file-backed fixture needs the same identity as an opened job.
+            // Keep the normal export readiness/dirty/revision checks in force.
+            jobID = draft.projectID
+            variantKey = "guided_story"
+        }
         // KRI-288: the API stub throws, so the Effects library would always be empty in UI tests.
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
             soundEffectCatalog = NativeEditorUITestFixtures.soundEffectCatalog
@@ -1061,9 +1200,20 @@ struct NativeEditorTemporaryVideo {
         }
         let userSongLipSync = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-user-song-lipsync")
         if userSongLipSync || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-user-song") {
-            previewVariant = userSongLipSync ? NativeEditorUITestFixtures.userSongLipSyncVariant : NativeEditorUITestFixtures.userSongVariant
+            let songTrimShape = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-song-trim")
+            previewVariant = userSongLipSync
+                ? (songTrimShape ? NativeEditorUITestFixtures.userSongLipSyncTrimVariant : NativeEditorUITestFixtures.userSongLipSyncVariant)
+                : (songTrimShape ? NativeEditorUITestFixtures.userSongBackgroundTrimVariant : NativeEditorUITestFixtures.userSongVariant)
+            if userSongLipSync, songTrimShape { fixtureLipsyncDeltas = NativeEditorUITestFixtures.songTrimTakeDeltas }
+            if songTrimShape {
+                // The fixture's preview video is not 10 s long; the timeline (4 x 2.5 s) is the video's length.
+                setAuthoritativeDuration(10)
+                refreshDuration()
+            }
             // The server advertises these on a real load; a fixture has no status response to read them from.
-            for (key, capability) in NativeEditorUITestFixtures.userSongCapabilities(lipSync: userSongLipSync) {
+            // `-ui-testing-editor-user-song-no-trim` is a server that predates `user_song.trim`.
+            let noTrim = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-user-song-no-trim")
+            for (key, capability) in NativeEditorUITestFixtures.userSongCapabilities(lipSync: userSongLipSync, trim: !noTrim) {
                 document.capabilities[key] = capability
             }
             // A real creator-song video carries no `original_level` until the creator sets one (the song
@@ -1391,6 +1541,7 @@ struct NativeEditorTemporaryVideo {
             let loadedDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
             draft = loadedDraft
             configureCapabilities(from: authoritativeVariant)
+            await applyCloudReadOnlyIfNeeded(api: api, variant: authoritativeVariant)
             cleanDocument = document; undoStack.removeAll(); redoStack.removeAll(); changedSections.removeAll(); explicitlyDirtySections.removeAll(); pendingRenderRetrySections.removeAll(); hasUnsavedChanges = false; saveState = .idle
             appliedChatDraftRevision = nil; chatStagedDocument = nil; chatStagedSections = []
             itemID = snapshot.itemID; variantKey = requestedVariantKey
@@ -1855,6 +2006,7 @@ struct NativeEditorTemporaryVideo {
             draft = loadedDraft
             legacyPromptSnapshot = loadedDraft.serverSnapshot
             configureCapabilities(from: variant)
+            await applyCloudReadOnlyIfNeeded(api: api, variant: variant)
             cleanDocument = document
             undoStack.removeAll()
             redoStack.removeAll()
@@ -2548,7 +2700,7 @@ struct NativeEditorTemporaryVideo {
             }
             var program = try compileProgram(songBed: realBed.map {
                 NativeEditorSongBed(assetID: $0.assetID, sourceStart: $0.sourceStart, sourceDuration: $0.sourceDuration,
-                                    volume: 1, fadeIn: $0.fadeIn, fadeOut: $0.fadeOut)
+                                    volume: 1, fadeIn: $0.fadeIn, fadeOut: $0.fadeOut, endS: $0.endS)
             })
             let liveVolume = hasSong && Self.songIsOnlyAudibleTrack(program.recipe)
             if hasSong, !liveVolume { program = try compileProgram(songBed: realBed) }
@@ -3156,6 +3308,10 @@ struct NativeEditorTemporaryVideo {
         // 20 mirrors the server's `_MAX_CLIPS` pool cap — an early, friendly
         // no-op instead of a round trip that would 422 anyway.
         guard !isAddingClip else { return }
+        if let cloudEditorUnavailableMessage {
+            addClipError = cloudEditorUnavailableMessage
+            return
+        }
         // The sheet is already gone by now, so a silent return would drop the user's pick with no signal.
         guard !rendersOnDevice else {
             isAddingClip = true
@@ -3534,16 +3690,18 @@ struct NativeEditorTemporaryVideo {
     /// never save. Same reasoning as `visualImportUnavailableMessage`'s `rendersOnDevice`
     /// case, surfaced separately since the timeline and Visuals import gate independently.
     var addClipUnavailableMessage: String? {
-        rendersOnDevice && !canRegisterPhoneSources ? "Adding media isn’t available for this edit on this iPhone." : nil
+        if let cloudEditorUnavailableMessage { return cloudEditorUnavailableMessage }
+        return rendersOnDevice && !canRegisterPhoneSources ? "Adding media isn’t available for this edit on this iPhone." : nil
     }
 
     var canAddTimelineMedia: Bool {
-        (canEditTimeline || document.editorState == "empty") && draft.clips.count < Self.maxTimelineClips && (!rendersOnDevice || canRegisterPhoneSources)
+        cloudEditorUnavailableMessage == nil && (canEditTimeline || document.editorState == "empty") && draft.clips.count < Self.maxTimelineClips && (!rendersOnDevice || canRegisterPhoneSources)
     }
     /// KRI-166: why `canAddTimelineMedia` is false, for the quick-add menu's
     /// Video row (which otherwise just greys out). Mirrors the three
     /// conditions above; nil when adding is allowed.
     var addClipUnavailableReason: String? {
+        if let cloudEditorUnavailableMessage { return cloudEditorUnavailableMessage }
         if rendersOnDevice && !canRegisterPhoneSources { return "Adding media isn’t available for this edit on this iPhone." }
         if !canEditTimeline && document.editorState != "empty" { return "This edit’s timeline can’t be changed." }
         if draft.clips.count >= Self.maxTimelineClips { return "An edit can have up to \(Self.maxTimelineClips) clips." }
@@ -5261,6 +5419,7 @@ struct NativeEditorTemporaryVideo {
         }
     }
     private func canEditSection(_ section: EditorSection) -> Bool {
+        if cloudEditorUnavailableMessage != nil { return false }
         if let capability = capability(for: section) { return capability.editable }
         switch section {
         case .timeline: return canEditTimeline
@@ -5463,11 +5622,8 @@ struct NativeEditorTemporaryVideo {
     /// What Save sends for the song: the unsaved edits (or, on a render retry, the acknowledged volume /
     /// start), with the start re-clamped to the current video length so the server never rejects it.
     private func commitUserSong() -> EditorCommitUserSong? {
-        guard var state = document.userSong ?? userSongRetry else { return nil }
-        if !state.removed, let start = state.windowStartS, let song = baseUserSong, let limit = maxUserSongStart(for: song) {
-            state.windowStartS = min(start, limit)
-        }
-        return state.commit
+        guard let pending = document.userSong ?? userSongRetry else { return nil }
+        return reclamped(pending).commit
     }
 
     private func acknowledgedSections(
@@ -5519,6 +5675,10 @@ struct NativeEditorTemporaryVideo {
             if abs(volume - savedVolume) > 0.0005 { rebased.volume = volume }
             let start = post?.windowStartS ?? oldSaved.windowStartS, savedStart = submitted.windowStartS ?? oldSaved.windowStartS
             if abs(start - savedStart) > 0.0005 { rebased.windowStartS = start }
+            // KRI-561: the creator's end is nil (none) or an absolute second; re-express it against the new saved end.
+            let end = oldSaved.creatorEnd(applying: post), savedEnd = oldSaved.creatorEnd(applying: submitted)
+            let endDiffers = (end == nil) != (savedEnd == nil) || abs((end ?? 0) - (savedEnd ?? 0)) > 0.0005
+            if endDiffers, let duration = oldSaved.durationS { rebased.windowEndS = end ?? duration }
             return rebased.isEmpty ? nil : rebased
         }
         document.userSong = userSongRebase(document.userSong)
@@ -5859,6 +6019,24 @@ struct NativeEditorTemporaryVideo {
         // Retain a generated frame from just inside the endpoint instead of
         // relying on VideoPlayer to keep its last surface after natural EOF.
         _ = requestScrubFrame(at: playbackDuration)
+    }
+
+    private func applyCloudReadOnlyIfNeeded(api: any KriaAPIClient, variant: [String: JSONValue]?) async {
+        guard variant != nil else {
+            cloudEditorUnavailableMessage = nil
+            return
+        }
+        let creationMode = (try? await api.creationCapabilities())?.creationMode
+        if creationMode == .deviceOnly, !rendersOnDevice {
+            let message = "This video was rendered in the cloud and can’t be changed on this iPhone. You can still play its existing video."
+            cloudEditorUnavailableMessage = message
+            canEditTimeline = false
+            canEditText = false
+            canEditCaptions = false
+            canEditMix = false
+        } else {
+            cloudEditorUnavailableMessage = nil
+        }
     }
 
     private func configureCapabilities(from variant: [String: JSONValue]?) {

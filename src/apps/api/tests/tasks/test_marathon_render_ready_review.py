@@ -156,10 +156,10 @@ def test_variant_without_beat_receipt_or_bed_level_keeps_today_behaviour():
 
     for req_id in ("r1", "r2", "r3", "r4", "r5"):
         assert receipts[req_id]["verification"] == "unchecked"
-    assert "Couldn't verify: clean captions" in text
-    assert "Couldn't verify: show medal photo" in text
-    assert "Couldn't verify: show watch photo" in text
-    assert "Couldn't verify: keep crowd noise" in text
+    assert "Have a look at these in the video:" in text
+    for ask in ("clean captions", "show medal photo", "show watch photo", "keep crowd noise"):
+        assert f"- {ask}" in text
+    assert "verify" not in text.lower()
 
 
 def test_a_narrated_variant_without_a_bed_level_still_knows_the_bed_is_under_the_voice():
@@ -172,7 +172,8 @@ def test_a_narrated_variant_without_a_bed_level_still_knows_the_bed_is_under_the
     assert receipts["r3"]["status"] == "met"
     assert "plays under your voice" in receipts["r3"]["reason"]
     assert receipts["r4"]["verification"] == "unchecked"
-    assert "Couldn't verify: show medal photo" in text
+    assert "- show medal photo" in text
+    assert "verify" not in text.lower()
 
 
 def test_prod_render_reply_has_no_couldnt_verify_line():
@@ -219,3 +220,94 @@ def test_a_word_by_word_talking_render_judges_captions_too():
     assert receipts["r2"]["verification"] == "checked"
     assert "Couldn't verify: clean captions" not in text
     assert "Couldn't verify: cut long pauses" not in text
+
+
+# ------------------------------------------------------------- KRI-549 Kadıköy T3
+
+_T3_BRIEF = CreativeBrief(
+    version=1,
+    requirements=[
+        _requirement(
+            "r1", "style", "yatay videoyu dikey (9:16) formata getir ve yüzü hep kadrajda tut"
+        ),
+        _requirement(
+            "r2",
+            "text",
+            "altyazılar Türkçe olsun; Moda, Bahariye, Yeldeğirmeni ve Kadıköy doğru yazılsın",
+        ),
+        _requirement("r3", "audio", "her 'kahve' kelimesinde küçük bir fincan sesi koy"),
+        _requirement(
+            "r4", "style", "'İlk durak' dediğinde kahve demleme videosunu köşede küçük göster"
+        ),
+    ],
+)
+_T3_LINES = (
+    "Selam, bugün sizi Kadıköy'de en sevdiğim 3 kahveciye götürüyorum.",
+    "Bakın, ben günde 4 kahve içiyorum, o yüzden bu konuda biraz uzmanım.",
+    "İlk durak Moda'da, deniz kenarında küçücük bir yer.",
+    "İkinci durak Bahariye'de.",
+    "Üçüncü ve en sevdiğim yer Yeldeğirmeni'nde.",
+    "Siz Kadıköy'de en iyi kahve nerede diyorsunuz?",
+)
+
+
+def _t3_review(lines=_T3_LINES, **overrides) -> tuple[str, dict[str, dict]]:
+    """Prod thread 9b625eec / job 3a6b9ff6: the finished phone Talking variant."""
+    from app.kria.reply_language import bind_reply_language, release_reply_language
+
+    variant = {
+        "variant_id": "subtitled",
+        "render_generation_id": GENERATION,
+        "render_destination": "device",
+        "resolved_archetype": "subtitled",
+        "caption_language": "tr",
+        "voiceover_caption_style": "sentence",
+        "caption_cues": [
+            {"text": text, "start_s": float(i), "end_s": i + 0.9} for i, text in enumerate(lines)
+        ],
+        "phone_beat_receipt": {
+            "placed": [{"at_s": 5.08, "trigger": "kahve", "sound_label": "Glass clink"}],
+            "closing": {"badge": "none", "status": "none"},
+            "matcher": "phrase",
+            "version": 1,
+            "unplaced": [],
+        },
+        **overrides,
+    }
+    thread = SimpleNamespace(id=uuid.uuid4(), creator_id=uuid.uuid4())
+    binding = BriefBinding.create(thread.id, _T3_BRIEF).model_dump(mode="json")
+    execution = SimpleNamespace(result={"brief_binding": binding})
+    job = SimpleNamespace(id=uuid.uuid4(), assembly_plan={})
+    token = bind_reply_language("tr")
+    try:
+        text, payload = kria_runtime._approved_generation_review(
+            None, thread, job, variant, execution, "Videon hazır."
+        )
+    finally:
+        release_reply_language(token)
+    return text, {row["requirement_id"]: row for row in payload}
+
+
+def test_t3_render_ready_reply_marks_turkish_captions_and_names_done():
+    text, receipts = _t3_review()
+
+    assert receipts["r2"]["status"] == "met"
+    assert receipts["r2"]["verification"] == "checked"
+    assert receipts["r2"]["generation_id"] == GENERATION
+    assert (
+        "- Yapıldı: altyazılar Türkçe olsun; Moda, Bahariye, Yeldeğirmeni ve Kadıköy doğru "
+        "yazılsın (Altyazılar Türkçe. Moda, Bahariye, Yeldeğirmeni ve Kadıköy yazdığın gibi "
+        "yazılmış)"
+    ) in text.splitlines()
+    assert "altyazıları henüz kontrol edemiyorum" not in text
+
+
+def test_t3_render_with_a_misspelled_name_says_which_and_where_to_fix_it():
+    lines = tuple(line.replace("Yeldeğirmeni", "Yeldegirmeni") for line in _T3_LINES)
+    text, receipts = _t3_review(lines)
+
+    assert receipts["r2"]["status"] == "partial"
+    assert receipts["r2"]["verification"] == "checked"
+    line = _line(text, "Kısmen: altyazılar Türkçe olsun")
+    assert 'Yeldeğirmeni yerine "Yeldegirmeni" yazıyor' in line
+    assert "editörde düzeltebilirsin" in line

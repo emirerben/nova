@@ -371,10 +371,6 @@ struct NativeTextAlignmentFeedback {
 
     mutating func reset() { active = nil; previousDistances = [:] }
 
-    /// The guides the text currently sits on ("center-x", "center-y", "left", ... "angle-0"),
-    /// so the preview can draw the centre lines it already signals with haptics (KRI-508).
-    var activeGuides: Set<String> { active ?? [] }
-
     mutating func update(center: CGPoint, size: CGSize, rotation: Double, canvas: CGSize) -> Bool {
         guard canvas.width > 0, canvas.height > 0,
               [center.x, center.y, size.width, size.height, rotation].allSatisfy(\.isFinite) else { return false }

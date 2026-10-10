@@ -30,17 +30,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, Protocol, TypeVar
 
 import structlog
 from pydantic import BaseModel, ValidationError
 
 log = structlog.get_logger()
+
+# A provider call and its reservation must have enough budget to start
+# meaningfully. The shared deadline still remains the hard upper bound.
+_MIN_PROVIDER_BUDGET_S = 1.0
 
 
 # Success outcomes for agent_run rows. A run lands here when the agent
@@ -234,6 +239,11 @@ class AgentSpec:
     schema_retry_limit: int = 1
 
 
+class ThoughtSummaryAttemptPublisher(Protocol):
+    def begin_attempt(self) -> Callable[[str], None]: ...
+    def mark_model_success(self) -> None: ...
+
+
 @dataclass(slots=True)
 class RunContext:
     """Per-call binding. Threaded into structlog events for cross-agent correlation."""
@@ -250,10 +260,19 @@ class RunContext:
     creator_id: str | None = None
     usage_purpose: str | None = None
     test_run_id: str | None = None
+    # Optional monotonic deadline shared by durable turns. Stateless routes leave
+    # this unset and retain each agent's existing provider timeout.
+    deadline_monotonic: float | None = None
+    # Optional per-call cap used by durable callers; never increases the agent
+    # or shared-turn budget.
+    timeout_override_s: float | None = None
     estimated_max_cost_usd: float | None = None
     reservation_approved: bool = False
     release_canary_id: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    # Interactive callers opt in to Gemini provider-marked thought summaries.
+    # This is kept out of normal traces and agent-run persistence.
+    thought_summary_callback: Callable[[str], None] | ThoughtSummaryAttemptPublisher | None = None
 
 
 @dataclass(slots=True)
@@ -532,6 +551,9 @@ class Agent(ABC, Generic[InputT, OutputT]):
                         output.model_dump() if hasattr(output, "model_dump") else None
                     ),
                 )
+                mark_success = getattr(ctx.thought_summary_callback, "mark_model_success", None)
+                if callable(mark_success):
+                    mark_success()
                 return output
             except RefusalError as exc:
                 # Refusing model probably won't yield to a different one — terminate.
@@ -568,6 +590,21 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     raise TerminalError(self._terminal_message("output truncated", exc)) from exc
                 raise TerminalSchemaError(self._terminal_message("schema", exc)) from exc
             except TransientError as exc:
+                remaining = self._remaining_deadline(ctx)
+                if remaining is not None and remaining < _MIN_PROVIDER_BUDGET_S:
+                    self._log_outcome(
+                        outcome="terminal_transient",
+                        model=stats.model_used or model,
+                        stats=stats,
+                        fallback_used=fallback_used,
+                        latency_ms=int((time.monotonic() - start) * 1000),
+                        ctx=ctx,
+                        error=self._safe_error(exc),
+                        input_dict=input_dump,
+                    )
+                    raise TerminalError(
+                        f"{self.spec.name}: shared turn deadline exhausted"
+                    ) from exc
                 last_exc = exc
                 # Try the next model in the fallback chain.
                 continue
@@ -635,6 +672,29 @@ class Agent(ABC, Generic[InputT, OutputT]):
 
     # ── Per-model retry loop ──────────────────────────────────────
 
+    @staticmethod
+    def _remaining_deadline(ctx: RunContext) -> float | None:
+        if ctx.deadline_monotonic is None:
+            return None
+        deadline = float(ctx.deadline_monotonic)
+        if not math.isfinite(deadline):
+            raise TerminalError("invalid shared turn deadline; expected a finite timestamp")
+        return deadline - time.monotonic()
+
+    def _provider_timeout(self, ctx: RunContext) -> float:
+        timeout_s = float(self.spec.timeout_s)
+        if ctx.timeout_override_s is not None:
+            override = float(ctx.timeout_override_s)
+            if not math.isfinite(override) or override <= 0:
+                raise TerminalError(
+                    "invalid provider timeout override; expected a positive finite value"
+                )
+            timeout_s = min(timeout_s, override)
+        remaining = self._remaining_deadline(ctx)
+        if remaining is not None:
+            timeout_s = min(timeout_s, remaining)
+        return timeout_s
+
     def _run_on_model(
         self,
         model: str,
@@ -651,6 +711,12 @@ class Agent(ABC, Generic[InputT, OutputT]):
         last_transient: BaseException | None = None
 
         for attempt in range(self.spec.max_attempts):
+            remaining = self._remaining_deadline(ctx)
+            if remaining is not None and remaining < _MIN_PROVIDER_BUDGET_S:
+                raise TransientError(
+                    f"{self.spec.name}: insufficient shared turn deadline budget "
+                    "before provider call"
+                )
             stats.attempts += 1
             reservation = None
             provider_max_output_tokens = self.max_output_tokens
@@ -706,7 +772,13 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     stats.cost_reservation_id = str(reservation.id)
                 mark_paid_call_started(reservation)
             try:
-                inv = self.client.invoke(
+                provider_timeout_s = self._provider_timeout(ctx)
+                if provider_timeout_s < _MIN_PROVIDER_BUDGET_S:
+                    raise TerminalError(
+                        f"{self.spec.name}: insufficient shared turn deadline budget "
+                        "before provider call"
+                    )
+                invoke_kwargs = dict(
                     model=model,
                     prompt=prompt,
                     media_uri=media,
@@ -715,8 +787,17 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     max_output_tokens=provider_max_output_tokens,
                     thinking_budget=self.spec.thinking_budget,
                     thinking_level=thinking_level,
-                    timeout_s=self.spec.timeout_s,
+                    timeout_s=provider_timeout_s,
                 )
+                # A publisher may mint a per-attempt closure. That closure
+                # carries an attempt generation so late chunks from a timed-out
+                # executor thread cannot update a replacement attempt.
+                if ctx.thought_summary_callback is not None:
+                    begin_attempt = getattr(ctx.thought_summary_callback, "begin_attempt", None)
+                    invoke_kwargs["thought_summary_callback"] = (
+                        begin_attempt() if callable(begin_attempt) else ctx.thought_summary_callback
+                    )
+                inv = self.client.invoke(**invoke_kwargs)
             except ProviderOutcomeUnknownError:
                 from app.services.ai_cost_control import mark_paid_call_unknown  # noqa: PLC0415
 
@@ -740,7 +821,15 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     error=self._safe_error(exc),
                     job_id=ctx.job_id,
                 )
-                time.sleep(backoff)
+                remaining = self._remaining_deadline(ctx)
+                if remaining is not None:
+                    if remaining < _MIN_PROVIDER_BUDGET_S:
+                        raise TransientError(
+                            f"{self.spec.name}: shared turn deadline exhausted during retry backoff"
+                        ) from exc
+                    time.sleep(min(backoff, remaining))
+                else:
+                    time.sleep(backoff)
                 continue
             except TerminalError:
                 from app.services.ai_cost_control import release_paid_call  # noqa: PLC0415

@@ -170,11 +170,13 @@ def http_creation_mutation_admission(request: Request) -> JSONResponse | None:
     authentication, request-body parsing, and database ownership.
     """
 
-    if not settings.ios_device_only_mode or not is_state_changing_method(request.method):
+    if not (settings.ios_device_only_mode or settings.ios_native_device_only_enabled):
+        return None
+    if not is_state_changing_method(request.method):
         return None
 
     path = request.url.path
-    if is_admin_render_path(path):
+    if settings.ios_device_only_mode and is_admin_render_path(path):
         log.info(
             "ios_device_only_admission",
             decision="rejected",
@@ -187,13 +189,28 @@ def http_creation_mutation_admission(request: Request) -> JSONResponse | None:
     if not is_legacy_creation_path(path):
         return None
 
-    rejected = creation_mutation_admission(
-        request,
-        native_client=is_native_candidate(
-            request.headers.get("authorization"), request.headers.get("x-user-id")
-        ),
-        client_protocol=parse_kria_client_protocol(request.headers.get("x-kria-client-protocol")),
+    native_client = is_native_candidate(
+        request.headers.get("authorization"), request.headers.get("x-user-id")
     )
+    if not settings.ios_device_only_mode and not native_client:
+        # The new rollout changes native creation only; web remains hybrid.
+        return None
+
+    client_protocol = parse_kria_client_protocol(request.headers.get("x-kria-client-protocol"))
+    if settings.ios_device_only_mode:
+        rejected = creation_mutation_admission(
+            request, native_client=native_client, client_protocol=client_protocol
+        )
+    elif client_protocol is None or client_protocol < settings.kria_minimum_client_protocol:
+        rejected = problem_response(
+            request,
+            status_code=426,
+            code="native_update_required",
+            message="Update Kria to continue creating projects.",
+            recovery="manual",
+        )
+    else:
+        rejected = None
     if rejected is not None:
         code = "native_update_required" if rejected.status_code == 426 else "web_creation_retired"
         log.info(

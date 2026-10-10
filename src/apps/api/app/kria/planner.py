@@ -15,7 +15,7 @@ import re
 import time
 import unicodedata
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from typing import Any
@@ -126,6 +126,7 @@ from app.services.song_order import (
     build_song_order_question,
     fold_song_orders,
     load_ready_alignment,
+    resolve_creator_placements,
     resolve_uncertain_takes,
     resolved_song_takes_payload,
     song_order_question_text,
@@ -611,6 +612,21 @@ async def _song_order_gate(
         # No lyric lines to anchor on and nothing matched any take: no question
         # could place a take by the song.
         return _SongGateResult(strategy=kept_strategy)
+    if answered and folded.arranged:
+        # KRI-561: the creator arranged the takes on the song timeline. Their layout stands
+        # even when a re-alignment since made every take look confident, so this runs
+        # BEFORE the "nothing to ask" exit below.
+        arranged = await asyncio.to_thread(
+            resolve_creator_placements,
+            alignment,
+            folded.ordered_media_ids,
+            folded.placements,
+            durations,
+            song_duration_s,
+        )
+        return _SongGateResult(
+            resolved_takes=resolved_song_takes_payload(arranged), strategy=kept_strategy
+        )
     needing = await asyncio.to_thread(
         takes_needing_order, alignment, take_ids, durations, song_duration_s
     )
@@ -637,6 +653,7 @@ async def _song_order_gate(
             song_generation=song_generation,
             durations=durations,
             song_duration_s=song_duration_s,
+            first_line_s=first_line_s,
         )
     )
     return _SongGateResult(
@@ -709,7 +726,12 @@ def _safe_diagnostics(status: str, diagnostics: dict[str, Any] | None) -> dict[s
 
 
 def adapt_editor_action(
-    *, reply: str, ops: list[dict], request_render: bool = False
+    *,
+    reply: str,
+    ops: list[dict],
+    request_render: bool = False,
+    unmet_requests: Sequence[Mapping[str, str]] = (),
+    notes: str | None = None,
 ) -> KriaTurnPlan:
     """Draft edits are reversible; rendering is a distinct, policy-gated action."""
     if not ops:
@@ -740,7 +762,24 @@ def adapt_editor_action(
             "intent_id": "apply-editor-ops",
             "tool_name": "draft.apply_editor_ops",
             "tool_version": 1,
-            "arguments": {"operations": ops, "summary": reply},
+            "arguments": {
+                "operations": ops,
+                "summary": reply,
+                **(
+                    {
+                        "unmet_requests": [
+                            {
+                                "request": str(item.get("request") or "")[:160],
+                                "reason": str(item.get("reason") or "")[:200],
+                            }
+                            for item in list(unmet_requests)[:6]
+                        ]
+                    }
+                    if unmet_requests
+                    else {}
+                ),
+                **({"notes": notes.strip()[:600]} if notes and notes.strip() else {}),
+            },
         },
     ]
     if request_render:
@@ -1135,6 +1174,7 @@ async def _plan_editor_revision(
     # Release the read transaction before Copilot model I/O. The response is
     # derived only from the immutable snapshot and copied conversation rows.
     await db.rollback()
+    planner_deadline = turn_deadline.get()
     response = await run_copilot_turn(
         CopilotTurnBody(
             message=user_message,
@@ -1144,6 +1184,12 @@ async def _plan_editor_revision(
             client_contract_version=2,
         ),
         job_id=target.job_id,
+        deadline_monotonic=(
+            planner_deadline - _POST_UNDERSTANDING_RESERVE_S
+            if planner_deadline is not None
+            else None
+        ),
+        timeout_override_s=120.0,
     )
     if (
         response.ops
@@ -1165,6 +1211,8 @@ async def _plan_editor_revision(
             # This portable operation invokes server speech processing; ordinary
             # text/timeline/mix edits stay drafts until an explicit Save.
             request_render=any(op.get("op") == "apply_speech_cut_candidate" for op in response.ops),
+            unmet_requests=getattr(response, "unmet_requests", None) or (),
+            notes=getattr(response, "reply_notes", None) or None,
         )
     if response.outcome in {"unsupported", "no_effect"} and is_overlay_display_ask(user_message):
         # KRI-297: a display-mode change (full-screen overlays) is not an in-place
@@ -1335,6 +1383,8 @@ async def _call_main_creator(
     item_id: uuid.UUID | None = None,
     creator_agent_session_id: uuid.UUID | None = None,
 ) -> MainCreatorOutput:
+    from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
+
     def _run_agent():  # noqa: ANN202 - inferred MainCreatorOutput
         return MainCreatorAgent(default_client()).run(
             inputs.agent_input,
@@ -1345,6 +1395,7 @@ async def _call_main_creator(
                 creator_agent_session_id=(
                     str(creator_agent_session_id) if creator_agent_session_id else None
                 ),
+                thought_summary_callback=current_thought_publisher(),
             ),
         )
 
@@ -1371,6 +1422,7 @@ async def _call_brief_extractor(
         user_message=inputs.agent_input.user_message,
         conversation=inputs.agent_input.conversation,
         current_brief=prior_brief,
+        require_request_scope=True,
     )
 
     def _run_agent():  # noqa: ANN202 - inferred BriefExtractionOutput
@@ -1390,6 +1442,35 @@ async def _call_brief_extractor(
         return await asyncio.to_thread(_run_agent)
     except TerminalError as exc:
         raise RuntimeError("Kria could not extract the creative brief reliably") from exc
+
+
+def _extraction_request_scope(
+    outputs: Sequence[BriefExtractionOutput],
+) -> tuple[str, str | None]:
+    """Resolve one semantic routing verdict across bounded brief batches.
+
+    The live extractor always supplies a scope.  The ``edit`` fallback preserves
+    old injected fixtures/direct callers whose output predates this contract; it
+    is unreachable through ``_call_brief_extractor`` because that call requires
+    the field at schema validation time.
+    """
+    scoped = [output for output in outputs if getattr(output, "request_scope", None) is not None]
+    if not scoped:
+        return "edit", None
+    scopes = {getattr(output, "request_scope") for output in scoped}
+    if len(scopes) != 1:
+        raise BriefUpdateBatchError("brief extractor batches disagree on request scope")
+    scope = scopes.pop()
+    if scope == "clarify":
+        clarifications = {
+            clarification.strip()
+            for output in scoped
+            if (clarification := getattr(output, "clarification", None))
+        }
+        if len(clarifications) != 1:
+            raise BriefUpdateBatchError("brief extractor clarification is ambiguous")
+        return scope, clarifications.pop()
+    return scope, None
 
 
 def _clip_understanding_wait_until() -> float:
@@ -2100,8 +2181,8 @@ async def _serve_unextracted_edit(
     The edit copilot reads the whole ledger plus the message and its ops are compiled
     deterministically into a reversible draft, so a result made ONLY of in-place text ops
     (the KRI-219 fast-path set) is served. Request preservation (KRI-459) holds because the
-    creator's full message is recorded as one requirement that no checker can judge, so it
-    stays visible as "can't check automatically" instead of being dropped.
+    creator's full message is recorded as one requirement, so it stays visible instead of
+    being dropped; the turn's receipt then names what the ops changed (KRI-558).
 
     Returns None whenever that is not the case (a re-plan cue, a long message, no editor
     target, the copilot asking a question or proposing structural ops): the caller then
@@ -2534,6 +2615,164 @@ async def _gate_unresolved_choices(
     )
 
 
+async def _plan_scoped_turn(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item: PlanItem,
+    persona: Persona,
+    user_message: str,
+    scope: list[str],
+    manual_edits: list[Any],
+    editor_state: Any = None,
+) -> PlannedKriaTurn:
+    """KRI-441: plan a turn the creator scoped to some plan sections.
+
+    ALWAYS editor operations (``[draft.apply_editor_ops, render.request]``): never a strategy
+    re-plan, never a brief extraction, and every failure is a reply, not a fall-through to the
+    unscoped planner. Enforcement layers 1 and 2 live here (``kria/plan_review.py``); layer 3
+    runs at draft compile in ``tasks/kria_runtime._complete_draft_turn``.
+    """
+    from app.kria import plan_review  # noqa: PLC0415
+
+    manifest, _ = await resolve_item_creator_context(db, item, persona=persona)
+
+    def _planned(plan: KriaTurnPlan) -> PlannedKriaTurn:
+        return PlannedKriaTurn(
+            plan=plan, manifest_hash=manifest.manifest_hash, context_hash=manifest.context_hash
+        )
+
+    def _reply(text: str, value: str = "recovery") -> PlannedKriaTurn:
+        return _planned(KriaTurnPlan(mode="respond", turn_value=value, response=text))  # type: ignore[arg-type]
+
+    try:
+        target = await _load_editor_target(
+            db, thread_id=thread_id, item=item, **_state_kw(editor_state)
+        )
+    except BriefCoverageError:
+        return _reply(
+            say(
+                en="Your saved request is too large for this update. Your video is unchanged.",
+                tr="Kayıtlı isteğin bu güncelleme için çok büyük. Videon değişmedi.",
+            )
+        )
+    if target is None:
+        miss = _editor_target_miss.get()
+        if miss == "render_in_flight":
+            return _reply(
+                say(en=_EDITOR_TARGET_IN_FLIGHT_REPLY, tr=_EDITOR_TARGET_IN_FLIGHT_REPLY_TR)
+            )
+        if miss == "editor_state_stale":
+            return _reply(_editor_state_stale_reply())
+        return _reply(
+            say(
+                en="I couldn't open your current video to update it. Try again in a moment.",
+                tr="Şu anki videonu güncellemek için açamadım. Birazdan tekrar dene.",
+            )
+        )
+    snapshot = plan_review.scoped_snapshot(target.snapshot, scope)
+    if snapshot is None:
+        return _reply(plan_review.nothing_in_scope_reply([], scope))
+
+    bars = [b for b in target.snapshot.get("text_bars") or [] if isinstance(b, dict)]
+    cue_ids = {
+        str(c.get("id"))
+        for c in (target.snapshot.get("captions") or {}).get("cues") or []
+        if isinstance(c, dict) and c.get("id")
+    }
+    covered: set[str] = set()
+    ops: list[dict] = []
+    reply = ""
+    if manual_edits:
+        try:
+            covered = {
+                plan_review.edit_section(edit, bars=bars, cue_ids=cue_ids) for edit in manual_edits
+            }
+            raw = plan_review.manual_edits_to_ops(manual_edits, snapshot)
+        except plan_review.ManualEditTargetMissing:
+            return _reply(
+                say(
+                    en=(
+                        "One of those lines changed, so I left your video as it was. "
+                        "Refresh and try again."
+                    ),
+                    tr=(
+                        "Satırlardan biri değişmiş, o yüzden videonu olduğu gibi bıraktım. "
+                        "Yenileyip tekrar dene."
+                    ),
+                )
+            )
+        # The SAME coercion the model's ops go through, with no model call.
+        ops, detail = plan_review.parse_ops_without_model(raw, snapshot, user_message)
+        if not ops:
+            return _reply(
+                detail
+                or say(
+                    en="I couldn't apply that edit, so your video is unchanged.",
+                    tr="Bu düzenlemeyi uygulayamadım, videon değişmedi.",
+                )
+            )
+        reply = say(
+            en=f"Updated {plan_review.scope_phrase(sorted(covered, key=scope.index))}.",
+            tr=f"{plan_review.scope_phrase(sorted(covered, key=scope.index))} güncellendi.",
+        )
+
+    dropped: list[dict[str, str]] = []
+    # Sections flagged without a deterministic edit still need the model (scoped to them).
+    model_scope = [section for section in scope if section not in covered]
+    if model_scope:
+        model_snapshot = plan_review.scoped_snapshot(target.snapshot, model_scope)
+        if model_snapshot is None:
+            if not ops:
+                return _reply(plan_review.nothing_in_scope_reply([], model_scope))
+        else:
+            await db.rollback()
+            response = await run_copilot_turn(
+                CopilotTurnBody(
+                    message=user_message,
+                    turns=target.conversation,
+                    snapshot=model_snapshot,
+                    client_contract_version=2,
+                ),
+                job_id=target.job_id,
+            )
+            kept, dropped = plan_review.filter_ops_to_scope(
+                list(response.ops), model_snapshot, model_scope
+            )
+            if kept:
+                ops = [*ops, *kept]
+                if not reply:
+                    reply = _phone_editor_reply(response.reply)
+            elif not ops:
+                if dropped:
+                    return _reply(plan_review.nothing_in_scope_reply(dropped, model_scope))
+                # No op survived: the copilot's own honest answer (question / limit).
+                return _reply(
+                    response.reply
+                    or say(
+                        en="That change isn't available for these sections yet.",
+                        tr="Bu değişiklik bu bölümler için henüz yapılamıyor.",
+                    ),
+                    "question" if response.outcome == "clarification" else "recovery",
+                )
+    note = plan_review.left_alone_note(dropped, scope)
+    plan = adapt_editor_action(
+        reply=f"{reply} {note}".strip() or say(en="Updated your video.", tr="Videon güncellendi."),
+        ops=ops,
+        request_render=True,
+    )
+    if plan.mode == "act":
+        plan = plan.model_copy(
+            update={
+                "diagnostics": {
+                    "scope": list(scope),
+                    **({"scope_dropped": dropped} if dropped else {}),
+                }
+            }
+        )
+    return _planned(plan)
+
+
 async def _plan_live_turn(
     db: AsyncSession,
     *,
@@ -2545,6 +2784,8 @@ async def _plan_live_turn(
     first_editor_result: tuple[KriaTurnPlan | None] | None = None,
     editor_state: Any = None,
     answers_clip_question: bool = False,
+    scope: list[str] | None = None,
+    manual_edits: list[Any] | None = None,
 ) -> PlannedKriaTurn:
     # KRI-282: `answers_clip_question` marks a turn that ANSWERS a clip-picker
     # question: structured `clip_selection` plus a synthetic message ("Dodgeball:
@@ -2560,6 +2801,19 @@ async def _plan_live_turn(
     persona = await db.get(Persona, plan.persona_id)
     if persona is None or persona.user_id != creator_id:
         raise RuntimeError("Kria creator context is unavailable")
+    if scope:
+        # KRI-441: a scoped turn is editor operations only; it never reaches the
+        # strategy re-plan, the clip-understanding wait or a brief extraction below.
+        return await _plan_scoped_turn(
+            db,
+            thread_id=thread_id,
+            item=item,
+            persona=persona,
+            user_message=user_message,
+            scope=scope,
+            manual_edits=manual_edits or [],
+            editor_state=editor_state,
+        )
     pending_analysis_ids: list[str] = []
     if settings.brief_binding_for(creator_id) and settings.kria_clip_understanding_enabled:
         from app.services.clip_intent_planning import wait_for_clip_understanding  # noqa: PLC0415
@@ -2673,11 +2927,10 @@ async def _plan_live_turn(
     extraction_complete = False
     pre_extracted_updates: tuple[BriefUpdate, ...] = ()
     pre_extracted_retrieved_ids: list[str] = []
+    semantic_request_scope: str | None = None
     # A rendered followup only needs typed requirement extraction before routing.
     # Keep the wide Main Creator envelope for genuine replans and first drafts.
-    from app.kria.brief import wants_full_replan  # noqa: PLC0415
-
-    if extract_first and not answers_clip_question and not wants_full_replan(user_message):
+    if extract_first and not answers_clip_question:
         try:
             extraction_inputs = await _load_creator_inputs(
                 db,
@@ -2711,6 +2964,19 @@ async def _plan_live_turn(
                 )
                 if batch is not None:
                     pre_extracted_retrieved_ids.extend(batch.requirement_ids)
+            semantic_request_scope, clarification = _extraction_request_scope(extraction_outputs)
+            # A retry that cannot be distinguished from a remake must not mutate
+            # the ledger or fall through to an editor/default rebuild decision.
+            if semantic_request_scope == "clarify":
+                return PlannedKriaTurn(
+                    plan=KriaTurnPlan(
+                        mode="respond",
+                        turn_value="question",
+                        response=clarification or "What would you like me to revise?",
+                    ),
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                )
             unique_extracted = {
                 json.dumps(update.model_dump(mode="json"), sort_keys=True): update
                 for result in extraction_outputs
@@ -2744,25 +3010,26 @@ async def _plan_live_turn(
                         "missing_media_ids": pending_analysis_ids,
                     },
                 )
-            item = await _refetch_item(db, item_id)
-            target = await _load_editor_target(
-                db, thread_id=thread_id, item=item, **_state_kw(editor_state)
-            )
-            if target is None:
-                recovery = _editor_target_recovery(manifest)
-                return replace(
-                    recovery,
-                    brief_updates=pre_extracted_updates,
-                    brief_expected_version=prior_brief.version if prior_brief else 0,
-                    defer_brief=False,
+            # A semantic rebuild goes straight to main planning.  Do not load an
+            # editor target first: a missing/stale target is irrelevant and must
+            # not replace the rebuild verdict with a recovery response.
+            route = "replan"
+            if semantic_request_scope != "rebuild":
+                item = await _refetch_item(db, item_id)
+                target = await _load_editor_target(
+                    db, thread_id=thread_id, item=item, **_state_kw(editor_state)
                 )
-            shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
-            await db.rollback()
-            route = (
-                "replan"
-                if answers_clip_question
-                else route_requirements(fresh, shape, message=user_message)
-            )
+                if target is None:
+                    recovery = _editor_target_recovery(manifest)
+                    return replace(
+                        recovery,
+                        brief_updates=pre_extracted_updates,
+                        brief_expected_version=prior_brief.version if prior_brief else 0,
+                        defer_brief=False,
+                    )
+                shape = plan_shape_from_editor_snapshot(target.snapshot)
+                await db.rollback()
+                route = route_requirements(fresh, shape, message=user_message, full_replan=False)
             if route == "editor_ops":
                 editor_plan = (
                     first_editor_result[0]
@@ -3011,7 +3278,7 @@ async def _plan_live_turn(
     # Every rollback above expires loaded rows; an expired attribute read on an
     # AsyncSession raises MissingGreenlet, so re-read the item before using it.
     item = await _refetch_item(db, item_id)
-    if item.current_job_id is not None:
+    if item.current_job_id is not None and semantic_request_scope != "rebuild":
         _editor_target_miss.set(None)
         target = await _load_editor_target(
             db, thread_id=thread_id, item=item, **_state_kw(editor_state)
@@ -3025,7 +3292,16 @@ async def _plan_live_turn(
         ):
             # The route below would be a re-plan caused solely by the missing target.
             return _editor_target_recovery(manifest)
-    route = route_requirements(fresh, shape, message=user_message)
+    route = route_requirements(
+        fresh,
+        shape,
+        message=user_message,
+        full_replan=True
+        if semantic_request_scope == "rebuild"
+        else False
+        if semantic_request_scope == "edit"
+        else None,
+    )
     if (
         answers_clip_question
         or creative_copy_pending
@@ -3128,7 +3404,7 @@ async def extract_deferred_brief(
     if isinstance(inputs, PlannedKriaTurn):
         return (), None
     session_id = None
-    extracted = []
+    extraction_outputs = []
     for batch in inputs.brief_batches or (None,):
         request = inputs.agent_input.creator_request if batch is None else batch.text
         output = await _call_brief_extractor(
@@ -3140,17 +3416,25 @@ async def extract_deferred_brief(
             creator_agent_session_id=session_id,
             prior_brief=prior_brief,
         )
-        extracted.extend(output.brief_updates)
-    updates = tuple(extracted)
+        extraction_outputs.append(output)
+    scope, _clarification = _extraction_request_scope(extraction_outputs)
+    if scope == "clarify":
+        return (), None
+    updates = tuple(update for output in extraction_outputs for update in output.brief_updates)
     effective = apply_updates(prior_brief, updates, source_turn_id=None)
     fresh = new_requirements(prior_brief, effective)
     item = await _refetch_item(db, item_id)
     shape = CurrentPlanShape(has_render=False)
-    if item.current_job_id is not None:
+    if item.current_job_id is not None and scope != "rebuild":
         target = await _load_editor_target(db, thread_id=thread_id, item=item)
         shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
         await db.rollback()
-    return updates, route_requirements(fresh, shape, message=user_message)
+    return updates, route_requirements(
+        fresh,
+        shape,
+        message=user_message,
+        full_replan=True if scope == "rebuild" else False,
+    )
 
 
 __all__ = [

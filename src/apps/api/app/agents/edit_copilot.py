@@ -41,7 +41,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-08-v75"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-09-v76"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2089,6 +2089,10 @@ class _ParseState:
         # KRI-219: a v2 selector op that matched nothing sets this; parse() turns
         # it into an honest clarification (never a silent no-op).
         self.selector_clarification: str | None = None
+        # A server-computed operation can be already satisfied while a sibling
+        # operation remains valid. Keep that distinction so the sibling is not
+        # discarded, while standalone no-op requests explain that nothing changed.
+        self.no_effect_clarifications: list[str] = []
         # Server-authored, fact-grounded sentences (which clips have no filming
         # time, which time zone hours are shown in). `parse` appends them to the
         # reply when ops were proposed and REPLACES the model's reply when a
@@ -3185,7 +3189,9 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         model=settings.edit_copilot_model,
         max_attempts=2,
         backoff_s=(2.0,),
-        timeout_s=40.0,
+        # Durable Kria turns supply a shared deadline and post-processing
+        # reserve. Stateless HTTP callers override this back to 40 seconds.
+        timeout_s=120.0,
         thinking_level="high",
         cost_per_1k_input_usd=0.002,
         cost_per_1k_output_usd=0.012,
@@ -3215,6 +3221,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             max_ops=_operation_limit(input.variant_snapshot),
         )
         prompt = _with_v2_fragments(prompt, input.variant_snapshot)
+        prompt = _with_scope_fragment(prompt, input.variant_snapshot)
         # KRI-520: the reply-language instruction goes last, after every fragment.
         # "" for English/unknown: byte-identical prompt.
         language_line = prompt_language_line(input.reply_language)
@@ -3431,6 +3438,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         )
         if capacity_reply is None and state.selector_clarification:
             capacity_reply = state.selector_clarification
+        if capacity_reply is None and not ops and state.no_effect_clarifications:
+            no_effect_reply = no_effect_reply or state.no_effect_clarifications[-1]
         capacity_pending_actions: list[dict[str, Any]] = []
         capacity_context: dict[str, Any] | None = None
         if capacity_reply is not None:
@@ -3698,6 +3707,32 @@ def _with_v2_fragments(prompt: str, snapshot: object) -> str:
     return f"{prompt}\n\n{fragments}" if fragments else prompt
 
 
+_SCOPE_SECTIONS = ("title", "clips", "captions", "music", "sfx", "overlays", "look")
+
+
+def _with_scope_fragment(prompt: str, snapshot: object) -> str:
+    """KRI-441: append "Change only: <sections>" when the turn is section-scoped.
+
+    ONLY when ``snapshot["scope"]`` is present, so every unscoped prompt stays byte-identical.
+    Section ids are whitelisted: the snapshot is data, never instructions.
+    """
+    scope = snapshot.get("scope") if isinstance(snapshot, dict) else None
+    if not isinstance(scope, list):
+        return prompt
+    sections = [s for s in _SCOPE_SECTIONS if s in scope]
+    if not sections:
+        return prompt
+    try:
+        text = (
+            (Path(__file__).resolve().parents[2] / "prompts" / "edit_copilot_ops" / "scope.txt")
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+    except OSError:
+        return prompt
+    return f"{prompt}\n\n{text.replace('{sections}', ', '.join(sections))}"
+
+
 def _coerce_confidence(value: object) -> float:
     try:
         confidence = float(value)
@@ -3819,6 +3854,7 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
             return None
 
     clarification_before = state.selector_clarification
+    no_effect_count_before = len(state.no_effect_clarifications)
     parsed = _coerce_payload(name, payload, snapshot, state)
     if parsed is None:
         if state.selector_clarification not in (None, clarification_before):
@@ -3827,6 +3863,8 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
             # spurious invalid_value here made `_honest_outcome` report
             # "failed" ("couldn't build a valid draft change") and hid the
             # zero-match question (KRI-219 live battery, rewrite-labels-en).
+            return None
+        if len(state.no_effect_clarifications) > no_effect_count_before:
             return None
         if name == "set_edit_direction" and _guided_revision_identity(snapshot) is None:
             state.reject(

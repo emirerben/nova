@@ -82,6 +82,9 @@ final class CreationChatFixture: @unchecked Sendable {
     private var planTicks: [String: Int] = [:]
     private var planTurnIDs: [String: String] = [:]
     private var editorTurnIDs: [String: String] = [:]
+    /// Live plan & review (`KRIA_CHAT_PLAN_REVIEW=1`): the contract-v2 server model (`GET /plan`, scoped turns, undo).
+    private let review = ReviewPlanFixture()
+    private var reviewEnabled: Bool { ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_REVIEW"] == "1" }
     private var editorTurnTicks: [String: Int] = [:]
     private let approvalID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     private var runtime: Int { ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1 }
@@ -96,16 +99,23 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "fail" { return nil }
             var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", 1), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" { capabilities["live_plan_review_enabled"] = true }
+            // `KRIA_CHAT_PLAN_BLOCKS_VERSION=2`: the server speaks live-plan contract v2 (structured payloads,
+            // 8 sections including post_caption, Review entry points). Absent = an older feed-only server.
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1",
+               let version = ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_VERSION"].flatMap(Int.init) { capabilities["live_plan_review_version"] = version }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_RICH_TEXT"] == "1" { capabilities["slide_post_rich_text"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_EXTENDED_DEVICE_EXPORT"] == "1" { capabilities["slide_post_extended_device_export"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CHAT_EDIT"] == "1" { capabilities["slide_post_chat_edit"] = true }
             // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
             // sends the clip_question payload but does not advertise the capability (old-server fallback).
             if ["1", "history"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
-            // KRIA_CHAT_SONG_ORDER: "1" = server advertises media.song and song_order_questions (KRI-374);
-            // "legacy" = it still sends the song_order_question payload but advertises nothing (old-app fallback).
-            if ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" {
+            // KRIA_CHAT_SONG_ORDER: "1" = server advertises media.song, song_order_questions and
+            // song_order_placements (the song timeline, KRI-561); "list" = media.song and song_order_questions only
+            // (the vertical order list, an older server); "legacy" = it still sends the song_order_question payload
+            // but advertises nothing (old-app fallback).
+            if ["1", "list"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"]) {
                 capabilities["song_order_questions"] = true
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" { capabilities["song_order_placements"] = true }
                 capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]]
             }
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
@@ -180,6 +190,14 @@ final class CreationChatFixture: @unchecked Sendable {
         guard parts.count >= 2, var thread = threads[parts[1]] else { return response(["detail": "Fixture route missing"], status: 404) }
         let id = parts[1]
         if parts.count == 3, parts[2] == "brief" { return response(Self.fixtureBrief(threadID: id)) }
+        // KRI-561: the signed song URL. The fixture hands out a generated tone as a file URL (no network).
+        if parts.count == 3, parts[2] == "song-audio", ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" {
+            guard let url = SongTimelineFixture.audioURL() else { return response(["detail": "Fixture audio missing"], status: 404) }
+            let generation = request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
+                .queryItems?.first { $0.name == "generation" }?.value.flatMap(Int.init) ?? SongTimelineFixture.generation
+            return response(["url": url.absoluteString, "generation": generation, "duration_s": SongTimelineFixture.audioSeconds,
+                             "expires_at": "2099-01-01T00:00:00Z"])
+        }
         var state = thread["state"] as? [String: Any] ?? [:]
         var events = thread["events"] as? [[String: Any]] ?? []
         var revision = thread["revision"] as? Int ?? 0
@@ -188,6 +206,34 @@ final class CreationChatFixture: @unchecked Sendable {
             var event: [String: Any] = ["id": UUID().uuidString, "sequence": events.count, "revision": revision, "role": role, "event_type": type, "content": text ?? "", "payload": payload, "created_at": "2026-09-10T10:00:00Z"]
             if let clientEventID { event["client_event_id"] = clientEventID }
             events.append(event)
+        }
+        if reviewEnabled {
+            // An update render advances one step per read of the plan or the delta (like the staged feed).
+            if parts.last == "delta" || parts.last == "plan", let done = review.tick(id: id) {
+                append("plan_block", role: "system", payload: done.blocksEvent)
+                append("plan_update_summary", role: "system", payload: done.summaryEvent)
+                thread["job"] = ["id": done.jobID, "status": "ready", "variants": [["variant_id": "original_text", "render_status": "ready", "output_url": "https://fixture.invalid/result.mp4"]]]
+                append("generation_ready")
+            }
+            if parts.count == 6, parts[2] == "plan", parts[3] == "sections", parts[5] == "undo" {
+                let turn = UUID().uuidString
+                if let failure = review.undoSection(id: id, initial: reviewInitialBlocks, section: parts[4], blockRevision: body["expected_block_revision"] as? Int ?? -1, turnID: turn) {
+                    return response(failure.1, status: failure.0)
+                }
+                append("draft_applied", payload: ["turn_id": turn, "draft_id": id])
+                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turn])
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return response(["section_id": parts[4], "thread_revision": revision, "draft_revision": 4, "turn_id": turn])
+            }
+            if parts.count == 4, parts[2] == "draft", parts[3] == "undo", body["render"] as? Bool == true {
+                let turn = UUID().uuidString
+                if let failure = review.undoAll(id: id, initial: reviewInitialBlocks, turnID: turn) { return response(failure.1, status: failure.0) }
+                append("draft_undone", payload: ["draft_id": id])
+                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turn])
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return response(["draft_id": id, "item_id": id, "variant_key": "original_text", "draft_revision": 4, "snapshot_hash": "hash", "etag": "etag-4",
+                                 "snapshot": [String: Any](), "can_undo": false, "created_at": "2026-10-09T10:05:00Z"])
+            }
         }
         if parts.last == "cancel-render" {
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_CANCEL"] == "unavailable" {
@@ -286,8 +332,27 @@ final class CreationChatFixture: @unchecked Sendable {
             var userPayload: [String: Any] = [:]
             if let order = body["song_order"] as? [String: Any] { userPayload["song_order"] = order }
             if let selection = body["choice_selection"] as? [String: Any] { userPayload["choice_selection"] = selection }
+            if let scope = body["scope"] as? [String] {
+                // Live plan & review: a scoped "Update video" turn is planned as editor operations on `scope` only.
+                guard reviewEnabled, runtime == 2 else {
+                    return response(["problem": ["code": "live_plan_review_unavailable", "message": "Not available."]], status: 404)
+                }
+                if scope.contains("post_caption") {
+                    return response(["problem": ["code": "scope_section_unsupported", "message": "A post caption can't be changed here."]], status: 422)
+                }
+                if scope.isEmpty || Set(scope).count != scope.count || !Set(scope).isSubset(of: Set(ReviewPlanFixture.order)) {
+                    return response(["problem": ["code": "scope_invalid", "message": "Invalid scope."]], status: 422)
+                }
+                userPayload["scope"] = scope
+                if let edits = body["manual_edits"] { userPayload["manual_edits"] = edits }
+            }
             append("user_message", role: "user", text: body["message"] as? String, payload: userPayload, clientEventID: turnID)
-            if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] == "1",
+            if let scope = body["scope"] as? [String] {
+                review.scopedTurn(id: id, initial: reviewInitialBlocks, scope: scope, edits: body["manual_edits"] as? [[String: Any]] ?? [], turnID: turnID)
+                append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": turnID, "turn_value": "response"])
+                append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
+                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] == "1",
                (thread["job"] as? [String: Any])?["status"] as? String == "ready" {
                 editorTurnIDs[id] = turnID
                 editorTurnTicks[id] = 0
@@ -295,20 +360,17 @@ final class CreationChatFixture: @unchecked Sendable {
                 if let order = body["song_order"] as? [String: Any] {
                     // Echo what the server received so the UI test can pin the structured payload.
                     let ids = (order["ordered_media_ids"] as? [String] ?? []).joined(separator: "+")
-                    append("assistant_response", text: "Got it. order[\(ids)] question[\(order["question_id"] ?? "")]")
+                    var echo = "Got it. order[\(ids)] question[\(order["question_id"] ?? "")]"
+                    if let placements = order["placements"] as? [[String: Any]] {
+                        let list = placements.map { "\($0["media_id"] ?? "")@" + String(format: "%.1f", $0["delta_s"] as? Double ?? .nan) }
+                        echo += " placements[\(list.joined(separator: ";"))]"
+                    }
+                    append("assistant_response", text: echo)
                 } else {
+                    let timeline = ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1"
                     append("assistant_question", text: "I couldn't place a few of your clips against the song. Check the order.", payload: [
                         "turn_id": turnID, "turn_value": "question",
-                        "song_order_question": [
-                            "question_id": "song-q-\(events.count)",
-                            "proposed_order": ["fixture-clip", "fixture-clip-2", "fixture-clip-3", "fixture-clip-4"],
-                            "items": [
-                                ["media_id": "fixture-clip", "status": "confident", "song_start_s": 4.0, "alternates": []],
-                                ["media_id": "fixture-clip-2", "status": "ambiguous", "song_start_s": 21.5, "alternates": [["delta_s": -8.0, "score": 0.4]]],
-                                ["media_id": "fixture-clip-3", "status": "unmatched", "alternates": []],
-                                ["media_id": "fixture-clip-4", "status": "confident", "song_start_s": 52.0, "alternates": []],
-                            ],
-                        ] as [String: Any],
+                        "song_order_question": SongTimelineFixture.question(id: "song-q-\(events.count)", timeline: timeline),
                     ])
                 }
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] != nil {
@@ -364,7 +426,17 @@ final class CreationChatFixture: @unchecked Sendable {
                 ])
             }
         } else if parts.contains("approvals") {
-            if parts.last == "approve" {
+            if parts.last == "approve", reviewEnabled, review.hasPending(id) {
+                // The creator tapped Update video / Undo: the pending review draft starts a NEW job.
+                let approved = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
+                let turn = approved?["turn_id"] as? String ?? id
+                if let started = review.approve(id: id, turnID: turn) {
+                    append("approval_approved")
+                    thread["active_job_id"] = started.jobID
+                    thread["job"] = ["id": started.jobID, "status": "processing", "variants": []]
+                    append("plan_block", role: "system", payload: started.event)
+                }
+            } else if parts.last == "approve" {
                 if let mismatch = renderShapeMismatch(body) { return response(["detail": mismatch], status: 422) }
                 let approved = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
                 append("approval_approved")
@@ -429,33 +501,87 @@ final class CreationChatFixture: @unchecked Sendable {
             } else { editorTurnTicks[id] = tick + 1 }
         }
         thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+        if reviewEnabled, parts.count == 3, parts[2] == "plan" {
+            // First render still deciding = planning; once the staged feed has finished, the plan is ready to review.
+            let feedDone = (planStages[id] ?? Self.planScript.count + 8) >= Self.planScript.count
+                && (thread["job"] as? [String: Any])?["id"] != nil
+            return response(review.snapshot(id: id, initial: reviewInitialBlocks, status: feedDone ? "ready" : "planning", eventCount: events.count))
+        }
         if parts.last == "delta" {
             let after = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "after_sequence" })?.value.flatMap(Int.init) ?? -1
             return response(["thread_id": id, "runtime_version": runtime, "status": "active", "after_sequence": after, "has_more": false, "thread_revision": revision, "events": events.filter { ($0["sequence"] as? Int ?? 0) > after }, "next_after_sequence": events.count - 1])
         }
-        if parts.last == "turns" { return response(["turn_id": editorTurnIDs[id] ?? id, "thread_revision": revision, "status": "queued"], status: 202) }
+        if parts.last == "turns" {
+            // Like the server (`runtime.py`), the accepted turn id is the one stamped on that turn's events
+            // (the client event id), so `ChatThinkingSettlement` can match the reply to the wait.
+            let acceptedTurnID = editorTurnIDs[id] ?? (body["client_event_id"] as? String ?? id)
+            return response(["turn_id": acceptedTurnID, "thread_revision": revision, "status": "queued"], status: 202)
+        }
         if parts.last == "approve" { return response(["approval_id": approvalID, "thread_id": id, "status": "approved", "thread_revision": revision]) }
         return response(withRenderShape(thread))
     }
+    /// The first job's final decided block per section, from the staged feed script (contract v2).
+    private func reviewInitialBlocks() -> [String: [String: Any]] {
+        var result: [String: [String: Any]] = [:]
+        for stage in Self.planScript {
+            for block in stage where block["state"] as? String == "decided" {
+                if let section = block["section_id"] as? String { result[section] = block }
+            }
+        }
+        return result
+    }
+
     /// KRI-443: the staged `plan_block` payloads, in the order the pipeline would decide them.
     private static var planScript: [[[String: Any]]] {
-        func block(_ section: String, _ state: String, _ summary: String? = nil, detail: String? = nil, skipped: Bool = false) -> [String: Any] {
+        let v2 = (ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_VERSION"].flatMap(Int.init) ?? 1) >= 2
+        func block(_ section: String, _ state: String, _ summary: String? = nil, detail: String? = nil, skipped: Bool = false, payload: Any? = nil) -> [String: Any] {
             var value: [String: Any] = ["section_id": section, "state": state, "intent": false, "skipped": skipped]
             if let summary { value["summary"] = summary }
             if let detail { value["detail"] = detail }
             if state == "decided" { value["decided_at"] = "2026-10-05T10:00:00Z" }
+            if v2 {
+                value["revision"] = state == "decided" ? 1 : 0
+                value["changed"] = false
+                if let payload { value["payload"] = payload }
+            }
             return value
         }
-        let sections = ["title", "clips", "captions", "music", "sfx", "overlays", "look"]
+        var sections = ["title", "clips", "captions", "music", "sfx", "overlays", "look"]
+        if v2 { sections.append("post_caption") }
         if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_DEVICE"] == "1" {
             // What an iPhone account gets in production: every section waiting, then every section decided
             // almost at once, because the server only plans and the video is built on the device.
+            var decided = [block("title", "decided", "Sunday reset, slowed down"), block("clips", "decided", "30 clips · 30s"),
+                           block("captions", "decided", "Bold captions, lower third"), block("music", "decided", "Your song"),
+                           block("sfx", "decided", "4 sound effects"), block("overlays", "decided", nil, skipped: true),
+                           block("look", "decided", "Warm film grain")]
+            if v2 { decided.append(block("post_caption", "decided", "Slow summer days in Bodrum")) }
+            return [sections.map { block($0, "waiting") }, decided]
+        }
+        if v2 {
+            let clips: [[String: Any]] = (0..<6).map { index in
+                var clip: [String: Any] = ["index": index, "kind": "video", "role": ["kettle", "street", "bakery", "bench", "harbor", "sunset"][index],
+                                           "start_s": Double(index) * 4, "end_s": Double(index + 1) * 4]
+                if index < 5 { clip["transition"] = ["cut", "dissolve", "whip", "fade", "banana"][index] }
+                return clip
+            }
             return [
                 sections.map { block($0, "waiting") },
-                [block("title", "decided", "Sunday reset, slowed down"), block("clips", "decided", "30 clips · 30s"),
-                 block("captions", "decided", "Bold captions, lower third"), block("music", "decided", "Your song"),
-                 block("sfx", "decided", "4 sound effects"), block("overlays", "decided", nil, skipped: true),
-                 block("look", "decided", "Warm film grain")],
+                [block("title", "deciding")],
+                [block("title", "decided", "A slow summer day", payload: ["text": "A slow summer day", "bar_id": "guided-title-1"]), block("clips", "deciding")],
+                [block("clips", "decided", "6 clips · 24s · beach first", payload: ["total_duration_s": 24.0, "clips": clips])],
+                [block("captions", "decided", "4 lines · pop-in · bottom", payload: ["count": 4, "truncated": false, "lines": [
+                    ["id": "c1", "kind": "cue", "text": "Slow mornings.", "start_s": 0.0, "end_s": 2.5],
+                    ["id": "c2", "kind": "cue", "text": "Salt, sun, sand.", "start_s": 3.0, "end_s": 5.5],
+                    ["id": "c3", "kind": "cue", "text": "Golden hour.", "start_s": 11.0, "end_s": 13.0],
+                    ["id": "c4", "kind": "cue", "text": "Stay a little longer.", "start_s": 18.0, "end_s": 21.0],
+                ] as [[String: Any]]]), block("music", "deciding")],
+                [block("music", "decided", "Sunday Drive by Kira", payload: ["source": "catalog", "title": "Sunday Drive", "artist": "Kira", "bpm": 112.0, "start_s": 12.0,
+                                                                               "mix": ["music_level": 0.7, "original_level": 0.5]]), block("sfx", "deciding")],
+                // A malformed payload must fall back to the summary, never break the feed.
+                [block("sfx", "decided", "4 sound effects", payload: "not-an-object"), block("overlays", "decided", nil, skipped: true), block("look", "deciding")],
+                [block("look", "decided", "Warm film · light grain", payload: ["chips": ["Warm film", "Light grain", "Serif titles"]]), block("post_caption", "deciding")],
+                [block("post_caption", "decided", "Slow summer days in Bodrum", payload: ["text": "Slow summer days in Bodrum, one roll of film at a time.", "hashtags": ["slowsummer", "bodrum"], "platform": "tiktok"])],
             ]
         }
         return [
@@ -770,6 +896,63 @@ enum DeviceRenderUITestFixture {
     private struct Publisher: DeviceRenderPublishing {
         func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
         func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
+    }
+}
+
+/// KRI-561 (`KRIA_CHAT_SONG_ORDER=1`): the song-order question the server sends to a timeline-capable app, and a
+/// generated tone standing in for the signed song URL.
+enum SongTimelineFixture {
+    static let generation = 3
+    static let audioSeconds = 12.0
+
+    static func question(id: String, timeline: Bool) -> [String: Any] {
+        func item(_ mediaID: String, _ status: String, start: Double?, duration: Double, candidates: [(Double, Double)], reason: String? = nil) -> [String: Any] {
+            var fields: [String: Any] = ["media_id": mediaID, "status": status, "alternates": [[String: Any]]()]
+            if let start { fields["song_start_s"] = start }
+            guard timeline else { return fields }
+            fields["duration_s"] = duration
+            fields["candidates"] = candidates.map { ["delta_s": $0.0, "likelihood": $0.1] as [String: Any] }
+            if let reason { fields["reason"] = reason }
+            return fields
+        }
+        var question: [String: Any] = [
+            "question_id": id,
+            "proposed_order": ["fixture-clip", "fixture-clip-2", "fixture-clip-3", "fixture-clip-4"],
+            "items": [
+                item("fixture-clip", "confident", start: 4.0, duration: 8, candidates: [(4.0, 0.9)]),
+                { var fields = item("fixture-clip-2", "ambiguous", start: 21.5, duration: 8, candidates: [(21.5, 0.6), (40.0, 0.3)], reason: "tie")
+                  if !timeline { fields["alternates"] = [["delta_s": -8.0, "score": 0.4]] }
+                  return fields }(),
+                item("fixture-clip-3", "unmatched", start: nil, duration: 6, candidates: [(14.0, 0.4)], reason: "no_evidence"),
+                item("fixture-clip-4", "confident", start: 52.0, duration: 8, candidates: [(52.0, 0.8), (-2.0, 0.1)]),
+            ],
+        ]
+        if timeline {
+            question["song_duration_s"] = 90.0
+            question["max_window_s"] = 120.0
+            question["first_line_s"] = 4.0
+            question["song_generation"] = generation
+        }
+        return question
+    }
+
+    /// A 12 s mono 16-bit tone with a slow swell, written once to Caches.
+    static func audioURL() -> URL? {
+        let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("song-timeline-fixture.wav")
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+        let rate = 4000, count = Int(audioSeconds) * rate
+        var pcm = Data(capacity: count * 2)
+        for index in 0..<count {
+            let t = Double(index) / Double(rate)
+            let amplitude = 0.2 + 0.6 * abs(sin(2 * .pi * t / 3))
+            let sample = Int16(amplitude * sin(2 * .pi * 220 * t) * 20000)
+            withUnsafeBytes(of: sample.littleEndian) { pcm.append(contentsOf: $0) }
+        }
+        func le32(_ value: Int) -> Data { withUnsafeBytes(of: UInt32(value).littleEndian) { Data($0) } }
+        func le16(_ value: Int) -> Data { withUnsafeBytes(of: UInt16(value).littleEndian) { Data($0) } }
+        var wav = Data("RIFF".utf8) + le32(36 + pcm.count) + Data("WAVEfmt ".utf8) + le32(16) + le16(1) + le16(1)
+        wav += le32(rate) + le32(rate * 2) + le16(2) + le16(16) + Data("data".utf8) + le32(pcm.count) + pcm
+        return (try? wav.write(to: url, options: .atomic)) != nil ? url : nil
     }
 }
 #endif

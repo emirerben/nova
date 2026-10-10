@@ -1094,6 +1094,49 @@ class CreationThreadEvent(Base):
     )
 
 
+class ThoughtSummary(Base):
+    """Provider-marked Gemini thought text for one interactive request.
+
+    This is intentionally outside the transcript: receiving or completing a
+    thought must never advance a creation thread revision.
+    """
+
+    __tablename__ = "thought_summaries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=True
+    )
+    plan_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=True
+    )
+    client_request_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="streaming")
+    text: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('streaming', 'completed', 'failed')", name="ck_thought_summaries_status"
+        ),
+        CheckConstraint("length(text) <= 12000", name="ck_thought_summaries_text_length"),
+        CheckConstraint(
+            "(thread_id IS NOT NULL)::int + (plan_item_id IS NOT NULL)::int = 1",
+            name="ck_thought_summaries_subject",
+        ),
+        Index(
+            "idx_thought_summaries_thread_request", "thread_id", "client_request_id", "started_at"
+        ),
+        Index(
+            "idx_thought_summaries_item_request", "plan_item_id", "client_request_id", "started_at"
+        ),
+    )
+
+
 class CreatorMemoryItem(Base):
     """Versioned, owner-scoped creator direction ledger item."""
 

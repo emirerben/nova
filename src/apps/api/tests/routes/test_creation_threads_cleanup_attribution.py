@@ -211,7 +211,11 @@ async def _chat_action(  # noqa: ANN001
     monkeypatch.setattr(routes, "_sync_render_projection", AsyncMock())
     monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
     monkeypatch.setattr(routes, "reconcile_render_state", AsyncMock())
-    monkeypatch.setattr(routes, "_available_formats", lambda: {"narrated": "narrated_planned"})
+    monkeypatch.setattr(
+        routes,
+        "_available_formats",
+        lambda **_kwargs: {"narrated": "narrated_planned"},
+    )
     monkeypatch.setattr(routes.creator_agent, "confirm_creator_plan_controller", controller)
     monkeypatch.setattr(
         "app.services.speech_cleanup_preflight.current_analysis_async",

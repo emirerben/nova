@@ -5,6 +5,8 @@ import SwiftUI
 /// alignment to offer. KRI-428 adds what the creator can change: song volume,
 /// where the song starts (background mode only; lip-sync keeps it where the
 /// takes were filmed) and removing the song (camera audio plays instead).
+/// KRI-561 adds `user_song.trim`: a two-handle range in both modes (a background song moves its start / end;
+/// a lip-sync song cuts the video to the range).
 /// Every control is gated by the server's `user_song.*` capabilities and edits
 /// the editor document, so Undo and Save work like any other lane.
 struct NativeEditorYourSongRow: View {
@@ -69,19 +71,36 @@ struct NativeEditorYourSongRow: View {
 
     @ViewBuilder
     private func start(_ controls: NativeEditorYourSongControls) -> some View {
-        switch controls.mode {
-        case .background:
-            NativeSongWindowBar(controls: controls, audioURL: session.userSongAudioURL,
-                                onChange: { session.moveSongStart($0) },
-                                onBegin: { session.beginSongStartDrag() },
-                                onEnd: { session.endSongStartDrag() })
-                .disabled(!controls.canEditStart)
-        case .lipsync:
-            Label(NativeEditorYourSong.lipSyncLockCopy, systemImage: "lock")
-                .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("native-editor-your-song-start-locked")
+        if controls.trimOffered {
+            // KRI-561: both ends of the song, in both modes. A server that does not offer `user_song.trim`
+            // keeps the single-handle bar / lip-sync lock below, exactly as before.
+            NativeSongTrimBar(controls: controls, audioURL: session.userSongAudioURL, actions: trimActions)
+                .disabled(!controls.canTrim)
+        } else {
+            switch controls.mode {
+            case .background:
+                NativeSongWindowBar(controls: controls, audioURL: session.userSongAudioURL,
+                                    onChange: { session.moveSongStart($0) },
+                                    onBegin: { session.beginSongStartDrag() },
+                                    onEnd: { session.endSongStartDrag() })
+                    .disabled(!controls.canEditStart)
+            case .lipsync:
+                Label(NativeEditorYourSong.lipSyncLockCopy, systemImage: "lock")
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("native-editor-your-song-start-locked")
+            }
         }
+    }
+
+    private var trimActions: NativeSongTrimActions {
+        NativeSongTrimActions(
+            begin: { session.beginSongStartDrag() },
+            moveStart: { session.moveSongStart($0) },
+            moveEnd: { session.moveSongEnd($0) },
+            preview: { session.previewLipsyncSongTrim(start: $0, end: $1) },
+            commit: { session.applyLipsyncSongTrim(start: $0, end: $1) },
+            end: { session.endSongStartDrag() })
     }
 
     private var removeButton: some View {

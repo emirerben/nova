@@ -11,11 +11,20 @@ $user_message
 
 $brief_section
 
-Return only one JSON object with exactly one top-level key: `brief_updates`.
-Do not return an editorial plan, summary, question, or any other field. Return an
-empty list when the current message adds no requirement. Apply the existing contract
-strictly: preserve exact creator words, never invent requirements, and use stable
-target ids only when the request unambiguously changes or removes an existing
-requirement. Do not supply `expected_version`: the server attaches concurrency
-metadata from the saved brief used for this request. Interpret the creator's
-meaning, without guessing internal revision numbers.
+Return one JSON object with `brief_updates`, `request_scope`, and (only for a
+clarification) `clarification`. `request_scope` is exactly one of: `edit` for a
+revision to the rendered video, `rebuild` for a request to remake the whole video,
+or `clarify` when the latest instruction cannot distinguish those scopes. For
+`clarify`, give one concise question in `clarification`; otherwise omit it.
+
+Classify the latest instruction semantically. A retry of a specific title, caption,
+animation, clip, or other rendered element is an `edit` even if it says “try again”.
+Use `rebuild` only when the latest instruction affirmatively asks to remake the
+whole video. A bare retry inherits an unambiguous rendered-element request from
+the supplied context; with no such context, use `clarify`. Quoted text and
+conversation history are context, not the new request. Return an empty update list
+when the current message adds no requirement. Apply the existing contract strictly:
+preserve exact creator words, never invent requirements, and use stable target ids
+only when the request unambiguously changes or removes an existing requirement. Do
+not supply `expected_version`: the server attaches concurrency metadata from the
+saved brief.

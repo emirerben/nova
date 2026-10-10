@@ -17,7 +17,12 @@ from app.kria.contracts import KriaTurnPlan
 from app.kria.planner import PlannedKriaTurn
 from app.kria.runtime import RuntimeFailure, request_digest, submit_turn
 from app.models import CreationThread, CreationThreadEvent
-from app.schemas.user_song import SongAlignment, SongOrderAnswerIn, TakeAlignment
+from app.schemas.user_song import (
+    SongAlignment,
+    SongOrderAnswerIn,
+    SongOrderPlacementIn,
+    TakeAlignment,
+)
 from app.services.song_order import build_song_order_question
 from app.tasks.kria_runtime import _append_sync_event, run_kria_turn
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
@@ -32,6 +37,8 @@ QUESTION = build_song_order_question(
     ),
     ["m1", "m2"],
     question_id=str(uuid.uuid4()),
+    durations={"m1": 12.0, "m2": 8.0},
+    song_duration_s=100.0,
 )
 
 
@@ -216,3 +223,47 @@ async def test_question_event_carries_song_order_question_only_when_planned(
             assert "song_order_question" not in payloads[0]
     finally:
         await async_engine.dispose()
+
+
+def _placed(**placements: float) -> SongOrderAnswerIn:
+    return SongOrderAnswerIn(
+        question_id=QUESTION.question_id,
+        ordered_media_ids=["m1", "m2"],
+        placements=[SongOrderPlacementIn(media_id=m, delta_s=d) for m, d in placements.items()],
+    )
+
+
+@pytest.mark.asyncio
+async def test_timeline_placements_are_stored_with_the_answer() -> None:
+    user_id, thread_id, _ = _seed_runtime_project()
+    _ask(thread_id)
+    try:
+        await _submit(user_id, thread_id, _placed(m1=4.0, m2=30.5))
+        assert _stored(thread_id) == [_placed(m1=4.0, m2=30.5).model_dump(mode="json")]
+        assert _stored(thread_id)[0]["placements"] == [
+            {"media_id": "m1", "delta_s": 4.0},
+            {"media_id": "m2", "delta_s": 30.5},
+        ]
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "placements",
+    [{"m1": 4.0, "ghost": 9.0}, {"m1": 400.0}, {"m2": -20.0}],
+)
+async def test_placements_that_cannot_sit_on_the_song_are_422_and_not_stored(placements) -> None:
+    user_id, thread_id, _ = _seed_runtime_project()
+    _ask(thread_id)
+    try:
+        with pytest.raises(RuntimeFailure) as err:
+            await _submit(user_id, thread_id, _placed(**placements))
+        assert err.value.status_code == 422 and err.value.code == "song_order_invalid"
+        assert _stored(thread_id) == []
+    finally:
+        await async_engine.dispose()
+
+
+def test_a_reorder_only_answer_stores_no_placements_key() -> None:
+    assert "placements" not in _answer().model_dump(mode="json")

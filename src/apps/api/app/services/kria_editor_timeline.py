@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import math
 from typing import Any
 
 from app.agents._schemas.text_element import CAPTION_CUE_SOURCE
@@ -341,7 +342,12 @@ def _preserve_label_offsets(
 
 
 def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
-    """Re-window ``state.text`` (and any same-bundle lanes) onto the new timeline."""
+    """Re-window ``state.text`` (and any same-bundle lanes) onto the new timeline.
+
+    Bars whose timing was explicitly authored in this bundle already use the
+    new output clock.  Preserve those windows and only validate their bounds;
+    all other authored text continues to follow the old-clock projection.
+    """
     ops = _ops()
     assign_slot_ids(state.slots)
     old_rows = [row for row in state.initial_slots if not row.get("removed")]
@@ -349,6 +355,7 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
     old_total = max((float(s["output_end_s"]) for s in old_segments), default=0.0)
     new_segments = guided_segments_for_rows(guided, state.slots)
     new_total = max((float(s["output_end_s"]) for s in new_segments), default=0.0)
+    explicit_text_ids = getattr(state, "explicit_text_ids", set()) or set()
     links = ops._clip_label_links(state.job, state.variant)
     project = make_time_projector(old_segments, new_segments)
     old_index = {str(s.get("segment_id")): i for i, s in enumerate(old_segments)}
@@ -368,6 +375,17 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
             rebased.append(bar)
             continue
         start, end = float(bar["start_s"]), float(bar["end_s"])
+        if str(bar.get("id") or "") in explicit_text_ids:
+            if (
+                not math.isfinite(start)
+                or not math.isfinite(end)
+                or start < 0.0
+                or end <= start
+                or end > new_total + 1e-6
+            ):
+                raise _op_error("That text timing does not fit on the video")
+            rebased.append(bar)
+            continue
         media_id = _bar_media(bar, links)
         is_label = str(bar.get("id") or "").startswith(_LABEL_PREFIX)
         old_segment = None
@@ -410,7 +428,9 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
                 length = end - start
                 new_end = new_total
                 new_start = max(0.0, new_total - length)
-            if new_end - new_start < _MIN_BAR_S:
+            # Keep already-authored short words short. The duration floor only
+            # protects bars that were at least this long before the edit.
+            if end - start >= _MIN_BAR_S and new_end - new_start < _MIN_BAR_S:
                 new_end = min(new_total, new_start + _MIN_BAR_S)
                 new_start = max(0.0, new_end - _MIN_BAR_S)
             updated["start_s"], updated["end_s"] = _round(new_start), _round(new_end)

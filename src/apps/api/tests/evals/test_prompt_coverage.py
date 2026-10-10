@@ -7,6 +7,7 @@ therefore never turn authored prompts into fabricated execution evidence.
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -158,6 +159,6 @@ def test_regression_runner_forces_replay_mode_and_uses_one_subprocess() -> None:
     assert result["passed"] is True
     assert len(calls) == 1
     command, kwargs = calls[0]
-    assert command[0].endswith("python")
+    assert command[0] == sys.executable
     assert "--eval-mode=replay" in command
     assert kwargs["env"]["NOVA_EVAL_MODE"] == "replay"

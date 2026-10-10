@@ -44,7 +44,7 @@ def test_a_variant_with_a_creator_song_carries_title_mode_and_window(make_job, m
     job, result = make_job()
     (variant,) = _public(job)
     song = result.user_song
-    assert variant["user_song"] == {
+    expected = {
         "title": "My Song",
         "mode": mode,
         "duration_s": song.duration_s,
@@ -52,6 +52,11 @@ def test_a_variant_with_a_creator_song_carries_title_mode_and_window(make_job, m
         "window_end_s": song.window_end_s,
         "volume": 1.0,
     }
+    if mode == "lipsync":
+        # KRI-561: the editor needs each pinned take's song offset to trim the song by cutting
+        # the video. Background songs carry no `takes` key (their response is unchanged).
+        expected["takes"] = {m: t.delta_s for m, t in song.takes.items()}
+    assert variant["user_song"] == expected
     print(json.dumps(variant["user_song"]))
     # Display-only: the catalog-music surface is untouched.
     assert variant.get("music_track_id") is None
