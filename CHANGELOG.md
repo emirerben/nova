@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.208.0] - 2026-10-10
+
+### Changed
+- fix(ios): stabilize TestFlight release tests (KRI-563) (#1529) <!-- release-pr: 1529 -->
+
 ## [0.78.207.0] - 2026-10-10
 
 ### Changed
