@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.205.0] - 2026-10-10
+
+### Changed
+- fix(ios): slide text keeps the creator's lines; edit box follows the caret (KRI-564) (#1527) <!-- release-pr: 1527 -->
+
 ## [0.78.204.0] - 2026-10-10
 
 ### Changed
