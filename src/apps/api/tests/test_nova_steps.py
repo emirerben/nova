@@ -1110,3 +1110,25 @@ def test_render_notes_from_overlay_receipt_fullscreen_layout_wording() -> None:
         "unplaced": [],
     }
     assert render_notes_from_overlay_receipt(many) == ["3 Visuals shown full screen"]
+
+
+def test_render_notes_count_every_skipped_hit_of_a_capped_beat() -> None:
+    """KRI-550: a word said more often than one edit marks. Each skipped hit is its own
+    `occurrence_cap` entry, so the count covers every time it was said, read once."""
+    receipt = {
+        "version": 1,
+        "matcher": "phrase",
+        "placed": [
+            {"beat_id": "kahve-sesi", "trigger": "kahve", "at_s": float(i), "sound_label": "Clink"}
+            for i in range(24)
+        ],
+        "unplaced": [
+            {"beat_id": "kahve-sesi", "trigger": "kahve", "reason": "occurrence_cap", "at_s": i}
+            for i in range(24, 30)
+        ],
+        "closing": {"status": "none", "badge": "none"},
+    }
+    assert render_notes_from_beat_receipt(receipt) == [
+        "Placed 24 of 30 moments you named",
+        'You said "kahve" more times than one edit can mark, so the last ones were skipped',
+    ]
