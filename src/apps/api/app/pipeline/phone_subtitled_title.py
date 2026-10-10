@@ -197,19 +197,23 @@ def source_box_to_canvas(
     display_height: float,
     canvas: _Canvas,
     scale: float = 1.0,
+    position_x: float = 0.0,
 ) -> NormalizedBox | None:
     """Map a box normalized to the upright source frame onto the canvas the way
     the phone engine draws the speaker: cover-fill centred, then
     ``transform.scale`` about the canvas centre (``scale < 1`` letterboxes,
-    `phone_recipe_shared.fit_transform`). ``None`` when nothing of it shows."""
+    `phone_recipe_shared.fit_transform`), then ``transform.position_x`` canvas
+    pixels to the right (KRI-547's face-filled crop shifts the speaker
+    sideways, `phone_speaker_framing`). ``None`` when nothing of it shows."""
     if display_width <= 0 or display_height <= 0:
         return None
     cover = max(canvas.width / display_width, canvas.height / display_height)
     shown_w = display_width * cover / canvas.width
     shown_h = display_height * cover / canvas.height
+    shift = position_x / canvas.width
 
     def x(value: float) -> float:
-        return 0.5 + ((value - 0.5) * shown_w) * scale
+        return 0.5 + ((value - 0.5) * shown_w) * scale + shift
 
     def y(value: float) -> float:
         return 0.5 + ((value - 0.5) * shown_h) * scale
@@ -292,6 +296,7 @@ def _face_boxes(
     canvas: _Canvas,
     scale: float,
     sample: FaceSampler,
+    position_x: float = 0.0,
 ) -> tuple[list[NormalizedBox], dict[str, Any]]:
     """The speaker's face over ``window`` (cut-timeline seconds), on the canvas.
 
@@ -338,6 +343,7 @@ def _face_boxes(
                 display_height=display_height,
                 canvas=canvas,
                 scale=scale,
+                position_x=position_x,
             )
         )
         is not None
@@ -364,11 +370,14 @@ def place_talking_title(
     canvas: _Canvas,
     scale: float = 1.0,
     sample: FaceSampler | None = None,
+    position_x: float = 0.0,
 ) -> tuple[dict, dict[str, Any]]:
     """``row`` moved off the speaker's face (and clear of the captions), plus
     a receipt for the job debug view. Never raises: anything that goes wrong
     while measuring leaves the row where it was. ``sample`` defaults to
-    `render_geometry.sample_face_regions` (looked up per call)."""
+    `render_geometry.sample_face_regions` (looked up per call). ``scale`` and
+    ``position_x`` are the speaker clip's main-track transform (letterbox scale,
+    KRI-547 face-filled crop shift), so the face is mapped where it is drawn."""
     default_y = float(row.get("y_frac") or 0.15)
     try:
         faces, receipt = _face_boxes(
@@ -380,6 +389,7 @@ def place_talking_title(
             canvas=canvas,
             scale=scale,
             sample=sample or sample_face_regions,
+            position_x=position_x,
         )
         probe = _translate_centered_box_to_y(_measure_title_box(row, canvas=canvas), default_y)
         chosen, decision = choose_title_y_frac(probe, default_y, faces)

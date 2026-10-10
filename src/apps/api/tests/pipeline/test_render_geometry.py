@@ -535,3 +535,139 @@ def test_guided_text_best_effort_never_prefers_a_chrome_unsafe_candidate() -> No
     picked = receipt["evaluated"][receipt["candidate_index"]]
     assert picked["clears_chrome"] is True
     assert chosen == pytest.approx(0.16)  # earliest chrome-safe candidate on a coverage tie
+
+
+# ── KRI-547: raw detector boxes for a caller that maps the face first ─────────
+
+
+def test_protection_box_is_the_clamp_then_the_padding():
+    from app.pipeline.render_geometry import (  # noqa: PLC0415
+        _face_protection_box,
+        clamp_face_width,
+        pad_face_box,
+    )
+
+    normal = NormalizedBox(0.2, 0.15, 0.45, 0.6)
+    merged = NormalizedBox(0.05, 0.1, 0.85, 0.7)
+    for raw in (normal, merged):
+        assert _face_protection_box(raw) == pad_face_box(clamp_face_width(raw))
+    assert clamp_face_width(normal) == normal
+    assert clamp_face_width(merged).width == pytest.approx(0.55)
+    padded = pad_face_box(normal)
+    assert (padded.left, padded.top, padded.right, padded.bottom) == pytest.approx(
+        (0.14, 0.13, 0.51, 0.68)
+    )
+
+
+def test_raw_boxes_skip_the_protection_box_on_every_path(monkeypatch):
+    import json  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    import app.pipeline.render_geometry as geometry  # noqa: PLC0415
+
+    raw = {"left": 0.2, "top": 0.15, "right": 0.45, "bottom": 0.6}
+    assert geometry._face_region_at(3.0, raw, raw_boxes=True).box == NormalizedBox(**raw)
+    assert geometry._face_region_at(3.0, raw).box == geometry._face_protection_box(
+        NormalizedBox(**raw)
+    )
+
+    stream = "\n".join(
+        json.dumps({"anchor": {"at_s": at, "decoded": True, "box": raw}}) for at in (1.0, 2.0)
+    )
+    partial, attempted, decoded = geometry._partial_samples_from_stream(stream, raw_boxes=True)
+    assert (attempted, decoded) == (2, 2)
+    assert [region.box for region in partial] == [NormalizedBox(**raw)] * 2
+    padded, _, _ = geometry._partial_samples_from_stream(stream)
+    assert padded[0].box == geometry._face_protection_box(NormalizedBox(**raw))
+
+    payload = {"attempted": 1, "decoded": 1, "samples": [{"at_s": 1.0, "box": raw}]}
+    monkeypatch.setattr(
+        geometry.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=json.dumps(payload), stderr=""),
+    )
+    regions, receipt = geometry.sample_face_regions(
+        "/tmp/c.mp4", [1.0], count_decoded=True, raw_boxes=True
+    )
+    assert [region.box for region in regions] == [NormalizedBox(**raw)]
+    assert receipt["decoded"] == 1
+    default, _ = geometry.sample_face_regions("/tmp/c.mp4", [1.0])
+    assert default[0].box == geometry._face_protection_box(NormalizedBox(**raw))
+
+
+# ── KRI-547 follow-up: strict face-core regions and flush corners for PiP cards ──
+
+
+def _card(**extra):
+    return {
+        "id": "c1",
+        "position": "custom",
+        "x_frac": 0.74,
+        "y_frac": 0.22,
+        "scale": 0.36,
+        "start_s": 0.0,
+        "end_s": 5.0,
+        **extra,
+    }
+
+
+def test_a_strict_region_rejects_an_overlap_the_iou_gate_tolerates():
+    from app.pipeline.render_geometry import (  # noqa: PLC0415
+        MediaFootprint,
+        _box_for_overlay,
+        arbitrate_media_overlays,
+    )
+
+    footprint = {"c1": MediaFootprint(aspect_ratio=1.0)}
+    card = _box_for_overlay(_card(), footprint=footprint["c1"])
+    # A sliver of face core under the card's bottom-left corner: IoU far below 0.02.
+    sliver = NormalizedBox(
+        card.left - 0.2, card.bottom - 0.005, card.left + 0.005, card.bottom + 0.2
+    )
+    assert 0 < card.iou(sliver) <= 0.02
+    tolerant, _ = arbitrate_media_overlays(
+        [_card()],
+        protected_boxes=[ProtectedRegion(0.0, 9.0, sliver, "face_core")],
+        footprints_by_id=footprint,
+    )
+    assert (tolerant[0]["x_frac"], tolerant[0]["y_frac"]) == (0.74, 0.22)
+    strict, receipts = arbitrate_media_overlays(
+        [_card()],
+        protected_boxes=[ProtectedRegion(0.0, 9.0, sliver, "face_core")],
+        footprints_by_id=footprint,
+        strict_kinds=frozenset({"face_core"}),
+    )
+    moved = _box_for_overlay(strict[0], footprint=footprint["c1"])
+    assert moved.intersection_area(sliver) == 0
+    assert receipts[0]["decision"] in ("moved", "shrunk")
+
+
+def test_flush_corners_are_tried_only_when_asked():
+    from app.pipeline.render_geometry import (  # noqa: PLC0415
+        MediaFootprint,
+        _box_for_overlay,
+        arbitrate_media_overlays,
+    )
+
+    # A head filling the middle of a close-up and the caption band: the 0.2/0.8 grid
+    # misses the thin strip beside the head even at the smallest shrink.
+    protected = [
+        ProtectedRegion(0.0, 9.0, NormalizedBox(0.12, 0.23, 0.79, 0.7), "face_core"),
+        ProtectedRegion(0.0, 9.0, NormalizedBox(0.0, 0.6, 1.0, 1.0), "captions"),
+    ]
+    footprint = {"c1": MediaFootprint(aspect_ratio=1080 / 1920)}
+    kwargs = {"protected_boxes": protected, "footprints_by_id": footprint}
+    grid, receipts = arbitrate_media_overlays(
+        [_card()], strict_kinds=frozenset({"face_core"}), **kwargs
+    )
+    assert grid == [] and receipts[0]["decision"] == "omitted_no_safe_candidate"
+    hugged, _ = arbitrate_media_overlays(
+        [_card()], strict_kinds=frozenset({"face_core"}), hug_corners=True, **kwargs
+    )
+    box = _box_for_overlay(hugged[0], footprint=footprint["c1"])
+    assert box.right == pytest.approx(0.98) and box.top == pytest.approx(0.02)
+    assert box.intersection_area(protected[0].box) == 0
+    # Defaults are the pre-KRI-547 behaviour exactly.
+    assert arbitrate_media_overlays([_card()], **kwargs) == arbitrate_media_overlays(
+        [_card()], strict_kinds=frozenset(), hug_corners=False, **kwargs
+    )

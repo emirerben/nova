@@ -313,6 +313,16 @@ class PlanFacts:
     # The language the rendered captions are in, and the language that was spoken.
     caption_language: str | None = None
     spoken_language: str | None = None
+    # KRI-547: how a phone Talking render framed a sideways speaker clip for a
+    # "vertical / keep my face in frame" ask (`variant["speaker_framing"]`): "face_fill",
+    # "letterbox" or "centre_fill", and why. None = no framing receipt (no such ask, a
+    # draft, or a render that does not record one): nothing about framing is claimed.
+    speaker_framing: str | None = None
+    speaker_framing_reason: str | None = None
+    # KRI-547: pop-ins the render dropped for lack of room, as (trigger, "no_room") when
+    # no spot cleared the face and captions, or (trigger, "overlap") when another pop-in
+    # held the spot at that moment (`phone_beat_receipt.unplaced[]`).
+    beat_room_drops: tuple[tuple[str, str], ...] = ()
     # KRI-549: the caption lines a finished phone render shows (its `caption_cues` text, in
     # order); () = it shows none. None = unknown (a draft, an editor edit, a cloud render).
     caption_texts: tuple[str, ...] | None = None
@@ -1106,6 +1116,8 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     elif variant.get("resolved_archetype") == "narrated":
         changes["audio_strategy"] = "voiceover"
     changes.update(_rendered_speech_facts(variant))
+    changes.update(_speaker_framing_facts(variant))
+    changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
     changes.update(_rendered_caption_facts(variant))
     rendered = _rendered_clip_durations(variant)
     if rendered is not None:
@@ -2530,6 +2542,80 @@ def _never_heard_problem(triggers: Iterable[str]) -> str:
     )
 
 
+# KRI-547: why a pop-in that WAS heard still didn't show. Card geometry drops a card
+# with "no_safe_spot" when no spot clears the face and the captions, and the beat lane
+# with "overlap" (or arbitration with "duplicate") when another pop-in holds the spot.
+_NO_ROOM_REASONS = frozenset({"no_safe_spot"})
+_OVERLAP_REASONS = frozenset({"overlap", "duplicate"})
+
+
+def _beat_room_facts(receipt: object) -> dict[str, Any]:
+    """``beat_room_drops`` off a variant's ``phone_beat_receipt`` (``{}`` when none)."""
+    if not isinstance(receipt, Mapping) or receipt.get("matcher") in ("manual", "failed", None):
+        return {}
+    drops: list[tuple[str, str]] = []
+    unplaced = receipt.get("unplaced")
+    for entry in unplaced if isinstance(unplaced, list) else []:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("trigger"), str):
+            continue
+        reason = entry.get("reason")
+        if reason in _NO_ROOM_REASONS:
+            drops.append((entry["trigger"], "no_room"))
+        elif reason in _OVERLAP_REASONS:
+            drops.append((entry["trigger"], "overlap"))
+    return {"beat_room_drops": tuple(dict.fromkeys(drops))} if drops else {}
+
+
+def _beat_room_drop(facts: PlanFacts, name: str) -> str | None:
+    """``no_room`` / ``overlap`` when the render dropped ``name``'s pop-in for lack of room."""
+    return next(
+        (kind for trigger, kind in facts.beat_room_drops if _trigger_heard(name, trigger)), None
+    )
+
+
+def _beat_room_problem(req: BriefRequirement, facts: PlanFacts, names: Sequence[str]) -> str | None:
+    """The honest sentence for this ask's pop-ins that had no room (``None`` if none).
+
+    A pop-in is this ask's when it matches one of ``names``, or -- for an ask whose
+    trigger words could not be named ("'İlk durak' dediğinde ...") -- when its trigger
+    appears in the requirement's own words."""
+    text = _req_text(req)
+    drops = [
+        (trigger, kind)
+        for trigger, kind in facts.beat_room_drops
+        if (
+            any(_trigger_heard(n, trigger) for n in names)
+            if names
+            else _contains_text(text, _fold(trigger))
+        )
+    ]
+    if not drops:
+        return None
+    parts: list[str] = []
+    no_room = [trigger for trigger, kind in drops if kind == "no_room"]
+    overlap = [trigger for trigger, kind in drops if kind == "overlap"]
+    if no_room:
+        parts.append(
+            say(
+                en=(
+                    f"There was no room on screen for {_names(no_room)} without covering "
+                    "your face or the captions"
+                ),
+                tr=(
+                    f"{_names(no_room)} için yüzünü ya da altyazıları kapatmadan ekranda yer yoktu"
+                ),
+            )
+        )
+    if overlap:
+        parts.append(
+            say(
+                en=f"{_names(overlap)} would have landed on another pop-in at the same moment",
+                tr=f"{_names(overlap)} aynı anda başka bir görselin üstüne denk gelirdi",
+            )
+        )
+    return "; ".join(parts)
+
+
 def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
     """Where the met pop-ins landed, in time order; None when the render gave no times."""
     timed = sorted((b for b in placements if b.at_s is not None), key=lambda b: b.at_s or 0.0)
@@ -2578,8 +2664,11 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         elif not beats:
             # Nothing was placed at all: every unheard word is this ask's problem.
             unheard = list(facts.unheard_beat_triggers) if not names else _unheard_for(facts, names)
+            room = _beat_room_problem(req, facts, names)
             if unheard:
                 problems.append(_never_heard_problem(unheard))
+            elif room:
+                problems.append(room)
             else:
                 problems.append(
                     say(
@@ -2606,8 +2695,12 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 placements = list(beats)
             elif matched:
                 placements = matched
-            elif all(any(_trigger_heard(n, u) for u in unheard) for n in names):
-                # Everything this ask is about was never said: nothing of it landed.
+            elif all(
+                any(_trigger_heard(n, u) for u in unheard) or _beat_room_drop(facts, n)
+                for n in names
+            ):
+                # Everything this ask is about was never said, or had no room on
+                # screen (KRI-547): nothing of it landed.
                 placements = []
             else:
                 # The sentence's own words matched no beat: judge the pop-ins as a whole
@@ -2624,6 +2717,11 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             ]
             if unheard:
                 problems.append(_never_heard_problem(unheard))
+            # Named words: only the ones that didn't land; unnamed: the ask's own words.
+            room = None if named and not missing else _beat_room_problem(req, facts, missing)
+            if room:
+                problems.append(room)
+                missing = [n for n in missing if not _beat_room_drop(facts, n)]
             unresolved = [
                 t
                 for t in facts.dropped_beat_triggers
@@ -2653,7 +2751,11 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                             tr="Çıkan görsellerin hiçbiri ses çalmıyor",
                         )
                     )
-                if _VISUAL_RE.search(text) and not any(b.visual_id for b in placements):
+                if (
+                    _VISUAL_RE.search(text)
+                    and not any(b.visual_id for b in placements)
+                    and not room  # KRI-547: the dropped card is the reason, told above
+                ):
                     problems.append(
                         say(
                             en="None of the pop-ins shows a photo or sticker",
@@ -3242,6 +3344,122 @@ def describe_text_look(req: BriefRequirement, facts: PlanFacts) -> str | None:
             field_name = say(en=_STYLE_FIELD_NAMES[name][0], tr=_STYLE_FIELD_NAMES[name][1])
             parts.append(f"{field_name}: {shown}")
     return "; ".join(parts)[:300] or None
+
+
+# KRI-547: "I filmed it sideways but want a vertical video, keep my face in frame".
+# The phone Talking worker reads the same words off the approved brief
+# (`app.kria.speaker_framing_ask`) and records how it framed the speaker on the
+# variant (`phone_speaker_framing`); these judge the ask from that receipt.
+_FRAMING_RECEIPT_MODES = frozenset({"face_fill", "letterbox", "centre_fill"})
+
+
+def _wants_speaker_framing(req: BriefRequirement) -> bool:
+    """A style ask for a vertical / full-screen / face-in-frame video, and nothing a
+    more specific checker owns (captions, pop-ins, the closing shot, speech cleanup)."""
+    from app.kria.speaker_framing_ask import requirement_asks_vertical_framing  # noqa: PLC0415
+
+    return requirement_asks_vertical_framing(req) and not (
+        _wants_captions(req) or _wants_beats(req) or _wants_closing(req) or _wants_cleanup(req)
+    )
+
+
+def _speaker_framing_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    """``speaker_framing`` / ``speaker_framing_reason`` off a variant's framing receipt."""
+    receipt = variant.get("speaker_framing")
+    if not isinstance(receipt, Mapping) or receipt.get("mode") not in _FRAMING_RECEIPT_MODES:
+        return {}
+    reason = receipt.get("reason")
+    return {
+        "speaker_framing": str(receipt["mode"]),
+        "speaker_framing_reason": str(reason) if isinstance(reason, str) and reason else None,
+    }
+
+
+def _framing_fallback_reason(reason: str | None, *, cropped: bool) -> str:
+    """Why the face crop was not used, and what the creator sees instead."""
+    shown = (
+        say(
+            en="so the video is cropped to the middle and your face can leave the frame",
+            tr="o yüzden video ortadan kırpıldı ve yüzün kadrajdan çıkabilir",
+        )
+        if cropped
+        else say(
+            en="so the whole frame shows with black bars above and below",
+            tr="o yüzden görüntünün tamamı üstte ve altta siyah bantlarla görünüyor",
+        )
+    )
+    if reason == "face_moves_too_much":
+        why = say(
+            en="Your face moves too far for one vertical crop to hold it",
+            tr="Yüzün tek bir dikey kadraja sığmayacak kadar hareket ediyor",
+        )
+    elif reason == "face_under_captions":
+        why = say(
+            en="A vertical crop would put the captions over your face",
+            tr="Dikey kırpma altyazıları yüzünün üstüne getirirdi",
+        )
+    elif reason == "creator_chose_bars":
+        return say(
+            en="You chose black bars in the editor, so the whole frame shows",
+            tr="Editörde siyah bantları seçtin, o yüzden görüntünün tamamı görünüyor",
+        )
+    elif reason == "creator_chose_crop":
+        return say(
+            en=(
+                "You chose crop in the editor, so the video is cropped to the middle "
+                "and your face can leave the frame"
+            ),
+            tr=(
+                "Editörde kırpmayı seçtin, o yüzden video ortadan kırpıldı ve yüzün "
+                "kadrajdan çıkabilir"
+            ),
+        )
+    else:
+        why = say(
+            en="I couldn't find your face reliably in the clip",
+            tr="Klipte yüzünü güvenle bulamadım",
+        )
+    return f"{why}, {shown}"
+
+
+def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    mode = facts.speaker_framing
+    if mode is None:
+        reason = (
+            say(
+                en="This video didn't record how it framed you, so I can't check it.",
+                tr="Bu video seni nasıl kadrajladığını kaydetmedi, o yüzden kontrol edemiyorum.",
+            )
+            if facts.rendered_variant
+            else say(
+                en="I'll check the framing on the finished video.",
+                tr="Kadrajı video hazır olunca kontrol edeceğim.",
+            )
+        )
+        return _receipt(req, "partial", reason, verification="unchecked")
+    if mode == "face_fill":
+        return _receipt(
+            req,
+            "met",
+            say(
+                en="The video fills the vertical frame and your face stays in it throughout",
+                tr="Video dikey ekranı dolduruyor ve yüzün baştan sona kadrajda kalıyor",
+            ),
+        )
+    if facts.speaker_framing_reason == "not_landscape":
+        return _receipt(
+            req,
+            "met",
+            say(
+                en="Your clip is already vertical, so it fills the frame",
+                tr="Klibin zaten dikey, o yüzden ekranı dolduruyor",
+            ),
+        )
+    return _receipt(
+        req,
+        "partial",
+        _framing_fallback_reason(facts.speaker_framing_reason, cropped=mode == "centre_fill"),
+    )
 
 
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -4342,6 +4560,8 @@ def _check_closing_speech(req: BriefRequirement, facts: PlanFacts) -> Requiremen
 
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
+    if _wants_speaker_framing(req):
+        return True
     if _wants_cleanup(req) or _wants_captions(req):
         return True
     if judged_at_render(req):
@@ -4385,6 +4605,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         # edit: the cleanup ask owns the sentence; the length it names is judged
         # inside it. Elsewhere the sentence takes its kind's usual path.
         return _check_speech_cleanup(req, facts)
+    if _wants_speaker_framing(req):
+        return _check_speaker_framing(req, facts)
     if facts.rendered_montage:
         # KRI-546: a finished phone montage shows which files repeat and whether the
         # closing clip's own line plays whole; every other plan keeps its usual path.

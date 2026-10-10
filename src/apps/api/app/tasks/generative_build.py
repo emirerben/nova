@@ -6653,6 +6653,43 @@ def _run_phone_subtitled_job(
                     analysis_view="full_clip"
                 )
 
+            # KRI-547: the creator asked for a vertical / full-screen / face-in-frame
+            # video. A sideways speaker clip is then face-filled -- the engine's
+            # cover fill slid onto the face, sampled across the kept take -- when
+            # one static window holds it, else it keeps today's framing and the
+            # receipt says why. No ask, or the kill switch off: `speaker_framing`
+            # stays None and every statement below runs exactly as before.
+            speaker_framing = (
+                _phone_speaker_framing(
+                    snapshot,
+                    binding=binding,
+                    clip_path=clip_path,
+                    keep_segments=(
+                        list(cut_plan.keep_segments)
+                        if cut_plan is not None and cut_plan.removed
+                        else [(0.0, float(binding.original.duration_s))]
+                    ),
+                    landscape_fit=landscape_fit,
+                )
+                if settings.phone_speaker_face_fill_enabled
+                else None
+            )
+            speaker_position_x = speaker_framing.position_x if speaker_framing else None
+            # Everything placed against the face (title, closing text, cards) maps
+            # it through the same crop the recipe draws.
+            framed_fit = "fill" if speaker_position_x is not None else landscape_fit
+            face_box_to_canvas = (
+                _phone_face_box_mapper(binding, speaker_position_x)
+                if speaker_position_x is not None
+                else None
+            )
+            framed_compile: dict[str, Any] = (
+                {"speaker_position_x": speaker_position_x} if speaker_position_x is not None else {}
+            )
+            framed_grounding: dict[str, Any] = (
+                {"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}
+            )
+
             # KRI-177: auto-detect the SPOKEN language unless the creator
             # explicitly asked for a specific caption language (already parsed +
             # validated into `caption_language_req` above) — never the plan/job
@@ -6895,7 +6932,8 @@ def _run_phone_subtitled_job(
                     binding=binding,
                     clip_path=clip_path,
                     keep_segments=speaker_keep_segments,
-                    landscape_fit=landscape_fit,
+                    landscape_fit=framed_fit,
+                    position_x=speaker_position_x or 0.0,
                 )
 
             def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
@@ -6908,7 +6946,8 @@ def _run_phone_subtitled_job(
                     binding=binding,
                     clip_path=clip_path,
                     keep_segments=speaker_keep_segments,
-                    landscape_fit=landscape_fit,
+                    landscape_fit=framed_fit,
+                    position_x=speaker_position_x or 0.0,
                 )
 
             sfx_duck: dict | None = None
@@ -6923,6 +6962,7 @@ def _run_phone_subtitled_job(
                     landscape_fit=landscape_fit,  # type: ignore[arg-type]
                     text_elements=title_rows + closing_text_rows,
                     text_elements_user_edited=bool(title_rows or closing_text_rows),
+                    **framed_compile,
                 )
             else:
                 raw_lane_request = snapshot.get(PHONE_SUBTITLED_LANES_FIELD)
@@ -6975,6 +7015,7 @@ def _run_phone_subtitled_job(
                                     # KRI-521: "when I say X, show my video" -- the
                                     # same gate the KRI-183 PiP pass uses.
                                     video_supported=video_overlays_enabled,
+                                    **framed_grounding,
                                 )
                             )
                         except OperationalError:
@@ -7071,6 +7112,7 @@ def _run_phone_subtitled_job(
                                     if overlay_layout == "fullscreen"
                                     else {}
                                 ),
+                                **framed_grounding,
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -7281,6 +7323,7 @@ def _run_phone_subtitled_job(
                         landscape_fit=landscape_fit,  # type: ignore[arg-type]
                         text_elements=text_rows,
                         text_elements_user_edited=bool(text_rows),
+                        **framed_compile,
                     )
 
                 recipe = None
@@ -7448,6 +7491,7 @@ def _run_phone_subtitled_job(
                 "variant_id": "subtitled",
                 "fit": "letterbox" if _letterboxed else "crop",
                 "landscape_fit": landscape_fit,
+                **({"framing": speaker_framing.mode} if speaker_framing is not None else {}),
             },
         )
     except Exception:  # noqa: BLE001 - observability only
@@ -7512,6 +7556,14 @@ def _run_phone_subtitled_job(
             new_entry["phone_lane_receipt"] = lane_receipt
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
+        if speaker_framing is not None:
+            # KRI-547: how the speaker was framed and why -- the brief receipt's
+            # evidence at render-ready, and what an editor Save keeps or resets.
+            new_entry["speaker_framing"] = speaker_framing.receipt()
+            if speaker_position_x is not None:
+                # A face crop IS a crop: the editor's bars/crop control shows it,
+                # and a Save without a bars/crop change keeps it.
+                new_entry["landscape_fit"] = "fill"
         if title_rows or closing_text_rows:
             # KRI-467: the title is an ordinary saved text row. `user_edited`
             # makes the read path serve it beside the projected caption
@@ -7591,6 +7643,74 @@ def _run_phone_subtitled_job(
     )
 
 
+def _phone_speaker_framing(
+    snapshot: dict,
+    *,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+) -> Any:
+    """KRI-547: how to frame the phone Talking speaker for a creator who asked
+    for a vertical / full-screen / face-in-frame video.
+
+    The ask is read deterministically off the approved brief pinned on the job
+    (``creator_brief_binding``), never a prompt field. ``None`` without such an
+    ask (or without a readable binding): the caller then compiles exactly as
+    before. Otherwise a `phone_speaker_framing.SpeakerFraming` -- face-filled,
+    or today's framing with the reason -- that never raises."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.speaker_framing_ask import brief_framing_requirement_ids  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import display_dims  # noqa: PLC0415
+    from app.pipeline.phone_speaker_framing import decide_speaker_framing  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return None
+    try:
+        brief = BriefBinding.model_validate(raw_binding).resolve()
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_speaker_framing.binding_unreadable", error=str(exc)[:200])
+        return None
+    asked_by = brief_framing_requirement_ids(brief)
+    if not asked_by:
+        return None
+    display_width, display_height = display_dims(binding.original)
+    framing = decide_speaker_framing(
+        clip_path,
+        keep_segments=keep_segments,
+        display_width=display_width,
+        display_height=display_height,
+        canvas=_STORY_CANVAS,
+        landscape_fit=landscape_fit,
+        asked_by=asked_by,
+    )
+    try:
+        record_pipeline_event("phone", "speaker_framing", framing.receipt())
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return framing
+
+
+def _phone_face_box_mapper(binding: Any, position_x: float) -> Any:
+    """Raw source face box -> the face core (eyes, nose, mouth) on the KRI-547
+    face-filled canvas (`phone_speaker_framing.face_core_mapper`), for beat and
+    PiP card grounding only; titles and captions keep the full protection."""
+    from app.pipeline.phone_recipe_shared import display_dims  # noqa: PLC0415
+    from app.pipeline.phone_speaker_framing import face_core_mapper  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+
+    display_width, display_height = display_dims(binding.original)
+    return face_core_mapper(
+        display_width=display_width,
+        display_height=display_height,
+        canvas=_STORY_CANVAS,
+        position_x=position_x,
+    )
+
+
 def _phone_talking_title_rows(
     opening_title: str,
     *,
@@ -7600,11 +7720,13 @@ def _phone_talking_title_rows(
     clip_path: str | None,
     keep_segments: list[tuple[float, float]],
     landscape_fit: str,
+    position_x: float = 0.0,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's opening title row (KRI-467), placed off the
     speaker's face, plus its placement receipt; ``([], None)`` when the title
     is empty or the clip has no time for it. ``binding`` is the speaker's
-    `PhoneSourceBinding`."""
+    `PhoneSourceBinding`; ``position_x`` is its KRI-547 face-filled crop shift
+    (with ``landscape_fit="fill"``), so the face is checked where it is drawn."""
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
     from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
@@ -7632,6 +7754,7 @@ def _phone_talking_title_rows(
         display_height=display_height,
         canvas=_STORY_CANVAS,
         scale=fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale,
+        position_x=position_x,
     )
     try:
         record_pipeline_event("phone", "subtitled_title_placement", receipt)
@@ -7649,6 +7772,7 @@ def _phone_talking_closing_rows(
     clip_path: str | None,
     keep_segments: list[tuple[float, float]],
     landscape_fit: str,
+    position_x: float = 0.0,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's closing text row (KRI-514) plus its placement
     receipt; ``([], None)`` when the text is empty or the clip has no time for
@@ -7689,6 +7813,7 @@ def _phone_talking_closing_rows(
             display_height=display_height,
             canvas=_STORY_CANVAS,
             scale=fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale,
+            position_x=position_x,
         )
     try:
         record_pipeline_event("phone", "subtitled_closing_title_placement", receipt)

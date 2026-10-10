@@ -248,6 +248,18 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     phone_subtitled_fullscreen_overlays_enabled: bool = True
+    # KRI-547 kill switch: when the approved brief asks for a vertical / 9:16 /
+    # full-screen / "keep my face in frame" video and the phone Talking speaker
+    # clip is landscape, `_run_phone_subtitled_job` samples the face across the
+    # take and cover-fills a static crop shifted onto it
+    # (`app.pipeline.phone_speaker_framing`) instead of letterboxing, and
+    # persists `variant["speaker_framing"]` for the brief receipt. Edits without
+    # such an ask are byte-identical either way. False: no ask is read, no
+    # receipt is written, landscape speakers keep `landscape_fit` exactly as
+    # before. Read per job (a worker restart picks up a flip). Rollback: `fly
+    # secrets set PHONE_SPEAKER_FACE_FILL_ENABLED=false --app nova-video` +
+    # `fly machine restart <id>` (worker). Docs: docs/pipelines/generative.md.
+    phone_speaker_face_fill_enabled: bool = True
     # KRI-136: a self-narrated (`narrated*`, no recorded voiceover) item with
     # 2+ clips that resolves to the `talking_head` archetype renders on the
     # device: the speech clip stays the main track (its audio runs the whole

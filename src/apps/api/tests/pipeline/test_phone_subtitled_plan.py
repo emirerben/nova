@@ -421,6 +421,95 @@ def test_landscape_fit_recipe_passes_phone_pilot_validation(monkeypatch):
     validate_phone_pilot_recipe(recipe)
 
 
+# KRI-547: a face-filled crop -- identity scale, the cover fill shifted sideways.
+_MAX_SHIFT_1080P = (1920 * 1920 / 1080 - 1080) / 2  # 1166.67 canvas px
+
+
+@pytest.mark.parametrize(
+    "binding_kwargs",
+    [
+        {"width": 1080, "height": 1920, "orientation_degrees": 90},
+        {"width": 1920, "height": 1080, "orientation_degrees": 0},
+    ],
+)
+def test_face_fill_shifts_every_cut_segment_and_wins_over_fit(binding_kwargs):
+    bindings = (_binding(duration_s=10.0, **binding_kwargs),)
+    plan = _cut_plan([(2.0, 3.0), (6.0, 7.0)], 10.0)
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], cut_plan=plan, landscape_fit="fit", speaker_position_x=508.44
+    )
+    clips = _speaker_clips(recipe)
+    assert len(clips) == 3
+    assert all(c.transform.scale == 1 and c.transform.position_x == 508.44 for c in clips)
+    assert all(c.transform.position_y == 0 and c.transform.rotation_degrees == 0 for c in clips)
+    # A face crop IS a crop, as far as the bars/crop inference goes.
+    assert landscape_fit_from_recipe(recipe) == "fill"
+    assert recipe.required_capabilities == {"basicComposition", "local1080Export"}
+
+
+@pytest.mark.parametrize("shift", [5000.0, -5000.0])
+def test_face_fill_shift_is_clamped_so_no_black_edge_shows(shift):
+    recipe = compile_phone_subtitled_plan(
+        (_binding(width=1920, height=1080),), caption_cues=_CUES, speaker_position_x=shift
+    )
+    [clip] = _speaker_clips(recipe)
+    assert abs(clip.transform.position_x) <= _MAX_SHIFT_1080P
+    assert abs(clip.transform.position_x) == pytest.approx(_MAX_SHIFT_1080P, abs=0.01)
+    assert clip.transform.position_x * shift > 0
+
+
+@pytest.mark.parametrize("dims", [(1080, 1920), (1080, 1080)])
+def test_face_fill_is_ignored_for_portrait_and_square_sources(dims):
+    width, height = dims
+    bindings = (_binding(width=width, height=height),)
+    base = compile_phone_subtitled_plan(bindings, caption_cues=_CUES)
+    shifted = compile_phone_subtitled_plan(bindings, caption_cues=_CUES, speaker_position_x=300.0)
+    assert shifted.model_dump_json() == base.model_dump_json()
+
+
+def test_no_face_fill_is_byte_identical_to_the_pre_kri547_recipe():
+    bindings = (_binding(width=1920, height=1080),)
+    for fit in ("fill", "fit"):
+        base = compile_phone_subtitled_plan(bindings, caption_cues=_CUES, landscape_fit=fit)
+        explicit = compile_phone_subtitled_plan(
+            bindings, caption_cues=_CUES, landscape_fit=fit, speaker_position_x=None
+        )
+        assert explicit.model_dump_json() == base.model_dump_json()
+
+
+def test_face_fill_leaves_captions_cutaways_and_the_ending_clip_alone():
+    speaker = _binding(width=1920, height=1080, duration_s=10.0)
+    cutaway = _cutaway("clip-1", 1.0, 2.0)
+    kwargs = {"caption_cues": _CUES, "cutaways": (cutaway,)}
+    fill = compile_phone_subtitled_plan((speaker,), **kwargs)
+    framed = compile_phone_subtitled_plan((speaker,), speaker_position_x=-240.0, **kwargs)
+    assert framed.text_layers == fill.text_layers
+    assert next(t for t in framed.tracks if t.id == CUTAWAY_TRACK_ID) == next(
+        t for t in fill.tracks if t.id == CUTAWAY_TRACK_ID
+    )
+    ending = SubtitledEndingClip(media_id=VIDEO_ID, gcs_path=VIDEO_PATH, generation="88")
+    recipe = compile_phone_subtitled_plan(
+        (_binding(width=1920, height=1080),),
+        caption_cues=_CUES,
+        visuals=(_pool_video_visual(),),
+        lanes=PhoneSubtitledLanes(ending_clip=ending),
+        speaker_position_x=-240.0,
+    )
+    speaker_clip, ending_clip = _speaker_clips(recipe)
+    assert speaker_clip.transform.position_x == -240.0
+    assert ending_clip.transform == type(ending_clip.transform)()
+
+
+def test_face_fill_recipe_passes_phone_pilot_validation(monkeypatch):
+    recipe = compile_phone_subtitled_plan(
+        (_binding(width=1920, height=1080),), caption_cues=_CUES, speaker_position_x=508.44
+    )
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+
+
 def test_accepts_rotated_landscape_pixels_that_display_portrait():
     # 1920x1080 pixels flagged 90 degrees display as 1080x1920 (portrait).
     bindings = (_binding(width=1920, height=1080, orientation_degrees=90),)

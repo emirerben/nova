@@ -14,6 +14,7 @@ from instead of copy-pasting again.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Sequence
 from typing import Any, Literal
 
@@ -82,6 +83,35 @@ def fit_transform(
     contain = min(canvas.width / display_w, canvas.height / display_h)
     cover = max(canvas.width / display_w, canvas.height / display_h)
     return MediaTransform(scale=contain / cover)
+
+
+def max_cover_shift_px(display_w: float, display_h: float, canvas: Canvas) -> float:
+    """How far (canvas px) the engine's cover-filled picture can slide sideways
+    before a black edge shows: half the width the cover fill overflows by."""
+    if display_w <= 0 or display_h <= 0:
+        return 0.0
+    cover = max(canvas.width / display_w, canvas.height / display_h)
+    return max(0.0, (display_w * cover - canvas.width) / 2)
+
+
+def face_fill_transform(
+    display_w: float, display_h: float, canvas: Canvas, position_x: float
+) -> MediaTransform:
+    """Main-track ``MediaTransform`` for a face-filled crop (KRI-547).
+
+    The engine cover-fills the clip centred, applies ``scale`` (identity here),
+    then moves it ``position_x`` canvas pixels to the right
+    (`KriaMediaEngine` ``Composition.transform``). ``position_x`` is clamped so
+    the shifted picture always covers the canvas; a clip with no sideways
+    overflow (portrait/square on a portrait canvas) gets the identity.
+    """
+    limit = max_cover_shift_px(display_w, display_h, canvas)
+    clamped = max(-limit, min(limit, float(position_x)))
+    # Hundredths of a pixel, rounded toward the centre so the clamp still holds.
+    shift = math.copysign(math.floor(abs(clamped) * 100) / 100, clamped) + 0.0
+    if shift == 0:
+        return MediaTransform()
+    return MediaTransform(position_x=shift)
 
 
 def display_dims(original: Any) -> tuple[int, int]:

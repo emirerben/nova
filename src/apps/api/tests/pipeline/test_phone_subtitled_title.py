@@ -415,3 +415,22 @@ def test_the_tag_compiles_with_its_background_and_needs_authored_text(monkeypatc
     monkeypatch.setattr(settings, "phone_render_verified_features", features)
     with pytest.raises(PhoneCapabilityUnavailable):
         validate_phone_pilot_recipe(recipe)
+
+
+def test_a_face_filled_speaker_is_mapped_through_the_crop_shift():
+    """KRI-547: the engine slides a face-filled crop ``position_x`` canvas pixels
+    right, so a face in the source's left third lands mid-canvas."""
+    face = NormalizedBox(0.2, 0.15, 0.45, 0.6)
+    shift = 512.0
+    mapped = source_box_to_canvas(
+        face, display_width=1920, display_height=1080, canvas=_CANVAS, position_x=shift
+    )
+    centred = source_box_to_canvas(face, display_width=1920, display_height=1080, canvas=_CANVAS)
+
+    # Centred (no shift), the face is cut by the left edge of the crop.
+    assert centred is not None and centred.left == 0.0 and centred.right < 0.5
+    assert mapped is not None
+    shown = 1920 * 1920 / 1080 / 1080  # cover-filled width in canvas widths
+    assert mapped.left == pytest.approx(0.5 + (0.2 - 0.5) * shown + shift / 1080)
+    assert mapped.right == pytest.approx(0.5 + (0.45 - 0.5) * shown + shift / 1080)
+    assert (mapped.top, mapped.bottom) == pytest.approx((0.15, 0.6))

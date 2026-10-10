@@ -761,3 +761,153 @@ def test_pip_receipt_has_no_layout_key(monkeypatch):
         _open_session, job_id=str(uuid.uuid4()), words=[], duration_s=10.0, clip_path=None
     )
     assert "layout" not in grounded.receipt
+
+
+def test_a_face_filled_speaker_is_avoided_where_the_crop_draws_it(monkeypatch):
+    """KRI-547: on a face-filled crop of a sideways clip, the speaker in the
+    source's left third fills the middle of the canvas. The sampler is asked
+    for RAW boxes and their eyes-nose-mouth core is mapped through the crop, so
+    the card never touches the core (the unmapped source box would have left
+    the default corner "clear" right on top of the face)."""
+    from app.pipeline.phone_speaker_framing import face_core_mapper  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+
+    asset = _asset("a1", subject="screenshot")
+    _patch_assets(monkeypatch, [asset])
+    monkeypatch.setattr(pg.settings, "gemini_api_key", None, raising=False)
+    monkeypatch.setattr(
+        pg, "heuristic_match", lambda *a, **k: [_placement("a1", start_s=3.0, end_s=5.0)]
+    )
+    raw_face = NormalizedBox(0.2, 0.15, 0.45, 0.6)
+    calls: list[dict] = []
+
+    def _fake_sample_face_regions(video_path, anchor_times_s, **kwargs):
+        calls.append(kwargs)
+        return [ProtectedRegion(0.0, float("inf"), raw_face, kind="face")], {
+            "attempted": len(anchor_times_s),
+            "detected": 1,
+        }
+
+    monkeypatch.setattr(pg, "sample_face_regions", _fake_sample_face_regions)
+    mapper = face_core_mapper(
+        display_width=1920, display_height=1080, canvas=_STORY_CANVAS, position_x=597.33
+    )
+    core_on_canvas = mapper(raw_face)
+
+    unmapped = pg.ground_phone_subtitled_overlays(
+        _open_session, job_id=str(uuid.uuid4()), words=WORDS, duration_s=15.0, clip_path="/c.mp4"
+    )
+    framed = pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=WORDS,
+        duration_s=15.0,
+        clip_path="/c.mp4",
+        face_box_to_canvas=mapper,
+    )
+
+    assert "raw_boxes" not in calls[0]
+    assert calls[1]["raw_boxes"] is True
+    [corner] = unmapped.cards
+    assert (corner.x_frac, corner.y_frac) == (pg._DEFAULT_CARD_X_FRAC, pg._DEFAULT_CARD_Y_FRAC)
+    default_box = _box_for_overlay(
+        {"position": "custom", "x_frac": corner.x_frac, "y_frac": corner.y_frac, "scale": 0.36},
+        footprint=MediaFootprint(aspect_ratio=1.0),
+    )
+    assert default_box.intersection_area(core_on_canvas) > 0  # the corner IS on the face
+    [card] = framed.cards
+    box = _box_for_overlay(
+        {"position": "custom", "x_frac": card.x_frac, "y_frac": card.y_frac, "scale": card.scale},
+        footprint=MediaFootprint(aspect_ratio=1.0),
+    )
+    assert box.intersection_area(core_on_canvas) == 0
+
+
+# KRI-547 follow-up: the Kadıköy take (T3). Raw boxes the OpenCV sampler found on the
+# 568x320 analysis proxy at exactly the four anchors r4's card window samples
+# ("'İlk durak' dediğinde kahve demleme videosunu köşede küçük göster", 7.72-12.753 s),
+# and the face-fill shift the worker chose for the whole take.
+_T3_FACES = {
+    8.349: (0.2, 0.1778, 0.4625, 0.6444),
+    9.607: (0.2229, 0.2074, 0.475, 0.6556),
+    10.866: (0.1917, 0.2037, 0.4542, 0.6704),
+    12.124: (0.2062, 0.1407, 0.4646, 0.6),
+}
+_T3_SHIFT = 508.44
+_T3_BREW_ASPECT = 1080 / 1920  # kahve_demleme.mp4 is a vertical clip
+
+
+def _t3_card_geometry(monkeypatch, faces: dict[float, tuple]):
+    from app.pipeline.phone_speaker_framing import face_core_mapper  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.services.phone_reaction_grounding import _PHOTO_SLOT  # noqa: PLC0415
+
+    calls: list = []
+
+    def sample(video_path, anchor_times_s, **kwargs):
+        calls.append((list(anchor_times_s), kwargs))
+        regions = [
+            ProtectedRegion(max(0.0, at - 0.5), at + 0.5, NormalizedBox(*faces[at]), "face")
+            for at in anchor_times_s
+            if at in faces
+        ]
+        return regions, {"attempted": len(anchor_times_s), "detected": len(regions)}
+
+    monkeypatch.setattr(pg, "sample_face_regions", sample)
+    mapper = face_core_mapper(
+        display_width=1920, display_height=1080, canvas=_STORY_CANVAS, position_x=_T3_SHIFT
+    )
+    overlay = {
+        "id": "ilk-durak-video",
+        "asset_id": "brew",
+        "position": "custom",
+        **_PHOTO_SLOT,
+        "start_s": 7.72,
+        "end_s": 12.753,
+    }
+    footprints = {"ilk-durak-video": MediaFootprint(aspect_ratio=_T3_BREW_ASPECT)}
+    resolved, reasons, sampling = pg.resolve_phone_card_geometry(
+        [overlay],
+        clip_path="/tmp/kadikoy.mp4",
+        job_id="t3",
+        footprints_by_id=footprints,
+        face_box_to_canvas=mapper,
+    )
+    return resolved, reasons, sampling, calls
+
+
+def test_the_kadikoy_brewing_video_fits_the_corner_off_the_face_core(monkeypatch):
+    from app.pipeline.phone_speaker_framing import face_core_box  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import source_box_to_canvas  # noqa: PLC0415
+
+    resolved, reasons, sampling, calls = _t3_card_geometry(monkeypatch, _T3_FACES)
+
+    [(anchors, kwargs)] = calls
+    assert anchors == list(_T3_FACES)  # the fixture is every frame the window samples
+    assert kwargs["raw_boxes"] is True
+    assert (reasons, sampling) == ({}, "ok")
+    card = resolved["ilk-durak-video"]
+    # The top-right corner, small, flush against the frame edges.
+    assert card["x_frac"] > 0.8 and card["y_frac"] < 0.2
+    assert abs(card["scale"] - 0.36 * 0.55) < 1e-9
+    box = _box_for_overlay(card, footprint=MediaFootprint(aspect_ratio=_T3_BREW_ASPECT))
+    assert box.left >= 0 and box.right <= 1 and box.top >= 0
+    for at, raw in _T3_FACES.items():
+        core = source_box_to_canvas(
+            face_core_box(NormalizedBox(*raw)),
+            display_width=1920,
+            display_height=1080,
+            canvas=_STORY_CANVAS,
+            position_x=_T3_SHIFT,
+        )
+        assert box.intersection_area(core) == 0, at
+
+
+def test_a_face_core_that_fills_the_frame_still_leaves_no_safe_spot(monkeypatch):
+    # The head fills the crop edge to edge and top to bottom: no corner is clear of
+    # the eyes, nose and mouth, so the card is dropped rather than put on the face.
+    huge = dict.fromkeys(_T3_FACES, (0.17, 0.0, 0.53, 0.75))
+    resolved, reasons, _sampling, _calls = _t3_card_geometry(monkeypatch, huge)
+    assert resolved == {}
+    assert reasons == {"ilk-durak-video": "no_safe_spot"}
