@@ -10,6 +10,7 @@ from app.config import settings
 from app.kria.brief import BriefRequirement
 from app.kria.brief_checks import (
     UNIFIED_SETTLED_KINDS,
+    defers_caption_words_to_phone_render,
     defers_to_unified_montage,
     requirements_to_check_at_draft,
 )
@@ -114,3 +115,85 @@ def test_a_missing_strategy_defers_nothing(unified_on):
         )
         is False
     )
+
+
+# ------------------------------------------------------------- KRI-549 phone Talking captions
+#
+# A draft has no captions yet, so "altyazılar Türkçe olsun; Moda ... doğru yazılsın" read
+# "Bu taslaktaki altyazıları henüz kontrol edemiyorum" on the T3 draft. The phone Talking
+# writer records the captions' language and lines, and the render-ready review judges the
+# ask from them; the draft leaves it out, so the creator gets the existing "still needs an
+# output check" receipt instead (KRI-529).
+
+_T3_CAPTIONS = BriefRequirement(
+    id="c1",
+    kind="text",
+    scope="global",
+    description="altyazılar Türkçe olsun; Moda, Bahariye, Yeldeğirmeni ve Kadıköy doğru yazılsın",
+)
+_ADD_CAPTIONS = BriefRequirement(id="c2", kind="text", scope="global", description="add captions")
+_CAPTION_LOOK = BriefRequirement(
+    id="c3", kind="style", scope="global", description="yellow Turkish captions"
+)
+_ENGLISH = BriefRequirement(id="c4", kind="style", scope="global", description="English subtitles")
+_TALKING = {"edit_format": "subtitled", "audio_strategy": "original_audio"}
+
+
+@pytest.fixture
+def phone_talking_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+
+
+def _talking(strategy=None, *, clips=(PROXY,), item_format="subtitled") -> list[str]:
+    return [
+        r.id
+        for r in requirements_to_check_at_draft(
+            [_T3_CAPTIONS, _ADD_CAPTIONS, _CAPTION_LOOK, _ENGLISH],
+            creator_id=USER,
+            strategy=_TALKING if strategy is None else strategy,
+            item_edit_format=item_format,
+            clip_paths=clips,
+        )
+    ]
+
+
+def test_a_phone_talking_draft_leaves_caption_language_and_spelling_to_the_render(
+    phone_talking_on,
+):
+    # "add captions" is judged on the draft's caption style; a look ask is judged nowhere.
+    assert _talking() == ["c2", "c3"]
+    assert defers_caption_words_to_phone_render(
+        creator_id=USER,
+        edit_format="subtitled",
+        audio_strategy="original_audio",
+        clip_paths=(PROXY,),
+    )
+
+
+@pytest.mark.parametrize("fmt", ["talking_head", "narrated", "narrated_planned"])
+def test_self_narrated_speech_formats_defer_too(phone_talking_on, fmt):
+    assert _talking({"edit_format": fmt, "audio_strategy": "original_audio"}, item_format=fmt) == [
+        "c2",
+        "c3",
+    ]
+
+
+def test_a_voiceover_lane_is_left_to_the_voiceover_record(phone_talking_on):
+    strategy = {"edit_format": "narrated_planned", "audio_strategy": "voiceover"}
+    assert "c1" in _talking(strategy, item_format="narrated_planned")
+
+
+def test_cloud_clips_and_other_formats_judge_the_draft_as_before(phone_talking_on):
+    assert len(_talking(clips=(CLOUD,))) == 4
+    assert len(_talking({"edit_format": "slides", "audio_strategy": "original_audio"})) == 4
+
+
+def test_the_phone_talking_rollout_gates_the_deferral(phone_talking_on, monkeypatch):
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", False)
+    assert len(_talking()) == 4
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [uuid.uuid4()])
+    assert len(_talking()) == 4
