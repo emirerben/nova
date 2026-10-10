@@ -44,7 +44,6 @@ from app.pipeline.phone_recipe_shared import (
     apply_landscape_fit,
     timeline_end_s,
 )
-from app.pipeline.phone_speaker_framing import SPEAKER_FRAMING_FIELD, editor_speaker_framing
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, lane_names
 from app.pipeline.phone_subtitled_plan import (
     SFX_DUCK_RECEIPT_FIELD,
@@ -805,7 +804,14 @@ def _compile_subtitled_editor_commit(
     )
     # KRI-547: a face-filled speaker keeps its crop on Save, drops it when the
     # creator picks black bars, and gets it back when they pick crop again.
-    # A variant without a framing receipt compiles exactly as before.
+    # A variant without a framing receipt compiles exactly as before. Imported here:
+    # `phone_speaker_framing` pulls in skia via `render_geometry`, and this module is on
+    # the routes' import path (the kria contracts CLI imports it without libEGL).
+    from app.pipeline.phone_speaker_framing import (  # noqa: PLC0415
+        SPEAKER_FRAMING_FIELD,
+        editor_speaker_framing,
+    )
+
     speaker_position_x, framing_receipt = editor_speaker_framing(
         variant.get(SPEAKER_FRAMING_FIELD), landscape_fit=landscape_fit
     )
