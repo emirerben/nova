@@ -137,9 +137,13 @@ struct NativeSongTrimBar: View {
                     .allowsHitTesting(false)
                 // Close handles must not steal each other's touches: past the midpoint between them, each
                 // hands over to the other (the start owns the left of it, the end the right).
-                let mid = (x(shownStart) + x(shownEnd)) / 2
-                handle(.start, center: x(shownStart), box: min(x(shownStart) - 22, mid - 44)...min(x(shownStart) + 22, mid), usable: usable)
-                handle(.end, center: x(shownEnd), box: max(x(shownEnd) - 22, mid)...max(x(shownEnd) + 22, mid + 44), usable: usable)
+                let startX: CGFloat = x(shownStart)
+                let endX: CGFloat = x(shownEnd)
+                let mid: CGFloat = (startX + endX) / 2
+                let startBox: ClosedRange<CGFloat> = min(startX - 22, mid - 44)...min(startX + 22, mid)
+                let endBox: ClosedRange<CGFloat> = max(endX - 22, mid)...max(endX + 22, mid + 44)
+                handle(.start, center: startX, box: startBox, usable: usable)
+                handle(.end, center: endX, box: endBox, usable: usable)
             }
         }
         .frame(height: barHeight)
@@ -152,43 +156,62 @@ struct NativeSongTrimBar: View {
     private func value(of handle: Handle) -> Double { handle == .start ? shownStart : shownEnd }
 
     private func handle(_ which: Handle, center: CGFloat, box: ClosedRange<CGFloat>, usable: CGFloat) -> some View {
-        let isStart = which == .start
-        return Color.clear
-            .overlay {
-                RoundedRectangle(cornerRadius: 5).fill(KriaColor.sky)
-                    .overlay(Capsule().fill(.white).frame(width: 2, height: 18))
-                    .frame(width: handleWidth, height: barHeight)
-                    .offset(x: center - (box.lowerBound + box.upperBound) / 2)
+        let isStart: Bool = which == .start
+        // Hoisted so each modifier chain below type-checks on its own (Xcode 26.x gave up on the
+        // single expression: "unable to type-check in reasonable time").
+        let boxWidth: CGFloat = box.upperBound - box.lowerBound
+        let boxMid: CGFloat = (box.lowerBound + box.upperBound) / 2
+        let knobOffset: CGFloat = center - boxMid
+        let label: String = isStart ? "Song start" : "Song end"
+        let identifier: String = isStart ? "native-editor-your-song-trim-start" : "native-editor-your-song-trim-end"
+        let timecode: String = NativeEditorYourSong.timecode(value(of: which))
+        let spoken: String = isStart ? "Starts at \(timecode)" : "Ends at \(timecode)"
+        let hint: String = controls.mode == .lipsync
+            ? "Adjust to cut your video to this point. You can undo it before saving."
+            : "Adjust to move this point one second at a time."
+        let drag: some Gesture = DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .updating($isDragging) { _, state, _ in state = true }
+            .onChanged { gesture in
+                if active == nil { begin(which) }
+                guard active == which else { return }
+                let fraction: Double = Double(gesture.translation.width / usable)
+                move(which, to: origin + fraction * span)
             }
-            .frame(width: box.upperBound - box.lowerBound, height: barHeight)
+            .onEnded { _ in finish() }
+        let knob = RoundedRectangle(cornerRadius: 5).fill(KriaColor.sky)
+            .overlay(Capsule().fill(.white).frame(width: 2, height: 18))
+            .frame(width: handleWidth, height: barHeight)
+            .offset(x: knobOffset)
+        return Color.clear
+            .overlay { knob }
+            .frame(width: boxWidth, height: barHeight)
             .contentShape(Rectangle())
             .offset(x: box.lowerBound)
             // Global space: the handle moves under the finger, so a local translation would shrink as it goes.
-            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                .updating($isDragging) { _, state, _ in state = true }
-                .onChanged { gesture in
-                    if active == nil { begin(which) }
-                    guard active == which else { return }
-                    move(which, to: origin + Double(gesture.translation.width / usable) * span)
-                }
-                .onEnded { _ in finish() })
+            .gesture(drag)
             .accessibilityElement()
-            .accessibilityLabel(isStart ? "Song start" : "Song end")
-            .accessibilityValue(isStart ? "Starts at \(NativeEditorYourSong.timecode(shownStart))"
-                                        : "Ends at \(NativeEditorYourSong.timecode(shownEnd))")
-            .accessibilityHint(controls.mode == .lipsync ? "Adjust to cut your video to this point. You can undo it before saving."
-                                                        : "Adjust to move this point one second at a time.")
-            .accessibilityIdentifier(isStart ? "native-editor-your-song-trim-start" : "native-editor-your-song-trim-end")
+            .accessibilityLabel(label)
+            .accessibilityValue(spoken)
+            .accessibilityHint(hint)
+            .accessibilityIdentifier(identifier)
             .accessibilityAdjustableAction { direction in
-                let step = direction == .increment ? 1.0 : -1.0
-                actions.begin()
-                let next = NativeSongTrimRange.clamp(value(of: which) + step, to: range(of: which, start: controls.startS, end: controls.endS))
-                switch controls.mode {
-                case .background: which == .start ? actions.moveStart(next) : actions.moveEnd(next)
-                case .lipsync: which == .start ? actions.commit(next, controls.endS) : actions.commit(controls.startS, next)
-                }
-                actions.end()
+                adjust(which, direction: direction)
             }
+    }
+
+    /// One VoiceOver step (1 s) on a handle, as a single undoable gesture.
+    private func adjust(_ which: Handle, direction: AccessibilityAdjustmentDirection) {
+        let step: Double = direction == .increment ? 1.0 : -1.0
+        actions.begin()
+        let allowed: ClosedRange<Double> = range(of: which, start: controls.startS, end: controls.endS)
+        let next: Double = NativeSongTrimRange.clamp(value(of: which) + step, to: allowed)
+        switch controls.mode {
+        case .background:
+            if which == .start { actions.moveStart(next) } else { actions.moveEnd(next) }
+        case .lipsync:
+            if which == .start { actions.commit(next, controls.endS) } else { actions.commit(controls.startS, next) }
+        }
+        actions.end()
     }
 
     private func range(of handle: Handle, start: Double, end: Double) -> ClosedRange<Double> {
