@@ -632,6 +632,7 @@ struct LineEditorConfiguration: Equatable {
     @MainActor func apply(to view: ExplicitLineTextView) {
         view.wrapsLines = wrapsLines
         view.textContainer.widthTracksTextView = wrapsLines
+        view.showsHorizontalScrollIndicator = false
         view.returnKeyType = returnKeyType
         view.autocorrectionType = autocorrectionType
         view.spellCheckingType = spellCheckingType
@@ -720,6 +721,10 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
             (textView as? ExplicitLineTextView)?.updateLineWidth()
             parent.text = textView.text
             (textView as? ExplicitLineTextView)?.reportLineCount()
+            (textView as? ExplicitLineTextView)?.scrollCaretIntoView()
+        }
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            (textView as? ExplicitLineTextView)?.scrollCaretIntoView()
         }
         func textViewDidBeginEditing(_ textView: UITextView) { parent.focused.wrappedValue = true }
         func textViewDidEndEditing(_ textView: UITextView) { parent.focused.wrappedValue = false }
@@ -772,7 +777,30 @@ final class ExplicitLineTextView: UITextView {
     override func layoutSubviews() {
         updateLineWidth()
         super.layoutSubviews()
+        keepWidestLineReachable()
         reportLineCount()
+    }
+
+    /// A non-wrapping box scrolls sideways. UITextView does not widen its content to a container wider
+    /// than the view, so the widest line must be made reachable by hand (KRI-564).
+    private func keepWidestLineReachable() {
+        guard !wrapsLines else { return }
+        // Track the width exactly (shrinking too) and pull the offset back inside it, or a line that got
+        // shorter leaves the box scrolled past its own start.
+        let needed = textContainer.size.width + textContainerInset.left + textContainerInset.right
+        if abs(contentSize.width - needed) > 0.5 { contentSize.width = needed }
+        let maxOffset = max(0, contentSize.width - bounds.width)
+        if contentOffset.x > maxOffset + 0.5 { contentOffset.x = maxOffset }
+    }
+
+    /// Keeps the caret on screen in a non-wrapping box: scrolls right as the creator types past the edge
+    /// and back left when the caret moves back. UITextView only follows the caret vertically.
+    func scrollCaretIntoView() {
+        guard !wrapsLines, bounds.width > 0, let end = selectedTextRange?.end else { return }
+        layoutIfNeeded()
+        let caret = caretRect(for: end).insetBy(dx: -12, dy: 0)
+        guard caret.minX.isFinite, caret.maxX.isFinite else { return }
+        scrollRectToVisible(caret, animated: false)
     }
 
     /// Lines the words take at the current width, trailing newline included. Reported once per

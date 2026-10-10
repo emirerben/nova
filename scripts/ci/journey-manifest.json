@@ -93,6 +93,7 @@
         "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave"
       ],
       "paths": [
+        "src/apps/api/app/pipeline/slide_post/build.py",
         "src/apps/api/app/routes/plan_items.py",
         "src/apps/api/app/schemas/slide_post.py",
         "src/apps/api/tests/routes/test_slide_post_native_routes.py",

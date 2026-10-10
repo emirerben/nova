@@ -82,6 +82,29 @@ import XCTest
         XCTAssertEqual(element.editorElement.raw["shadow_opacity"]?.numberValue, 0, "no shadow shows 0%")
     }
 
+    /// KRI-564: small text looked different in the saved image than in the preview because the preview floored the
+    /// font at 8pt while the export scales exactly. The text must scale in proportion to the canvas.
+    func testSmallTextScalesWithTheCanvasSoPreviewMatchesTheExport() throws {
+        var element = SlidePostTextElement(id: "t1", text: "Small text")
+        element.sizePx = 12
+        element.extra[SlidePostTextElement.wrapLinesKey] = .bool(false)
+        func inkWidth(_ pixels: CGSize) throws -> Int {
+            let image = try XCTUnwrap(SlidePostOnDeviceRender.textLayer([element], pixels: pixels)?.cgImage)
+            let width = image.width, height = image.height
+            var bytes = [UInt8](repeating: 0, count: width * height * 4)
+            let context = try XCTUnwrap(CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            var minX = width, maxX = -1
+            for y in 0..<height { for x in 0..<width where bytes[(y * width + x) * 4 + 3] > 32 { minX = min(minX, x); maxX = max(maxX, x) } }
+            return maxX < minX ? 0 : maxX - minX + 1
+        }
+        let preview = try inkWidth(CGSize(width: 360, height: 640))
+        let export = try inkWidth(CGSize(width: 1080, height: 1920))
+        XCTAssertGreaterThan(preview, 0)
+        XCTAssertEqual(Double(export) / Double(preview), 3, accuracy: 0.45, "export ink is 3x the preview's, like the canvas")
+    }
+
     func testInvalidValuesAreIgnoredAndRangesClamp() {
         var element = SlidePostTextElement(id: "t1", text: "Hi")
         let before = element
@@ -92,9 +115,15 @@ import XCTest
         element.setEditorValue(.string("Loud"), forKey: "editor_preset")
         element.setEditorValue(.string("shout"), forKey: "text_case")
         element.setEditorValue(.string("x"), forKey: "background")
-        element.setEditorValue(.bool(true), forKey: "wrap_lines")
         element.setEditorValue(.object(["entrance": .string("fade")]), forKey: "animation_phases")
         XCTAssertEqual(element, before, "bad input and video-only keys change nothing")
+
+        // KRI-564: a slide keeps the video editor's `wrap_lines` contract. Absent = legacy auto-wrap.
+        XCTAssertTrue(element.wrapsLines)
+        element.setEditorValue(.string("nope"), forKey: "wrap_lines"); XCTAssertEqual(element, before, "non-bool is ignored")
+        element.setEditorValue(.bool(false), forKey: "wrap_lines"); XCTAssertFalse(element.wrapsLines)
+        element.setEditorValue(.null, forKey: "wrap_lines"); XCTAssertTrue(element.wrapsLines)
+        XCTAssertEqual(element, before, "clearing the flag restores the legacy element")
 
         element.setEditorValue(.number(9_999), forKey: "size_px"); XCTAssertEqual(element.sizePx, 200)
         element.setEditorValue(.number(1), forKey: "size_px"); XCTAssertEqual(element.sizePx, 8)

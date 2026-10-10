@@ -7996,6 +7996,12 @@
             "title": "Text Case",
             "type": "string"
           },
+          "wrap_lines": {
+            "default": null,
+            "nullable": true,
+            "title": "Wrap Lines",
+            "type": "boolean"
+          },
           "x_frac": {
             "default": null,
             "maximum": 1.0,
