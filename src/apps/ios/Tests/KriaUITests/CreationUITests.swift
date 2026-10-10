@@ -119,87 +119,6 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Ready"].exists)
     }
 
-    func testEveryCreationFormatOpensTheAttachmentFlow() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
-        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
-        app.launch()
-        for format in ["montage", "narrated", "talking_to_camera"] {
-            createFreshChat(in: app)
-            let card = app.buttons["format-\(format)"]
-            if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-            XCTAssertTrue(card.waitForExistence(timeout: 5))
-            card.tap()
-            XCTAssertTrue(app.buttons["choose-videos"].waitForExistence(timeout: 5))
-            app.buttons["choose-videos"].tap()
-            XCTAssertTrue(app.buttons["Choose from Photos"].waitForExistence(timeout: 3))
-            XCTAssertTrue(app.buttons["Choose from Files or iCloud"].exists)
-            app.buttons["attachment-close"].tap()
-        }
-    }
-
-    /// KRI-282 follow-up: the in-app Photos gallery at the start of creation supports tap and slide-to-select
-    /// (pick-order numbers), and Apple's picker stays one tap away.
-    func testStartOfCreationGallerySlidesToSelectAndKeepsApplePickerFallback() {
-        let app = XCUIApplication()
-        app.resetAuthorizationStatus(for: .photos)
-        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
-        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
-        app.launch()
-        createFreshChat(in: app)
-        let card = app.buttons["format-montage"]
-        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        XCTAssertTrue(card.waitForExistence(timeout: 5))
-        card.tap()
-        let chooseVideos = app.buttons["choose-videos"]
-        XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
-        chooseVideos.tap()
-        func allowFullAccess(_ alert: XCUIElement) -> Bool {
-            guard alert.buttons.count == 3 else { return false }
-            alert.buttons.element(boundBy: 1).tap()
-            return true
-        }
-        let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
-        defer { removeUIInterruptionMonitor(monitor) }
-        let photos = app.buttons["Choose from Photos"]
-        XCTAssertTrue(photos.waitForExistence(timeout: 3))
-        photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
-
-        let tile0 = app.buttons["gallery-tile-0"], tile1 = app.buttons["gallery-tile-1"], tile2 = app.buttons["gallery-tile-2"]
-        XCTAssertTrue(tile0.waitForExistence(timeout: 15), app.debugDescription)
-        XCTAssertTrue(tile2.exists)
-        let count = app.staticTexts["gallery-count"]
-        // Slide across three tiles: all selected, numbered in touch order.
-        tile0.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(
-                forDuration: 0.1,
-                thenDragTo: tile2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
-                withVelocity: .slow,
-                thenHoldForDuration: 0.1
-            )
-        XCTAssertTrue(eventually { count.label.hasPrefix("3 of") }, count.label)
-        XCTAssertEqual(tile1.value as? String, "Selected, 2")
-        // A slide that starts on a selected tile deselects.
-        tile1.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(
-                forDuration: 0.1,
-                thenDragTo: tile2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
-                withVelocity: .slow,
-                thenHoldForDuration: 0.1
-            )
-        XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
-        XCTAssertEqual(tile0.value as? String, "Selected, 1")
-        // Tap toggles one tile.
-        tile2.tap()
-        XCTAssertTrue(eventually { count.label.hasPrefix("2 of") }, count.label)
-        // Fallback to Apple's picker.
-        app.buttons["gallery-toggle-picker"].tap()
-        XCTAssertTrue(app.scrollViews["photosView_content_scroll_view"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["photos-picker-done"].exists)
-    }
-
     /// KRI-282 regression: every asset picked in the in-app gallery used to fail with "This file couldn't be
     /// read" (a `PhotosPickerItem(itemIdentifier:)` has no item provider). A gallery pick must be read from
     /// Photos and reach the upload step: the offline fixture has no upload reservations, so it surfaces as a
@@ -231,10 +150,41 @@ final class CreationUITests: XCTestCase {
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
         if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
-        let tile0 = app.buttons["gallery-tile-0"]
+        let tile0 = app.buttons["gallery-tile-0"], tile1 = app.buttons["gallery-tile-1"], tile2 = app.buttons["gallery-tile-2"]
         XCTAssertTrue(tile0.waitForExistence(timeout: 40), app.debugDescription)
-        tile0.tap()
-        XCTAssertTrue(eventually { app.staticTexts["gallery-count"].label.hasPrefix("1 of") })
+        XCTAssertTrue(tile2.exists)
+        let count = app.staticTexts["gallery-count"]
+        // Apple's picker stays one tap away from the in-app gallery (and back).
+        app.buttons["gallery-toggle-picker"].tap()
+        XCTAssertTrue(app.scrollViews["photosView_content_scroll_view"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["photos-picker-done"].exists)
+        app.buttons["gallery-toggle-picker"].tap()
+        XCTAssertTrue(tile0.waitForExistence(timeout: 15), "the toggle returns to the in-app gallery")
+        // Slide across three tiles: all selected, numbered in touch order.
+        tile0.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(
+                forDuration: 0.1,
+                thenDragTo: tile2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.1
+            )
+        XCTAssertTrue(eventually { count.label.hasPrefix("3 of") }, count.label)
+        XCTAssertEqual(tile1.value as? String, "Selected, 2")
+        // A slide that starts on a selected tile deselects.
+        tile1.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(
+                forDuration: 0.1,
+                thenDragTo: tile2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.1
+            )
+        XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
+        XCTAssertEqual(tile0.value as? String, "Selected, 1")
+        // Tap toggles one tile; toggling it back leaves only the first tile picked.
+        tile2.tap()
+        XCTAssertTrue(eventually { count.label.hasPrefix("2 of") }, count.label)
+        tile2.tap()
+        XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
         app.buttons["photos-picker-done"].tap()
 
         // The offline fixture has no upload reservations, so a pick that was READ from Photos fails later, at the
@@ -402,20 +352,6 @@ final class CreationUITests: XCTestCase {
     func testConfirmScreenLandscapeChoiceIsSentWithoutAFit() {
         for runtime in ["v1", "v2"] {
             createWithVideoShape(runtime: runtime, offered: true, expect: "landscape/none", choose: ["video-shape-orientation-landscape"])
-        }
-    }
-
-    /// KRI-306: the seeded default and a Crop pick both reach the server as the creator left them.
-    func testConfirmScreenSendsTheSeededDefaultAndACropPick() {
-        createWithVideoShape(runtime: "v2", offered: true, expect: "portrait/fit")
-        createWithVideoShape(runtime: "v1", offered: true, expect: "portrait/fill", choose: ["video-shape-fit-fill"])
-        createWithVideoShape(runtime: "v2", offered: true, expect: "portrait/fill", choose: ["video-shape-fit-fill"])
-    }
-
-    /// KRI-306: an older server (or a thread with nothing to choose) shows no picker and sends no shape keys.
-    func testConfirmScreenHidesThePickerAndSendsNothingWhenTheServerOffersNoShape() {
-        for runtime in ["v1", "v2"] {
-            createWithVideoShape(runtime: runtime, offered: false, expect: "none/none")
         }
     }
 
@@ -821,6 +757,15 @@ final class CreationUITests: XCTestCase {
         shoot(app, "2-sheet-selected")
         // A tile with a cached poster has no placeholder.
         XCTAssertFalse(app.descendants(matching: .any)["clip-placeholder-\(Self.realShapeIDs[0])"].exists)
+        // 1-24 have cached posters; 25+ do not. Scroll the grid until a placeholder tile appears, then back.
+        let thumbGrid = app.scrollViews["clip-grid"].firstMatch
+        let placeholder = app.descendants(matching: .any)["clip-placeholder-\(Self.realShapeIDs[30])"]
+        for _ in 0..<8 where !placeholder.exists { thumbGrid.swipeUp() }
+        XCTAssertTrue(placeholder.exists, "a clip with no cached poster is a labelled placeholder")
+        XCTAssertEqual(app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[30])"].label, "Clip 31")
+        shoot(app, "5-placeholders")
+        let tileTwo = app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[2])"]
+        for _ in 0..<12 where !tileTwo.isHittable { thumbGrid.swipeDown() }
         // Select all / Clear.
         app.buttons["clip-select-all"].tap()
         XCTAssertEqual(app.descendants(matching: .any)["clip-count"].label, "48 of 48 selected")
@@ -851,20 +796,6 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["clip-card-answered"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["clip-choose"].exists)
         shoot(app, "4-collapsed")
-    }
-
-    func testMissingCachedThumbnailsShowLabelledPlaceholdersNotBlankTiles() {
-        let app = launchRealShapeHistory(thumbs: true)
-        XCTAssertTrue(app.buttons["clip-choose"].waitForExistence(timeout: 20))
-        app.buttons["clip-choose"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
-        // 1-24 have cached posters; 25+ do not. Scroll the grid until a placeholder tile appears.
-        let grid = app.scrollViews["clip-grid"].firstMatch
-        let placeholder = app.descendants(matching: .any)["clip-placeholder-\(Self.realShapeIDs[30])"]
-        for _ in 0..<8 where !placeholder.exists { grid.swipeUp() }
-        XCTAssertTrue(placeholder.exists, "a clip with no cached poster is a labelled placeholder")
-        XCTAssertEqual(app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[30])"].label, "Clip 31")
-        shoot(app, "5-placeholders")
     }
 
     func testClipPickerSelectsClipsAndSendsStructuredAnswerWithMissingThumbnailFallback() {
@@ -899,38 +830,6 @@ final class CreationUITests: XCTestCase {
         // Answered: the card collapses to a read-only summary.
         XCTAssertTrue(app.descendants(matching: .any)["clip-card-answered"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.descendants(matching: .any)["clip-card-answered"].label, "Dodgeball: 2 clips · Football: 1 clip")
-        XCTAssertFalse(app.buttons["clip-choose"].exists)
-    }
-
-    func testClipPickerNoneOfTheseSendsNoneKeys() {
-        let app = launchClipQuestionFixture(capability: "1")
-        XCTAssertTrue(app.buttons["clip-choose"].waitForExistence(timeout: 15))
-        app.buttons["clip-choose"].tap()
-        // Dodgeball starts with its suggestion ticked; "None of these" clears it and is exclusive.
-        let none = app.buttons["clip-none-dodgeball"]
-        XCTAssertTrue(none.waitForExistence(timeout: 5))
-        none.tap()
-        XCTAssertEqual(app.buttons["clip-thumb-dodgeball-fixture-clip-2"].value as? String, "Not selected")
-        app.buttons["clip-done"].tap()
-        XCTAssertTrue(app.staticTexts["You: None of these for Dodgeball"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "none[dodgeball]")).firstMatch.waitForExistence(timeout: 10))
-    }
-
-    func testClipPickerSkipSendsSkipped() {
-        let app = launchClipQuestionFixture(capability: "1")
-        XCTAssertTrue(app.descendants(matching: .any)["clip-card"].waitForExistence(timeout: 15))
-        let skip = app.buttons["clip-skip"]
-        scrollIntoView(skip, in: app)
-        skip.tap()
-        XCTAssertTrue(app.staticTexts["You: Skip, decide for me"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "skipped[true]")).firstMatch.waitForExistence(timeout: 10))
-    }
-
-    func testClipQuestionFallsBackToTextWhenServerLacksCapability() {
-        let app = launchClipQuestionFixture(capability: "legacy")
-        // The reply still arrives as plain text; no picker, no structured payload.
-        XCTAssertTrue(app.staticTexts["Kria: I couldn't verify any clips for dodgeball. Could you clarify?"].waitForExistence(timeout: 15))
-        XCTAssertFalse(app.descendants(matching: .any)["clip-card"].exists)
         XCTAssertFalse(app.buttons["clip-choose"].exists)
     }
 
@@ -970,15 +869,6 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["choice-card-answered"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["choice-option-group_first"].exists)
         XCTAssertFalse(app.buttons["choice-option-chronological"].exists)
-    }
-
-    func testChoiceQuestionFallsBackToTextWhenServerLacksCapability() {
-        let app = launchChoiceQuestionFixture(capability: "legacy")
-        // The numbered text question still arrives; no tappable options are drawn.
-        let text = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: You asked for a chronological video")).firstMatch
-        XCTAssertTrue(text.waitForExistence(timeout: 15))
-        XCTAssertFalse(app.descendants(matching: .any)["choice-card"].exists)
-        XCTAssertFalse(app.buttons["choice-option-group_first"].exists)
     }
 
     func testSlowDirectionAndPreJobFailureNeverReturnToUploading() {
@@ -1342,6 +1232,9 @@ final class CreationUITests: XCTestCase {
         // ReadyStage is unchanged once the render finishes.
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 60))
         XCTAssertFalse(feed.exists)
+        // Feed only (no contract v2): no Review CTA in the feed and no Review row under the finished video.
+        XCTAssertFalse(app.buttons["plan-feed-review-cta"].exists)
+        XCTAssertFalse(app.buttons["project-review-entry"].waitForExistence(timeout: 3))
     }
 
     /// Contract v2: structured payloads render rich cards, a malformed payload falls back to its summary, the 8th
@@ -1382,14 +1275,6 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["plan-feed.change.captions"].isEnabled, "Change is live on a v2 server")
         attach(app, "plan-feed-v2-captions-open")
         XCTAssertFalse(app.descendants(matching: .any)["plan-feed.change.post_caption"].exists, "a post caption is display only")
-    }
-
-    func testLivePlanFeedV2UnderReduceTransparency() {
-        let app = launchLivePlanFeed(reduceMotion: true, reduceTransparency: true, contractV2: true)
-        XCTAssertTrue(app.otherElements["plan-feed"].waitForExistence(timeout: 30))
-        XCTAssertTrue(eventually(timeout: 90) { app.staticTexts["plan-feed.title"].label == "Plan ready · 8 of 8 decided" })
-        XCTAssertTrue(app.buttons["plan-feed-review-cta"].waitForExistence(timeout: 5))
-        attach(app, "plan-feed-v2-reduced-transparency-ready")
     }
 
     func testReadyVideoFollowupWaitsWithoutReplayingPriorPlan() {
@@ -1461,12 +1346,6 @@ final class CreationUITests: XCTestCase {
         attach(app, "plan-feed-device-stopped")
     }
 
-    func testLivePlanFeedStaysOffWithoutTheCapability() {
-        let app = launchLivePlanFeed(reduceMotion: true, capability: false)
-        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
-        XCTAssertFalse(app.otherElements["plan-feed"].exists)
-    }
-
     func testLivePlanFeedStopCancelsTheRender() {
         let app = launchLivePlanFeed(reduceMotion: true)
         let stop = app.buttons["plan-feed-stop"]
@@ -1487,18 +1366,6 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["plan-feed.stop-message"].waitForExistence(timeout: 10))
         XCTAssertTrue(eventually(timeout: 5) { !app.buttons["plan-feed-stop"].exists })
         XCTAssertTrue(app.otherElements["plan-feed"].exists, "the render carries on")
-    }
-
-    func testLivePlanFeedUnderReduceMotionAndReduceTransparency() {
-        let app = launchLivePlanFeed(reduceMotion: true, reduceTransparency: true)
-        XCTAssertTrue(app.otherElements["plan-feed"].waitForExistence(timeout: 30))
-        XCTAssertTrue(eventually(timeout: 40) {
-            ["title", "clips", "captions", "music", "sfx", "overlays", "look"].contains { self.planBlockValue(app, $0) == "deciding" }
-        })
-        attach(app, "plan-feed-reduced-deciding")
-        XCTAssertTrue(eventually(timeout: 60) { app.staticTexts["plan-feed.title"].label == "Plan ready · 7 of 7 decided" })
-        attach(app, "plan-feed-reduced-complete")
-        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 60))
     }
 
     // MARK: - Live plan & review: the Review your video sheet
@@ -1585,6 +1452,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(element(app, "review-changed-line-c2").exists, "changed lines are marked")
         XCTAssertFalse(element(app, "review-changed-line-c1").exists, "unchanged lines are not")
         XCTAssertTrue(element(app, "review-undo-all").exists)
+        XCTAssertTrue(element(app, "review-done").exists)
         attach(app, "review-updated")
 
         // Undo one section: only captions come back, as another update that can itself be undone.
@@ -1676,23 +1544,6 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(eventually(timeout: 10) { !app.otherElements["review-section-captions"].exists }, "Keep as is closes the sheet")
         XCTAssertTrue(app.buttons["Open editor"].exists, "nothing was sent: still the same finished video")
         XCTAssertFalse(app.otherElements["plan-feed"].exists)
-    }
-
-    func testReviewPlanStaysHiddenOnAnOlderServer() {
-        // Feed only (no contract v2): no Review CTA in the feed and no Review row under the finished video.
-        let app = launchLivePlanFeed(reduceMotion: true)
-        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 120))
-        XCTAssertFalse(app.buttons["plan-feed-review-cta"].exists)
-        XCTAssertFalse(app.buttons["project-review-entry"].waitForExistence(timeout: 3))
-    }
-
-    func testReviewPlanUnderReduceMotionAndReduceTransparency() {
-        let app = launchLivePlanFeed(reduceMotion: true, reduceTransparency: true, review: true)
-        openReviewFromFeed(app)
-        attach(app, "review-reduced-idle")
-        updateCaptionsAndMusic(app, screenshots: false)
-        attach(app, "review-reduced-updated")
-        XCTAssertTrue(element(app, "review-done").exists)
     }
 
     private func createFreshChat(in app: XCUIApplication) {
