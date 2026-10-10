@@ -103,8 +103,13 @@ struct SlidePostTextElement: Codable, Equatable, Identifiable, Sendable {
         // Style keys not typed yet (rotation, outline colour, shadow, preset ...) move as a set: a default
         // on the source clears the target's value instead of leaving it behind.
         for key in Self.styleExtraKeys { extra[key] = nil }
-        for (key, value) in other.extra { extra[key] = value }
+        // `wrap_lines` belongs to the words, not the look: each text keeps its own line breaking.
+        for (key, value) in other.extra where key != Self.wrapLinesKey { extra[key] = value }
     }
+    static let wrapLinesKey = "wrap_lines"
+    /// False once the creator has typed the text: only their own line breaks apply, exactly like the video
+    /// editor's text (KRI-508). Absent = the legacy auto-wrap at `maxWidthFrac`.
+    var wrapsLines: Bool { extra[Self.wrapLinesKey] != .bool(false) }
     var isInvalid: Bool {
         // The server counts code points, not grapheme clusters, so count unicode scalars.
         text.isEmpty || text.unicodeScalars.count > Self.maxLength || fontFamily.isEmpty || !Self.sizeRange.contains(sizePx)
@@ -958,7 +963,8 @@ private struct SlidePostItemResponse: Decodable {
         var edits = value.slides[index].edits ?? SlidePostEdits()
         var texts = edits.effectiveTexts
         guard texts.count < SlidePostEdits.maxTexts else { return nil }
-        let element = SlidePostTextElement(text: text)
+        var element = SlidePostTextElement(text: text)
+        element.extra[SlidePostTextElement.wrapLinesKey] = .bool(false)
         texts.append(element)
         edits.setTexts(texts)
         value.slides[index].edits = edits

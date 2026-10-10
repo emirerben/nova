@@ -80,6 +80,7 @@ _PARITY_STYLE_FIELDS = (
     "text_case",
     "letter_spacing",
     "line_spacing",
+    "wrap_lines",
 )
 
 
@@ -135,6 +136,9 @@ class SlideTextElement(BaseModel):
     text_case: Literal["none", "upper", "lower", "title"] | None = None
     letter_spacing: float | None = None  # em, clamped to [-0.05, 0.5]
     line_spacing: float | None = None  # multiplier, clamped to [0.5, 3.0]
+    # False = only explicit newlines break lines (the video editor's KRI-508 contract);
+    # None = legacy auto-wrap at max_width_frac.
+    wrap_lines: bool | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_parity_fields(self, handler):

@@ -19,7 +19,7 @@ extension SlidePostTextElement {
     ]
     private static let hexColorKeys: Set<String> = ["stroke_color", "shadow_color", "background_color"]
     /// Raw keys the panel may write that a slide does not store at all (video-only concepts).
-    private static let ignoredKeys: Set<String> = ["wrap_lines", "animation_phases", "effect", "highlight_color", "behind_subject"]
+    private static let ignoredKeys: Set<String> = ["animation_phases", "effect", "highlight_color", "behind_subject"]
 
     /// The text as the real Text panel sees it.
     var editorElement: EditorTextElement {
@@ -71,6 +71,8 @@ extension SlidePostTextElement {
         case "background":
             if let next = value?.stringValue, ["none", "box"].contains(next) { background = next }
             else if value == nil { background = "none" }
+        case Self.wrapLinesKey:
+            if case .bool(let wraps)? = value { extra[key] = .bool(wraps) } else if value == nil { extra[key] = nil }
         case "rotation_deg":
             guard let number = Self.clamped(value?.numberValue, Self.rotationRange), number != 0 else { extra["rotation_deg"] = nil; return }
             extra["rotation_deg"] = .number(number)
@@ -163,7 +165,7 @@ extension SlidePostTextElement {
         guard canEdit(.text) else { return }
         // The server counts code points; refuse growth past 120 but never reject a shorter edit.
         let capped = String(String.UnicodeScalarView(content.unicodeScalars.prefix(SlidePostTextElement.maxLength)))
-        mutate(id) { $0.text = capped }
+        mutate(id) { $0.text = capped; $0.extra[SlidePostTextElement.wrapLinesKey] = .bool(false) }
     }
     func updateTextTiming(id: String, startS: Double?, endS: Double?) {}
     func setTextStyle(id: String, style: String) { write(id, "font_family", .string(style)) }

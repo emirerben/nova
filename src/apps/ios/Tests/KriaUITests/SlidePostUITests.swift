@@ -769,6 +769,59 @@ import XCTest
         attach(app, "Hold-select: after corner resize")
     }
 
+    /// KRI-564: a line typed on one line stays on one line on the slide, and resizing only scales it. The edit
+    /// box scrolls sideways so the caret stays visible past the box edge and comes back when it moves back.
+    func testTypedLineStaysOnOneLineAndResizeOnlyScalesIt() {
+        let app = openRichWorkspace()
+        addText(app, "Athens")
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        let text = canvasText(app)
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        let selection = app.descendants(matching: .any)["slidepost-text-selection"].firstMatch
+        text.press(forDuration: 0.9)
+        XCTAssertTrue(selection.waitForExistence(timeout: 3))
+        let oneLineHeight = selection.frame.height
+        XCTAssertGreaterThan(oneLineHeight, 0)
+
+        // Re-open the text and type a line far wider than the canvas (it used to wrap onto four or more lines).
+        Thread.sleep(forTimeInterval: 0.9)
+        text.tap()
+        let field = app.textViews["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.press(forDuration: 1.0)
+        if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
+        let longLine = "One long line the creator typed without a single line break"
+        field.typeText(longLine)
+        attach(app, "Edit box: caret at the end of a long line")
+        // Deleting the tail pulls the box back to the start of the line; retyping it scrolls forward again.
+        let tail = " the creator typed without a single line break"
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: tail.count))
+        Thread.sleep(forTimeInterval: 0.5)
+        attach(app, "Edit box: scrolled back after deleting the tail")
+        field.typeText(tail)
+        app.buttons["slidepost-done"].tap()
+        XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 5))
+
+        XCTAssertEqual(canvasText(app).label, longLine)
+        canvasText(app).press(forDuration: 0.9)
+        XCTAssertTrue(selection.waitForExistence(timeout: 3))
+        let longHeight = selection.frame.height
+        XCTAssertLessThan(longHeight, oneLineHeight * 1.5, "the typed line stays on one line, not wrapped")
+        attach(app, "Long typed line: one line on the canvas")
+
+        // Shrinking changes the size, never the number of lines.
+        Thread.sleep(forTimeInterval: 0.9)
+        canvasText(app).tap()
+        app.buttons["Style"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-text-handle"].firstMatch.waitForExistence(timeout: 3))
+        let sizeBefore = number(canvasText(app).value as? String ?? "", after: "size")
+        preview.pinch(withScale: 0.5, velocity: -1)
+        let shrunk = NSPredicate { _, _ in self.number(self.canvasText(app).value as? String ?? "", after: "size") < sizeBefore }
+        expectation(for: shrunk, evaluatedWith: nil); waitForExpectations(timeout: 5)
+        XCTAssertLessThan(selection.frame.height, oneLineHeight * 1.5, "still one line after resizing")
+        attach(app, "Long typed line: one line after shrinking")
+    }
+
     func testTapOnHoldSelectedTextOpensEditTextWithKeyboard() {
         let app = openRichWorkspace()
         addText(app, "Athens")

@@ -288,6 +288,7 @@ def render_text_element_png(element, png_path: str, *, canvas: Canvas) -> None:
             "background_color",
             "rotation_deg",
             "max_width_frac",
+            "wrap_lines",
         )
         if getattr(element, key) is not None
     }

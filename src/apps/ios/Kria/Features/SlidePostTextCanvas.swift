@@ -314,7 +314,9 @@ struct SlidePostTextLayerView: View {
 
     private func textView(_ element: SlidePostTextElement) -> some View {
         let scale = size.width / 1080
-        let points = max(8, CGFloat(element.sizePx) * scale)
+        // No legibility floor: the export scales exactly, so a floor here makes small text look bigger on the
+        // preview than in the saved image (KRI-564).
+        let points = max(1, CGFloat(element.sizePx) * scale)
         let font = NativeFontCatalog.shared.ctFont(element.fontFamily, size: points).map(Font.init) ?? KriaFont.body(points).weight(.bold)
         let selected = accessibility?.selectedID == element.id
         let alignment: TextAlignment = element.alignment == "left" ? .leading : (element.alignment == "right" ? .trailing : .center)
@@ -329,7 +331,7 @@ struct SlidePostTextLayerView: View {
         return styled(makeText, color: Color(slideHex: element.color), alignment: alignment, stroke: stroke, shadow: element.shadowEnabled, scale: scale)
             .padding(.horizontal, element.background == "box" ? points * 0.45 : 0).padding(.vertical, element.background == "box" ? points * 0.22 : 0)
             .background { if element.background == "box" { RoundedRectangle(cornerRadius: points * 0.25, style: .continuous).fill(.black.opacity(0.55)) } }
-            .modifier(SlidePostHuggingWidth(maxWidth: size.width * CGFloat(element.maxWidthFrac ?? SlidePostTextElement.defaultWidthFrac)))
+            .modifier(SlidePostHuggingWidth(maxWidth: element.wrapsLines ? size.width * CGFloat(element.maxWidthFrac ?? SlidePostTextElement.defaultWidthFrac) : nil))
             .background(GeometryReader { geometry in
                 Color.clear.preference(key: SlidePostBlockSizeKey.self, value: [element.id: geometry.size])
             })
@@ -394,17 +396,18 @@ private struct SlidePostBlockSizeKey: PreferenceKey {
     }
 }
 
-/// Wraps its child at `maxWidth` but reports the child's own (widest-line) width, so the measured
-/// block hugs the glyphs the way the native preview's selection does. `.frame(maxWidth:)` would
+/// Wraps its child at `maxWidth` (nil = never wrap: only the creator's own line breaks apply) but reports
+/// the child's own (widest-line) width, so the measured block hugs the glyphs the way the native preview's selection does. `.frame(maxWidth:)` would
 /// instead grow to the full wrap width and draw a selection box far wider than the text.
 private struct SlidePostHuggingWidth: ViewModifier {
-    let maxWidth: CGFloat
+    let maxWidth: CGFloat?
     func body(content: Content) -> some View { HuggingLayout(maxWidth: maxWidth) { content } }
 
     private struct HuggingLayout: Layout {
-        let maxWidth: CGFloat
+        let maxWidth: CGFloat?
         func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-            subviews.first?.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil)) ?? .zero
+            // `.infinity` asks for the ideal size of each line; nil would collapse to the minimum.
+            subviews.first?.sizeThatFits(ProposedViewSize(width: maxWidth ?? .infinity, height: nil)) ?? .zero
         }
         func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
             subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
