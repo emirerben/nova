@@ -675,13 +675,17 @@ def test_prod_kadikoy_captions_no_longer_run_under_the_mark(monkeypatch, text, s
 
 
 def test_prod_kadikoy_line_breaks():
-    layers = compile_caption_layers(
-        _cues([_KADIKOY_ILK, _KADIKOY_UCUNCU]), canvas_width=1080, canvas_height=1920
-    )
-    assert [_line_texts(layer) for layer in layers] == [
-        ["İlk durak", "Moda'da, deniz kenarında", "küçücük bir yer."],
-        ["Üçüncü ve en", "sevdiğim yer", "Yeldeğirmeni'nde."],
-    ]
+    # The exact split depends on Skia's glyph metrics, which differ slightly between
+    # macOS and Linux (local "İlk durak / Moda'da, deniz kenarında / …", CI "İlk durak
+    # Moda'da, / deniz kenarında / …"). Pin what matters: both prod cues gain one line,
+    # keep every word in order, and leave no ink under the mark.
+    cues = [_KADIKOY_ILK, _KADIKOY_UCUNCU]
+    layers = compile_caption_layers(_cues(cues), canvas_width=1080, canvas_height=1920)
+    for layer, text in zip(layers, cues, strict=True):
+        lines = _line_texts(layer)
+        assert len(lines) == 3, lines
+        assert " ".join(lines).split() == text.split()
+    assert _ink_pixels_under_the_mark(layers) == 0
 
 
 @pytest.mark.parametrize("style", ["sentence", "word"])
