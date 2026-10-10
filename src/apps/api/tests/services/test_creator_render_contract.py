@@ -1078,3 +1078,97 @@ def test_the_contract_model_schema_is_unchanged_so_old_workers_can_still_read_it
         (Path(__file__).parents[1] / "fixtures" / "creator_render_contract.schema.json").read_text()
     )
     assert CreatorRenderContract.model_json_schema() == golden
+
+
+# --- described-shot labels placed by the clip-intent resolver (Tigre M1, 2026-10-10) -----
+
+
+def _per_clip_text_brief(*literals: str):
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    return CreativeBrief(
+        requirements=[
+            BriefRequirement(
+                id=f"r{i + 1}", kind="text", scope="per_clip", literal=text, description=text
+            )
+            for i, text in enumerate(literals)
+        ]
+    )
+
+
+def _label_intent(intent_id: str, text: str, *media_ids: str, value: bool = True) -> dict:
+    return {
+        "intent_id": intent_id,
+        "op": "label",
+        "attribute": f"the {intent_id} clip",
+        "creator_text": text,
+        "status": "resolved",
+        "assignments": [
+            {
+                "media_id": media_id,
+                "value": text if value else None,
+                "confidence": 0.95,
+                "grounding": "creator_text",
+            }
+            for media_id in media_ids
+        ],
+    }
+
+
+def test_described_shot_label_placed_by_a_resolved_label_intent_pins_that_clip():
+    """ "Mutfak, Çatı katı, Banyo, İskele on those shots": the planner emits no positional
+    ``shot_labels``; the resolver matched each word to a clip. The contract must pin those
+    clips, not refuse with "I need an explicit shot assignment" (prod thread E2260793)."""
+    contract = build_render_contract(
+        {
+            "resolved_clip_intents": [
+                _label_intent("kitchen", "Mutfak", "m1-03"),
+                _label_intent("loft", "Çatı katı", "m1-06"),
+                _label_intent("bathroom", "Banyo", "m1-01", value=False),
+                _label_intent("pier", "İskele", "m1-08", "m1-16"),
+            ]
+        },
+        generation_id="g",
+        brief=_per_clip_text_brief("Mutfak", "Çatı katı", "Banyo", "İskele"),
+    )
+    assert contract is not None and not contract.unresolved
+    assert [(t.role, t.text, t.media_id, t.shot_index) for t in contract.exact_texts] == [
+        ("clip", "Mutfak", "m1-03", None),
+        ("clip", "Çatı katı", "m1-06", None),
+        ("clip", "Banyo", "m1-01", None),
+        ("clip", "İskele", "m1-08", None),
+        ("clip", "İskele", "m1-16", None),
+    ]
+
+
+def test_positional_shot_labels_still_win_over_a_label_intent_for_the_same_words():
+    contract = build_render_contract(
+        {
+            "shot_labels": ["Mutfak"],
+            "resolved_clip_intents": [_label_intent("kitchen", "Mutfak", "m1-03")],
+        },
+        generation_id="g",
+        brief=_per_clip_text_brief("Mutfak"),
+    )
+    assert contract is not None and not contract.unresolved
+    # The strategy row and the brief row both pin shot 1; nothing points at a media id.
+    assert contract.exact_texts and all(
+        t.media_id is None and t.shot_index == 0 for t in contract.exact_texts
+    )
+
+
+def test_described_shot_label_nobody_placed_is_refused_naming_the_words():
+    from app.kria.reply_language import reply_language_for
+
+    strategy = {"resolved_clip_intents": [_label_intent("kitchen", "Mutfak", "m1-03")]}
+    brief = _per_clip_text_brief("Mutfak", "Banyo")
+    contract = build_render_contract(strategy, generation_id="g", brief=brief)
+    assert contract is not None
+    assert list(contract.unresolved) == [
+        "I couldn't tell which clip \"Banyo\" goes on, so I can't confirm that text."
+    ]
+    with reply_language_for("tr"):
+        contract = build_render_contract(strategy, generation_id="g", brief=brief)
+    assert contract is not None and list(contract.unresolved) == [
+        '"Banyo" yazısının hangi klibe gideceğini anlayamadım, o yüzden bu yazıyı doğrulayamıyorum.'
+    ]
