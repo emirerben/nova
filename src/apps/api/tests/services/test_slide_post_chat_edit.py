@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from app.agents import edit_copilot, editor_ops_v2
-from app.agents._runtime import ModelClient, TerminalError
+from app.agents._runtime import ModelClient, RunContext, TerminalError
 from app.agents.edit_copilot import (
     EditCopilotAgent,
     EditCopilotInput,
@@ -491,9 +491,11 @@ class _Stub:
     def __init__(self, output: EditCopilotOutput | Exception) -> None:
         self.output = output
         self.input: EditCopilotInput | None = None
+        self.ctx: RunContext | None = None
 
     def run(self, _input: EditCopilotInput, ctx: Any = None) -> EditCopilotOutput:
         self.input = _input
+        self.ctx = ctx
         if isinstance(self.output, Exception):
             raise self.output
         return self.output
@@ -598,6 +600,62 @@ async def test_run_no_op_result_is_no_effect(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("existing_cap, expected_cap", [(80.0, 40.0), (20.0, 20.0)])
+async def test_stateless_agent_cap_is_bounded_without_mutating_context(
+    monkeypatch: pytest.MonkeyPatch,
+    existing_cap: float,
+    expected_cap: float,
+) -> None:
+    assets = [_asset()]
+    draft = _draft(assets)
+    stub = _patch_agent(monkeypatch, _output([]))
+    original = RunContext(
+        job_id="job-1",
+        creator_id="creator-1",
+        request_id="request-1",
+        usage_purpose="live_eval",
+        timeout_override_s=existing_cap,
+    )
+
+    result = await run_slide_post_chat_edit(
+        draft=draft,
+        assets_by_id=_by_id(assets),
+        message="do it",
+        turns=[],
+        user_id=USER_ID,
+        server_version=7,
+        run_context=original,
+    )
+
+    assert result.outcome == "no_effect"
+    assert stub.ctx is not original
+    assert stub.ctx is not None
+    assert stub.ctx.timeout_override_s == expected_cap
+    assert stub.ctx.job_id == original.job_id
+    assert stub.ctx.creator_id == original.creator_id
+    assert stub.ctx.request_id == original.request_id
+    assert stub.ctx.usage_purpose == original.usage_purpose
+    assert original.timeout_override_s == existing_cap
+
+
+@pytest.mark.asyncio
+async def test_stateless_agent_default_cap_is_forty_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assets = [_asset()]
+    stub = _patch_agent(monkeypatch, _output([]))
+    await run_slide_post_chat_edit(
+        draft=_draft(assets),
+        assets_by_id=_by_id(assets),
+        message="do it",
+        turns=[],
+        user_id=USER_ID,
+        server_version=7,
+    )
+    assert stub.ctx is not None and stub.ctx.timeout_override_s == 40.0
+
+
+@pytest.mark.asyncio
 async def test_run_agent_failure_is_honest(monkeypatch: pytest.MonkeyPatch) -> None:
     assets = [_asset()]
     _patch_agent(monkeypatch, TerminalError("boom"))
@@ -680,9 +738,21 @@ async def test_context_overflow_is_unsupported_without_calling_or_mutating_draft
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assets = [_asset()]
-    binding = _binding("x" * 12_001)
-    draft = _draft(assets)
+    # Restore a valid legacy pin: new approvals now reject oversized context at
+    # creation, but an already stored draft must still fail closed on editing.
+    raw = _binding("legacy request").model_dump(mode="json")
+    raw["creator_request"] = "x" * 12_001
+    raw["digest"] = BriefBinding._digest(
+        raw["thread_id"], raw["state"], None, raw["creator_request"], raw["media_snapshot"]
+    )
+    binding = BriefBinding.model_validate(raw)
+    draft = _draft(assets).model_copy(update={"brief_binding": binding})
+    before = draft.model_dump(mode="json")
     monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(
+        "app.agents._model_client.default_client",
+        lambda: pytest.fail("Overflow must not call a model"),
+    )
     result = await run_slide_post_chat_edit(
         draft=draft,
         assets_by_id=_by_id(assets),
@@ -690,10 +760,10 @@ async def test_context_overflow_is_unsupported_without_calling_or_mutating_draft
         turns=[],
         user_id=USER_ID,
         server_version=7,
-        brief_binding=binding,
     )
     assert result.outcome == "unsupported" and result.draft is None
     assert "unchanged" in result.reply
+    assert draft.model_dump(mode="json") == before
 
 
 @pytest.mark.asyncio

@@ -156,10 +156,10 @@ def test_variant_without_beat_receipt_or_bed_level_keeps_today_behaviour():
 
     for req_id in ("r1", "r2", "r3", "r4", "r5"):
         assert receipts[req_id]["verification"] == "unchecked"
-    assert "Couldn't verify: clean captions" in text
-    assert "Couldn't verify: show medal photo" in text
-    assert "Couldn't verify: show watch photo" in text
-    assert "Couldn't verify: keep crowd noise" in text
+    assert "Have a look at these in the video:" in text
+    for ask in ("clean captions", "show medal photo", "show watch photo", "keep crowd noise"):
+        assert f"- {ask}" in text
+    assert "verify" not in text.lower()
 
 
 def test_a_narrated_variant_without_a_bed_level_still_knows_the_bed_is_under_the_voice():
@@ -172,7 +172,8 @@ def test_a_narrated_variant_without_a_bed_level_still_knows_the_bed_is_under_the
     assert receipts["r3"]["status"] == "met"
     assert "plays under your voice" in receipts["r3"]["reason"]
     assert receipts["r4"]["verification"] == "unchecked"
-    assert "Couldn't verify: show medal photo" in text
+    assert "- show medal photo" in text
+    assert "verify" not in text.lower()
 
 
 def test_prod_render_reply_has_no_couldnt_verify_line():

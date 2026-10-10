@@ -148,6 +148,7 @@ struct AttachmentSheet: View {
     private func uploadDestination(for mediaRole: CreationMediaRole) -> ProjectUploadDestination {
         ProjectUploadDestination.resolve(
             capabilities: capabilities?.phoneRendering,
+            creationMode: capabilities?.creationMode,
             capabilitiesLoaded: capabilitiesLoaded,
             sourcePurposes: ProjectUploadDestination.sourcePurposes(media: media, records: pendingRecords, projectID: projectID),
             role: mediaRole

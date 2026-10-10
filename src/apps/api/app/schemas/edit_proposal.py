@@ -26,10 +26,12 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
 from app.schemas.clip_intents import MAX_CLIP_INTENTS, ResolvedClipIntent
 from app.schemas.edit_frame_schedule import EditFrameSchedule
+from app.schemas.text_composition import TextCompositionProgram
 from app.schemas.text_style_intent import LabelPosition, TitleAnimation
 from app.schemas.user_song import UserSongPlan
 
@@ -1228,6 +1230,11 @@ class EditProposalSnapshot(BaseModel):
     frame_schedule: EditFrameSchedule | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # Authored and validated by the creation composer; absent keeps legacy hashes.
+    text_composition: SkipJsonSchema[TextCompositionProgram | None] = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     direction: ProposalDirection = "guided_story"
     goal: str = Field(default="", max_length=500)
     pace: ProposalPace = "balanced"
@@ -1985,6 +1992,10 @@ class MediaRefResponse(MediaRef):
 
 
 class EditProposalSnapshotResponse(EditProposalSnapshot):
+    # Server-owned executable state is persisted internally; PATCH retains it.
+    text_composition: SkipJsonSchema[TextCompositionProgram | None] = Field(
+        default=None, exclude=True
+    )
     media: list[MediaRefResponse] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
 
 

@@ -107,9 +107,18 @@ struct KeychainTokenStore: TokenStore, @unchecked Sendable {
 }
 struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { "Secure sign-in storage is unavailable." } }
 
-protocol KriaAPIClient: Sendable {
-    func slidePost(itemID: String) async throws -> SlidePostState
+/// The two calls needed while a slide-post proposal is in flight. Keeping
+/// this narrow lets fixtures control the reply and live poll independently.
+protocol SlidePostProposalClient: Sendable {
     func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal
+    func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
+}
+
+protocol KriaAPIClient: SlidePostProposalClient, Sendable {
+    func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
+    func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse
+    func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse
+    func slidePost(itemID: String) async throws -> SlidePostState
     func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse
     func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft
     func generateSlidePost(itemID: String, expectedVersion: Int) async throws
@@ -162,6 +171,10 @@ protocol KriaAPIClient: Sendable {
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted
     /// `songOrder` and `choiceSelection` are independent structured answers (a turn carries at most one); each is nil = omitted.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted
+    /// A short-lived signed URL for the thread's attached song, so the song timeline can draw and play it
+    /// (KRI-561). `generation` pins the song the question was built against; a 409 `song_changed` means it was
+    /// replaced. A 404 means the server does not offer it.
+    func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta
     func draft(threadID: UUID) async throws -> DraftSnapshot
@@ -176,6 +189,15 @@ protocol KriaAPIClient: Sendable {
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue]
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot
+    /// Live plan & review (contract v2): `GET creation-threads/{id}/plan`.
+    func planSnapshot(threadID: UUID) async throws -> PlanSnapshot
+    /// Live plan & review: "Update video". The turn is planned as editor operations on `scope` only; the
+    /// resulting approval is auto-approved by the Review view (tapping Update video is the consent).
+    func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit]) async throws -> TurnAccepted
+    /// Live plan & review: restore one section to its previous value, then re-render.
+    func undoPlanSection(threadID: UUID, sectionID: PlanSectionID, expectedThreadRevision: Int, expectedBlockRevision: Int, expectedDraftRevision: Int) async throws -> PlanSectionUndoResult
+    /// Live plan & review "Undo all": `render: true` also re-renders the restored revision.
+    func undoDraft(threadID: UUID, expectedRevision: Int, render: Bool) async throws -> DraftSnapshot
     /// KRI-443: Stop on the live plan feed. A 409 `turn_not_cancellable` means the render can no longer be stopped.
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
@@ -234,12 +256,23 @@ extension KriaAPIClient {
 /// implemented by a substitute.
 extension KriaAPIClient {
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
+    func planSnapshot(threadID: UUID) async throws -> PlanSnapshot { throw APIError.unsupported }
+    func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit]) async throws -> TurnAccepted { throw APIError.unsupported }
+    func undoPlanSection(threadID: UUID, sectionID: PlanSectionID, expectedThreadRevision: Int, expectedBlockRevision: Int, expectedDraftRevision: Int) async throws -> PlanSectionUndoResult { throw APIError.unsupported }
+    func undoDraft(threadID: UUID, expectedRevision: Int, render: Bool) async throws -> DraftSnapshot {
+        if render { throw APIError.unsupported }
+        return try await undoDraft(threadID: threadID, expectedRevision: expectedRevision)
+    }
     func refreshLibraryPosters(jobIDs: [UUID], brokenJobIDs: [UUID]) async throws -> [LibraryPoster] { throw APIError.unsupported }
     func slidePost(itemID: String) async throws -> SlidePostState { throw APIError.unsupported }
     func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal { throw APIError.unsupported }
     func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse { throw APIError.unsupported }
     func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft { throw APIError.unsupported }
     func generateSlidePost(itemID: String, expectedVersion: Int) async throws { throw APIError.unsupported }
+    func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
+    func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
+    func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
+    func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
     func requestAccountDeletion() async throws -> AccountDeletionRequest { throw APIError.unsupported }
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws { throw APIError.unsupported }
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
@@ -292,6 +325,7 @@ extension KriaAPIClient {
     }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
+    func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink { throw APIError.unsupported }
     func creationBrief(threadID: UUID) async throws -> CreativeBrief { throw APIError.unsupported }
 
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse {
@@ -317,6 +351,29 @@ extension KriaAPIClient {
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse {
         _ = itemID; _ = variantID; _ = request
         throw APIError.unsupported
+    }
+}
+
+/// `GET creation-threads/{id}/song-audio`: where to fetch the creator's song (a signed https URL valid ~15 minutes).
+struct SongAudioLink: Decodable, Equatable, Sendable {
+    let url: URL
+    let generation: Int
+    let durationS: Double?
+    let expiresAt: String?
+    enum CodingKeys: String, CodingKey { case url, generation; case durationS = "duration_s"; case expiresAt = "expires_at" }
+    init(url: URL, generation: Int, durationS: Double?, expiresAt: String? = nil) {
+        self.url = url; self.generation = generation; self.durationS = durationS; self.expiresAt = expiresAt
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let raw = try c.decode(String.self, forKey: .url)
+        guard let parsed = URL(string: raw), parsed.scheme != nil else {
+            throw DecodingError.dataCorruptedError(forKey: .url, in: c, debugDescription: "Expected a URL")
+        }
+        url = parsed
+        generation = try c.decode(Int.self, forKey: .generation)
+        durationS = (try? c.decodeIfPresent(Double.self, forKey: .durationS)).flatMap { $0 }.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        expiresAt = (try? c.decodeIfPresent(String.self, forKey: .expiresAt)).flatMap { $0 }
     }
 }
 
@@ -606,16 +663,19 @@ struct EditorCommitMusicWindow: Codable, Equatable, Sendable {
 }
 
 /// The creator's own song (KRI-428). Sent only when the user_song section changed:
-/// `volume` 0...1 and `window_start_s` are omitted when untouched; `removed`
-/// falls the edit back to the camera audio.
+/// `volume` 0...1, `window_start_s` and `window_end_s` are omitted when untouched; `removed`
+/// falls the edit back to the camera audio. `window_end_s` (KRI-561, background only) is where the music
+/// stops in absolute song seconds; the song's own length clears it. A lip-sync song is trimmed by cutting
+/// the video instead and never sends an end.
 struct EditorCommitUserSong: Codable, Equatable, Sendable {
     var volume: Double?
     var windowStartS: Double?
+    var windowEndS: Double?
     var removed: Bool
-    init(volume: Double? = nil, windowStartS: Double? = nil, removed: Bool = false) {
-        self.volume = volume; self.windowStartS = windowStartS; self.removed = removed
+    init(volume: Double? = nil, windowStartS: Double? = nil, windowEndS: Double? = nil, removed: Bool = false) {
+        self.volume = volume; self.windowStartS = windowStartS; self.windowEndS = windowEndS; self.removed = removed
     }
-    private enum CodingKeys: String, CodingKey { case volume; case windowStartS = "window_start_s"; case removed }
+    private enum CodingKeys: String, CodingKey { case volume; case windowStartS = "window_start_s"; case windowEndS = "window_end_s"; case removed }
 }
 
 struct EditorCommitBackgroundMusic: Codable, Equatable, Sendable {
@@ -967,7 +1027,24 @@ struct KriaAPI: KriaAPIClient {
     func projects() async throws -> [ProjectSummary] { try await request(path: "creation-threads", method: "GET", bodyData: nil, decode: [CreationThread].self).map(\.summary) }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
     func creationCapabilities() async throws -> CreationCapabilities { try await request(path: "creation-threads/capabilities", method: "GET", bodyData: nil, decode: CreationCapabilities.self) }
+    func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink {
+        try await request(path: "creation-threads/\(threadID.uuidString)/song-audio", method: "GET",
+                          query: generation.map { [URLQueryItem(name: "generation", value: String($0))] } ?? [],
+                          bodyData: nil, decode: SongAudioLink.self)
+    }
     func creationBrief(threadID: UUID) async throws -> CreativeBrief { try await request(path: "creation-threads/\(threadID.uuidString)/brief", method: "GET", bodyData: nil, decode: CreativeBrief.self) }
+    func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse {
+        try await request(path: "creation-threads/\(threadID.uuidString)/thought-summaries", method: "GET", query: [URLQueryItem(name: "client_request_id", value: clientRequestID)], bodyData: nil, decode: KriaThoughtSummaryResponse.self)
+    }
+    func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse {
+        try await request(path: "plan-items/\(itemID)/slide-post/thought-summaries", method: "GET", query: [URLQueryItem(name: "client_request_id", value: clientRequestID)], bodyData: nil, decode: KriaThoughtSummaryResponse.self)
+    }
+    func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse {
+        try await request(path: "creation-threads/\(threadID.uuidString)/thought-summaries", method: "GET", bodyData: nil, decode: KriaThoughtSummaryResponse.self)
+    }
+    func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse {
+        try await request(path: "plan-items/\(itemID)/slide-post/thought-summaries", method: "GET", bodyData: nil, decode: KriaThoughtSummaryResponse.self)
+    }
     func library() async throws -> [ProjectSummary] {
         var summaries: [ProjectSummary] = []
         var seenJobIDs = Set<String>()
@@ -1088,6 +1165,18 @@ struct KriaAPI: KriaAPIClient {
                           method: "GET", bodyData: nil, decode: EditorSourceRegistrationResponse.self)
     }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/draft/undo", method: "POST", bodyData: try JSONEncoder().encode(DraftUndoRequest(expectedRevision: expectedRevision)), decode: DraftSnapshot.self) }
+    func undoDraft(threadID: UUID, expectedRevision: Int, render: Bool) async throws -> DraftSnapshot {
+        try await request(path: "creation-threads/\(threadID.uuidString)/draft/undo", method: "POST", bodyData: try JSONEncoder().encode(DraftUndoRequest(expectedRevision: expectedRevision, render: render)), decode: DraftSnapshot.self)
+    }
+    func planSnapshot(threadID: UUID) async throws -> PlanSnapshot {
+        try await request(path: "creation-threads/\(threadID.uuidString)/plan", method: "GET", bodyData: nil, decode: PlanSnapshot.self)
+    }
+    func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit]) async throws -> TurnAccepted {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(ScopedSubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, scope: scope, manualEdits: manualEdits)), decode: TurnAccepted.self)
+    }
+    func undoPlanSection(threadID: UUID, sectionID: PlanSectionID, expectedThreadRevision: Int, expectedBlockRevision: Int, expectedDraftRevision: Int) async throws -> PlanSectionUndoResult {
+        try await request(path: "creation-threads/\(threadID.uuidString)/plan/sections/\(sectionID.rawValue)/undo", method: "POST", bodyData: try JSONEncoder().encode(PlanSectionUndoRequest(expectedThreadRevision: expectedThreadRevision, expectedBlockRevision: expectedBlockRevision, expectedDraftRevision: expectedDraftRevision)), decode: PlanSectionUndoResult.self)
+    }
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
         try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel-render", method: "POST", bodyData: try JSONEncoder().encode(CancelRenderRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
     }
@@ -1603,7 +1692,35 @@ struct ProjectMediaInput: Encodable {
 private struct CreateThreadRequest: Encodable { let message: String?; let clientEventID: String; let runtimeVersion: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case runtimeVersion = "runtime_version" } }
 private struct DraftWriteRequest: Encodable { let expectedRevision: Int; let snapshot: [String: JSONValue]; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision"; case snapshot } }
 private struct CancelRenderRequest: Encodable { let expectedThreadRevision: Int; enum CodingKeys: String, CodingKey { case expectedThreadRevision = "expected_thread_revision" } }
-private struct DraftUndoRequest: Encodable { let expectedRevision: Int; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision" } }
+private struct DraftUndoRequest: Encodable {
+    let expectedRevision: Int
+    /// Live plan & review "Undo all": absent unless true, so the plain undo body is byte-identical to before.
+    var render = false
+    enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision"; case render }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(expectedRevision, forKey: .expectedRevision)
+        if render { try c.encode(true, forKey: .render) }
+    }
+}
+/// The scoped "Update video" turn (live plan & review contract v2): the usual turn keys plus `scope` and, when the
+/// creator edited text or the mix by hand, `manual_edits`. Sent only to a server that advertises v2.
+struct ScopedSubmitTurnRequest: Encodable {
+    let message: String
+    let clientEventID: String
+    let expectedThreadRevision: Int
+    let scope: [PlanSectionID]
+    let manualEdits: [ManualPlanEdit]
+    enum CodingKeys: String, CodingKey { case message, scope; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case manualEdits = "manual_edits" }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(message, forKey: .message)
+        try c.encode(clientEventID, forKey: .clientEventID)
+        try c.encode(expectedThreadRevision, forKey: .expectedThreadRevision)
+        try c.encode(scope.map(\.rawValue), forKey: .scope)
+        if !manualEdits.isEmpty { try c.encode(manualEdits, forKey: .manualEdits) }
+    }
+}
 enum APIError: Error, LocalizedError, Equatable {
     /// The server answered with a status the request doesn't accept.
     /// `detail` carries the server's `detail` string when its error body had

@@ -117,39 +117,12 @@ struct NativeVideoPreview: View {
     @GestureState private var directResizeGestureActive = false
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
-    /// KRI-508: the text whose words are being typed on the video. The burn of
-    /// it is replaced by a typing field over the frozen layers below/above it.
-    private let inlineTextID: String?
-    /// Actions drawn next to the selected text; nil keeps them in the island.
-    private let textActions: NativePreviewTextActions?
-    /// A tap on the text that is already selected: type on the video.
-    private let onEditText: ((String) -> Void)?
-    /// A tap or drag on the preview left this text selected.
-    private let onTextFocus: ((String) -> Void)?
-    /// A tap outside the typing field: finish typing.
-    private let onInlineCommit: (() -> Void)?
-    /// A tap on a title the server keeps read-only.
-    private let onLockedTextTap: (() -> Void)?
-    @State private var inlineFrame: NativeEditorSession.TextInteractionFrame?
-    /// Where the typed block's centre sits relative to its anchor (canvas fractions), measured when typing starts.
-    @State private var inlineCenterOffsetY: CGFloat = 0
-    @State private var pillSize = CGSize(width: NativeTextPillPlacement.estimatedWidth, height: NativeTextPillPlacement.height)
-    /// Inset that keeps a text's resize corner reachable inside the preview (slide-post rule).
-    private static let textHandleInset: CGFloat = 14
 
-    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil, onFindOriginals: (() -> Void)? = nil, onAddClip: (() -> Void)? = nil,
-         inlineTextID: String? = nil, textActions: NativePreviewTextActions? = nil, onEditText: ((String) -> Void)? = nil,
-         onTextFocus: ((String) -> Void)? = nil, onInlineCommit: (() -> Void)? = nil, onLockedTextTap: (() -> Void)? = nil) {
+    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil, onFindOriginals: (() -> Void)? = nil, onAddClip: (() -> Void)? = nil) {
         self.session = session
         self.onEmptyTap = onEmptyTap
         self.onFindOriginals = onFindOriginals
         self.onAddClip = onAddClip
-        self.inlineTextID = inlineTextID
-        self.textActions = textActions
-        self.onEditText = onEditText
-        self.onTextFocus = onTextFocus
-        self.onInlineCommit = onInlineCommit
-        self.onLockedTextTap = onLockedTextTap
         _clock = ObservedObject(wrappedValue: session.playbackClock)
     }
 
@@ -265,10 +238,7 @@ struct NativeVideoPreview: View {
             liveTextFrame = prepared
         }
         updateTextAlignment(in: canvas)
-        // KRI-508 (plan 027 D11): gestures keep the size between 24 and 320.
-        let reference = NativeEditorSession.textSize(for: liveTextBaseline ?? baseline)
-        let clamped = scale == 1 ? 1 : NativeTextSizeRange.clampedScale(scale, baseSize: reference)
-        liveText.resize(current: nativeTextTransformBaseline(baseline), scale: clamped, rotation: rotation, snapRotation: transformBaseline != nil)
+        liveText.resize(current: nativeTextTransformBaseline(baseline), scale: scale, rotation: rotation, snapRotation: transformBaseline != nil)
         if liveTextFrame != nil { liveTextSampleCount += 1 }
     }
 
@@ -319,41 +289,22 @@ struct NativeVideoPreview: View {
     }
 
     private func selectPreviewObject(at point: CGPoint, in size: CGSize) {
-        // KRI-508: while typing on the video, a tap anywhere outside the field finishes.
-        if inlineTextID != nil {
-            onInlineCommit?()
-            return
-        }
         let candidates = NativeEditorInteraction.previewOrder(
             NativeEditorInteraction.visible(objects.map(\.item), at: clock.currentTime)
         ).reversed().filter { item in
             guard let object = objects.first(where: { $0.item.selection == item.selection }) else { return false }
             return NativeEditorInteraction.contains(point, in: frame(for: object, in: size), rotationDegrees: object.rotation)
         }
-        let settled = Date().timeIntervalSince(dragClock.lastChange) > 0.4
         guard !candidates.isEmpty else {
             lastTapIDs = []
             lastTapPoint = nil
             // A near-miss on the selected object's rotate/scale corner (its 22pt
             // zone extends outside the frame) must not open fullscreen.
-            guard !isNearSelectedCorner(point, in: size), settled else { return }
-            // A read-only title is drawn but can't be edited here: say so instead of ignoring the tap.
-            if onLockedTextTap != nil, lockedTextContains(point, in: size) {
-                onLockedTextTap?()
-                return
-            }
-            onEmptyTap?()
+            if !isNearSelectedCorner(point, in: size),
+               Date().timeIntervalSince(dragClock.lastChange) > 0.4 { onEmptyTap?() }
             return
         }
         let ordered = candidates.map(\.selection)
-        // KRI-508 (plan 027 D1): a second tap on the selected text types on it.
-        if let selected = session.selection, selected.kind == .text, ordered.contains(selected), settled,
-           let onEditText, let object = objects.first(where: { $0.item.selection == selected }), canDirectlyPosition(object) {
-            lastTapIDs = ordered
-            lastTapPoint = point
-            onEditText(selected.id)
-            return
-        }
         let next: EditorSelection
         let pointIsNearPrevious = lastTapPoint.map { hypot($0.x - point.x, $0.y - point.y) <= 12 } ?? false
         if pointIsNearPrevious, ordered == lastTapIDs, let selected = session.selection, let index = ordered.firstIndex(of: selected) {
@@ -363,10 +314,7 @@ struct NativeVideoPreview: View {
         }
         lastTapIDs = ordered
         lastTapPoint = point
-        // KRI-508 (plan 027 D9): text must stay on screen to be edited, so selecting it pauses.
-        if next.kind == .text, session.isPlaying { session.pausePlayback() }
         session.select(next, seekToStart: false)
-        if next.kind == .text { onTextFocus?(next.id) }
     }
 
     /// Same corner and 22pt radius the direct-manipulation gesture uses to
@@ -374,37 +322,9 @@ struct NativeVideoPreview: View {
     private func isNearSelectedCorner(_ point: CGPoint, in size: CGSize) -> Bool {
         guard let selection = session.selection,
               let selected = objects.first(where: { $0.item.selection == selection }) else { return false }
-        let corner = handlePoint(for: selected, in: size)
+        let bounds = frame(for: selected, in: size)
+        let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: selected.rotation)
         return hypot(point.x - corner.x, point.y - corner.y) <= NativeTextTransformMath.cornerGrabRadius
-    }
-
-    /// Where an object's resize corner is drawn and grabbed. A text's corner is
-    /// pulled inside the preview so a text near an edge keeps a reachable handle.
-    private func handlePoint(for object: NativeEditorPreviewObject, in size: CGSize) -> CGPoint {
-        let bounds = frame(for: object, in: size)
-        let rotation = object.item.id == liveTextBaseline?.id
-            ? (liveTextBaseline?.raw["rotation_deg"]?.numberValue ?? 0) + liveText.rotation
-            : object.rotation
-        guard object.item.kind == .text else { return NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: rotation) }
-        return NativeTextTransformMath.handleCenter(of: bounds, rotationDegrees: rotation, canvas: size, inset: Self.textHandleInset)
-    }
-
-    /// A tap on a read-only title that is on screen now (KRI-508 D12).
-    private func lockedTextContains(_ point: CGPoint, in size: CGSize) -> Bool {
-        let time = clock.currentTime
-        return session.document.textElements.contains { element in
-            guard element.isReadOnly, !element.isCaption,
-                  let bounds = session.previewSelectionBounds(for: EditorSelection(kind: .text, id: element.id), at: time) else { return false }
-            let start = session.timelineProjection.projectBaseTime(element.startS)
-            let end = session.timelineProjection.projectBaseTime(element.endS)
-            guard time >= start, time < max(end, start + 0.01) else { return false }
-            let width: CGFloat = CGFloat(bounds.width) * size.width
-            let height: CGFloat = CGFloat(bounds.height) * size.height
-            let minX: CGFloat = CGFloat(bounds.centerX) * size.width - width / 2
-            let minY: CGFloat = CGFloat(bounds.centerY) * size.height - height / 2
-            let rect = CGRect(x: minX, y: minY, width: width, height: height)
-            return NativeEditorInteraction.contains(point, in: rect, rotationDegrees: bounds.rotationDegrees)
-        }
     }
 
     private func directMoveCandidate(at point: CGPoint, in size: CGSize) -> NativeEditorPreviewObject? {
@@ -432,7 +352,7 @@ struct NativeVideoPreview: View {
     }
 
     private func handleDirectMoveChanged(_ value: DragGesture.Value, in size: CGSize) {
-        guard directResizeObjectID == nil, inlineTextID == nil else { return }
+        guard directResizeObjectID == nil else { return }
         if directMoveObjectID == nil {
             textAlignmentFeedback.reset()
             textAlignmentHaptic.prepare()
@@ -441,7 +361,7 @@ struct NativeVideoPreview: View {
                selected.item.kind == .text, session.canEdit(.text),
                let text = session.document.textElements.first(where: { $0.id == selected.item.id }) {
                 let bounds = frame(for: selected, in: size)
-                let corner = handlePoint(for: selected, in: size)
+                let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: text.raw["rotation_deg"]?.numberValue ?? 0)
                 if NativeTextTransformMath.grabsCorner(at: value.startLocation, corner: corner, bounds: bounds) {
                     directMoveObjectID = selected.id
                     transformBaseline = text
@@ -520,8 +440,6 @@ struct NativeVideoPreview: View {
     private func settleDirectManipulation() {
         let hasActiveManipulation = directMoveObjectID != nil || directResizeObjectID != nil || session.isDirectManipulating
         guard hasActiveManipulation else { return }
-        let manipulatedText = liveTextBaseline?.id
-        defer { if let manipulatedText { onTextFocus?(manipulatedText) } }
         commitLiveText()
         directMoveObjectID = nil
         directMoveBaseline = nil
@@ -552,7 +470,6 @@ struct NativeVideoPreview: View {
             .updating($directResizeGestureActive) { _, active, _ in active = true }
             .onChanged { value in
                 dragClock.lastChange = Date()
-                guard inlineTextID == nil else { return }
                 if directResizeObjectID == nil {
                     guard let selection = session.selection,
                           let object = objects.first(where: { $0.item.selection == selection }),
@@ -635,155 +552,6 @@ struct NativeVideoPreview: View {
         }
     }
 
-    // MARK: - KRI-508: text on the video
-
-    private var isManipulatingText: Bool {
-        liveTextBaseline != nil || directMoveObjectID != nil || directResizeObjectID != nil || session.isDirectManipulating
-    }
-
-    /// The selected text, when it is on screen now.
-    private func selectedTextObject(visible: [NativeEditorTimelineItem]) -> NativeEditorPreviewObject? {
-        guard let selection = session.selection, selection.kind == .text,
-              visible.contains(where: { $0.selection == selection }) else { return nil }
-        return objects.first { $0.item.selection == selection }
-    }
-
-    private var showsTextActionPill: Bool {
-        inlineTextID == nil && !session.isPlaying && !isManipulatingText
-            && session.document.editorState != "empty" && (session.hasSourcePreview || session.sourcePreviewState == .idle)
-    }
-
-    /// Paused with nothing selected: each editable text shows a faint dashed outline (plan 027 D7).
-    private func showsTapHint(for object: NativeEditorPreviewObject) -> Bool {
-        object.render == .text && session.selection == nil && !session.isPlaying && inlineTextID == nil
-            && !isManipulatingText && canDirectlyPosition(object)
-    }
-
-    private func textAccessibilityActions(for object: NativeEditorPreviewObject) -> NativePreviewTextAccessibility? {
-        guard object.render == .text, inlineTextID == nil, canDirectlyPosition(object) else { return nil }
-        let id = object.item.id
-        func step(_ delta: Double) {
-            guard let element = session.document.textElements.first(where: { $0.id == id }) else { return }
-            session.setTextSize(id: id, sizePX: NativeTextSizeRange.clamped(NativeEditorSession.textSize(for: element) + delta))
-        }
-        return NativePreviewTextAccessibility(
-            onEdit: onEditText.map { edit in {
-                session.select(object.item, seekToStart: false)
-                edit(id)
-            } },
-            onBigger: { step(8) },
-            onSmaller: { step(-8) }
-        )
-    }
-
-    /// Handle, guides and size readout for the text being manipulated (plan 027 D4, D10, D11).
-    @ViewBuilder private func textSelectionDecorations(visible: [NativeEditorTimelineItem], canvas: CGSize) -> some View {
-        if inlineTextID == nil {
-            if let baseline = liveTextBaseline {
-                let guides = textAlignmentFeedback.activeGuides
-                let moving = transformBaseline == nil && directResizeTextBaseline == nil
-                NativeTextMoveGuides(
-                    showsVerticalCenter: guides.contains("center-x"),
-                    showsHorizontalCenter: guides.contains("center-y"),
-                    showsPlatformZones: moving && session.previewAspectRatio < 1
-                )
-                .frame(width: canvas.width, height: canvas.height)
-                if !moving, let object = objects.first(where: { $0.item.id == baseline.id }) {
-                    let live = frame(for: object, in: canvas)
-                    NativeTextSizeReadout(size: Int((NativeEditorSession.textSize(for: baseline) * liveText.scale).rounded()))
-                        .position(x: min(max(live.midX, 44), max(44, canvas.width - 44)), y: max(18, live.minY - 24))
-                }
-            }
-            if let selected = selectedTextObject(visible: visible), scaleHandler(for: selected) != nil,
-               directMoveObjectID == nil || transformBaseline != nil {
-                NativeTextResizeHandle()
-                    .position(handlePoint(for: selected, in: canvas))
-            }
-        }
-    }
-
-    /// The axis-aligned box around a rotated frame (for placing the action pill).
-    static func boundingBox(_ frame: CGRect, degrees: Double) -> CGRect {
-        guard degrees.truncatingRemainder(dividingBy: 360) != 0 else { return frame }
-        // Half extents of the rotated rectangle, in simple typed steps: CI's
-        // compiler timed out type-checking the corner-mapping version.
-        let radians = CGFloat(degrees) * .pi / 180
-        let cosine: CGFloat = abs(cos(radians))
-        let sine: CGFloat = abs(sin(radians))
-        let halfWidth: CGFloat = (frame.width * cosine + frame.height * sine) / 2
-        let halfHeight: CGFloat = (frame.width * sine + frame.height * cosine) / 2
-        return CGRect(x: frame.midX - halfWidth, y: frame.midY - halfHeight, width: halfWidth * 2, height: halfHeight * 2)
-    }
-
-    private func beginInlineTyping(_ id: String?) {
-        inlineFrame = nil
-        inlineCenterOffsetY = 0
-        guard let id, let element = session.document.textElements.first(where: { $0.id == id }) else { return }
-        adoptInlineFrame(session.textInteractionFrame)
-        if let bounds = session.previewSelectionBounds(for: EditorSelection(kind: .text, id: id), at: clock.currentTime) {
-            inlineCenterOffsetY = CGFloat(bounds.centerY) - nativeTextPosition(element).y
-        }
-    }
-
-    /// The frozen frame without the text, prepared when the text was selected.
-    private func adoptInlineFrame(_ frame: NativeEditorSession.TextInteractionFrame?) {
-        guard let id = inlineTextID, inlineFrame == nil, let frame, frame.element.id == id,
-              abs(frame.time - clock.currentTime) < 0.05 else { return }
-        inlineFrame = frame
-    }
-
-    private func inlineFont(for element: EditorTextElement, canvas: CGSize) -> UIFont {
-        func font(_ size: CGFloat) -> UIFont {
-            if let font = NativeFontCatalog.shared.ctFont(element.fontFamily, size: size) { return font as UIFont }
-            return UIFont(name: "Inter-Bold", size: size) ?? .boldSystemFont(ofSize: size)
-        }
-        let size = NativeTextInlineLayout.displaySize(sizePx: NativeEditorSession.textSize(for: element),
-                                                      previewSize: canvas, aspectRatio: session.previewAspectRatio)
-        let natural = font(size)
-        // Typing keeps every line on one row: a line wider than the video shrinks the field's font.
-        let longest = NativeTextInlineField.lineWidths(element.text, font: natural).max() ?? 0
-        let fitted = NativeTextInlineLayout.fittedSize(size, longestLineAt: longest, available: canvas.width - 32)
-        return fitted == size ? natural : font(fitted)
-    }
-
-    /// Typing on the video: the frame without the text, dimmed, and a field in the text's look at its place.
-    @ViewBuilder private func inlineTypingLayer(element: EditorTextElement, canvas: CGSize) -> some View {
-        let frozen = inlineFrame
-        let font = inlineFont(for: element, canvas: canvas)
-        let alignment = element.raw["alignment"]?.stringValue ?? "center"
-        let anchor = nativeTextPosition(element)
-        let field = NativeTextInlineLayout.fieldFrame(
-            lineWidths: NativeTextInlineField.lineWidths(element.text, font: font),
-            lineHeight: font.lineHeight, anchor: anchor, alignment: alignment,
-            centerY: (anchor.y + inlineCenterOffsetY) * canvas.height, canvas: canvas)
-        ZStack(alignment: .topLeading) {
-            Group {
-                if let frozen {
-                    Image(uiImage: frozen.below).resizable().frame(width: canvas.width, height: canvas.height)
-                    Image(uiImage: frozen.above).resizable().frame(width: canvas.width, height: canvas.height)
-                }
-                Color.black.opacity(frozen == nil ? 0.45 : 0.24)
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-            NativeTextInlineField(
-                text: Binding(
-                    get: { session.textElement(id: element.id)?.text ?? "" },
-                    set: { session.updateTextContent(id: element.id, content: $0) }
-                ),
-                font: font,
-                color: UIColor(nativeEditorColor(element.raw["color"]?.stringValue ?? "#FFFFFF")),
-                background: element.raw["background_color"]?.stringValue.map { UIColor(nativeEditorColor($0)) },
-                alignment: alignment == "left" ? .left : alignment == "right" ? .right : .center
-            )
-            .accessibilityIdentifier("native-editor-inline-text-field")
-            .frame(width: field.width, height: field.height)
-            .rotationEffect(.degrees(element.raw["rotation_deg"]?.numberValue ?? 0))
-            .position(x: field.midX, y: field.midY)
-        }
-        .frame(width: canvas.width, height: canvas.height)
-    }
-
     /// KRI-211: plain copy plus the one useful next step. Retry is deliberately absent.
     @ViewBuilder private func originalsUnavailableBody(textStyle: Font, alignment: HorizontalAlignment = .center) -> some View {
         Text(onFindOriginals == nil
@@ -833,7 +601,8 @@ struct NativeVideoPreview: View {
                     }
                 }
             } else if session.sourcePreviewState == .preparing {
-                ProgressView("Preparing preview")
+                // KRI-535: with an AI edit staged, say that is what is being applied.
+                ProgressView(session.hasOnlyChatStagedChanges ? "Applying your edit" : "Preparing preview")
                     .tint(.white).foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if case .failed(let message) = session.sourcePreviewState {
@@ -922,13 +691,10 @@ struct NativeVideoPreview: View {
                             onSelect: { session.select(object.item, seekToStart: false) },
                             onMove: positionHandler(for: object),
                             onResize: scaleHandler(for: object),
-                            showsContent: !session.hasSourcePreview && object.item.id != inlineTextID,
-                            rotationOverride: object.item.id == liveTextBaseline?.id ? (liveTextBaseline?.raw["rotation_deg"]?.numberValue ?? 0) + liveText.rotation : nil,
-                            showsHint: showsTapHint(for: object),
-                            textAccessibility: textAccessibilityActions(for: object)
+                            showsContent: !session.hasSourcePreview,
+                            rotationOverride: object.item.id == liveTextBaseline?.id ? (liveTextBaseline?.raw["rotation_deg"]?.numberValue ?? 0) + liveText.rotation : nil
                         )
                     }
-                    textSelectionDecorations(visible: visible, canvas: proxy.size)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Route manipulation from the canvas itself so the visible
@@ -951,30 +717,6 @@ struct NativeVideoPreview: View {
             // buttons work and tap-to-fullscreen on the empty canvas keeps working.
             .allowsHitTesting(session.document.editorState != "empty" && !(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
 
-            // Each KRI-508 layer is its own accessibility container, so the preview's
-            // identifier stops there instead of replacing the identifiers inside it.
-            if let id = inlineTextID, let element = session.document.textElements.first(where: { $0.id == id }) {
-                GeometryReader { proxy in
-                    inlineTypingLayer(element: element, canvas: proxy.size)
-                }
-                .accessibilityElement(children: .contain)
-            }
-
-            if let actions = textActions, showsTextActionPill {
-                GeometryReader { proxy in
-                    let visible = NativeEditorInteraction.visible(objects.map(\.item), at: clock.currentTime)
-                    if let selected = selectedTextObject(visible: visible),
-                       NativeTextPillPlacement.fits(canvasWidth: proxy.size.width) {
-                        let box = Self.boundingBox(frame(for: selected, in: proxy.size).insetBy(dx: -8, dy: -8), degrees: selected.rotation)
-                        NativeTextActionPill(actions: actions)
-                            .onGeometryChange(for: CGSize.self) { $0.size } action: { pillSize = $0 }
-                            .position(NativeTextPillPlacement.center(selection: box, pill: pillSize, canvas: proxy.size))
-                    }
-                }
-                .accessibilityElement(children: .contain)
-                .transition(.opacity)
-            }
-
             if session.showsEditApplied {
                 Label("Edit applied", systemImage: "checkmark.circle.fill")
                     .font(KriaFont.body(12).weight(.semibold))
@@ -993,6 +735,11 @@ struct NativeVideoPreview: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Showing your last finished video")
                         .font(KriaFont.body(12).weight(.semibold))
+                    if session.hasOnlyChatStagedChanges {
+                        // KRI-535: without this the old video reads as "the AI did nothing".
+                        Text("This is the version before your AI edit.")
+                            .font(KriaFont.body(11))
+                    }
                     if case .failed(let message) = session.sourcePreviewState {
                         Text(message)
                             .font(KriaFont.body(11))
@@ -1029,8 +776,6 @@ struct NativeVideoPreview: View {
             if !active && !directMoveGestureActive { settleDirectManipulation() }
         }
         .onDisappear(perform: settleDirectManipulation)
-        .onChange(of: inlineTextID) { _, id in beginInlineTyping(id) }
-        .onReceive(session.$textInteractionFrame) { adoptInlineFrame($0) }
         .onChange(of: session.document) { _, _ in refreshObjects() }
         .onChange(of: session.scrubPreviewFrame) { _, _ in
             if !session.isDirectManipulating {
@@ -1184,13 +929,6 @@ private enum NativePreviewRender: Equatable {
     case text, caption, mediaOverlay, visualBlock, carousel, runtimeOnly
 }
 
-/// VoiceOver's way to do what the preview gestures do to a text (KRI-508).
-private struct NativePreviewTextAccessibility {
-    var onEdit: (() -> Void)?
-    var onBigger: () -> Void
-    var onSmaller: () -> Void
-}
-
 private struct NativePreviewObjectView: View {
     let object: NativeEditorPreviewObject
     let frame: CGRect
@@ -1200,9 +938,6 @@ private struct NativePreviewObjectView: View {
     let onResize: ((CGFloat) -> Void)?
     let showsContent: Bool
     var rotationOverride: Double? = nil
-    /// A faint dashed outline that says "tap me" while the video is paused (KRI-508).
-    var showsHint = false
-    var textAccessibility: NativePreviewTextAccessibility? = nil
 
     private var accessibilityValue: String {
         var parts = ["\(nativeTimecode(object.item.start)) to \(nativeTimecode(object.item.end))"]
@@ -1280,26 +1015,23 @@ private struct NativePreviewObjectView: View {
         .frame(width: frame.width, height: frame.height)
         .contentShape(Rectangle())
         .overlay {
-            if showsHint && !isSelected {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(.white.opacity(0.8), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                    .shadow(color: .black.opacity(0.25), radius: 1)
-                    .padding(-6)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-        }
-        .overlay {
             if isSelected {
                 ZStack {
-                    // The halo keeps the Sky box readable on bright footage (KRI-508 D4).
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(KriaColor.ink.opacity(0.35), lineWidth: 4)
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(KriaColor.sky, lineWidth: 2)
-                    if object.render == .text {
-                        // The text's resize corner is drawn by the canvas, pulled inside the preview.
-                        EmptyView()
+                    if onResize != nil, object.render == .text {
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Spacer()
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 22, height: 22)
+                                    .background(KriaColor.sky, in: Circle())
+                            }
+                        }
+                        .padding(-11)
                     } else if onResize != nil {
                         VStack {
                             HStack {
@@ -1328,7 +1060,6 @@ private struct NativePreviewObjectView: View {
         .accessibilityAction(named: "Select \(object.title.lowercased())") {
             onSelect()
         }
-        .modifier(NativePreviewTextAccessibilityActions(actions: textAccessibility))
         .rotationEffect(.degrees(rotationOverride ?? object.rotation))
         .position(x: frame.midX, y: frame.midY)
         .zIndex(Double(object.item.zIndex))
@@ -1339,21 +1070,6 @@ private struct NativePreviewObjectView: View {
             .fill(KriaColor.sky)
             .overlay { Circle().stroke(.white, lineWidth: 1) }
             .frame(width: 12, height: 12)
-    }
-}
-
-private struct NativePreviewTextAccessibilityActions: ViewModifier {
-    let actions: NativePreviewTextAccessibility?
-
-    func body(content: Content) -> some View {
-        if let actions {
-            content
-                .accessibilityAction(named: "Edit text") { actions.onEdit?() }
-                .accessibilityAction(named: "Make text bigger") { actions.onBigger() }
-                .accessibilityAction(named: "Make text smaller") { actions.onSmaller() }
-        } else {
-            content
-        }
     }
 }
 

@@ -209,7 +209,8 @@ private struct RequirementChip: View {
 
     private var treatment: (icon: String, foreground: Color, background: Color) {
         // KRI-529: an unchecked requirement is neutral, never the yellow "partly done".
-        if receipt.isUnchecked { return ("questionmark", KriaColor.zinc, KriaColor.softZinc) }
+        // KRI-558: it points the creator at the video ("have a look"), never at a failure.
+        if receipt.isUnchecked { return ("eye", KriaColor.zinc, KriaColor.softZinc) }
         return switch receipt.outcome {
         case .met: ("checkmark", KriaColor.success, KriaColor.successSoft)
         case .partial: ("circle.lefthalf.filled", KriaColor.ink, KriaColor.butter)
@@ -237,11 +238,11 @@ private struct RequirementChip: View {
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(receipt.isUnchecked ? "Not checked yet" : receipt.outcome.word): \(label)")
+            .accessibilityLabel("\(receipt.isUnchecked ? "Have a look" : receipt.outcome.word): \(label)")
             .accessibilityHint(isExpanded ? "Hides the reason" : "Shows the reason")
             .accessibilityIdentifier("requirement-chip-\(receipt.requirementID)")
             if isExpanded {
-                Text(receipt.reason ?? (receipt.isUnchecked ? "I couldn’t check this one automatically yet." : receipt.outcome.defaultReason))
+                Text(receipt.reason ?? (receipt.isUnchecked ? "Have a look at this one in the video." : receipt.outcome.defaultReason))
                     .font(KriaFont.body(12))
                     .foregroundStyle(KriaColor.zinc)
                     .fixedSize(horizontal: false, vertical: true)

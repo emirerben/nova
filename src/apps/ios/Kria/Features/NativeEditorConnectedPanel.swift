@@ -2,12 +2,11 @@ import SwiftUI
 
 /// One destination owns both the visible inspector and the rail highlight.
 enum NativeEditorPanel: Equatable {
-    /// `textInline` is typing on the video (KRI-508): the panel shrinks to the bar that rides the keyboard.
-    case text(String), textInline(String), textCreation, captions, visuals, sounds
+    case text(String), textCreation, captions, visuals, sounds
 
     var tool: NativeEditorTool {
         switch self {
-        case .text, .textInline, .textCreation: return .text
+        case .text, .textCreation: return .text
         case .captions: return .captions
         case .visuals: return .visuals
         case .sounds: return .sounds

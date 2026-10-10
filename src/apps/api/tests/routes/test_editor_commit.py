@@ -4263,6 +4263,38 @@ def test_mix_on_variant_without_voice_bed_422(monkeypatch):
     assert exc.value.status_code == 422
 
 
+def test_original_level_only_mix_on_song_variant_persists_and_forces_full_render(monkeypatch):
+    """The cloud renderer reads `original_audio_level`, so a footage-level save on a
+    plain song variant (no voice bed) is accepted and re-renders the audio."""
+    _arm(monkeypatch)
+    job = _job(mix=None)
+    prep = gj.prepare_editor_commit(
+        job, "song_text", _commit_req(mix=gj.EditorCommitMix(original_level=0.3))
+    )
+    assert job.assembly_plan["variants"][0]["original_audio_level"] == 0.3
+    assert prep["original_level_changed"] is True and prep["mix_override"] is None
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
+    assert calls[0]["kwargs"]["force_full_render"] is True
+    assert "queue" not in calls[0]  # not a text-only reburn
+
+
+def test_original_level_on_cloud_voiceover_variant_422(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(variant_id="voiceover_only", mix=0.5)
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job, "voiceover_only", _commit_req(mix=gj.EditorCommitMix(original_level=0.3))
+        )
+    assert exc.value.detail == "original_audio_voiceover_unsupported"
+
+
 @pytest.mark.parametrize("archetype", ["narrated", "subtitled"])
 def test_mix_commit_on_caption_archetype_422(monkeypatch, archetype):
     """R1-4: caption renderers persist mix=1.0, so without this guard a mix save
@@ -4767,6 +4799,36 @@ def client() -> TestClient:
 
 def teardown_function() -> None:
     app.dependency_overrides.clear()
+
+
+def test_native_only_rollout_refuses_legacy_cloud_editor_commit_before_write(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.auth import is_native_client
+    from app.config import settings
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "ios_native_device_only_enabled", True)
+    user = _user()
+    job = _job()
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[is_native_client] = lambda: True
+    app.dependency_overrides[get_db] = lambda: db
+
+    response = client.post(
+        f"/plan-items/{item.id}/variants/song_text/editor-commit",
+        json={"base_generation": "2026-07-01T00:00:00Z"},
+        headers={
+            "Authorization": "Bearer test-native-session",
+            "X-Kria-Client-Protocol": str(settings.kria_minimum_client_protocol),
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "device_render_unsupported"
+    db.commit.assert_not_awaited()
 
 
 def test_guided_editor_route_preflights_before_title_validation(

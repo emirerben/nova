@@ -1,0 +1,94 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-09-v76",
+  "input": {
+    "utterance": "make the captions shorter",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "editor_ops_version": 2,
+      "has_narrated_captions": true,
+      "text_bars": [
+        {
+          "id": "hook",
+          "text": "Matcha morning routine",
+          "start_s": 0,
+          "end_s": 2.5,
+          "role": "generative_intro",
+          "size_px": 72
+        },
+        {
+          "id": "label-note",
+          "text": "Ceremonial grade",
+          "start_s": 3.0,
+          "end_s": 5.0,
+          "size_px": 48
+        }
+      ],
+      "slots": [
+        {
+          "index": 0,
+          "output_start_s": 0,
+          "output_end_s": 4,
+          "duration_s": 4
+        },
+        {
+          "index": 1,
+          "output_start_s": 4,
+          "output_end_s": 8,
+          "duration_s": 4
+        }
+      ],
+      "total_duration_s": 8,
+      "captions": {
+        "total_cues": 2,
+        "truncated": false,
+        "cues_editable": true,
+        "cues": [
+          {
+            "index": 0,
+            "id": "cue-1",
+            "text": "so I whisk the matcha for about thirty seconds",
+            "start_s": 0.0,
+            "end_s": 3.0
+          },
+          {
+            "index": 1,
+            "id": "cue-2",
+            "text": "until it is smooth and frothy on top",
+            "start_s": 3.0,
+            "end_s": 6.0
+          }
+        ],
+        "meta": {
+          "enabled": true,
+          "style": "sentence",
+          "font": null,
+          "y_frac": 0.82
+        }
+      },
+      "music": {
+        "swappable": false,
+        "removable": true,
+        "current_track_id": "track-1",
+        "current_track_title": "Beat",
+        "candidates": []
+      },
+      "mix": {
+        "music_level": 0.6
+      },
+      "allowed_op_families": [
+        "caption",
+        "text",
+        "music",
+        "clip"
+      ]
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"edit_caption\", \"cue_index\": 0, \"text\": \"I whisk the matcha for thirty seconds\"}, {\"op\": \"edit_caption\", \"cue_index\": 1, \"text\": \"until smooth and frothy\"}, {\"op\": \"set_mix\", \"music_level\": 0.3}, {\"op\": \"set_clip_duration\", \"slot_index\": 0, \"duration_s\": 3.0}, {\"op\": \"edit_text\", \"bar_index\": 0, \"text\": \"Matcha mornings\"}], \"confidence\": 0.8, \"reply\": \"Shortened the captions and tidied the rest.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {},
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "same prompt without a scope: music and clip ops survive",
+    "plan_review_scope_eval": true
+  }
+}

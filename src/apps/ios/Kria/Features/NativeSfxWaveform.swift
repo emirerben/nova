@@ -20,7 +20,7 @@ enum NativeSfxWaveformPeaks {
     }
 
     /// Decodes `url` (downloading remote audio to the caches dir first) into normalized bars.
-    static func load(url: URL) async -> [Float]? {
+    static func load(url: URL, buckets: Int = bucketCount) async -> [Float]? {
         do {
             var local = url
             if !url.isFileURL {
@@ -57,7 +57,7 @@ enum NativeSfxWaveformPeaks {
                     }
                 }
             }
-            let bars = normalize(peaks)
+            let bars = normalize(peaks, buckets: buckets)
             return bars.isEmpty ? nil : bars
         } catch {
             return nil

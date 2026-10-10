@@ -2428,12 +2428,15 @@ async def test_editor_ops_turn_receipts_cover_only_this_turns_requirements(
             ).scalar_one()
             receipts = {r["requirement_id"]: r for r in event.payload["requirement_receipts"]}
             content = event.content
-        # r1 is from an earlier turn; r3 (per-clip text with no exact words) can't
-        # be checked on an editor edit, so it gets no receipt rather than "Partly".
-        assert set(receipts) == {"r2"}
+        # r1 is from an earlier turn. r3 ("a label on each clip") is judged against what the
+        # ops changed (KRI-558): a title rewrite is not a label, so it is not claimed.
+        assert set(receipts) == {"r2", "r3"}
         assert receipts["r2"]["status"] == "met"
-        assert "Couldn't" not in content and "Partly" not in content
-        assert content == 'Retitled the hook.\n- Done: "Fresh matcha, finally"'
+        assert receipts["r3"]["status"] == "not_possible"
+        assert receipts["r3"]["verification"] == "checked"
+        assert content.startswith("- Done: Changed 'Old matcha hook' to 'Fresh matcha, finally'")
+        assert "- Couldn't: a label on each clip" in content
+        assert "verify" not in content.lower()
     finally:
         await async_engine.dispose()
 
@@ -2617,10 +2620,10 @@ async def test_kri529_lisbon_editor_turns_scope_receipts_and_keep_each_texts_hei
         receipts = {r["requirement_id"]: r for r in payload["requirement_receipts"]}
         # r1 is an earlier requirement: no "still needs an output check" chip for it.
         assert set(receipts) == {"r2"}
-        # KRI-524: a changed text lane does not prove a style ask, so it stays honestly
-        # unchecked (it is not claimed "met"), but it is still just THIS turn's receipt.
-        assert receipts["r2"]["verification"] == "unchecked"
-        assert "output check" not in content
+        # KRI-558: the ops added a fade to both texts, so the receipt names that change.
+        assert receipts["r2"]["status"] == "met"
+        assert receipts["r2"]["verification"] == "checked"
+        assert content == "Done: Added a fade-in animation to both texts."
 
         # The creator's unsaved manual edit (a recolour) rides along as client state.
         manual = _pinned_rows()
@@ -2637,8 +2640,9 @@ async def test_kri529_lisbon_editor_turns_scope_receipts_and_keep_each_texts_hei
         )
         receipts = {r["requirement_id"]: r for r in payload["requirement_receipts"]}
         assert set(receipts) == {"r3"}
-        assert receipts["r3"]["verification"] == "unchecked"
-        assert "output check" not in content
+        assert receipts["r3"]["status"] == "met"
+        assert receipts["r3"]["verification"] == "checked"
+        assert content == "Done: Lined up both texts on the left."
         with sync_session() as db:
             head = db.execute(
                 select(CreatorEditDraft).where(
@@ -3322,3 +3326,306 @@ async def _response_for(db, thread_id):  # noqa: ANN001, ANN202
     from app.routes.creation_threads import _response
 
     return await _response(db, await db.get(CreationThread, thread_id))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history_size", [0, 11990, 12001])
+async def test_creation_approval_pins_raw_history_after_choice_and_recovers_overflow(
+    monkeypatch: pytest.MonkeyPatch, history_size: int
+) -> None:
+    from app.kria.brief_binding import BriefBinding
+    from app.tasks.kria_runtime import _full_creator_request_sync
+
+    user_id, thread_id, session_id = _seed_runtime_project()
+    original = (
+        "x" * history_size
+        if history_size
+        else (
+            "Title it 20K Kosu. Split the title into words "
+            "and animate each word after the previous one."
+        )
+    )
+    # Prior source instructions are present in the real event log but omitted
+    # from the deliberately shortened extracted brief returned by the provider.
+    with sync_session() as db:
+        db.add(
+            CreationThreadEvent(
+                thread_id=thread_id,
+                sequence=2,
+                revision=3,
+                role="user",
+                event_type="message",
+                content=original,
+            )
+        )
+        db.get(CreationThread, thread_id).revision = 3
+        db.commit()
+
+    async def planned(*_args, **_kwargs):
+        return PlannedKriaTurn(
+            plan=_brief_strategy_plan(),
+            manifest_hash="a" * 64,
+            context_hash="b" * 64,
+            brief_updates=_brief_updates()[:1],
+            brief_route="replan",
+            brief_clip_ids=("clip-1",),
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", planned)
+    try:
+        accepted = await _submit(user_id, thread_id, "1", 3)
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        with sync_session() as db:
+            item_id = db.get(CreatorAgentSession, session_id).plan_item_id
+            heads = list(
+                db.execute(
+                    select(CreatorEditDraft).where(
+                        CreatorEditDraft.item_id == item_id, CreatorEditDraft.is_head.is_(True)
+                    )
+                ).scalars()
+            )
+            if history_size:
+                assert result["status"] == "completed"
+                assert heads == []
+                turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+                assert turn.plan_json["turn_value"] == "recovery"
+                assert "too long" in turn.plan_json["response"]
+                assert (
+                    db.execute(
+                        select(func.count())
+                        .select_from(CreativeBriefVersion)
+                        .where(CreativeBriefVersion.thread_id == thread_id)
+                    ).scalar_one()
+                    == 0
+                )
+                return
+            assert result["status"] == "awaiting_approval"
+            assert len(heads) == 1
+            binding = BriefBinding.model_validate(heads[0].snapshot_json["brief_binding"])
+            assert original in binding.creator_request
+            assert "Latest message: 1" in binding.creator_request
+            assert "Creative brief v1" in binding.creator_request
+            turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+            source = db.get(CreationThreadEvent, turn.source_event_id)
+            next_sequence = (
+                db.execute(
+                    select(func.max(CreationThreadEvent.sequence)).where(
+                        CreationThreadEvent.thread_id == thread_id
+                    )
+                ).scalar_one()
+                + 1
+            )
+            db.add(
+                CreationThreadEvent(
+                    thread_id=thread_id,
+                    sequence=next_sequence,
+                    revision=99,
+                    role="user",
+                    event_type="message",
+                    content="Later unrelated correction",
+                )
+            )
+            db.flush()
+            bounded = _full_creator_request_sync(
+                db, thread_id=thread_id, through_sequence=source.sequence
+            )
+            assert bounded == original + "\n1"
+            assert "Later unrelated" not in binding.creator_request
+    finally:
+        await async_engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# KRI-558: the AI says what it changed (editor turns) and stays quiet until render (drafts)
+# ---------------------------------------------------------------------------
+
+
+def _seed_lisbon_editor_job(user_id, thread_id, session_id) -> list[str]:  # noqa: ANN001
+    """The Lisbon thread's finished edit with two stacked pinned texts (as KRI-529)."""
+    job_id = uuid.uuid4()
+    with sync_session() as db:
+        session = db.get(CreatorAgentSession, session_id, with_for_update=True)
+        item = db.get(PlanItem, session.plan_item_id, with_for_update=True)
+        db.add(
+            Job(
+                id=job_id,
+                user_id=user_id,
+                status="variants_ready",
+                mode="generative",
+                raw_storage_path="",
+                selected_platforms=["tiktok"],
+                content_plan_item_id=item.id,
+                content_plan_ownership_epoch=0,
+                all_candidates={"clip_paths": ["users/test/lisbon.mp4"]},
+                assembly_plan={
+                    "variants": [
+                        {
+                            "variant_id": "original_text",
+                            "resolved_archetype": "montage",
+                            "render_status": "ready",
+                            "render_generation_id": "generation-1",
+                            "render_finished_at": "2026-10-08T08:00:00Z",
+                            "video_path": "generative-jobs/test/output.mp4",
+                            "base_video_path": "generative-jobs/test/base.mp4",
+                            "text_elements": _pinned_rows(),
+                        }
+                    ]
+                },
+            )
+        )
+        db.flush()
+        item.current_job_id = job_id
+        session.target_job_id = job_id
+        session.target_variant_id = "original_text"
+        session.target_generation_id = "generation-1"
+        session.manifest_hash = "a" * 64
+        db.commit()
+    return [row["id"] for row in _pinned_rows()]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "patch", "target", "expected"),
+    [
+        # The three asks of prod thread 03191e89 that all ended as "couldn't verify".
+        (
+            "All texts should use alte haas font",
+            {"font_family": "Alte Haas Grotesk"},
+            "all",
+            "Done: Font → Alte Haas Grotesk on both texts.",
+        ),
+        (
+            "Add fade in animation to all of them",
+            {"animation_phases": {"entrance": "fade"}},
+            "all",
+            "Done: Added a fade-in animation to both texts.",
+        ),
+        (
+            "Make the lisbon text smaller",
+            {"size_scale": 0.8},
+            "first",
+            "Done: Made 'Must visit spots in Lisbon' smaller (52→41.6px).",
+        ),
+    ],
+)
+async def test_kri558_editor_turns_name_what_they_changed_instead_of_cant_check(
+    monkeypatch: pytest.MonkeyPatch, message: str, patch: dict, target: str, expected: str
+) -> None:
+    from app.kria.brief import BriefRequirement  # noqa: F401
+
+    user_id, thread_id, session_id = _seed_runtime_project()
+    pinned = _seed_lisbon_editor_job(user_id, thread_id, session_id)
+    ids = pinned if target == "all" else pinned[:1]
+    ops = [
+        {
+            "op": "patch_text",
+            "selector": {"ids": ids},
+            "target_ids": ids,
+            "expected_count": len(ids),
+            "patch": patch,
+        }
+    ]
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=adapt_editor_action(reply="Updated your edit.", request_render=False, ops=ops),
+            manifest_hash="a" * 64,
+            context_hash="b" * 64,
+            # The extractor's description only: no structured style_intent, as in prod.
+            brief_updates=(BriefUpdate(kind="style", scope="global", description=message),),
+            brief_route="editor_ops",
+            brief_clip_ids=("clip-1",),
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+    try:
+        accepted = await _submit(user_id, thread_id, message, 2)
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        assert result["status"] == "completed"
+        with sync_session() as db:
+            event = db.execute(
+                select(CreationThreadEvent).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "draft_applied",
+                )
+            ).scalar_one()
+            receipts = list(event.payload["requirement_receipts"])
+            content = event.content
+        assert content == expected
+        [receipt] = receipts
+        assert (receipt["status"], receipt["verification"]) == ("met", "checked")
+        lowered = content.lower()
+        assert "verify" not in lowered and "can't check" not in lowered
+        assert "have a look" not in lowered
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "facts",
+    [{}, {"text_color": "#FFFFFF", "font_family": "Inter"}],
+)
+async def test_kri558_first_draft_says_nothing_about_asks_only_the_render_can_show(
+    monkeypatch: pytest.MonkeyPatch, facts: dict
+) -> None:
+    """Prod thread 92154c24: "use inter font and white" on a first draft read "I couldn't
+    verify every requested change". A draft has no finished video, so it says nothing."""
+    user_id, thread_id, _session_id = _seed_runtime_project()
+    plan = _brief_strategy_plan()
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=plan,
+            manifest_hash="a" * 64,
+            context_hash="b" * 64,
+            brief_updates=(
+                BriefUpdate(kind="text", scope="title", literal="20K Kosu"),
+                BriefUpdate(
+                    kind="style",
+                    scope="global",
+                    description="use inter font and white",
+                    facts=facts,
+                ),
+                BriefUpdate(
+                    kind="timing",
+                    scope="global",
+                    description="make all clips 1 second long except the first and the last",
+                    literal="1",
+                ),
+            ),
+            brief_route="replan",
+            brief_clip_ids=("clip-1", "clip-2"),
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+    try:
+        accepted = await _submit(
+            user_id, thread_id, "Title it 20K Kosu, use inter font and white", 2
+        )
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        assert result["status"] == "awaiting_approval"
+        with sync_session() as db:
+            event = db.execute(
+                select(CreationThreadEvent).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "draft_applied",
+                )
+            ).scalar_one()
+            receipts = list(event.payload.get("requirement_receipts") or [])
+            content = event.content
+        assert all(r["verification"] != "unchecked" for r in receipts)
+        assert {r["requirement_id"] for r in receipts} == {"r1"}  # only the title is checkable now
+        lowered = content.lower()
+        for phrase in ("verify", "output check", "have a look", "can't check"):
+            assert phrase not in lowered, phrase
+    finally:
+        await async_engine.dispose()

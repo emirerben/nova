@@ -58,6 +58,7 @@ from app.routes import (
     sound_effects,
     template_jobs,
     templates,
+    thought_summaries,
     tiktok,
     uploads,
     waitlist,
@@ -414,6 +415,7 @@ app.include_router(generative_jobs.router, prefix="/generative-jobs", tags=["gen
 app.include_router(personas.router, prefix="/personas", tags=["personas"])
 app.include_router(content_plans.router, prefix="/content-plans", tags=["content-plans"])
 app.include_router(creation_threads.router, prefix="/creation-threads", tags=["creation-threads"])
+app.include_router(thought_summaries.router, tags=["thought-summaries"])
 app.include_router(kria_runtime.router, prefix="/creation-threads", tags=["kria-runtime-v2"])
 app.include_router(plan_items.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(editor_sources.router, prefix="/plan-items", tags=["plan-items"])

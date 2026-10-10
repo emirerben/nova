@@ -103,21 +103,31 @@ def test_turkish_not_possible_and_met_labels_and_kept_summary() -> None:
 
 
 def test_turkish_unchecked_header_and_label() -> None:
+    """KRI-558: an ask no check could decide is never a failure; the creator is pointed at it."""
     reqs = [_req("style", "yazı rengi sarı olsun")]
     with reply_language_for("tr"):
         text = _reply(reqs, PlanFacts())
-    assert text.startswith(
-        "İstediğin değişikliklerin hepsini doğrulayamadım:\n- Doğrulayamadım: yazı rengi sarı olsun"
-    )
-    assert "Bunu henüz otomatik olarak doğrulayamıyorum" in text
+    assert text == "Bunlara videoda bir göz at:\n- yazı rengi sarı olsun"
+    assert "doğrulayamadım" not in text.lower()
 
 
-def test_english_unchecked_header_is_unchanged() -> None:
+def test_english_unchecked_header_is_calm() -> None:
     reqs = [_req("style", "make the text yellow")]
     text = _reply(reqs, PlanFacts())
-    assert text.startswith(
-        "I couldn't verify every requested change:\n- Couldn't verify: make the text yellow"
-    )
+    assert text == "Have a look at these in the video:\n- make the text yellow"
+    assert "verify" not in text.lower()
+
+
+def test_unchecked_asks_sit_after_the_judged_lines_and_replace_the_summary() -> None:
+    reqs = [
+        _req("text", "title", scope="title", literal="Galata", rid="r1"),
+        _req("style", "make the text yellow", rid="r2"),
+    ]
+    facts = PlanFacts(title="Galata", texts=("Galata",), title_source="creator")
+    text = _reply(reqs, facts)
+    assert text.startswith("- Done: title")
+    assert text.endswith("Have a look at these in the video:\n- make the text yellow")
+    assert "Done!" not in text and "Ready." not in text  # an open ask never keeps the summary
 
 
 def test_turkish_guess_line_and_chosen_outcome() -> None:

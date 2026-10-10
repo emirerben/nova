@@ -215,9 +215,29 @@ async def get_current_user_or_synthetic(
     return await get_current_user(x_user_id=x_user_id, authorization=authorization, db=db)
 
 
+async def is_native_client_or_synthetic(
+    user: Annotated[User, Depends(get_current_user_or_synthetic)],
+    x_user_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> bool:
+    """Identify a verified native session without rejecting synthetic callers."""
+
+    if user.id == SYNTHETIC_USER_ID:
+        return False
+    if settings.internal_api_key and authorization == f"Bearer {settings.internal_api_key}":
+        return False
+    return bool(
+        authorization
+        and authorization.startswith("Bearer ")
+        and settings.mobile_jwt_secret
+        and not x_user_id
+    )
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentUserOrSynthetic = Annotated[User, Depends(get_current_user_or_synthetic)]
 NativeClient = Annotated[bool, Depends(is_native_client)]
+NativeClientOrSynthetic = Annotated[bool, Depends(is_native_client_or_synthetic)]
 KriaClientProtocol = Annotated[int | None, Depends(kria_client_protocol)]
 
 __all__ = [
@@ -226,10 +246,12 @@ __all__ = [
     "CurrentUserOrSynthetic",
     "KriaClientProtocol",
     "NativeClient",
+    "NativeClientOrSynthetic",
     "ensure_job_owner",
     "get_current_user",
     "get_current_user_or_synthetic",
     "is_native_client",
+    "is_native_client_or_synthetic",
     "kria_client_protocol",
     "parse_kria_client_protocol",
 ]

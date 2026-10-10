@@ -217,7 +217,10 @@ enum NativeEditorRenderError: Error, Equatable {
             let start = min(max(0, bed.sourceStart), available)
             // The song plays while it has time left and stops where it ends (KRI-457). The bed's own duration
             // was only the window the last saved recipe had, so it never caps a longer video.
-            let length = min(total, available - start)
+            // KRI-561: the creator may have stopped the music earlier (absolute song second `endS`).
+            let natural = min(total, available - start)
+            let creatorEndApplies = bed.endS.map { $0 - start < natural - 0.05 } ?? false
+            let length = creatorEndApplies ? max(0, (bed.endS ?? 0) - start) : natural
             if length > 0 {
                 let id = Self.songTrackID
                 assets[id] = MediaAsset(id: id, relativePath: id, fingerprint: fingerprint, duration: available)
@@ -226,7 +229,11 @@ enum NativeEditorRenderError: Error, Equatable {
                 var clip = TimelineClip(id: id, sourceAssetID: id, sourceStart: start, sourceDuration: length,
                                         timelineStart: 0, volume: bed.volume)
                 clip.audioFadeIn = bed.fadeIn.map { min($0, length / 2) }
-                clip.audioFadeOut = bed.fadeOut.map { min($0, length / 2) }
+                // The server fades a creator-stopped song out over 1.5 s; a song that merely runs out keeps the
+                // recipe's own fade.
+                clip.audioFadeOut = creatorEndApplies
+                    ? min(NativeEditorSongBed.creatorEndFadeOut, length / 2)
+                    : bed.fadeOut.map { min($0, length / 2) }
                 audioTracks.append(TimelineTrack(id: id, kind: .audio, clips: [clip]))
             } else {
                 // No song plays (its window is past the end of the file): the camera is not muted for nothing.

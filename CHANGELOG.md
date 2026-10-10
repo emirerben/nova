@@ -2,6 +2,141 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.205.0] - 2026-10-10
+
+### Changed
+- fix(ios): slide text keeps the creator's lines; edit box follows the caret (KRI-564) (#1527) <!-- release-pr: 1527 -->
+
+## [0.78.204.0] - 2026-10-10
+
+### Changed
+- feat(kria): trim the creator's song start and end in the editor (KRI-561) (#1526) <!-- release-pr: 1526 -->
+
+## [0.78.203.0] - 2026-10-09
+
+### Changed
+- feat(kria): song-timeline order screen for lip-sync takes (KRI-561) (#1524) <!-- release-pr: 1524 -->
+
+## [0.78.202.0] - 2026-10-09
+
+### Changed
+- feat(kria): section-scoped turns and per-section undo (KRI-441, KRI-442) (#1522) <!-- release-pr: 1522 -->
+
+## [0.78.201.0] - 2026-10-09
+
+### Changed
+- fix(kria): keep iPhone creation on device (KRI-563) (#1525) <!-- release-pr: 1525 -->
+
+## [0.78.200.0] - 2026-10-09
+
+### Changed
+- Fix iOS slide post save after binding number round-trip (#1523) <!-- release-pr: 1523 -->
+
+## [0.78.199.0] - 2026-10-09
+
+### Changed
+- feat(ios): Review your video sheet - scoped update, Updated state, undo, manual edits (KRI-440, KRI-444, KRI-445, KRI-451) (#1521) <!-- release-pr: 1521 -->
+
+## [0.78.198.0] - 2026-10-09
+
+### Changed
+- feat(audio): server renderer honors mix.original_level (KRI-449) (#1518) <!-- release-pr: 1518 -->
+
+## [0.78.197.0] - 2026-10-09
+
+### Changed
+- feat(ios): restyle live plan feed to Paper -B glass/butter design (KRI-450) (#1520) <!-- release-pr: 1520 -->
+
+## [0.78.196.0] - 2026-10-09
+
+### Changed
+- feat(live-plan): structured block payloads, revision/changed, post caption, GET /plan (KRI-439, KRI-447, KRI-448, KRI-453) (#1519) <!-- release-pr: 1519 -->
+
+## [0.78.195.0] - 2026-10-09
+
+### Changed
+- feat(ios): every tool panel starts at one height, Style keeps the Edit text top (KRI-508) (#1510) <!-- release-pr: 1510 -->
+
+## [0.78.194.0] - 2026-10-09
+
+### Fixed
+- fix(kria): name what an edit changed instead of "can't check" (KRI-558) (#1514) <!-- release-pr: 1514 -->
+
+## [0.78.193.0] - 2026-10-09
+
+### Changed
+- fix: preserve compound clip extensions and bound durable model waits (#1517) <!-- release-pr: 1517 -->
+
+## [0.78.192.0] - 2026-10-09
+
+### Changed
+- feat(ios): show live Gemini thought summaries in chat (KRI-557) (#1512) <!-- release-pr: 1512 -->
+
+## [0.78.191.0] - 2026-10-09
+
+### Fixed
+- fix(kria): preserve text timing and save shortened edits (#1515) <!-- release-pr: 1515 -->
+
+## [0.78.190.0] - 2026-10-09
+
+### Fixed
+- fix(ios): shimmer Thinking label (KRI-556) (#1516) <!-- release-pr: 1516 -->
+
+## [0.78.189.0] - 2026-10-09
+
+### Changed
+- feat(kria): require affected journey evidence (KRI-559) (#1513) <!-- release-pr: 1513 -->
+
+## [0.78.188.0] - 2026-10-09
+
+### Changed
+- fix(kria): verify composed titles across render validation (#1511) <!-- release-pr: 1511 -->
+
+## [0.78.187.0] - 2026-10-09
+
+### Changed
+- test(ios): fixture returns the event turn id; scrub and song-order tests wait for the UI (KRI-554) (#1509) <!-- release-pr: 1509 -->
+
+## [0.78.186.0] - 2026-10-09
+
+### Changed
+- test(ios): text accessibility UI tests follow the panel opening on Edit text (KRI-508) (#1508) <!-- release-pr: 1508 -->
+
+## [0.78.185.0] - 2026-10-09
+
+### Changed
+- fix(kria): preserve requests through retries and creation text composition (KRI-524) (#1499) <!-- release-pr: 1499 -->
+
+## [0.78.184.0] - 2026-10-08
+
+### Changed
+- feat(ios): text opens on Edit text with the keyboard, one-line box that grows (KRI-508) (#1497) <!-- release-pr: 1497 -->
+
+## [0.78.183.0] - 2026-10-08
+
+### Added
+- feat(kria): verify style asks from structured intent (KRI-543) (#1500) <!-- release-pr: 1500 -->
+
+## [0.78.182.0] - 2026-10-08
+
+### Changed
+- fix(kria): phone Montage render-ready receipts judge order, duplicates and the closing line (KRI-546) (#1503) <!-- release-pr: 1503 -->
+
+## [0.78.181.0] - 2026-10-08
+
+### Fixed
+- fix(kria): calmer reply for applied edits, serve single text asks when extraction fails, no stale video on first open (KRI-534, KRI-535, KRI-536) (#1498) <!-- release-pr: 1498 -->
+
+## [0.78.180.0] - 2026-10-08
+
+### Changed
+- fix(kria): render byte-identical iPhone uploads once under "each video once" (KRI-544) (#1502) <!-- release-pr: 1502 -->
+
+## [0.78.179.0] - 2026-10-08
+
+### Changed
+- fix(kria): chapter-title list never becomes the montage's opening title (KRI-545) (#1501) <!-- release-pr: 1501 -->
+
 ## [0.78.178.0] - 2026-10-08
 
 ### Changed

@@ -51,6 +51,87 @@ def _default_font_recipe(family, *, giant=False):
     return recipe
 
 
+def test_compiled_guided_text_sequence_keeps_lineage_for_phone_contract() -> None:
+    """The real compiler output must prove a split approved phrase as one title."""
+    from app.agents._schemas.text_element import TextElement
+    from app.services.creator_render_contract import (
+        CreatorRenderContract,
+        TextRequirement,
+        verify_phone_recipe,
+    )
+
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(
+            id="guided-title::sequence-1",
+            text="Morning",
+            start_s=0.0,
+            end_s=1.0,
+            font_family="Inter",
+            effect="static",
+            size_px=64,
+            source_params={"sequence_source_id": "guided-title"},
+        ),
+        TextElement(
+            id="guided-title::sequence-2",
+            text="coffee",
+            start_s=1.0,
+            end_s=2.0,
+            font_family="Inter",
+            effect="static",
+            size_px=64,
+            source_params={"sequence_source_id": "guided-title"},
+        ),
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings)
+    contract = CreatorRenderContract(generation_id="g").rebind(
+        exact_texts=(TextRequirement(role="opening", text="Morning coffee"),)
+    )
+
+    verify_phone_recipe(contract, recipe)
+
+
+def test_compiled_clip_label_sequence_cannot_satisfy_opening_contract() -> None:
+    from app.agents._schemas.text_element import TextElement
+    from app.services.creator_render_contract import (
+        CreatorRenderContract,
+        CreatorRenderContractError,
+        TextRequirement,
+        verify_phone_recipe,
+    )
+
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(
+            id="clip-label-0::sequence-1",
+            text="Morning",
+            start_s=0.0,
+            end_s=1.0,
+            font_family="Inter",
+            effect="static",
+            size_px=64,
+            source_params={"sequence_source_id": "clip-label-0"},
+        ),
+        TextElement(
+            id="clip-label-0::sequence-2",
+            text="coffee",
+            start_s=1.0,
+            end_s=2.0,
+            font_family="Inter",
+            effect="static",
+            size_px=64,
+            source_params={"sequence_source_id": "clip-label-0"},
+        ),
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings)
+    contract = CreatorRenderContract(generation_id="g").rebind(
+        exact_texts=(TextRequirement(role="opening", text="Morning coffee"),)
+    )
+
+    with pytest.raises(CreatorRenderContractError, match="missing confirmed on-screen text"):
+        verify_phone_recipe(contract, recipe)
+
+
 def test_qualified_font_does_not_qualify_giant_title(monkeypatch):
     # Strict-mode pin: the narrow per-instance gate never qualified a giant
     # title (any effect combined with `giant_title` was unqualified). In

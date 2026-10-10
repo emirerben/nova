@@ -329,6 +329,128 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertNotNil(state, "a failed sync never blocks the send")
     }
 
+    // MARK: KRI-535 — first open, and a render that changed under unsaved edits
+
+    /// Opens the editor while the source preview is held in `.preparing`, the window in which
+    /// the OLD rendered video used to be shown as if it were current.
+    private func openedWhilePreparing(_ snapshot: DraftSnapshot) async throws -> (NativeEditorSession, EditorCommitSpy, Task<Void, Never>) {
+        let fake = EditorCommitSpy(draftSnapshot: snapshot, authoritativeVariant: Self.variant())
+        fake.suspendNextSourcePool = true
+        let project = threadProject(UUID(), revision: 5)
+        let session = NativeEditorSession(project: project)
+        let loading = Task { await session.load(project: project, api: fake) }
+        for _ in 0..<200 where !fake.sourcePoolIsSuspended {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(fake.sourcePoolIsSuspended, "the source-pool gate did not suspend in time")
+        return (session, fake, loading)
+    }
+
+    func testFirstOpenHidesTheOldRenderWhileAStagedChatEditPrepares() async throws {
+        let (session, fake, loading) = try await openedWhilePreparing(Self.chatSnapshot(shape: .flatOnly))
+        XCTAssertEqual(session.sourcePreviewState, .preparing)
+        XCTAssertTrue(session.hasOnlyChatStagedChanges, "the AI edit is already staged in the document")
+        XCTAssertNotNil(session.player, "the old render stays installed as the failure fallback")
+        XCTAssertFalse(session.canDisplayCurrentPlayer, "the old render predates the AI edit: never show it as current")
+        fake.resumeSourcePool()
+        await loading.value
+    }
+
+    func testFirstOpenWithNothingStagedStillShowsTheCurrentRender() async throws {
+        // A draft built on another render is dropped, so the rendered video IS current.
+        let (session, fake, loading) = try await openedWhilePreparing(Self.chatSnapshot(base: "g0", shape: .flatOnly))
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        fake.resumeSourcePool()
+        await loading.value
+    }
+
+    func testFirstOpenFallsBackToTheOldRenderWhenTheEditCannotBePreviewed() async throws {
+        let fake = EditorCommitSpy(draftSnapshot: Self.chatSnapshot(shape: .flatOnly), authoritativeVariant: Self.variant())
+        fake.sourcePoolResult = nil  // the source pool is unavailable, so the local preview fails
+        let project = threadProject(UUID(), revision: 5)
+        let session = NativeEditorSession(project: project)
+        await session.load(project: project, api: fake)
+        XCTAssertTrue(session.sourcePreviewState.isFailure)
+        XCTAssertTrue(session.isShowingRenderedFallback)
+        XCTAssertTrue(session.canDisplayCurrentPlayer, "better the last finished video, labelled, than a blank editor")
+        XCTAssertTrue(session.hasUnsavedChanges, "the staged AI edit is still there to save")
+    }
+
+    func testReopenAsksBeforeReloadingOverANewerRenderWithManualEdits() async throws {
+        let id = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+        let session = NativeEditorSession(project: threadProject(id, revision: 5))
+        await session.load(project: threadProject(id, revision: 5), api: fake)
+        session.setClipTiming(clipID: "s1", durationS: 1.1)  // the creator's own unsaved edit
+        let variantFetches = fake.editorVariantJobIDs.count
+        fake.authoritativeVariant = Self.variant(generation: "g2")  // a newer render of the same job
+
+        let handled = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
+
+        XCTAssertTrue(handled, "no silent reload")
+        XCTAssertEqual(session.newerJobPrompt?.serverRevision, 7)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.durationS, 1.1)
+        XCTAssertEqual(fake.editorVariantJobIDs.count, variantFetches + 1, "only the check ran, not a reload")
+        XCTAssertTrue(session.needsReload(for: threadProject(id, revision: 7)), "the next open asks again")
+
+        session.keepEditingCurrentJob()
+        XCTAssertNil(session.newerJobPrompt)
+        XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.durationS, 1.1, "keep editing keeps the work")
+    }
+
+    func testSwitchingToTheNewerRenderDiscardsOnlyBecauseTheCreatorChose() async throws {
+        let id = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+        let session = NativeEditorSession(project: threadProject(id, revision: 5))
+        await session.load(project: threadProject(id, revision: 5), api: fake)
+        session.setClipTiming(clipID: "s1", durationS: 1.1)
+        fake.authoritativeVariant = Self.variant(generation: "g2")
+        _ = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
+        let prompt = try XCTUnwrap(session.newerJobPrompt)
+
+        await session.switchToLatestJob(prompt, api: fake)
+
+        XCTAssertNil(session.newerJobPrompt)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertFalse(session.needsReload(for: threadProject(id, revision: 7)))
+    }
+
+    func testReopenOverANewerRenderReloadsWithoutAskingWhenNothingOfTheirsIsAtStake() async throws {
+        let id = UUID()
+        // Clean editor, and an editor holding only the AI's staged edit (the render replaces it).
+        for snapshot in [Self.bootstrapSnapshot(), Self.chatSnapshot(shape: .flatOnly)] {
+            let fake = EditorCommitSpy(draftSnapshot: snapshot, authoritativeVariant: Self.variant())
+            let session = NativeEditorSession(project: threadProject(id, revision: 5))
+            await session.load(project: threadProject(id, revision: 5), api: fake)
+            fake.authoritativeVariant = Self.variant(generation: "g2")
+            let handled = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
+            XCTAssertFalse(handled)
+            XCTAssertNil(session.newerJobPrompt)
+        }
+    }
+
+    func testReopenKeepsManualEditsThroughADroppedConnectionButNotThroughASupersededJob() async throws {
+        let id = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+        let session = NativeEditorSession(project: threadProject(id, revision: 5))
+        await session.load(project: threadProject(id, revision: 5), api: fake)
+        session.setClipTiming(clipID: "s1", durationS: 1.1)
+
+        fake.editorVariantError = .offline
+        let offline = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
+        XCTAssertTrue(offline, "a dropped connection must not wipe the creator's edits or error the editor")
+        XCTAssertEqual(session.loadState, .loaded)
+        XCTAssertTrue(session.hasUnsavedChanges)
+
+        for superseded in [APIError.contentPlanUnavailable, APIError.conflict] {
+            fake.editorVariantError = superseded
+            let handled = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
+            XCTAssertFalse(handled, "a superseded job takes the full path that follows the thread")
+        }
+    }
+
     func testChatStagedEditsAloneNeedNoFlushButLocalEditsDo() async throws {
         let (session, fake) = await loaded(Self.chatSnapshot(shape: .flatOnly))
         XCTAssertTrue(session.hasOnlyChatStagedChanges, "send must not commit/render chat-staged edits")
@@ -532,6 +654,78 @@ final class ChatDraftStagingTests: XCTestCase {
     }
 
     // MARK: - Editor-state turns (the user never saves mid-flow)
+
+    /// KRI-524: a clip trim and twelve explicit word windows must arrive and save
+    /// together, even when the draft retains older nested section values.
+    func testCompoundOpeningTrimStagesAndSavesExactWordWindows() async throws {
+        var variant = Self.variant()
+        let words = "Join us for our favorite bakery and tea shop near the harbor".split(separator: " ")
+        func texts(duration: Double) -> [JSONValue] {
+            words.enumerated().map { index, word in
+                .object(["id": .string("word-\(index)"), "text": .string(String(word)),
+                         "start_s": .number(Double(index) * duration / 12),
+                         "end_s": .number(Double(index + 1) * duration / 12),
+                         "role": .string("generative_sequence"), "effect": .string("fade"),
+                         "font_family": .string("Inter"), "font_size_px": .number(72),
+                         "x_frac": .number(0.3), "y_frac": .number(0.7)])
+            }
+        }
+        func slots(firstDuration: Double) -> [JSONValue] {
+            (0..<3).map { index in
+                .object(["slot_id": .string("s\(index + 1)"), "clip_index": .number(Double(index)),
+                         "in_s": .number(0), "duration_s": .number(index == 0 ? firstDuration : 2),
+                         "source_duration_s": .number(6), "removed": .bool(false)])
+            }
+        }
+        let oldWords = texts(duration: 4.633333)
+        variant["duration_s"] = .number(8.633333)
+        variant["user_timeline"] = .object(["slots": .array(slots(firstDuration: 4.633333))])
+        variant["text_elements"] = .array(oldWords)
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: variant,
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2",
+                sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: true, mix: false),
+                revisionNumber: 4, revisionHash: "r4", expectedDuration: nil))
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+        let submitted = try XCTUnwrap(session.exportEditorState())
+        let newWords = texts(duration: 2)
+        let snapshot = DraftSnapshot(draftID: "trim", itemID: "item", variantKey: "initial", draftRevision: 6,
+            snapshotHash: "trim", etag: "trim", baseJobID: Self.jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "editor_payload": .object([
+                "base_generation": .string("g1"),
+                "timeline_slots": .array(slots(firstDuration: 2)), "text_elements": .array(newWords),
+                "sections": .object(["timeline_slots": .array(slots(firstDuration: 4.633333)),
+                                     "text_elements": .array(oldWords)])])], canUndo: true, createdAt: .now)
+        fake.draftSnapshot = Self.echoing(submitted.clientStateID, snapshot)
+        await session.synchronizePromptRevision()
+        XCTAssertNotEqual(session.saveState, .conflict)
+        XCTAssertEqual(session.document.clips.map(\.durationS), [2, 2, 2])
+        XCTAssertEqual(session.document.textElements.count, 12)
+        XCTAssertEqual(session.dirtySections, [.timeline, .text])
+        // A repeated refresh must not restore the older nested sections.
+        await session.synchronizePromptRevision()
+        await session.save()
+        let request = try XCTUnwrap(fake.lastRequest)
+        XCTAssertEqual(fake.commitCount, 1)
+        let savedSlots = try XCTUnwrap(request.timelineSlots)
+        XCTAssertEqual(savedSlots.count, 3)
+        for (index, value) in savedSlots.enumerated() {
+            guard case let .object(row) = value else { return XCTFail("clip row missing") }
+            XCTAssertEqual(row["slot_id"], .string("s\(index + 1)"))
+            XCTAssertEqual(row["duration_s"], .number(2))
+            XCTAssertEqual(row["in_s"], .number(0))
+            XCTAssertEqual(row["source_duration_s"], .number(6))
+        }
+        let savedWords = try XCTUnwrap(request.textElements)
+        for (index, value) in savedWords.enumerated() {
+            guard case let .object(row) = value, case let .object(expected) = newWords[index] else {
+                return XCTFail("word must remain an individual text row")
+            }
+            for key in ["id", "text", "start_s", "end_s", "effect", "font_family", "font_size_px", "x_frac", "y_frac"] {
+                XCTAssertEqual(row[key], expected[key], "word \(index), \(key)")
+            }
+        }
+    }
 
     private static func echoing(_ stateID: String, _ snapshot: DraftSnapshot) -> DraftSnapshot {
         var value = snapshot.snapshot

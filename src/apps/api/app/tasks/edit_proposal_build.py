@@ -341,7 +341,10 @@ def _creator_request_for_guided_attempt(
         active_plan = session.active_plan if isinstance(session.active_plan, dict) else {}
         if active_plan.get("guided_generation_attempt_id") != attempt_id:
             continue
-        return str(active_plan.get("creator_request") or "")[:1000]
+        request = str(active_plan.get("creator_request") or "")
+        if len(request) > 12000:
+            raise ValueError("The complete creator request exceeds the planning limit")
+        return request
     return ""
 
 
@@ -1585,6 +1588,11 @@ def _run_draft_attempt(
             # Decided once per attempt so the plan, its digest and the story
             # layouts agree; the save below rejects the attempt if it moved.
             visuals_only_device = item_visuals_only_on_device_sync(db, item, owner_id)
+            from app.services.phone_destination import (  # noqa: PLC0415
+                item_requires_native_device_only_sync,
+            )
+
+            native_device_only = item_requires_native_device_only_sync(db, item, owner_id)
             assignments = [
                 dict(a)
                 for a in (item.clip_assignments or [])
@@ -1745,6 +1753,7 @@ def _run_draft_attempt(
             clip_refs + [ref for ref in pool if ref.gcs_path not in clip_paths],
             owner_id,
             visuals_only_device=visuals_only_device,
+            native_device_only=native_device_only,
         )
         if not media:
             with sync_session() as db:
@@ -1979,13 +1988,16 @@ def _run_draft_attempt(
                 assert owner_id is not None
                 fresh_pool = _pool_refs(db, item, owner_id)
                 fresh_visuals_only = item_visuals_only_on_device_sync(db, item, owner_id)
+                fresh_native_device_only = item_requires_native_device_only_sync(db, item, owner_id)
                 fresh_media = phone_renderable_media(
                     clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths],
                     owner_id,
                     visuals_only_device=fresh_visuals_only,
+                    native_device_only=fresh_native_device_only,
                 )
                 if (
                     fresh_visuals_only != visuals_only_device
+                    or fresh_native_device_only != native_device_only
                     or canonical_media_digest(fresh_media, narration) != digest
                 ):
                     _fail(
@@ -2444,7 +2456,12 @@ def _run_draft_attempt(
         snapshot = _snapshot_for(output)
         if snapshot is None:
             return
-        snapshot = phone_story_layouts(snapshot, owner_id, visuals_only_device=visuals_only_device)
+        snapshot = phone_story_layouts(
+            snapshot,
+            owner_id,
+            visuals_only_device=visuals_only_device,
+            native_device_only=native_device_only,
+        )
         # Dry-run the strict compiler on EVERY draft, not only on recoveries. The
         # planner now repairs an authored plan instead of rejecting it (KRI-129);
         # without this, a repaired plan the renderer cannot allocate would be
@@ -2454,7 +2471,10 @@ def _run_draft_attempt(
         # repair fixes takes the same deterministic fallback as any other dry-run reject
         # instead of failing after the creator approves.
         phone_destination = renders_on_phone(
-            snapshot.media, owner_id, visuals_only_device=visuals_only_device
+            snapshot.media,
+            owner_id,
+            visuals_only_device=visuals_only_device,
+            native_device_only=native_device_only,
         )
         phone_repair_notes: list[str] = []
 
@@ -2512,7 +2532,10 @@ def _run_draft_attempt(
             if snapshot is None:
                 return
             snapshot = phone_story_layouts(
-                snapshot, owner_id, visuals_only_device=visuals_only_device
+                snapshot,
+                owner_id,
+                visuals_only_device=visuals_only_device,
+                native_device_only=native_device_only,
             )
             validate_proposal_timing(snapshot)
             if phone_destination:
@@ -2525,6 +2548,18 @@ def _run_draft_attempt(
                     ][:6]
                 }
             )
+        # Same composition lane for guided proposals, before they are offered for
+        # approval. Fail visibly on incomplete text behavior; never use the base
+        # proposal as a silent fallback after the composition step failed.
+        from app.services.creation_text_composition import compose_creation_text  # noqa: PLC0415
+        from app.services.edit_proposals import _validated_scheduled_draft  # noqa: PLC0415
+
+        snapshot = _validated_scheduled_draft(snapshot, current)
+        snapshot = compose_creation_text(
+            snapshot,
+            creator_request=brief.creator_request,
+            ctx=RunContext(plan_item_id=item_id, request_id=f"creation-text:{attempt_id}"),
+        )
         with sync_session() as db:
             locked = _locked_item(db, iid, ownership_epoch)
             item = locked[0] if locked else None

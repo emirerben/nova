@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Literal
@@ -1350,6 +1351,54 @@ def _creator_selected_clip_paths(
     return [path_by_id[media_id] for media_id in selected if media_id in path_by_id]
 
 
+def _collapse_duplicate_uploads(
+    item: PlanItem,
+    clip_paths: list[str],
+    creator_strategy: dict | None,
+    *,
+    brief_binding: dict | None = None,
+    protected_paths: Iterable[str] = (),
+) -> tuple[list[str], dict[str, str]]:
+    """KRI-544: drop byte-identical iPhone uploads from the clip set, keeping one copy.
+
+    Returns ``(clip_paths, {dropped media_id: kept media_id})``. The rule lives in
+    ``app.kria.duplicate_uploads.duplicate_aliases``: only under the approved strategy's
+    ``video_reuse_policy == "once"`` and only for uploads whose receipts carry the device
+    original's sha256 (web uploads never collapse). A copy a clip-scoped brief requirement
+    names, or the speech-cleanup source (``protected_paths``), keeps its whole group.
+    Attachment order of the remaining paths is unchanged.
+    """
+
+    if not creator_strategy or len(clip_paths) < 2:
+        return clip_paths, {}
+    from app.kria.duplicate_uploads import duplicate_aliases  # noqa: PLC0415
+
+    wanted = set(clip_paths)
+    rows = [
+        row
+        for row in (item.clip_assignments or [])
+        if isinstance(row, dict) and row.get("gcs_path") in wanted
+    ]
+    protected = set(protected_paths)
+    blocked = [str(row.get("media_id") or "") for row in rows if row.get("gcs_path") in protected]
+    brief = brief_binding.get("brief") if isinstance(brief_binding, dict) else None
+    for requirement in (brief.get("requirements") if isinstance(brief, dict) else None) or []:
+        scope = requirement.get("scope") if isinstance(requirement, dict) else None
+        if isinstance(scope, str) and scope.startswith("clip:"):
+            blocked.append(scope[5:])
+    aliases = duplicate_aliases(creator_strategy, rows, blocked_refs=blocked)
+    if not aliases:
+        return clip_paths, {}
+    dropped = {str(row["gcs_path"]) for row in rows if str(row.get("media_id") or "") in aliases}
+    log.info(
+        "plan_item_render.duplicate_uploads_collapsed",
+        plan_item_id=str(item.id),
+        dropped_media_ids=sorted(aliases),
+        kept_media_ids=sorted(set(aliases.values())),
+    )
+    return [path for path in clip_paths if path not in dropped], aliases
+
+
 def order_paths_by_resolved_intents(
     clip_paths: list[str],
     path_by_media_id: dict[str, str],
@@ -1490,7 +1539,11 @@ _VISUALS_IN_FLIGHT_STATES = ("uploaded", "queued", "analyzing")
 
 
 def _lands_on_unified_phone_montage(
-    item: PlanItem, plan: ContentPlan, *, allow_phone_unapproved_montage: bool
+    item: PlanItem,
+    plan: ContentPlan,
+    *,
+    allow_phone_unapproved_montage: bool,
+    native_device_only: bool = False,
 ) -> bool:
     """Whether a bypassed montage dispatch renders as the unified phone montage.
 
@@ -1508,8 +1561,8 @@ def _lands_on_unified_phone_montage(
     return bool(
         allow_phone_unapproved_montage
         and any(is_analysis_proxy_path(path) for path in item.clip_gcs_paths or [])
-        and settings.phone_rendering_for(plan.user_id)
-        and settings.kria_runtime_v2_phone_for(plan.user_id)
+        and (settings.phone_rendering_for(plan.user_id) or native_device_only)
+        and (settings.kria_runtime_v2_phone_for(plan.user_id) or native_device_only)
     )
 
 
@@ -1619,6 +1672,8 @@ def _dispatch_item_render(
     (cloud) source, or this flag left False, still refuses. False (default)
     keeps every other caller's gate byte-identical.
     """
+    if len(str(creator_request or "")) > 12_000:
+        raise ValueError("Creator request exceeds the safe limit")
     from app.agents._schemas.edit_format import (  # noqa: PLC0415
         coerce_edit_format,
         guided_edit_applicable,
@@ -1739,6 +1794,11 @@ def _dispatch_item_render(
     if proposal_generate_error(item) == "proposal_replan_required":
         return DispatchResult("proposal_replan_required")
     if bypass_guided_edit_gate and guided_applicable:
+        from app.services.phone_destination import (  # noqa: PLC0415
+            item_requires_native_device_only_sync,
+        )
+
+        native_device_only = item_requires_native_device_only_sync(session, item, plan.user_id)
         # The caller's zero-registered-pool-assets invariant was checked in a
         # SEPARATE transaction — re-assert it under THIS lock (the item row is
         # already FOR-UPDATE-locked by dispatch_item_render_for) before
@@ -1766,7 +1826,10 @@ def _dispatch_item_render(
                 item,
                 creator_strategy,
                 unified_phone_montage=_lands_on_unified_phone_montage(
-                    item, plan, allow_phone_unapproved_montage=allow_phone_unapproved_montage
+                    item,
+                    plan,
+                    allow_phone_unapproved_montage=allow_phone_unapproved_montage,
+                    native_device_only=native_device_only,
                 ),
             )
             if refusal is not None:
@@ -1924,7 +1987,12 @@ def _dispatch_item_render(
             outcome_analysis_id = str(speech_cleanup_analysis_id)
     # Decided on the item itself, before the seed path below stands in for
     # clips: a project with no footage at all whose Visuals render on the iPhone.
-    from app.services.phone_destination import item_visuals_only_on_device_sync  # noqa: PLC0415
+    from app.services.phone_destination import (  # noqa: PLC0415
+        item_requires_native_device_only_sync,
+        item_visuals_only_on_device_sync,
+    )
+
+    native_device_only = item_requires_native_device_only_sync(session, item, plan.user_id)
 
     visuals_only_device = (
         not item_clip_paths
@@ -1951,13 +2019,35 @@ def _dispatch_item_render(
     clip_paths = _creator_selected_clip_paths(
         item, clip_paths, creator_strategy, without_proposal=approved_proposal is None
     )
+    # KRI-544: two uploads of the same file under "each video once" render once. An
+    # approved guided proposal pins its own media choice, so only proposal-less montages
+    # (runtime-v2 approvals, native plans) collapse. The persisted strategy stays as
+    # approved (its equality with the session plan is checked elsewhere); readers remap
+    # through the recorded aliases instead.
+    duplicate_aliases: dict[str, str] = {}
+    intent_strategy = creator_strategy
+    if approved_proposal is None and guided_applicable:
+        source = (preflight_snapshot or {}).get("source")
+        clip_paths, duplicate_aliases = _collapse_duplicate_uploads(
+            item,
+            clip_paths,
+            creator_strategy,
+            brief_binding=creator_brief_binding,
+            protected_paths=(
+                [str(source.get("storage_path") or "")] if isinstance(source, dict) else []
+            ),
+        )
+        if duplicate_aliases and creator_strategy:
+            from app.kria.duplicate_uploads import collapse_strategy  # noqa: PLC0415
+
+            intent_strategy = collapse_strategy(creator_strategy, duplicate_aliases)
     intent_order_placed = 0
     if not creator_clip_order:
         # An explicit preserved-order revision fence wins; otherwise the resolved
         # `order` intents fix the sequence (the model's selected_media_ids order
         # is not a statement of intent). A filming guide still wins below.
         clip_paths, intent_order_placed = _creator_intent_clip_order(
-            item, clip_paths, creator_strategy
+            item, clip_paths, intent_strategy
         )
     if creator_clip_order:
         creator_clip_order = [
@@ -2101,7 +2191,7 @@ def _dispatch_item_render(
         # carry an admin-authored subtitled lane request.
         phone_subtitled_eligible = False
         if any(is_analysis_proxy_path(path) for path in clip_paths):
-            if not settings.phone_rendering_for(plan.user_id):
+            if not settings.phone_rendering_for(plan.user_id) and not native_device_only:
                 phone_gate = "not_enrolled"
                 raise ValueError("phone rendering is unavailable for this account")
             if guided_voiceover and not phone_guided_narration_supported():
@@ -2130,7 +2220,7 @@ def _dispatch_item_render(
                 and allow_phone_unapproved_montage
                 and bypass_guided_edit_gate
                 and not guided_voiceover
-                and settings.kria_runtime_v2_phone_for(plan.user_id)
+                and (settings.kria_runtime_v2_phone_for(plan.user_id) or native_device_only)
             )
             if guided_applicable:
                 if approved_proposal is None and not v2_phone_montage:
@@ -2280,7 +2370,11 @@ def _dispatch_item_render(
             )
             else None
         )
-        if settings.ios_device_only_mode and not phone_sources and not visuals_only_device:
+        if (
+            (settings.ios_device_only_mode or native_device_only)
+            and not phone_sources
+            and not visuals_only_device
+        ):
             # A legacy project can still carry cloud GCS clips when first
             # opened by the compatible app. Device-only mode never converts
             # that shape into a fresh cloud render: reject before constructing
@@ -2350,16 +2444,29 @@ def _dispatch_item_render(
             smart_captions=smart_context,
             creator_strategy=creator_strategy,
             creator_clip_order=creator_clip_order,
-            creator_request=str(creator_request or "")[:12000],
+            creator_request=str(creator_request or ""),
             creator_render_shape=creator_render_shape,
             **({"phone_sources": phone_sources} if phone_sources else {}),
             **({"render_on_device": True} if visuals_only_device else {}),
+            **({"native_device_only": True} if native_device_only else {}),
             **({"phone_subtitled_lanes": phone_subtitled_lanes} if phone_subtitled_lanes else {}),
         )
         if intent_order_placed and not narrative_shot_count:
             job.all_candidates = {
                 **(job.all_candidates or {}),
                 "clip_order_source": "resolved_order_intents",
+            }
+        if duplicate_aliases:
+            from app.kria.duplicate_uploads import (  # noqa: PLC0415
+                DROPPED_DUPLICATES_FIELD,
+                receipt,
+            )
+
+            job.all_candidates = {
+                **(job.all_candidates or {}),
+                DROPPED_DUPLICATES_FIELD: receipt(
+                    duplicate_aliases, list(item.clip_assignments or [])
+                ),
             }
         if has_user_song:
             # The exact object generation attach verified: the worker re-reads
@@ -2445,6 +2552,7 @@ def _dispatch_item_render(
                     composition=(
                         commitments_from_strategy(strategy_payload) if authority_on else None
                     ),
+                    duplicate_aliases=duplicate_aliases,
                 )
                 if contract is not None:
                     job.all_candidates = {**job.all_candidates, REQUIREMENT_VERSION_FIELD: 1}

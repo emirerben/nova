@@ -64,6 +64,7 @@ struct ChatTimelineEntry: Identifiable {
         case message(ChatTranscriptMessage)
         case media(ThreadEvent)
         case pendingUpload(UUID)
+        case thoughts([KriaThoughtSummary])
         case stage
     }
     let id: String
@@ -78,7 +79,8 @@ enum ChatTimeline {
         pending: [ChatPendingMessage],
         stage: ChatTimelineStageAnchor?,
         suppressedMessageIDs: Set<String> = [],
-        uploads: [ChatPendingUpload] = []
+        uploads: [ChatPendingUpload] = [],
+        thoughtSummaries: [String: [KriaThoughtSummary]] = [:]
     ) -> [ChatTimelineEntry] {
         var entries = ChatTranscriptHistory.merge([], with: events).compactMap { event -> ChatTimelineEntry? in
             if event.eventType == "media_added" {
@@ -87,6 +89,10 @@ enum ChatTimeline {
             }
             guard !suppressedMessageIDs.contains(event.id), let message = ChatTranscriptMessage.from(event: event) else { return nil }
             return ChatTimelineEntry(id: message.id, sequence: event.sequence, position: 0, content: .message(message))
+        }
+        for event in events where event.role == "user" && event.eventType == "user_message" && !suppressedMessageIDs.contains(event.id) {
+            guard let requestID = event.clientEventID, let summaries = thoughtSummaries[requestID], !summaries.isEmpty else { continue }
+            entries.append(ChatTimelineEntry(id: "thought-\(requestID)", sequence: event.sequence, position: 1, content: .thoughts(summaries)))
         }
         if let stage {
             entries.append(ChatTimelineEntry(id: stage.id, sequence: stage.afterSequence, position: 1, content: .stage))

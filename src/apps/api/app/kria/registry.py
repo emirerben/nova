@@ -43,6 +43,15 @@ class ApplyStrategyResult(BaseModel):
     changes: list[str]
 
 
+class EditorUnmetRequest(BaseModel):
+    """A part of the creator's message the copilot did not turn into an operation (KRI-558)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request: str = Field(default="", max_length=160)
+    reason: str = Field(default="", max_length=200)
+
+
 class ApplyEditorOpsArguments(BaseModel):
     """Portable EditCopilot operations; target and generation pins are server-owned."""
 
@@ -50,6 +59,10 @@ class ApplyEditorOpsArguments(BaseModel):
 
     operations: list[dict[str, Any]] = Field(min_length=1, max_length=MAX_EDITOR_OPS)
     summary: str = Field(min_length=1, max_length=1000)
+    # KRI-558: what the copilot declined, and its server-authored notes (time zone, missing
+    # filming times). Receipts name the first; the reply carries the second.
+    unmet_requests: list[EditorUnmetRequest] = Field(default_factory=list, max_length=6)
+    notes: str | None = Field(default=None, max_length=600)
 
 
 class RequestRenderArguments(BaseModel):

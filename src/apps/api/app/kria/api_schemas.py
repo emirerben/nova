@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.agents._schemas.visual_block import VisualBlock
 from app.kria.contracts import KriaProblem
 from app.kria.draft_schemas import DraftSnapshotOut as DraftSnapshotOut
+from app.kria.plan_contract import ManualEdit
 from app.routes.generative_jobs import EditorCommitRequest, TimelineSlotEdit
 from app.schemas.user_song import SongOrderAnswerIn
 from app.services.choice_questions import ChoiceSelectionIn
@@ -111,6 +112,24 @@ class SubmitTurnBody(_StrictBody):
     song_order: SongOrderAnswerIn | None = None
     # KRI-282: the answer to a conflict-choice question; old clients omit it.
     choice_selection: ChoiceSelectionIn | None = None
+    # KRI-441 (live plan & review, dark behind LIVE_PLAN_REVIEW_ENABLED): the plan
+    # sections this turn may change. Typed `str` so an unknown/duplicate/empty list gets
+    # the contract's `scope_invalid` problem (runtime.validate_scope), not a generic 422.
+    scope: list[str] | None = Field(default=None, max_length=32)
+    # Deterministic edits (no model call); require `scope`, each covered by it.
+    manual_edits: list[ManualEdit] | None = Field(default=None, max_length=12)
+
+    @model_validator(mode="after")
+    def _manual_edits_well_formed(self) -> SubmitTurnBody:
+        for edit in self.manual_edits or []:
+            if edit.kind == "rewrite_text" and (not edit.target_id or not edit.text):
+                raise ValueError("rewrite_text needs target_id and text")
+            if edit.kind == "set_mix" and all(
+                value is None
+                for value in (edit.music_level, edit.original_level, edit.music_gain_db)
+            ):
+                raise ValueError("set_mix needs at least one level")
+        return self
 
     @field_validator("message")
     @classmethod
@@ -205,6 +224,8 @@ class DraftWriteBody(_StrictBody):
 
 class DraftUndoBody(_StrictBody):
     expected_draft_revision: int = Field(ge=0)
+    # Live plan & review "Undo all": also re-render the restored state (KRI-442).
+    render: bool = False
 
 
 class DeltaEvent(BaseModel):

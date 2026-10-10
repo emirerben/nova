@@ -55,11 +55,67 @@ import XCTest
         let requestBinding = requestJSON?["brief_binding"] as? [String: Any]
         XCTAssertEqual(requestBinding?["version"] as? Double, 3)
     }
+    func testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave() throws {
+        let fixtureURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Fixtures/SlidePostBindingRoundTrip.json")
+        let draft = try JSONDecoder().decode(SlidePostDraft.self, from: Data(contentsOf: fixtureURL))
+        let digest = try XCTUnwrap(draft.briefBinding?.objectValue?["digest"]?.stringValue)
+
+        let chat = SlidePostChatEditRequest(
+            message: "Keep the title.", expectedVersion: 2, draft: draft, turns: [], clientRequestID: "fixture"
+        )
+        let save = SlidePostSaveRequest(draft: draft, expectedVersion: 2)
+        let encodedRequests = [
+            (data: try JSONEncoder().encode(chat), isChat: true),
+            (data: try JSONEncoder().encode(save), isChat: false),
+        ]
+
+        for request in encodedRequests {
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.data) as? [String: Any])
+            let draftBody: [String: Any]
+            if request.isChat {
+                draftBody = try XCTUnwrap(body["draft"] as? [String: Any])
+            } else {
+                draftBody = body
+            }
+            let binding = try XCTUnwrap(draftBody["brief_binding"] as? [String: Any])
+            XCTAssertEqual(binding["digest"] as? String, digest)
+
+            let snapshot = try XCTUnwrap(binding["media_snapshot"] as? [String: Any])
+            let snapshotDraft = try XCTUnwrap(snapshot["draft"] as? [String: Any])
+            let slides = try XCTUnwrap(snapshotDraft["slides"] as? [[String: Any]])
+            let edits = try XCTUnwrap(slides.first?["edits"] as? [String: Any])
+            let texts = try XCTUnwrap(edits["texts"] as? [[String: Any]])
+            let opacity = try XCTUnwrap(texts.first?["shadow_opacity"] as? NSNumber)
+            XCTAssertEqual(opacity.intValue, 1)
+            XCTAssertNotEqual(String(cString: opacity.objCType), "d", "the nested opacity must encode as JSON 1")
+        }
+    }
     func testAuthenticatedProposalIsReadOnlyUntilExplicitAcceptance() async throws {
         let saved = fixture()
         let response = SlidePostProposal(draft: try XCTUnwrap(saved.draft), baseVersion: 1, fallbackUsed: false, summary: "Review the order")
         var paths: [String] = []
         NativeEditorURLProtocol.handler = { request in
+            if request.url!.path.hasSuffix("/thought-summaries") {
+                XCTAssertEqual(request.httpMethod, "GET")
+                var requestID = ""
+                for item in URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? [] {
+                    if item.name == "client_request_id" { requestID = item.value ?? "" }
+                }
+                let payload: [String: Any] = [
+                    "client_request_id": requestID,
+                    "summaries": [[
+                        "id": "33333333-3333-3333-3333-333333333333",
+                        "client_request_id": requestID,
+                        "status": "completed",
+                        "text": "Compared the slide order.",
+                        "started_at": "2026-10-09T08:00:00Z",
+                        "completed_at": "2026-10-09T08:00:02Z",
+                        "duration_ms": 2000
+                    ]]
+                ]
+                return (200, try JSONSerialization.data(withJSONObject: payload))
+            }
             paths.append(request.url!.path)
             if request.httpMethod == "POST" {
                 XCTAssertEqual(request.url?.path, "/plan-items/\(self.itemID)/slide-post/propose")
@@ -77,8 +133,39 @@ import XCTest
         await session.propose(api: api, itemID: itemID, instruction: "Lead with the landscape")
         XCTAssertEqual(session.draft, saved.draft)
         XCTAssertNotNil(session.proposal)
+        XCTAssertEqual(session.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
+        XCTAssertEqual(session.proposalRequestText, "Lead with the landscape")
+        XCTAssertEqual(session.proposalThoughtSummaries.first?.durationLabel, "Thought for 2s")
         XCTAssertEqual(paths.count, 2)
         XCTAssertFalse(session.hasUnsavedChanges)
+        let reopened = SlidePostSession(defaults: defaults)
+        await reopened.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reopened.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
+        XCTAssertEqual(reopened.proposalRequestText, "Lead with the landscape")
+    }
+    func testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory() async throws {
+        let saved = fixture()
+        let proposal = SlidePostProposal(draft: try XCTUnwrap(saved.draft), baseVersion: 1, fallbackUsed: false, summary: "Review the order")
+        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(saved)) }
+        let api = ControlledThoughtProposalClient(proposal: proposal)
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
+
+        let request = Task { await session.propose(api: api, itemID: itemID, instruction: "Lead with the landscape") }
+        for _ in 0..<600 where session.liveThoughtSummaries.first?.status != .streaming {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(session.isProposing)
+        XCTAssertEqual(session.liveThoughtSummaries.map(\.text), ["Comparing the slide order."])
+        XCTAssertEqual(session.liveThoughtSummaries.first?.status, .streaming)
+
+        await api.finish()
+        await request.value
+        XCTAssertEqual(session.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
+        XCTAssertEqual(session.proposalThoughtSummaries.first?.status, .completed)
+        let reopened = SlidePostSession(defaults: defaults)
+        await reopened.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
+        XCTAssertEqual(reopened.proposalThoughtSummaries.map(\.text), ["Compared the slide order."])
     }
     func testSaveSendsExpectedVersionAndNeverServerOwnedMetadata() async throws {
         let saved = fixture(version: 3)
@@ -450,5 +537,37 @@ import XCTest
         let rows = try await NativeEditorTestSupport.api().library()
         XCTAssertTrue(try XCTUnwrap(rows.first).isSlidePost)
         XCTAssertEqual(rows.first?.activePlanItemID, itemID)
+    }
+}
+
+private actor ControlledThoughtProposalClient: SlidePostProposalClient {
+    let proposal: SlidePostProposal
+    private var finished = false
+    private var continuation: CheckedContinuation<SlidePostProposal, Never>?
+
+    init(proposal: SlidePostProposal) { self.proposal = proposal }
+
+    func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal {
+        if finished { return proposal }
+        return await withCheckedContinuation { continuation = $0 }
+    }
+
+    func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse {
+        KriaThoughtSummaryResponse(clientRequestID: clientRequestID, summaries: [
+            KriaThoughtSummary(
+                id: "33333333-3333-3333-3333-333333333333", clientRequestID: clientRequestID,
+                status: finished ? .completed : .streaming,
+                text: finished ? "Compared the slide order." : "Comparing the slide order.",
+                startedAt: Date(timeIntervalSince1970: 1_000),
+                completedAt: finished ? Date(timeIntervalSince1970: 1_002) : nil,
+                durationMS: finished ? 2_000 : nil
+            ),
+        ])
+    }
+
+    func finish() {
+        finished = true
+        continuation?.resume(returning: proposal)
+        continuation = nil
     }
 }

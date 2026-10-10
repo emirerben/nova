@@ -389,6 +389,17 @@ async def test_song_capability_present_when_everything_holds() -> None:
     assert song["max_file_bytes"] == manifest["media"]["voiceover"]["max_file_bytes"]
     assert song["content_types"] == manifest["media"]["voiceover"]["content_types"]
     assert manifest["song_order_questions"] is True
+    assert manifest["song_order_placements"] is True
+
+
+@pytest.mark.asyncio
+async def test_timeline_capability_has_its_own_kill_switch(monkeypatch) -> None:
+    """KRI-561: dropping the flag keeps the song affordance and the reorder card."""
+    monkeypatch.setattr(settings, "song_order_timeline_enabled", False)
+    manifest = await _caps()
+    assert manifest["song_order_questions"] is True
+    assert manifest["song_order_placements"] is False
+    assert manifest["media"]["song"]["max"] == 1
 
 
 @pytest.mark.asyncio
@@ -417,6 +428,7 @@ async def test_song_capability_absent_otherwise(monkeypatch, off) -> None:
 
     assert "song" not in manifest["media"]
     assert manifest["song_order_questions"] is False
+    assert manifest["song_order_placements"] is False
     # Everything else on the manifest is untouched.
     assert manifest["media"]["voiceover"]["max"] == 1
 
@@ -435,3 +447,122 @@ async def test_absent_song_capability_is_omitted_from_the_serialized_response(mo
     monkeypatch.setattr(settings, "user_song_montage_enabled", True)
     wire = CreationCapabilitiesOut.model_validate(await _caps()).model_dump(mode="json")
     assert wire["media"]["song"]["max"] == 1
+
+
+# ── song-audio (KRI-561) ─────────────────────────────────────────────────────
+
+
+def _song_item(**extra):  # noqa: ANN003, ANN202
+    base = dict(
+        audio_mode="song",
+        song_gcs_path="users/u/song-1.m4a",
+        song_generation=7,
+        song_duration_s=93.5,
+    )
+    base.update(extra)
+    return SimpleNamespace(**base)
+
+
+async def _song_audio(monkeypatch, item, *, generation=None, user_id=None, signed=None):  # noqa: ANN001, ANN202
+    thread = SimpleNamespace(id=uuid.uuid4(), active_plan_item_id=uuid.uuid4())
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+    db.rollback = AsyncMock()
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    calls: list[tuple] = []
+
+    def sign(path, *, generation, expiration_minutes):  # noqa: ANN001, ANN202
+        calls.append((path, generation, expiration_minutes))
+        if signed is not None:
+            raise signed
+        return "https://storage.example/song?sig=1"
+
+    monkeypatch.setattr(routes.storage, "signed_get_url_for_generation", sign)
+    response = SimpleNamespace(headers={})
+    out = await routes.get_song_audio(
+        _request(),
+        str(thread.id),
+        SimpleNamespace(id=user_id or uuid.uuid4()),
+        db,
+        response,
+        generation,
+    )
+    return out, response, calls, db
+
+
+@pytest.mark.asyncio
+async def test_song_audio_signs_the_exact_generation_and_is_never_cached(monkeypatch) -> None:
+    out, response, calls, db = await _song_audio(monkeypatch, _song_item(), generation=7)
+    assert out.url == "https://storage.example/song?sig=1"
+    assert out.generation == 7 and out.duration_s == 93.5
+    assert calls == [("users/u/song-1.m4a", "7", 15)]
+    assert response.headers["Cache-Control"] == "no-store"
+    db.rollback.assert_awaited()  # no connection held across the signing call
+
+
+@pytest.mark.asyncio
+async def test_song_audio_without_a_generation_uses_the_items_current_one(monkeypatch) -> None:
+    out, _, calls, _ = await _song_audio(monkeypatch, _song_item(song_generation=9))
+    assert out.generation == 9 and calls[0][1] == "9"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "item",
+    [
+        _song_item(song_generation=8),  # the song was replaced since the question
+        _song_item(audio_mode="kria"),  # the song was removed
+        _song_item(song_gcs_path=None),
+        None,
+    ],
+)
+async def test_song_audio_for_a_changed_song_fails_closed_with_409(monkeypatch, item) -> None:
+    with pytest.raises(routes.RuntimeFailure) as err:
+        await _song_audio(monkeypatch, item, generation=7)
+    assert err.value.status_code == 409 and err.value.code == "song_changed"
+
+
+@pytest.mark.asyncio
+async def test_song_audio_for_an_object_that_vanished_is_409(monkeypatch) -> None:
+    with pytest.raises(routes.RuntimeFailure) as err:
+        await _song_audio(monkeypatch, _song_item(), generation=7, signed=FileNotFoundError("x"))
+    assert err.value.code == "song_changed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("off", ["song_flag", "timeline_flag", "phone"])
+async def test_song_audio_is_404_when_disabled(monkeypatch, off) -> None:
+    if off == "song_flag":
+        monkeypatch.setattr(settings, "user_song_montage_enabled", False)
+    elif off == "timeline_flag":
+        monkeypatch.setattr(settings, "song_order_timeline_enabled", False)
+    else:
+        monkeypatch.setattr(settings, "phone_rendering_enabled", False)
+    with pytest.raises(routes.RuntimeFailure) as err:
+        await _song_audio(monkeypatch, _song_item(), generation=7)
+    assert err.value.status_code == 404 and err.value.code == "song_audio_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_song_audio_loads_the_thread_through_the_owner_scoped_loader(monkeypatch) -> None:
+    """Ownership is `_load`'s job: a foreign thread raises there and nothing is signed."""
+    monkeypatch.setattr(
+        routes,
+        "_load",
+        AsyncMock(
+            side_effect=routes.RuntimeFailure(404, "thread_not_found", "Creation thread not found")
+        ),
+    )
+    signer = Mock()
+    monkeypatch.setattr(routes.storage, "signed_get_url_for_generation", signer)
+    with pytest.raises(routes.RuntimeFailure) as err:
+        await routes.get_song_audio(
+            _request(),
+            str(uuid.uuid4()),
+            SimpleNamespace(id=uuid.uuid4()),
+            Mock(),
+            SimpleNamespace(headers={}),
+            7,
+        )
+    assert err.value.status_code == 404
+    signer.assert_not_called()

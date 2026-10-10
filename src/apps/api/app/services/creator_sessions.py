@@ -28,6 +28,7 @@ from app.config import settings
 from app.kria.media_sources import is_analysis_proxy_path
 from app.models import (
     ContentPlan,
+    CreationThread,
     CreatorAgentEvent,
     CreatorAgentExecution,
     CreatorAgentSession,
@@ -50,7 +51,10 @@ from app.services.edit_proposal_limits import (
     queue_for_guided_contract,
 )
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
-from app.services.phone_destination import item_visuals_only_on_device
+from app.services.phone_destination import (
+    has_native_device_only_intent,
+    item_visuals_only_on_device,
+)
 from app.services.phone_sources import bind_phone_sources
 from app.services.sfx_catalog import planner_catalog
 from app.services.tiktok_style_observations import effective_persona_style
@@ -367,6 +371,23 @@ async def resolve_item_creator_context(
     phone_visuals_only = not source_paths and await item_visuals_only_on_device(
         db, item, persona.user_id
     )
+    native_device_only = False
+    if settings.ios_native_device_only_enabled:
+        thread_states = (
+            (
+                await db.execute(
+                    select(CreationThread.state).where(
+                        CreationThread.creator_id == persona.user_id,
+                        CreationThread.active_plan_item_id == item.id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        native_device_only = any(
+            has_native_device_only_intent(thread_state) for thread_state in thread_states
+        )
     if phone_visuals_only:
         phone_source_media_ids = []
     # KRI-189: when/where facts (capture time, place, best-guess landmark, each
@@ -577,7 +598,9 @@ async def resolve_item_creator_context(
         media=media_refs,
         catalog=catalog,
         phone_source_media_ids=phone_source_media_ids,
-        phone_rendering_allowed=settings.phone_rendering_for(persona.user_id),
+        phone_rendering_allowed=(
+            settings.phone_rendering_for(persona.user_id) or native_device_only
+        ),
         phone_visuals_only=phone_visuals_only,
         # KRI-374: a creator-uploaded song (None-safe; adds nothing without one).
         user_song_item=item,
