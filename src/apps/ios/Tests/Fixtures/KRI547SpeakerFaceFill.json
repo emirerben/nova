@@ -1,0 +1,424 @@
+{
+  "contract": "KRI-547 face-filled crop: the iOS engine must show visible_source_px of a 1920x1080 speaker clip after the main-track MediaTransform in status",
+  "generator": "src/apps/api/tests/pipeline/test_kri547_face_fill_device_fixture.py",
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "source": {
+    "media_id": "kri547-speaker",
+    "width": 1920,
+    "height": 1080,
+    "duration_s": 2.0,
+    "band_width_px": 240,
+    "band_rgb": [
+      [
+        255,
+        0,
+        0
+      ],
+      [
+        255,
+        255,
+        0
+      ],
+      [
+        0,
+        255,
+        0
+      ],
+      [
+        0,
+        255,
+        255
+      ],
+      [
+        0,
+        0,
+        255
+      ],
+      [
+        255,
+        0,
+        255
+      ],
+      [
+        255,
+        255,
+        255
+      ],
+      [
+        128,
+        128,
+        128
+      ]
+    ]
+  },
+  "cover_scale": 1.777778,
+  "max_cover_shift_px": 1166.667,
+  "cases": [
+    {
+      "name": "face_left_third",
+      "face_box": [
+        0.2,
+        0.2,
+        0.34,
+        0.45
+      ],
+      "framing": {
+        "mode": "face_fill",
+        "reason": "face_in_window",
+        "window": {
+          "left": 0.1118,
+          "right": 0.4282,
+          "position_x": 785.07,
+          "worst_visible": 1.0,
+          "margin_px": 301.1,
+          "fits": true
+        }
+      },
+      "position_x": 785.07,
+      "scale": 1,
+      "visible_source_px": [
+        214.648,
+        822.148
+      ],
+      "status": {
+        "phase": "awaiting_device",
+        "request": {
+          "identity": {
+            "job_id": "00000000-0000-4000-8000-000000000547",
+            "variant_id": "subtitled",
+            "recipe_revision": 1,
+            "recipe_digest": "dcd97d921587e2b1487a28c779a4190c996c6c9b518f8198f4462c5dad3907b5"
+          },
+          "recipe": {
+            "schema_version": 2,
+            "renderer_version": "kria-ios-2",
+            "canvas": {
+              "width": 1080,
+              "height": 1920
+            },
+            "frame_rate": 30.0,
+            "assets": [
+              {
+                "id": "kri547-speaker",
+                "relative_path": "kri547-speaker",
+                "fingerprint": {
+                  "algorithm": "sha256",
+                  "hex": "5555555555555555555555555555555555555555555555555555555555555555",
+                  "byte_count": 547
+                },
+                "duration": 2.0,
+                "natural_size": {
+                  "width": 1920.0,
+                  "height": 1080.0
+                },
+                "frame_rate": null,
+                "orientation_degrees": 0,
+                "is_proxy_available": true
+              }
+            ],
+            "tracks": [
+              {
+                "id": "subtitled",
+                "kind": "video",
+                "clips": [
+                  {
+                    "id": "clip-0",
+                    "source_asset_id": "kri547-speaker",
+                    "source_start": 0.0,
+                    "source_duration": 2.0,
+                    "timeline_start": 0.0,
+                    "rate": 1.0,
+                    "transform": {
+                      "scale": 1.0,
+                      "rotation_degrees": 0.0,
+                      "position_x": 785.07,
+                      "position_y": 0.0
+                    },
+                    "transition": null,
+                    "text": null,
+                    "volume": 1.0
+                  }
+                ]
+              }
+            ],
+            "audio": {
+              "music_asset_id": null,
+              "music_volume": 1.0,
+              "original_volume": 1.0,
+              "fade_in": 0.0,
+              "fade_out": 0.0,
+              "duck_original_during_music": false
+            },
+            "required_capabilities": [
+              "basicComposition",
+              "local1080Export"
+            ],
+            "asset_manifest": {
+              "version": 1,
+              "assets": [
+                {
+                  "kind": "original",
+                  "id": "kri547-speaker",
+                  "media_id": "kri547-speaker",
+                  "fingerprint": {
+                    "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+                    "byte_count": 547
+                  }
+                }
+              ]
+            },
+            "text_layers": []
+          }
+        },
+        "reason": null,
+        "reason_code": null,
+        "published_generation": null
+      }
+    },
+    {
+      "name": "face_right_edge_clamped",
+      "face_box": [
+        0.86,
+        0.2,
+        0.98,
+        0.45
+      ],
+      "framing": {
+        "mode": "face_fill",
+        "reason": "face_in_window",
+        "window": {
+          "left": 0.68359,
+          "right": 1.0,
+          "position_x": -1166.67,
+          "worst_visible": 1.0,
+          "margin_px": 68.3,
+          "fits": true
+        }
+      },
+      "position_x": -1166.66,
+      "scale": 1,
+      "visible_source_px": [
+        1312.496,
+        1919.996
+      ],
+      "status": {
+        "phase": "awaiting_device",
+        "request": {
+          "identity": {
+            "job_id": "00000000-0000-4000-8000-000000000547",
+            "variant_id": "subtitled",
+            "recipe_revision": 1,
+            "recipe_digest": "bf70dfa08df7d6404a974fc4017b776c1841a8765b9956484007d8c4adfe472b"
+          },
+          "recipe": {
+            "schema_version": 2,
+            "renderer_version": "kria-ios-2",
+            "canvas": {
+              "width": 1080,
+              "height": 1920
+            },
+            "frame_rate": 30.0,
+            "assets": [
+              {
+                "id": "kri547-speaker",
+                "relative_path": "kri547-speaker",
+                "fingerprint": {
+                  "algorithm": "sha256",
+                  "hex": "5555555555555555555555555555555555555555555555555555555555555555",
+                  "byte_count": 547
+                },
+                "duration": 2.0,
+                "natural_size": {
+                  "width": 1920.0,
+                  "height": 1080.0
+                },
+                "frame_rate": null,
+                "orientation_degrees": 0,
+                "is_proxy_available": true
+              }
+            ],
+            "tracks": [
+              {
+                "id": "subtitled",
+                "kind": "video",
+                "clips": [
+                  {
+                    "id": "clip-0",
+                    "source_asset_id": "kri547-speaker",
+                    "source_start": 0.0,
+                    "source_duration": 2.0,
+                    "timeline_start": 0.0,
+                    "rate": 1.0,
+                    "transform": {
+                      "scale": 1.0,
+                      "rotation_degrees": 0.0,
+                      "position_x": -1166.66,
+                      "position_y": 0.0
+                    },
+                    "transition": null,
+                    "text": null,
+                    "volume": 1.0
+                  }
+                ]
+              }
+            ],
+            "audio": {
+              "music_asset_id": null,
+              "music_volume": 1.0,
+              "original_volume": 1.0,
+              "fade_in": 0.0,
+              "fade_out": 0.0,
+              "duck_original_during_music": false
+            },
+            "required_capabilities": [
+              "basicComposition",
+              "local1080Export"
+            ],
+            "asset_manifest": {
+              "version": 1,
+              "assets": [
+                {
+                  "kind": "original",
+                  "id": "kri547-speaker",
+                  "media_id": "kri547-speaker",
+                  "fingerprint": {
+                    "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+                    "byte_count": 547
+                  }
+                }
+              ]
+            },
+            "text_layers": []
+          }
+        },
+        "reason": null,
+        "reason_code": null,
+        "published_generation": null
+      }
+    },
+    {
+      "name": "face_centred",
+      "face_box": [
+        0.43,
+        0.2,
+        0.57,
+        0.45
+      ],
+      "framing": {
+        "mode": "face_fill",
+        "reason": "face_in_window",
+        "window": {
+          "left": 0.3418,
+          "right": 0.6582,
+          "position_x": 0.0,
+          "worst_visible": 1.0,
+          "margin_px": 301.1,
+          "fits": true
+        }
+      },
+      "position_x": 0,
+      "scale": 1,
+      "visible_source_px": [
+        656.25,
+        1263.75
+      ],
+      "status": {
+        "phase": "awaiting_device",
+        "request": {
+          "identity": {
+            "job_id": "00000000-0000-4000-8000-000000000547",
+            "variant_id": "subtitled",
+            "recipe_revision": 1,
+            "recipe_digest": "2bac2e91bc3b205afea2f0589a9a568533f97a1eb51296bb8cf988530332d4c4"
+          },
+          "recipe": {
+            "schema_version": 2,
+            "renderer_version": "kria-ios-2",
+            "canvas": {
+              "width": 1080,
+              "height": 1920
+            },
+            "frame_rate": 30.0,
+            "assets": [
+              {
+                "id": "kri547-speaker",
+                "relative_path": "kri547-speaker",
+                "fingerprint": {
+                  "algorithm": "sha256",
+                  "hex": "5555555555555555555555555555555555555555555555555555555555555555",
+                  "byte_count": 547
+                },
+                "duration": 2.0,
+                "natural_size": {
+                  "width": 1920.0,
+                  "height": 1080.0
+                },
+                "frame_rate": null,
+                "orientation_degrees": 0,
+                "is_proxy_available": true
+              }
+            ],
+            "tracks": [
+              {
+                "id": "subtitled",
+                "kind": "video",
+                "clips": [
+                  {
+                    "id": "clip-0",
+                    "source_asset_id": "kri547-speaker",
+                    "source_start": 0.0,
+                    "source_duration": 2.0,
+                    "timeline_start": 0.0,
+                    "rate": 1.0,
+                    "transform": {
+                      "scale": 1.0,
+                      "rotation_degrees": 0.0,
+                      "position_x": 0.0,
+                      "position_y": 0.0
+                    },
+                    "transition": null,
+                    "text": null,
+                    "volume": 1.0
+                  }
+                ]
+              }
+            ],
+            "audio": {
+              "music_asset_id": null,
+              "music_volume": 1.0,
+              "original_volume": 1.0,
+              "fade_in": 0.0,
+              "fade_out": 0.0,
+              "duck_original_during_music": false
+            },
+            "required_capabilities": [
+              "basicComposition",
+              "local1080Export"
+            ],
+            "asset_manifest": {
+              "version": 1,
+              "assets": [
+                {
+                  "kind": "original",
+                  "id": "kri547-speaker",
+                  "media_id": "kri547-speaker",
+                  "fingerprint": {
+                    "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+                    "byte_count": 547
+                  }
+                }
+              ]
+            },
+            "text_layers": []
+          }
+        },
+        "reason": null,
+        "reason_code": null,
+        "published_generation": null
+      }
+    }
+  ]
+}
