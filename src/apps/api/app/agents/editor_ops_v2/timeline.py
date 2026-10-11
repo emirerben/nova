@@ -387,9 +387,7 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
         on_device or not guided or not _clip_capability(state, "playback_rate")
     ):
         raise _err("Speed changes are not available for this edit")
-    if "source_crop" in patch and (
-        on_device or not guided or not _clip_capability(state, "source_crop")
-    ):
+    if "source_crop" in patch and not _clip_capability(state, "source_crop"):
         raise _err("Cropping is not available for this edit")
     if ("transition_after" in patch or "transition_duration_s" in patch) and (
         not _clip_capability(state, "transitions")
@@ -446,7 +444,10 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
             row["look_preset"] = patch["look_preset"]
             row["look_adjustments"] = None
             applied += 1
-        if "source_crop" in patch and not image:
+        if "source_crop" in patch:
+            if patch["source_crop"] is not None and row.get("layout") == "supporting_card":
+                # A card photo is drawn whole on the phone; there is nothing to crop.
+                raise _err("A photo shown as a card can't be cropped")
             row["source_crop"] = patch["source_crop"]
             applied += 1
         if ("transition_after" in patch or "transition_duration_s" in patch) and (

@@ -20,7 +20,7 @@ from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_narrated_plan import compile_phone_narrated_plan
 from app.pipeline.phone_recipe_shared import PHONE_AUDIO_FADE_S, timeline_end_s
 from app.pipeline.phone_voiceover_cut import replace_voiceover_cut, transition_overlap_s
-from app.services.phone_rollout import validate_phone_pilot_recipe
+from app.services.phone_rollout import PhoneCapabilityUnavailable, validate_phone_pilot_recipe
 from app.services.phone_voiceover_timeline import (
     narrated_timings_and_assignments,
     voiceover_ai_timeline,
@@ -316,3 +316,64 @@ def test_a_new_clip_takes_the_cut_look_only_where_the_look_can_grade_it():
             bindings=(*_BINDINGS, landscape),
             pool=[*_POOL, landscape.proxy_path],
         )
+
+
+# ── Creator crop on a Voiceover clip (KRI-44) ───────────────────────────────────
+
+_CROP = {"x": 0.1, "y": 0.2, "width": 0.5, "height": 0.6}
+
+
+def _clip_crops(recipe, track_id):
+    return [clip.source_crop for clip in _track(recipe, track_id).clips]
+
+
+@pytest.mark.parametrize(
+    ("archetype", "track_id", "slots_of"),
+    [("narrated", "narrated", _narrated_slots), ("voiceover", "montage", _montage_slots)],
+)
+def test_a_crop_on_one_slot_lands_on_that_clip_and_survives_the_next_cut(
+    archetype, track_id, slots_of
+):
+    recipe = _recipe() if archetype == "narrated" else _montage(_recipe())
+    slots = slots_of(recipe)
+    slots[1]["source_crop"] = dict(_CROP)
+
+    cropped = _cut(recipe, slots, archetype)
+
+    crops = _clip_crops(cropped, track_id)
+    assert crops[0] is None and crops[2] is None
+    assert crops[1].model_dump() == _CROP
+    # The device cover-fits the crop itself, so the clip carries no letterbox transform.
+    assert _track(cropped, track_id).clips[1].transform.scale == 1
+    # The editor reads the crop back, and re-saving without touching it keeps it.
+    reread = slots_of(cropped)
+    assert reread[1]["source_crop"] == _CROP
+    assert _cut(cropped, reread, archetype) == cropped
+
+
+def test_an_explicit_null_clears_the_crop_and_an_omitted_key_keeps_it():
+    recipe = _montage(_recipe())
+    slots = _montage_slots(recipe)
+    slots[0]["source_crop"] = dict(_CROP)
+    cropped = _cut(recipe, slots, "voiceover")
+
+    omitted = _montage_slots(cropped)
+    del omitted[0]["source_crop"]
+    assert _clip_crops(_cut(cropped, omitted, "voiceover"), "montage")[0].model_dump() == _CROP
+
+    cleared = _montage_slots(cropped)
+    cleared[0]["source_crop"] = None
+    assert _clip_crops(_cut(cropped, cleared, "voiceover"), "montage")[0] is None
+
+
+def test_a_cropped_clip_is_refused_until_the_device_verifies_source_crop(monkeypatch):
+    monkeypatch.setattr(settings, "phone_render_verified_features", list(_VERIFIED))
+    recipe = _recipe()
+    slots = _narrated_slots(recipe)
+    slots[0]["source_crop"] = dict(_CROP)
+    cropped = _cut(recipe, slots)
+
+    with pytest.raises(PhoneCapabilityUnavailable):
+        validate_phone_pilot_recipe(cropped)
+    monkeypatch.setattr(settings, "phone_render_verified_features", [*_VERIFIED, "sourceCrop"])
+    validate_phone_pilot_recipe(cropped)

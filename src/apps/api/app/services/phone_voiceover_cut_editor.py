@@ -139,10 +139,11 @@ def resolve_phone_voiceover_slots(job: Any, variant: dict, slots: list[Any]) -> 
             raise _error(422, "TIMELINE_INVALID_WINDOW", slot_id=slot.slot_id)
         if duration < MIN_SLOT_DURATION_S:
             raise _error(422, "TIMELINE_INVALID_WINDOW", slot_id=slot.slot_id)
+        crop_allowed = "sourceCrop" in settings.phone_render_verified_features
         if (
             slot.look_preset not in (None, "none")
             or slot.look_adjustments is not None
-            or slot.source_crop is not None
+            or (slot.source_crop is not None and not crop_allowed)
             or slot.layout == "supporting_card"
         ):
             raise _error(422, "phone_edit_unsupported")
@@ -216,6 +217,9 @@ def resolve_phone_voiceover_slots(job: Any, variant: dict, slots: list[Any]) -> 
         }
         if rate != 1.0:
             row["playback_rate"] = rate
+        if "source_crop" in slot.model_fields_set:
+            # Omitted keeps the pinned crop; an explicit null clears it (KRI-44).
+            row["source_crop"] = slot.source_crop
         if slot.parent_segment_id:
             row["parent_segment_id"] = slot.parent_segment_id
         resolved.append(row)
