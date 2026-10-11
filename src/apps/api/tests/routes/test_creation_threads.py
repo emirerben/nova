@@ -214,7 +214,7 @@ async def test_native_only_capabilities_are_device_only_without_changing_the_web
     web = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=False)
 
     assert native["creation_mode"] == "device_only"
-    assert [entry["id"] for entry in native["formats"]] == ["montage"]
+    assert [entry["id"] for entry in native["formats"]] == ["montage", "slides"]
     assert web["creation_mode"] == "hybrid"
     assert "slides" in {entry["id"] for entry in web["formats"]}
 
@@ -301,6 +301,41 @@ def test_unavailable_format_is_removed_from_capability_manifest(
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", False)
     monkeypatch.setattr(settings, "slide_posts_enabled", False)
     assert _available_formats() == {"montage": "montage"}
+
+
+@pytest.mark.parametrize("native_mode", ["pilot", "strict"])
+def test_native_picker_keeps_slider_under_the_phone_format_filter(
+    monkeypatch: pytest.MonkeyPatch, native_mode: str
+) -> None:
+    """KRI-599: strict (iPhone-only) mode dropped Slider from the TestFlight picker.
+    `select_format` validates against this same function, so offering == accepting."""
+    from app.services import phone_rollout
+
+    monkeypatch.setattr(settings, "slide_posts_enabled", True)
+    monkeypatch.setattr(
+        phone_rollout, "phone_render_supported_formats", lambda: frozenset({"montage"})
+    )
+    assert _available_formats(native_mode=native_mode) == {  # type: ignore[arg-type]
+        "montage": "montage",
+        "slides": "slides",
+    }
+    # The feature flag still wins: the exemption never resurrects a disabled format.
+    monkeypatch.setattr(settings, "slide_posts_enabled", False)
+    assert _available_formats(native_mode=native_mode) == {"montage": "montage"}  # type: ignore[arg-type]
+
+
+def test_global_device_only_cutover_still_hides_slider_in_strict_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-599 scope: only the native-only fence regains Slider; the global mode is unchanged."""
+    from app.services import phone_rollout
+
+    monkeypatch.setattr(settings, "slide_posts_enabled", True)
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    monkeypatch.setattr(
+        phone_rollout, "phone_render_supported_formats", lambda: frozenset({"montage"})
+    )
+    assert _available_formats(native_mode="strict") == {"montage": "montage"}
 
 
 def test_slide_posts_default_on_is_present_in_capability_manifest() -> None:

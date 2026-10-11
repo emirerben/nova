@@ -770,10 +770,16 @@ def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web"
         from app.services.phone_rollout import phone_render_supported_formats  # noqa: PLC0415
 
         supported = phone_render_supported_formats()
+        # Slide posts render on the iPhone and the server only saves them (KRI-581), so
+        # the native-only fence (IOS_NATIVE_DEVICE_ONLY_ENABLED) keeps Slider like pilot
+        # does (KRI-599). The global IOS_DEVICE_ONLY_MODE cutover is unchanged: it still hides it.
+        keeps_slides = native_mode == "pilot" or (
+            native_mode == "strict" and not settings.ios_device_only_mode
+        )
         available = {
             key: value
             for key, value in available.items()
-            if value in supported or (native_mode == "pilot" and value == "slides")
+            if value in supported or (keeps_slides and value == "slides")
         }
     return available
 
