@@ -1,0 +1,1052 @@
+{
+  "schema_version": 1,
+  "about": "KRI-577 reliability gates: one entry per production incident from 2026-10-04..11, the boundary it crossed, the regression tests that now pin it, how real the harness is, which evidence level each fix reached, and the neighbouring paths still open. tests/gates/test_reliability_gates.py validates this file; scripts/reliability-gates.py selects and runs the gates for changed paths and runs the red control (fix commit's parent must fail).",
+  "boundaries": [
+    "parser",
+    "brief",
+    "contract",
+    "dispatch",
+    "planner",
+    "compiler",
+    "verifier",
+    "publication",
+    "reply",
+    "persistence",
+    "model_budget",
+    "device"
+  ],
+  "gates": [
+    {
+      "id": "kri-422-long-intent-id",
+      "tickets": [
+        "KRI-422"
+      ],
+      "symptom": "'understood N of your clip instructions': a >40-char model-minted intent_id dropped a creator caption.",
+      "boundary": "parser",
+      "fix_prs": [
+        1378
+      ],
+      "fix_commit": "be0b13cd7",
+      "paths": [
+        "src/apps/api/app/agents/clip_intent_planner.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/services/clip_intent_planning.py"
+      ],
+      "regression_tests": [
+        "tests/agents/test_clip_intent_planner.py",
+        "tests/schemas/test_clip_intents.py",
+        "tests/services/test_clip_intent_planning_robustness.py"
+      ],
+      "harness": "real_parser",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "golden fixture kri422_per_shot_captions_long_ids",
+        "live_model": "unknown",
+        "native_output": "unknown",
+        "production": "merged 2026-10-04"
+      },
+      "neighbours_covered": [
+        "long ids on captions",
+        "short ids unchanged"
+      ],
+      "neighbours_gap": [],
+      "follow_ups": [
+        "KRI-422 per-shot texts (#1380)"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-422-per-shot-texts",
+      "tickets": [
+        "KRI-422"
+      ],
+      "symptom": "The Creative Brief kept only the last dictated per-shot text.",
+      "boundary": "brief",
+      "fix_prs": [
+        1380
+      ],
+      "fix_commit": "05af0884e",
+      "paths": [
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/kria/brief.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_creative_brief.py",
+        "tests/agents/test_main_creator_user_song.py"
+      ],
+      "harness": "real_parser",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "fixture kri422_per_shot_texts",
+        "live_model": "unknown",
+        "native_output": "unknown",
+        "production": "merged 2026-10-04"
+      },
+      "neighbours_covered": [
+        "several per-shot texts in one turn"
+      ],
+      "neighbours_gap": [
+        "per-shot texts spread over two turns"
+      ],
+      "follow_ups": [
+        "KRI-568 (#1531): resolved label intents were still refused by the contract"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "still-checking-clips-wait",
+      "tickets": [
+        "KRI-433"
+      ],
+      "symptom": "A fresh phone chat replied 'still checking... send it again' while clip analysis was in flight.",
+      "boundary": "persistence",
+      "fix_prs": [
+        1381
+      ],
+      "fix_commit": "6bca6c7d8",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_clip_understanding_wait_postgres.py",
+        "tests/services/test_clip_intent_understanding_gate.py",
+        "tests/kria/test_runtime_v2.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Postgres-backed wait test",
+        "live_model": "n/a",
+        "native_output": "unknown",
+        "production": "merged 2026-10-05"
+      },
+      "neighbours_covered": [
+        "analysis finishes during the wait",
+        "analysis never finishes"
+      ],
+      "neighbours_gap": [
+        "a second message sent during the wait (KRI-552 class)"
+      ],
+      "follow_ups": [
+        "KRI-552"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-430-chapter-caption-cap",
+      "tickets": [
+        "KRI-430"
+      ],
+      "symptom": "'couldn't safely verify caption: Chapter 5' because a 61-char creator line hit a 60-char cap.",
+      "boundary": "parser",
+      "fix_prs": [
+        1389
+      ],
+      "fix_commit": "446119d8a",
+      "paths": [
+        "src/apps/api/app/agents/clip_intent_planner.py",
+        "src/apps/api/app/agents/clip_request_resolver.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/app/services/clip_selection.py"
+      ],
+      "regression_tests": [
+        "tests/agents/test_clip_intent_planner.py",
+        "tests/schemas/test_clip_intents.py",
+        "tests/services/test_clip_intent_planning_robustness.py"
+      ],
+      "harness": "real_parser",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "golden fixture merce_word_for_word_chapter_lines",
+        "live_model": "unknown",
+        "native_output": "phone-verified 2026-10-05 (v1438)",
+        "production": "v1438"
+      },
+      "neighbours_covered": [
+        "word-for-word chapter lines over the cap"
+      ],
+      "neighbours_gap": [
+        "include + caption on the same clip doubles vision checks (open)"
+      ],
+      "follow_ups": [
+        "KRI-433"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-433-clip-answer-cache",
+      "tickets": [
+        "KRI-433"
+      ],
+      "symptom": "iPhone clip vision answers were never cached across turns, so 'go ahead' restarted the 18-call budget.",
+      "boundary": "persistence",
+      "fix_prs": [
+        1394
+      ],
+      "fix_commit": "9799d91e0",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/clip_intent_answers.py",
+        "src/apps/api/app/services/clip_intent_resolution.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_clip_answer_cache_postgres.py",
+        "tests/routes/test_creator_agent_clip_intents.py",
+        "tests/services/test_clip_intent_resolution.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "real Postgres row + real cache writer/loader, fake agents",
+        "live_model": "n/a",
+        "native_output": "unknown",
+        "production": "v1440 (2026-10-05)"
+      },
+      "neighbours_covered": [
+        "pool assets",
+        "raw phone clip_assignments rows"
+      ],
+      "neighbours_gap": [
+        "coalescing identical vision questions inside one turn",
+        "calls-per-turn instrumentation (KRI-577 item 4)"
+      ],
+      "follow_ups": [
+        "KRI-454 (#1395, #1400)"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-454-named-place-labels",
+      "tickets": [
+        "KRI-454"
+      ],
+      "symptom": "Named-place labels (Lisbon) never matched their clips; the resolver parser discarded an empty value the prompt allowed, then a lone guess was dropped when vision could not name the place.",
+      "boundary": "parser",
+      "fix_prs": [
+        1395,
+        1400
+      ],
+      "fix_commit": "4463f3612",
+      "paths": [
+        "src/apps/api/app/agents/clip_request_resolver.py",
+        "src/apps/api/app/services/clip_intent_resolution.py"
+      ],
+      "regression_tests": [
+        "tests/agents/test_clip_request_resolver.py",
+        "tests/services/test_clip_intent_resolution.py",
+        "tests/services/test_clip_intent_resolution_sharding.py"
+      ],
+      "harness": "mocked_internal",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "parser golden kri454_creator_named_places; resolution tests fake the resolver agent",
+        "live_model": "unknown",
+        "native_output": "phone re-send after #1400 still open per memory (2026-10-05)",
+        "production": "v1442 / v1447"
+      },
+      "neighbours_covered": [
+        "creator-named place present",
+        "place absent",
+        "5+5 shards"
+      ],
+      "neighbours_gap": [
+        "resolution-level tests stub the resolver's run(); only test_clip_request_resolver exercises the real parser round-trip. A record through parser -> resolution -> contract is still missing."
+      ],
+      "follow_ups": [
+        "#1400 same day",
+        "KRI-568 (#1531) same class: representation mismatch between resolved intents and shot_labels"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-455-voiceover-titles",
+      "tickets": [
+        "KRI-455"
+      ],
+      "symptom": "Titles were missing on iPhone voiceover edits; the editor preview then placed them where the burn does not.",
+      "boundary": "compiler",
+      "fix_prs": [
+        1403,
+        1415
+      ],
+      "fix_commit": "e15698a65",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_narrated_plan.py",
+        "src/apps/api/app/services/phone_rollout.py",
+        "src/apps/api/app/tasks/generative_build.py"
+      ],
+      "regression_tests": [
+        "tests/pipeline/test_phone_narrated_plan.py",
+        "tests/routes/test_phone_narrated_editor_commit.py",
+        "tests/tasks/test_phone_subtitled_narrated_dispatch.py",
+        "tests/test_ios_text_row_look_parity.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": "phone_narrated_title_enabled",
+      "evidence": {
+        "offline_replay": "compiler + editor commit tests",
+        "live_model": "n/a",
+        "native_output": "unknown (phone check pending per memory)",
+        "production": "merged 2026-10-05/06"
+      },
+      "neighbours_covered": [
+        "title on narrated plan",
+        "title editable (KRI-465 #1432)"
+      ],
+      "neighbours_gap": [
+        "editor preview parity on a real device export"
+      ],
+      "follow_ups": [
+        "#1415 preview",
+        "#1432 KRI-465",
+        "#1424 iOS row look"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-456-voiceover-alignment",
+      "tickets": [
+        "KRI-456",
+        "KRI-532"
+      ],
+      "symptom": "Phone voiceover clips did not follow the words that describe them; then a caption-style ask became a clip intent; then renders ignored the resolved order; then a nested brief_updates list crashed the Main Creator; then a full order lock killed the render (KRI-532).",
+      "boundary": "planner",
+      "fix_prs": [
+        1404,
+        1416,
+        1423,
+        1429,
+        1490
+      ],
+      "fix_commit": "f4b885e4f",
+      "paths": [
+        "src/apps/api/app/agents/narrated_clip_alignment.py",
+        "src/apps/api/app/pipeline/narrated_alignment.py",
+        "src/apps/api/app/kria/plan_blocks.py",
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/tasks/generative_build.py"
+      ],
+      "regression_tests": [
+        "tests/pipeline/test_narrated_alignment.py",
+        "tests/agents/test_narrated_clip_alignment.py",
+        "tests/agents/test_creator_agent_schema.py",
+        "tests/kria/test_plan_blocks.py",
+        "tests/tasks/test_phone_plan_blocks.py",
+        "tests/tasks/test_phone_subtitled_narrated_dispatch.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": "narrated_clip_alignment_enabled",
+      "evidence": {
+        "offline_replay": "fixtures narrated_alignment/cacio_e_pepe + goldens",
+        "live_model": "narrated_clip_alignment evals (structural)",
+        "native_output": "phone-verified 2026-10-06 12:45Z (clip order + timing)",
+        "production": "v1469 (2026-10-06), #1490 v1530 (2026-10-08)"
+      },
+      "neighbours_covered": [
+        "free order",
+        "locked order",
+        "pinned first/last"
+      ],
+      "neighbours_gap": [
+        "five PRs for one feature: the first PR tested one sampled model output; the planner-slip (nested brief_updates) and the order-lock paths were only found on the phone"
+      ],
+      "follow_ups": [
+        "#1416",
+        "#1423",
+        "#1429",
+        "KRI-532 #1490",
+        "KRI-465 #1432"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-467-talking-title",
+      "tickets": [
+        "KRI-467",
+        "KRI-514"
+      ],
+      "symptom": "Hook titles were refused on iPhone Talking edits; later a confirmed closing text ('MY PICK') was refused too.",
+      "boundary": "compiler",
+      "fix_prs": [
+        1433,
+        1476
+      ],
+      "fix_commit": "3b8815606",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_subtitled_plan.py",
+        "src/apps/api/app/pipeline/phone_subtitled_title.py",
+        "src/apps/api/app/services/phone_editor.py",
+        "src/apps/api/app/kria/strategy_policy.py"
+      ],
+      "regression_tests": [
+        "tests/pipeline/test_phone_subtitled_title.py",
+        "tests/routes/test_phone_subtitled_title_editor.py",
+        "tests/tasks/test_phone_subtitled_title_worker.py",
+        "tests/tasks/test_phone_subtitled_closing_title_worker.py",
+        "tests/kria/test_strategy_policy.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": "phone_subtitled_title_enabled",
+      "evidence": {
+        "offline_replay": "title + closing-title worker tests",
+        "live_model": "n/a",
+        "native_output": "on phone build a0c407628, re-send check pending (memory)",
+        "production": "merged 2026-10-06 / 2026-10-08"
+      },
+      "neighbours_covered": [
+        "opening title",
+        "closing badge"
+      ],
+      "neighbours_gap": [
+        "title + closing + beat card on one take (room arbitration, KRI-547 open PR)"
+      ],
+      "follow_ups": [
+        "#1443",
+        "#1445",
+        "KRI-514 #1476",
+        "KRI-547 #1507"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "talking-first-draft-and-length",
+      "tickets": [
+        "KRI-467",
+        "KRI-470"
+      ],
+      "symptom": "A Talking chat with a length + cleanup ask was refused ('draft unchanged... simpler version?'); then a 40 s length was pinned on a 68 s take and preflight failed on 66.13 s audio.",
+      "boundary": "contract",
+      "fix_prs": [
+        1443,
+        1445
+      ],
+      "fix_commit": "b6813781d",
+      "paths": [
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/tasks/speech_cleanup_analysis.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_brief_talking_receipts.py",
+        "tests/kria/test_runtime_talking_first_draft.py",
+        "tests/services/test_creator_render_contract.py",
+        "tests/tasks/test_speech_cleanup_analysis.py"
+      ],
+      "harness": "real_contract",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "contract + preflight tests",
+        "live_model": "n/a",
+        "native_output": "phone re-send check pending (memory)",
+        "production": "re-deployed 2026-10-07 14:59Z after a stale re-run rolled prod back"
+      },
+      "neighbours_covered": [
+        "length ask on a longer take",
+        "audio ending before picture"
+      ],
+      "neighbours_gap": [
+        "deploy rollback by a stale workflow re-run is a deploy-process gap, not a test gap"
+      ],
+      "follow_ups": [],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-510-511-described-order",
+      "tickets": [
+        "KRI-510",
+        "KRI-511"
+      ],
+      "symptom": "A placed 'end on <clip>' rule dead-ended the chat; 'skip the X clip' flipped to include and an order_by was invented.",
+      "boundary": "contract",
+      "fix_prs": [
+        1469,
+        1471
+      ],
+      "fix_commit": "3ae65e66e",
+      "paths": [
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/agents/clip_intent_planner.py"
+      ],
+      "regression_tests": [
+        "tests/services/test_described_order_contract.py",
+        "tests/incidents/test_incident_corpus.py",
+        "tests/agents/test_clip_intent_planner.py"
+      ],
+      "harness": "real_contract",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "incident record kri510-order-end-on-clip-no-basis + goldens kri511_*",
+        "live_model": "unknown",
+        "native_output": "unknown",
+        "production": "merged 2026-10-08"
+      },
+      "neighbours_covered": [
+        "end on clip",
+        "start with clip (KRI-503)",
+        "skip clip"
+      ],
+      "neighbours_gap": [
+        "an exclude op does not exist in the planner schema; skip is modelled around it"
+      ],
+      "follow_ups": [
+        "KRI-516 #1477"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "caption-language-asks",
+      "tickets": [
+        "KRI-549"
+      ],
+      "symptom": "'subtitles in English' on a Turkish voiceover / cleaned-up Talking clip produced Turkish captions.",
+      "boundary": "compiler",
+      "fix_prs": [
+        1472,
+        1473
+      ],
+      "fix_commit": "2448e0768",
+      "paths": [
+        "src/apps/api/app/pipeline/caption_language.py",
+        "src/apps/api/app/tasks/generative_build.py"
+      ],
+      "regression_tests": [
+        "tests/pipeline/test_caption_language.py",
+        "tests/tasks/test_narrated_caption_language.py",
+        "tests/tasks/test_subtitled_caption_language.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "language ask -> whisper hint tests",
+        "live_model": "n/a",
+        "native_output": "phone re-send check pending (memory)",
+        "production": "merged 2026-10-08"
+      },
+      "neighbours_covered": [
+        "voiceover",
+        "cleaned-up Talking"
+      ],
+      "neighbours_gap": [
+        "receipt for the language ask lived in a separate fix (#1504)"
+      ],
+      "follow_ups": [
+        "KRI-549 #1504"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-515-selected-clips",
+      "tickets": [
+        "KRI-515"
+      ],
+      "symptom": "The Creator picked 11 of 12 clips; the proposal-less unified phone montage planned all 12 and the verifier refused the render.",
+      "boundary": "dispatch",
+      "fix_prs": [
+        1474
+      ],
+      "fix_commit": "44765a0cc",
+      "paths": [
+        "src/apps/api/app/tasks/content_plan_build.py"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_selected_clip_dispatch.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "real dispatch narrowing -> planner -> guided compiler -> phone compiler -> contract -> verifier",
+        "live_model": "n/a",
+        "native_output": "Berlin re-run on phone 2026-10-08: order PASS, duplicate still played twice (KRI-544)",
+        "production": "merged 2026-10-08"
+      },
+      "neighbours_covered": [
+        "selected set",
+        "contract pins the selected order"
+      ],
+      "neighbours_gap": [
+        "empty selection (= every clip) and byte-identical uploads under different ids were not in the harness; fixed by kri-544-duplicate-uploads",
+        "red control 2026-10-11: pre-fix tree fails the gate (dispatch signature), verified with scripts/reliability-gates.py"
+      ],
+      "follow_ups": [
+        "KRI-544 #1502",
+        "KRI-545 #1501",
+        "KRI-546 #1503"
+      ],
+      "red_control": "verified"
+    },
+    {
+      "id": "kri-544-duplicate-uploads",
+      "tickets": [
+        "KRI-544"
+      ],
+      "symptom": "Two byte-identical uploads under different ids rendered twice under 'each video once' while the draft said one copy was removed.",
+      "boundary": "dispatch",
+      "fix_prs": [
+        1502
+      ],
+      "fix_commit": "ebdf3ca47",
+      "paths": [
+        "src/apps/api/app/kria/duplicate_uploads.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/tasks/generative_build.py"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_duplicate_upload_dedupe.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "real dispatch collapse -> contract -> unified planner -> guided + phone compilers -> verifier",
+        "live_model": "n/a",
+        "native_output": "unknown (phone re-send after deploy pending)",
+        "production": "merged 2026-10-08"
+      },
+      "neighbours_covered": [
+        "empty selection",
+        "explicit selection",
+        "duplicate bytes under two ids",
+        "receipt says what happened"
+      ],
+      "neighbours_gap": [
+        "near-duplicates (same content, different encode) are out of scope by design",
+        "red control 2026-10-11: the gate only fails at import on the pre-fix tree (it imports helpers the fix added), so it does not prove the behaviour change by itself"
+      ],
+      "follow_ups": [],
+      "red_control": "weak"
+    },
+    {
+      "id": "kri-516-517-545-berlin-montage",
+      "tickets": [
+        "KRI-516",
+        "KRI-517",
+        "KRI-545"
+      ],
+      "symptom": "Chapter captions read backwards under a filming-time order; the closing spoken line was cut; a chapter-title list became the opening title.",
+      "boundary": "planner",
+      "fix_prs": [
+        1477,
+        1475,
+        1501
+      ],
+      "fix_commit": "d9aafa733",
+      "paths": [
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/app/kria/brief_route.py",
+        "src/apps/api/app/kria/plan_blocks.py"
+      ],
+      "regression_tests": [
+        "tests/services/test_chapter_filming_order.py",
+        "tests/pipeline/test_unified_montage_closing_speech.py",
+        "tests/kria/test_chapter_list_title.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "goldens kri516_berlin_chapters_* + unified montage tests",
+        "live_model": "unknown",
+        "native_output": "Berlin re-run 2026-10-08: order/chapters/closing PASS (job a7d69a5b)",
+        "production": "merged 2026-10-08"
+      },
+      "neighbours_covered": [
+        "filming-time order",
+        "speaking closing clip",
+        "title list"
+      ],
+      "neighbours_gap": [
+        "three symptom patches from one chat; no single record replays the whole Berlin brief end to end"
+      ],
+      "follow_ups": [
+        "KRI-546 #1503"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-519-521-550-reaction-beats",
+      "tickets": [
+        "KRI-519",
+        "KRI-521",
+        "KRI-550",
+        "KRI-540"
+      ],
+      "symptom": "'show my medal photo when I say X' dead-ended on phone Voiceover; 'when I say X show my video' dead-ended on Talking; 'every time I say X' stopped at 8 hits; Turkish 'fincan sesi' never played.",
+      "boundary": "planner",
+      "fix_prs": [
+        1484,
+        1482,
+        1505,
+        1492
+      ],
+      "fix_commit": "b311e434b",
+      "paths": [
+        "src/apps/api/app/agents/_schemas/reaction_beats.py",
+        "src/apps/api/app/services/phone_reaction_grounding.py",
+        "src/apps/api/app/services/nova_steps.py",
+        "src/apps/api/app/services/sfx_catalog.py",
+        "src/apps/api/app/services/creator_capabilities.py"
+      ],
+      "regression_tests": [
+        "tests/services/test_phone_reaction_grounding.py",
+        "tests/test_nova_steps.py",
+        "tests/kria/test_brief_reaction_beats.py",
+        "tests/services/test_sfx_catalog.py",
+        "tests/services/test_creator_capabilities.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": "phone_voiceover_reaction_beats_enabled",
+      "evidence": {
+        "offline_replay": "grounding + cap + receipts tests",
+        "live_model": "main_creator fixture kri519_voiceover_reaction_beats",
+        "native_output": "phone-verified 2026-10-08 15:04Z (medal + watch on their words); KRI-540 phone-verified",
+        "production": "#1505 merged 2026-10-11"
+      },
+      "neighbours_covered": [
+        "photo beat",
+        "video beat",
+        "every-time beats past the cap",
+        "TR sound names"
+      ],
+      "neighbours_gap": [
+        "cap overflow is reported, not placed beyond the cap by design"
+      ],
+      "follow_ups": [
+        "KRI-537 #1494"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-520-turkish-chat",
+      "tickets": [
+        "KRI-520",
+        "KRI-531"
+      ],
+      "symptom": "Turkish chats were not understood or answered in Turkish; Turkish chapter titles then read 'couldn't verify' over model slips (ellipsis quotes, invented ops).",
+      "boundary": "parser",
+      "fix_prs": [
+        1483,
+        1488
+      ],
+      "fix_commit": "739b698df",
+      "paths": [
+        "src/apps/api/app/kria/language.py",
+        "src/apps/api/app/kria/reply_language.py",
+        "src/apps/api/app/agents/clip_intent_planner.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri520_reply_language.py",
+        "tests/kria/test_kri520_receipts.py",
+        "tests/kria/test_kri520_planner_copy.py",
+        "tests/schemas/test_kri520_turkish_parsers.py",
+        "tests/services/test_kri520_clip_intent_copy.py",
+        "tests/agents/test_clip_intent_planner.py"
+      ],
+      "harness": "real_parser",
+      "kill_switch": "kria_reply_language_enabled",
+      "evidence": {
+        "offline_replay": "TR parsers + reply-language tests",
+        "live_model": "unknown",
+        "native_output": "KRI-531 phone-verified 2026-10-08 11:14Z (7 intents, no question)",
+        "production": "v1526"
+      },
+      "neighbours_covered": [
+        "TR replies",
+        "TR cue forms",
+        "parser slips"
+      ],
+      "neighbours_gap": [
+        "app UI strings are not translated (KRI-520 note)"
+      ],
+      "follow_ups": [
+        "KRI-540 #1492",
+        "KRI-549 #1504"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-542-thinking-budget",
+      "tickets": [
+        "KRI-542"
+      ],
+      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana dönüştüremedim').",
+      "boundary": "model_budget",
+      "fix_prs": [
+        1493
+      ],
+      "fix_commit": "efeaa5f2f",
+      "paths": [
+        "src/apps/api/app/agents/_runtime.py",
+        "src/apps/api/app/agents/main_creator.py"
+      ],
+      "regression_tests": [
+        "tests/agents/test_thinking_budget.py",
+        "tests/kria/test_runtime_v2.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "MAX_TOKENS retry at thinking=low",
+        "live_model": "small comparison: median call ~27 s -> ~70 s, planning ~$0.16 -> ~$0.33 per video (PR #1493)",
+        "native_output": "n/a",
+        "production": "v1536 (2026-10-08)"
+      },
+      "neighbours_covered": [
+        "one bounded retry"
+      ],
+      "neighbours_gap": [
+        "no per-turn call-count / latency / cost instrumentation; resource envelope was measured once, not gated"
+      ],
+      "follow_ups": [],
+      "red_control": "pending"
+    },
+    {
+      "id": "voiceover-render-receipts",
+      "tickets": [
+        "KRI-533",
+        "KRI-537",
+        "KRI-541",
+        "KRI-549"
+      ],
+      "symptom": "Every phone Voiceover ask read 'Couldn't verify' at draft time; then photo-on-words and crowd-noise asks; then captions and pause cuts; then caption language and name spelling, although the render did them.",
+      "boundary": "reply",
+      "fix_prs": [
+        1491,
+        1494,
+        1495,
+        1504
+      ],
+      "fix_commit": "d39edcfad",
+      "paths": [
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_brief_checks_narrated_alignment.py",
+        "tests/tasks/test_narrated_alignment_receipts.py",
+        "tests/kria/test_brief_marathon_receipts.py",
+        "tests/tasks/test_marathon_render_ready_review.py",
+        "tests/kria/test_brief_rendered_speech_facts.py",
+        "tests/kria/test_draft_receipts_defer.py"
+      ],
+      "harness": "real_reply",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "prod briefs verbatim, review over the persisted variant",
+        "live_model": "n/a",
+        "native_output": "KRI-537 phone-verified 2026-10-08 15:04Z (job 8a0ced82, no Couldn't verify)",
+        "production": "#1504 merged 2026-10-10"
+      },
+      "neighbours_covered": [
+        "order",
+        "clip timing",
+        "caption language",
+        "beats",
+        "mix",
+        "captions",
+        "pause cut",
+        "name spelling"
+      ],
+      "neighbours_gap": [
+        "four PRs because each judged from a different fact source; the variant facts a render must persist for receipts are not a typed contract (KRI-577 item 1)"
+      ],
+      "follow_ups": [
+        "KRI-546 #1503",
+        "KRI-552"
+      ],
+      "red_control": "pending"
+    },
+    {
+      "id": "kri-546-montage-receipts",
+      "tickets": [
+        "KRI-546"
+      ],
+      "symptom": "Phone Montage render-ready reply said 'Doğrulayamadım' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped.",
+      "boundary": "publication",
+      "fix_prs": [
+        1503
+      ],
+      "fix_commit": "414d8181b",
+      "paths": [
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_brief_montage_render_asks.py",
+        "tests/tasks/test_montage_render_ready_review.py"
+      ],
+      "harness": "real_reply",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id",
+        "live_model": "n/a",
+        "native_output": "Berlin re-run job a7d69a5b (2026-10-08) was the incident; post-fix phone re-send pending",
+        "production": "merged 2026-10-08"
+      },
+      "neighbours_covered": [
+        "generation looked up through the device record of the published attempt"
+      ],
+      "neighbours_gap": [
+        "approved/published generation lineage is not a typed invariant at the publication boundary (KRI-577 item 1)",
+        "red control 2026-10-11: the gate only fails at import on the pre-fix tree (it imports helpers the fix added), so it does not prove the behaviour change by itself"
+      ],
+      "follow_ups": [],
+      "red_control": "weak"
+    },
+    {
+      "id": "kri-548-caption-watermark",
+      "tickets": [
+        "KRI-548"
+      ],
+      "symptom": "The Kria logo covered the first letters of phone caption lines.",
+      "boundary": "device",
+      "fix_prs": [
+        1506
+      ],
+      "fix_commit": "0bbbea82d",
+      "journey": "kri-548-caption-watermark",
+      "paths": [],
+      "regression_tests": [
+        "tests/pipeline/test_phone_captions.py",
+        "tests/pipeline/test_phone_caption_watermark_fixture.py",
+        "tests/kria/test_portable_text_layout.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "caption layout tests",
+        "live_model": "n/a",
+        "native_output": "CI journey kri-548-caption-watermark exports captions on the iPhone simulator",
+        "production": "merged 2026-10-11"
+      },
+      "neighbours_covered": [
+        "server-rebroken captions",
+        "prod unbroken captions ink the corner"
+      ],
+      "neighbours_gap": [
+        "iOS editor preview parity (KRI-553)"
+      ],
+      "follow_ups": [
+        "KRI-553"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-547-face-fill-crop",
+      "tickets": [
+        "KRI-547"
+      ],
+      "symptom": "'make my landscape video vertical, keep my face in frame' rendered letterboxed while Kria said it did it.",
+      "boundary": "device",
+      "status": "open_pr",
+      "fix_prs": [
+        1507
+      ],
+      "owner": "KRI-547",
+      "paths": [],
+      "regression_tests": [],
+      "harness": "pending",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "pending merge",
+        "live_model": "n/a",
+        "native_output": "local real sampler on T3 footage (PR body); no device export yet",
+        "production": "not merged"
+      },
+      "neighbours_covered": [],
+      "neighbours_gap": [
+        "device export evidence required before merge (KRI-577 item 3)"
+      ],
+      "follow_ups": [
+        "KRI-553"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-568-shot-labels",
+      "tickets": [
+        "KRI-568"
+      ],
+      "symptom": "Resolved label intents existed but the contract required an equivalent shot_labels entry and refused after ~3 minutes of planning.",
+      "boundary": "contract",
+      "status": "open_pr",
+      "fix_prs": [
+        1531
+      ],
+      "owner": "KRI-568",
+      "paths": [],
+      "regression_tests": [],
+      "harness": "pending",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "pending merge",
+        "live_model": "n/a",
+        "native_output": "phone M1 re-send after deploy",
+        "production": "not merged"
+      },
+      "neighbours_covered": [],
+      "neighbours_gap": [
+        "same representation-mismatch class as KRI-454; a parser -> resolution -> contract record would catch both"
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-551-retake-cleanup",
+      "tickets": [
+        "KRI-551"
+      ],
+      "symptom": "Consent promised 'pauses and retakes' but cleanup only handles silence/fillers; 'At kilometer 30... sorry.' was never cut.",
+      "boundary": "verifier",
+      "status": "gap",
+      "owner": "KRI-551",
+      "gap_reason": "Capability, consent copy and receipts disagree; no fix yet. Needs a consent/capability agreement test before the feature.",
+      "paths": [],
+      "regression_tests": [],
+      "harness": "pending",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "none",
+        "live_model": "n/a",
+        "native_output": "incident observed on phone 2026-10-08 (job 8a0ced82)",
+        "production": "unfixed"
+      },
+      "neighbours_covered": [],
+      "neighbours_gap": [
+        "unsupported cleanup must read as unsupported in consent and receipts"
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-552-resend-idempotency",
+      "tickets": [
+        "KRI-552"
+      ],
+      "symptom": "A second copy of the same chat message, run after the render, read cleanup asks as caption intents and re-planned finished work.",
+      "boundary": "persistence",
+      "status": "gap",
+      "owner": "KRI-552",
+      "gap_reason": "Resend at 69 s during a 113 s turn is confirmed; the race mechanism is unproven. Needs a trace before orchestration changes (KRI-577 item 4).",
+      "paths": [],
+      "regression_tests": [],
+      "harness": "pending",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "none",
+        "live_model": "n/a",
+        "native_output": "incident observed on phone 2026-10-08",
+        "production": "unfixed"
+      },
+      "neighbours_covered": [],
+      "neighbours_gap": [
+        "semantic resend / idempotency across turns",
+        "completed-output reuse"
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable"
+    }
+  ]
+}

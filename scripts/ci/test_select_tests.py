@@ -503,7 +503,15 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/planner.py",
-                (True, "covered", "kri-524-creation,kri-557-thinking"),
+                (True, "covered", "kri-524-creation,kri-557-thinking,kri-577-reliability-gates"),
+            ),
+            (
+                "src/apps/api/app/tasks/content_plan_build.py",
+                (True, "covered", "kri-577-reliability-gates"),
+            ),
+            (
+                "src/apps/api/app/kria/duplicate_uploads.py",
+                (True, "covered", "kri-577-reliability-gates"),
             ),
             (
                 "src/apps/ios/Kria/Features/ThoughtSummaryDisclosure.swift",
