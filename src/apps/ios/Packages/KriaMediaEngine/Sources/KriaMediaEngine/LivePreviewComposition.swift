@@ -141,6 +141,14 @@ public struct LivePreviewExportSnapshot: Sendable {
             y: bounds.centerY - bounds.height / 2, width: bounds.width, height: bounds.height))
     }
 
+    /// Swaps only the freehand drawings (KRI-589): the cheap path for a move / scale / rotate gesture on a
+    /// drawing, which changes no other layer.
+    public func updateDrawings(_ layers: [PortableDrawingLayer]) throws {
+        var next = recipe
+        next.drawingLayers = layers
+        try updateText(recipe: next)
+    }
+
     public func updateText(recipe next: EditRecipe, assetURLs nextURLs: [String: URL]? = nil) throws {
         try next.validate()
         let urls = nextURLs ?? assetURLs

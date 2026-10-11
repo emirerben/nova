@@ -28,6 +28,10 @@ struct NativeEditorView: View {
     @State private var showsDeviceRender = false
     @State private var showsOriginalsRecovery = false
     @State private var showsConversation = false
+    /// KRI-589: Draw mode. `appendingTo` is the drawing "Draw more" adds to; nil starts a new drawing.
+    @State private var drawMode: DrawMode?
+    @StateObject private var sketch = NativeDrawingSketch()
+    private struct DrawMode: Equatable { var appendingTo: String? }
     @State private var showsEmptyAddClip = false
     @State private var selectedTextForActions: String?
     /// KRI-185: a block opened from the Text tab's list edits its words first and
@@ -341,6 +345,14 @@ struct NativeEditorView: View {
                         .accessibilityIdentifier("native-editor-caption-stale-preview")
                     }
                 }
+                .overlay {
+                    // KRI-589: the finger canvas in Draw mode, else the selected drawing's move / scale / rotate layer.
+                    if drawMode != nil {
+                        NativeDrawingCanvas(sketch: sketch)
+                    } else if let selection = session.selection, selection.kind == .drawing {
+                        NativeDrawingTransformLayer(session: session, id: selection.id)
+                    }
+                }
                 .accessibilityIdentifier("native-editor-preview")
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
@@ -500,7 +512,8 @@ struct NativeEditorView: View {
             ZStack(alignment: .bottom) {
                 NativeEditorTimeline(
                     session: session, uploads: model.uploads, bottomClearance: clearance, isCovered: panelIsOpen,
-                    onSelectVisual: { selectTool(.visuals) }, onSelectText: { selectTool(.text) }
+                    onSelectVisual: { selectTool(.visuals) }, onSelectText: { selectTool(.text) },
+                    onSelectDrawing: session.canAddDrawing ? { selectTool(.draw) } : nil
                 )
                     .ignoresSafeArea(.container, edges: .bottom)
                     // Safe-area expansion must not let the retained timeline
@@ -586,7 +599,7 @@ struct NativeEditorView: View {
                                     .transition(panelTransition)
                             }
                             if !keyboardVisible && !lineEditing {
-                                NativeEditorToolRail(selected: panel?.tool, availableWidth: area.size.width - 24, connected: true, onSelect: selectTool)
+                                NativeEditorToolRail(selected: panel?.tool, availableWidth: area.size.width - 24, connected: true, showsDraw: session.canAddDrawing, onSelect: selectTool)
                             }
                         }
                         .frame(width: panelIsOpen ? max(0, area.size.width - 24) : min(328, max(0, area.size.width - 24)))
@@ -612,6 +625,13 @@ struct NativeEditorView: View {
                     }
                 }
                 .padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
+            }
+            .overlay {
+                // KRI-589: Draw mode owns the whole area under the preview: the timeline and tool rail step aside.
+                if drawMode != nil {
+                    NativeDrawingToolbar(sketch: sketch, onCancel: { leaveDrawMode(save: false) }, onDone: { leaveDrawMode(save: true) })
+                        .transition(.opacity)
+                }
             }
             .frame(width: area.size.width, height: area.size.height, alignment: .bottom)
         }
@@ -644,6 +664,8 @@ struct NativeEditorView: View {
             NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case .sounds:
             NativeSoundsPanel(session: session, panelDrafts: panelDrafts) { changePanel(to: nil) }
+        case .drawing(let id):
+            NativeDrawingPanel(session: session, id: id, onDrawMore: { enterDrawMode(appendingTo: id) }, onDone: { changePanel(to: nil) }).id(id)
         case nil:
             EmptyView()
         }
@@ -668,7 +690,7 @@ struct NativeEditorView: View {
             // An empty draft returns nil and the pending-text observer closes the panel.
             if let selection = session.finishTextCreation() { textCreated(selection) }
         case .text: textEditingDone()
-        case .captions, .visuals, .sounds: changePanel(to: nil)
+        case .captions, .visuals, .sounds, .drawing: changePanel(to: nil)
         case nil: break
         }
     }
@@ -719,6 +741,7 @@ struct NativeEditorView: View {
             changePanel(to: .visuals)
             session.select(nil)
         case .sounds: changePanel(to: .sounds)
+        case .draw: enterDrawMode()
         default:
             changePanel(to: nil)
             inspector = .tool(tool)
@@ -757,6 +780,37 @@ struct NativeEditorView: View {
         changePanel(to: .text(id))
     }
 
+    /// KRI-589: opens Draw mode. Playback pauses, the panel closes, the finger canvas covers the preview and a
+    /// toolbar replaces the timeline (so nothing can be scrubbed or selected underneath). "Draw more" first
+    /// shows the drawing finished, so the new strokes land against what is already there.
+    private func enterDrawMode(appendingTo id: String? = nil) {
+        guard drawMode == nil, id == nil ? session.canAddDrawing : session.canEditDrawings else { return }
+        session.pausePlayback()
+        finishPanelEditing()
+        if let id, let drawing = session.drawing(id: id) {
+            session.seek(to: min(drawing.endS - 0.05, max(session.currentTime, drawing.startS + drawing.drawDurationS)))
+        } else {
+            session.select(nil)
+        }
+        changePanel(to: nil)
+        sketch.reset(canvasAspect: session.previewAspectRatio) { [session] points, strokes in
+            session.drawingCapMessage(extraPoints: points, extraStrokes: strokes, editing: id)
+        }
+        withAnimation(shouldReduceMotion ? nil : .easeOut(duration: 0.2)) { drawMode = DrawMode(appendingTo: id) }
+    }
+
+    private func leaveDrawMode(save: Bool) {
+        guard let mode = drawMode else { return }
+        let strokes = save ? sketch.finishedStrokes() : []
+        withAnimation(shouldReduceMotion ? nil : .easeOut(duration: 0.2)) { drawMode = nil }
+        guard !strokes.isEmpty else { return }
+        if let id = mode.appendingTo {
+            if session.appendDrawingStrokes(id: id, previewStrokes: strokes) { changePanel(to: .drawing(id)) }
+        } else {
+            session.addDrawing(strokes: strokes, canvasAspect: session.previewAspectRatio)
+        }
+    }
+
     private func routeSelection() {
         guard !session.isDirectManipulating, !session.isTimingGestureActive else { return }
         guard let selection = session.selection else {
@@ -766,6 +820,11 @@ struct NativeEditorView: View {
         }
         if [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect].contains(selection.kind) {
             changePanel(to: .visuals)
+            return
+        }
+        if selection.kind == .drawing {
+            guard drawMode == nil else { return }
+            changePanel(to: .drawing(selection.id))
             return
         }
         if selection.kind == .soundEffect {
@@ -949,6 +1008,7 @@ private enum NativeEditorInspector: Identifiable {
             case .soundEffect: return "Sound effect"
             case .mediaOverlay: return "Overlay"
             case .visualBlock, .motionScene, .cameraEffect: return "Visual"
+            case .drawing: return "Drawing"
             case .carousel: return "Carousel"
             }
         case .adjust: return "Adjust"
