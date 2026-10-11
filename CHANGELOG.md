@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.209.0] - 2026-10-11
+
+### Changed
+- test(ios): prune 60 redundant UI tests so main iOS shards stay under the 60-min cap (KRI-567) (#1530) <!-- release-pr: 1530 -->
+
 ## [0.78.208.0] - 2026-10-10
 
 ### Changed
