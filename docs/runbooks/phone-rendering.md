@@ -2463,7 +2463,7 @@ Flow:
    `PUT /creation-threads/{id}/song-range` `{start_s, end_s, client_event_id, expected_revision}`
    (both null clears; end clamped to the song, at least 5 s; 404 `song_range_unavailable` when off,
    409 `song_missing` with no song, 422 `song_range_invalid`). It is stored on the PlanItem
-   (`song_range_start_s/_end_s`, migration 0117, cleared whenever the song changes in
+   (`song_range_start_s/_end_s`, migration 0118, cleared whenever the song changes in
    `mutate_plan_item_media`) and mirrored onto the thread's song media entry as `song_range` so the
    app can show it. It is applied where alignment is READ, never where it is written
    (`services/song_range.restrict_alignment_to_range`, called by the planner gate and by
@@ -2474,7 +2474,7 @@ Flow:
    changing or clearing the range takes effect immediately and needs no re-alignment. Capability
    `song_filming_range`; kill switch `SONG_FILMING_RANGE_ENABLED=false` (api + worker restart) drops
    the capability, 404s the setter and ignores any stored range (whole song, as before). Deploy order:
-   API first (migration 0117 is additive and nullable). Guards: `tests/services/test_song_range.py`
+   API first (migration 0118 is additive and nullable). Guards: `tests/services/test_song_range.py`
    (the real job's candidates; a repeated verse no longer splits the group),
    `tests/kria/test_planner_song_order.py`, `tests/routes/test_creation_threads_user_song.py`.
    Playback:
