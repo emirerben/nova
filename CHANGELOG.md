@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.219.0] - 2026-10-11
+
+### Changed
+- feat(captions): pin the lyric-caption decision at plan time (KRI-578) (#1541) <!-- release-pr: 1541 -->
+
 ## [0.78.218.0] - 2026-10-11
 
 ### Changed
