@@ -4195,6 +4195,27 @@ _TITLE_WAY_FORWARD_MIXED = 'For the title, tell me the words or say "continue wi
 _RENDER_BLOCK_SUFFIX = "Your draft is saved. Should I try again or simplify this request?"
 
 
+# The phone Voiceover worker's question when it could not place the clips on the spoken
+# words (`_run_phone_narrated_job`). The worker binds no chat language, so the stored copy
+# is this English text; the chat observer re-words it for a Turkish chat (KRI-592), the
+# same way it re-words `render_block_recovery`.
+NARRATED_ALIGNMENT_RECOVERY = (
+    "I couldn't match the narration to the actions reliably. Your draft is saved. "
+    "Should I try again or use a simpler clip sequence?"
+)
+
+
+def narrated_alignment_recovery() -> str:
+    """`NARRATED_ALIGNMENT_RECOVERY` in the bound chat language."""
+    return say(
+        en=NARRATED_ALIGNMENT_RECOVERY,
+        tr=(
+            "Seslendirmeyi kliplerle güvenilir bir şekilde eşleştiremedim. Taslağın "
+            "kaydedildi. Tekrar mı deneyeyim, yoksa daha basit bir klip sırası mı kullanayım?"
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class RenderBlockRecovery:
     """What the creator is told when checked receipts block a render, and the typed decline."""
@@ -4993,6 +5014,7 @@ __all__ = [
     "BeatFact",
     "ClosingSpeechFact",
     "NO_TITLE_REASON",
+    "NARRATED_ALIGNMENT_RECOVERY",
     "RenderBlockRecovery",
     "NARRATED_ALIGNED_BASES",
     "NARRATED_ALIGNMENT_FIELD",
@@ -5009,6 +5031,7 @@ __all__ = [
     "is_judged",
     "is_no_title_reason",
     "judged_at_render",
+    "narrated_alignment_recovery",
     "needs_creator_choice",
     "SpeechSectionFact",
     "plan_facts_from_editor_payload",

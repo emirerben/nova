@@ -8517,11 +8517,13 @@ def _run_phone_narrated_job(
                                 "generation_id": generation,
                             },
                         )
-                        recovery_message = (
-                            "I couldn't match the narration to the actions reliably. "
-                            "Your draft is saved. Should I try again "
-                            "or use a simpler clip sequence?"
+                        from app.kria.brief_checks import (  # noqa: PLC0415
+                            narrated_alignment_recovery,
                         )
+
+                        # KRI-592: no chat language is bound here, so this stores the
+                        # English copy; the chat observer re-words it for a Turkish chat.
+                        recovery_message = narrated_alignment_recovery()
                         if not _save_request_recovery(
                             job_id,
                             snapshot,
