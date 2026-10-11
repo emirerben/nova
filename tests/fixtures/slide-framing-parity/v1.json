@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "placements": [
+    {
+      "name": "landscape_photo_plain_cover",
+      "image": [
+        4000,
+        3000
+      ],
+      "crop": null,
+      "canvas": [
+        1080,
+        1920
+      ],
+      "expected": [
+        -740.0,
+        0.0,
+        2560.0,
+        1920.0
+      ]
+    },
+    {
+      "name": "portrait_photo_plain_cover",
+      "image": [
+        3000,
+        4000
+      ],
+      "crop": null,
+      "canvas": [
+        1080,
+        1920
+      ],
+      "expected": [
+        -180.0,
+        0.0,
+        1440.0,
+        1920.0
+      ]
+    },
+    {
+      "name": "portrait_quad_top_left",
+      "image": [
+        2000,
+        2000
+      ],
+      "crop": {
+        "x": 0,
+        "y": 0,
+        "width": 0.5,
+        "height": 0.5
+      },
+      "canvas": [
+        1080,
+        1920
+      ],
+      "expected": [
+        -420.0,
+        0.0,
+        3840.0,
+        3840.0
+      ]
+    },
+    {
+      "name": "landscape_slide_center_crop",
+      "image": [
+        4000,
+        3000
+      ],
+      "crop": {
+        "x": 0.1,
+        "y": 0.1,
+        "width": 0.8,
+        "height": 0.8
+      },
+      "canvas": [
+        1920,
+        1080
+      ],
+      "expected": [
+        -240.0,
+        -360.0,
+        2400.0,
+        1800.0
+      ]
+    },
+    {
+      "name": "landscape_slide_plain",
+      "image": [
+        3000,
+        4000
+      ],
+      "crop": null,
+      "canvas": [
+        1920,
+        1080
+      ],
+      "expected": [
+        0.0,
+        -740.0,
+        1920.0,
+        2560.0
+      ]
+    },
+    {
+      "name": "ig_4x5_right_third",
+      "image": [
+        4000,
+        3000
+      ],
+      "crop": {
+        "x": 0.5,
+        "y": 0,
+        "width": 0.5,
+        "height": 1.0
+      },
+      "canvas": [
+        1080,
+        1350
+      ],
+      "expected": [
+        -1080.0,
+        -135.0,
+        2160.0,
+        1620.0
+      ]
+    }
+  ],
+  "focus": [
+    {
+      "name": "wide_top",
+      "source_aspect": 1.7777777777777777,
+      "canvas_aspect": 0.5625,
+      "focus": "left",
+      "zoom": 1.0,
+      "expected": {
+        "x": 0.0,
+        "y": 0.0,
+        "width": 0.316406,
+        "height": 1.0
+      }
+    },
+    {
+      "name": "tall_in_wide_top",
+      "source_aspect": 0.5625,
+      "canvas_aspect": 1.7777777777777777,
+      "focus": "top",
+      "zoom": 1.0,
+      "expected": {
+        "x": 0.0,
+        "y": 0.0,
+        "width": 1.0,
+        "height": 0.316406
+      }
+    },
+    {
+      "name": "square_zoom2_center",
+      "source_aspect": 1.0,
+      "canvas_aspect": 0.5625,
+      "focus": "center",
+      "zoom": 2.0,
+      "expected": {
+        "x": 0.359375,
+        "y": 0.25,
+        "width": 0.28125,
+        "height": 0.5
+      }
+    },
+    {
+      "name": "identity",
+      "source_aspect": 0.5625,
+      "canvas_aspect": 0.5625,
+      "focus": "center",
+      "zoom": 1.0,
+      "expected": null
+    }
+  ]
+}

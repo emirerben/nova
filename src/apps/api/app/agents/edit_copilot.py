@@ -41,7 +41,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-09-v76"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-11-v77"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -161,7 +161,7 @@ _BULK_OPS = {"add_unused_sources", "set_media_duration", "stack_images"}
 _HISTORY_OPS = frozenset({"undo_last_edit", "repeat_last_edit"})
 # KRI-301: the ONLY ops a slide post accepts (`snapshot["surface"] == "slide_post"`).
 # Slide-only ops are refused on every other surface.
-_SLIDE_POST_ONLY_OPS = frozenset({"set_slide_cover", "set_post_caption"})
+_SLIDE_POST_ONLY_OPS = frozenset({"set_slide_cover", "set_post_caption", "set_slide_framing"})
 SLIDE_POST_OPS = frozenset(
     {
         "edit_text",

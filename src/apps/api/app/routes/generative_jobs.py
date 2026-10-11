@@ -7080,6 +7080,65 @@ def _clamp_phone_editor_capabilities(
     return clamped
 
 
+def _base_editor_capabilities(job: Job, variant: dict) -> dict:
+    """The per-archetype capability map plus an explicit ``clips.source_crop`` (KRI-44)."""
+    return _ensure_source_crop_capability(
+        _compute_base_editor_capabilities(job, variant), job, variant
+    )
+
+
+def _phone_voiceover_crop_edits_enabled(job: Job, variant: dict) -> bool:
+    """A phone Voiceover edit (narrated, or montage ``voiceover``) whose Save can
+    recompile a creator crop into the pinned recipe (KRI-44)."""
+    from app.config import settings  # noqa: PLC0415
+    from app.services.phone_editor import (  # noqa: PLC0415
+        is_phone_narrated_editor_variant,
+        is_phone_voiceover_montage_editor_variant,
+    )
+
+    return bool(settings.phone_voiceover_timeline_edits_enabled) and (
+        is_phone_narrated_editor_variant(variant)
+        or is_phone_voiceover_montage_editor_variant(variant, job.assembly_plan or {})
+    )
+
+
+def _ensure_source_crop_capability(capabilities: dict, job: Job, variant: dict) -> dict:
+    """Add ``clips.source_crop`` where a Save really carries a crop (KRI-44).
+
+    The guided-story v2 map already owns the key (revision-gated, then clamped for
+    device renders). The other maps deliberately carry no ``clips`` group, so this
+    adds one ONLY where it opens crop: authored timelines, and phone Voiceover edits
+    once the device has verified ``sourceCrop`` (they recompile it into the pinned
+    recipe). An absent key means "no crop here"; the app must not fall back to "the
+    timeline section is editable" for it.
+    """
+    from app.config import settings  # noqa: PLC0415
+
+    if variant.get("resolved_archetype") == "slides":
+        return capabilities
+    clips = capabilities.get("clips")
+    if isinstance(clips, dict) and "source_crop" in clips:
+        return capabilities
+    device = variant.get("render_destination") == "device"
+    verified = "sourceCrop" in settings.phone_render_verified_features
+    authored = variant.get("editor_timeline_mode") == "authored"
+    if not device:
+        editable = authored
+    elif authored:
+        editable = verified
+    else:
+        editable = verified and _phone_voiceover_crop_edits_enabled(job, variant)
+    if not editable:
+        return capabilities
+    return {
+        **capabilities,
+        "clips": {
+            **(clips if isinstance(clips, dict) else {}),
+            "source_crop": {"editable": True, "reason": None},
+        },
+    }
+
+
 def _editor_capabilities(job: Job, variant: dict) -> dict:
     """Editor capability map for one variant, clamped to what its renderer can save."""
     capabilities = _base_editor_capabilities(job, variant)
@@ -7112,8 +7171,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             shape=shape,
             subtitled_text=subtitled_lanes and _phone_subtitled_text_lane_available(variant),
             source_crop=(
-                variant.get("resolved_archetype") == "guided_story"
-                and "sourceCrop" in settings.phone_render_verified_features
+                "sourceCrop" in settings.phone_render_verified_features
+                and (
+                    variant.get("resolved_archetype") == "guided_story"
+                    or _phone_voiceover_crop_edits_enabled(job, variant)
+                )
             ),
         )
     return capabilities
@@ -7190,7 +7252,7 @@ def _phone_editor_media_available(
     )
 
 
-def _base_editor_capabilities(job: Job, variant: dict) -> dict:
+def _compute_base_editor_capabilities(job: Job, variant: dict) -> dict:
     """E4: server-derived editor capability map for one variant (kills FE 404-probing).
 
     Cheap by design — flag reads, string checks, and the already-persisted

@@ -814,10 +814,19 @@ export interface SlideTextOverlay {
   position: "top" | "center" | "bottom";
 }
 
-/** Mirrors `SlideEdits` in app/schemas/slide_post.py. */
+/** Mirrors `SlideFraming` in app/schemas/slide_post.py (KRI-44). The crop is a
+ *  normalized, top-left-origin rectangle in the UPRIGHT frame of the source. */
+export interface SlideFraming {
+  orientation: "portrait" | "landscape";
+  source_crop?: { x: number; y: number; width: number; height: number } | null;
+}
+
+/** Mirrors `SlideEdits` in app/schemas/slide_post.py. Omit `framing` to keep the
+ *  stored crop; send `null` to clear it. */
 export interface SlideEdits {
   text?: SlideTextOverlay | null;
   look_preset: LookPreset;
+  framing?: SlideFraming | null;
 }
 
 /** One item in a slide post's ordered sequence. References a pool asset by

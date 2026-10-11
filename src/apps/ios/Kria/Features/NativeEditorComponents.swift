@@ -320,6 +320,7 @@ struct NativeEditorTimeline: View {
 struct NativeEditorContextStrip: View {
     @ObservedObject var session: NativeEditorSession
     let onAdjust: () -> Void
+    var onCrop: () -> Void = {}
     let onTransition: () -> Void
     @State private var scrollState = NativeEditorActionScrollState()
 
@@ -333,6 +334,20 @@ struct NativeEditorContextStrip: View {
                 }
                 .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
                 .accessibilityIdentifier("native-editor-adjust")
+
+                // KRI-44: only where the server explicitly lists `clips.source_crop`; legacy cloud variants never show it.
+                if session.serverOffersClipCrop {
+                    let blocked = session.cropBlockedReason(for: session.selection)
+                    Button(action: onCrop) {
+                        Label("Crop", systemImage: "crop")
+                            .frame(minHeight: 44)
+                            .padding(.horizontal, 16)
+                    }
+                    .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                    .disabled(blocked != nil || !session.canEdit(.timeline))
+                    .accessibilityIdentifier("native-editor-clip-crop")
+                    .accessibilityHint(blocked ?? "Choose which part of this clip shows")
+                }
 
                 // Toggles the selected clip's own sound (it used to open Adjust and show a static
                 // "not supported" note). The icon is the state: speaker = heard, slashed = silent.

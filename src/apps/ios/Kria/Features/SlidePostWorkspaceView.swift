@@ -166,6 +166,8 @@ struct SlidePostWorkspaceView: View {
         let liveLook = rich && extendedDeviceExportOn
         let preset = liveLook ? session.selectedSlide?.edits?.lookPreset ?? "none" : "none"
         let profile = session.draft?.platformProfile ?? "instagram_carousel"
+        let slideCanvas = session.selectedSlide.map { SlidePostFraming.canvas(for: $0, profile: profile) } ?? SlidePostOnDeviceRender.canvas(for: profile)
+        let slideCrop = session.selectedSlide.flatMap { SlidePostFraming.effectiveCrop(for: $0) }
         let playerKey = "\(asset?.id ?? "")|\(profile)|\(preset)"
         return ZStack {
             if let asset, let url = previewURL {
@@ -180,7 +182,7 @@ struct SlidePostWorkspaceView: View {
                 } else {
                     SlidePostCachedImage(assetID: asset.id, variant: .preview, url: url, onExpired: { await refresh() },
                                          loadingIdentifier: "slidepost-preview-loading", showsRetry: true, reportsState: true,
-                                         lookPreset: preset, lookCanvas: SlidePostOnDeviceRender.canvas(for: profile))
+                                         lookPreset: preset, lookCanvas: slideCanvas, crop: slideCrop)
                 }
             } else { Image(systemName: "photo.on.rectangle").font(.largeTitle).foregroundStyle(KriaColor.zinc) }
         }
@@ -231,6 +233,7 @@ struct SlidePostWorkspaceView: View {
 
     /// Chat-edit staging in the AI sheet is the one genuinely optional piece: unknown or off => propose flow.
     private var chatEditOn: Bool { effectiveCapabilities?.slidePostChatEditEnabled == true }
+    private var framingOn: Bool { effectiveCapabilities?.slidePostFramingEnabled == true }
     private var extendedDeviceExportOn: Bool { effectiveCapabilities?.slidePostExtendedDeviceExportEnabled == true }
     private func seedAndAppend() {
         session.seedDraftIfNeeded()
@@ -262,7 +265,12 @@ struct SlidePostWorkspaceView: View {
     /// asset carries it this stays off, so the notice never appears on a guess.
     private var showsNoMetadataNotice: Bool { false }
 
-    private func aspect(_ draft: SlidePostDraft) -> CGFloat { draft.platformProfile == "instagram_carousel" ? 4.0 / 5 : 9.0 / 16 }
+    /// The selected slide's own shape: a landscape slide shows 16:9, fitted inside the same stage.
+    private func aspect(_ draft: SlidePostDraft) -> CGFloat {
+        let canvas = session.selectedSlide.map { SlidePostFraming.canvas(for: $0, profile: draft.platformProfile) }
+            ?? SlidePostOnDeviceRender.canvas(for: draft.platformProfile)
+        return canvas.width / canvas.height
+    }
     private func platformName(_ draft: SlidePostDraft) -> String { draft.platformProfile == "instagram_carousel" ? "Instagram" : "TikTok" }
 
     /// Why export cannot start right now (shown as a disabled row in the export menu); nil = it can.
@@ -292,6 +300,7 @@ struct SlidePostWorkspaceView: View {
         let subtitle: String
         if mode == .text { subtitle = "Slide \(slideNumber) · Text" }
         else if mode == .look { subtitle = "Slide \(slideNumber) · Look" }
+        else if mode == .crop { subtitle = "Slide \(slideNumber) · Crop" }
         else if session.hasUnsavedChanges { subtitle = "Unsaved changes" }
         else { subtitle = "\(platformName(draft)) · \(draft.platformProfile == "instagram_carousel" ? "4:5" : "9:16") · \(draft.slides.count) slide\(draft.slides.count == 1 ? "" : "s")" }
         return SlidePostTransportRow(
@@ -337,11 +346,22 @@ struct SlidePostWorkspaceView: View {
         .background(KriaColor.paper)
     }
 
-    private func richWorkspace(_ draft: SlidePostDraft) -> some View {
+    @ViewBuilder private func richWorkspace(_ draft: SlidePostDraft) -> some View {
         let slide = session.selectedSlide
         let panelOpen = mode == .text || mode == .look
         let height = max(rootSize.height, 640)
-        return VStack(spacing: 0) {
+        if mode == .crop, let slide {
+            VStack(spacing: 0) {
+                richBanner
+                SlidePostCropWorkspace(
+                    session: session, slide: slide, profile: draft.platformProfile,
+                    previewURL: previewURL(rich: true), onExpired: { await refresh() }, onDone: { mode = .browse }
+                )
+                .frame(maxHeight: .infinity)
+            }
+            .background(KriaColor.paper)
+        } else {
+        VStack(spacing: 0) {
             richBanner
             if showsNoMetadataNotice, !panelOpen {
                 SlidePostNotice(title: "No dates or places on these photos",
@@ -370,6 +390,7 @@ struct SlidePostWorkspaceView: View {
             }
         }
         .background(KriaColor.paper)
+        }
     }
 
     /// KRI-305: with the keyboard up on a small phone the panel has no room for its pinned Add text row (it
@@ -497,6 +518,7 @@ struct SlidePostWorkspaceView: View {
             SlidePostToolBar(
                 mode: mode, canCover: slide != nil, canRemove: draft.slides.count > 1 && slide != nil,
                 canDuplicateText: hasTexts && (slide?.edits?.effectiveTexts.count ?? 0) < SlidePostEdits.maxTexts,
+                showsCrop: framingOn && slide?.kind == "image", onCrop: { session.selectedTextID = nil; mode = .crop },
                 onText: beginTextEditing,
                 onCover: { if let id = slide?.id { session.setCover(id: id); UINotificationFeedbackGenerator().notificationOccurred(.success) } },
                 onLook: { mode = .look },

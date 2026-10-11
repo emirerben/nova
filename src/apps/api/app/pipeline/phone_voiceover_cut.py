@@ -33,6 +33,7 @@ from app.kria.recipes import (
     MediaAsset,
     MediaSize,
     MediaTransform,
+    NormalizedSourceCrop,
     TimelineClip,
     Transition,
 )
@@ -182,6 +183,17 @@ def _video_clips(
             "transition": transition,
         }
         old = by_id.get(clip_id)
+        # A creator crop (KRI-44). The slot omits it to keep the pinned one; an
+        # explicit None clears it. A cropped clip is cover-fitted from the crop by
+        # the device, so it never also carries a letterbox transform.
+        if "source_crop" in slot:
+            raw_crop = slot["source_crop"]
+            update["source_crop"] = (
+                NormalizedSourceCrop.model_validate(raw_crop) if raw_crop is not None else None
+            )
+        crop = (
+            update["source_crop"] if "source_crop" in update else (old.source_crop if old else None)
+        )
         look = old.look if old is not None else default_look
         original = binding.original
         if look == "golden_hour" and (
@@ -196,13 +208,19 @@ def _video_clips(
         # (a portrait clip shrunk to 32% on black, or a landscape clip
         # cropped), so recompute it for the new source. A newly placed clip
         # gets the recipe's fit the same way.
-        if old is not None and old.source_asset_id == asset.id:
+        clearing_crop = (
+            old is not None
+            and old.source_crop is not None
+            and "source_crop" in update
+            and crop is None
+        )
+        if old is not None and old.source_asset_id == asset.id and not clearing_crop:
+            if crop is not None:
+                update["transform"] = MediaTransform()
             clips.append(old.model_copy(update=update))
         else:
             transform = MediaTransform()
-            keeps_identity = old is not None and (
-                old.source_crop is not None or old.still_layout is not None
-            )
+            keeps_identity = crop is not None or (old is not None and old.still_layout is not None)
             if landscape_fit == "fit" and canvas.height > canvas.width and not keeps_identity:
                 display_w, display_h = display_dims(original)
                 transform = fit_transform(display_w, display_h, canvas, landscape_fit)
@@ -211,6 +229,9 @@ def _video_clips(
                     "a color grade cannot be combined with letterboxed landscape fit"
                 )
             if old is not None:
+                # A repointed slot is a different picture: it never inherits the old
+                # source's crop unless the slot sends one (KRI-44).
+                update.setdefault("source_crop", None)
                 clips.append(old.model_copy(update={**update, "transform": transform}))
             else:
                 clips.append(TimelineClip(**update, transform=transform, look=default_look))

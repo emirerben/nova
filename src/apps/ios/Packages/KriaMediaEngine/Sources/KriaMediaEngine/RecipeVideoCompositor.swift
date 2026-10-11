@@ -323,17 +323,19 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         return frame
     }
 
-    /// Crop coordinates use the editor's top-left origin in decoded source pixels.
-    /// Preserve the existing transform's user zoom, rotation and translation while
-    /// replacing its full-source cover fit with a fit of the selected rectangle.
+    /// Crop coordinates are normalized, top-left origin, in UPRIGHT (display) space: the
+    /// frame after the track's preferred transform / EXIF orientation. This matches the
+    /// cloud `reframe.py` crop and the crop editor. `layer.preferredTransform` is the
+    /// Core Image (bottom-left) form of that transform. Map the upright rectangle back
+    /// into the encoded frame before cropping, then preserve the existing transform's
+    /// user zoom, rotation and translation while replacing its full-source cover fit with
+    /// a fit of the selected rectangle.
     static func positionedSource(_ source: CIImage, layer: RecipeVideoLayer, canvas: CGRect, time: Double) -> CIImage {
         var image = source
         var transform = layer.transform
         if let crop = layer.sourceCrop {
             let full = source.extent
-            let rectangle = CGRect(x: full.minX + full.width * crop.x,
-                y: full.maxY - full.height * (crop.y + crop.height),
-                width: full.width * crop.width, height: full.height * crop.height)
+            let rectangle = uprightCropToEncodedRect(crop: crop, extent: full, preferredTransform: layer.preferredTransform)
             image = source.cropped(to: rectangle)
             if layer.visualPlacement == nil {
                 let orientedFull = full.applying(layer.preferredTransform)
@@ -354,6 +356,20 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         }
         return layer.visualPlacement?.position(image, preferred: layer.preferredTransform, canvas: canvas,
             time: time, clipStart: layer.start, clipEnd: layer.end) ?? image.transformed(by: transform)
+    }
+
+    /// Converts a normalized, top-left-origin crop in upright space into a Core Image
+    /// (bottom-left-origin) rectangle in the encoded frame `extent`. `preferredTransform`
+    /// maps encoded -> upright in Core Image coordinates; mirrored and quarter-turn
+    /// transforms are handled by mapping the upright rectangle through its inverse.
+    static func uprightCropToEncodedRect(crop: NormalizedSourceRect, extent: CGRect, preferredTransform: CGAffineTransform) -> CGRect {
+        let upright = extent.applying(preferredTransform)
+        let uprightRect = CGRect(x: upright.minX + upright.width * crop.x,
+            y: upright.maxY - upright.height * (crop.y + crop.height),
+            width: upright.width * crop.width, height: upright.height * crop.height)
+        let t = preferredTransform
+        guard !t.isIdentity, abs(t.a * t.d - t.b * t.c) > 1e-9 else { return uprightRect }
+        return uprightRect.applying(preferredTransform.inverted())
     }
 
     // Requests are serialized and each finishes exactly once. Draining the queue avoids leaving

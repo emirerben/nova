@@ -4,7 +4,7 @@ import KriaMediaEngine
 struct NativeFootagePanel: View {
     @ObservedObject var session: NativeEditorSession
     let selection: EditorSelection
-    @State private var crop = NormalizedSourceRect(x: 0, y: 0, width: 1, height: 1)
+    @State private var showCrop = false
 
     var body: some View {
         Group {
@@ -14,25 +14,38 @@ struct NativeFootagePanel: View {
                 editableControls
             }
         }
-        // Recreate the controls when the inspector follows another item. This
-        // also guarantees an in-flight crop gesture settles with its original
-        // selection instead of writing its final value to the next item.
+        // Recreate the controls when the inspector follows another item.
         .id(selection)
-        .onAppear {
-            crop = session.footageCrop(for: selection) ?? .init(x: 0, y: 0, width: 1, height: 1)
-        }
+        .sheet(isPresented: $showCrop) { NativeCropSheet(session: session, selection: selection) }
     }
 
-    /// The phone renderer can't draw crop or speed yet, so a device variant
-    /// only offers to clear a value saved before that; otherwise Save fails.
+    /// Crop opens the shared editor; the clip's `clips.source_crop` capability (or, for an overlay, its section) decides.
+    @ViewBuilder private var cropRow: some View {
+        let blocked = selection.kind == .clip ? session.cropBlockedReason(for: selection) : nil
+        Button { showCrop = true } label: {
+            HStack {
+                Label("Crop…", systemImage: "crop")
+                Spacer()
+                if session.footageCrop(for: selection) != nil { Text("Cropped").foregroundStyle(.secondary) }
+            }
+        }
+        .disabled(blocked != nil)
+        .accessibilityIdentifier("native-editor-footage-crop")
+        if let blocked { Text(blocked).font(.footnote).foregroundStyle(.secondary) }
+    }
+
+    /// The phone renderer can't draw speed yet, so a device variant only offers to clear a saved speed. Crop is
+    /// offered only when the server opens `clips.source_crop` for this variant.
     @ViewBuilder private var deviceControls: some View {
         Section("Speed and crop") {
-            Text("Crop, speed and looks aren’t available yet for edits rendered on this iPhone.").font(.footnote).foregroundStyle(.secondary)
+            if selection.kind == .clip, session.canCropClips || session.footageCrop(for: selection) != nil {
+                cropRow
+            } else if session.footageCrop(for: selection) != nil {
+                Button("Reset crop") { session.setFootageCrop(selection, crop: nil) }
+            }
+            Text("Speed and looks aren’t available yet for edits rendered on this iPhone.").font(.footnote).foregroundStyle(.secondary)
             if abs(session.footagePlaybackRate(for: selection) - 1) > 0.000_001 {
                 Button("Reset speed") { session.setFootagePlaybackRate(selection, rate: 1) }
-            }
-            if session.footageCrop(for: selection) != nil {
-                Button("Reset crop") { session.setFootageCrop(selection, crop: nil); crop = .init(x: 0, y: 0, width: 1, height: 1) }
             }
         }
     }
@@ -50,92 +63,56 @@ struct NativeFootagePanel: View {
             ) { Text("Playback rate") }
             Text("Changes footage speed while animation timing stays separate.").font(.footnote).foregroundStyle(.secondary)
         }
-        Section("Freeform crop") {
-            NativeCropCanvas(crop: $crop, onBegin: { session.beginTransaction() }, onCommit: { value in
-                session.setFootageCrop(selection, crop: value)
-                session.endTransaction()
-            })
-            Button("Reset crop") { session.setFootageCrop(selection, crop: nil); crop = .init(x: 0, y: 0, width: 1, height: 1) }
-                .disabled(crop == .init(x: 0, y: 0, width: 1, height: 1))
+        // A clip is cropped only where the server explicitly lists `clips.source_crop`; an overlay or visual keeps its section gate.
+        if selection.kind != .clip || session.serverOffersClipCrop || session.footageCrop(for: selection) != nil {
+            Section("Crop") { cropRow }
         }
     }
 }
 
-private struct NativeCropCanvas: View {
-    @Binding var crop: NormalizedSourceRect
-    let onBegin: () -> Void
-    let onCommit: (NormalizedSourceRect) -> Void
-    @State private var baseline: NormalizedSourceRect?
-    @GestureState private var moveGestureActive = false
-    @GestureState private var resizeGestureActive = false
-    private let minimum = 0.08
+/// The shared Crop editor (KRI-44) for a clip, overlay or visual, writing through `setFootageCrop`.
+/// `embedded` = already inside the editor inspector's navigation stack (and its Done button).
+struct NativeCropSheet: View {
+    @ObservedObject var session: NativeEditorSession
+    let selection: EditorSelection
+    var embedded = false
+    @Environment(\.dismiss) private var dismiss
+    @State private var crop: NormalizedSourceRect?
+
+    private var content: some View {
+        KriaCropFrameHost(
+            load: { await session.cropSourceFrame(for: selection) },
+            outputAspect: session.cropOutputAspect,
+            crop: Binding(
+                get: { crop },
+                set: { crop = $0; session.setFootageCrop(selection, crop: $0) }
+            ),
+            onEditingChanged: { editing in
+                if editing { session.beginTransaction() } else { session.endTransaction() }
+            }
+        )
+        .padding(16)
+        .background(KriaColor.paper)
+        .onAppear { crop = session.footageCrop(for: selection) }
+        .accessibilityIdentifier("native-editor-crop-sheet")
+    }
 
     var body: some View {
-        GeometryReader { proxy in
-            let rect = CGRect(x: crop.x * proxy.size.width, y: crop.y * proxy.size.height,
-                              width: crop.width * proxy.size.width, height: crop.height * proxy.size.height)
-            ZStack(alignment: .topLeading) {
-                Color.black.opacity(0.18)
-                Rectangle().path(in: rect).stroke(.white, lineWidth: 2)
-                cropHandle(.topLeading, at: rect.origin, size: proxy.size)
-                cropHandle(.topTrailing, at: CGPoint(x: rect.maxX, y: rect.minY), size: proxy.size)
-                cropHandle(.bottomLeading, at: CGPoint(x: rect.minX, y: rect.maxY), size: proxy.size)
-                cropHandle(.bottomTrailing, at: CGPoint(x: rect.maxX, y: rect.maxY), size: proxy.size)
+        if embedded {
+            content
+        } else {
+            NavigationStack {
+                content
+                    .navigationTitle("Crop")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { dismiss() }.accessibilityIdentifier("native-editor-crop-done")
+                        }
+                    }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .gesture(moveGesture(size: proxy.size))
+            .tint(KriaColor.ink)
+            .presentationDetents([.large])
         }
-        .aspectRatio(9 / 16, contentMode: .fit)
-        .frame(maxWidth: 220)
-        .accessibilityIdentifier("native-editor-freeform-crop")
-        .onChange(of: moveGestureActive) { _, active in
-            if !active && !resizeGestureActive { finish() }
-        }
-        .onChange(of: resizeGestureActive) { _, active in
-            if !active && !moveGestureActive { finish() }
-        }
-        .onDisappear(perform: finish)
-    }
-
-    private enum Corner { case topLeading, topTrailing, bottomLeading, bottomTrailing }
-    private func cropHandle(_ corner: Corner, at point: CGPoint, size: CGSize) -> some View {
-        Circle().fill(.white).frame(width: 18, height: 18).position(point)
-            .gesture(handleGesture(corner, size: size))
-    }
-    private func moveGesture(size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 3)
-        .updating($moveGestureActive) { _, active, _ in active = true }
-        .onChanged { value in
-            if baseline == nil { baseline = crop; onBegin() }
-            guard let base = baseline else { return }
-            crop = normalized(base, dx: value.translation.width / size.width, dy: value.translation.height / size.height)
-        }.onEnded { _ in finish() }
-    }
-    private func handleGesture(_ corner: Corner, size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 0)
-        .updating($resizeGestureActive) { _, active, _ in active = true }
-        .onChanged { value in
-            if baseline == nil { baseline = crop; onBegin() }
-            guard let base = baseline else { return }
-            let dx = value.translation.width / size.width, dy = value.translation.height / size.height
-            crop = resized(base, corner: corner, dx: dx, dy: dy)
-        }.onEnded { _ in finish() }
-    }
-    private func finish() {
-        guard baseline != nil else { return }
-        let value = crop
-        baseline = nil
-        onCommit(value)
-    }
-    private func normalized(_ value: NormalizedSourceRect, dx: Double, dy: Double) -> NormalizedSourceRect {
-        let x = min(max(0, value.x + dx), 1 - value.width), y = min(max(0, value.y + dy), 1 - value.height)
-        return .init(x: x, y: y, width: value.width, height: value.height)
-    }
-    private func resized(_ value: NormalizedSourceRect, corner: Corner, dx: Double, dy: Double) -> NormalizedSourceRect {
-        var left = value.x, top = value.y, right = value.x + value.width, bottom = value.y + value.height
-        switch corner { case .topLeading: left += dx; top += dy; case .topTrailing: right += dx; top += dy; case .bottomLeading: left += dx; bottom += dy; case .bottomTrailing: right += dx; bottom += dy }
-        left = min(max(0, left), right - minimum); top = min(max(0, top), bottom - minimum)
-        right = max(min(1, right), left + minimum); bottom = max(min(1, bottom), top + minimum)
-        return .init(x: left, y: top, width: right - left, height: bottom - top)
     }
 }

@@ -97,7 +97,7 @@ def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, 
         "transition_duration_s": enabled("transitions"),
         "look_preset": enabled("looks") and not device,
         "playback_rate": enabled("playback_rate") and guided and not device,
-        "source_crop": enabled("source_crop") and guided and not device,
+        "source_crop": enabled("source_crop", default=False),
     }
 
 

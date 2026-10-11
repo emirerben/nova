@@ -39,6 +39,9 @@ extension NativeEditorSession {
     /// or the edit could never save again.
     private func canEditFootage(_ section: EditorSection, keys: [String], operation: String, resetting: Bool) -> Bool {
         if resetting { return canEditOperation(keys + [section.rawValue], section: section) }
+        // KRI-44: a clip's crop is decided by the server's explicit `clips.source_crop` (phone variants open it once
+        // the phone compiler verifies `sourceCrop`); speed and looks stay closed on a device render.
+        if operation == "source_crop", section == .timeline, rendersOnDevice { return canCropClips }
         guard !rendersOnDevice else { return false }
         let clipKeys: [String] = section == .timeline ? ["clips.\(operation)"] : []
         return canEditOperation(keys + clipKeys + [section.rawValue], section: section)

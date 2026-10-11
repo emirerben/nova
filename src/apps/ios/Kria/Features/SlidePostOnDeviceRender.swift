@@ -4,8 +4,8 @@ import KriaMediaEngine
 import SwiftUI
 import UIKit
 
-/// Renders photo slides on the phone from the ORIGINAL photos: cover-fit centre-crop into the
-/// profile canvas at 2x, then the same `SlidePostTextLayerView` the editor shows, drawn at real pixel size,
+/// Renders photo slides on the phone from the ORIGINAL photos: cover-fit (framed by the slide's crop, centred by default) into the
+/// slide's canvas at 2x, then the same `SlidePostTextLayerView` the editor shows, drawn at real pixel size,
 /// then the Kria watermark the server render also puts on every slide (KRI-472). No server render, no
 /// polling. The gated extension supports authored looks and delegates video slides to AVFoundation.
 /// Unsupported profiles, looks, fonts, or sources take the server path.
@@ -20,6 +20,9 @@ import UIKit
     static func canvas(for profile: String) -> CGSize {
         profile == "instagram_carousel" ? CGSize(width: 1080, height: 1350) : CGSize(width: 1080, height: 1920)
     }
+
+    /// A slide's export canvas: its own shape (KRI-44), not just the profile's.
+    static func canvas(for slide: SlidePostSlide, profile: String) -> CGSize { SlidePostFraming.canvas(for: slide, profile: profile) }
 
     static func supports(_ draft: SlidePostDraft?, assets: [SlidePostAsset], extended: Bool = false) -> Bool {
         guard let draft, !draft.slides.isEmpty else { return false }
@@ -46,11 +49,12 @@ import UIKit
     ) async throws -> Data {
         guard let url = asset.sourceURL ?? asset.displayURL else { throw RenderError.undecodable }
         let data = try await fetch(url)
-        let canvas = canvas(for: profile)
+        let canvas = canvas(for: slide, profile: profile)
         let pixels = CGSize(width: canvas.width * scale, height: canvas.height * scale)
-        guard let photo = decode(data, maxPixel: max(pixels.width, pixels.height)) else { throw RenderError.undecodable }
+        let crop = SlidePostFraming.effectiveCrop(for: slide)
+        guard let photo = decode(data, maxPixel: decodeLongSide(data, crop: crop, pixels: pixels)) else { throw RenderError.undecodable }
         let preset = slide.edits?.lookPreset ?? "none"
-        let graded = preset == "none" ? nil : try lookedImage(photo, pixels: pixels, preset: preset)
+        let graded = preset == "none" ? nil : try lookedImage(photo, pixels: pixels, preset: preset, crop: crop)
         let texts = slide.edits?.effectiveTexts ?? []
         let overlay = texts.isEmpty ? nil : textLayer(texts, pixels: pixels)
         let mark = try watermark()
@@ -60,7 +64,7 @@ import UIKit
         let image = UIGraphicsImageRenderer(size: pixels, format: format).image { context in
             UIColor.black.setFill(); UIRectFill(CGRect(origin: .zero, size: pixels))
             if let graded { graded.draw(in: CGRect(origin: .zero, size: pixels)) }
-            else { photo.draw(in: coverRect(image: photo.size, in: pixels)) }
+            else { photo.draw(in: SlidePostFraming.placement(imageSize: photo.size, crop: crop, canvas: pixels)) }
             overlay?.draw(in: CGRect(origin: .zero, size: pixels))
             // Last, so no text buries it: the stacking the video engine and the server render use.
             context.cgContext.interpolationQuality = .high
@@ -72,7 +76,7 @@ import UIKit
 
     /// Grade the cropped media, before graphics. The preview uses the same profile geometry.
     nonisolated static let lookContext = CIContext(options: [.workingColorSpace: NSNull()])
-    nonisolated static func lookedImage(_ photo: UIImage, pixels: CGSize, preset: String) throws -> UIImage {
+    nonisolated static func lookedImage(_ photo: UIImage, pixels: CGSize, preset: String, crop: NormalizedSourceRect? = nil) throws -> UIImage {
         // Cache thumbnails retain their source color profile; export decoding
         // already normalizes to sRGB. Normalize both before encoded-RGB LUTs.
         guard let cg = photo.cgImage, let srgb = CGColorSpace(name: CGColorSpace.sRGB),
@@ -88,10 +92,11 @@ import UIKit
         }
         let source = CIImage(cgImage: normalized, options: [.colorSpace: NSNull()])
         let extent = CGRect(origin: .zero, size: pixels)
-        let rect = coverRect(image: source.extent.size, in: pixels)
+        // `rect` is in top-left canvas pixels; Core Image's origin is bottom-left, so the y offset is flipped.
+        let rect = SlidePostFraming.placement(imageSize: source.extent.size, crop: crop, canvas: pixels)
         let cropped = source.transformed(by: CGAffineTransform(translationX: -source.extent.minX, y: -source.extent.minY))
             .transformed(by: CGAffineTransform(scaleX: rect.width / source.extent.width, y: rect.height / source.extent.height))
-            .transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY)).cropped(to: extent)
+            .transformed(by: CGAffineTransform(translationX: rect.minX, y: pixels.height - rect.maxY)).cropped(to: extent)
         let looked = try SlidePostLookRenderer.apply(cropped, preset: preset)
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let output = lookContext.createCGImage(looked, from: extent, format: .RGBA8, colorSpace: colorSpace) else { throw RenderError.encodeFailed }
@@ -108,11 +113,17 @@ import UIKit
         return image
     }
 
-    /// Cover-fit, centre-crop: the photo scaled to fill `canvas`, centred (the overflow is clipped by the bitmap).
-    nonisolated static func coverRect(image: CGSize, in canvas: CGSize) -> CGRect {
-        let factor = max(canvas.width / image.width, canvas.height / image.height)
-        let size = CGSize(width: image.width * factor, height: image.height * factor)
-        return CGRect(x: (canvas.width - size.width) / 2, y: (canvas.height - size.height) / 2, width: size.width, height: size.height)
+    /// The long side to decode at: enough pixels for the cropped region to fill the canvas sharply, never more
+    /// than the original has and never beyond a memory-safe ceiling.
+    nonisolated static func decodeLongSide(_ data: Data, crop: NormalizedSourceRect?, pixels: CGSize) -> CGFloat {
+        let base = max(pixels.width, pixels.height)
+        guard let crop, let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue, width > 0, height > 0 else { return base }
+        let turned = [5, 6, 7, 8].contains((properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1)
+        let placed = SlidePostFraming.placement(imageSize: turned ? CGSize(width: height, height: width) : CGSize(width: width, height: height), crop: crop, canvas: pixels)
+        return min(max(base, max(placed.width, placed.height)), 6144)
     }
 
     /// EXIF-upright, sRGB, at most `maxPixel` on the long side (the original is never up-scaled).
