@@ -580,7 +580,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     fallback_used=fallback_used,
                     latency_ms=int((time.monotonic() - start) * 1000),
                     ctx=ctx,
-                    error=str(exc),
+                    error=self._safe_error(exc) or str(exc),
                     input_dict=input_dump,
                 )
                 if output_truncated:
@@ -959,6 +959,15 @@ class Agent(ABC, Generic[InputT, OutputT]):
                         raise
                     raise SchemaError(f"{self.spec.name}: parse failed — {exc}") from exc
                 stats.schema_retries += 1
+                log.warning(
+                    "agent_schema_retry",
+                    agent=self.spec.name,
+                    model=model,
+                    attempt=attempt + 1,
+                    of=self.spec.max_attempts,
+                    error=self._safe_error(exc),
+                    job_id=ctx.job_id,
+                )
                 # KRI-118 item 4: make the real error available to
                 # `schema_clarification()` (truncated so a huge validation
                 # dump never blows the prompt budget).
@@ -1120,7 +1129,10 @@ class Agent(ABC, Generic[InputT, OutputT]):
         output_dict: dict[str, Any] | None = None,
     ) -> None:
         if self.spec.sensitive_io and error is not None:
-            error = "sensitive_agent_error"
+            # `_safe_error` already reduced a classed error to a closed vocabulary
+            # (``sensitive_agent_error:<class>``); keep it so a redacted run stays diagnosable.
+            if not error.startswith("sensitive_agent_error"):
+                error = "sensitive_agent_error"
         cost_usd = (
             stats.settled_cost_usd
             if stats.price_version is not None
