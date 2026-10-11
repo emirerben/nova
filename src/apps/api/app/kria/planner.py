@@ -2275,6 +2275,17 @@ def _recovery_cause(stage: str, exc: BaseException) -> dict[str, str]:
     cause: dict[str, str] = {"stage": stage, "error_type": type(exc).__name__}
     if exc.__cause__ is not None:
         cause["cause_type"] = type(exc.__cause__).__name__
+    # KRI-586: a redacted agent failure carries a value-free ``error_class`` (field paths +
+    # error types, never values) on some link of the chain; surface it for the admin views.
+    link: BaseException | None = exc
+    for _ in range(4):
+        error_class = getattr(link, "error_class", None)
+        if isinstance(error_class, str) and error_class:
+            cause["error_class"] = error_class[:80]
+            break
+        link = link.__cause__ if link is not None else None
+        if link is None:
+            break
     return cause
 
 

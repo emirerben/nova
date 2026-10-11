@@ -9245,7 +9245,10 @@ def _guided_execution_plan(
         ]
         if not visual_label_intents:
             return plan
-        from app.pipeline.guided_story import matcher_clip_metas  # noqa: PLC0415
+        from app.pipeline.guided_story import (  # noqa: PLC0415
+            clip_label_media_ids,
+            matcher_clip_metas,
+        )
 
         moments = list(plan.get("story_timeline") or [])
         steps: list[Any] = []
@@ -9275,6 +9278,7 @@ def _guided_execution_plan(
             clip_metas,
             creator_request=creator_request,
             media_refs=snapshot.media,
+            skip_clip_ids=clip_label_media_ids(snapshot),
         )
         elements = _context_sport_text_elements(
             grounded_rows,
@@ -16157,6 +16161,7 @@ def _grounded_context_labels(
     *,
     creator_request: str = "",
     media_refs: list[Any] | None = None,
+    skip_clip_ids: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Worker-edge re-verification for KRI-127 open-vocabulary context labels.
 
@@ -16184,6 +16189,10 @@ def _grounded_context_labels(
     provenance consumed by ``_context_sport_text_elements``. Each resolved
     visual label intent gets one independently grounded row per clip. Several
     requested labels for one clip must all ground.
+
+    ``skip_clip_ids`` are clips another lane already labels (KRI-584: a unified
+    montage's ``clip-label-*`` bars, ``guided_story.clip_label_media_ids``); they
+    get no row, so the same creator label is never drawn twice.
     """
     if not resolved_intents:
         return []
@@ -16223,7 +16232,7 @@ def _grounded_context_labels(
             continue
         for assignment in getattr(intent, "assignments", ()):
             clip_id = _resolve_clip_id_for_media_id(assignment.media_id, clip_id_to_gcs)
-            if clip_id is None:
+            if clip_id is None or clip_id in skip_clip_ids:
                 continue
             pair = (clip_id, intent.intent_id)
             if pair in seen_pairs:

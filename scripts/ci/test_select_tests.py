@@ -560,6 +560,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-547-speaker-framing"),
             ),
             (
+                "src/apps/api/prompts/main_creator.txt",
+                (True, "covered", "kri-586-hook-copy"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/agent_evals/main_creator/kri586_generate_after_choice.json",
+                (True, "covered", "kri-586-hook-copy"),
+            ),
+            (
                 "src/apps/api/app/pipeline/phone_captions.py",
                 (True, "covered", "kri-548-caption-watermark"),
             ),
