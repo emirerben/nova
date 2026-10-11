@@ -422,6 +422,9 @@ class UnifiedMontagePlan:
     # that clip last with its own audio kept ({media_id, source_start_s, source_end_s}).
     # Empty when no line was held, so every earlier record is unchanged.
     closing_speech: dict[str, Any] = field(default_factory=dict)
+    # KRI-569: the song's lyrics placed as captions ({status, style, words, lines}). Empty
+    # when no lyric captions were planned, so every earlier record is unchanged.
+    caption_receipt: dict[str, Any] = field(default_factory=dict)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -447,6 +450,7 @@ class UnifiedMontagePlan:
         )
         song = {"user_song": dict(self.song_receipt)} if self.song_receipt else {}
         speech = {"closing_speech": dict(self.closing_speech)} if self.closing_speech else {}
+        captions = {"captions": dict(self.caption_receipt)} if self.caption_receipt else {}
         pins = (
             {"pinned_texts": [pin.model_dump(mode="json") for pin in self.snapshot.pinned_texts]}
             if self.snapshot.pinned_texts
@@ -486,6 +490,7 @@ class UnifiedMontagePlan:
             **zone,
             **song,
             **speech,
+            **captions,
         }
 
         if self.snapshot.text_composition is not None:

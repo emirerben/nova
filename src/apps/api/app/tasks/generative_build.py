@@ -5573,7 +5573,127 @@ def _plan_phone_user_song_montage(
     font_covers: Any,
     creator_order: list[int],
     output_orientation: str | None = None,
+    creator_text: str = "",
 ) -> Any:
+    """Plan the creator-song montage, with the song's lyrics as captions when asked (KRI-569).
+
+    ``creator_text`` is the creator's own request (and the brief written from it): lyric
+    captions are planned only when those words ask for captions. A song with no words
+    to caption is a ``UserSongPlanDeclined`` question, never a silent caption-free edit.
+    """
+    plan, analysis = _plan_phone_user_song_core(
+        job_id,
+        user_song,
+        clips=clips,
+        visuals=visuals,
+        view=view,
+        strategy=strategy,
+        clip_intents_enabled=clip_intents_enabled,
+        font_covers=font_covers,
+        creator_order=creator_order,
+        output_orientation=output_orientation,
+    )
+    if settings.song_captions_enabled and _song_captions_wanted(creator_text, strategy):
+        _attach_song_captions(plan, analysis, strategy, creator_text)
+    return plan
+
+
+_SONG_CAPTIONS_NO_WORDS_MESSAGE = (
+    "I couldn't hear any words in your song to caption. Should I make it without captions?"
+)
+_SONG_CAPTIONS_NO_WORDS_IN_WINDOW_MESSAGE = (
+    "There are no sung words in the part of the song your video uses, so there's nothing "
+    "to caption. Should I make it without captions?"
+)
+SONG_CAPTIONS_NEED_SONG_MESSAGE = "Add the song you lip-synced to and I'll caption its lyrics."
+
+
+def _creator_request_text(all_candidates: dict) -> str:
+    """The creator's saved request (with the brief written from it), never a later message."""
+    raw = all_candidates.get("creator_request")
+    if not raw and isinstance(all_candidates.get("brief"), dict):
+        raw = all_candidates["brief"].get("creator_request")
+    return str(raw or "")
+
+
+def _decline_song_captions_without_song(creator_text: str, strategy: Any) -> None:
+    """A lip-sync caption ask with no uploaded song: ask for the song, never a bare failure.
+
+    Reached only by a job whose song is missing (the chat asks first, so this is the
+    safety net for a stale plan). Other montages with a caption ask are not rerouted.
+    """
+    from app.pipeline.phone_guided_plan import UserSongPlanDeclined  # noqa: PLC0415
+    from app.pipeline.song_captions import mentions_lipsync  # noqa: PLC0415
+
+    if (
+        settings.song_captions_enabled
+        # The chat only asks while creator songs are on (planner fence): same fence here.
+        and settings.user_song_montage_enabled
+        and mentions_lipsync(creator_text)
+        and _song_captions_wanted(creator_text, strategy if isinstance(strategy, dict) else {})
+    ):
+        raise UserSongPlanDeclined(SONG_CAPTIONS_NEED_SONG_MESSAGE)
+
+
+def _song_captions_wanted(creator_text: str, strategy: dict) -> bool:
+    """The creator's own words ask for captions (never the model's caption default alone)."""
+    from app.pipeline.song_captions import captions_requested  # noqa: PLC0415
+
+    return captions_requested([creator_text], strategy.get("caption_style"))
+
+
+def _attach_song_captions(plan: Any, analysis: Any, strategy: dict, creator_text: str) -> None:
+    """Pin the song's words on the plan's snapshot and note it in the plan record."""
+    from app.kria.brief_checks import text_asks_for_word_captions  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import UserSongPlanDeclined  # noqa: PLC0415
+    from app.pipeline.song_captions import caption_style_for, track_from_analysis  # noqa: PLC0415
+    from app.schemas.edit_proposal import EditProposalSnapshot  # noqa: PLC0415
+
+    style = caption_style_for(
+        strategy.get("caption_style"), word_ask=text_asks_for_word_captions(creator_text)
+    )
+    track = track_from_analysis(analysis, caption_style=style)
+    if track is None or plan.snapshot.user_song is None:
+        raise UserSongPlanDeclined(_SONG_CAPTIONS_NO_WORDS_MESSAGE)
+    # `model_copy` does not validate: re-validate so the song generation fence holds.
+    plan.snapshot = EditProposalSnapshot.model_validate(
+        {**plan.snapshot.model_dump(mode="json"), "song_captions": track.model_dump(mode="json")}
+    )
+    from app.pipeline.song_captions import project_snapshot_words, window_words  # noqa: PLC0415
+
+    window = plan.snapshot.user_song
+    in_window = window_words(
+        plan.snapshot.song_captions, window.window_start_s, window.window_end_s
+    )
+    inside = project_snapshot_words(plan.snapshot)
+    if not inside:
+        # Words exist, but none are sung in the stretch this video uses (an instrumental
+        # intro or tail): never report captions that nothing on screen will show.
+        raise UserSongPlanDeclined(_SONG_CAPTIONS_NO_WORDS_IN_WINDOW_MESSAGE)
+    plan.caption_receipt = {
+        "status": "placed",
+        "style": style,
+        "words": len(inside),
+        "lines": sum(1 for word in inside if word.line_end),
+        # The recipe draws one layer per word: a long song is cut after a whole lyric line.
+        "in_window": len(in_window),
+        "truncated": len(inside) < len(in_window),
+    }
+
+
+def _plan_phone_user_song_core(
+    job_id: str,
+    user_song: dict,
+    *,
+    clips: list,
+    visuals: Any,
+    view: Any,
+    strategy: dict,
+    clip_intents_enabled: bool,
+    font_covers: Any,
+    creator_order: list[int],
+    output_orientation: str | None = None,
+) -> tuple[Any, Any]:
     """Plan a phone montage around the creator's own song (KRI-374).
 
     ``user_song`` is the dispatch record (``{gcs_path, generation, duration_s, sync}``).
@@ -5635,7 +5755,7 @@ def _plan_phone_user_song_montage(
         )
 
     if sync == "background":
-        return _background_plan()
+        return _background_plan(), analysis
 
     if alignment is None or alignment.song_generation != generation:
         # No alignment could be produced even inline: every take is "unmatched",
@@ -5660,17 +5780,20 @@ def _plan_phone_user_song_montage(
         alignment, strategy.get("resolved_song_takes")
     )
     try:
-        return plan_lipsync_montage(
-            [*clips, *visuals],
-            alignment,
+        return (
+            plan_lipsync_montage(
+                [*clips, *visuals],
+                alignment,
+                analysis,
+                view,
+                strategy,
+                confirmed_order,
+                plan_item_id=str(item_id),
+                font_covers=font_covers,
+                output_orientation=output_orientation,
+                creator_choices=creator_choices,
+            ),
             analysis,
-            view,
-            strategy,
-            confirmed_order,
-            plan_item_id=str(item_id),
-            font_covers=font_covers,
-            output_orientation=output_orientation,
-            creator_choices=creator_choices,
         )
     except LipsyncPlanError as exc:
         if exc.code in ("no_synced_takes", "span_too_short"):
@@ -5706,7 +5829,7 @@ def _plan_phone_user_song_montage(
                 "fallback_reason": exc.code,
                 "unmatched_ids": unmatched_ids,
             }
-            return plan
+            return plan, analysis
         log.warning("lipsync_plan_declined", job_id=job_id, code=exc.code, error=str(exc))
         raise UserSongPlanDeclined(
             _LIPSYNC_PLAN_ERROR_MESSAGES.get(exc.code, str(exc)), capability="musicBed"
@@ -5979,8 +6102,10 @@ def _run_phone_unified_montage_job(
                     if isinstance(value, int) and not isinstance(value, bool)
                 ],
                 output_orientation=_creator_shape_orientation(all_candidates),
+                creator_text=_creator_request_text(all_candidates),
             )
         else:
+            _decline_song_captions_without_song(_creator_request_text(all_candidates), strategy)
             plan = plan_unified_montage(
                 clips,
                 view,

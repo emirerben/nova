@@ -9,6 +9,7 @@ analysis / alignment (no network, no aligner).
 from __future__ import annotations
 
 import copy
+import json
 import sys
 import uuid
 from contextlib import contextmanager
@@ -22,7 +23,7 @@ from app.kria.render_assets import RenderFingerprint, SongRenderAsset
 from app.pipeline.guided_story import compile_execution_plan
 from app.pipeline.lipsync_montage import lipsync_sync_error_s
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, UserSongPlanDeclined
-from app.schemas.user_song import SongAlignment
+from app.schemas.user_song import SongAlignment, SongWord
 from app.services.device_render import device_status
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 from app.tasks import generative_build as gb
@@ -72,6 +73,8 @@ def harness(monkeypatch):
         song_analysis=None,
         song_alignment=None,
         durations=None,
+        creator_request=None,
+        with_song=True,
     ):
         bindings = _bindings(durations)
         assignments = [
@@ -100,16 +103,23 @@ def harness(monkeypatch):
                 "creator_strategy": {
                     "render_program": "guided",
                     "direction": "guided_story",
-                    "audio_strategy": "user_song",
-                    "song_sync": sync,
+                    "audio_strategy": "user_song" if with_song else "original_audio",
+                    **({"song_sync": sync} if with_song else {}),
                     **(strategy_extra or {}),
                 },
-                "user_song": {
-                    "gcs_path": "users/u/creation-threads/t/song.m4a",
-                    "generation": SONG_GENERATION,
-                    "duration_s": SONG_DURATION_S,
-                    "sync": sync,
-                },
+                **(
+                    {
+                        "user_song": {
+                            "gcs_path": "users/u/creation-threads/t/song.m4a",
+                            "generation": SONG_GENERATION,
+                            "duration_s": SONG_DURATION_S,
+                            "sync": sync,
+                        }
+                    }
+                    if with_song
+                    else {}
+                ),
+                **({"creator_request": creator_request} if creator_request else {}),
             },
             error_detail=None,
             failure_reason=None,
@@ -832,3 +842,254 @@ def test_the_worker_never_matches_a_library_track_for_a_creator_song(monkeypatch
     assert compiled["user_song"]["mode"] == "background"
     assert compiled.get("song_reference") is None
     assert compiled.get("music") is None
+
+
+# ── KRI-569: the song's lyrics as captions ───────────────────────────────────
+
+CAPTION_REQUEST = "Full creator request (chronological):\nLipsync\nAdd captions"
+KARAOKE = {"caption_style": "karaoke"}
+
+
+def _lyrics_analysis(count: int = 230):
+    """The synthetic song sings a word every half second from 2.0 s."""
+    words = [
+        SongWord(text=f"la{i}", start_s=2.0 + i * 0.5, end_s=2.0 + i * 0.5 + 0.4)
+        for i in range(count)
+    ]
+    return analysis().model_copy(update={"words": words})
+
+
+@pytest.fixture
+def composer(monkeypatch):
+    """Patch ONLY the model client: the composer says the request is already satisfied."""
+    from app.agents.edit_copilot import EditCopilotAgent
+
+    seen = []
+
+    def run(self, input, *, ctx=None):
+        seen.append(input)
+        reply = {
+            "intent": "describe",
+            "confidence": 0.95,
+            "reply": "Captions are in the caption lane.",
+            "ops": [],
+        }
+        return self.parse(json.dumps(reply), input)
+
+    monkeypatch.setattr(EditCopilotAgent, "run", run)
+    return seen
+
+
+def _caption_rows(plan):
+    return [row for row in plan["text_elements"] if row["id"].startswith("song-caption-")]
+
+
+def test_lipsync_with_captions_pins_the_song_lyrics_as_editable_caption_rows(harness, composer):
+    job, _snapshot, _bindings = harness(
+        sync="lipsync",
+        rows=[confident("clip-a", 10), confident("clip-b", 28), confident("clip-c", 46)],
+        song_analysis=_lyrics_analysis(),
+        creator_request=CAPTION_REQUEST,
+        strategy_extra=KARAOKE,
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    plan = job.assembly_plan["guided_story_execution_plan"]
+    song = plan["user_song"]
+    track = job.assembly_plan["guided_edit"]["approved_proposal"]["song_captions"]
+    assert track["song_generation"] == SONG_GENERATION
+    assert track["caption_style"] == "word"  # karaoke asks for one word at a time
+    rows = _caption_rows(plan)
+    assert rows
+    # Output time is song time minus the window start, and nothing leaves the window.
+    window = song["window_end_s"] - song["window_start_s"]
+    first = rows[0]
+    index = int(first["id"].removeprefix("song-caption-"))
+    assert first["start_s"] == pytest.approx(
+        track["words"][index]["start_s"] - song["window_start_s"]
+    )
+    assert all(0 <= row["start_s"] < row["end_s"] <= window + 1e-6 for row in rows)
+    # They are the SAME rows narration captions use, so the caption panel edits them.
+    assert all(row["source_params"]["source"] == "caption_cue" for row in rows)
+    assert plan["editor_caption_meta"] == {"style": "word", "y_frac": 0.7}
+    # The text composer saw a summary of the lane, not 100+ caption rows.
+    (seen,) = composer
+    lane = seen.variant_snapshot["caption_lane"]
+    assert lane["origin"] == "song_lyrics" and lane["words"] == len(rows)
+    assert not any(
+        bar["id"].startswith("song-caption-") for bar in seen.variant_snapshot["text_bars"]
+    )
+    # The phone recipe carries them as text layers.
+    recipe, _clip = _song_clip(job)
+    drawn = " ".join(run.text for layer in recipe.text_layers for run in layer.runs)
+    assert first["text"] in drawn
+    record = job.assembly_plan["unified_montage"]
+    assert record["captions"]["status"] == "placed"
+    assert record["captions"]["style"] == "word"
+    assert record["captions"]["words"] == len(rows)
+
+
+def test_background_song_with_a_plain_captions_ask_shows_whole_lyric_lines(harness, composer):
+    job, _snapshot, _bindings = harness(
+        sync="background",
+        song_analysis=_lyrics_analysis(),
+        creator_request="Full creator request (chronological):\nAdd captions",
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    plan = job.assembly_plan["guided_story_execution_plan"]
+    assert plan["editor_caption_meta"]["style"] == "sentence"
+    rows = _caption_rows(plan)
+    assert rows
+    # A lyric line ends where the song's own line ends (no punctuation needed).
+    ends = [row["id"] for row in rows if row["source_params"].get("line_end")]
+    assert ends
+    recipe, _clip = _song_clip(job)
+    lines = {run.text for layer in recipe.text_layers for run in layer.runs}
+    assert any(text.count("la") > 1 for text in lines)  # a whole line, not one word
+
+
+def test_a_met_captions_ask_is_judged_from_the_real_plan_record(harness, composer):
+    from app.kria.brief import BriefRequirement
+    from app.kria.brief_checks import build_receipts, plan_facts_from_unified_montage
+
+    job, _snapshot, _bindings = harness(
+        sync="background", song_analysis=_lyrics_analysis(), creator_request=CAPTION_REQUEST
+    )
+    gb._run_generative_job(str(job.id))
+
+    record = job.assembly_plan["unified_montage"]
+    ask = BriefRequirement(
+        id="r1", kind="style", scope="global", description="add captions to the lip-sync"
+    )
+    (receipt,) = build_receipts([ask], plan_facts_from_unified_montage(record))
+    assert receipt.status == "met"
+
+
+def test_no_captions_ask_means_no_lyric_captions_even_with_a_caption_style(harness, composer):
+    job, _snapshot, _bindings = harness(
+        sync="background",
+        song_analysis=_lyrics_analysis(),
+        creator_request="Full creator request (chronological):\nMake a fast montage",
+        strategy_extra=KARAOKE,  # the model's own default is never a request
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert "song_captions" not in job.assembly_plan["guided_edit"]["approved_proposal"]
+    assert not _caption_rows(job.assembly_plan["guided_story_execution_plan"])
+    assert "captions" not in job.assembly_plan["unified_montage"]
+
+
+def test_kill_switch_off_is_byte_identical_to_before(harness, composer, monkeypatch):
+    monkeypatch.setattr(gb.settings, "song_captions_enabled", False)
+    job, _snapshot, _bindings = harness(
+        sync="background", song_analysis=_lyrics_analysis(), creator_request=CAPTION_REQUEST
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert "song_captions" not in job.assembly_plan["guided_edit"]["approved_proposal"]
+    assert not _caption_rows(job.assembly_plan["guided_story_execution_plan"])
+    assert "caption_lane" not in composer[0].variant_snapshot
+
+
+def test_a_song_with_no_words_asks_instead_of_rendering_without_captions(harness):
+    message, error = _plan_error(
+        harness, sync="background", creator_request=CAPTION_REQUEST, strategy_extra=KARAOKE
+    )
+    assert isinstance(error, UserSongPlanDeclined)
+    assert "couldn't hear any words in your song" in message
+
+
+def test_prod_job_430219e4_shape_asks_for_the_song_instead_of_phone_plan_unsupported(harness):
+    """Lip-sync + 'Add captions', clips' own audio, NO uploaded song (the failed prod job)."""
+    message, error = _plan_error(
+        harness,
+        sync="background",
+        with_song=False,
+        creator_request=CAPTION_REQUEST,
+        strategy_extra={**KARAOKE, "media_scope": "all"},
+    )
+    assert isinstance(error, UserSongPlanDeclined)
+    assert message == gb.SONG_CAPTIONS_NEED_SONG_MESSAGE
+
+
+def _speech_runner_declines(monkeypatch):
+    """A montage with no song is offered to the spoken-excerpt runner first; it passes."""
+    monkeypatch.setattr(
+        "app.services.phone_speech_montage_job.run_phone_speech_montage_job",
+        Mock(return_value=False),
+    )
+
+
+def test_the_dispatcher_shows_the_ask_for_the_song_verbatim(harness, monkeypatch):
+    job, _snapshot, _bindings = harness(
+        sync="background", with_song=False, creator_request=CAPTION_REQUEST, strategy_extra=KARAOKE
+    )
+    _speech_runner_declines(monkeypatch)
+    fail = Mock(return_value=True)
+    monkeypatch.setattr(gb, "_fail_job", fail)
+    monkeypatch.setattr(gb, "mark_failed_phase", Mock())
+    gb._run_generative_job(str(job.id))
+    fail.assert_called_once()
+    assert fail.call_args.kwargs["failure_reason"] == "user_song_plan_declined"
+    assert fail.call_args.args[1] == gb.SONG_CAPTIONS_NEED_SONG_MESSAGE
+
+
+def test_a_montage_without_a_song_or_a_lipsync_ask_is_not_rerouted(harness, composer, monkeypatch):
+    job, _snapshot, _bindings = harness(
+        sync="background",
+        with_song=False,
+        creator_request="Full creator request (chronological):\nAdd captions",
+        strategy_extra=KARAOKE,
+    )
+    _speech_runner_declines(monkeypatch)
+    gb._run_generative_job(str(job.id))  # reaches the existing composer path unchanged
+    assert job.status == "awaiting_device"
+
+
+def _late_lyrics_analysis():
+    """The song only sings in its last seconds; the montage window sits near the start."""
+    words = [
+        SongWord(text=f"la{i}", start_s=100.0 + i * 0.5, end_s=100.4 + i * 0.5) for i in range(20)
+    ]
+    return analysis().model_copy(update={"words": words})
+
+
+def test_an_instrumental_stretch_asks_instead_of_claiming_captions_it_never_placed(
+    harness, composer
+):
+    message, error = _plan_error(
+        harness,
+        sync="background",
+        song_analysis=_late_lyrics_analysis(),
+        creator_request=CAPTION_REQUEST,
+    )
+    assert isinstance(error, UserSongPlanDeclined)
+    assert "no sung words in the part of the song your video uses" in message
+
+
+def test_user_song_flag_off_leaves_a_songless_lipsync_caption_ask_on_the_legacy_path(
+    harness, composer, monkeypatch
+):
+    """USER_SONG_MONTAGE_ENABLED=false: the chat never asks for a song; neither does the worker."""
+    job, _snapshot, _bindings = harness(
+        sync="background", with_song=False, creator_request=CAPTION_REQUEST, strategy_extra=KARAOKE
+    )
+    _speech_runner_declines(monkeypatch)
+    monkeypatch.setattr(gb.settings, "user_song_montage_enabled", False)
+    fail = Mock(return_value=True)
+    monkeypatch.setattr(gb, "_fail_job", fail)
+    monkeypatch.setattr(gb, "mark_failed_phase", Mock())
+
+    gb._run_generative_job(str(job.id))
+
+    assert not fail.called
+    assert job.status == "awaiting_device"

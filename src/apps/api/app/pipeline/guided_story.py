@@ -50,6 +50,12 @@ from app.pipeline.pinned_text import (
 )
 from app.pipeline.probe import probe_video
 from app.pipeline.sequence_text_evidence import sequence_lineage, sequence_role
+from app.pipeline.song_captions import (
+    SONG_CAPTION_ORIGIN,
+    project_snapshot_words,
+    song_caption_id,
+    song_caption_index,
+)
 from app.schemas.edit_proposal import (
     FAST_MONTAGE_TITLE_HOLD_S,
     GUIDED_STORY_MIN_MOMENT_S,
@@ -1573,7 +1579,7 @@ def _base_text_elements(
             *title_elements,
             *label_elements,
             *closing_elements(fast=True, effect="static"),
-            *_narration_caption_elements(snapshot, pin_windows),
+            *_caption_lane_elements(snapshot, pin_windows),
         ]
     # Explicit Main Creator copy is immutable. Specialist montage bindings are
     # advisory and must not replace a confirmed title with generated words.
@@ -1623,7 +1629,7 @@ def _base_text_elements(
         return [
             *elements,
             *closing_elements(fast=True, effect="static"),
-            *_narration_caption_elements(snapshot, pin_windows),
+            *_caption_lane_elements(snapshot, pin_windows),
         ]
     # New fast-montage proposals carry their own dense cut list. Keep only the
     # short hook/title; generated chapter thoughts would turn a music-led cut
@@ -1662,7 +1668,7 @@ def _base_text_elements(
                 ]
             ),
             *closing_elements(fast=True, effect="static"),
-            *_narration_caption_elements(snapshot, pin_windows),
+            *_caption_lane_elements(snapshot, pin_windows),
         ]
     if compiler_version < 3:
         elements = [
@@ -1707,7 +1713,7 @@ def _base_text_elements(
                     max_width_frac=0.84,
                 ).model_dump(mode="json", exclude_none=True)
             )
-        return [*elements, *_narration_caption_elements(snapshot, pin_windows)]
+        return [*elements, *_caption_lane_elements(snapshot, pin_windows)]
 
     # A labeled edit shows only confirmed creator copy (see show_title).
     elements = (
@@ -1773,15 +1779,180 @@ def _base_text_elements(
     return [
         *elements,
         *closing_elements(fast=snapshot.direction == "fast_montage", effect=policy["text_effect"]),
-        *_narration_caption_elements(snapshot, pin_windows),
+        *_caption_lane_elements(snapshot, pin_windows),
     ]
 
 
 def _narration_caption_meta(snapshot: EditProposalSnapshot) -> dict[str, Any] | None:
     narration = snapshot.narration
-    if narration is None or narration.caption_style is None:
+    if narration is None:
+        # KRI-569: a song montage's lyric captions use the same caption controls.
+        track = snapshot.song_captions
+        return {"style": track.caption_style, "y_frac": 0.7} if track is not None else None
+    if narration.caption_style is None:
         return None
     return {"style": narration.caption_style, "y_frac": 0.7}
+
+
+def _caption_lane_elements(
+    snapshot: EditProposalSnapshot, pin_windows: list[PinWindow] | None = None
+) -> list[dict]:
+    """The caption lane: narration words, or (KRI-569) the creator song's lyrics."""
+
+    return [
+        *_narration_caption_elements(snapshot, pin_windows),
+        *_song_caption_elements(snapshot, pin_windows),
+    ]
+
+
+def _song_caption_element(
+    snapshot: EditProposalSnapshot,
+    *,
+    index: int,
+    text: str,
+    start_s: float,
+    end_s: float,
+    line_end: bool,
+    y_frac: float,
+) -> TextElement:
+    """One lyric word as a ``caption_cue`` row, styled like a narration caption."""
+
+    return TextElement(
+        id=song_caption_id(index),
+        text=text,
+        start_s=start_s,
+        end_s=end_s,
+        role="generative_sequence",
+        position="custom",
+        x_frac=0.5,
+        y_frac=y_frac,
+        font_family=snapshot.font_family or "Inter-Bold",
+        size_px=58,
+        color="#FFFFFF",
+        highlight_color="#FFFFFF",
+        stroke_width=6,
+        shadow_enabled=True,
+        effect="static",
+        alignment="center",
+        max_width_frac=0.84,
+        word_timings=[{"text": text, "start_s": start_s, "end_s": end_s}],
+        source_params=_song_caption_source_params(index, line_end),
+    )
+
+
+def _song_caption_source_params(index: int, line_end: bool) -> dict[str, Any]:
+    return {
+        "source": CAPTION_CUE_SOURCE,
+        "key": str(index),
+        "identity": f"song-caption-identity-{index}",
+        "origin": SONG_CAPTION_ORIGIN,
+        **({"line_end": True} if line_end else {}),
+    }
+
+
+def _reproject_song_captions(
+    rows: list[dict[str, Any]],
+    snapshot: EditProposalSnapshot,
+    song_row: Mapping[str, Any] | None,
+    *,
+    tombstoned_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Re-time the song's lyric captions to the revision's song window (KRI-569).
+
+    The creator's text and style on each approved ``song-caption-N`` row survive; only
+    timing follows the song clock. A word that left the window stays in the lane as a
+    hidden row (``removed``) so the approved identities remain active; a word the window
+    now reaches gets a fresh row unless the creator deleted it. A removed song hides all.
+    """
+
+    track = snapshot.song_captions
+    if track is None:
+        return rows
+    projected = (
+        {
+            word.index: word
+            for word in project_snapshot_words(
+                snapshot, (float(song_row["window_start_s"]), float(song_row["window_end_s"]))
+            )
+        }
+        if isinstance(song_row, Mapping)
+        else {}
+    )
+    out: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for row in rows:
+        index = song_caption_index(row.get("id"))
+        params = row.get("source_params") if isinstance(row.get("source_params"), dict) else {}
+        if (
+            index is None
+            or params.get("source") != CAPTION_CUE_SOURCE
+            or params.get("origin") != SONG_CAPTION_ORIGIN
+        ):
+            out.append(row)
+            continue
+        seen.add(index)
+        word = projected.get(index)
+        pinned = _song_caption_source_params(index, bool(params.get("line_end")))
+        if row.get("removed") and not params.get("window_hidden"):
+            out.append(row)  # the creator deleted this word: keep it deleted, in or out
+        elif word is None:
+            out.append({**row, "removed": True, "source_params": {**pinned, "window_hidden": True}})
+        else:
+            out.append(
+                {
+                    **row,
+                    "start_s": word.start_s,
+                    "end_s": word.end_s,
+                    "word_timings": [
+                        {"text": word.text, "start_s": word.start_s, "end_s": word.end_s}
+                    ],
+                    "removed": False,
+                    "source_params": pinned,
+                }
+            )
+    for index, word in projected.items():
+        if index in seen or song_caption_id(index) in tombstoned_ids:
+            continue
+        out.append(
+            _song_caption_element(
+                snapshot,
+                index=index,
+                text=word.text,
+                start_s=word.start_s,
+                end_s=word.end_s,
+                line_end=word.line_end,
+                y_frac=0.82,
+            ).model_dump(mode="json")
+        )
+    return out
+
+
+def _song_caption_elements(
+    snapshot: EditProposalSnapshot, pin_windows: list[PinWindow] | None = None
+) -> list[dict]:
+    """Project the song's lyric words inside its window onto the output clock."""
+
+    track = snapshot.song_captions
+    song = snapshot.user_song
+    if track is None or song is None:
+        return []
+    pins = pin_windows or []
+    return [
+        _song_caption_element(
+            snapshot,
+            index=word.index,
+            text=word.text,
+            start_s=word.start_s,
+            end_s=word.end_s,
+            line_end=word.line_end,
+            y_frac=(
+                LABEL_Y_CLEAR_OF_BOTTOM_PIN
+                if bottom_pin_overlaps(pins, word.start_s, word.end_s)
+                else 0.82
+            ),
+        ).model_dump(mode="json", exclude_none=True)
+        for word in project_snapshot_words(snapshot)
+    ]
 
 
 def _narration_caption_elements(
@@ -3440,6 +3611,13 @@ def compile_guided_runtime_plan(
                         )
                     window_end = min(window_end, round(float(creator_end), 3))
             song_row["window_end_s"] = window_end
+        if snapshot.song_captions is not None:
+            runtime_payload["text_elements"] = _reproject_song_captions(
+                runtime_payload["text_elements"],
+                snapshot,
+                song_row if isinstance(song_row, dict) else None,
+                tombstoned_ids=tombstoned_text_id_set,
+            )
         # A timeline revision can split, reorder, or reuse sources. Rebuild
         # grounded clip labels against its output windows so a label never leaks
         # into a neighboring segment.
@@ -4525,7 +4703,8 @@ def guided_plan_text_evidence(plan: Mapping[str, Any]) -> dict[str, Any]:
             "narration_label_text_elements",
         )
         for row in plan.get(lane) or []
-        if row.get("id") not in hidden
+        # A tombstoned row (a song lyric that left the window, KRI-569) is never drawn.
+        if row.get("id") not in hidden and not row.get("removed")
     ]
     return {
         "picture_timeline": timeline,
@@ -5454,6 +5633,10 @@ def _tag_guided_text_overlays(
         source_params = element.source_params if element is not None else None
         if (source_params or {}).get("source") == CAPTION_CUE_SOURCE:
             overlay["role"] = "generative_narration_caption"
+            if (source_params or {}).get("line_end") is True:
+                # KRI-569: a lyric line ends here (display grouping only; the key is
+                # consumed by ``project_guided_caption_overlays``).
+                overlay["caption_line_end"] = True
     return compiled
 
 

@@ -25,7 +25,7 @@ from app.agents.edit_copilot import (
 )
 from app.schemas.edit_proposal import EditProposalSnapshot
 from app.schemas.text_composition import TextCompositionProgram
-from app.services.kria_editor_ops import apply_text_lane_ops
+from app.services.kria_editor_ops import apply_text_lane_ops, is_caption_text_bar
 
 _TEXT_OPS = frozenset(
     {
@@ -59,11 +59,19 @@ Return the normal editor response schema. No operation may change media or audio
 """
 
 
+_CAPTION_LANE_INSTRUCTIONS = """CAPTION LANE
+The creator's song lyrics are already on screen as timed captions in the caption lane
+(see Caption lane below). Requests for captions, subtitles, karaoke or lyrics on screen are
+satisfied by that lane: never add text bars that duplicate them and never report them as
+unmet. Their wording, look and timing are edited in the caption panel, not in this pass.
+"""
+
+
 class CreationTextComposer(EditCopilotAgent):
     # This is background creation, not the latency-limited interactive route.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v2-creation-text-composition",
+        prompt_version="v3-creation-text-composition",
         timeout_s=90.0,
     )
 
@@ -82,14 +90,21 @@ class CreationTextComposer(EditCopilotAgent):
             "Do not infer unsupported operations or omit requested text behavior. "
             "Non-text requirements are already handled by the base planner. "
         )
+        caption_lane = (input.variant_snapshot or {}).get("caption_lane")
         return "\n\n".join(
             [
                 _INSTRUCTIONS,
+                *([_CAPTION_LANE_INSTRUCTIONS] if caption_lane else []),
                 response_contract,
                 text_tools,
                 "Fonts: " + _font_catalog(),
                 "Creator request: " + json.dumps(input.utterance, ensure_ascii=False),
                 "Current draft: " + _format_snapshot(input.variant_snapshot),
+                *(
+                    ["Caption lane: " + json.dumps(caption_lane, ensure_ascii=False)]
+                    if caption_lane
+                    else []
+                ),
             ]
         )
 
@@ -149,6 +164,12 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
         )
         if state.slots != slots or state.changed - {"text"}:
             raise ValueError("non-text lane changed")
+        # The caption lane (narration words, song lyrics) belongs to its own lane and the
+        # caption panel: no composer op may edit, restyle, retime or remove one of its rows.
+        lane_before = {row["id"]: row for row in texts if is_caption_text_bar(row)}
+        lane_after = {row.get("id"): row for row in state.text if is_caption_text_bar(row)}
+        if lane_before != lane_after:
+            raise CreationTextCompositionError("Text composition cannot change the caption lane")
         total = max((float(x.get("output_end_s") or 0) for x in slots), default=0)
         rows = []
         ids = set()
@@ -158,6 +179,8 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
                 raise ValueError("invalid text identity or timing")
             ids.add(element.id)
             rows.append(element.model_dump(mode="json", exclude_none=False))
+    except CreationTextCompositionError:
+        raise
     except (ValueError, TypeError, KeyError) as exc:
         raise CreationTextCompositionError(f"Text composition could not compile: {exc}") from exc
     result = copy.deepcopy(plan)
@@ -168,6 +191,68 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
     return GuidedStoryExecutionPlan.model_validate(result).model_dump(
         mode="json", exclude_none=False
     )
+
+
+_CAPTION_LANE_SAMPLE_LINES = 6
+_CAPTION_LANE_LINE_CHARS = 100
+
+
+def _to_full_bar_indexes(ops: list[dict], texts: list[dict]) -> list[dict]:
+    """Translate the model's bar indexes (caption rows hidden) to the full text lane's.
+
+    The model addressed ``text_bars`` without the caption rows, but replay resolves a
+    ``bar_index`` against every row. Selectors already carry ids, so only the legacy
+    ``bar_index`` / ``bar_indexes`` keys are rewritten.
+    """
+
+    visible = [i for i, row in enumerate(texts) if not is_caption_text_bar(row)]
+
+    def full(value: Any) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < len(visible):
+            raise CreationTextCompositionError("Text composition addressed an unknown text bar")
+        return visible[value]
+
+    out: list[dict] = []
+    for op in ops:
+        rewritten = dict(op)
+        if "bar_index" in rewritten:
+            rewritten["bar_index"] = full(rewritten["bar_index"])
+        if isinstance(rewritten.get("bar_indexes"), list):
+            rewritten["bar_indexes"] = [full(value) for value in rewritten["bar_indexes"]]
+        out.append(rewritten)
+    return out
+
+
+def _song_caption_lane(snapshot: EditProposalSnapshot) -> dict[str, Any] | None:
+    """A short account of the song-lyric caption lane the model must leave alone."""
+    track = snapshot.song_captions
+    song = snapshot.user_song
+    if track is None or song is None:
+        return None
+    from app.pipeline.song_captions import project_snapshot_words  # noqa: PLC0415
+
+    words = project_snapshot_words(snapshot)
+    lines: list[str] = []
+    current: list[str] = []
+    for word in words:
+        current.append(word.text)
+        if word.line_end:
+            lines.append(" ".join(current))
+            current = []
+    if current:
+        lines.append(" ".join(current))
+    from app.agents.edit_copilot import _clean_prompt_data  # noqa: PLC0415
+
+    return {
+        "origin": "song_lyrics",
+        "style": track.caption_style,
+        "words": len(words),
+        # Lyrics are third-party text: bounded and defanged like every other prompt datum.
+        "line_samples": [
+            _clean_prompt_data(line, max_chars=_CAPTION_LANE_LINE_CHARS)
+            for line in lines[:_CAPTION_LANE_SAMPLE_LINES]
+        ],
+    }
 
 
 def compose_creation_text(
@@ -188,13 +273,21 @@ def compose_creation_text(
     plan = compile_proposal_execution_plan(snapshot)
     texts, slots = _lanes(plan)
     # Narration/caption cues remain owned by their existing lane.
+    model_texts = texts
+    caption_lane = _song_caption_lane(snapshot)
+    if caption_lane is not None:
+        # KRI-569: the song's lyrics are one word per row. The model gets a summary of the
+        # lane (so "add captions" is satisfied) instead of hundreds of rows it must not edit;
+        # the digest and replay below still cover every row.
+        model_texts = [row for row in texts if not is_caption_text_bar(row)]
     model_snapshot: dict[str, Any] = {
         "allowed_op_families": ["text", "text_timeline"],
         "editor_ops_version": 2,
         "component_context_version": 1,
-        "text_bars": texts,
+        "text_bars": model_texts,
         "slots": slots,
         "total_duration_s": max((float(x.get("output_end_s") or 0) for x in slots), default=0),
+        **({"caption_lane": caption_lane} if caption_lane is not None else {}),
     }
     # The complete request remains data; the composer adds server instructions.
     output = CreationTextComposer(default_client()).run(
@@ -211,6 +304,9 @@ def compose_creation_text(
         raise CreationTextCompositionError("Text composition is incomplete: " + output.reply)
     if not output.ops:
         return snapshot
-    program = TextCompositionProgram(base_digest=_digest(texts, slots), operations=output.ops)
+    operations = output.ops
+    if caption_lane is not None:
+        operations = _to_full_bar_indexes(operations, texts)
+    program = TextCompositionProgram(base_digest=_digest(texts, slots), operations=operations)
     replay_text_composition(plan, program)
     return snapshot.model_copy(update={"text_composition": program})

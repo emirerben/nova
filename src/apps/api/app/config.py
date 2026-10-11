@@ -622,6 +622,13 @@ class Settings(BaseSettings):
     # `song_order_placements` and the app falls back to the reorder card. Only effective
     # while USER_SONG_MONTAGE_ENABLED holds.
     song_order_timeline_enabled: bool = True
+    # KRI-569: "add captions" on a creator-song montage shows the song's lyrics as the
+    # standard caption lane (same style/font/text controls as narration captions); without
+    # a song the chat asks for it instead of failing the render. Kill switch:
+    # `fly secrets set SONG_CAPTIONS_ENABLED=false` + restart (api + worker): no lyric
+    # captions are planned and no ask is made, byte-identical to before. Recompiles of
+    # already-approved plans do not read it. Only effective while USER_SONG_MONTAGE_ENABLED holds.
+    song_captions_enabled: bool = True
     # KRI-443: live plan block feed. After Create on a v2 thread, the render emits
     # `plan_block` events into CreationThreadEvent (read via GET /delta), and
     # POST /creation-threads/{id}/turns/{turn}/cancel-render is enabled. Default

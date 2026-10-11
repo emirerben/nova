@@ -27,6 +27,7 @@ from dataclasses import dataclass
 
 from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
 from app.agents._schemas.creator_policy import (
+    CAPABILITY_USER_SONG,
     USER_SONG_BACKGROUND_NOTICE,
     USER_SONG_CONTRACT_NOTICE,
     USER_SONG_LIPSYNC_SHAPE_NOTICE,
@@ -38,7 +39,7 @@ from app.agents._schemas.creator_policy import (
     MontageCadenceUnavailableError,
     PhoneMediaUnavailableError,
 )
-from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
+from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
 from app.kria.reply_language import current_reply_language, say
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PINNED_TEXT_MAX_CHARS
 from app.services.creator_capabilities import (
@@ -197,6 +198,47 @@ class CheckedStrategy:
 class RefusedStrategy:
     question: str
     code: str
+
+
+SONG_CAPTIONS_NEED_SONG_CODE = "song_captions_need_song"
+
+
+def song_captions_refusal(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy, *, creator_text: str
+) -> RefusedStrategy | None:
+    """Ask for the song before a lip-sync edit that was asked to show lyrics (KRI-569).
+
+    The lyrics are the uploaded song's: without the song there is nothing to caption, and
+    the room audio in the clips is not a lyrics source. Judged on the creator's own words
+    ("lip-sync" and "captions"), never on the model's caption default, so an ordinary
+    montage is never asked for a song. The caller owns the ``SONG_CAPTIONS_ENABLED`` fence.
+    """
+
+    if (
+        not creator_text
+        or strategy.audio_strategy in ("user_song", "voiceover")
+        or strategy.edit_format not in GUIDED_EDIT_FORMATS
+    ):
+        return None
+    from app.pipeline.song_captions import captions_requested, mentions_lipsync  # noqa: PLC0415
+
+    asked = captions_requested([creator_text], strategy.caption_style)
+    if not (asked and mentions_lipsync(creator_text)):
+        return None
+    if getattr(manifest, "has_user_song", False) or getattr(manifest, "has_voiceover", False):
+        return None
+    # A song that IS attached but cannot be used (phone-only, switched off, wrong format)
+    # leaves `has_user_song` False and marks the capability unavailable; the user-song
+    # messaging owns that case. Only a manifest with no song capability at all is "no song".
+    if CAPABILITY_USER_SONG in (getattr(manifest, "capabilities", None) or {}):
+        return None
+    return RefusedStrategy(
+        question=say(
+            en="Add the song you lip-synced to and I'll caption its lyrics.",
+            tr="Dudak senkronu yaptığın şarkıyı ekle, sözlerini altyazı olarak ekleyeyim.",
+        ),
+        code=SONG_CAPTIONS_NEED_SONG_CODE,
+    )
 
 
 def _downgrade_guided_voiceover(
@@ -621,6 +663,8 @@ __all__ = [
     "TRANSCRIPT_LABELS_DROPPED_NOTICE",
     "CheckedStrategy",
     "RefusedStrategy",
+    "SONG_CAPTIONS_NEED_SONG_CODE",
     "check_strategy_for_runtime_v2",
+    "song_captions_refusal",
     "localize_known_message",
 ]

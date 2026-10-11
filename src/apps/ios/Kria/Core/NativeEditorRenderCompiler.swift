@@ -846,7 +846,12 @@ enum NativeEditorRenderError: Error, Equatable {
         for index in captionIndices {
             let spoken = projected[index].text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !spoken.isEmpty else { continue }
-            let terminal = spoken.range(of: #"[.!?]+["'’”\)\]]*$"#, options: .regularExpression) != nil
+            let punctuated = spoken.range(of: #"[.!?]+["'’”\)\]]*$"#, options: .regularExpression) != nil
+            // KRI-569: song lyrics carry no terminal punctuation. The server marks the
+            // last word of each lyric line with `source_params.line_end`; narration rows
+            // never carry it, so only lyric lines are split by it.
+            let lineEnd = projected[index].raw["source_params"]?.objectValue?["line_end"] == .bool(true)
+            let terminal = punctuated || lineEnd
             guard projected[index].raw["enabled"] != .bool(false), projected[index].raw["removed"] != .bool(true) else {
                 // A hidden word must not leak into the display. Its terminal
                 // punctuation still separates the adjacent visible sentences.

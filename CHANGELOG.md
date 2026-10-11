@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.212.0] - 2026-10-11
+
+### Changed
+- feat(captions): lyric captions from the uploaded song on lip-sync montages (KRI-569) (#1535) <!-- release-pr: 1535 -->
+
 ## [0.78.211.0] - 2026-10-11
 
 ### Changed
