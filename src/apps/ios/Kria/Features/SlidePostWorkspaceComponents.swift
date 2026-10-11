@@ -41,6 +41,8 @@ extension Color {
 
 enum SlidePostMode: Equatable {
     case browse, text, look
+    /// KRI-44: the stage becomes the Crop editor for the selected photo.
+    case crop
 }
 
 // MARK: Header
@@ -348,13 +350,20 @@ struct SlidePostStrip: View {
                                 .padding(.horizontal, 6).padding(.vertical, 2).background(KriaColor.butter, in: Capsule()).padding(3)
                         }
                     }
+                    .overlay(alignment: .topTrailing) {
+                        if slide.edits?.framing?.orientation == .landscape {
+                            Image(systemName: "rectangle.fill").font(.system(size: 9, weight: .bold)).foregroundStyle(KriaColor.ink)
+                                .padding(.horizontal, 5).padding(.vertical, 3).background(KriaColor.butter, in: Capsule()).padding(3)
+                                .accessibilityIdentifier("slidepost-landscape-badge-\(index + 1)")
+                        }
+                    }
                     .overlay { if selected { RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(KriaColor.paper, lineWidth: 2) } }
                     .padding(2)
                     .overlay { if selected { RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(KriaColor.ink, lineWidth: 2) } }
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Slide \(index + 1)")
-            .accessibilityValue(index == coverIndex ? "Cover" : "")
+            .accessibilityValue([index == coverIndex ? "Cover" : nil, slide.edits?.framing?.orientation == .landscape ? "Landscape" : nil].compactMap { $0 }.joined(separator: ", "))
             .accessibilityAddTraits(selected ? .isSelected : [])
             .accessibilityIdentifier("slidepost-tile-\(index + 1)")
             Text("\(index + 1)").font(KriaFont.body(11).weight(selected ? .bold : .semibold)).foregroundStyle(selected ? KriaColor.ink : KriaColor.zinc)
@@ -514,6 +523,9 @@ struct SlidePostToolBar: View {
     let canCover: Bool
     let canRemove: Bool
     let canDuplicateText: Bool
+    /// Crop shows only when the server's `slide_post_framing` is on and the slide is a photo.
+    var showsCrop = false
+    var onCrop: () -> Void = {}
     let onText: () -> Void
     let onCover: () -> Void
     let onLook: () -> Void
@@ -540,6 +552,7 @@ struct SlidePostToolBar: View {
             item("textformat", "Text", id: "slidepost-tool-text", active: mode == .text, action: onText)
             item("star.square", "Cover", id: "slidepost-tool-cover", active: false, enabled: canCover, action: onCover)
             item("circle.lefthalf.filled", "Look", id: "slidepost-tool-look", active: mode == .look, action: onLook)
+            if showsCrop { item("crop", "Crop", id: "slidepost-tool-crop", active: mode == .crop, action: onCrop) }
             Menu {
                 Button(role: .destructive, action: onRemove) { Label("Remove slide", systemImage: "trash") }.disabled(!canRemove)
                 Button(action: onDuplicateText) { Label("Duplicate text", systemImage: "plus.square.on.square") }.disabled(!canDuplicateText)

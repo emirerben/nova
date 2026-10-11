@@ -348,6 +348,19 @@ pool order / first slide as cover / no caption rather than blocking assembly.
 | `PUT` | `/plan-items/{id}/variants/{vid}/slides` *(via `require_editable_variant`'s companion `_require_slides_variant`)* | Not a separate route — the two above are the only writers; this is the internal dispatch helper's job. |
 | `GET` | `/plan-items/{id}/variants/{vid}/slides/bundle` | Signed export URL. 422s while `slide_post.validation.errors` is non-empty — export is refused, not silently partial. |
 
+## Per-slide framing: crop and Vertical/Landscape (KRI-44, flag `slide_post_framing_enabled`, default off)
+
+`SlideEdits.framing = {orientation: "portrait"|"landscape", source_crop?}`.
+
+- **`source_crop`** is a normalized, top-left-origin rectangle in the UPRIGHT (EXIF-applied) frame of the photo, the same space as `NormalizedSourceCrop`, so the iPhone and the cloud agree. The renderer cuts it first (`ffmpeg_crop_filter`), then does the usual cover fit. Math lives in `app/kria/framing.py` (`cover_placement`, `crop_for_focus`) and is pinned for Swift by `tests/fixtures/slide-framing-parity/v1.json`. Image slides only: video slides keep the plain cover fit.
+- **`orientation: "landscape"`** makes THAT slide export at 1920x1080 (`slide_canvas`, TikTok photo profile only; `PlatformProfileSpec.allows_landscape`). A post can mix shapes. The Instagram carousel keeps one shape, so `SlidePostDraft` coerces landscape back to portrait there.
+- **Preview stays one canvas.** `render_preview_segment(source_canvas=...)` fits and pads a landscape slide into the post's preview canvas, so `concat_preview_segments` still joins same-canvas inputs. The normalized key includes the slide's own canvas. The text band keeps the destination aspect at the 1080 raster width (uniform scale, no stretch).
+- **Cache.** `SlideEdits` omits `framing` from its serialized form while it is None, so an unframed slide hashes exactly as before (pinned in `test_slide_post_framing.py`) and no existing derivative re-renders.
+- **Save contract (three states).** `framing` key missing (older iOS, the web editor, `edits: null`) keeps the stored value; explicit `null` clears; a value sets (`merge_stored_framing`). New iOS builds always encode the key. While `SLIDE_POST_FRAMING_ENABLED` is off the PUT ignores incoming framing.
+- **Version fence.** `SLIDES_RENDERER_VERSION` is 2; the variant stamps `slide_post.renderer_version`, and `_slide_post_export_is_current` treats a framed draft as stale unless it was rendered by a worker at version 2 or later, so an old worker can never serve a crop-less export as current.
+- **AI.** `set_slide_framing{slide_indexes|all, orientation?, focus?, zoom?, reset?}` (slides lane). The model never writes rectangles: `focus` (center/top/bottom/left/right) and `zoom` (1-3) resolve against the photo's upright shape (`PlanItemAsset.aspect`, else `analysis.width/height`; both are measured after EXIF rotation by `_analyze_image`). Unknown shape refuses a focus/zoom crop honestly; orientation and reset still work. Changing the shape drops the old crop. `compile_slide_post_ops` carries `framing` across text and look ops.
+- **Rollout.** Merge dark. Turn on `SLIDE_POST_FRAMING_ENABLED` (Fly secret on api and worker, then restart both) once a TestFlight build with the slide Crop UI exists. Capability `slide_post_framing` gates the iOS Crop item and the AI op.
+
 ## Known v1 gaps (tracked, not silently shipped)
 
 - **No direct publish.** v1 is export-only (`bundle.zip`). TikTok photo

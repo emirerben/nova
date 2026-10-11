@@ -2049,6 +2049,29 @@ The device applies the crop, then cover-fits it — same order as the cloud's
 3. Append `sourceCrop` to `PHONE_RENDER_VERIFIED_FEATURES`
    (`fly secrets set …` + restart api and worker). Rollback: remove it.
 
+**Crop beyond guided stories (KRI-44).** The crop control now also covers phone
+Voiceover edits (`narrated` and montage `voiceover`) and authored timelines, still
+only while `sourceCrop` is in `PHONE_RENDER_VERIFIED_FEATURES`. The server opens
+`clips.source_crop` per variant in `_ensure_source_crop_capability` (an absent key means
+"no crop"; the app must not fall back to the section being editable).
+`resolve_phone_voiceover_slots` accepts a slot `source_crop` (key omitted keeps the
+pinned crop, explicit null clears) and `replace_voiceover_cut` sets it on the clip
+with an identity transform (the device cover-fits the crop, so a letterbox transform
+would double-fit). The timeline projection reads the crop back to the editor.
+Photos crop too: the cloud guided renderer cuts the upright region first
+(`app/pipeline/image_crop.py`), and the phone writers already carried it for
+fullscreen photos; a `supporting_card` photo stays uncroppable.
+
+**Verify rotated sources before flipping `sourceCrop`.** The crop rectangle is in the
+UPRIGHT frame, like the cloud's `reframe`. `RecipeVideoCompositor.positionedSource` used
+to cut the raw encoded frame, so a portrait iPhone clip (stored rotated) showed a
+different region; it now maps the upright rectangle through the inverse
+`preferredTransform` (`uprightCropToEncodedRect`, pinned for every stored orientation in
+`NativeSourceCropTests`). The device check in step 2 above must include a rotated
+portrait clip and a photo in each of guided, authored and Voiceover edits. Cloud
+template/montage re-renders (the legacy pipeline, incl. single-pass) do not apply a
+crop and keep it closed: follow-up.
+
 **Face-aware guided text.** The cloud burn's `_apply_guided_text_face_placement`
 needs decoded frames; a phone render has none. With
 `PHONE_GUIDED_TEXT_FACE_PLACEMENT_ENABLED=true`, `_run_phone_guided_job` samples

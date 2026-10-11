@@ -1,3 +1,4 @@
+import KriaMediaEngine
 import OSLog
 import SwiftUI
 import UIKit
@@ -22,6 +23,9 @@ struct SlidePostCachedImage: View {
     /// Source-only grade. Thumbnails remain ungraded in the shared cache.
     var lookPreset = "none"
     var lookCanvas = CGSize(width: 1080, height: 1350)
+    /// KRI-44: the slide's crop, in the upright frame. The view this fills has the slide's canvas aspect, so what
+    /// shows here is what exports. nil = plain centred cover.
+    var crop: NormalizedSourceRect? = nil
 
     @State private var tick = 0
     @State private var failed = false
@@ -34,10 +38,15 @@ struct SlidePostCachedImage: View {
 
     var body: some View {
         let full = resolved()
-        let lookIdentity = "\(assetID)|\(lookPreset)|\(lookCanvas.width)x\(lookCanvas.height)|\(full.map { ObjectIdentifier($0).debugDescription } ?? "missing")"
+        let lookIdentity = "\(assetID)|\(lookPreset)|\(lookCanvas.width)x\(lookCanvas.height)|\(crop.map { "\($0.x),\($0.y),\($0.width),\($0.height)" } ?? "-")|\(full.map { ObjectIdentifier($0).debugDescription } ?? "missing")"
         ZStack {
             if let full {
-                Image(uiImage: lookedIdentity == lookIdentity ? (lookedImage ?? full) : full).resizable().scaledToFill()
+                if lookedIdentity == lookIdentity, let lookedImage {
+                    // Already framed to the canvas by the look pass.
+                    Image(uiImage: lookedImage).resizable().scaledToFill()
+                } else {
+                    framed(full)
+                }
                 if lookFailed, lookPreset != "none" {
                     Text("Look preview unavailable").font(KriaFont.body(12))
                         .padding(8).background(KriaColor.paper, in: Capsule())
@@ -62,9 +71,9 @@ struct SlidePostCachedImage: View {
             lookedImage = nil; lookedIdentity = lookIdentity; lookFailed = false
             guard lookPreset != "none", let full else { return }
             do {
-                let canvas = lookCanvas, preset = lookPreset
+                let canvas = lookCanvas, preset = lookPreset, framing = crop
                 let image = try await Task.detached(priority: .userInitiated) {
-                    try SlidePostOnDeviceRender.lookedImage(full, pixels: canvas, preset: preset)
+                    try SlidePostOnDeviceRender.lookedImage(full, pixels: canvas, preset: preset, crop: framing)
                 }.value
                 guard !Task.isCancelled else { return }
                 lookedImage = image
@@ -73,6 +82,21 @@ struct SlidePostCachedImage: View {
         .modifier(PreviewStateReport(enabled: reportsState,
                                     value: "\(assetID)|\(full != nil ? "full" : "blur")" + (lookedImage != nil && lookedIdentity == lookIdentity ? "|look:\(lookPreset)" : ""),
                                     blurred: full == nil && variant == .preview && cache.cachedImage(assetID: assetID, variant: .thumb) != nil))
+    }
+
+    @ViewBuilder private func framed(_ image: UIImage) -> some View {
+        if let crop {
+            GeometryReader { proxy in
+                let rect = SlidePostFraming.placement(imageSize: image.size, crop: crop, canvas: proxy.size)
+                Image(uiImage: image).resizable()
+                    .frame(width: rect.width, height: rect.height)
+                    .offset(x: rect.minX, y: rect.minY)
+                    .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+            }
+            .clipped()
+        } else {
+            Image(uiImage: image).resizable().scaledToFill()
+        }
     }
 
     private static let log = Logger(subsystem: "com.kria.app", category: "slidepost-images")

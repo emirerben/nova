@@ -1660,6 +1660,35 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(slot.raw["playback_rate"])
     }
 
+    /// KRI-44: Crop is offered only where the server explicitly lists `clips.source_crop`. A variant with no
+    /// `clips` group (legacy cloud montage and template renders) must not fall back to "the timeline is editable".
+    func testCropIsOfferedOnlyWhenTheServerExplicitlyListsClipCrop() async throws {
+        let legacy = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        XCTAssertFalse(legacy.serverOffersClipCrop)
+        XCTAssertFalse(legacy.canCropClips)
+
+        let (open, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
+        let openSelection = EditorSelection(kind: .clip, id: try XCTUnwrap(open.timelineClips.first).id.uuidString)
+        XCTAssertTrue(open.serverOffersClipCrop)
+        XCTAssertNil(open.cropBlockedReason(for: openSelection))
+
+        let (closed, _) = await Self.footageSession(destination: "cloud", operationsEditable: false)
+        let closedSelection = EditorSelection(kind: .clip, id: try XCTUnwrap(closed.timelineClips.first).id.uuidString)
+        XCTAssertTrue(closed.serverOffersClipCrop)
+        XCTAssertNotNil(closed.cropBlockedReason(for: closedSelection), "Listed but closed: shown disabled with a reason")
+    }
+
+    /// Once the server opens `clips.source_crop` for a phone-rendered variant, the crop saves; speed stays closed.
+    func testDeviceVariantTakesACropOnceTheServerOpensIt() async throws {
+        let (session, _) = await Self.footageSession(destination: "device", operationsEditable: true)
+        XCTAssertTrue(session.rendersOnDevice)
+        let selection = EditorSelection(kind: .clip, id: try XCTUnwrap(session.timelineClips.first).id.uuidString)
+        session.setFootageCrop(selection, crop: .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
+        XCTAssertEqual(session.footageCrop(for: selection), .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
+        session.setFootagePlaybackRate(selection, rate: 0.5)
+        XCTAssertEqual(session.footagePlaybackRate(for: selection), 1, "Speed is still refused on a phone render")
+    }
+
     func testClosedClipCropCapabilityIsHonoredOnCloudVariants() async throws {
         let (session, _) = await Self.footageSession(destination: "cloud", operationsEditable: false)
         let clip = try XCTUnwrap(session.timelineClips.first)
