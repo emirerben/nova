@@ -8,7 +8,7 @@
 # nova_<worktree>_test under the current OS user, migrates it, and records the URL in
 # .dev/test-db-url, which scripts/check-api.sh and scripts/preship-check.sh export.
 #
-# Usage:  bash scripts/dev/test-db.sh            # create/migrate + print export line
+# Usage:  bash scripts/dev/test-db.sh            # create/migrate + print export line (re-run after merging main)
 #         bash scripts/dev/test-db.sh --drop     # drop this worktree's test database
 #         eval "$(bash scripts/dev/test-db.sh --export)"   # just the export line
 set -uo pipefail
