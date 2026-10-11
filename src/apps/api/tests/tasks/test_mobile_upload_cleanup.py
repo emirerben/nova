@@ -98,6 +98,28 @@ def test_cleanup_zero_limit_never_opens_a_database_session(monkeypatch) -> None:
     session_factory.assert_not_called()
 
 
+def test_adopted_upload_leaves_cleanup_queue_without_deleting_bytes(monkeypatch) -> None:
+    now = datetime(2026, 9, 7, 12, tzinfo=UTC)
+    row = _reservation(now=now)
+    row.object_path = f"users/{row.user_id}/library/source.mp4"
+    claim_session, receipt_session = _sessions(monkeypatch, row)
+    monkeypatch.setattr(
+        mobile_upload_cleanup.media_library_retention,
+        "path_is_adopted_by_library",
+        lambda *_a: True,
+    )
+    remote_delete = MagicMock()
+    monkeypatch.setattr(mobile_upload_cleanup, "delete_object_best_effort", remote_delete)
+
+    assert mobile_upload_cleanup.cleanup_expired_temporary_uploads(now=now) == 0
+    assert row.status == "adopted"
+    assert row.deleted_at is None
+    assert row.delete_attempts == 0
+    remote_delete.assert_not_called()
+    claim_session.commit.assert_called_once_with()
+    receipt_session.get.assert_not_called()
+
+
 def test_cleanup_caps_batch_and_ignores_row_changed_after_storage_delete(monkeypatch) -> None:
     now = datetime(2026, 9, 7, 12, tzinfo=UTC)
     row = _reservation(now=now)

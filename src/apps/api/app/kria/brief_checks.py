@@ -52,6 +52,7 @@ from app.schemas.text_style_intent import (
 )
 from app.services.clip_facts import CAPTURE_ORDER_KEYS
 from app.services.kria_editor_ops_diff import effective_entrance
+from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
@@ -471,7 +472,6 @@ def plan_facts_from_strategy(
         )
         if value
     ]
-    duration = strategy.get("target_duration_s")
     basis = strategy.get("ordering_basis")
     if (
         basis is None
@@ -494,7 +494,10 @@ def plan_facts_from_strategy(
         per_clip_text=per_clip,
         inferred_text=inferred,
         positional_labels=labels,
-        duration_s=float(duration) if isinstance(duration, (int, float)) else None,
+        # A strategy target is a proposal, even when a creator proved the target.
+        # Only a rendered output or a separately validated execution plan supplies
+        # duration evidence for a receipt.
+        duration_s=None,
         ordering_basis=str(basis) if basis else None,
         ordering_fallback_clip_ids=tuple(
             str(c) for c in (strategy.get("ordering_fallback_clip_ids") or [])
@@ -2976,7 +2979,7 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         # planner's to report, so the ask stays "can't verify" there, as before.
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
     if facts.rendered_variant:
-        return _check_rendered_cleanup(req, facts)
+        return _merge_cleanup_timing(req, facts, _check_rendered_cleanup(req, facts))
     if facts.speech_cleanup_enabled:
         lead, status = _CLEANUP_PLANNED, "met"
     elif facts.speech_cleanup_offered is True:
@@ -2990,19 +2993,8 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     if _wants_named_cuts(req):
         notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
         status = "partial"
-    if _has_duration_target(req):
-        target = float(req.facts["duration_s"])
-        notes.append(
-            say(
-                en=f"the length follows what's left of your take, so I can't promise {target:g}s",
-                tr=(
-                    "uzunluk çekimin geriye kalan kısmına göre belirleniyor, "
-                    f"{target:g} sn için söz veremem"
-                ),
-            )
-        )
-        status = "partial"
-    return _receipt(req, status, "; ".join(notes) if status == "partial" else None)
+    cleanup = _receipt(req, status, "; ".join(notes) if status == "partial" else None)
+    return _merge_cleanup_timing(req, facts, cleanup)
 
 
 def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -3021,21 +3013,25 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
         # The cut removes pauses and filler sounds; a named line or retake stays.
         notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
         status = "partial"
-    if _has_duration_target(req):
-        target = float(req.facts["duration_s"])
-        notes.append(
-            say(
-                en=f"the length follows what's left of your take, so it isn't held to {target:g}s",
-                tr=(
-                    "uzunluk çekimin geriye kalan kısmına göre belirlendi, "
-                    f"{target:g} sn'ye göre ayarlanmadı"
-                ),
-            )
-        )
-        status = "partial"
     if status == "met" and outcome == "applied":
         return _receipt(req, "met", None)
     return _receipt(req, status, "; ".join(notes))
+
+
+def _merge_cleanup_timing(
+    req: BriefRequirement, facts: PlanFacts, cleanup: RequirementReceipt
+) -> RequirementReceipt:
+    """Retain cleanup facts while an explicit creator target judges actual duration."""
+    if not _has_duration_target(req):
+        return cleanup
+    timing = _check_timing(req, facts)
+    if timing.status == "met":
+        return cleanup
+    if cleanup.status == "met" or not cleanup.reason:
+        return _receipt(req, "partial", timing.reason)
+    if not timing.reason or timing.reason == cleanup.reason:
+        return cleanup
+    return _receipt(req, "partial", f"{cleanup.reason}; {timing.reason}")
 
 
 def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -3609,15 +3605,21 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
         # that requirement has resolved target windows, report missing evidence
         # instead of rejecting a valid edit (or falsely passing an equal total).
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
-    if facts.edit_format == "subtitled":
-        # KRI-142: the Talking renderers keep the whole take (minus any speech
-        # cleanup); `target_duration_s` never trims it, so it can't be "met".
-        return _receipt(req, "partial", _TALKING_KEEPS_WHOLE_TAKE)
-    if facts.edit_format in NARRATED_EDIT_FORMATS:
-        return _receipt(req, "partial", _VOICEOVER_SETS_LENGTH)
+    strategy = {
+        "edit_format": facts.edit_format or "montage",
+        "audio_strategy": facts.audio_strategy or "licensed_music",
+    }
+    try:
+        natural_owner = natural_length_owner(strategy)
+        owner = length_owner(strategy, creator_duration_proven=True)
+    except ValueError:
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    if owner != "creator" or natural_owner not in {"song", "voiceover", "take", "footage"}:
+        # Keep the owner matrix authoritative if a future policy changes it.
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
     if facts.duration_s is None:
         return _receipt(req, "partial", _CANT_CONFIRM_LENGTH)
-    if abs(facts.duration_s - float(target)) <= DURATION_TOLERANCE * float(target):
+    if creator_duration_matches(facts.duration_s, float(target)):
         return _receipt(req, "met", None)
     # The edit's own length is what is compared: the phone adds its outro after the edit,
     # so the file runs `outro_s` longer than this (28.0s of edit is a ~29.6s video).

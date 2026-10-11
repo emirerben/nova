@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # Executor behavior is intentionally owned by the render pipeline; this
     # setting only declares the rollout control plane default.
     cloud_render_execution_enabled: bool = True
+    # Frozen into each newly approved generation; workers do not read this flag.
+    creator_duration_check_mode: Literal["log_only", "enforce"] = "log_only"
 
     # Phone rendering remains off until a capability group has device evidence.
     phone_rendering_enabled: bool = False
@@ -524,6 +526,11 @@ class Settings(BaseSettings):
     # capped at 24 hours so account deletion leaves at most a short-lived cache
     # copy; PostgreSQL rows are removed immediately by the creator FK cascade.
     media_analysis_cache_ttl_days: int = Field(default=90, ge=1, le=365)
+    # KRI-384 rollout controls. The additive ownership contract ships before
+    # upload/library clients; reuse and proposals activate independently only
+    # after their API and physical-device evidence is complete.
+    media_library_enabled: bool = False
+    media_collection_proposals_enabled: bool = False
     # Daily comparison of delayed Standard Usage Cost export with Nova's
     # settled reservation ledger. Targets and project attribution stay JSON so
     # both billing accounts can be added without shipping account IDs in git.
@@ -629,6 +636,11 @@ class Settings(BaseSettings):
     # `song_order_placements` and the app falls back to the reorder card. Only effective
     # while USER_SONG_MONTAGE_ENABLED holds.
     song_order_timeline_enabled: bool = True
+    # KRI-580: the creator can say which stretch of the song they filmed in; takes are then matched
+    # only there (a repeated verse elsewhere stops splitting the group). Kill switch:
+    # `fly secrets set SONG_FILMING_RANGE_ENABLED=false` + restart (api + worker): the capability
+    # drops, the setter 404s and any stored range is ignored (the whole song is matched, as before).
+    song_filming_range_enabled: bool = True
     # KRI-569: "add captions" on a creator-song montage shows the song's lyrics as the
     # standard caption lane (same style/font/text controls as narration captions); without
     # a song the chat asks for it instead of failing the render. Kill switch:
@@ -1713,6 +1725,12 @@ class Settings(BaseSettings):
     # 404s. Capability `slide_post_chat_edit`. Apply: `fly secrets set
     # SLIDE_POST_CHAT_EDIT_ENABLED=true --app nova-video` + restart (api).
     slide_post_chat_edit_enabled: bool = False
+    # KRI-44: per-slide framing (crop + Vertical/Landscape). Off: the slide-post PUT
+    # keeps each slide's stored `framing` and ignores incoming values, the chat op
+    # `set_slide_framing` is unavailable, and capability `slide_post_framing` is
+    # false. Dual-flag with the iOS capability. Apply: `fly secrets set
+    # SLIDE_POST_FRAMING_ENABLED=true --app nova-video` (api + worker) + restart.
+    slide_post_framing_enabled: bool = False
     # KRI-557: provider-marked Gemini thought summaries for native creation and
     # slide-post calls. Deploy dark; enable after production canary with
     # THOUGHT_SUMMARIES_ENABLED=true for API and Celery processes after canary.

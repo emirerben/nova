@@ -261,3 +261,18 @@ def captions_requested(texts: Iterable[str], caption_style: str | None) -> bool:
     if caption_style == "none":
         return False
     return text_asks_for_captions("\n".join(text for text in texts if text))
+
+
+def song_captions_pin(creator_text: str, caption_style: str | None) -> str | None:
+    """KRI-578: the ONE lyric-caption decision -- ``"word"`` / ``"sentence"`` or ``None``.
+
+    ``None`` when the creator's own words did not ask for captions (or ``caption_style`` is
+    the explicit ``none``). The planner calls this once and pins the result on
+    ``CreativeStrategy.song_captions``; the legacy (unstamped) worker path calls it with the
+    saved request, so the two can never drift apart.
+    """
+    if not captions_requested([creator_text], caption_style):
+        return None
+    from app.kria.brief_checks import text_asks_for_word_captions  # noqa: PLC0415
+
+    return caption_style_for(caption_style, word_ask=text_asks_for_word_captions(creator_text))

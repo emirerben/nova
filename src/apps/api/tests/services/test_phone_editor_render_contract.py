@@ -201,3 +201,46 @@ def test_a_row_the_contract_never_asked_for_stays_any_beside_the_duplicate_shape
         ("any", "Before"),
         ("opening", "Before"),
     ]
+
+
+def test_authored_timeline_save_rebinds_the_creator_length_in_the_new_generation(monkeypatch):
+    from app.services.length_policy_state import read_length_policy, stamp_length_policy
+    from tests.routes.test_phone_editor_commit import _enable_guided_v2
+
+    job = phone_job(monkeypatch)
+    _enable_guided_v2(job, monkeypatch)
+    strategy = {
+        "edit_format": "montage",
+        "audio_strategy": "original_audio",
+        "creator_duration_s": 3.0,
+    }
+    contract = build_render_contract(strategy, generation_id="first")
+    job.all_candidates = {"creator_strategy": strategy}
+    job.assembly_plan = stamp_length_policy(
+        {**job.assembly_plan, CONTRACT_FIELD: contract.model_dump(mode="json")},
+        strategy,
+        contract,
+        mode="enforce",
+    )
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    segment = revision["segments"][0]
+    prep = gj.prepare_editor_commit(
+        job,
+        "guided_story",
+        gj.EditorCommitRequest(
+            base_generation="first",
+            guided_revision_number=revision["revision_number"],
+            timeline_slots=[
+                gj.TimelineSlotEdit(
+                    slot_id=segment["segment_id"], clip_index=0, in_s=2.2, duration_s=0.8
+                )
+            ],
+        ),
+    )
+    revised = _revised(job)
+    assert revised.duration_s == pytest.approx(0.8)
+    assert revised.generation_id == prep["generation"]
+    assert read_length_policy(job.assembly_plan, revised).requested_duration_s == pytest.approx(0.8)
+    assert read_length_policy(job.assembly_plan, contract).requested_duration_s == 3.0
+    assert device_status(job, "guided_story").request.recipe.duration == pytest.approx(0.8)

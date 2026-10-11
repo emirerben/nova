@@ -374,7 +374,7 @@ def test_a_length_ask_keeps_the_duration_checker() -> None:
     assert not _wants_beats(req)
     receipt = check_requirement(req, _draft_facts())
     assert receipt.status == "partial"
-    assert receipt.reason == "A voiceover edit runs as long as your voiceover"
+    assert receipt.reason == "I can't confirm this draft's length yet."
 
 
 def test_a_length_ask_with_a_pop_in_cue_is_still_a_length_ask() -> None:

@@ -140,6 +140,7 @@ class GateTests(unittest.TestCase):
                 "journey": {"result": result},
                 # test-api has other dependencies; they must not weaken this gate.
                 "test-api-suite": {"result": "success"},
+                "creator-contract-replay": {"result": "success"},
             }
             ci.gate(needs, "journey", "journey")
         for selected, result in (
@@ -158,6 +159,7 @@ class GateTests(unittest.TestCase):
                 "changes": {"result": "success", "outputs": {"api": "true"}},
                 "test-api-suite": {"result": "success"},
                 "journey": {"result": "skipped"},
+                "creator-contract-replay": {"result": "success"},
             },
             "api",
             "test-api-suite",
@@ -499,7 +501,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/services/cloud_render_contract.py",
-                (True, "covered", "kri-524-creation"),
+                (True, "covered", "kri-492-length-ownership,kri-524-creation"),
             ),
             (
                 "src/apps/api/app/kria/planner.py",

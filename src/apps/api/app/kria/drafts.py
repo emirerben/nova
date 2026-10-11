@@ -35,37 +35,63 @@ from app.models import (
     Job,
     PlanItem,
 )
+from app.services.length_policy import creator_duration_s
 
 MAX_DRAFT_BYTES = 2 * 1024 * 1024
 
 
 def _sanitize_strategy_duration_provenance(
-    raw: dict[str, Any], *, authoritative_answers: list[dict[str, Any]] | None = None
+    raw: dict[str, Any],
+    *,
+    authoritative_answers: list[dict[str, Any]] | None = None,
+    authoritative_duration_s: float | None = None,
+    brief_binding: BriefBinding | None = None,
 ) -> dict[str, Any]:
     """Persist only server-derived duration approval provenance.
 
     Draft snapshots are client-writable. A client may propose a duration, but
     must not claim it was explicitly approved by supplying the server-owned
-    marker. Reconstruct the marker from the raw duration key before schema
-    normalization, which otherwise materializes the default 24 seconds.
+    marker. The client-supplied duration key is a proposal only: the proof and
+    exact target must come from an approved binding or a prior server stamp.
 
     ``choice_answers`` (KRI-476) are server-owned the same way: whatever the client wrote
     is dropped and only the head draft's own answers (the planner gate wrote them) stay.
     """
 
-    requested = "target_duration_s" in raw
+    binding_answers = (
+        brief_binding.choice_answers if brief_binding is not None else authoritative_answers or ()
+    )
+    proven_duration_s = creator_duration_s(
+        brief=brief_binding.brief if brief_binding is not None else None,
+        authoritative_answers=binding_answers,
+    )
+    if proven_duration_s is None:
+        proven_duration_s = authoritative_duration_s
     strategy = CreativeStrategy.model_validate(
         {
             key: value
             for key, value in raw.items()
-            if key not in ("target_duration_requested", "choice_answers")
-        }
-    ).model_copy(
-        update={
-            "target_duration_requested": True if requested else None,
-            "choice_answers": authoritative_answers or None,
+            if key
+            not in (
+                "target_duration_requested",
+                "creator_duration_s",
+                "choice_answers",
+                "selected_music_section",
+            )
         }
     )
+    update: dict[str, Any] = {
+        "target_duration_requested": True if proven_duration_s is not None else None,
+        "creator_duration_s": proven_duration_s,
+        "choice_answers": authoritative_answers or None,
+    }
+    if brief_binding is not None:
+        length_plan = brief_binding.media_snapshot.get("length_plan")
+        if isinstance(length_plan, dict):
+            update["selected_music_section"] = length_plan.get("licensed_music")
+    if proven_duration_s is not None:
+        update["target_duration_s"] = proven_duration_s
+    strategy = strategy.model_copy(update=update)
     return strategy.model_dump(mode="json", exclude_none=True)
 
 
@@ -519,10 +545,20 @@ async def write_draft(
         snapshot[field] = authoritative
     if snapshot.get("kind") == "strategy" and isinstance(snapshot.get("strategy"), dict):
         head_strategy = (head.snapshot_json or {}).get("strategy")
+        binding = snapshot.get("brief_binding")
         snapshot["strategy"] = _sanitize_strategy_duration_provenance(
             snapshot["strategy"],
             authoritative_answers=(
                 head_strategy.get("choice_answers") if isinstance(head_strategy, dict) else None
+            ),
+            authoritative_duration_s=(
+                head_strategy.get("creator_duration_s")
+                if isinstance(head_strategy, dict)
+                and isinstance(head_strategy.get("creator_duration_s"), (int, float))
+                else None
+            ),
+            brief_binding=(
+                BriefBinding.model_validate(binding) if isinstance(binding, dict) else None
             ),
         )
     document = KriaDraftDocument.model_validate(snapshot)

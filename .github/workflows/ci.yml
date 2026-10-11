@@ -135,7 +135,7 @@ jobs:
 
   test-api:
     if: always()
-    needs: [changes, test-api-suite, journey]
+    needs: [changes, test-api-suite, journey, creator-contract-replay]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -148,6 +148,77 @@ jobs:
         env:
           CI_NEEDS: ${{ toJSON(needs) }}
         run: python3 scripts/ci/select-tests.py gate journey journey
+      - name: Require creator-contract replay to pass for API changes
+        if: needs.changes.outputs.api == 'true'
+        env:
+          REPLAY_RESULT: ${{ needs.creator-contract-replay.result }}
+        run: test "$REPLAY_RESULT" = success
+
+  # KRI-499: compare every available sanitized successful creator job (up to
+  # 100) against an actual base-revision verifier, then run the candidate with
+  # its new duration check enforced. Both runs are offline and use no paid API.
+  creator-contract-replay:
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: src/apps/api/pyproject.toml
+      - name: Install offline replay dependencies
+        working-directory: src/apps/api
+        run: pip install -e '.[dev]'
+      - name: Resolve immutable comparison base
+        id: comparison-base
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+          else
+            base_sha="$(git merge-base origin/main HEAD)"
+          fi
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::could not resolve an immutable replay base SHA"
+            exit 1
+          }
+          echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
+      - name: Export actual base verifier outcomes
+        env:
+          BASE_SHA: ${{ steps.comparison-base.outputs.sha }}
+        run: |
+          mkdir -p test-results/kri-499/base
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          git archive "$BASE_SHA" | tar -x -C test-results/kri-499/base
+          PYTHONPATH="$GITHUB_WORKSPACE/test-results/kri-499/base/src/apps/api" \
+            STORAGE_BUCKET=replay DATABASE_URL=postgresql://replay@localhost/replay \
+            python3 scripts/ci/replay-creator-contracts.py \
+              --snapshot scripts/ci/fixtures/kri492-creator-contracts.json \
+              --candidate-sha "$BASE_SHA" --base-sha "$BASE_SHA" --export-outcomes \
+              --report test-results/kri-499/base-outcomes.json
+      - name: Replay candidate creator contracts with enforced duration policy
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          python3 scripts/ci/replay-creator-contracts.py \
+            --snapshot scripts/ci/fixtures/kri492-creator-contracts.json \
+            --baseline test-results/kri-499/base-outcomes.json \
+            --base-sha "${{ steps.comparison-base.outputs.sha }}" \
+            --candidate-sha "${{ github.sha }}" \
+            --report test-results/kri-499/replay-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kri-499-creator-contract-replay-${{ github.sha }}
+          path: test-results/kri-499/
+          if-no-files-found: warn
+          retention-days: 14
 
   test-api-suite:
     needs: changes
@@ -262,7 +333,7 @@ jobs:
           python3 - <<'PY'
           import os
           selected = os.environ["JOURNEY_IDS"].split(",")
-          allowed = {"kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing"}
+          allowed = {"kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing"}
           if os.environ["COVERAGE"] != "covered" or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed:
               raise SystemExit("Journey selection has an unmapped or invalid incident")
           PY
@@ -280,8 +351,24 @@ jobs:
       - name: Install offline journey dependencies
         working-directory: src/apps/api
         run: pip install -e '.[dev]'
+      - name: Verify KRI-492 offline policy and compiled-recipe replay prerequisites
+        if: contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+          KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}
+        run: |
+          python3 -m pytest tests/services/test_length_policy_state.py \
+            tests/services/test_creator_render_contract.py \
+            tests/services/test_cloud_render_contract.py -q
+          python3 ../../../scripts/ci/replay-creator-contracts.py \
+            --snapshot ../../../scripts/ci/fixtures/kri492-creator-contracts.json \
+            --candidate-sha "$KRIA_JOURNEY_HEAD_SHA" --export-outcomes \
+            --report ../../../test-results/kri-559/kri-492-candidate-outcomes.json
       - name: Require FFmpeg for deterministic fixture media
-        if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
+        if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation') || contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
         run: |
           command -v ffmpeg >/dev/null || brew install ffmpeg
           ffmpeg -version | head -n 1
@@ -294,6 +381,9 @@ jobs:
           python3 scripts/ios/kri-524-trim-save-e2e.py test-results/kri-559/trim-save
           python3 scripts/ios/kri-524-trim-save-e2e.py test-results/kri-559/extend --extend
           python3 scripts/ci/journey-gate.py verify-input --fixture test-results/kri-559/fixture --head "$KRIA_JOURNEY_HEAD_SHA"
+      - name: Generate KRI-492 approved-length fixture through server approval and compiler
+        if: contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
+        run: python3 scripts/ios/kri-492-length-e2e.py test-results/kri-559/kri-492
       - name: Generate iOS project and select simulator
         run: |
           mkdir -p test-results/kri-559
@@ -343,6 +433,25 @@ jobs:
             -resultBundlePath ../../../test-results/kri-559/trim-save/native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/trim-save/native.xcresult \
             > ../../../test-results/kri-559/trim-save/native-test-results.json
+      - name: Render approved 24-second length journey on the iPhone simulator
+        if: contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
+        working-directory: src/apps/ios
+        env:
+          TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/kri-492
+        run: |
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
+            -only-testing:KriaTests/DeviceMontageRenderE2ETests/testApprovedTwentyFourSecondLengthThenExportOnTheIPhone \
+            -resultBundlePath ../../../test-results/kri-559/kri-492/native.xcresult test
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/kri-492/native.xcresult \
+            > ../../../test-results/kri-559/kri-492/native-test-results.json
+      - name: Require approved-length native journey test to pass
+        if: contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
+        run: |
+          python3 scripts/ci/journey-gate.py verify-tests \
+            --test-results test-results/kri-559/kri-492/native-test-results.json \
+            --xctest DeviceMontageRenderE2ETests/testApprovedTwentyFourSecondLengthThenExportOnTheIPhone
       - name: Render delayed extension journey on the built iPhone simulator
         if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios

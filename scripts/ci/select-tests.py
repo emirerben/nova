@@ -315,7 +315,7 @@ def ui_shards(event, groups):
 def gate(needs, suite, job):
     """A skipped job passes ONLY when a successful selector explicitly opted out."""
     required_needs = (
-        {"changes", "test-api-suite", "journey"}
+        {"changes", "test-api-suite", "journey", "creator-contract-replay"}
         if suite in ("api", "journey")
         else {"changes", job}
     )

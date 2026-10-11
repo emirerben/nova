@@ -179,6 +179,7 @@ from app.schemas.slide_post import (
     bump_slide_post_version,
     canonicalize_slide_post_brief_binding,
     merge_legacy_text_edits,
+    merge_stored_framing,
     parse_slide_post,
 )
 from app.services.ai_usage_headers import paid_call_headers
@@ -4544,11 +4545,19 @@ def _new_slide_post_binding(
     )
 
 
-async def _maybe_rebuild_slide_post(item: PlanItem, user_id: uuid.UUID, db: AsyncSession) -> None:
+async def _maybe_rebuild_slide_post(
+    item: PlanItem,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+    *,
+    native_client: bool = False,
+) -> None:
     """After a draft write, rebuild the rendered variant if one already exists.
 
     A draft saved BEFORE the first Generate has nothing to rebuild — Generate
-    itself will pick it up. This only fires for a post-render edit.
+    itself will pick it up. This only fires for a post-render edit. Under the
+    iPhone-only rollout the draft still saves, but an old server render is not
+    replaced: the phone renders the post itself (KRI-581).
     """
     if item.current_job_id is None:
         return
@@ -4561,6 +4570,13 @@ async def _maybe_rebuild_slide_post(item: PlanItem, user_id: uuid.UUID, db: Asyn
     )
     if slides_variant is None or slides_variant.get("resolved_archetype") != "slides":
         return
+    from app.services.cloud_render_policy import cloud_render_mutation_block_reason  # noqa: PLC0415
+
+    if (
+        cloud_render_mutation_block_reason(job, variant=slides_variant, native_client=native_client)
+        is not None
+    ):
+        return
     pending_publish = dispatch_slide_post_edit(job, "slides", publish=False)
     await db.commit()
     await _publish_committed_variant_render(pending_publish, db)
@@ -4572,6 +4588,7 @@ async def put_slide_post_draft(
     body: SlidePostDraftBody,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClient = False,
 ) -> PlanItemResponse:
     """Save a manually-edited slide-post draft: reorder, add, remove, cover,
     caption, or platform-profile change. Rebuilds the rendered variant when
@@ -4600,6 +4617,11 @@ async def put_slide_post_draft(
     try:
         # Old clients omit `texts`; keep the stored rich text (KRI-299).
         body.slides = merge_legacy_text_edits(current, body.slides)
+        # Old clients/web omit `framing`; keep the stored crop (KRI-44). While
+        # SLIDE_POST_FRAMING_ENABLED is off, incoming framing is ignored.
+        body.slides = merge_stored_framing(
+            current, body.slides, accept_incoming=settings.slide_post_framing_enabled
+        )
         if current is None:
             new_draft = SlidePostDraft(
                 platform_profile=platform_profile,
@@ -4645,7 +4667,7 @@ async def put_slide_post_draft(
     item.slide_post = new_draft.model_dump(mode="json")
     flag_modified(item, "slide_post")
     await db.commit()
-    await _maybe_rebuild_slide_post(item, user.id, db)
+    await _maybe_rebuild_slide_post(item, user.id, db, native_client=native_client)
     reloaded = await _load_owned_item(item_id, user.id, db)
     return plan_item_response(reloaded)
 
@@ -5011,6 +5033,9 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         return False
     if not isinstance(validation, dict) or validation.get("errors"):
         return False
+    from app.agents._schemas.edit_format import (  # noqa: PLC0415
+        SLIDES_FRAMING_RENDERER_VERSION,
+    )
     from app.pipeline.slide_post.build import (  # noqa: PLC0415
         SLIDE_IMAGE_NORMALIZER_VERSION,
         SLIDE_WATERMARK_VERSION,
@@ -5020,6 +5045,12 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         return False  # rendered before the current image decode recipe: re-render
     if slide_post.get("watermark_version") != SLIDE_WATERMARK_VERSION:
         return False  # rendered before the current watermark: re-render
+    if any(ref.edits is not None and ref.edits.framing is not None for ref in draft.slides):
+        # A worker older than the framing renderer drops crop/landscape silently,
+        # so its output must never read as the current export (KRI-44).
+        stamped = slide_post.get("renderer_version")
+        if not isinstance(stamped, int) or stamped < SLIDES_FRAMING_RENDERER_VERSION:
+            return False
     expected_ids = [str(ref.asset_id) for ref in draft.slides]
     rendered_ids = [str(row.get("asset_id")) for row in rendered if isinstance(row, dict)]
     if len(rendered) != len(expected_ids) or len(rendered_ids) != len(expected_ids):

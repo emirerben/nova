@@ -195,13 +195,13 @@ WORKER_FUNCTIONS: dict[str, tuple[str, str]] = {
         "(`legacy_unstamped`, services/phone_speech_montage_job.py)",
     ),
     "_creator_request_text": (
-        "content_only",
-        "KRI-569: loader of the saved request for the song-lyric caption ask. It only decides "
-        "whether to ADD the uploaded song's own lyrics as captions (content from the song, "
-        "never creator-required text) or to decline asking for the song; it never picks the "
-        "route, duration, voice or order (the song is already pinned in `user_song`). Stays "
-        "until a typed caption carrier exists on CreativeStrategy (follow-up KRI-578), the "
-        "same gap as `_creator_requests_narrated_treatment`.",
+        "legacy_unstamped",
+        "KRI-569/KRI-578: loader of the saved request for the song-lyric caption ask on "
+        "UNSTAMPED jobs only. A plan-authority job reads the planner's pinned "
+        '`strategy["song_captions"]` (CreativeStrategy.song_captions) and never calls it. '
+        "It only decides whether to ADD the uploaded song's own lyrics as captions (content "
+        "from the song, never creator-required text); it never picks the route, duration, "
+        "voice or order.",
     ),
     "_grounded_context_labels": ("content_only", "grounds context-label wording"),
     "_guided_execution_plan": ("content_only", "guided plan label wording"),
@@ -236,6 +236,10 @@ WORKER_FUNCTIONS: dict[str, tuple[str, str]] = {
 # Each legacy gate must be proven bypassed for plan-authority jobs by a test that still exists,
 # is collected (module-level ``test_*`` function) and is not skipped or xfailed.
 LEGACY_GATE_PROOFS: dict[str, tuple[str, str]] = {
+    "tasks/generative_build.py": (
+        "tasks/test_user_song_montage_job.py",
+        "test_a_stamped_montage_ignores_a_captions_ask_in_the_request_text",
+    ),
     "services/phone_speech_montage_job.py": (
         "tasks/test_route_override_flips.py",
         "test_a_contracted_phone_montage_ignores_speech_words_in_the_request",

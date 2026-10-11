@@ -137,15 +137,18 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
     var lookPreset: String = "none"
     /// The rich model. nil = an older draft that only has the single legacy `text`.
     var texts: [SlidePostTextElement]? = nil
-    enum CodingKeys: String, CodingKey { case text, texts; case lookPreset = "look_preset" }
-    init(text: SlidePostText? = nil, lookPreset: String = "none", texts: [SlidePostTextElement]? = nil) {
-        self.text = text; self.lookPreset = lookPreset; self.texts = texts
+    /// KRI-44: the slide's shape and crop. nil = portrait, centred cover (and, on save, "clear any stored framing").
+    var framing: SlidePostFraming? = nil
+    enum CodingKeys: String, CodingKey { case text, texts, framing; case lookPreset = "look_preset" }
+    init(text: SlidePostText? = nil, lookPreset: String = "none", texts: [SlidePostTextElement]? = nil, framing: SlidePostFraming? = nil) {
+        self.text = text; self.lookPreset = lookPreset; self.texts = texts; self.framing = framing
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         text = try c.decodeIfPresent(SlidePostText.self, forKey: .text)
         lookPreset = try c.decodeIfPresent(String.self, forKey: .lookPreset) ?? "none"
         texts = try c.decodeIfPresent([SlidePostTextElement].self, forKey: .texts)
+        framing = try c.decodeIfPresent(SlidePostFraming.self, forKey: .framing)
     }
     /// Writes both shapes: `texts`, and the legacy `text` mirroring `texts[0]` (the server's own rule).
     func encode(to encoder: Encoder) throws {
@@ -157,6 +160,9 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
             try c.encodeIfPresent(text, forKey: .text)
         }
         try c.encode(lookPreset, forKey: .lookPreset)
+        // The server reads the key's presence: missing keeps what it stored (an older client), `null` clears it,
+        // a value sets it. This build always says which, so removing a crop can never be mistaken for "unchanged".
+        if let framing { try c.encode(framing, forKey: .framing) } else { try c.encodeNil(forKey: .framing) }
     }
     /// What the editor shows: `texts`, or the legacy text lifted into one boxed element.
     var effectiveTexts: [SlidePostTextElement] {
@@ -200,6 +206,16 @@ struct SlidePostDraft: Codable, Equatable, Sendable {
     /// Rendering stamps and server metadata do not turn a clean editor dirty.
     func hasSameContent(as other: Self) -> Bool {
         platformProfile == other.platformProfile && slides == other.slides && coverIndex == other.coverIndex && caption == other.caption
+    }
+    /// Instagram keeps one shape for every slide, so a landscape slide (and its landscape-shaped crop) goes back to portrait.
+    func withLandscapeResetIfUnsupported() -> SlidePostDraft {
+        guard !SlidePostFraming.allowsLandscape(profile: platformProfile),
+              slides.contains(where: { $0.edits?.framing?.orientation == .landscape }) else { return self }
+        var copy = self
+        for index in copy.slides.indices where copy.slides[index].edits?.framing?.orientation == .landscape {
+            copy.slides[index].edits?.framing = nil
+        }
+        return copy
     }
     var validationMessage: String? {
         guard ["tiktok_photo", "instagram_carousel"].contains(platformProfile) else { return "Choose a supported post format." }
@@ -839,7 +855,9 @@ private struct SlidePostItemResponse: Decodable {
     /// clears redo. `coalescing` merges a run of the same gesture (typing, a slider drag) into one
     /// undo step. Also the entry point for a staged AI result (Lane E): stage it, show it, and the
     /// user can undo it before saving.
-    func stageDraft(_ new: SlidePostDraft, coalescing key: String? = nil) {
+    func stageDraft(_ staged: SlidePostDraft, coalescing key: String? = nil) {
+        // Switching to Instagram (a staged AI edit can) turns landscape slides back to portrait, as the server would.
+        let new = staged.withLandscapeResetIfUnsupported()
         // Dropped while a save/propose is in flight: the draft is being rebased onto the server's
         // answer, and the controls that call this are disabled/veiled in that window anyway.
         guard !isBusy, let current = draft, !new.hasSameContent(as: current) else { return }
@@ -1027,6 +1045,18 @@ private struct SlidePostItemResponse: Decodable {
             edits.setTexts(texts)
             value.slides[index].edits = edits
         }
+        stageDraft(value)
+    }
+    /// Sets (or, with nil/default, clears) a slide's shape and crop. Landscape is a TikTok-only shape.
+    func setFraming(slideID: String, _ framing: SlidePostFraming?) {
+        guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return }
+        var framing = framing
+        if framing?.orientation == .landscape, !SlidePostFraming.allowsLandscape(profile: value.platformProfile) { framing?.orientation = .portrait }
+        if framing?.isDefault == true { framing = nil }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        guard edits.framing != framing else { return }
+        edits.framing = framing
+        value.slides[index].edits = edits
         stageDraft(value)
     }
     func setLook(slideID: String, preset: String) {

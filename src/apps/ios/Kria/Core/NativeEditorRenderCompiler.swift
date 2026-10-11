@@ -47,11 +47,15 @@ enum NativeEditorRenderError: Error, Equatable {
     /// frame (lower-third safe zone, pop-in) whatever the format. The preview
     /// follows it so a phone Narrated caption shows where the phone burns it
     /// (KRI-280); cloud Narrated keeps its low burn position.
+    ///
+    /// `songCaptionShift` (KRI-576): re-times the song's lyric caption rows for the live preview only; nil leaves
+    /// every row exactly as the document has it.
     func compile(document: EditorDocument, clips: [EditorClip], items: [NativeEditorTimelineItem],
                  sources: [Int: ResolvedEditorSource], audioSources: [String: ResolvedEditorSource] = [:], mediaSources: [String: ResolvedEditorSource] = [:],
                  referenceOnlyMusic: Bool = false, sourceAudioPreserved: Bool = true,
                  songBed: NativeEditorSongBed? = nil,
-                 deviceCaptions: Bool = false) throws -> NativeEditorRenderProgram {
+                 deviceCaptions: Bool = false,
+                 songCaptionShift: NativeSongCaptionShift? = nil) throws -> NativeEditorRenderProgram {
         for (name, populated) in [
             ("carousel", document.carouselMoment != nil),
         ] where populated { throw NativeEditorRenderError.unsupportedLane(name) }
@@ -401,8 +405,11 @@ enum NativeEditorRenderError: Error, Equatable {
         // contain one receipt-backed element per spoken word, with its original
         // id and timing. Repeating the sentence on those adjacent intervals
         // keeps it continuously visible without inventing a replacement cue.
+        // KRI-576: lyric rows follow the song window as it is NOW (preview only). The shift works on a copy;
+        // a row it hides is `removed` here, so the interval check below never sees a reversed window.
+        let timedTextElements = songCaptionShift.map { $0.apply(to: document.textElements) } ?? document.textElements
         let renderedTextElements = Self.projectSentenceCaptions(
-            document.textElements, captionMeta: captionMeta
+            timedTextElements, captionMeta: captionMeta
         )
         for rawElement in renderedTextElements where rawElement.raw["enabled"] != .bool(false) && rawElement.raw["removed"] != .bool(true) {
             if rawElement.isCaption {

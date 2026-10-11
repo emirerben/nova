@@ -843,13 +843,15 @@ def test_east_run_replay_carries_every_requirement_in_one_replan_with_receipts()
 
     facts = plan_facts_from_strategy(fixture["replan_strategy"], clip_ids=fixture["clip_ids"])
     receipts = build_receipts(brief.live(), facts)
-    assert [r.requirement_id for r in receipts] == [r.id for r in brief.live()]
+    # A model target is not execution evidence, so the duration requirement
+    # remains unjudged on this strategy-only replan.
+    assert [r.requirement_id for r in receipts] == ["r1", "r3", "r4"]
     for receipt in receipts:
         expected = fixture["expected_receipts"][receipt.requirement_id]
         assert receipt.status == expected["status"], receipt
         assert receipt.inferred == expected["inferred"], receipt
     reply = reply_from_receipts(brief, receipts, summary="One pass through Bosphorus.")
-    for req in brief.live():
+    for req in (brief.requirements[0], brief.requirements[2], brief.requirements[3]):
         assert req.text() in reply
     assert "I guessed these" in reply and "Bebek" in reply
 

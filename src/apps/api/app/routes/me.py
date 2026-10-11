@@ -3471,7 +3471,10 @@ async def confirm_account_deletion(
         id=uuid.uuid4(),
         job_id=uuid.uuid4(),
         object_paths=late_tiktok_snapshot_paths,
-        object_prefixes=[f"users/{user.id}/"],
+        # Library sources may retain a provably owned historical UUID root.
+        # Sweep both namespaces after source/catalogue rows cascade; recording
+        # the roots before erasure also catches late uploads after commit.
+        object_prefixes=[f"users/{user.id}/", f"{user.id}/"],
         next_attempt_at=datetime.now(UTC) + ACCOUNT_ERASURE_LATE_UPLOAD_QUIESCENCE,
     )
     db.add(account_prefix_outbox)

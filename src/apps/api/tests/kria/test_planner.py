@@ -312,6 +312,10 @@ async def test_live_creator_plan_releases_transaction_and_offloads_sync_agent(
         content_plan_id=plan_id,
         current_job_id=None,
         edit_format="montage",
+        clip_gcs_paths=["clips/asset-verified.mp4"],
+        clip_assignments=[
+            {"media_id": "asset-verified", "gcs_path": "clips/asset-verified.mp4", "duration_s": 3}
+        ],
     )
     content_plan = SimpleNamespace(id=plan_id, user_id=creator_id, persona_id=persona_id)
     persona = SimpleNamespace(id=persona_id, user_id=creator_id)
@@ -432,8 +436,16 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
         content_plan_id=plan_id,
         current_job_id=None,
         edit_format="montage",
+        clip_gcs_paths=["clips/asset-verified.mp4"],
+        clip_assignments=[
+            {"media_id": "asset-verified", "gcs_path": "clips/asset-verified.mp4", "duration_s": 3}
+        ],
     )
-    refreshed_item = SimpleNamespace(id=item_id)
+    refreshed_item = SimpleNamespace(
+        id=item_id,
+        clip_gcs_paths=item.clip_gcs_paths,
+        clip_assignments=item.clip_assignments,
+    )
     content_plan = SimpleNamespace(id=plan_id, user_id=creator_id, persona_id=persona_id)
     persona = SimpleNamespace(id=persona_id, user_id=creator_id)
     manifest = ResolvedCreatorManifest(

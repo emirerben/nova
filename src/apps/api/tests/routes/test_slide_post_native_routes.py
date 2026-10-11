@@ -523,3 +523,73 @@ async def test_put_staged_binding_survives_slide_reorder(
     saved = SlidePostDraft.model_validate(item.slide_post)
     assert [slide.id for slide in saved.slides] == ["two", "one"]
     assert saved.brief_binding == binding
+
+
+def _cloud_rendered_job(*, render_destination: str | None = None) -> SimpleNamespace:
+    variant = {"variant_id": "slides", "resolved_archetype": "slides"}
+    if render_destination:
+        variant["render_destination"] = render_destination
+    return SimpleNamespace(assembly_plan={"variants": [variant]})
+
+
+async def _rebuild_after_save(
+    monkeypatch: pytest.MonkeyPatch, job: SimpleNamespace, *, native_client: bool
+) -> AsyncMock:
+    dispatch = AsyncMock()
+    db = SimpleNamespace(get=AsyncMock(return_value=job), commit=AsyncMock())
+    monkeypatch.setattr(plan_items, "dispatch_slide_post_edit", dispatch)
+    monkeypatch.setattr(plan_items, "_publish_committed_variant_render", AsyncMock())
+    item = SimpleNamespace(current_job_id=uuid.uuid4())
+    await plan_items._maybe_rebuild_slide_post(item, uuid.uuid4(), db, native_client=native_client)
+    return dispatch
+
+
+@pytest.mark.asyncio
+async def test_native_save_does_not_mint_a_cloud_rerender_under_the_native_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-581: the draft saves, but an old server render is not replaced on the iPhone."""
+    monkeypatch.setattr(settings, "ios_native_device_only_enabled", True)
+
+    dispatch = await _rebuild_after_save(monkeypatch, _cloud_rendered_job(), native_client=True)
+
+    dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_web_save_still_rebuilds_a_cloud_render_under_the_native_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ios_native_device_only_enabled", True)
+    monkeypatch.setattr(settings, "ios_device_only_mode", False)
+    monkeypatch.setattr(settings, "cloud_render_execution_enabled", True)
+
+    dispatch = await _rebuild_after_save(monkeypatch, _cloud_rendered_job(), native_client=False)
+
+    dispatch.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_native_save_still_rebuilds_a_device_bound_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ios_native_device_only_enabled", True)
+
+    dispatch = await _rebuild_after_save(
+        monkeypatch, _cloud_rendered_job(render_destination="device"), native_client=True
+    )
+
+    dispatch.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_native_save_rebuilds_when_the_fence_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ios_native_device_only_enabled", False)
+    monkeypatch.setattr(settings, "ios_device_only_mode", False)
+    monkeypatch.setattr(settings, "cloud_render_execution_enabled", True)
+
+    dispatch = await _rebuild_after_save(monkeypatch, _cloud_rendered_job(), native_client=True)
+
+    dispatch.assert_called_once()
