@@ -1390,6 +1390,29 @@ def _snapshot_total_s(snapshot: EditProposalSnapshot) -> float:
     )
 
 
+def _draws_clip_labels(snapshot: EditProposalSnapshot) -> bool:
+    """Does this snapshot's text projection draw the `clip-label-*` lane (KRI-190)?"""
+    return bool(
+        snapshot.clip_labels is not None
+        and snapshot.direction == "fast_montage"
+        and snapshot.fast_cuts
+        and snapshot.narration is None
+    )
+
+
+def clip_label_media_ids(snapshot: EditProposalSnapshot) -> frozenset[str]:
+    """Clips whose label the `clip-label-*` lane draws; the context lane skips them.
+
+    KRI-584: a unified montage turns resolved label intents into `clip_labels`, and
+    the grounded context lane read the same intents, so every room label was drawn
+    twice (a centred line and a corner tag). The `clip-label-*` bar owns a clip it
+    labels: it honours the creator's label position and is the bar the editor edits.
+    """
+    if not _draws_clip_labels(snapshot):
+        return frozenset()
+    return frozenset(label.media_id for label in snapshot.clip_labels or [] if label.text)
+
+
 def _text_elements(
     snapshot: EditProposalSnapshot,
     beat_windows: list[dict],
@@ -1511,13 +1534,8 @@ def _base_text_elements(
     # reading time) at the bottom, so it coexists with an opening title at the
     # top. Only snapshots that carry `clip_labels` reach this branch; every
     # earlier snapshot keeps its projection byte-for-byte.
-    if (
-        snapshot.clip_labels is not None
-        and snapshot.direction == "fast_montage"
-        and snapshot.fast_cuts
-        and snapshot.narration is None
-    ):
-        label_by_source = {label.media_id: label.text for label in snapshot.clip_labels}
+    if _draws_clip_labels(snapshot):
+        label_by_source = {label.media_id: label.text for label in snapshot.clip_labels or []}
         label_elements: list[dict] = []
         title_elements: list[dict] = []
         # KRI-522: the creator's named title entrance and label corner. Unset keeps the
@@ -3655,6 +3673,7 @@ def compile_guided_runtime_plan(
                 clip_id_to_gcs,
                 matcher_clip_metas(snapshot),
                 media_refs=list(snapshot.media),
+                skip_clip_ids=clip_label_media_ids(snapshot),
             )
             by_clip_rows: dict[str, list[dict[str, Any]]] = {}
             for row in labels:
@@ -3733,14 +3752,22 @@ def compile_guided_runtime_plan(
             # without the raw clip intents needed to rebuild them.  Still
             # project those labels onto the revised timeline; carrying the
             # canonical intervals here would make a trim render past EOF.
-            runtime_payload["context_label_text_elements"] = _project_context_label_text_elements(
-                canonical.context_label_text_elements,
-                moments,
-                canonical_moments=[
-                    moment.model_dump(mode="json") for moment in canonical.story_timeline
-                ],
-                moment_lineage=moment_lineage,
-            )
+            # KRI-584: a plan pinned before the fix may still carry a corner copy
+            # of a `clip-label-*` bar; the revision drops it (projected rows are
+            # per revised clip, so a run over an unlabelled clip keeps that part).
+            labelled = clip_label_media_ids(snapshot)
+            runtime_payload["context_label_text_elements"] = [
+                element
+                for element in _project_context_label_text_elements(
+                    canonical.context_label_text_elements,
+                    moments,
+                    canonical_moments=[
+                        moment.model_dump(mode="json") for moment in canonical.story_timeline
+                    ],
+                    moment_lineage=moment_lineage,
+                )
+                if element["source_params"].get("source_clip_id") not in labelled
+            ]
         runtime = GuidedStoryExecutionPlan.model_validate(runtime_payload)
         return runtime.model_dump(mode="json", exclude_none=False)
     except GuidedStoryError:

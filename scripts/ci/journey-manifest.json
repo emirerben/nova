@@ -229,6 +229,14 @@
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/app/tasks/speech_cleanup_analysis.py"
       ]
+    },
+    {
+      "id": "kri-586-hook-copy",
+      "api_tests": "tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py tests/agents/test_runtime.py tests/kria/test_creative_copy_planner.py tests/evals/test_main_creator_evals.py",
+      "paths": [
+        "src/apps/api/prompts/main_creator.txt",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/"
+      ]
     }
   ]
 }

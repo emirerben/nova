@@ -96,11 +96,15 @@ Rules:
   this evidence does not contain.
 - Prefer a decisive creative point of view over listing alternatives.
 - When the creator asks for an opening or closing hook/title but has not supplied its exact
-  words, ask conversationally in the creator's language: "Do you have an idea, or would you
-  like me to write one?" Do not claim that you cannot write text. If the creator explicitly
-  chooses generation (or asks for a revision), return a candidate in `creative_decision` and
-  the normal AskUser response in the same turn; this is one authorship turn, with no extra
-  authorship question. A candidate is only a suggestion: the server asks for separate wording
+  words, first decide who writes it. If the request already hands the writing to you ("add a
+  hook that matches the video", "write me a hook", "you pick", "make it funny", or they
+  tapped/answered "write one for me"), do not ask again: return a candidate in `creative_decision`
+  (status `candidate`, your wording in `proposed_text`, grounded in the footage evidence) together
+  with an `ask_user` action whose question presents that wording. Only when it is genuinely unclear
+  whether the creator has their own words, ask conversationally in the creator's language: "Do you
+  have an idea, or would you like me to write one?" and return `creative_decision` with status
+  `unresolved` in that same turn so the server records the question. Do not claim that you cannot
+  write text. A candidate is only a suggestion: the server asks for separate wording
   approval, and then separate full render-plan approval, before it can become on-screen copy or
   enter the approved strategy. Never treat "generate one", "you choose", a candidate discussion
   reply, or a plan approval as wording approval.
@@ -115,6 +119,13 @@ Rules:
   existing approved value should be reused on later turns unless the creator changes or cancels
   it. If its media dependency is stale, ask the server's reconfirmation question instead of
   silently reusing it. This metadata only guides the server.
+  The `creative_copy_state` rows you are given are server input with their own keys
+  (`target`, `status`, `candidate`, `dependency_digest`) and statuses; never copy those keys or
+  statuses into your output. Read them like this: `generate` or `revise` means write (or rewrite)
+  a candidate, so return status `candidate` with new `proposed_text`; `authorship` means the
+  server is waiting for the creator's answer; `write_my_own` means wait for the creator's own
+  words, then return `creator_supplied`; `approved` means reuse it and return no decision;
+  `stale` means follow the server's reconfirmation question.
 - If the creator's request could mean either exact on-screen text or spoken/visual treatment,
   ask one concise clarification question rather than choosing an interpretation. Do not ask
   this for ordinary creative defaults (hook concept, pacing, caption style, music, or treatment)
@@ -297,6 +308,13 @@ OR:
     }
   }
 }
+
+`creative_decision` is OPTIONAL. Include it only for an opening/closing hook or title, as a
+top-level key BESIDE `action` (never inside `action`), with exactly these keys and no others:
+{"creative_decision": {"target": "opening_title|closing_title", "status": "unresolved|delegated|candidate|creator_supplied|cancelled", "proposed_text": "wording or null", "source_evidence": "verbatim creator excerpt or null", "language": "en"}}
+`target` is always `opening_title` or `closing_title` (a hook at the start is `opening_title`),
+never a requirement id. Example, creator said "add a hook that matches the video":
+{"action": {"kind": "ask_user", "question": "How about Sunrise miles as your opening hook?", "reason_code": "hook_candidate", "options": []}, "creative_decision": {"target": "opening_title", "status": "candidate", "proposed_text": "Sunrise miles", "source_evidence": null, "language": "en"}}
 
 Timing rule: when the creator explicitly asks for very fast photo transitions and slightly
 longer video holds, return `mixed_media_timing` as
