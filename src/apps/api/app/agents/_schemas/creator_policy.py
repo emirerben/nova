@@ -62,6 +62,23 @@ def _stated_media_count(normalized: str) -> int | None:
     return None
 
 
+def stated_media_counts(request: str) -> set[int]:
+    """Every media quantity the creator states: "7 clips", "all 30", "7 klibin" (KRI-594)."""
+
+    normalized = " ".join(str(request or "").casefold().split())
+    counts = {
+        int(count)
+        for count in re.findall(
+            rf"\b(\d{{1,4}})\s+(?:of\s+(?:the|my|your)\s+)?{_MEDIA_COUNT_NOUN}\b", normalized
+        )
+    }
+    english = _stated_media_count(normalized)
+    if english is not None:
+        counts.add(english)
+    counts.update(turkish_stated_media_counts(request))
+    return counts
+
+
 def _attached_media_count(manifest: Any) -> int:
     """Count of non-asset media (video/image) attached to this manifest."""
 

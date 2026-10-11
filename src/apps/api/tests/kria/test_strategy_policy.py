@@ -14,7 +14,7 @@ from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_checks import PlanFacts, check_requirement, reply_from_receipts
 from app.kria.strategy_policy import (
     CAPTIONS_KEPT_NOTICE,
-    GUIDED_VOICEOVER_DOWNGRADE_NOTICE,
+    VISUALS_NEED_A_WORD_NOTICE,
     CheckedStrategy,
     RefusedStrategy,
     check_strategy_for_runtime_v2,
@@ -288,7 +288,8 @@ def test_guided_voiceover_is_downgraded_to_the_native_voiceover_edit(prod_profil
     assert checked.strategy.execution_contract is None
     assert checked.strategy.render_program == "native"
     assert checked.strategy.selected_media_ids == CLIPS
-    assert GUIDED_VOICEOVER_DOWNGRADE_NOTICE in checked.notices
+    # KRI-594: the photos it leaves out pop in on a spoken word on this edit (KRI-519).
+    assert VISUALS_NEED_A_WORD_NOTICE in checked.notices
 
 
 def test_talking_length_receipt_says_the_whole_take_is_kept() -> None:

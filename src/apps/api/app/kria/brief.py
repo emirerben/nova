@@ -874,6 +874,46 @@ def route_requirements(
 # ---------------------------------------------------------------- request rendering
 
 
+# KRI-594: a select requirement on one clip may ask to leave it OUT ("remove the bathtub
+# photo", "küvet fotoğrafını çıkar"). Written against `loose_text` with punctuation as spaces.
+_LEAVE_OUT_ASK = re.compile(
+    r"\b(?:remove|delete|drop|skip|cut|avoid|exclude|leave out|get rid of|without|no|never"
+    r"|don t|do not)\b"
+    r"|\b(?:cikar|sil|atla|kullanma|koyma|olmasin|istemiyorum)\w*"
+)
+
+
+def requested_media(brief: CreativeBrief | None, media_ids: Iterable[str]) -> dict[str, str]:
+    """KRI-594: each medium a live requirement asks to show, with that requirement's words.
+
+    A ``clip:<id>`` scope names the medium by its id, or by a unique tail of it (the brief
+    may drop an own clip's "analysis-proxy-ios-" prefix). A select requirement that reads as
+    leaving the medium out is the opposite of an ask and never counts.
+    """
+
+    if brief is None:
+        return {}
+    ids = list(dict.fromkeys(media_ids))
+    asked: dict[str, str] = {}
+    for req in brief.live():
+        if not req.scope.startswith("clip:"):
+            continue
+        token = req.scope.split(":", 1)[1]
+        tails = (
+            [media_id for media_id in ids if media_id.endswith(token)] if len(token) >= 6 else []
+        )
+        media_id = token if token in ids else (tails[0] if len(tails) == 1 else None)
+        if media_id is None:
+            continue
+        words = req.text()
+        if req.kind == "select" and _LEAVE_OUT_ASK.search(
+            " ".join(re.sub(r"[^\w\s]", " ", loose_text(words)).split())
+        ):
+            continue
+        asked.setdefault(media_id, words)
+    return asked
+
+
 def render_brief_request(brief: CreativeBrief | None, *, latest_message: str = "") -> str:
     """Render the brief as the strategy's creator request.
 
@@ -1205,6 +1245,7 @@ __all__ = [
     "persist_brief_version_sync",
     "plan_shape_from_editor_snapshot",
     "render_brief_request",
+    "requested_media",
     "route_requirements",
     "wants_full_replan",
 ]
