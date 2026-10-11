@@ -30,13 +30,6 @@ import structlog
 
 from app.kria.reply_language import say
 from app.schemas.clip_intents import ResolvedClipIntent
-from app.services.phone_reaction_grounding import _find_all, fold_tokens
-from app.services.speech_segments import (
-    EXCERPT_TAIL_S,
-    _fuzzy_span,
-    ground_excerpt,
-    words_to_segments,
-)
 
 log = structlog.get_logger()
 
@@ -113,6 +106,19 @@ def quoted_phrases(text: str | None) -> list[str]:
     return out
 
 
+def fold_tokens(text: object) -> list[str]:
+    # Imported here: phone_reaction_grounding pulls in skia, and this module is on the
+    # import path of routes and CLIs that must load without a GPU stack.
+    from app.services.phone_reaction_grounding import fold_tokens as fold  # noqa: PLC0415
+
+    return fold(text)
+
+
+def _find_all(tokens: list[str], target: list[str]) -> bool:
+    width = len(target)
+    return any(tokens[i : i + width] == target for i in range(len(tokens) - width + 1))
+
+
 def spoken_quote(text: str | None) -> str | None:
     """The first quoted phrase of ``text`` when ``text`` asks for something said."""
     quotes = quoted_phrases(text)
@@ -130,6 +136,8 @@ def _says(tokens: list[str], target: list[str]) -> bool:
         return False
     if _find_all(tokens, target):
         return True
+    from app.services.speech_segments import _fuzzy_span  # noqa: PLC0415
+
     # Creators quote from memory: "ben burada" for "burada ben ya".
     return len(target) >= 3 and _fuzzy_span(tokens, target) is not None
 
@@ -273,6 +281,12 @@ def locate_in_words(
     quote: str, words: Sequence[Mapping[str, Any]], duration_s: float
 ) -> tuple[float, float] | None:
     """The quote's word-timed window, widened to its sentence when that is close."""
+    from app.services.speech_segments import (  # noqa: PLC0415
+        EXCERPT_TAIL_S,
+        ground_excerpt,
+        words_to_segments,
+    )
+
     grounded = ground_excerpt(list(words), quote, duration_s=duration_s)
     if grounded is None:
         return None
