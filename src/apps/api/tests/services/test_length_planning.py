@@ -338,3 +338,75 @@ def test_kri492_bounded_windows_and_single_hero_audio_clocks(case: str) -> None:
             window["source_end_s"] - window["source_start_s"] for window in plan["windows"]
         ]
         assert durations == [14.0, 6.0]
+
+
+# KRI-595 (prod 2026-10-11, job 0c9f0a82): a 30 fps analysis proxy rounds its duration up to
+# whole frames (5.0 s) while the device original is 4.968333 s. The plan stores the proxy's
+# duration; the worker measures the original. The reader demanded a 1 ms match and failed
+# every such render with "length plan source duration changed".
+PROXY_S = 5.0
+ORIGINAL_S = 4.968333333333334
+
+
+def _proxy_envelope(*, window_end_s: float, duration_s: float = PROXY_S) -> dict:
+    return {
+        "version": 1,
+        "sources": [
+            {
+                "media_id": "a",
+                "storage_generation": "1",
+                "gcs_path": "a.mp4",
+                "kind": "video",
+                "duration_s": duration_s,
+            }
+        ],
+        "windows": [
+            {"media_id": "a", "source_start_s": 0.0, "source_end_s": window_end_s, "score": 5.0}
+        ],
+        "conflicts": [],
+        "window_eligible": True,
+    }
+
+
+def test_kri595_proxy_frame_rounding_does_not_invalidate_the_approved_plan() -> None:
+    parts = read_length_plan(_proxy_envelope(window_end_s=3.0), [_clip("a", duration_s=ORIGINAL_S)])
+
+    assert parts is not None
+    assert (parts[0].source_start_s, parts[0].source_end_s) == (0.0, 3.0)
+
+
+def test_kri595_window_to_the_proxy_end_is_clamped_to_the_real_clip() -> None:
+    parts = read_length_plan(
+        _proxy_envelope(window_end_s=PROXY_S), [_clip("a", duration_s=ORIGINAL_S)]
+    )
+
+    assert parts is not None
+    assert parts[0].source_end_s <= ORIGINAL_S
+    assert parts[0].source_end_s > ORIGINAL_S - 0.002
+
+
+@pytest.mark.parametrize("actual_s", [4.8, 5.2])
+def test_kri595_a_genuinely_different_source_is_still_rejected(actual_s: float) -> None:
+    with pytest.raises(ValueError, match="length plan source duration changed"):
+        read_length_plan(_proxy_envelope(window_end_s=3.0), [_clip("a", duration_s=actual_s)])
+
+
+def test_kri595_a_window_the_real_clip_cannot_hold_is_rejected() -> None:
+    envelope = _proxy_envelope(window_end_s=PROXY_S)
+    envelope["windows"][0]["source_start_s"] = 4.95
+
+    with pytest.raises(ValueError, match="window exceeds source"):
+        read_length_plan(envelope, [_clip("a", duration_s=ORIGINAL_S)])
+
+
+def test_kri595_the_approved_proxy_plan_reaches_a_montage_snapshot() -> None:
+    """End to end through the planner: the incident's plan + the worker's original clip."""
+    compiled = plan_unified_montage(
+        [_clip("a", duration_s=ORIGINAL_S)],
+        strategy={},
+        approved_length_plan=_proxy_envelope(window_end_s=PROXY_S),
+    )
+
+    cuts = compiled.snapshot.fast_cuts
+    assert [cut.media_id for cut in cuts] == ["a"]
+    assert cuts[0].source_end_s <= ORIGINAL_S + 0.001

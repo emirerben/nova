@@ -122,7 +122,7 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-08-v53"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-11-v54"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt
@@ -779,3 +779,137 @@ def test_render_intent_evidence_nested_in_strategy_is_moved_beside_it() -> None:
 
     assert isinstance(output.action, ProposeStrategy)
     assert output.action.render_intent_evidence is not None
+
+
+# ── KRI-586: prod 2026-10-11, thread e3971fd6. Asked to write a hook, the model had no
+# documented `creative_decision` shape and returned these three, all rejected x3. ──
+
+
+def _hook_raw(decision: object, *, kind: str = "ask_user", nested: bool = False) -> str:
+    action: dict = {
+        "kind": kind,
+        "question": "How about Sunrise miles as your opening hook?",
+        "reason_code": "hook_candidate",
+        "options": [],
+    }
+    data: dict = {"action": action}
+    if nested:
+        action["creative_decision"] = decision
+    else:
+        data["creative_decision"] = decision
+    return json.dumps(data)
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        # attempt 2 of the incident: resolution/text instead of status/proposed_text
+        {"target": "opening_title", "resolution": "candidate", "text": "Marathon morning vibes"},
+        # attempt 3: requirement id as target, `candidate` instead of proposed_text
+        {"target": "r1", "status": "candidate", "candidate": "Race day sunrise", "language": "en"},
+        # attempt 1: requirement id target + `state`
+        {"target": "r1", "state": "candidate", "candidate": "Sunrise steps", "language": "en"},
+        # the server's own state row echoed back, with its extra digest key
+        {
+            "target": "opening_title",
+            "status": "generate",
+            "candidate": "Sunrise miles",
+            "dependency_digest": "abc",
+        },
+    ],
+)
+def test_incident_creative_decision_shapes_parse_as_inert_candidates(decision: dict) -> None:
+    output = MainCreatorAgent(None).parse(_hook_raw(decision), _input())  # type: ignore[arg-type]
+
+    assert output.creative_decision is not None
+    assert output.creative_decision.target == "opening_title"
+    assert output.creative_decision.status == "candidate"
+    assert output.creative_decision.proposed_text
+
+
+def test_creative_decision_nested_in_action_is_hoisted() -> None:
+    decision = {"target": "opening_title", "status": "candidate", "proposed_text": "Sunrise miles"}
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        _hook_raw(decision, nested=True), _input()
+    )
+
+    assert output.creative_decision is not None
+    assert output.creative_decision.proposed_text == "Sunrise miles"
+
+
+def test_echoed_server_owned_states_never_become_consent() -> None:
+    for status in ("approved", "stale"):
+        decision = {"target": "opening_title", "status": status, "candidate": "Sunrise miles"}
+        output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+            _hook_raw(decision), _input()
+        )
+        assert output.creative_decision is None
+
+
+def test_repair_never_invents_creator_supplied_or_its_target() -> None:
+    agent = MainCreatorAgent(None)
+    # "write_my_own" is the server waiting for the creator: an inert `unresolved`, not supplied.
+    waiting = {"target": "opening_title", "status": "write_my_own"}
+    parsed = agent.parse(_hook_raw(waiting), _input())  # type: ignore[arg-type]
+    assert parsed.creative_decision is not None
+    assert parsed.creative_decision.status == "unresolved"
+    # A consent-bearing status keeps a strict target: a requirement id is still a schema error.
+    from app.agents._runtime import SchemaError
+
+    supplied = {
+        "target": "r1",
+        "status": "creator_supplied",
+        "proposed_text": "My words",
+        "source_evidence": "My words",
+    }
+    with pytest.raises(SchemaError):
+        agent.parse(_hook_raw(supplied), _input())  # type: ignore[arg-type]
+
+
+def test_creative_decision_failure_names_the_object_and_class_without_values() -> None:
+    from app.agents._runtime import SchemaError
+
+    agent = MainCreatorAgent(None)
+    bad = {"target": "opening_title", "status": "PRIVATE-WORDS"}
+    with pytest.raises(SchemaError) as exc_info:
+        agent.parse(_hook_raw(bad), _input())  # type: ignore[arg-type]
+
+    clarification = agent.schema_clarification()
+    assert "creative_decision" in clarification
+    assert "proposed_text" in clarification
+    assert "PRIVATE-WORDS" not in clarification
+    error_class = exc_info.value.error_class  # type: ignore[attr-defined]
+    assert error_class == "creative_decision:status:literal_error"
+    assert "PRIVATE-WORDS" not in error_class
+    import re
+
+    assert re.fullmatch(r"[a-z_:,]{1,80}", error_class)
+
+
+def test_strategy_rationale_beside_strategy_is_accepted() -> None:
+    raw = json.loads(_raw(audio_strategy="licensed_music", selected=[]))
+    raw["action"]["rationale"] = raw["action"]["strategy"].pop("rationale")
+
+    output = MainCreatorAgent(None).parse(json.dumps(raw), _input())  # type: ignore[arg-type]
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.rationale == "Build a concise visual arc."
+
+
+def test_missing_rationale_everywhere_is_still_a_classed_failure() -> None:
+    from app.agents._runtime import SchemaError
+
+    raw = json.loads(_raw(audio_strategy="licensed_music", selected=[]))
+    raw["action"]["strategy"].pop("rationale")
+    with pytest.raises(SchemaError) as exc_info:
+        MainCreatorAgent(None).parse(json.dumps(raw), _input())  # type: ignore[arg-type]
+
+    assert exc_info.value.error_class == "strategy_rationale_missing"  # type: ignore[attr-defined]
+
+
+def test_prompt_documents_the_creative_decision_contract() -> None:
+    prompt = MainCreatorAgent(None).render_prompt(_input())  # type: ignore[arg-type]
+
+    for key in ("proposed_text", "source_evidence", "opening_title", "closing_title"):
+        assert key in prompt
+    assert "BESIDE `action`" in prompt

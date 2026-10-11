@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
+from app.kria.media_sources import PROXY_ORIGINAL_DURATION_TOLERANCE_S
 from app.pipeline.best_parts import BestPart, BestPartsConflict, BestPartsResult, select_best_parts
 from app.schemas.edit_proposal import (
     MixedMediaTimingProfile,
@@ -454,9 +455,19 @@ def read_length_plan(
         # A still's recorded capacity is an allocation rule, not media
         # metadata.  Its upload duration is commonly None or zero and must not
         # invalidate the approved synthetic hold.
+        #
+        # The plan records the analysis proxy's duration, which a frame-rate
+        # encode rounds to whole frames (a 4.968 s original becomes a 5.0 s
+        # proxy), while the worker measures the original.  The identity checks
+        # above (path + storage generation) are what detect a replaced file;
+        # this one only catches a grossly different one, with the same slack the
+        # upload contract allows between a proxy and its original (KRI-595).
         if expected_duration is None or (
             kind != "image"
-            and (actual_duration is None or abs(expected_duration - actual_duration) > 0.001)
+            and (
+                actual_duration is None
+                or abs(expected_duration - actual_duration) > PROXY_ORIGINAL_DURATION_TOLERANCE_S
+            )
         ):
             raise ValueError("length plan source duration changed")
         expected[source["media_id"]] = source
@@ -480,6 +491,13 @@ def read_length_plan(
             or end > float(source_duration) + 0.001
         ):
             raise ValueError("length plan window exceeds source")
+        if expected[window["media_id"]].get("kind", "video") == "video":
+            # A window the proxy allowed may run a frame past the real clip.
+            actual_end = _number(getattr(clip, "duration_s", None))
+            if actual_end is not None and end > actual_end:
+                end = math.floor(actual_end * 1000) / 1000
+                if end - start < 0.1 - 1e-9:
+                    raise ValueError("length plan window exceeds source")
         included.add(window["media_id"])
         parts.append(
             BestPart(

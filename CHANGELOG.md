@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.224.0] - 2026-10-11
+
+### Changed
+- fix(length): approved length plan tolerates proxy frame-rounding and clamps windows to the real clip (KRI-595) (#1551) <!-- release-pr: 1551 -->
+
+## [0.78.223.0] - 2026-10-11
+
+### Changed
+- fix(kria): hook requests no longer dead-end on a creative_decision schema error (KRI-586) (#1544) <!-- release-pr: 1544 -->
+
 ## [0.78.222.0] - 2026-10-11
 
 ### Changed
