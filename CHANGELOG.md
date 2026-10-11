@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.211.0] - 2026-10-11
+
+### Changed
+- fix(kria): break phone captions around the Kria watermark (KRI-548) (#1506) <!-- release-pr: 1506 -->
+
+## [0.78.210.0] - 2026-10-11
+
+### Changed
+- fix(kria): place every "every time I say X" hit and report the ones past the cap (KRI-550) (#1505) <!-- release-pr: 1505 -->
+
 ## [0.78.209.0] - 2026-10-11
 
 ### Changed
