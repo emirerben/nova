@@ -552,6 +552,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-548-caption-watermark"),
             ),
             (
+                "src/apps/api/app/kria/voiceover_scope.py",
+                (True, "covered", "kri-598-voiceover-planner"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/agent_evals/clip_intent_planner/golden/kri598_tigre_spoken_cues.json",
+                (True, "covered", "kri-598-voiceover-planner"),
+            ),
+            (
                 "src/apps/api/app/kria/planner.py.backup",
                 (True, "gap", ""),
             ),

@@ -194,6 +194,17 @@
         "src/apps/api/prompts/main_creator.txt",
         "src/apps/api/tests/fixtures/agent_evals/main_creator/"
       ]
+    },
+    {
+      "id": "kri-598-voiceover-planner",
+      "api_tests": "tests/kria/test_kri598_voiceover_planner.py tests/evals/test_clip_intent_planner_evals.py tests/evals/test_main_creator_evals.py",
+      "paths": [
+        "src/apps/api/app/kria/voiceover_scope.py",
+        "src/apps/api/prompts/clip_intent_planner.txt",
+        "src/apps/api/tests/fixtures/agent_evals/clip_intent_planner/",
+        "src/apps/api/tests/fixtures/kri598_tigre_voiceover_turns.json",
+        "src/apps/api/tests/kria/test_kri598_voiceover_planner.py"
+      ]
     }
   ]
 }
