@@ -588,6 +588,10 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-598-voiceover-planner"),
             ),
             (
+                "src/apps/api/tests/kria/test_voiceover_downgrade_losses.py",
+                (True, "covered", "kri-598-voiceover-planner"),
+            ),
+            (
                 "src/apps/api/app/kria/planner.py.backup",
                 (True, "gap", ""),
             ),

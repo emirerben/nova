@@ -640,6 +640,7 @@ jobs:
         run: |
           set -o pipefail
           python3 -m pytest tests/kria/test_kri598_voiceover_planner.py \
+            tests/kria/test_voiceover_downgrade_losses.py \
             tests/evals/test_clip_intent_planner_evals.py \
             tests/evals/test_main_creator_evals.py -q \
             | tee ../../../test-results/kri-559/voiceover-planner-api-tests.log
