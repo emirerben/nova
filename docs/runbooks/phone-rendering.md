@@ -2500,6 +2500,24 @@ Flow:
    API first (migration 0118 is additive and nullable). Guards: `tests/services/test_song_range.py`
    (the real job's candidates; a repeated verse no longer splits the group),
    `tests/kria/test_planner_song_order.py`, `tests/routes/test_creation_threads_user_song.py`.
+   **Asked in the chat (KRI-588).** The row above was buried in Add media > Song, so nobody found
+   it. The planner gate (`_song_order_gate`) now ASKS once per song generation: when no range is set
+   and some take has two plausible places at least 15 s apart (`takes_ambiguous_between_repeats`:
+   second candidate likelihood >= 0.2), the turn is a `song_range_question`
+   (`{question_id, song_generation, song_duration_s}` on the assistant event payload and the turn
+   plan), asked BEFORE any order question. The answer rides on the next turn as
+   `song_range: {question_id, start_s, end_s}` (both null = "the whole song"/skip); submit
+   validates it against the latest open question (409 `song_range_stale`, 422
+   `song_range_invalid`), stores the range exactly like `PUT /song-range` (shared
+   `apply_song_range`) and the planner continues with matches narrowed to it. "Asked" is
+   remembered from the question event itself, so an ignored question is never repeated.
+   `thread_keeps_lipsync` and `model_text` treat the exchange like the order question (lip-sync
+   survives the answer turn; the model reads a neutral line, not the card text). Capability
+   `song_range_questions`; same kill switch `SONG_FILMING_RANGE_ENABLED`. Guards:
+   `tests/services/test_song_range_question.py`, `tests/kria/test_song_range_answer_apply.py`,
+   the gate cases in `tests/kria/test_planner_song_order.py`. Order-question fixtures that are
+   verse repeats turn the range question off in their autouse fixture; do the same in any new
+   gate test that expects the order question first.
    Playback:
    `GET /creation-threads/{id}/song-audio?generation=N` returns a 15-minute signed URL
    pinned to the object generation (409 `song_changed` if the song was replaced or

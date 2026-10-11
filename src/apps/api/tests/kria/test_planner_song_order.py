@@ -83,6 +83,9 @@ def _item(alignment: dict | None, analysis: dict | None = None) -> SimpleNamespa
 def _flags(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "user_song_montage_enabled", True)
     monkeypatch.setattr(settings, "song_alignment_turn_deadline_s", 0.0)
+    # KRI-588: the order-question tests below use verse-repeat fixtures; the range question that
+    # would come first has its own tests (test_song_range_question.py).
+    monkeypatch.setattr(settings, "song_filming_range_enabled", False)
     monkeypatch.setattr(planner, "_SONG_ALIGNMENT_POLL_S", 0.01)
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
 
@@ -612,9 +615,19 @@ def test_the_full_creator_request_never_includes_a_song_answers_echo_text() -> N
     assert "0:44" not in request and "1:40" not in request
 
 
-async def test_the_gate_matches_takes_only_inside_the_stretch_the_creator_filmed_in() -> None:
+async def test_the_gate_matches_takes_only_inside_the_stretch_the_creator_filmed_in(
+    monkeypatch,
+) -> None:
     """KRI-580: a take whose best guess is a verse repeat elsewhere is placed in the stretch."""
     from app.schemas.user_song import PlacementCandidate  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "song_filming_range_enabled", True)
+    # The range question was already asked (and skipped) for this song: the plain run goes on to
+    # the order question instead of asking again.
+    asked = {"song_range_question": {"question_id": "q-range", "song_generation": GEN}}
+    monkeypatch.setattr(
+        planner, "_load_thread_events", AsyncMock(return_value=[("assistant", asked)])
+    )
 
     far_repeat = TakeAlignment(
         media_id="b",
@@ -654,3 +667,125 @@ async def test_a_stored_range_is_ignored_when_the_feature_is_switched_off(monkey
     assert asked is not None
     by_id = {i.media_id: i for i in asked.song_order_question.items}
     assert by_id["a"].song_start_s == 20.0
+
+
+# -- KRI-588: "which part of the song did you film?" is asked in the chat -----
+
+
+def _repeat_take(mid: str = "b") -> TakeAlignment:
+    """The job-1c598df5 shape: a sure place plus a second, lower place a verse-repeat away."""
+    return TakeAlignment(
+        media_id=mid,
+        status="ambiguous",
+        delta_s=99.0,
+        confidence=0.98,
+        likelihood=0.98,
+        margin=0.68,
+        candidates=[
+            PlacementCandidate(delta_s=99.0, likelihood=0.98, method="lyrics"),
+            PlacementCandidate(delta_s=145.0, likelihood=0.31, method="lyrics"),
+        ],
+    )
+
+
+def _range_asked(generation: int | None = GEN) -> tuple[str, dict]:
+    return (
+        "assistant",
+        {"song_range_question": {"question_id": "q1", "song_generation": generation}},
+    )
+
+
+@pytest.fixture
+def _range_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "song_filming_range_enabled", True)
+
+
+@pytest.mark.usefixtures("_range_on")
+async def test_a_repeated_verse_asks_which_part_of_the_song_before_any_order_question() -> None:
+    db = _Db(_item(_alignment(_conf("a", 20.0), _repeat_take())))
+    plan = (await _gate(db, _manifest("a", "b"), _strategy())).plan
+    assert plan is not None and plan.mode == "respond" and plan.turn_value == "question"
+    assert plan.song_range_question is not None
+    assert plan.song_range_question.song_generation == GEN
+    assert plan.song_order_question is None
+    assert "which part of the song" in plan.response.lower()
+
+
+@pytest.mark.usefixtures("_range_on")
+async def test_it_is_asked_once_per_song_even_if_the_creator_never_answered(monkeypatch) -> None:
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[_range_asked()]))
+    db = _Db(_item(_alignment(_conf("a", 20.0), _repeat_take())))
+    result = await _gate(db, _manifest("a", "b"), _strategy())
+    # Not asked again; this take is confident, so there is no order question either.
+    assert result.plan is None
+
+
+@pytest.mark.usefixtures("_range_on")
+async def test_a_replaced_song_is_asked_again(monkeypatch) -> None:
+    monkeypatch.setattr(
+        planner, "_load_thread_events", AsyncMock(return_value=[_range_asked(GEN - 1)])
+    )
+    db = _Db(_item(_alignment(_conf("a", 20.0), _repeat_take())))
+    plan = (await _gate(db, _manifest("a", "b"), _strategy())).plan
+    assert plan is not None and plan.song_range_question is not None
+
+
+@pytest.mark.usefixtures("_range_on")
+async def test_nothing_is_asked_when_the_creator_already_set_a_range() -> None:
+    item = _item(_alignment(_conf("a", 20.0), _repeat_take()))
+    item.song_range_start_s, item.song_range_end_s = 80.0, 130.0
+    plan = (await _gate(_Db(item), _manifest("a", "b"), _strategy())).plan
+    assert plan is None or plan.song_range_question is None
+
+
+@pytest.mark.usefixtures("_range_on")
+async def test_clear_matches_and_far_apart_noise_do_not_trigger_the_question() -> None:
+    # Two confident takes: nothing is ambiguous.
+    db = _Db(_item(_alignment(_conf("a", 1.0), _conf("b", 9.0))))
+    result = await _gate(db, _manifest("a", "b"), _strategy())
+    assert result.plan is None
+    # A second place that is only noise (likelihood 0.05) is not a repeat the creator must pick.
+    noisy = TakeAlignment(
+        media_id="b",
+        status="confident",
+        delta_s=99.0,
+        confidence=0.98,
+        likelihood=0.98,
+        margin=0.95,
+        candidates=[
+            PlacementCandidate(delta_s=99.0, likelihood=0.98, method="lyrics"),
+            PlacementCandidate(delta_s=145.0, likelihood=0.05, method="lyrics"),
+        ],
+    )
+    result = await _gate(
+        _Db(_item(_alignment(_conf("a", 20.0), noisy))), _manifest("a", "b"), _strategy()
+    )
+    assert result.plan is None
+
+
+@pytest.mark.usefixtures("_range_on")
+async def test_the_kill_switch_restores_the_old_flow(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "song_filming_range_enabled", False)
+    db = _Db(_item(_alignment(_conf("a", 20.0), _repeat_take())))
+    result = await _gate(db, _manifest("a", "b"), _strategy())
+    assert result.plan is None  # exactly the pre-KRI-588 behavior
+
+
+@pytest.mark.usefixtures("_range_on")
+async def test_a_creator_who_already_ordered_the_takes_is_not_asked(monkeypatch) -> None:
+    answer = {
+        "song_order": {"question_id": "qo", "ordered_media_ids": ["a", "b"]},
+    }
+    question = {
+        "song_order_question": SongOrderQuestion(
+            question_id="qo", song_generation=GEN, proposed_order=["a", "b"], items=[]
+        ).model_dump(mode="json")
+    }
+    monkeypatch.setattr(
+        planner,
+        "_load_thread_events",
+        AsyncMock(return_value=[("assistant", question), ("user", answer)]),
+    )
+    db = _Db(_item(_alignment(_conf("a", 20.0), _repeat_take())))
+    result = await _gate(db, _manifest("a", "b"), _strategy())
+    assert result.plan is None or result.plan.song_range_question is None

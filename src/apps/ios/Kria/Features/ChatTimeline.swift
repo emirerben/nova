@@ -9,9 +9,12 @@ struct ChatPendingMessage: Identifiable {
     let localOrder: Int
     /// KRI-374: the order this message confirms, so its card reads as answered while the send is in flight.
     let songOrder: SongOrderSubmission?
+    /// KRI-588: the song part this message answers, so its card reads as answered while the send is in flight.
+    let songRange: SongRangeAnswer?
 
-    init(content: String, clientEventID: String, afterSequence: Int, localOrder: Int = 0, id: UUID = UUID(), songOrder: SongOrderSubmission? = nil) {
+    init(content: String, clientEventID: String, afterSequence: Int, localOrder: Int = 0, id: UUID = UUID(), songOrder: SongOrderSubmission? = nil, songRange: SongRangeAnswer? = nil) {
         self.songOrder = songOrder
+        self.songRange = songRange
         self.id = id
         self.content = content
         self.clientEventID = clientEventID
@@ -20,7 +23,7 @@ struct ChatPendingMessage: Identifiable {
     }
 
     var transcriptMessage: ChatTranscriptMessage {
-        ChatTranscriptMessage(id: "pending-\(id.uuidString)", role: .user, content: content, isPending: true, songOrderAnswer: songOrder)
+        ChatTranscriptMessage(id: "pending-\(id.uuidString)", role: .user, content: content, isPending: true, songOrderAnswer: songOrder, songRangeAnswer: songRange)
     }
 }
 

@@ -125,6 +125,7 @@ from app.services.phone_destination import (
     item_visuals_only_on_device,
     with_device_intent,
 )
+from app.services.song_range import SongRangeError, apply_song_range, normalized_range
 from app.services.speech_cleanup_decision import (
     SpeechCleanupDecisionConflict,
     evaluate_enforce_mode_decision,
@@ -367,6 +368,9 @@ class CreationCapabilitiesOut(BaseModel):
     song_order_placements: bool = False
     # KRI-580: PUT /{thread_id}/song-range sets the stretch of the song the creator filmed in.
     song_filming_range: bool = False
+    # KRI-588: the server may ask "which part of the song did you film?" in the chat
+    # (`song_range_question` on a turn plan) and accepts the answer as `song_range` on a turn.
+    song_range_questions: bool = False
     # KRI-443: plan_block events follow Create and cancel-render is available.
     live_plan_review_enabled: bool = False
     # KRI-439: 2 = structured payloads, GET /plan, scoped turns and undo; 1 = the feed only.
@@ -3576,9 +3580,6 @@ class SongRangeBody(StrictBody):
         return self
 
 
-_SONG_RANGE_MIN_S = 5.0
-
-
 @router.put("/{thread_id}/song-range", response_model=CreationThreadOut)
 @limiter.limit("30/minute")
 async def set_song_range(
@@ -3626,32 +3627,11 @@ async def set_song_range(
         or not getattr(item, "song_gcs_path", None)
     ):
         raise RuntimeFailure(409, "song_missing", "Attach a song first.")
-    if body.start_s is not None and body.end_s is not None:
-        song_s = float(getattr(item, "song_duration_s", None) or 0.0)
-        if song_s and body.start_s >= song_s:
-            raise RuntimeFailure(422, "song_range_invalid", "That starts after your song ends.")
-        if body.end_s - body.start_s < _SONG_RANGE_MIN_S:
-            raise RuntimeFailure(
-                422, "song_range_invalid", "Pick at least five seconds of your song."
-            )
-        # A creator rounding up past the end of the song is not an error: clamp to the song.
-        end_s = min(float(body.end_s), song_s) if song_s else float(body.end_s)
-        item.song_range_start_s, item.song_range_end_s = float(body.start_s), end_s
-    else:
-        item.song_range_start_s = item.song_range_end_s = None
-    state = dict(thread.state or {})
-    media = [dict(entry) for entry in (state.get("media") or []) if isinstance(entry, dict)]
-    for entry in media:
-        if entry.get("role") == "song":
-            if item.song_range_start_s is None:
-                entry.pop("song_range", None)
-            else:
-                entry["song_range"] = {
-                    "start_s": item.song_range_start_s,
-                    "end_s": item.song_range_end_s,
-                }
-    state["media"] = media
-    thread.state = state
+    try:
+        chosen = normalized_range(body.start_s, body.end_s, getattr(item, "song_duration_s", None))
+    except SongRangeError as exc:
+        raise RuntimeFailure(422, exc.code, str(exc)) from exc
+    apply_song_range(thread, item, chosen)
     await _append(
         db,
         thread,
@@ -3763,6 +3743,7 @@ async def capabilities(
         "song_order_questions": song_available,
         "song_order_placements": bool(song_available and settings.song_order_timeline_enabled),
         "song_filming_range": bool(song_available and settings.song_filming_range_enabled),
+        "song_range_questions": bool(song_available and settings.song_filming_range_enabled),
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
     }

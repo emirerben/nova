@@ -2879,6 +2879,47 @@
           "title": "SongOrderPlacementIn",
           "type": "object"
         },
+        "SongRangeAnswerIn": {
+          "additionalProperties": false,
+          "description": "The creator's answer: a stretch of the song, or both null for \"the whole song\" / skip.",
+          "properties": {
+            "end_s": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "End S"
+            },
+            "question_id": {
+              "title": "Question Id",
+              "type": "string"
+            },
+            "start_s": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Start S"
+            }
+          },
+          "required": [
+            "question_id"
+          ],
+          "title": "SongRangeAnswerIn",
+          "type": "object"
+        },
         "SourceCrop": {
           "additionalProperties": false,
           "properties": {
@@ -3352,6 +3393,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SongOrderAnswerIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "song_range": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SongRangeAnswerIn"
             },
             {
               "type": "null"

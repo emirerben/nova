@@ -309,6 +309,12 @@ def _complete_response_turn(
                     if plan.song_order_question is not None
                     else {}
                 ),
+                # KRI-588: persisted so the answer can be validated + folded later.
+                **(
+                    {"song_range_question": plan.song_range_question.model_dump(mode="json")}
+                    if plan.song_range_question is not None
+                    else {}
+                ),
                 **({"choice_question": plan.choice_question} if plan.choice_question else {}),
                 **(
                     {"creative_copy_resolution": creative_copy_resolution}
