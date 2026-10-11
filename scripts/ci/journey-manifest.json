@@ -93,9 +93,11 @@
     },
     {
       "id": "slide-post-binding-recovery",
-      "api_tests": "tests/routes/test_slide_post_native_routes.py",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/pipeline/test_slide_post_framing.py",
       "xctests": [
-        "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave"
+        "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave",
+        "KriaTests/SlidePostFramingTests/testEncodingAlwaysWritesTheFramingKeySoAClearIsNeverMistakenForAnOlderApp",
+        "KriaTests/SlidePostFramingTests/testPlacementMatchesTheSharedParityFixtureWithinAHundredthOfAPixel"
       ],
       "paths": [
         "src/apps/api/app/pipeline/slide_post/build.py",
@@ -104,7 +106,12 @@
         "src/apps/api/tests/routes/test_slide_post_native_routes.py",
         "src/apps/ios/Kria/Core/SlidePost.swift",
         "src/apps/ios/Tests/KriaTests/SlidePostTests.swift",
-        "src/apps/ios/Tests/Fixtures/SlidePostBindingRoundTrip.json"
+        "src/apps/ios/Tests/Fixtures/SlidePostBindingRoundTrip.json",
+        "src/apps/api/app/kria/framing.py",
+        "src/apps/api/tests/pipeline/test_slide_post_framing.py",
+        "src/apps/ios/Kria/Core/SlidePostFraming.swift",
+        "src/apps/ios/Tests/KriaTests/SlidePostFramingTests.swift",
+        "tests/fixtures/slide-framing-parity/v1.json"
       ]
     },
     {
