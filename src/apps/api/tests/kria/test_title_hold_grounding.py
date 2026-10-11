@@ -259,6 +259,12 @@ def test_grounding_reads_the_creators_own_seconds() -> None:
         ("3 SECONDS TO MIDNIGHT", 'Open with "3 SECONDS TO MIDNIGHT"', 3.0, False),
         ("3 seconds", 'Title "3 seconds" for 2 seconds', 2.0, True),
         ("3 seconds", 'Title "3 seconds" for 2 seconds', 3.0, False),
+        # PR 1548 recheck: the title is itself a seconds expression, and the creator states
+        # the same seconds again as the hold. Only the copy's own occurrence is skipped.
+        ("3 seconds", 'Keep the title "3 seconds" for 3 seconds', 3.0, True),
+        ("one second", 'Show "one second" for one second', 1.0, True),
+        ("3 seconds", "title 3 seconds for 3 seconds", 3.0, True),
+        ("3 seconds", "Show “3 seconds” on screen", 3.0, False),
     ],
     ids=[
         "digit-title",
@@ -268,6 +274,10 @@ def test_grounding_reads_the_creators_own_seconds() -> None:
         "copy-only",
         "copy-and-hold",
         "copy-hold-mismatch",
+        "seconds-title-and-same-hold",
+        "word-seconds-title-and-same-hold",
+        "unquoted-title-then-hold",
+        "seconds-title-only",
     ],
 )
 def test_a_title_that_matches_the_seconds_keeps_the_stated_hold(
