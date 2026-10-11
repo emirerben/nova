@@ -158,9 +158,32 @@ def _slide_rows(draft: SlidePostDraft) -> list[dict[str, Any]]:
                 "removed": False,
                 "transition_after": "cut",
                 "look_preset": slide.edits.look_preset if slide.edits else "none",
+                "orientation": _framing_of(slide)[0],
+                "source_crop": _framing_of(slide)[1],
             }
         )
     return rows
+
+
+def _framing_of(slide: SlideRef) -> tuple[str, dict[str, float] | None]:
+    framing = slide.edits.framing if slide.edits else None
+    if framing is None:
+        return "portrait", None
+    crop = framing.source_crop.model_dump() if framing.source_crop is not None else None
+    return framing.orientation, crop
+
+
+def _asset_upright_aspect(asset: Any) -> float | None:
+    """Width / height of the photo as displayed, or None when unknown."""
+    aspect = getattr(asset, "aspect", None)
+    if isinstance(aspect, (int, float)) and not isinstance(aspect, bool) and aspect > 0:
+        return round(float(aspect), 4)
+    analysis = getattr(asset, "analysis", None)
+    if isinstance(analysis, dict):
+        w, h = analysis.get("width"), analysis.get("height")
+        if all(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 for v in (w, h)):
+            return round(float(w) / float(h), 4)
+    return None
 
 
 def _bar_row(slide_id: str, index: int, el: SlideTextElement, *, bar_id: str) -> dict[str, Any]:
@@ -225,6 +248,13 @@ def build_slide_post_snapshot(
         facts = _slide_facts(assets_by_id.get(slide.asset_id)) if facts_on else []
         slot = _safe_slot(row, index, facts=facts or None)
         slot["is_cover"] = index == draft.cover_index
+        if settings.slide_post_framing_enabled:
+            orientation, crop = _framing_of(slide)
+            slot["orientation"] = orientation
+            slot["cropped"] = crop is not None
+            source_aspect = _asset_upright_aspect(assets_by_id.get(slide.asset_id))
+            if source_aspect is not None:
+                slot["source_aspect"] = source_aspect
         slots.append(slot)
     rows, meta = _bars_and_meta(draft)
     text_bars: list[dict[str, Any]] = []
@@ -254,6 +284,9 @@ def build_slide_post_snapshot(
             "platform_profile": str(draft.platform_profile),
         },
     }
+    if settings.slide_post_framing_enabled:
+        snapshot["post"]["framing_enabled"] = True
+        snapshot["post"]["landscape_allowed"] = draft.platform_profile == "tiktok_photo"
     if any(slot.get("facts") for slot in slots):
         snapshot["label_facts"] = True
     binding = brief_binding or draft.brief_binding
@@ -443,6 +476,10 @@ def compile_slide_post_ops(
     by_id = {slide.id: slide for slide in draft.slides}
     new_order = [str(row["media_id"]) for row in surviving]
     look_by_id = {str(row["media_id"]): row.get("look_preset", "none") for row in surviving}
+    framing_by_id = {
+        str(row["media_id"]): (row.get("orientation") or "portrait", row.get("source_crop"))
+        for row in surviving
+    }
     alive = set(new_order)
 
     # Group the final bars per slide, in bar order (originals first, then new).
@@ -494,6 +531,7 @@ def compile_slide_post_ops(
     new_slides: list[SlideRef] = []
     text_changed: list[int] = []
     look_changed = 0
+    framing_changed = 0
     for position, sid in enumerate(new_order):
         slide = by_id[sid]
         elements = per_slide[sid]
@@ -505,13 +543,18 @@ def compile_slide_post_ops(
         same_text = [e.model_dump() for e in elements] == [e.model_dump() for e in original]
         look = look_by_id[sid]
         original_look = slide.edits.look_preset if slide.edits else "none"
-        if same_text and look == original_look:
+        orientation, crop = framing_by_id[sid]
+        original_framing = _framing_of(slide)
+        framing_same = (orientation, crop) == original_framing
+        if same_text and look == original_look and framing_same:
             new_slides.append(slide)
             continue
         if not same_text:
             text_changed.append(position + 1)
         if look != original_look:
             look_changed += 1
+        if not framing_same:
+            framing_changed += 1
         payload: dict[str, Any] = {
             "text": None,
             "look_preset": look,
@@ -525,6 +568,8 @@ def compile_slide_post_ops(
         }
         if payload["texts"] is None and slide.edits is not None and slide.edits.text is not None:
             payload["text"] = slide.edits.text.model_dump()
+        if orientation != "portrait" or crop is not None:
+            payload["framing"] = {"orientation": orientation, "source_crop": crop}
         try:
             new_slides.append(
                 slide.model_copy(update={"edits": SlideEdits.model_validate(payload)})
@@ -568,6 +613,10 @@ def compile_slide_post_ops(
         )
     if look_changed:
         changes.append(f"Look changed on {look_changed} slide{'s' if look_changed != 1 else ''}")
+    if framing_changed:
+        changes.append(
+            f"Framing changed on {framing_changed} slide{'s' if framing_changed != 1 else ''}"
+        )
     if new_order[cover_index] != draft.slides[draft.cover_index].id:
         changes.append(f"Cover is now slide {cover_index + 1}")
     if caption != draft.caption:

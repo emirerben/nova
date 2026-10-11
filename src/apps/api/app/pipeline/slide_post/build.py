@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Literal
 import structlog
 
 from app.config import settings
+from app.kria.framing import LANDSCAPE_CANVAS, ffmpeg_crop_filter
 from app.pipeline.look_presets import look_preset_filter
 
 if TYPE_CHECKING:
@@ -138,12 +139,35 @@ def probe_duration_s(path: str) -> float:
     return float(out)
 
 
-def _scale_crop_filter(canvas: Canvas) -> str:
+def _scale_crop_filter(canvas: Canvas, source_crop: dict[str, float] | None = None) -> str:
     cw, ch = canvas
     # Cover-fit: scale so the shorter axis fills the target, then center-crop
     # the overflow. Same fit policy as image_to_video._normalize_to_9x16,
     # expressed as one ffmpeg filter instead of a PIL resize+crop pass.
-    return f"scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch}"
+    # A framing `source_crop` (upright space) is cut out first, so the cover fit
+    # is of that region -- the same order the device and `reframe` use.
+    fit = f"scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch}"
+    pre = ffmpeg_crop_filter(source_crop)
+    return f"{pre},{fit}" if pre else fit
+
+
+def slide_canvas(profile: str, edits: SlideEdits | None) -> Canvas:
+    """The canvas this slide exports at: the profile's, or 1920x1080 when the
+    slide is landscape and the profile allows mixing shapes (KRI-44)."""
+    from app.pipeline.slide_post.profiles import PLATFORM_PROFILES  # noqa: PLC0415
+
+    spec = PLATFORM_PROFILES[profile]  # type: ignore[index]
+    framing = edits.framing if edits is not None else None
+    if framing is not None and framing.orientation == "landscape" and spec.allows_landscape:
+        return LANDSCAPE_CANVAS
+    return spec.canvas
+
+
+def _framing_crop(edits: SlideEdits | None) -> dict[str, float] | None:
+    framing = edits.framing if edits is not None else None
+    if framing is None or framing.source_crop is None:
+        return None
+    return framing.source_crop.model_dump()
 
 
 def _drawtext_y_expr(position: str) -> str:
@@ -271,8 +295,11 @@ def render_text_element_png(element, png_path: str, *, canvas: Canvas) -> None:
     else:
         y = _RICH_Y_FRAC[element.position]
     x = _RICH_X_FRAC[element.alignment] if element.x_frac is None else element.x_frac
-    band_top = max(0, (full_h - ch) // 2) if ch <= full_h else 0
-    band_h = min(ch, full_h)
+    # The band keeps the destination's aspect at the raster's width, so the final
+    # resize is uniform: 1080x1920 -> the whole raster, 1080x1350 -> a 1350-row
+    # band (unchanged), 1920x1080 -> a 608-row band scaled up 1.78x both ways.
+    band_h = min(full_h, round(full_w * ch / cw))
+    band_top = (full_h - band_h) // 2
     y_full = (band_top + y * band_h) / full_h
     from app.agents._schemas.text_element import apply_text_case  # noqa: PLC0415
 
@@ -320,7 +347,7 @@ def render_text_element_png(element, png_path: str, *, canvas: Canvas) -> None:
     if (cw, ch) != _FULL_CANVAS:
         with Image.open(png_path) as raster:
             img = raster.convert("RGBA")
-        if ch <= full_h:
+        if band_h < full_h:
             img = img.crop((0, band_top, full_w, band_top + band_h))
         if img.size != (cw, ch):
             img = img.resize((cw, ch), Image.LANCZOS)
@@ -442,7 +469,7 @@ def normalize_image_slide(
         ) as edit_fragment,
         _text_pngs(edits, canvas=canvas, out_path=out_path) as pngs,
     ):
-        vf = _scale_crop_filter(canvas)
+        vf = _scale_crop_filter(canvas, _framing_crop(edits))
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
         cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", decoded_path]
@@ -479,7 +506,7 @@ def normalize_video_slide(
         ) as edit_fragment,
         _text_pngs(edits, canvas=canvas, out_path=out_path) as pngs,
     ):
-        vf = f"{_scale_crop_filter(canvas)},fps=30"
+        vf = f"{_scale_crop_filter(canvas, _framing_crop(edits))},fps=30"
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
         cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", src_path]
@@ -521,9 +548,21 @@ def render_preview_segment(
     kind: Literal["image", "video"],
     canvas: Canvas,
     hold_s: float = DEFAULT_IMAGE_HOLD_S,
+    source_canvas: Canvas | None = None,
 ) -> None:
-    """Render one slide's silent, capped-duration segment for the stitched preview."""
+    """Render one slide's silent, capped-duration segment for the stitched preview.
+
+    `canvas` is the post's preview canvas. A slide exported on a different
+    canvas (a landscape slide in a portrait post) is fitted whole and padded with
+    black bars so the stitched preview keeps one shape."""
     cw, ch = canvas
+    if source_canvas is not None and source_canvas != canvas:
+        fit_filter = (
+            f"scale={cw}:{ch}:force_original_aspect_ratio=decrease,"
+            f"pad={cw}:{ch}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
+        )
+    else:
+        fit_filter = f"scale={cw}:{ch},setsar=1"
     # setsar=1 is required, not cosmetic: the image and video encode paths
     # can each independently pick up a non-square Sample Aspect Ratio (a PNG
     # decoder's default vs. an already-1:1 H.264 stream), and the concat
@@ -545,7 +584,7 @@ def render_preview_segment(
             "-t",
             f"{max(0.5, hold_s):.3f}",
             "-vf",
-            f"scale={cw}:{ch},setsar=1",
+            fit_filter,
             "-c:v",
             "libx264",
             "-preset",
@@ -569,7 +608,7 @@ def render_preview_segment(
             f"{max(0.5, hold_s):.3f}",
             "-an",
             "-vf",
-            f"scale={cw}:{ch},setsar=1",
+            fit_filter,
             "-c:v",
             "libx264",
             "-preset",
@@ -648,6 +687,8 @@ class BundleSlideFile:
     kind: Literal["image", "video"]
     index: int
     alt: str | None = None
+    width: int | None = None
+    height: int | None = None
 
     @property
     def arcname(self) -> str:
@@ -675,6 +716,7 @@ def build_post_manifest(
                 "kind": s.kind,
                 "filename": s.arcname.removeprefix("slides/"),
                 "alt": s.alt,
+                **({"width": s.width, "height": s.height} if s.width and s.height else {}),
             }
             for s in slides
         ],

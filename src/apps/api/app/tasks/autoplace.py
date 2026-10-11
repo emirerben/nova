@@ -1024,6 +1024,21 @@ def _persist_pool_media_readiness(
         db.commit()
 
 
+def _exif_quarter_turn(local_path: str) -> bool:
+    """True when the image's EXIF orientation is a quarter turn (5-8).
+
+    Opened separately: `Image.verify()` must directly follow `open()`, and
+    reading EXIF first would break it. Unreadable EXIF is "no rotation".
+    """
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        with Image.open(local_path) as im:
+            return im.getexif().get(0x0112) in (5, 6, 7, 8)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _analyze_image(
     local_path: str,
     job_scope: str,
@@ -1053,6 +1068,12 @@ def _analyze_image(
                 if im.width * im.height > _MAX_POOL_IMAGE_PIXELS:
                     raise AssetUnreadableError("image pixel limit exceeded")
             im.verify()
+        if dims is not None and _exif_quarter_turn(local_path):
+            # EXIF orientations 5-8 store the pixels rotated a quarter turn; the photo
+            # is displayed (and rendered) upright, so measure it that way. Crop
+            # rectangles are defined in that upright space (KRI-44).
+            dims = (dims[1], dims[0])
+            aspect = round(dims[0] / dims[1], 4)
         has_alpha = image_has_alpha(local_path)
     except SoftTimeLimitExceeded:
         raise

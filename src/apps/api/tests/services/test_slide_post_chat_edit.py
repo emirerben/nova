@@ -903,3 +903,135 @@ async def test_run_passes_capture_facts_to_agent_and_orders_and_labels(
     }
     assert place_labels["s2"] == ["Kadıköy"]
     assert place_labels["s0"] and place_labels["s0"][0].startswith("Beşiktaş")
+
+
+# ------------------------------------------------------- slide framing (KRI-44)
+
+
+def _framing_assets(n: int = 3, aspect: float | None = 4 / 3) -> list[SimpleNamespace]:
+    assets = [_asset() for _ in range(n)]
+    for a in assets:
+        a.aspect = aspect
+    return assets
+
+
+def _framing_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "slide_post_framing_enabled", True)
+
+
+def _framing_of(draft: SlidePostDraft, index: int):
+    edits = draft.slides[index].edits
+    return edits.framing if edits else None
+
+
+class TestSlideFraming:
+    def test_landscape_op_turns_one_slide_landscape(self, monkeypatch):
+        _framing_on(monkeypatch)
+        assets = _framing_assets()
+        compiled, _ = _edit(
+            _draft(assets),
+            assets,
+            [{"op": "set_slide_framing", "slide_indexes": [1], "orientation": "landscape"}],
+        )
+        assert _framing_of(compiled.draft, 1).orientation == "landscape"
+        assert _framing_of(compiled.draft, 0) is None
+        assert "Framing changed on 1 slide" in compiled.changes
+
+    def test_focus_zoom_resolves_a_canvas_shaped_crop(self, monkeypatch):
+        _framing_on(monkeypatch)
+        assets = _framing_assets(2, aspect=16 / 9)
+        compiled, _ = _edit(
+            _draft(assets),
+            assets,
+            [{"op": "set_slide_framing", "all": True, "focus": "left", "zoom": 1}],
+        )
+        crop = _framing_of(compiled.draft, 0).source_crop
+        # A 16:9 photo into the 9:16 canvas keeps full height, 0.316 of the width, left-anchored.
+        assert (crop.x, crop.y, crop.height) == (0, 0, 1.0)
+        assert crop.width == pytest.approx(0.316406, abs=1e-5)
+        assert _framing_of(compiled.draft, 1).source_crop == crop
+
+    def test_unrelated_text_op_keeps_the_crop(self, monkeypatch):
+        _framing_on(monkeypatch)
+        assets = _framing_assets(2)
+        framed = _draft(assets)
+        step1, _ = _edit(
+            framed,
+            assets,
+            [{"op": "set_slide_framing", "slide_indexes": [0], "focus": "top", "zoom": 2}],
+        )
+        before = _framing_of(step1.draft, 0)
+        assert before is not None and before.source_crop is not None
+        step2, _ = _edit(
+            step1.draft,
+            assets,
+            [{"op": "add_text", "text": "Summer", "start_s": 0, "end_s": 2}],
+        )
+        assert _framing_of(step2.draft, 0) == before
+        step3, _ = _edit(
+            step2.draft,
+            assets,
+            [{"op": "set_look_preset", "slot_index": 0, "look_preset": "stadium_diffusion"}],
+        )
+        assert _framing_of(step3.draft, 0) == before
+
+    def test_instagram_refuses_landscape(self, monkeypatch):
+        _framing_on(monkeypatch)
+        assets = _framing_assets()
+        draft = _draft(assets).model_copy(update={"platform_profile": "instagram_carousel"})
+        snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+        assert snapshot["post"]["landscape_allowed"] is False
+        output = _parse(
+            snapshot,
+            [{"op": "set_slide_framing", "slide_indexes": [0], "orientation": "landscape"}],
+        )
+        assert not output.ops
+        assert any("Instagram" in r["detail"] for r in output.rejection_reasons)
+
+    def test_unknown_source_shape_refuses_a_focus_crop_but_allows_orientation(self, monkeypatch):
+        _framing_on(monkeypatch)
+        assets = _framing_assets(1, aspect=None)
+        draft = _draft(assets)
+        snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+        assert "source_aspect" not in snapshot["slots"][0]
+        refused = _parse(snapshot, [{"op": "set_slide_framing", "all": True, "focus": "top"}])
+        assert not refused.ops
+        allowed = _parse(
+            snapshot, [{"op": "set_slide_framing", "all": True, "orientation": "landscape"}]
+        )
+        assert allowed.ops
+
+    def test_flag_off_the_op_is_unavailable_and_snapshot_is_unchanged(self, monkeypatch):
+        monkeypatch.setattr(settings, "slide_post_framing_enabled", False)
+        assets = _framing_assets()
+        draft = _draft(assets)
+        snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+        assert "framing_enabled" not in snapshot["post"]
+        assert not {"orientation", "cropped", "source_aspect"} & set(snapshot["slots"][0])
+        output = _parse(
+            snapshot,
+            [{"op": "set_slide_framing", "slide_indexes": [0], "orientation": "landscape"}],
+        )
+        assert not output.ops
+
+    def test_reset_clears_framing(self, monkeypatch):
+        _framing_on(monkeypatch)
+        assets = _framing_assets(1)
+        step1, _ = _edit(
+            _draft(assets),
+            assets,
+            [
+                {
+                    "op": "set_slide_framing",
+                    "all": True,
+                    "orientation": "landscape",
+                    "focus": "top",
+                    "zoom": 2,
+                }
+            ],
+        )
+        assert _framing_of(step1.draft, 0) is not None
+        step2, _ = _edit(
+            step1.draft, assets, [{"op": "set_slide_framing", "all": True, "reset": True}]
+        )
+        assert _framing_of(step2.draft, 0) is None
