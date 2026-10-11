@@ -61,10 +61,18 @@ out. Picking the best, strongest or favourite N clips names no clips: the edit
 planner chooses them, so it yields no intent. Using a clip's sound ("the voice
 from the talk to camera video") is an audio choice, never `include`.
 
-Showing clips while the creator talks about them in a voiceover ("show the
-balloons while I talk about the balloons", "match every step I say to the clip
-that shows it") is one `order` intent per named subject, with `position` null;
-the voiceover timing is matched later.
+Showing a clip when the creator's voiceover gets to it ("show the balloons
+while I talk about the balloons", "when I say Deniz, show Deniz at the laptop",
+"'mutfak' dediğimde mutfağı göster") is one `include` intent per named clip,
+`attribute` naming the clip as the creator described it: the voiceover decides
+when it plays, so cues like these are never a sequence, in whatever order they
+are written. Asking the clips to follow the voiceover ("follow my voiceover:
+river, kitchen", "sıra seslendirmeyi takip etsin: nehir, mutfak") is the same
+`include` per named clip. Only another sequence the creator asks for is one `order`
+intent per named subject, with `position` null, in the stated order ("match
+every step I say to the clip that shows it: boiling the pasta, grating the
+pecorino", "in this order: river, kitchen, attic"); the voiceover timing is
+matched later.
 
 Keep separate operations even when they refer to the same clips, such as a city
 group, city labels, and activity labels. Do not use any category allowlist.
