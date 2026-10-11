@@ -596,3 +596,17 @@ async def test_the_planner_recompiles_the_kept_lipsync_strategy(monkeypatch) -> 
     assert seen[-1] is kept
     assert adapted["action"].strategy is kept
     assert "extra notice." in adapted["action"].summary
+
+
+def test_the_full_creator_request_never_includes_a_song_answers_echo_text() -> None:
+    """KRI-575: the arrangement echo ('clip 2 at 1:40') became an invented 108 s requirement."""
+    from app.services.song_order import SONG_ORDER_ANSWER_MESSAGE  # noqa: PLC0415
+
+    echo = "Use this arrangement: clip 4 at 0:00, clip 5 at 0:44, clip 2 at 1:40"
+    rows = [
+        SimpleNamespace(role="user", content="Lipsync", payload=None),
+        SimpleNamespace(role="user", content=echo, payload={"song_order": {"question_id": "q"}}),
+    ]
+    request = planner._full_creator_request(rows, current_message=SONG_ORDER_ANSWER_MESSAGE)
+    assert request == f"Lipsync\n{SONG_ORDER_ANSWER_MESSAGE}"
+    assert "0:44" not in request and "1:40" not in request
