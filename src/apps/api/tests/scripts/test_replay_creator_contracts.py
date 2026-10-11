@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-
-SCRIPT = Path(__file__).with_name("replay-creator-contracts.py")
+ROOT = Path(__file__).resolve().parents[5]
+SCRIPT = ROOT / "scripts/ci/replay-creator-contracts.py"
 FIXTURE = SCRIPT.parent / "fixtures/kri492-creator-contracts.json"
 spec = importlib.util.spec_from_file_location("creator_replay", SCRIPT)
 replay_script = importlib.util.module_from_spec(spec)
@@ -17,21 +17,32 @@ def snapshot():
         "base_sha": "a" * 40,
         "available_count": 1,
         "missing_required_inputs_count": 0,
-        "captures": [{
-            "id": "captured-success",
-            "source_provenance": {"capture": "redacted production replay"},
-            "contract": {"requirements": ["duration"]},
-            "variant": {"duration_s": 12.0, "render_status": "success", "render_destination": "native"},
-            "candidates": {"creator_strategy": {"edit_format": "montage"}},
-            "phone_recipe": {"tracks": []},
-            "source_audio": {"has_audio": True},
-            "composition": {"selected_media_count": 1},
-        }],
+        "captures": [
+            {
+                "id": "captured-success",
+                "source_provenance": {"capture": "redacted production replay"},
+                "contract": {"requirements": ["duration"]},
+                "variant": {
+                    "duration_s": 12.0,
+                    "render_status": "success",
+                    "render_destination": "native",
+                },
+                "candidates": {"creator_strategy": {"edit_format": "montage"}},
+                "phone_recipe": {"tracks": []},
+                "source_audio": {"has_audio": True},
+                "composition": {"selected_media_count": 1},
+            }
+        ],
     }
 
 
 def baseline():
-    return {"schema_version": 1, "base_sha": "a" * 40, "evaluator_sha": "a" * 40, "outcomes": {"captured-success": {"declined": False}}}
+    return {
+        "schema_version": 1,
+        "base_sha": "a" * 40,
+        "evaluator_sha": "a" * 40,
+        "outcomes": {"captured-success": {"declined": False}},
+    }
 
 
 def test_missing_required_capture_inputs_cannot_pass() -> None:

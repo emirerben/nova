@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import io
-from pathlib import Path
+import json
 import subprocess
 import sys
-
-
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src/apps/api"))
+from pathlib import Path
 
 from app.services import length_check_observation
 
+ROOT = Path(__file__).resolve().parents[5]
 SCRIPT = ROOT / "scripts/ci/collect-length-checks.py"
 CANDIDATE = "b" * 40
 START = 1_000
@@ -78,7 +75,9 @@ def _run(tmp_path: Path, proof: dict[str, object], lines: list[object], *extra: 
 
 
 def test_collects_only_sanitized_aggregate_evidence(tmp_path: Path) -> None:
-    result, journal = _run(tmp_path, _proof(), [{"event": "unrelated", "creator_id": "do-not-save"}, _event()])
+    result, journal = _run(
+        tmp_path, _proof(), [{"event": "unrelated", "creator_id": "do-not-save"}, _event()]
+    )
     assert result.returncode == 0
     assert journal == json.loads(result.stdout)
     assert journal["status"] == "collected"
@@ -125,8 +124,24 @@ def test_collector_rejects_stale_proof_and_short_or_incomplete_stream(tmp_path: 
     journal_path = tmp_path / "journal.json"
     proof_path.write_text(json.dumps(_proof()))
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--fleet-proof", str(proof_path), "--journal", str(journal_path), "--interval-start", str(START), "--interval-end", str(END - 1), "--now-epoch-s", str(NOW)],
-        input=json.dumps(_event()), text=True, capture_output=True, check=False,
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--fleet-proof",
+            str(proof_path),
+            "--journal",
+            str(journal_path),
+            "--interval-start",
+            str(START),
+            "--interval-end",
+            str(END - 1),
+            "--now-epoch-s",
+            str(NOW),
+        ],
+        input=json.dumps(_event()),
+        text=True,
+        capture_output=True,
+        check=False,
     )
     assert result.returncode == 0
     assert json.loads(journal_path.read_text())["clean_observations"] == []

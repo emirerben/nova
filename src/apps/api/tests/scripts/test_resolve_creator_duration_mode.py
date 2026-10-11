@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-
-SCRIPT = Path(__file__).with_name("resolve-creator-duration-mode.py")
+ROOT = Path(__file__).resolve().parents[5]
+SCRIPT = ROOT / "scripts/ci/resolve-creator-duration-mode.py"
 SPEC = importlib.util.spec_from_file_location("duration_mode_resolver", SCRIPT)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -21,15 +21,22 @@ def _machine(mode: str | None) -> dict[str, object]:
 
 
 def test_push_inherits_consistent_managed_mode() -> None:
-    assert MODULE.resolve_mode([_machine("enforce"), _machine("enforce")], requested_mode=None) == "enforce"
+    assert (
+        MODULE.resolve_mode([_machine("enforce"), _machine("enforce")], requested_mode=None)
+        == "enforce"
+    )
 
 
 def test_push_uses_log_only_when_setting_is_absent_everywhere() -> None:
     assert MODULE.resolve_mode([_machine(None), _machine(None)], requested_mode=None) == "log_only"
 
 
-@pytest.mark.parametrize("modes", [("enforce", "log_only"), ("enforce", None), ("unexpected", "unexpected")])
-def test_push_rejects_mixed_or_malformed_managed_modes(modes: tuple[str | None, str | None]) -> None:
+@pytest.mark.parametrize(
+    "modes", [("enforce", "log_only"), ("enforce", None), ("unexpected", "unexpected")]
+)
+def test_push_rejects_mixed_or_malformed_managed_modes(
+    modes: tuple[str | None, str | None],
+) -> None:
     with pytest.raises(MODULE.ModeResolutionError):
         MODULE.resolve_mode([_machine(modes[0]), _machine(modes[1])], requested_mode=None)
 
