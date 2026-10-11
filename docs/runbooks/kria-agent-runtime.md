@@ -83,6 +83,17 @@ terminal truncation means even `low` did not fit (KRI-542). A
 `kria_turn_lease_renewal_failed` warning is not a failure: the
 heartbeat retries on its next 5-second tick and the turn keeps planning.
 
+"I couldn't turn that into a plan this time" (`brief_coverage.reason =
+creator_planning_failed`) means the Main Creator ended terminally. That agent is
+`sensitive_io`, so its raw text is never stored, but a schema failure carries a
+value-free class (field paths + Pydantic error types, never values):
+`agent_run.error_message = sensitive_agent_error:<class>` and
+`brief_coverage.cause.error_class` on the turn/event admin views (each retry also logs
+`agent_schema_retry`). Example, KRI-586: `creative_decision:status:missing` meant the
+model invented keys for the `creative_decision` object. Read the agent runs with
+`python scripts/admin.py --prod GET 'plan-items/<item-id>/proposal-trace?limit=50'`; to
+see the raw output, replay the captured `input_json` against the live model locally.
+
 The same reply with `error.code = runtime_turn_claims_exhausted` means three
 runs of the turn ended without a result: each was killed at `run_kria_turn`'s
 time limit or lost its worker, so its planning lease lapsed. The reconciler (or
