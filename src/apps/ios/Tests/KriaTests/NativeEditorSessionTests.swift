@@ -594,6 +594,133 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(try songStart(), 1.5, accuracy: 0.001, "the singer starts 0.5s later in the take, so does the song")
     }
 
+    // MARK: KRI-576 lyric captions follow the song window in the live preview
+
+    /// Four lyric words as the server projects them for a window starting at song second 1 (starts 0.0 ... 1.2).
+    private static func lyricRows(hiddenIndexes: Set<Int> = [], offset: Double = 0) -> JSONValue {
+        .array((0..<4).map { index in
+            let start = Double(index) * 0.4 - offset
+            var params: [String: JSONValue] = ["source": .string("caption_cue"), "origin": .string("song"), "key": .string("\(index)")]
+            if hiddenIndexes.contains(index) { params["window_hidden"] = .bool(true) }
+            return .object(["id": .string("song-caption-\(index)"), "text": .string("w\(index)"),
+                            "start_s": .number(start), "end_s": .number(start + 0.3), "role": .string("generative_sequence"),
+                            "position": .string("custom"), "x_frac": .number(0.5), "y_frac": .number(0.82),
+                            "removed": .bool(hiddenIndexes.contains(index)), "source_params": .object(params)])
+        })
+    }
+
+    private func lyricStarts(_ session: NativeEditorSession) throws -> [String: Double] {
+        let layers = try XCTUnwrap(session.displayedSourcePreviewRecipe).textLayers.filter { $0.id.hasPrefix("song-caption-") }
+        return Dictionary(uniqueKeysWithValues: layers.map { ($0.id, $0.start) })
+    }
+
+    private func lyricSession(mode: String, caps: [String: Bool]) async throws -> (NativeEditorSession, EditorCommitSpy, URL) {
+        try await userSongSession(mode: mode, caps: caps) { variant in
+            variant["text_elements"] = Self.lyricRows()
+        }
+    }
+
+    func testMovingTheSongStartShiftsLyricCaptionsInThePreviewWithoutTouchingTheDocument() async throws {
+        let (session, fake, sourceURL) = try await lyricSession(mode: "background", caps: Self.allSongCaps)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let starts = try lyricStarts(session)
+        XCTAssertEqual(starts["song-caption-2"] ?? -1, 0.8, accuracy: 0.001, "untouched: rows sit where the server put them")
+        let documentBefore = session.document.textElements
+        XCTAssertEqual(documentBefore.count, 4)
+
+        session.setUserSongStart(1.5)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let moved = try lyricStarts(session)
+        XCTAssertNil(moved["song-caption-0"], "starts 0.5 s before the new window")
+        XCTAssertNil(moved["song-caption-1"], "starts 0.1 s before the new window")
+        XCTAssertEqual(moved["song-caption-2"] ?? -1, 0.3, accuracy: 0.001)
+        XCTAssertEqual(moved["song-caption-3"] ?? -1, 0.7, accuracy: 0.001)
+
+        XCTAssertEqual(session.document.textElements, documentBefore, "preview only: the document keeps the server's rows")
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(windowStartS: 1.5))
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false),
+            revisionNumber: 2, revisionHash: "h2", expectedDuration: nil)
+        await session.save()
+        XCTAssertNil(fake.lastRequest?.textElements, "no text commit payload: only the song start was edited")
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(volume: nil, windowStartS: 1.5, removed: false))
+    }
+
+    func testTheLyricShiftIsOneUndoStepWithTheSongEdit() async throws {
+        let (session, _, sourceURL) = try await lyricSession(mode: "background", caps: Self.allSongCaps)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        session.setUserSongStart(1.5)
+        XCTAssertNotNil(session.songCaptionShift)
+        session.undo()
+        XCTAssertNil(session.document.userSong)
+        XCTAssertFalse(session.canUndo, "the song step was the only history entry")
+        XCTAssertNil(session.songCaptionShift, "undo puts the lyrics back where the server has them")
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try lyricStarts(session)["song-caption-2"] ?? -1, 0.8, accuracy: 0.001)
+    }
+
+    func testRemovingTheSongHidesTheLyricCaptionsAndUndoBringsThemBack() async throws {
+        let (session, _, sourceURL) = try await lyricSession(mode: "background", caps: Self.allSongCaps)
+        session.removeUserSong()
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertTrue(try lyricStarts(session).isEmpty)
+        session.undo()
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try lyricStarts(session).count, 4)
+    }
+
+    func testTrimmingALipsyncTakeShiftsTheLyricCaptions() async throws {
+        let (session, _, sourceURL) = try await lyricSession(mode: "lipsync", caps: ["volume": true, "window": false, "remove": true])
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try lyricStarts(session)["song-caption-2"] ?? -1, 0.8, accuracy: 0.001)
+        let clipID = try XCTUnwrap(session.document.clips.first?.id)
+        session.setClipTiming(clipID: clipID, inS: 0.5)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let moved = try lyricStarts(session)
+        XCTAssertEqual(moved["song-caption-2"] ?? -1, 0.3, accuracy: 0.001, "the song starts 0.5 s later, so the lyrics come 0.5 s earlier")
+        XCTAssertNil(moved["song-caption-0"])
+        for (row, expected) in zip(session.document.textElements, [0, 0.4, 0.8, 1.2]) {
+            XCTAssertEqual(row.startS, expected, accuracy: 1e-9, "the document keeps the server's times")
+        }
+    }
+
+    private static let lyricSaveResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+        sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false),
+        revisionNumber: 2, revisionHash: "h2", expectedDuration: nil)
+
+    /// A Save whose read-back fails (the variant still shows the old generation and rows) keeps the shift: the rows
+    /// in the document are still the old ones, so the preview must keep moving them.
+    func testLyricShiftSurvivesAFailedReadBack() async throws {
+        let (session, fake, sourceURL) = try await lyricSession(mode: "background", caps: Self.allSongCaps)
+        session.setUserSongStart(1.5)
+        fake.commitResponse = Self.lyricSaveResponse
+        await session.save()
+        XCTAssertEqual(try XCTUnwrap(session.songCaptionShift).shiftS, 0.5, accuracy: 0.001, "rows are still the old ones")
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try lyricStarts(session)["song-caption-2"] ?? -1, 0.3, accuracy: 0.001)
+    }
+
+    /// Once the server's re-timed rows are adopted the shift is 0: shifting them again would double it.
+    func testLyricShiftEndsWhenTheServersRowsAreAdopted() async throws {
+        let (session, fake, sourceURL) = try await lyricSession(mode: "background", caps: Self.allSongCaps)
+        session.setUserSongStart(1.5)
+        var next = try XCTUnwrap(fake.authoritativeVariant)
+        next["render_generation_id"] = .string("generation-2")
+        next["variant_id"] = .string("variant")
+        next["user_song"] = .object(["title": .string("Midnight Drive"), "mode": .string("background"),
+            "duration_s": .number(200), "window_start_s": .number(1.5), "window_end_s": .number(3.5)])
+        next["text_elements"] = Self.lyricRows(hiddenIndexes: [0, 1], offset: 0.5)
+        fake.authoritativeVariant = next
+        fake.commitResponse = Self.lyricSaveResponse
+        await session.save()
+        XCTAssertNil(session.songCaptionShift, "the adopted rows already sit at the new window")
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let adopted = try lyricStarts(session)
+        XCTAssertEqual(adopted["song-caption-2"] ?? -1, 0.3, accuracy: 0.001, "0.8 - 0.5, shifted once")
+        XCTAssertEqual(adopted["song-caption-3"] ?? -1, 0.7, accuracy: 0.001)
+        XCTAssertNil(adopted["song-caption-0"], "the server hid it; its stale time never shows")
+    }
+
     func testTrimmingAHeadNeverMovesABackgroundSong() async throws {
         let (session, _, sourceURL) = try await userSongSession(mode: "background", caps: ["volume": true, "window": true, "remove": true])
         let clipID = try XCTUnwrap(session.document.clips.first?.id)
