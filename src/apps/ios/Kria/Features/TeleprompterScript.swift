@@ -6,11 +6,24 @@ struct TeleprompterScriptDraft: Codable, Equatable, Sendable {
     var text: String
     var revision: UUID
     var anchorUTF16: Int
+    var window: TeleprompterWindowPreference
 
-    init(text: String = "", revision: UUID = UUID(), anchorUTF16: Int = 0) {
+    init(text: String = "", revision: UUID = UUID(), anchorUTF16: Int = 0,
+         window: TeleprompterWindowPreference = .init()) {
         self.text = text
         self.revision = revision
         self.anchorUTF16 = max(0, min(anchorUTF16, text.utf16.count))
+        self.window = window
+    }
+
+    private enum CodingKeys: String, CodingKey { case text, revision, anchorUTF16, window }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let text = try values.decode(String.self, forKey: .text)
+        let revision = try values.decode(UUID.self, forKey: .revision)
+        let anchor = try values.decode(Int.self, forKey: .anchorUTF16)
+        let window = (try? values.decodeIfPresent(TeleprompterWindowPreference.self, forKey: .window)) ?? .init()
+        self.init(text: text, revision: revision, anchorUTF16: anchor, window: window)
     }
 }
 
@@ -40,6 +53,7 @@ final class TeleprompterScript: ObservableObject {
     @Published private(set) var travelDistance: CGFloat = 0
     @Published private(set) var wordsPerMinute: Int
     @Published private(set) var fontSize: CGFloat
+    @Published private(set) var windowPreference: TeleprompterWindowPreference
 
     private let uptime: () -> TimeInterval
     private var lastTick: TimeInterval?
@@ -53,6 +67,7 @@ final class TeleprompterScript: ObservableObject {
         anchorUTF16 = max(0, min(draft.anchorUTF16, draft.text.utf16.count))
         self.wordsPerMinute = Self.normalizedPace(wordsPerMinute ?? Self.preferredWordsPerMinute)
         self.fontSize = max(12, fontSize ?? Self.preferredFontSize)
+        windowPreference = draft.window
         self.uptime = uptime
     }
 
@@ -63,7 +78,7 @@ final class TeleprompterScript: ObservableObject {
     }
 
     var draft: TeleprompterScriptDraft {
-        get { .init(text: text, revision: revision, anchorUTF16: anchorUTF16) }
+        get { .init(text: text, revision: revision, anchorUTF16: anchorUTF16, window: windowPreference) }
         set { replaceDraft(newValue) }
     }
     var isPlaying: Bool { playbackState == .playing }
@@ -98,7 +113,12 @@ final class TeleprompterScript: ObservableObject {
         UserDefaults.standard.set(Double(fontSize), forKey: Self.fontSizeKey)
     }
 
-    /// Called after TextKit lays out the fixed-height widget. Reflow chooses the
+    func setWindowPreference(_ value: TeleprompterWindowPreference) {
+        windowPreference = .init(appearance: value.appearance, normalizedX: value.normalizedX, normalizedY: value.normalizedY,
+                                 widthFraction: value.widthFraction, preferredHeight: value.preferredHeight)
+    }
+
+    /// Called after TextKit lays out the reading window. Reflow chooses the
     /// line containing the persisted UTF-16 anchor instead of preserving pixels.
     func setLayout(lines: [TeleprompterVisualLine], travelDistance: CGFloat) {
         advanceToNow()
@@ -150,6 +170,7 @@ final class TeleprompterScript: ObservableObject {
         text = draft.text
         revision = draft.revision
         anchorUTF16 = max(0, min(draft.anchorUTF16, draft.text.utf16.count))
+        windowPreference = draft.window
         scrollPosition = 0
         visualLines = []
         travelDistance = 0

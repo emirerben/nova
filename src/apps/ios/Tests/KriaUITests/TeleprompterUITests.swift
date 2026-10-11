@@ -3,6 +3,87 @@ import XCTest
 /// Script entry and failure recovery exercise the real native screen, store,
 /// and navigation. Simulator camera unavailability is deliberately truthful.
 @MainActor final class TeleprompterUITests: XCTestCase {
+    func testWindowBackgroundAndDimensionsSurviveReopening() {
+        let app = launchTalking()
+        openScriptCamera(app)
+        let window = windowElement(app)
+        XCTAssertTrue(window.waitForExistence(timeout: 5))
+        XCTAssertTrue((window.value as? String)?.localizedCaseInsensitiveContains("transparent") == true)
+        let initial = window.frame
+
+        openWindowSettings(app)
+        app.buttons["teleprompter-background-glass"].tap()
+        app.sliders["teleprompter-window-width"].adjust(toNormalizedSliderPosition: 0.35)
+        app.sliders["teleprompter-window-height"].adjust(toNormalizedSliderPosition: 0.6)
+        let preferredHeight = app.sliders["teleprompter-window-height"].value as? String
+        app.buttons["Move right"].tap()
+        app.buttons["teleprompter-window-settings-close"].tap()
+        XCTAssertTrue(window.waitForExistence(timeout: 5))
+        let saved = window.frame
+        XCTAssertLessThan(saved.width, initial.width - 10)
+        XCTAssertGreaterThan(saved.minX, initial.minX)
+        XCTAssertTrue((window.value as? String)?.localizedCaseInsensitiveContains("glass") == true)
+        assertWindowStaysClearOfRecord(window, app: app)
+        capture(app, "Movable glass script window")
+
+        app.buttons["Close camera"].tap()
+        app.buttons["teleprompter-close"].tap()
+        app.buttons["teleprompter-open"].tap()
+        app.buttons["teleprompter-open-camera"].tap()
+        XCTAssertTrue(app.staticTexts["teleprompter-camera-error"].waitForExistence(timeout: 10))
+        XCTAssertTrue(window.waitForExistence(timeout: 5))
+        XCTAssertTrue((window.value as? String)?.localizedCaseInsensitiveContains("glass") == true)
+        XCTAssertEqual(window.frame.width, saved.width, accuracy: 2)
+        XCTAssertEqual(window.frame.minX, saved.minX, accuracy: 2)
+
+        openWindowSettings(app)
+        XCTAssertEqual(app.sliders["teleprompter-window-height"].value as? String, preferredHeight)
+        app.buttons["teleprompter-background-solid"].tap()
+        app.buttons["teleprompter-window-reset"].tap()
+        app.buttons["teleprompter-window-settings-close"].tap()
+        XCTAssertTrue((window.value as? String)?.localizedCaseInsensitiveContains("solid") == true)
+        XCTAssertEqual(window.frame.width, initial.width, accuracy: 2)
+        XCTAssertEqual(window.frame.minX, initial.minX, accuracy: 2)
+        assertWindowStaysClearOfRecord(window, app: app)
+        capture(app, "Solid script window reset to default placement")
+    }
+
+    func testWindowHandlesDoNotPauseOrScrollTheScript() {
+        let app = launchTalking()
+        openScriptCamera(app)
+        let window = windowElement(app)
+        XCTAssertTrue(window.waitForExistence(timeout: 5))
+        let original = window.frame
+        scrollOptions(app, to: app.buttons["teleprompter-pause-text"])
+        app.buttons["teleprompter-pause-text"].tap()
+        XCTAssertTrue(app.buttons["Pause rehearsal"].exists)
+
+        let resize = app.buttons["teleprompter-window-resize"]
+        XCTAssertTrue(resize.isHittable)
+        let resizeStart = resize.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        resizeStart.press(forDuration: 0.15, thenDragTo: resizeStart.withOffset(CGVector(dx: -80, dy: -20)))
+        XCTAssertEqual(window.frame.width, original.width - 80, accuracy: 5,
+                       "Resizing follows finger travel in screen coordinates.")
+        XCTAssertTrue(app.buttons["Pause rehearsal"].exists, "Resizing must not send the script body its pause/scroll gesture.")
+
+        let shrunk = window.frame
+        let move = app.buttons["teleprompter-window-move"]
+        XCTAssertTrue(move.isHittable)
+        let moveStart = move.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        moveStart.press(forDuration: 0.15, thenDragTo: moveStart.withOffset(CGVector(dx: 35, dy: 25)))
+        XCTAssertEqual(window.frame.minX, shrunk.minX + 35, accuracy: 5,
+                       "Moving follows finger travel even while the grip itself moves.")
+        XCTAssertTrue(app.buttons["Pause rehearsal"].exists, "Moving must keep the current rehearsal running.")
+        assertWindowStaysClearOfRecord(window, app: app)
+        capture(app, "Transparent window moved and resized")
+
+        // SwiftUI exposes the identifier on the first laid-out line, which can already
+        // have scrolled above the clip. Drag the visible reading area below the grip.
+        let textStart = window.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.7))
+        textStart.press(forDuration: 0.15, thenDragTo: textStart.withOffset(CGVector(dx: 0, dy: -25)))
+        XCTAssertTrue(app.buttons["Rehearse"].exists, "Dragging text still pauses and repositions the script.")
+    }
+
     func testScriptIsSavedAndCameraFailureKeepsItEditable() {
         let app = launchTalking()
         app.buttons["teleprompter-open"].tap()
@@ -105,6 +186,36 @@ import XCTest
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func openScriptCamera(_ app: XCUIApplication) {
+        app.buttons["teleprompter-open"].tap()
+        let field = app.textViews["teleprompter-script-editor"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("This is a longer script for reading at a steady pace. We can move the reading window without losing our place. We can resize the window while keeping the camera controls clear. The background can be transparent, glass, or solid. These settings should return when this script is reopened.")
+        app.buttons["teleprompter-open-camera"].tap()
+        XCTAssertTrue(app.staticTexts["teleprompter-camera-error"].waitForExistence(timeout: 10))
+    }
+
+    private func windowElement(_ app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "teleprompter-window").firstMatch
+    }
+
+    private func openWindowSettings(_ app: XCUIApplication) {
+        let settings = app.buttons["teleprompter-window-settings"]
+        scrollOptions(app, to: settings)
+        settings.tap()
+        XCTAssertTrue(app.buttons["teleprompter-window-settings-close"].waitForExistence(timeout: 5))
+    }
+
+    private func assertWindowStaysClearOfRecord(_ window: XCUIElement, app: XCUIApplication) {
+        XCTAssertGreaterThan(window.frame.width, 100)
+        XCTAssertGreaterThan(window.frame.height, 40)
+        XCTAssertTrue(app.frame.contains(window.frame), "The entire reading window must fit on screen.")
+        let record = app.buttons["teleprompter-record"]
+        XCTAssertTrue(record.isHittable)
+        XCTAssertFalse(window.frame.intersects(record.frame), "Moving/resizing must preserve the Record/Stop touch area.")
     }
 
     private func scrollOptions(_ app: XCUIApplication, to button: XCUIElement) {

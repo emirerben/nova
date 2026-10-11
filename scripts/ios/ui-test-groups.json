@@ -80,7 +80,9 @@
       "KriaUITests/CreationUITests/testClipPickerSlideNearBottomEdgeAutoScrollsAndVerticalDragStillScrolls",
       "KriaUITests/TeleprompterUITests/testScriptIsSavedAndCameraFailureKeepsItEditable",
       "KriaUITests/TeleprompterUITests/testScriptControlsAreReachableAtAccessibilitySize",
-      "KriaUITests/TeleprompterUITests/testPreviousTakeAndFailedIntakeKeepTheRecordingRecoverable"
+      "KriaUITests/TeleprompterUITests/testPreviousTakeAndFailedIntakeKeepTheRecordingRecoverable",
+      "KriaUITests/TeleprompterUITests/testWindowBackgroundAndDimensionsSurviveReopening",
+      "KriaUITests/TeleprompterUITests/testWindowHandlesDoNotPauseOrScrollTheScript"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -259,6 +261,7 @@
     "src/apps/ios/Kria/Features/TeleprompterCamera.swift": "creation",
     "src/apps/ios/Kria/Features/TeleprompterScript.swift": "creation",
     "src/apps/ios/Kria/Features/TeleprompterScriptWidget.swift": "creation",
+    "src/apps/ios/Kria/Features/TeleprompterWindow.swift": "creation",
     "src/apps/ios/Kria/Features/TeleprompterStore.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/TeleprompterUITests.swift": "creation",
     "src/apps/ios/Kria/Features/TeleprompterReviewFixture.swift": "creation"

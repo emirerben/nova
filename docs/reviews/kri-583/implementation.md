@@ -3,13 +3,22 @@
 Ticket: https://linear.app/kria/issue/KRI-583/iphone-record-talking-videos-with-a-steady-scroll-teleprompter
 Branch: `codex/kri-583-iphone-teleprompter`
 Base: `b33471508f87cdf622ebcdcf301a158a57b1203b`
-QA status: `DONE_WITH_CONCERNS` — real capture/recovery passed; the remaining
-release checks are listed below.
+QA status: `DONE_WITH_CONCERNS` — native window/capture checks passed; final
+hardware visual confirmation and remaining release checks are listed below.
 
 ## Creator flow
 
 Talking edit → Add footage → Record with script → paste/edit script → Open camera.
-The front-camera preview has a 144-point script widget below the top safe area.
+The front-camera preview defaults to a 144-point script window below Close.
+Transparent is the default background; Text window settings also offer Glass
+and opaque Solid. A top-left grip moves the window and a lower-right grip
+resizes it. Tapping either grip opens the accessible settings for background,
+width, height, position and Reset. Reset keeps the selected background.
+Placement is bounded above the measured capture controls. Dynamic Type keeps
+enough height for a reading line whenever screen space permits. Position,
+dimensions and appearance save with the edit's script; older drafts safely
+default to the new layout. Moving/resizing works before and during capture
+without pausing the text; dragging the script body still pauses/repositions it.
 Creators can rehearse, set approximate pace from 60–240 words/min, resize text,
 pause or reposition text, and record after a cancellable three-second countdown.
 Text starts when file output acknowledges capture; reaching the script end does
@@ -24,7 +33,7 @@ confirmed account/project deletion. Full-resolution originals stay on iPhone;
 Use take enters the existing proxy intake with one stable recovery identity.
 A full Talking slot keeps the new take and explains removing existing footage.
 
-## Automated evidence
+## Baseline automated evidence
 
 - Native build and full unit suite: 1,500 executed, 21 intentionally skipped,
   zero failures. Includes monotonic pace changes/pause/end/reflow, Unicode
@@ -46,12 +55,12 @@ A full Talking slot keeps the new take and explains removing existing footage.
   final bounded recheck reported no further material finding.
 
 Result bundles are under `test-results/ios/` in the worktree. The latest full
-unit result is `prepare-ui.9ix9lq/unit.xcresult`; the final UI result is
-`ui.7Thpnv/ui.xcresult`. UI fixture evidence
+unit result is `prepare-ui.V9rgzt/unit.xcresult`; the nine-test window UI result
+is `ui.2i2jGf/ui.xcresult`. UI fixture evidence
 is offline replay; the review fixture uses existing bundled footage with test
 audio. No model/provider change or live call was made; live-model cost is $0.
 
-## Physical iPhone evidence
+## Baseline physical iPhone evidence
 
 A separate opt-in `Kria Hardware QA` scheme builds `KriaHardwareUITests`, keeping
 hardware-dependent cases outside the standard simulator inventory. The test
@@ -102,6 +111,48 @@ Test log: `/private/tmp/kri-583-device-ui-recovery.log`.
 Build log: `/private/tmp/kri-583-device-capability-build.log`.
 Private raw movies and screenshots remain outside the repository.
 
+## Window refinement evidence (Transparent / Glass / Solid)
+
+- Full native unit suite: 1,509 total, 1,488 passed, 21 intentional skips,
+  zero failures. Includes nine window decoding, persistence, fractional bounds,
+  minimum reading-height and resize/anchor checks. The unchanged model/store/
+  geometry results are reused after the final UI-only clipping/gesture edits.
+- Nine selected native UI tests passed without retry, including both new window
+  journeys, existing teleprompter recovery/large-text checks and creation/editor
+  smoke checks. Four smoke checks and the background/persistence journey passed
+  again after the visual refinements.
+- Final native UI run against the built test bundle: all five teleprompter
+  journeys passed without retry, including exact move/resize finger travel,
+  uninterrupted rehearsal during handle drags and text-body drag-to-pause.
+- The text-drag check initially selected a StaticText that had scrolled above
+  the clip. Its final version targets the visible reading area using the window
+  frame. An empty method-filter run was discarded; the final class run verified
+  five executed tests and zero failures.
+- All 93 offline iOS orchestration checks passed after classifying the new UI
+  methods and feature source in the test manifest.
+- The real iPhone window test passed once: all three backgrounds over genuine
+  preview, moving/resizing before capture and during recording, a cancelled
+  countdown, normal Stop/Review, interrupted retake and restored review.
+- New saved takes: normal 13.500 s and interrupted 1.700 s, HEVC 1920×1080 at
+  30 fps with portrait rotation; mono AAC at 48 kHz with nonzero samples. Both
+  fully decoded. Inspected frames at 1 s and 8 s contain camera pixels only,
+  including the interval when Glass was displayed over live recording.
+- Real screenshots prompted a final fix: white grips, rounded window edges and
+  an independently clipped reading area below the move header. Handle drags use
+  screen coordinates so moving the grip does not reduce finger travel.
+
+Unit result: `prepare-ui.V9rgzt/unit.xcresult`.
+Nine-test UI result: `ui.2i2jGf/ui.xcresult`.
+Final UI result: `/private/tmp/kri-583-window-final-class-ui.xcresult`.
+Passed physical window result: `/private/tmp/kri-583-window-final-device-ui.xcresult`.
+
+The final hardware visual recheck did not execute an application test: Xcode
+first requested an unlocked phone, then the runner exited with code 74 before
+connecting. The final QA build installs successfully under its isolated identity.
+Real-camera results above precede only the last visual/clipping and exact-drag
+refinements; those have separate final simulator validation. Real-server intake,
+spoken sync and additional devices remain unverified.
+
 ## Physical iPhone release check still required
 
 1. Record spoken words with a visible clap; check saved picture/audio sync.
@@ -122,5 +173,7 @@ TestFlight.
 Implementation and hardware fixes are committed on the branch above in
 `/private/tmp/nova-kri-583-iphone-teleprompter`. No branch push, PR, merge or
 release was performed. The dedicated QA app remains installed on the paired
-iPhone. The final pre-ship check passed against fetched `origin/main`
-(`4f1dc8c8c`), with no overlapping file changes or release metadata edits.
+iPhone. The latest pre-ship check passed its mechanical gates against fetched
+`origin/main` (`900b94070`). It reports newer overlapping changes in intake,
+attachments, QA transport and the UI test manifest. Integrate and revalidate
+those changes before opening/merging a PR. No release metadata was edited.

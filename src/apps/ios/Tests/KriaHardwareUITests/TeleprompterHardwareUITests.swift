@@ -44,6 +44,17 @@ import XCTest
             return
         }
 
+        // All backgrounds render above the genuine preview. Window manipulation must leave
+        // the native capture session ready and its Record control exposed.
+        setWindowBackground("glass", in: app)
+        screenshot(app, named: "Physical glass window over camera")
+        setWindowBackground("solid", in: app)
+        screenshot(app, named: "Physical solid window over camera")
+        setWindowBackground("transparent", in: app)
+        moveAndResizeWindow(in: app, avoiding: record)
+        XCTAssertTrue(record.isEnabled)
+        screenshot(app, named: "Physical transparent window moved and resized")
+
         // Countdown cancellation must create no take and leave a usable Record action.
         record.tap()
         let cancel = app.buttons["teleprompter-cancel-countdown"]
@@ -54,6 +65,12 @@ import XCTest
         record.tap()
         let stop = app.buttons["teleprompter-stop-recording"]
         XCTAssertTrue(stop.waitForExistence(timeout: 10), "Stop appears only after AVFoundation confirms recording started.")
+        // Presenting settings and manipulating the window during capture must not interrupt
+        // AVFoundation. This screenshot is compared with the saved movie after the run.
+        setWindowBackground("glass", in: app)
+        moveAndResizeWindow(in: app, avoiding: stop)
+        XCTAssertTrue(stop.isEnabled)
+        screenshot(app, named: "Physical glass window adjusted while recording")
         wait(seconds: 5.5)
         stop.tap()
         let retake = app.buttons["teleprompter-retake"]
@@ -98,6 +115,36 @@ import XCTest
     }
 
     #if !targetEnvironment(simulator)
+    private func setWindowBackground(_ appearance: String, in app: XCUIApplication) {
+        let grip = app.buttons["teleprompter-window-move"]
+        XCTAssertTrue(grip.waitForExistence(timeout: 5))
+        grip.tap()
+        let choice = app.buttons["teleprompter-background-\(appearance)"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5))
+        choice.tap()
+        app.buttons["teleprompter-window-settings-close"].tap()
+        let window = app.descendants(matching: .any).matching(identifier: "teleprompter-window").firstMatch
+        XCTAssertTrue((window.value as? String)?.localizedCaseInsensitiveContains(appearance) == true)
+    }
+
+    private func moveAndResizeWindow(in app: XCUIApplication, avoiding captureButton: XCUIElement) {
+        let window = app.descendants(matching: .any).matching(identifier: "teleprompter-window").firstMatch
+        let before = window.frame
+        let resize = app.buttons["teleprompter-window-resize"]
+        XCTAssertTrue(resize.isHittable)
+        let resizeStart = resize.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        resizeStart.press(forDuration: 0.15, thenDragTo: resizeStart.withOffset(CGVector(dx: -40, dy: 20)))
+        XCTAssertLessThan(window.frame.width, before.width - 10)
+        let shrunk = window.frame
+        let move = app.buttons["teleprompter-window-move"]
+        let moveStart = move.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        moveStart.press(forDuration: 0.15, thenDragTo: moveStart.withOffset(CGVector(dx: 20, dy: 20)))
+        XCTAssertGreaterThan(window.frame.minX, shrunk.minX + 5)
+        XCTAssertTrue(app.frame.contains(window.frame))
+        XCTAssertFalse(window.frame.intersects(captureButton.frame))
+        XCTAssertTrue(captureButton.isHittable)
+    }
+
     private func launchTalking() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]

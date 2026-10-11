@@ -1,18 +1,33 @@
 import SwiftUI
 import UIKit
 
-/// Fixed 144pt, lens-adjacent reading surface. Timeline ticks only this small
-/// subtree; capture and the creation workspace are not invalidated per frame.
+/// The reading surface is kept independent from camera capture. Timeline ticks only this small
+/// subtree; moving or resizing it never changes the recording session.
 struct TeleprompterScriptWidget: View {
     @ObservedObject var model: TeleprompterScript
+    let preference: TeleprompterWindowPreference
+    let canvas: CGRect
+    let setPreference: (TeleprompterWindowPreference) -> Void
+    let persist: () -> Void
+    let openSettings: () -> Void
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var layout: [TeleprompterVisualLine] = []
     @State private var travelDistance: CGFloat = 0
     @State private var dragStartScroll: CGFloat?
+    @State private var moveStartPreference: TeleprompterWindowPreference?
+    @State private var resizeStartPreference: TeleprompterWindowPreference?
 
-    private let height: CGFloat = 144
     private let inset: CGFloat = 16
+    private let headerHeight: CGFloat = 44
+    private let trailingGutter: CGFloat = 44
+
+    static func minimumHeight(fontSize: CGFloat, dynamicTypeSize: DynamicTypeSize) -> CGFloat {
+        let font = TeleprompterTextLayout.scaledInterFont(size: fontSize, dynamicTypeSize: dynamicTypeSize)
+        return max(TeleprompterWindowGeometry.minimumSize.height, 44 + 32 + font.lineHeight)
+    }
+
+    private var requiredHeight: CGFloat { Self.minimumHeight(fontSize: model.fontSize, dynamicTypeSize: dynamicTypeSize) }
 
     var body: some View {
         SwiftUI.TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !model.isPlaying)) { context in
@@ -21,33 +36,42 @@ struct TeleprompterScriptWidget: View {
                 let marker = inset + font.lineHeight / 2
                 ZStack(alignment: .topLeading) {
                     teleprompterBackground
-                    ForEach(layout) { line in
-                        scriptLine(line, font: font, width: proxy.size.width, marker: marker)
+                    ZStack(alignment: .topLeading) {
+                        ForEach(layout) { line in
+                            scriptLine(line, font: font, width: proxy.size.width, marker: marker)
+                        }
+                        // The marker stays beside the reading line rather than drawing
+                        // through its words, which also keeps it quiet in camera preview.
+                        RoundedRectangle(cornerRadius: 2).fill(KriaColor.sky.opacity(0.9))
+                            .frame(width: 4, height: font.lineHeight)
+                            .offset(x: inset - 8, y: marker - font.lineHeight / 2)
                     }
-                    // The marker stays beside the reading line rather than drawing
-                    // through its words, which also keeps it quiet in camera preview.
-                    RoundedRectangle(cornerRadius: 2).fill(KriaColor.sky.opacity(0.9))
-                        .frame(width: 4, height: font.lineHeight)
-                        .offset(x: inset - 8, y: marker - font.lineHeight / 2)
+                    .frame(width: proxy.size.width, height: max(0, proxy.size.height - headerHeight), alignment: .topLeading)
+                    .clipped()
+                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("teleprompter-window-text")
+                    .gesture(DragGesture(minimumDistance: 1).onChanged { value in
+                        if dragStartScroll == nil { dragStartScroll = model.scrollPosition }
+                        model.setScrollPosition((dragStartScroll ?? model.scrollPosition) - value.translation.height)
+                    }.onEnded { _ in dragStartScroll = nil })
+                    .onAppear { updateLayout(width: proxy.size.width) }
+                    .onChange(of: proxy.size.width) { _, width in updateLayout(width: width) }
+                    .onChange(of: model.text) { _, _ in updateLayout(width: proxy.size.width) }
+                    .onChange(of: model.fontSize) { _, _ in updateLayout(width: proxy.size.width) }
+                    .onChange(of: dynamicTypeSize) { _, _ in updateLayout(width: proxy.size.width) }
+                    .onChange(of: context.date) { _, _ in model.tick() }
+                    .offset(y: headerHeight)
+
+                    moveGrip
+                    resizeGrip.offset(x: max(0, proxy.size.width - 44), y: max(0, proxy.size.height - 44))
                 }
-                .clipped()
-                .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 1).onChanged { value in
-                    if dragStartScroll == nil { dragStartScroll = model.scrollPosition }
-                    model.setScrollPosition((dragStartScroll ?? model.scrollPosition) - value.translation.height)
-                }.onEnded { _ in dragStartScroll = nil })
-                .onAppear { updateLayout(width: proxy.size.width) }
-                .onChange(of: proxy.size.width) { _, width in updateLayout(width: width) }
-                .onChange(of: model.text) { _, _ in updateLayout(width: proxy.size.width) }
-                .onChange(of: model.fontSize) { _, _ in updateLayout(width: proxy.size.width) }
-                .onChange(of: dynamicTypeSize) { _, _ in updateLayout(width: proxy.size.width) }
-                .onChange(of: context.date) { _, _ in model.tick() }
+                .clipShape(RoundedRectangle(cornerRadius: 14))
             }
         }
-        .frame(height: height)
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Script")
-        .accessibilityValue(accessibilityValue)
+        .accessibilityValue("\(preference.appearance.rawValue.capitalized), \(accessibilityValue)")
+        .accessibilityIdentifier("teleprompter-window")
         .accessibilityAction(named: "Previous line") { model.backLine() }
         .accessibilityAction(named: "Next line") { model.nextLine() }
         .accessibilityAdjustableAction { direction in
@@ -56,20 +80,64 @@ struct TeleprompterScriptWidget: View {
     }
 
     private func scriptLine(_ line: TeleprompterVisualLine, font: UIFont, width: CGFloat, marker: CGFloat) -> some View {
-        Text(line.text)
+        let textWidth = max(1, width - inset * 2 - trailingGutter)
+        return Text(line.text)
             .font(.custom(font.fontName, fixedSize: font.pointSize))
             .foregroundStyle(.white)
+            .shadow(color: .black.opacity(preference.appearance == .transparent ? 0.95 : 0.45), radius: 1.2, x: 0, y: 1)
             .lineLimit(1)
-            .frame(width: max(0, width - inset * 2), alignment: .leading)
-            .position(x: width / 2, y: marker + line.anchor - model.scrollPosition)
+            .frame(width: textWidth, alignment: .leading)
+            .position(x: inset + textWidth / 2, y: marker + line.anchor - model.scrollPosition)
     }
 
     @ViewBuilder private var teleprompterBackground: some View {
-        if KriaTransparency.isReduced(reduceTransparency) {
-            Color.black.opacity(0.92)
+        if preference.appearance == .transparent {
+            Color.clear
+        } else if preference.appearance == .solid || KriaTransparency.isReduced(reduceTransparency) {
+            Color.black
         } else {
             Rectangle().fill(.ultraThinMaterial).overlay(Color.black.opacity(0.54))
         }
+    }
+
+    private var moveGrip: some View {
+        Button(action: openSettings) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(Color.black.opacity(0.36), in: RoundedRectangle(cornerRadius: 10))
+        }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Move text window")
+            .accessibilityIdentifier("teleprompter-window-move")
+            .highPriorityGesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                .onChanged { value in
+                    if moveStartPreference == nil { moveStartPreference = preference }
+                    guard let start = moveStartPreference else { return }
+                    setPreference(TeleprompterWindowGeometry.moving(start, in: canvas, by: value.translation, minimumHeight: requiredHeight))
+                }
+                .onEnded { _ in moveStartPreference = nil; persist() })
+    }
+
+    private var resizeGrip: some View {
+        Button(action: openSettings) {
+            Image(systemName: "arrow.down.right")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(Color.black.opacity(0.36), in: RoundedRectangle(cornerRadius: 10))
+        }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Resize text window")
+            .accessibilityIdentifier("teleprompter-window-resize")
+            .highPriorityGesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                .onChanged { value in
+                    if resizeStartPreference == nil { resizeStartPreference = preference }
+                    guard let start = resizeStartPreference else { return }
+                    setPreference(TeleprompterWindowGeometry.resizing(start, in: canvas, by: value.translation, minimumHeight: requiredHeight))
+                }
+                .onEnded { _ in resizeStartPreference = nil; persist() })
     }
 
     private var effectiveFont: UIFont {
@@ -82,7 +150,7 @@ struct TeleprompterScriptWidget: View {
 
     private func updateLayout(width: CGFloat) {
         let font = effectiveFont
-        let result = TeleprompterTextLayout.lines(text: model.text, width: max(1, width - inset * 2), font: font)
+        let result = TeleprompterTextLayout.lines(text: model.text, width: max(1, width - inset * 2 - trailingGutter), font: font)
         layout = result
         travelDistance = max(0, CGFloat(max(0, result.count - 1)) * font.lineHeight)
         model.setLayout(lines: result, travelDistance: travelDistance)

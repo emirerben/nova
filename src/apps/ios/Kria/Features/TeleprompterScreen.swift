@@ -12,6 +12,9 @@ struct TeleprompterScreen: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var confirmsDiscard = false
     @State private var allowsAutomaticScroll = false
+    @State private var showsWindowSettings = false
+    @State private var captureControlsHeight: CGFloat = 220
+    @State private var readingCanvas: CGRect = .zero
 
     private var manualScrolling: Bool {
         UIAccessibility.isVoiceOverRunning || (KriaMotion.isReduced(reduceMotion) && !allowsAutomaticScroll)
@@ -54,6 +57,9 @@ struct TeleprompterScreen: View {
         .confirmationDialog("Discard this take?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
             Button("Discard take", role: .destructive) { flow.discardSelected() }
         } message: { Text("Your script and any previous take stay saved.") }
+        .sheet(isPresented: $showsWindowSettings) {
+            TeleprompterWindowSettings(script: flow.script, canvas: readingCanvas, persist: { flow.persistDraft() })
+        }
     }
 
     private var scriptEntry: some View {
@@ -82,14 +88,19 @@ struct TeleprompterScreen: View {
 
     private var cameraScreen: some View {
         GeometryReader { geometry in
+            let topInset: CGFloat = 60
+            let bottomInset: CGFloat = max(120, captureControlsHeight + 16)
+            let canvas = CGRect(x: 12, y: topInset, width: max(1, geometry.size.width - 24),
+                                height: max(0, geometry.size.height - topInset - bottomInset))
             ZStack {
                 Color.black.ignoresSafeArea()
                 TeleprompterCameraPreview(camera: flow.camera)
                     .frame(width: geometry.size.width, height: geometry.size.width * 16 / 9)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityHidden(true)
+                TeleprompterWindowOverlay(script: flow.script, canvas: canvas, persist: { flow.persistDraft() },
+                                           openSettings: { showsWindowSettings = true })
                 VStack(spacing: 8) {
-                    TeleprompterScriptWidget(model: flow.script).padding(.horizontal, 12)
                     HStack {
                         Button { closeCapture() } label: {
                             Image(systemName: "xmark").font(.system(size: 18, weight: .semibold)).frame(width: 44, height: 44)
@@ -98,28 +109,42 @@ struct TeleprompterScreen: View {
                         Spacer()
                     }.padding(.horizontal, 12)
                     Spacer(minLength: 8)
-                    if let message = flow.camera.error {
-                        TeleprompterCameraErrorCard(message: message, accessibilityLayout: dynamicTypeSize.isAccessibilitySize,
-                            editScript: { flow.editScript() }, retry: { Task { await flow.camera.prepare() } },
-                            openSettings: { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } })
-                    }
-                    if let error = flow.error { errorText(error).padding(.horizontal, 16) }
-                    if flow.stage == .countdown {
-                        Text("\(flow.countdown)").font(KriaFont.body(48).weight(.bold))
-                            .accessibilityLabel("Recording in \(flow.countdown)")
-                        Button("Cancel countdown") { flow.cancelCountdown() }.frame(minHeight: 44)
-                            .accessibilityIdentifier("teleprompter-cancel-countdown")
-                    } else if flow.stage == .starting || flow.stage == .finalizing {
-                        ProgressView(flow.stage == .starting ? "Starting recording…" : "Saving take…").tint(.white).padding(16)
-                    } else {
-                        TeleprompterCaptureControls(script: flow.script, camera: flow.camera,
-                            recording: flow.stage == .recording,
-                            manual: manualScrolling,
-                            enableAutomaticScroll: UIAccessibility.isVoiceOverRunning ? nil : { allowsAutomaticScroll = true },
-                            record: { flow.record(manual: manualScrolling) },
-                            stop: { flow.stop() })
-                    }
+                    cameraBottom
+                        .background(GeometryReader { proxy in
+                            Color.clear.preference(key: TeleprompterCaptureControlsHeight.self, value: proxy.size.height)
+                        })
                 }.foregroundStyle(.white).padding(.top, 8).padding(.bottom, 16)
+            }
+            .onAppear { readingCanvas = canvas }
+            .onChange(of: geometry.size) { _, _ in readingCanvas = canvas }
+            .onChange(of: captureControlsHeight) { _, _ in readingCanvas = canvas }
+            .onPreferenceChange(TeleprompterCaptureControlsHeight.self) { captureControlsHeight = $0 }
+        }
+    }
+
+    @ViewBuilder private var cameraBottom: some View {
+        VStack(spacing: 8) {
+            if let message = flow.camera.error {
+                TeleprompterCameraErrorCard(message: message, accessibilityLayout: dynamicTypeSize.isAccessibilitySize,
+                    editScript: { flow.editScript() }, retry: { Task { await flow.camera.prepare() } },
+                    openSettings: { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } })
+            }
+            if let error = flow.error { errorText(error).padding(.horizontal, 16) }
+            if flow.stage == .countdown {
+                Text("\(flow.countdown)").font(KriaFont.body(48).weight(.bold))
+                    .accessibilityLabel("Recording in \(flow.countdown)")
+                Button("Cancel countdown") { flow.cancelCountdown() }.frame(minHeight: 44)
+                    .accessibilityIdentifier("teleprompter-cancel-countdown")
+            } else if flow.stage == .starting || flow.stage == .finalizing {
+                ProgressView(flow.stage == .starting ? "Starting recording…" : "Saving take…").tint(.white).padding(16)
+            } else {
+                TeleprompterCaptureControls(script: flow.script, camera: flow.camera,
+                    recording: flow.stage == .recording,
+                    manual: manualScrolling,
+                    enableAutomaticScroll: UIAccessibility.isVoiceOverRunning ? nil : { allowsAutomaticScroll = true },
+                    windowSettings: { showsWindowSettings = true },
+                    record: { flow.record(manual: manualScrolling) },
+                    stop: { flow.stop() })
             }
         }
     }
@@ -251,6 +276,7 @@ private struct TeleprompterCaptureControls: View {
     let recording: Bool
     let manual: Bool
     let enableAutomaticScroll: (() -> Void)?
+    let windowSettings: () -> Void
     let record: () -> Void
     let stop: () -> Void
 
@@ -306,6 +332,8 @@ private struct TeleprompterCaptureControls: View {
                     .font(KriaFont.body(14))
             }
             if script.hasEnded { Text("End of script").font(KriaFont.body(13)) }
+            Button("Text window", action: windowSettings).frame(maxWidth: .infinity, minHeight: 44)
+                .accessibilityIdentifier("teleprompter-window-settings")
             if !recording {
                 Button("Start of script") { script.reset() }.frame(maxWidth: .infinity, minHeight: 44)
                 Stepper("Text size \(Int(script.fontSize))", value: Binding(get: { Double(script.fontSize) }, set: { script.setFontSize(CGFloat($0)) }), in: 18...32, step: 2)
@@ -327,6 +355,90 @@ private struct TeleprompterCaptureControls: View {
             }.disabled(!recording && camera.phase != .ready)
                 .accessibilityIdentifier(recording ? "teleprompter-stop-recording" : "teleprompter-record")
     }
+}
+
+private struct TeleprompterCaptureControlsHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 220
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+/// Keeps high-frequency text playback and window preference updates out of the whole camera view.
+private struct TeleprompterWindowOverlay: View {
+    @ObservedObject var script: TeleprompterScript
+    let canvas: CGRect
+    let persist: () -> Void
+    let openSettings: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        let minimumHeight = TeleprompterScriptWidget.minimumHeight(fontSize: script.fontSize, dynamicTypeSize: dynamicTypeSize)
+        let frame = TeleprompterWindowGeometry.frame(preference: script.windowPreference, in: canvas, minimumHeight: minimumHeight)
+        return TeleprompterScriptWidget(model: script, preference: script.windowPreference, canvas: canvas,
+                                        setPreference: { script.setWindowPreference($0) }, persist: persist, openSettings: openSettings)
+            .frame(width: frame.width, height: frame.height)
+            .position(x: frame.midX, y: frame.midY)
+    }
+}
+
+private struct TeleprompterWindowSettings: View {
+    @ObservedObject var script: TeleprompterScript
+    let canvas: CGRect
+    let persist: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Background") {
+                    HStack {
+                        appearanceButton(.transparent, title: "Transparent")
+                        appearanceButton(.glass, title: "Glass")
+                        appearanceButton(.solid, title: "Solid")
+                    }
+                }
+                Section("Size") {
+                    Slider(value: Binding(get: { Double(preference.widthFraction) }, set: {
+                        apply(TeleprompterWindowPreference(appearance: preference.appearance, normalizedX: preference.normalizedX,
+                                                           normalizedY: preference.normalizedY, widthFraction: CGFloat($0), preferredHeight: preference.preferredHeight))
+                    }), in: 0.35...1)
+                    .accessibilityLabel("Text window width").accessibilityValue("\(Int(preference.widthFraction * 100)) percent")
+                    .accessibilityIdentifier("teleprompter-window-width")
+                    Slider(value: Binding(get: { Double(preference.preferredHeight) }, set: {
+                        apply(TeleprompterWindowPreference(appearance: preference.appearance, normalizedX: preference.normalizedX,
+                                                           normalizedY: preference.normalizedY, widthFraction: preference.widthFraction, preferredHeight: CGFloat($0)))
+                    }), in: 96...320)
+                    .accessibilityLabel("Text window height").accessibilityValue("\(Int(preference.preferredHeight)) points")
+                    .accessibilityIdentifier("teleprompter-window-height")
+                }
+                Section("Position") {
+                    HStack { Button("Move up") { move(.init(width: 0, height: -30)) }; Button("Move down") { move(.init(width: 0, height: 30)) } }
+                        .buttonStyle(.borderless)
+                    HStack { Button("Move left") { move(.init(width: -30, height: 0)) }; Button("Move right") { move(.init(width: 30, height: 0)) } }
+                        .buttonStyle(.borderless)
+                    Button("Reset window") {
+                        apply(.init(appearance: preference.appearance))
+                    }.accessibilityIdentifier("teleprompter-window-reset")
+                }
+            }
+            .navigationTitle("Text window").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() }.accessibilityIdentifier("teleprompter-window-settings-close") } }
+        }
+    }
+
+    private func appearanceButton(_ appearance: TeleprompterWindowAppearance, title: String) -> some View {
+        Button(title) { apply(.init(appearance: appearance, normalizedX: preference.normalizedX, normalizedY: preference.normalizedY,
+                                    widthFraction: preference.widthFraction, preferredHeight: preference.preferredHeight)) }
+            .buttonStyle(.borderedProminent).tint(preference.appearance == appearance ? KriaColor.sky : .gray)
+            .accessibilityIdentifier("teleprompter-background-\(appearance.rawValue)")
+            .accessibilityAddTraits(preference.appearance == appearance ? .isSelected : [])
+    }
+    private func move(_ offset: CGSize) {
+        let minimumHeight = TeleprompterScriptWidget.minimumHeight(fontSize: script.fontSize, dynamicTypeSize: dynamicTypeSize)
+        apply(TeleprompterWindowGeometry.moving(preference, in: canvas, by: offset, minimumHeight: minimumHeight))
+    }
+    private var preference: TeleprompterWindowPreference { script.windowPreference }
+    private func apply(_ value: TeleprompterWindowPreference) { script.setWindowPreference(value); persist() }
 }
 private struct TeleprompterElapsed: View {
     let start: TimeInterval?
