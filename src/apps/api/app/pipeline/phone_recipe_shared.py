@@ -19,7 +19,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agents._schemas.drawing import coerce_drawings
 from app.kria.portable_drawing import compile_drawing_layers
 from app.kria.recipes import Canvas, MediaTransform, TimelineClip
 from app.kria.recipes_v2 import EditRecipeV2
@@ -221,9 +220,6 @@ def apply_landscape_fit(
     return EditRecipeV2(**fields)
 
 
-MIN_LAYER_WINDOW_S = 0.2
-
-
 def with_drawings(recipe: EditRecipeV2, drawings: list[dict] | None) -> EditRecipeV2:
     """``recipe`` carrying exactly the freehand drawing layers ``drawings`` compile to (KRI-589).
 
@@ -239,15 +235,7 @@ def with_drawings(recipe: EditRecipeV2, drawings: list[dict] | None) -> EditReci
     layer past the end. Returns ``recipe`` itself when nothing changes, so a
     recipe without drawings stays byte-identical.
     """
-    # `PortableDrawingLayer.draw_duration` has a 0.2 s floor and the contract clamps it to the
-    # window, so a window under 0.2 s (legal for a DrawingElement, floor 0.1 s) would make
-    # `compile_drawing_layers` raise on EVERY later Save. Such a sliver is invisible anyway:
-    # leave it out of the recipe (the stored lane keeps it).
-    drawings = [
-        drawing
-        for drawing in coerce_drawings(drawings)
-        if min(drawing.end_s, recipe.duration) - drawing.start_s >= MIN_LAYER_WINDOW_S
-    ]
+    # The contract compile is tolerant: a window that no longer fits is dropped or clamped.
     layers = compile_drawing_layers(drawings, timeline_duration_s=recipe.duration)
     if not layers and not recipe.drawing_layers:
         return recipe

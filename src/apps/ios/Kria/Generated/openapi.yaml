@@ -6544,7 +6544,7 @@
           },
           "draw_duration": {
             "maximum": 10.0,
-            "minimum": 0.2,
+            "minimum": 0.1,
             "title": "Draw Duration",
             "type": "number"
           },

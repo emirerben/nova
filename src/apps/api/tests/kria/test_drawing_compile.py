@@ -146,9 +146,9 @@ def test_with_drawings_clamps_to_each_cut_and_strips_cleanly(monkeypatch) -> Non
     assert stripped.model_dump(mode="json") == recipe.model_dump(mode="json")
 
 
-def test_a_sliver_window_never_breaks_a_later_save(monkeypatch) -> None:
-    """A 0.15 s window is a legal DrawingElement but below the layer's 0.2 s draw floor; the
-    recipe leaves it out instead of making EVERY later Save of the variant raise."""
+def test_a_sliver_window_compiles_and_never_breaks_a_later_save(monkeypatch) -> None:
+    """A 0.15 s window is legal; its draw duration clamps to the window instead of raising."""
     _job, recipe = _device_job(monkeypatch)
     sliver = {**CASES[0]["drawings"][0], "id": "sliver", "start_s": 1.0, "end_s": 1.15}
-    assert with_drawings(recipe, [sliver]) is recipe
+    layers = with_drawings(recipe, [sliver]).drawing_layers
+    assert [(layer.id, round(layer.draw_duration, 2)) for layer in layers] == [("sliver", 0.15)]

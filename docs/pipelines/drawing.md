@@ -39,8 +39,8 @@ narrated, voiceover montage), whatever sections the Save carried, so a text edit
 shorter cut re-clamps the stored lane and a longer cut brings the window back. The
 stored lane is never rewritten by a cut. Patching compilers (`narrated`, `voiceover`)
 strip the previous layers first, since the recipe validator rejects a layer past the
-new end. A window under 0.2 s is left out of the recipe (the layer's draw floor); the
-lane keeps it.
+new end. A window shorter than the 0.1 s minimum after the clamp is dropped from the recipe; the
+lane keeps it. `draw_duration` clamps to the window.
 
 A guided Save that touches only `text_elements` and/or `drawings` keeps the approved
 timing program (`render_sections - {"text_elements", "drawings"}`); it never re-clocks.
