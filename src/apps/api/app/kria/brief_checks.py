@@ -293,6 +293,9 @@ class PlanFacts:
     # KRI-537: triggers the render never heard in the creator's voice (a phone variant's
     # `phone_beat_receipt.unplaced[]`), so "never said" is told apart from "no room".
     unheard_beat_triggers: tuple[str, ...] = ()
+    # KRI-550: (trigger, placed, heard) for each "every time I say X" beat the render placed
+    # on only some of the times it was said (`unplaced[]` reason "occurrence_cap").
+    capped_beat_hits: tuple[tuple[str, int, int], ...] = ()
     # The strategy's audio strategy ("voiceover", "original_audio", ...); None = unknown.
     audio_strategy: str | None = None
     # How loud the footage's own sound plays under the creator's voice (0..1; 1.0 = full
@@ -1033,6 +1036,33 @@ def _finite_number(value: object) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _capped_beat_hits(placed: object, unplaced: object) -> tuple[tuple[str, int, int], ...]:
+    """KRI-550: (trigger, placed, heard) for every beat a receipt capped, in receipt order.
+
+    ``phone_reaction_grounding`` writes one ``"occurrence_cap"`` entry per hit of an
+    "every time I say X" beat past its caps, only for a beat that placed something. Such a
+    beat's other ``unplaced`` entries are hits demoted after grounding, so its placed plus
+    unplaced entries count every time the word was said. Counted per beat: a photo beat
+    and a sound beat on the same word are two beats over the same hits.
+    """
+    placed_rows = [e for e in placed if isinstance(e, Mapping)] if isinstance(placed, list) else []
+    missed_rows = (
+        [e for e in unplaced if isinstance(e, Mapping)] if isinstance(unplaced, list) else []
+    )
+    capped = {
+        row.get("beat_id"): row["trigger"]
+        for row in missed_rows
+        if row.get("reason") == "occurrence_cap" and isinstance(row.get("trigger"), str)
+    }
+    hits: list[tuple[str, int, int]] = []
+    for beat_id, trigger in capped.items():
+        placed_n = sum(1 for row in placed_rows if row.get("beat_id") == beat_id)
+        if placed_n:
+            missed_n = sum(1 for row in missed_rows if row.get("beat_id") == beat_id)
+            hits.append((trigger, placed_n, placed_n + missed_n))
+    return tuple(hits)
+
+
 def _phone_receipt_facts(receipt: object, *, timed: bool) -> dict[str, Any]:
     """Beat and closing facts read off a variant's persisted ``phone_beat_receipt``.
 
@@ -1069,6 +1099,7 @@ def _phone_receipt_facts(receipt: object, *, timed: bool) -> dict[str, Any]:
         "reaction_beats_available": True,
         "reaction_beats": tuple(beats),
         "unheard_beat_triggers": tuple(dict.fromkeys(unheard)),
+        "capped_beat_hits": _capped_beat_hits(placed, unplaced),
     }
     closing = receipt.get("closing")
     if isinstance(closing, Mapping):
@@ -2530,6 +2561,40 @@ def _never_heard_problem(triggers: Iterable[str]) -> str:
     )
 
 
+# Any quote mark, apostrophes included: "her 'kahve' kelimesinde" quotes with them.
+_CAPPED_WORD_QUOTES = "\"'“”‘’«»"
+
+
+def _ask_is_about_capped_word(req: BriefRequirement, names: Sequence[str], trigger: str) -> bool:
+    """Whether the ask is about ``trigger``: one of its named words, or (naming none, like
+    T3's "her 'kahve' kelimesinde ...") the word quoted or after Turkish "her" (every)."""
+    if names:
+        return any(_trigger_heard(n, trigger) for n in names)
+    word = re.escape(_fold(trigger))
+    quotes = _CAPPED_WORD_QUOTES
+    pattern = rf"[{quotes}]{word}[{quotes}]|\bher\s+[{quotes}]?{word}(?!\w)"
+    return re.search(pattern, _req_text(req)) is not None
+
+
+def _capped_beat_problems(
+    req: BriefRequirement, facts: PlanFacts, names: Sequence[str]
+) -> list[str]:
+    """KRI-550: a word this ask is about that the render marked on only some of the times
+    it was said. Another ask's capped word is not this ask's problem."""
+    problems: list[str] = []
+    for trigger, placed, heard in facts.capped_beat_hits:
+        if not _ask_is_about_capped_word(req, names, trigger):
+            continue
+        problems.append(
+            say(
+                en=f'I added it on only {placed} of the {heard} times you said "{trigger}"',
+                tr=f'"{trigger}" dediğin {heard} yerden yalnızca {placed} tanesine ekleyebildim',
+            )
+        )
+    # A photo beat and a sound beat on one word read once.
+    return list(dict.fromkeys(problems))
+
+
 def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
     """Where the met pop-ins landed, in time order; None when the render gave no times."""
     timed = sorted((b for b in placements if b.at_s is not None), key=lambda b: b.at_s or 0.0)
@@ -2644,6 +2709,7 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                         tr=(f"Şunlar için fotoğraf ya da çıkartma bulamadım: {_names(unresolved)}"),
                     )
                 )
+            problems.extend(_capped_beat_problems(req, facts, names))
             text = _req_text(req)
             if placements:
                 if _SOUND_RE.search(text) and not any(b.sound for b in placements):

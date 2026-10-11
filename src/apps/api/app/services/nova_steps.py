@@ -405,6 +405,12 @@ def beat_miss_sentence(trigger: str, reason: str | None) -> str:
         return f'Couldn\'t find a sound for "{trigger}" in the library'
     if reason in _MISS_REASON_NO_ROOM:
         return f'No room to show "{trigger}" without covering your face or the captions'
+    if reason == "occurrence_cap":
+        # KRI-550: one entry per hit past `phone_reaction_grounding`'s caps; the
+        # earlier hits of the same word did get their photo or sound.
+        return (
+            f'You said "{trigger}" more times than one edit can mark, so the last ones were skipped'
+        )
     return f'Couldn\'t add "{trigger}" to the phone render'
 
 
