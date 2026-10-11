@@ -33,7 +33,7 @@ from app.schemas.clip_intents import MAX_CLIP_INTENTS, ResolvedClipIntent
 from app.schemas.edit_frame_schedule import EditFrameSchedule
 from app.schemas.text_composition import TextCompositionProgram
 from app.schemas.text_style_intent import LabelPosition, TitleAnimation
-from app.schemas.user_song import UserSongPlan
+from app.schemas.user_song import SongCaptionTrack, UserSongPlan
 
 # Keep existing integer JSON stable for approval hashes while accepting fractions.
 MAX_PROPOSAL_DURATION_S = 120
@@ -1432,6 +1432,13 @@ class EditProposalSnapshot(BaseModel):
     # clock). None is omitted from serialization so every snapshot that predates
     # the field keeps its stored shape, approval hash and compiler replay.
     user_song: UserSongPlan | None = Field(default=None, exclude_if=lambda value: value is None)
+    # KRI-569: the song's lyrics as a caption track, server-authored when the creator asked
+    # for captions on a song montage. Kept off ``UserSongPlan`` (strict, copied into the
+    # execution plan and iOS) so an older worker never sees an unknown plan field. None is
+    # omitted, so every earlier snapshot keeps its stored shape, hash and compiler replay.
+    song_captions: SkipJsonSchema[SongCaptionTrack | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_beat_media(self) -> EditProposalSnapshot:
@@ -1628,6 +1635,10 @@ class EditProposalSnapshot(BaseModel):
                 raise ValueError("a creator song requires fast montage cuts")
             if abs(self.user_song.window_duration_s - float(self.duration_s)) > 0.001:
                 raise ValueError("the song window must equal the proposal duration")
+        if self.song_captions is not None:
+            song = self.user_song
+            if song is None or self.song_captions.song_generation != song.generation:
+                raise ValueError("song captions need the creator song they were written for")
         if self.output_orientation is None:
             orientation, reason = infer_story_output_orientation(self)
             self.output_orientation = orientation
@@ -1996,6 +2007,7 @@ class EditProposalSnapshotResponse(EditProposalSnapshot):
     text_composition: SkipJsonSchema[TextCompositionProgram | None] = Field(
         default=None, exclude=True
     )
+    song_captions: SkipJsonSchema[SongCaptionTrack | None] = Field(default=None, exclude=True)
     media: list[MediaRefResponse] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
 
 
