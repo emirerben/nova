@@ -653,6 +653,29 @@ def _compile_staggered_content(overlay, *, text, canvas, font, size, font_asset,
     return StaggeredContent(text=text, glyphs=glyphs)
 
 
+def _forced_word_rows(sizes: object, word_count: int) -> list[list[int]] | None:
+    """Word-index rows from explicit per-row word counts, or None to wrap as usual.
+
+    Only phone captions set ``karaoke_row_sizes``: a cue re-broken so no line
+    runs under the device watermark (KRI-548, `phone_captions`). Anything that
+    does not partition exactly ``word_count`` words falls back to the normal
+    balanced wrap rather than raising.
+    """
+    if (
+        not isinstance(sizes, list)
+        or not sizes
+        or any(isinstance(size, bool) or not isinstance(size, int) or size < 1 for size in sizes)
+        or sum(sizes) != word_count
+    ):
+        return None
+    rows: list[list[int]] = []
+    start = 0
+    for size in sizes:
+        rows.append(list(range(start, start + size)))
+        start += size
+    return rows
+
+
 def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
     from app.kria.portable_text import KaraokeContent, PortableTextLayer, PositionedTextRun
     from app.pipeline import text_overlay_skia as cloud
@@ -683,8 +706,8 @@ def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
     font = skia.Font(resolved.typeface, size)
     font.setSubpixel(True)
     spacing = cloud._overlay_letter_spacing_px(overlay, size)
-    rows = cloud._wrap_word_indices(
-        words, font, cloud._overlay_max_width_px(overlay, canvas), spacing
+    rows = _forced_word_rows(overlay.get("karaoke_row_sizes"), len(words)) or (
+        cloud._wrap_word_indices(words, font, cloud._overlay_max_width_px(overlay, canvas), spacing)
     )
     widths = [cloud._measure_line(font, word, spacing) for word in words]
     gap = font.measureText(" ") + 2 * spacing

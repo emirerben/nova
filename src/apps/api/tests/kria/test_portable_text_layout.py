@@ -231,3 +231,53 @@ def test_authored_background_has_explicit_native_geometry():
     assert layer.background.width > 16
     assert layer.background.height > 8
     assert layer.background.radius == 4
+
+
+def _karaoke_overlay(**extra) -> dict:
+    words = "one two three four five".split()
+    return {
+        "text": " ".join(words),
+        "effect": "karaoke-line",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "font_family": "TikTok Sans",
+        "text_size_px": 78,
+        "position_y_frac": 0.5,
+        "word_timings": [
+            {"text": word, "start_s": 0.2 * i, "end_s": 0.2 * (i + 1)}
+            for i, word in enumerate(words)
+        ],
+        **extra,
+    }
+
+
+def _rows(layer) -> list[list[str]]:
+    rows: dict[float, list[str]] = {}
+    for run in layer.runs:
+        rows.setdefault(run.baseline_y, []).append(run.text)
+    return [rows[baseline] for baseline in sorted(rows)]
+
+
+def test_karaoke_row_sizes_pin_the_rows_and_keep_word_timing():
+    """Phone captions re-break a karaoke cue around the device watermark
+    (KRI-548) by naming its rows; the word order and timing are untouched."""
+    canvas = Canvas(1080, 1920)
+    natural, _ = compile_text_overlay(_karaoke_overlay(), layer_id="k", canvas=canvas)
+    pinned, _ = compile_text_overlay(
+        _karaoke_overlay(karaoke_row_sizes=[2, 3]), layer_id="k", canvas=canvas
+    )
+
+    assert _rows(natural) == [["one", "two", "three", "four", "five"]]
+    assert _rows(pinned) == [["one", "two"], ["three", "four", "five"]]
+    assert pinned.karaoke.starts == natural.karaoke.starts
+    assert pinned.anchor_y == natural.anchor_y
+
+
+@pytest.mark.parametrize("sizes", [[2, 2], [5, 1], [0, 5], [2.5, 2.5], [True, 4], "2,3", []])
+def test_karaoke_row_sizes_that_do_not_partition_the_words_wrap_as_usual(sizes):
+    canvas = Canvas(1080, 1920)
+    natural, _ = compile_text_overlay(_karaoke_overlay(), layer_id="k", canvas=canvas)
+    layer, _ = compile_text_overlay(
+        _karaoke_overlay(karaoke_row_sizes=sizes), layer_id="k", canvas=canvas
+    )
+    assert layer == natural
