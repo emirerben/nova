@@ -1298,6 +1298,13 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         if record.uploadCompleted == true { await attach(record) } else { await retry(record) }
     }
 
+    /// A recovered camera take resumes this intake instead of reserving a
+    /// second copy while preparation/upload still owns the record ID.
+    func containsIntake(recordID: UUID) -> Bool {
+        inFlight[recordID] != nil || records.contains { $0.id == recordID }
+            || Self.restorePreparingUploads(key: defaultsKey).contains { $0.id == recordID }
+    }
+
     func retryAttachment(recordID: UUID) async {
         guard let record = records.first(where: { $0.id == recordID }), record.uploadCompleted == true else { return }
         failures.removeAll { $0.id == recordID }

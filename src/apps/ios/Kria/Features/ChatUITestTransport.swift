@@ -121,10 +121,13 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
             // choice_question payload but does not advertise the capability (old-server text fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "1" { capabilities["choice_questions"] = true }
-            if DeviceRenderUITestFixture.scenario != nil {
+            if DeviceRenderUITestFixture.scenario != nil || ProcessInfo.processInfo.environment["KRIA_TELEPROMPTER_REVIEW_FIXTURE"] == "1" {
                 capabilities["phone_rendering"] = ["enabled": true, "recipe_versions": [1, 2], "verified_features": MediaCapability.allCases.map(\.rawValue)]
             }
             return response(capabilities)
+        }
+        if path.hasSuffix("/upload-urls"), ProcessInfo.processInfo.environment["KRIA_TELEPROMPTER_REVIEW_FIXTURE"] == "1" {
+            return response(["detail": "This fixture deliberately rejects intake."], status: 422)
         }
         // `KRIA_SLIDE_POST_READY_THREAD=1`: a READY slide post already exists. The LIST (drawer) payload is the
         // worst case (no `state.format`, no variants), while the FULL projection carries the format, which is

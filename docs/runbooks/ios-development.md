@@ -181,6 +181,39 @@ sources, the hardware encoder).
 - Access and refresh tokens belong in Keychain. The native app never contains
   `INTERNAL_API_KEY` and never sends `X-User-Id`.
 
+### Talking camera and teleprompter (KRI-583)
+
+In a Talking edit, **Add footage → Record with script** opens a project-scoped
+script editor, then the front camera. A fixed-height script widget sits below
+the top safe area. Steady scrolling defaults to approximately 140 words/min;
+pace, text size, rehearsal, text pause and repositioning work independently of
+recording. Capture begins after a cancellable three-second countdown and the
+file-output start acknowledgment. Portrait movies contain camera video and
+microphone audio only; preview mirroring and the script UI are separate layers.
+
+`TeleprompterCamera` owns the serial AVFoundation session. `TeleprompterScript`
+owns monotonic playback and UTF-16 reading anchors. `TeleprompterRecordingFlow`
+owns durable capture/review/intake transitions. `TeleprompterStore` keeps draft
+and take manifests under Application Support, isolated by account and project.
+Logout preserves recovery files without exposing them to another account;
+confirmed project/account deletion removes the corresponding files.
+
+The screen retains a previous take until a candidate is explicitly used.
+Accepted takes enter the existing phone intake with a stable recovery ID:
+full-resolution originals stay on device and only analysis proxies upload.
+A full Talking clip slot requires removing its current footage in Add media
+before using the saved take. An unknown recovered upload result stays queued
+while checking its server receipt; it must never enqueue a second logical take.
+
+`TeleprompterUITests` covers script persistence, unavailable-camera recovery,
+large text, previous-take selection, and failed native proxy intake. Debug-only
+`KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE=1` and
+`KRIA_TELEPROMPTER_REVIEW_FIXTURE=1` require `-ui-testing-chat`; the review fixture
+uses bundled footage with generated audio and does not prove camera capture.
+Before release, check a real iPhone for preview framing, saved portrait/mirroring,
+audio sync, text absence from saved pixels, and background/audio interruption
+recovery. Simulator success is not evidence for those hardware behaviors.
+
 ## Performance gate
 
 Simulator results prove correctness only. Before enabling a local-render

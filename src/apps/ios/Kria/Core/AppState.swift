@@ -31,10 +31,26 @@ enum ProfileFetchState: Equatable, Sendable {
     @Published private(set) var linkedProviders: [String] = []
     @Published private(set) var profileState: ProfileFetchState = .idle
     @Published private(set) var hasAIConsent = false
+    /// Stable account boundary for recoverable, device-only recording drafts.
+    /// UI fixtures use their own identity and never read a developer's Keychain.
+    var localStorageIdentity: String? {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") { return "teleprompter-ui-fixture" }
+        #endif
+        guard isSignedIn, let session = try? tokenStore.read(),
+              let subject = Self.jwtSubject(in: session.accessToken) else { return nil }
+        return SHA256.hash(data: Data(subject.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    func clearTeleprompterAccount() {
+        guard let identity = localStorageIdentity else { return }
+        try? TeleprompterStore.removeAccount(accountID: identity)
+    }
     private let tokenStore: TokenStore
     private let api: KriaAPIClient
     private let defaults: UserDefaults
     private var sessionExpiredSubscription: AnyCancellable?
+    private var projectDeletedSubscription: AnyCancellable?
     init(tokenStore: TokenStore = KeychainTokenStore(), api: (any KriaAPIClient)? = nil, defaults: UserDefaults = .standard) {
         self.tokenStore = tokenStore
         self.api = api ?? KriaAPI(tokenStore: tokenStore)
@@ -45,6 +61,13 @@ enum ProfileFetchState: Equatable, Sendable {
         sessionExpiredSubscription = NotificationCenter.default.publisher(for: .kriaSessionExpired)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.expireSession() }
+        projectDeletedSubscription = NotificationCenter.default.publisher(for: .kriaProjectDeleted)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] notification in
+                guard let projectID = notification.object as? UUID,
+                      let identity = self?.localStorageIdentity else { return }
+                try? TeleprompterStore.removeProject(accountID: identity, projectID: projectID)
+            }
         if isSignedIn {
             Task { [weak self] in await self?.refreshProfile() }
         }
@@ -440,6 +463,7 @@ enum AccountIdentity {
             throw error
         }
         deletedProjectIDs.insert(project.id)
+        NotificationCenter.default.post(name: .kriaProjectDeleted, object: project.id)
         collectionGeneration += 1
         var cacheWarning: String?
         // The server deletion is already committed; never present it as a failed

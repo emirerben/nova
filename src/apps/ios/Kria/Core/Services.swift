@@ -12,6 +12,7 @@ import KriaMediaEngine
 extension Notification.Name {
     static let kriaSessionExpired = Notification.Name("kria.session-expired")
     static let kriaNativeUpdateRequired = Notification.Name("kria.native-update-required")
+    static let kriaProjectDeleted = Notification.Name("kria.project-deleted")
 }
 
 /// Process-wide, deliberately one-way state for a server-enforced native
