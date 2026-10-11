@@ -163,6 +163,7 @@ def source_candidates(
             continue
         last_used = source_last_activity(source)
         delete_at = last_used + timedelta(days=settings.storage_retention_inactive_days)
+        warning_delete_at = max(delete_at, now + timedelta(days=7))
         warning_at = delete_at - timedelta(
             days=settings.storage_retention_inactive_days - settings.storage_retention_warning_days
         )
@@ -178,7 +179,7 @@ def source_candidates(
                         source.object_path,
                         source.object_generation,
                         source.byte_count,
-                        delete_at,
+                        warning_delete_at,
                         "warn",
                         "inactive_library_source_warning",
                     )
@@ -204,7 +205,7 @@ def source_candidates(
                     source.object_path,
                     source.object_generation,
                     source.byte_count,
-                    delete_at,
+                    warning_delete_at,
                     "warn",
                     "inactive_library_source_warning",
                 )

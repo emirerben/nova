@@ -75,6 +75,31 @@ def _insert_source(connection: object, user_id: uuid.UUID, asset_id: uuid.UUID) 
     return source_id
 
 
+def _insert_temporary_upload(
+    connection: object,
+    user_id: uuid.UUID,
+    object_path: str,
+    *,
+    status: str = "reserved",
+    cleanup_claimed_at: datetime | None = None,
+) -> None:
+    connection.execute(
+        text("""
+            INSERT INTO temporary_media_uploads
+              (id, user_id, object_path, purpose, status, retention_expires_at, cleanup_claimed_at)
+            VALUES (:id, :user_id, :object_path, 'test', :status, :expires_at, :cleanup_claimed_at)
+        """),
+        {
+            "id": uuid.uuid4(),
+            "user_id": user_id,
+            "object_path": object_path,
+            "status": status,
+            "expires_at": datetime.now(UTC) + timedelta(days=1),
+            "cleanup_claimed_at": cleanup_claimed_at,
+        },
+    )
+
+
 def _assert_rejected(connection: object, statement: object, params: dict[str, object]) -> None:
     with pytest.raises(DBAPIError):
         with connection.begin_nested():
@@ -170,6 +195,225 @@ def test_source_identity_and_asset_declared_identity_are_immutable() -> None:
             connection,
             text("UPDATE media_asset_sources SET uploaded_sha256 = :digest WHERE id = :id"),
             {"digest": "b" * 64, "id": source_id},
+        )
+
+
+@pytest.mark.parametrize(
+    ("status", "cleanup_claimed_at"),
+    [
+        ("cleanup_pending", None),
+        ("deleted", None),
+        ("reserved", datetime.now(UTC)),
+    ],
+)
+@pytest.mark.parametrize(
+    "path_template",
+    [
+        "users/{owner}/generative/{upload}/clip.mp4",
+        "{owner}/{job}/device/{attempt}.mp4",
+    ],
+)
+def test_source_writer_rejects_cleanup_claimed_temporary_receipts(
+    status: str, cleanup_claimed_at: datetime | None, path_template: str
+) -> None:
+    """A committed cleanup receipt must fence adoption before remote deletion runs.
+
+    Before the 0117 trigger hardening this INSERT succeeds, so rollback leaves
+    a new available source pointing at bytes that a cleanup worker may delete.
+    """
+    with _engine.begin() as connection:
+        user_id = _insert_user(connection)
+        asset_id = _insert_asset(connection, user_id)
+        path = path_template.format(owner=user_id, upload=uuid.uuid4(), job=uuid.uuid4(), attempt=1)
+        _insert_temporary_upload(
+            connection,
+            user_id,
+            path,
+            status=status,
+            cleanup_claimed_at=cleanup_claimed_at,
+        )
+        _assert_rejected(
+            connection,
+            text("""
+                INSERT INTO media_asset_sources
+                  (id, user_id, asset_id, role, object_path, object_generation, byte_count, content_type)
+                VALUES (:id, :user_id, :asset_id, 'original', :path, 'g-1', 1, 'video/mp4')
+            """),
+            {"id": uuid.uuid4(), "user_id": user_id, "asset_id": asset_id, "path": path},
+        )
+        assert (
+            connection.scalar(
+                text("SELECT count(*) FROM media_asset_sources WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            == 0
+        )
+
+
+def test_source_writer_allows_unclaimed_and_adopted_temporary_receipts() -> None:
+    """Reserved unclaimed and already-adopted receipts remain valid durable adoption paths."""
+    with _engine.begin() as connection:
+        user_id = _insert_user(connection)
+        asset_id = _insert_asset(connection, user_id)
+        for status in ("reserved", "adopted"):
+            path = f"users/{user_id}/generative/{uuid.uuid4()}/clip.mp4"
+            _insert_temporary_upload(connection, user_id, path, status=status)
+            connection.execute(
+                text("""
+                    INSERT INTO media_asset_sources
+                      (id, user_id, asset_id, role, object_path, object_generation, byte_count, content_type)
+                    VALUES (:id, :user_id, :asset_id, 'original', :path, :generation, 1, 'video/mp4')
+                """),
+                {
+                    "id": uuid.uuid4(),
+                    "user_id": user_id,
+                    "asset_id": asset_id,
+                    "path": path,
+                    "generation": status,
+                },
+            )
+
+
+def test_source_writer_rejects_available_transition_after_temporary_cleanup_claim() -> None:
+    """A previously missing source cannot become available after its receipt is claimed."""
+    with _engine.begin() as connection:
+        user_id = _insert_user(connection)
+        asset_id = _insert_asset(connection, user_id)
+        source_id = uuid.uuid4()
+        path = f"users/{user_id}/generative/{uuid.uuid4()}/clip.mp4"
+        _insert_temporary_upload(connection, user_id, path)
+        connection.execute(
+            text("""
+                INSERT INTO media_asset_sources
+                  (id, user_id, asset_id, role, object_path, object_generation, byte_count, content_type, status)
+                VALUES (:id, :user_id, :asset_id, 'original', :path, 'g-1', 1, 'video/mp4', 'missing')
+            """),
+            {"id": source_id, "user_id": user_id, "asset_id": asset_id, "path": path},
+        )
+        connection.execute(
+            text(
+                "UPDATE temporary_media_uploads SET status = 'cleanup_pending' WHERE object_path = :path"
+            ),
+            {"path": path},
+        )
+        _assert_rejected(
+            connection,
+            text("UPDATE media_asset_sources SET status = 'available' WHERE id = :id"),
+            {"id": source_id},
+        )
+        assert (
+            connection.scalar(
+                text("SELECT status FROM media_asset_sources WHERE id = :id"), {"id": source_id}
+            )
+            == "missing"
+        )
+
+
+def test_reference_identity_cannot_move_or_narrow_an_existing_pin() -> None:
+    """Changing a reference identity must detach then attach, preserving the old pin reset.
+
+    Before the 0117 hardening a source-specific reference can be moved or an
+    asset-wide reference narrowed by UPDATE, without running DELETE's source
+    inactivity reset for the original pin.
+    """
+    with _engine.begin() as connection:
+        user_id = _insert_user(connection)
+        asset_id = _insert_asset(connection, user_id)
+        first_source = _insert_source(connection, user_id, asset_id)
+        second_source = uuid.uuid4()
+        connection.execute(
+            text("""
+                INSERT INTO media_asset_sources
+                  (id, user_id, asset_id, role, object_path, object_generation, byte_count, content_type)
+                VALUES (:id, :owner, :asset, 'thumbnail', :path, 'g-2', 1, 'video/mp4')
+            """),
+            {
+                "id": second_source,
+                "owner": user_id,
+                "asset": asset_id,
+                "path": f"users/{user_id}/library/b.mp4",
+            },
+        )
+        job_id = uuid.uuid4()
+        reference_id = uuid.uuid4()
+        connection.execute(
+            text(
+                "INSERT INTO jobs (id, user_id, raw_storage_path, status, job_type) VALUES (:id, :owner, 'users/job.mp4', 'queued', 'default')"
+            ),
+            {"id": job_id, "owner": user_id},
+        )
+        connection.execute(
+            text("""
+                INSERT INTO media_asset_references (id, user_id, asset_id, source_id, job_id)
+                VALUES (:id, :owner, :asset, :source, :job)
+            """),
+            {
+                "id": reference_id,
+                "owner": user_id,
+                "asset": asset_id,
+                "source": first_source,
+                "job": job_id,
+            },
+        )
+        old_activity = datetime.now(UTC) - timedelta(days=100)
+        connection.execute(
+            text("UPDATE media_asset_sources SET last_used_at = :old WHERE id = :id"),
+            {"old": old_activity, "id": first_source},
+        )
+        _assert_rejected(
+            connection,
+            text("UPDATE media_asset_references SET source_id = :source WHERE id = :id"),
+            {"source": second_source, "id": reference_id},
+        )
+        assert (
+            connection.scalar(
+                text("SELECT source_id FROM media_asset_references WHERE id = :id"),
+                {"id": reference_id},
+            )
+            == first_source
+        )
+        assert (
+            connection.scalar(
+                text("SELECT last_used_at FROM media_asset_sources WHERE id = :id"),
+                {"id": first_source},
+            )
+            == old_activity
+        )
+        asset_wide_job_id = uuid.uuid4()
+        asset_wide_reference_id = uuid.uuid4()
+        connection.execute(
+            text(
+                "INSERT INTO jobs (id, user_id, raw_storage_path, status, job_type) VALUES (:id, :owner, 'users/job-wide.mp4', 'queued', 'default')"
+            ),
+            {"id": asset_wide_job_id, "owner": user_id},
+        )
+        connection.execute(
+            text("""
+                INSERT INTO media_asset_references (id, user_id, asset_id, job_id)
+                VALUES (:id, :owner, :asset, :job)
+            """),
+            {
+                "id": asset_wide_reference_id,
+                "owner": user_id,
+                "asset": asset_id,
+                "job": asset_wide_job_id,
+            },
+        )
+        _assert_rejected(
+            connection,
+            text("UPDATE media_asset_references SET source_id = :source WHERE id = :id"),
+            {"source": first_source, "id": asset_wide_reference_id},
+        )
+        assert (
+            connection.scalar(
+                text("SELECT source_id FROM media_asset_references WHERE id = :id"),
+                {"id": asset_wide_reference_id},
+            )
+            is None
+        )
+        connection.execute(
+            text("UPDATE media_asset_references SET created_at = created_at WHERE id = :id"),
+            {"id": reference_id},
         )
 
 
@@ -409,6 +653,14 @@ def test_reference_writer_rejects_retention_tombstone() -> None:
                 VALUES (:id, :user_id, :asset_id, :job_id)
             """),
             {"id": uuid.uuid4(), "user_id": user_id, "asset_id": asset_id, "job_id": job_id},
+        )
+        connection.execute(
+            text("""
+                UPDATE storage_retention_manifests
+                SET status = 'completed', executed_at = :now
+                WHERE id = :id
+            """),
+            {"id": manifest_id, "now": datetime.now(UTC)},
         )
 
 

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.config import settings
@@ -23,6 +23,7 @@ from app.models import (
     User,
 )
 from app.services import media_library_retention
+from app.storage import ObjectMetadata
 from app.tasks import storage_retention
 
 
@@ -94,6 +95,9 @@ def test_catalogue_source_warns_then_deletes_but_a_shared_ref_or_recent_use_pins
         assert [(candidate.action, candidate.reason) for candidate in ours] == [
             ("warn", "inactive_library_source_warning")
         ]
+        # Late first warnings must advertise the actual earliest deletion,
+        # rather than a day-90 deadline that has already arrived.
+        assert ours[0].eligible_at >= now + timedelta(days=7)
 
         manifest = StorageRetentionManifest(
             status="completed",
@@ -160,6 +164,93 @@ def test_catalogue_source_warns_then_deletes_but_a_shared_ref_or_recent_use_pins
         assert not [candidate for candidate in candidates if candidate.source_id == source.id]
 
 
+def test_legacy_job_scan_leaves_an_adopted_generation_for_library_retention(
+    library_source: tuple[MediaAssetSource, uuid.UUID], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A legacy job prefix can find an adopted source before its library page.
+
+    The source has been unused for 100 days, so library retention must create
+    its day-83 warning.  Historically the legacy scan classified this exact
+    generation as a superseded derivative and `seen` suppressed the library
+    candidate, allowing a later deletion without the creator warning.
+    """
+    source, _ = library_source
+    now = datetime.now(UTC)
+    job_id = uuid.uuid4()
+    path = f"users/{source.user_id}/jobs/{job_id}/render.mp4"
+    overlap_asset_id = uuid.uuid4()
+    overlap_source_id = uuid.uuid4()
+    overlap_source = MediaAssetSource(
+        id=overlap_source_id,
+        user_id=source.user_id,
+        asset_id=overlap_asset_id,
+        role="original",
+        object_path=path,
+        object_generation="legacy-overlap",
+        byte_count=456,
+        content_type="video/mp4",
+        created_at=now - timedelta(days=100),
+        last_used_at=now - timedelta(days=100),
+    )
+    with sync_session() as db:
+        db.add(
+            MediaAsset(
+                id=overlap_asset_id,
+                user_id=source.user_id,
+                kind="video",
+                status="ready",
+                created_at=now - timedelta(days=100),
+                updated_at=now - timedelta(days=100),
+            )
+        )
+        db.add(overlap_source)
+        db.add(
+            Job(
+                id=job_id,
+                user_id=source.user_id,
+                status="completed",
+                job_type="template",
+                raw_storage_path=f"users/{source.user_id}/jobs/{job_id}/source.mp4",
+                created_at=now - timedelta(days=100),
+                updated_at=now - timedelta(days=100),
+            )
+        )
+        db.commit()
+
+    metadata = ObjectMetadata(
+        path=path,
+        generation=overlap_source.object_generation,
+        etag=None,
+        size=overlap_source.byte_count,
+        content_type="video/mp4",
+        created_at=now - timedelta(days=100),
+    )
+    monkeypatch.setattr(
+        storage_retention.storage,
+        "list_object_metadata",
+        lambda prefix: [metadata] if prefix == f"users/{source.user_id}/jobs/{job_id}/" else [],
+    )
+    monkeypatch.setattr(settings, "storage_retention_enabled", True)
+    monkeypatch.setattr(settings, "storage_retention_scan_jobs", 10_000)
+    monkeypatch.setattr(storage_retention, "_previous_library_scan_cursor", lambda _db: None)
+
+    manifest_id = storage_retention.build_retention_manifest(now=now)
+    assert manifest_id is not None
+    with sync_session() as db:
+        entries = db.scalars(
+            select(StorageRetentionEntry).where(
+                StorageRetentionEntry.manifest_id == uuid.UUID(manifest_id),
+                StorageRetentionEntry.creator_id == source.user_id,
+                StorageRetentionEntry.object_path == path,
+            )
+        ).all()
+        assert [(entry.action, entry.reason) for entry in entries] == [
+            ("warn", "inactive_library_source_warning")
+        ]
+        db.get(StorageRetentionManifest, uuid.UUID(manifest_id)).status = "completed"
+        db.commit()
+
+
 def _approved_library_entry(
     source: MediaAssetSource,
     *,
@@ -216,11 +307,19 @@ def _approved_library_entry(
         return manifest.id
 
 
+@pytest.mark.parametrize("delete_reason", ("inactive_library_source", "superseded_derivative"))
 def test_warning_and_late_first_warning_never_fence_or_delete_library_source(
-    library_source: tuple[MediaAssetSource, uuid.UUID], monkeypatch: pytest.MonkeyPatch
+    library_source: tuple[MediaAssetSource, uuid.UUID],
+    monkeypatch: pytest.MonkeyPatch,
+    delete_reason: str,
 ) -> None:
     source, _ = library_source
     monkeypatch.setattr(settings, "storage_retention_delete_enabled", True)
+    monkeypatch.setattr(
+        storage_retention.storage,
+        "object_metadata_once",
+        lambda *_args, **_kwargs: SimpleNamespace(generation=source.object_generation),
+    )
     monkeypatch.setattr(storage_retention.storage, "delete_object_generation", pytest.fail)
     warning_manifest = _approved_library_entry(
         source, action="warn", reason="inactive_library_source_warning"
@@ -236,7 +335,7 @@ def test_warning_and_late_first_warning_never_fence_or_delete_library_source(
     late_manifest = _approved_library_entry(
         source,
         action="delete",
-        reason="inactive_library_source",
+        reason=delete_reason,
         warning_created_at=datetime.now(UTC),
     )
     assert storage_retention.execute_retention_manifest(str(late_manifest)) == {
@@ -248,8 +347,11 @@ def test_warning_and_late_first_warning_never_fence_or_delete_library_source(
         assert db.get(MediaAssetSource, source.id).status == "available"
 
 
+@pytest.mark.parametrize("delete_reason", ("inactive_library_source", "superseded_derivative"))
 def test_library_source_deletes_only_after_a_durable_seven_day_warning(
-    library_source: tuple[MediaAssetSource, uuid.UUID], monkeypatch: pytest.MonkeyPatch
+    library_source: tuple[MediaAssetSource, uuid.UUID],
+    monkeypatch: pytest.MonkeyPatch,
+    delete_reason: str,
 ) -> None:
     source, _ = library_source
     monkeypatch.setattr(settings, "storage_retention_delete_enabled", True)
@@ -266,7 +368,7 @@ def test_library_source_deletes_only_after_a_durable_seven_day_warning(
     manifest_id = _approved_library_entry(
         source,
         action="delete",
-        reason="inactive_library_source",
+        reason=delete_reason,
         # It is both seven days old and after this source's day-83 threshold.
         warning_created_at=datetime.now(UTC) - timedelta(days=8),
     )
@@ -285,8 +387,11 @@ def test_library_source_deletes_only_after_a_durable_seven_day_warning(
         assert db.get(MediaAssetSource, source.id).status == "deleted"
 
 
+@pytest.mark.parametrize("delete_reason", ("inactive_library_source", "superseded_derivative"))
 def test_reuse_invalidates_an_old_warning_until_the_current_window_is_warned(
-    library_source: tuple[MediaAssetSource, uuid.UUID], monkeypatch: pytest.MonkeyPatch
+    library_source: tuple[MediaAssetSource, uuid.UUID],
+    monkeypatch: pytest.MonkeyPatch,
+    delete_reason: str,
 ) -> None:
     source, _ = library_source
     now = datetime.now(UTC)
@@ -302,7 +407,7 @@ def test_reuse_invalidates_an_old_warning_until_the_current_window_is_warned(
     manifest_id = _approved_library_entry(
         source,
         action="delete",
-        reason="inactive_library_source",
+        reason="superseded_derivative",
         warning_created_at=stale_warning_at,
     )
     with sync_session() as db:
@@ -313,6 +418,11 @@ def test_reuse_invalidates_an_old_warning_until_the_current_window_is_warned(
     ]
 
     monkeypatch.setattr(settings, "storage_retention_delete_enabled", True)
+    monkeypatch.setattr(
+        storage_retention.storage,
+        "object_metadata_once",
+        lambda *_args, **_kwargs: SimpleNamespace(generation=source.object_generation),
+    )
     monkeypatch.setattr(storage_retention.storage, "delete_object_generation", pytest.fail)
     assert storage_retention.execute_retention_manifest(str(manifest_id)) == {
         "deleted": 0,

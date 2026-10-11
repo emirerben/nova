@@ -187,6 +187,35 @@ def _prior_warning_times(
     return warned
 
 
+def _library_owned_metadata_identities(
+    db: Any, owner_id: uuid.UUID, metadata_rows: list[storage.ObjectMetadata]
+) -> set[tuple[str, str]]:
+    """Return library-owned exact generations from one job's metadata page.
+
+    The legacy scan can list a source that was adopted into the catalogue
+    beneath a historical job prefix.  Query only those returned identities so
+    a large owner's complete source history is never materialized, while all
+    source statuses remain library-owned until their exact generation expires.
+    """
+
+    identities = {(metadata.path, metadata.generation) for metadata in metadata_rows}
+    if not identities:
+        return set()
+    return set(
+        db.execute(
+            select(
+                MediaAssetSource.object_path,
+                MediaAssetSource.object_generation,
+            ).where(
+                MediaAssetSource.user_id == owner_id,
+                tuple_(MediaAssetSource.object_path, MediaAssetSource.object_generation).in_(
+                    identities
+                ),
+            )
+        )
+    )
+
+
 def _entry_is_protected(db: Any, entry: StorageRetentionEntry) -> bool:
     """Recheck one candidate against its owner's live references.
 
@@ -508,8 +537,20 @@ def build_retention_manifest(*, now: datetime | None = None) -> str | None:
     for job, source_paths, current_paths in scan_jobs:
         metadata_rows, errors = _metadata_for_job(job, source_paths)
         counts["scan_errors"] += errors
+        # The remote inventory is already materialized. Keep this DB lookup
+        # short and exact, then release it before scanning the next job.
+        with sync_session() as db:
+            library_owned_identities = _library_owned_metadata_identities(
+                db, job.user_id, metadata_rows
+            )
         for metadata in metadata_rows:
             identity = (metadata.path, metadata.generation)
+            if identity in library_owned_identities:
+                # A catalogue source may still live beneath a historical job
+                # prefix.  Leave its warning/deletion decision to the fair
+                # library cursor, even if that cursor reaches it in a later
+                # bounded page.
+                continue
             if identity in seen:
                 continue
             seen.add(identity)
@@ -750,7 +791,11 @@ def execute_retention_manifest(manifest_id: str) -> dict[str, int]:
                     warned_at = None
                 if (
                     entry.status == "pending"
-                    and entry.reason in ("inactive_source_or_editable", "inactive_library_source")
+                    and (
+                        is_library_source
+                        or entry.reason
+                        in ("inactive_source_or_editable", "inactive_library_source")
+                    )
                     and warned_at is None
                 ):
                     entry.status = "skipped"

@@ -290,6 +290,17 @@ def upgrade() -> None:
                   AND entry.object_generation = NEW.object_generation) THEN
                 RAISE EXCEPTION 'media source raced with retention tombstone' USING ERRCODE = '40001';
             END IF;
+            -- Temporary upload cleanup commits its owner-locked claim before
+            -- deleting remote bytes. Do not admit a source that could point
+            -- at that claimed or deleted object; an adopted receipt is safe.
+            IF (TG_OP = 'INSERT' OR NEW.status = 'available') AND EXISTS (
+                SELECT 1 FROM temporary_media_uploads receipt
+                WHERE receipt.user_id = NEW.user_id AND receipt.object_path = NEW.object_path
+                  AND (receipt.status IN ('cleanup_pending', 'deleted')
+                       OR receipt.cleanup_claimed_at IS NOT NULL)
+            ) THEN
+                RAISE EXCEPTION 'media source raced with temporary upload cleanup' USING ERRCODE = '40001';
+            END IF;
             RETURN NEW;
         END $$
     """)
@@ -321,6 +332,19 @@ def upgrade() -> None:
                   AND (OLD.source_id IS NULL OR id = OLD.source_id)
                   AND status IN ('available','missing');
                 RETURN OLD;
+            END IF;
+            -- A reference's target identity is immutable. Replacing or
+            -- narrowing it must be DELETE then INSERT so the previous source
+            -- receives DELETE's inactivity reset before the new pin is made.
+            IF TG_OP = 'UPDATE' AND (
+                NEW.user_id IS DISTINCT FROM OLD.user_id
+                OR NEW.asset_id IS DISTINCT FROM OLD.asset_id
+                OR NEW.source_id IS DISTINCT FROM OLD.source_id
+                OR NEW.creation_thread_id IS DISTINCT FROM OLD.creation_thread_id
+                OR NEW.plan_item_id IS DISTINCT FROM OLD.plan_item_id
+                OR NEW.job_id IS DISTINCT FROM OLD.job_id
+            ) THEN
+                RAISE EXCEPTION 'media reference identity is immutable';
             END IF;
             IF NEW.creation_thread_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM creation_threads t WHERE t.id = NEW.creation_thread_id AND t.creator_id = NEW.user_id) THEN
                 RAISE EXCEPTION 'media reference creation thread has another owner';
