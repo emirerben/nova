@@ -267,3 +267,33 @@ async def test_placements_that_cannot_sit_on_the_song_are_422_and_not_stored(pla
 
 def test_a_reorder_only_answer_stores_no_placements_key() -> None:
     assert "placements" not in _answer().model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_a_claimed_answer_turn_reads_the_neutral_sentence_not_the_echo() -> None:
+    """KRI-575: the planner (and brief extractor) must not see 'clip 2 at 1:40' as a request."""
+    from app.services.song_order import SONG_ORDER_ANSWER_MESSAGE  # noqa: PLC0415
+    from app.tasks.kria_runtime import _claim  # noqa: PLC0415
+
+    user_id, thread_id, _ = _seed_runtime_project()
+    _ask(thread_id)
+    try:
+        accepted = await _submit(user_id, thread_id, _placed(m1=4.0, m2=30.5))
+        claimed = _claim(accepted.turn_id, "test-owner")
+        assert isinstance(claimed, tuple)
+        assert claimed[1] == SONG_ORDER_ANSWER_MESSAGE
+        # The transcript still shows what the creator tapped.
+        with sync_session() as db:
+            shown = (
+                db.execute(
+                    select(CreationThreadEvent.content).where(
+                        CreationThreadEvent.thread_id == thread_id,
+                        CreationThreadEvent.role == "user",
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert "Use this order" in shown
+    finally:
+        await async_engine.dispose()

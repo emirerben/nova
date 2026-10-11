@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from app.pipeline import lipsync_montage
-from app.pipeline.lipsync_montage import plan_lipsync_montage
+from app.pipeline.lipsync_montage import close_small_holes, plan_lipsync_montage
 from app.schemas.user_song import (
     PlacementCandidate,
     SongAlignment,
@@ -344,3 +344,147 @@ def test_an_empty_placements_list_is_the_creators_decision_that_nothing_is_place
         alignment(confident("A", 10), unmatched("B")), folded.ordered_media_ids, folded.placements
     )
     assert {r["place"] for r in resolved.values()} == {"broll"}
+
+
+# -- KRI-575: sub-second holes in a hand-made arrangement ------------------------------------
+#
+# Real job 1c598df5 (a 209 s song, five takes): the creator's arrangement put four takes back to
+# back from 44.3 s to 107.3 s, each starting 0.07-0.2 s after the previous one's footage ended.
+# That is song time NO take has footage for, so no gap rule bridged it, the montage split into
+# five islands and the heaviest single take (29.2 s) was the whole draft.
+
+
+def _user_arrangement():
+    clips = [
+        take("T1184", 33.5),  # creator put it at the very start (no evidence)
+        take("D232", 29.8),
+        take("T9EE5", 14.266667),
+        take("DD4A", 10.833333),
+        take("C8FA", 7.666667),
+    ]
+    rows = [
+        unmatched("T1184"),
+        # Real likelihoods from the job: the two sure takes are what the aligner measured.
+        _with_candidates("D232", (44.303, 0.99)),
+        _with_candidates("T9EE5", (185.0, 0.14)),
+        _with_candidates("DD4A", (88.639, 0.29)),
+        _with_candidates("C8FA", (99.66, 0.98), (144.9, 0.31)),
+    ]
+    placements = {
+        "T1184": -3.8,
+        "D232": 44.303,
+        "T9EE5": 74.3,
+        "DD4A": 88.639,
+        "C8FA": 99.66,
+    }
+    return clips, rows, placements
+
+
+def test_the_real_arrangement_keeps_all_four_takes_that_nearly_touch():
+    clips, rows, placements = _user_arrangement()
+    plan, _resolved, _ = _arrange(clips, rows, placements)
+    placed = [b["media_id"] for b in plan.song_receipt["placed"]]
+    assert placed == ["D232", "T9EE5", "DD4A", "C8FA"]
+    # One continuous stretch (was 29.2 s: the first take alone).
+    assert plan.snapshot.duration_s > 60
+    # The far-away take that no gap can reach is the only one left out.
+    assert {row["media_id"]: row["reason"] for row in plan.song_receipt["dropped"]} == {
+        "T1184": "gap_unfillable"
+    }
+
+
+def test_closing_the_holes_slides_each_take_a_fraction_of_a_second_and_keeps_its_match():
+    clips, rows, placements = _user_arrangement()
+    plan, _resolved, _ = _arrange(clips, rows, placements)
+    by_id = {b["media_id"]: b for b in plan.song_receipt["placed"]}
+    slid = {m: b.get("slipped_s", 0) for m, b in by_id.items()}
+    # 0.457 s of holes sit between the two takes the aligner is sure of (0.99 and 0.98);
+    # clips cannot stretch, so something has to slide. No take moves further than the cap,
+    # and every take that did move says so in the receipt.
+    assert any(slid.values()) and all(abs(v) <= 0.8 for v in slid.values())
+    # A slid take is still the same measured match: it keeps its likelihood, so the run of four
+    # outweighs the lone first take instead of losing to it.
+    assert by_id["D232"]["likelihood"] >= 0.9 and by_id["C8FA"]["likelihood"] >= 0.9
+
+
+def test_without_hole_closing_the_same_arrangement_collapses_to_one_take(monkeypatch):
+    """The regression this fixes: with the old behaviour the draft is the first take alone."""
+    monkeypatch.setattr(lipsync_montage, "HOLE_CLOSE_MAX_MS", 0)
+    clips, rows, placements = _user_arrangement()
+    plan, _resolved, _ = _arrange(clips, rows, placements)
+    assert len(plan.song_receipt["placed"]) == 1
+    assert plan.snapshot.duration_s < 35
+
+
+def test_holes_between_takes_the_creator_did_not_place_are_left_to_the_tiler():
+    """No creator arrangement (aligner positions only): nothing is slid."""
+    clips = [take("A", 12), take("B", 12)]
+    plan = plan_lipsync_montage(
+        clips,
+        alignment(confident("A", 10), confident("B", 22.3)),
+        analysis(),
+        plan_item_id=SONG_ITEM_ID,
+    )
+    assert all("slipped_s" not in row for row in plan.song_receipt["placed"])
+
+
+def _slide(pins, durations, weights=None, **kwargs):
+    return close_small_holes(pins, durations, weights or {m: 1.0 for m in pins}, **kwargs)
+
+
+def test_two_takes_with_a_small_hole_close_it_by_sliding_the_cheaper_one():
+    # A (10 s at 0) ends at 10_000; B starts at 10_200: a 200 ms hole.
+    pins = {"A": 0, "B": 10_200}
+    dur = {"A": 10_000, "B": 5_000}
+    out = _slide(pins, dur, {"A": 0.9, "B": 0.2})
+    assert out == {"A": 0, "B": 10_000}  # B slides earlier; the strong A stays
+    out = _slide(pins, dur, {"A": 0.2, "B": 0.9})
+    assert out == {"A": 200, "B": 10_200}  # now A slides later and B stays
+
+
+def test_a_chain_anchors_on_the_take_that_minimises_the_weighted_slide():
+    pins = {"A": 0, "B": 10_200, "C": 20_300}  # holes 200 and 100 ms
+    dur = {"A": 10_000, "B": 10_000, "C": 5_000}
+    out = _slide(pins, dur, {"A": 1.0, "B": 0.2, "C": 1.0})
+    # B is cheap: it closes both holes alone (A and C fixed is impossible), so B moves and
+    # the strong ends stay, which needs the holes 300 ms apart to be absorbed by B: not possible
+    # without moving a strong take, so the cheapest consistent anchor is chosen.
+    assert out["B"] != pins["B"] or out["C"] != pins["C"] or out["A"] != pins["A"]
+    # Whatever is chosen, the run ends up with no holes left.
+    ordered = sorted(out, key=lambda m: out[m])
+    for a, b in zip(ordered, ordered[1:], strict=False):
+        assert out[b] - (out[a] + dur[a]) == 0
+
+
+@pytest.mark.parametrize(
+    "pins",
+    [
+        {"A": 0, "B": 10_000},  # exactly adjacent: no hole
+        {"A": 0, "B": 9_500},  # overlap: the tiler's business
+        {"A": 0, "B": 11_000},  # a 1 s hole: a real gap, not a miss
+    ],
+)
+def test_adjacent_overlapping_or_big_gaps_are_never_touched(pins):
+    dur = {"A": 10_000, "B": 5_000}
+    assert _slide(pins, dur) == pins
+
+
+def test_a_run_that_needs_more_than_the_slide_cap_is_left_alone():
+    # Four 590 ms holes in a row: even the best anchor slides a take by >= 1.18 s.
+    pins = {"A": 0, "B": 10_590, "C": 21_180, "D": 31_770, "E": 42_360}
+    dur = {m: 10_000 for m in pins}
+    assert _slide(pins, dur) == pins
+
+
+def test_a_single_take_and_an_empty_arrangement_are_unchanged():
+    assert _slide({}, {}) == {}
+    assert _slide({"A": 5}, {"A": 100}) == {"A": 5}
+
+
+def test_negative_positions_and_unsorted_input_are_handled():
+    pins = {"B": 10_200, "A": -3_800}  # insertion order is not time order
+    dur = {"A": 14_000, "B": 5_000}  # A ends at 10_200: exactly adjacent
+    assert _slide(pins, dur) == pins
+    pins = {"B": 10_500, "A": -3_800}  # a 300 ms hole
+    out = _slide(pins, dur, {"A": 1.0, "B": 0.5})
+    assert out == {"A": -3_800, "B": 10_200}
