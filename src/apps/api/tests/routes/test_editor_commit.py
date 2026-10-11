@@ -1506,6 +1506,8 @@ def test_guided_v2_device_variant_closes_every_edit_the_phone_compiler_rejects(
         "visual_editor_style",
         # KRI-306: a guided device variant can Save bars/crop (cloud never can).
         "landscape_fit",
+        # KRI-589: drawings exist only on the phone (the cloud map carries the lane closed).
+        "drawings",
         *("sfx", "overlays", "visual_blocks", "motion_scenes"),
         *("sfx_reason", "overlays_reason", "visual_blocks_reason", "motion_scenes_reason"),
     }
@@ -1561,8 +1563,14 @@ def test_cloud_variant_capabilities_are_never_clamped(
 
     capabilities = gj._editor_capabilities(job, variant)
 
+    drawings = capabilities.pop("drawings")
     assert capabilities == gj._base_editor_capabilities(job, variant)
     assert "phone_edit_unsupported" not in json.dumps(capabilities)
+    # KRI-589: drawings are phone-only, so a cloud variant carries the lane closed.
+    assert drawings == {
+        operation: {"editable": False, "reason": "drawing_requires_phone_render"}
+        for operation in ("add", "edit", "trim", "delete")
+    }
 
 
 def _commit_req(**kw) -> gj.EditorCommitRequest:
@@ -2616,6 +2624,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
         "visual_blocks": False,
         "motion_scenes": False,
         "camera_effects": False,
+        "drawings": False,
         "carousel_moment": False,
     }
 
@@ -2789,6 +2798,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         "visual_blocks": False,
         "motion_scenes": False,
         "camera_effects": False,
+        "drawings": False,
         "carousel_moment": False,
     }
 
@@ -4895,6 +4905,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "visual_blocks": False,
         "motion_scenes": False,
         "camera_effects": False,
+        "drawings": False,
         "carousel_moment": False,
         "title": True,
     }
@@ -6008,6 +6019,10 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "motion_runtime_hash": None,
         "evolving_type": False,
         "camera_effects": False,
+        "drawings": {
+            operation: {"editable": False, "reason": "drawing_requires_phone_render"}
+            for operation in ("add", "edit", "trim", "delete")
+        },
         "background_music": False,
         "automatic_cut": False,
         "automatic_cut_reason": "no_reviewable_speech_timing",
