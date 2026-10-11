@@ -22,7 +22,8 @@ def _sentence_groups(captions: list[dict[str, Any]]) -> list[list[dict[str, Any]
         if not text:
             continue
         current.append(row)
-        if _SENTENCE_END_RE.search(text):
+        # A lyric line ends here even without punctuation (KRI-569).
+        if _SENTENCE_END_RE.search(text) or row.get("caption_line_end") is True:
             groups.append(current)
             current = []
     if current:
@@ -42,6 +43,7 @@ def _legacy_groups(captions: list[dict[str, Any]]) -> list[list[dict[str, Any]]]
         if not group or (
             float(row["start_s"]) - float(group[-1]["end_s"]) > 0.35
             or str(group[-1]["text"]).rstrip().endswith((".", "!", "?"))
+            or group[-1].get("caption_line_end") is True
             or len(combined.split()) > 6
             or len(combined) > 42
         ):
@@ -61,6 +63,8 @@ def project_guided_caption_overlays(
     a mid-sentence flicker while the persisted per-word elements stay intact.
     """
     if not meta:
+        for row in overlays:
+            row.pop("caption_line_end", None)
         return overlays
     captions = sorted(
         (row for row in overlays if row.get("role") == "generative_narration_caption"),
@@ -123,4 +127,6 @@ def project_guided_caption_overlays(
                         ]
                     output.append(row)
             offset += len(words)
+    for row in output:
+        row.pop("caption_line_end", None)
     return output

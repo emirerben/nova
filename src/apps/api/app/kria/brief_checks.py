@@ -337,6 +337,11 @@ class PlanFacts:
     # nothing about duplicates is claimed.
     duplicate_clip_positions: tuple[tuple[int, ...], ...] | None = None
     source_duplicate_copies: int | None = None
+    # KRI-569: a song montage that carries the creator's song lyrics as captions
+    # ("placed"), and how they show ("word" one at a time, "sentence" whole lyric lines).
+    # None = this plan placed no lyric captions (nothing about them is claimed).
+    montage_captions: str | None = None
+    montage_caption_style: str | None = None
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -655,7 +660,16 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         },
         label_timezone=str(record.get("label_timezone") or ""),
         label_timezone_basis=str(record.get("label_timezone_basis") or ""),
+        **_montage_caption_facts(record.get("captions")),
     )
+
+
+def _montage_caption_facts(raw: object) -> dict[str, str]:
+    """The ``captions`` entry of a unified montage record (KRI-569), or nothing."""
+    if not isinstance(raw, Mapping) or raw.get("status") != "placed":
+        return {}
+    style = "word" if raw.get("style") == "word" else "sentence"
+    return {"montage_captions": "placed", "montage_caption_style": style}
 
 
 def plan_facts_from_speech_montage(record: Mapping[str, Any] | None) -> PlanFacts:
@@ -2238,6 +2252,11 @@ def _wants_word_captions(req: BriefRequirement) -> bool:
     return bool(_WORD_CAPTION_RE.search(_req_text(req)))
 
 
+def text_asks_for_word_captions(text: str) -> bool:
+    """The words ask for karaoke / word-by-word captions."""
+    return bool(_WORD_CAPTION_RE.search(_fold(text or "")))
+
+
 # "Keep the crowd noise quiet under my voiceover": how loud the footage's own sound plays
 # beneath the creator's voice (KRI-537). Patterns run on `_fold` output.
 _SOUND_NOUN = r"(?:noise|noises|sound|sounds|audio|chatter|ambience|volume)"
@@ -2931,6 +2950,27 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
     fmt = facts.edit_format
     text = _req_text(req)
     rendered = facts.rendered_variant
+    if facts.montage_captions == "placed" and not (facts.editor or _CAPTION_DETAIL_RE.search(text)):
+        # KRI-569: a song montage that carries the song's lyrics as captions.
+        if _wants_no_captions(req):
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en="Captions are still on in this draft.",
+                    tr="Bu taslakta altyazılar hâlâ açık.",
+                ),
+            )
+        if _wants_word_captions(req) and facts.montage_caption_style != "word":
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en="Captions are on as full sentences, not word by word.",
+                    tr="Altyazılar kelime kelime değil, tam cümleler olarak açık.",
+                ),
+            )
+        return _receipt(req, "met", None)
     if (
         facts.caption_style is None
         or (facts.editor and not rendered)
