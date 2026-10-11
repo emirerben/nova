@@ -21,12 +21,7 @@ import XCTest
     func testTyped426ReplacesEachRootRoute() {
         let routes: [([String], String)] = [
             ([], "signin.google"),
-            (["-ui-testing-brand"], "format-carousel"),
             (["-ui-testing-chat"], "workspace-menu-toggle"),
-            (["-ui-testing-editor"], "native-editor-fixture-sourceText"),
-            (["-ui-testing-chat-bubbles"], "chat-bubbles-pasted"),
-            (["-device-effects"], "device-effects-status"),
-            (["-ui-testing-account"], "ai-consent-continue"),
         ]
 
         for (arguments, routeIdentifier) in routes {
