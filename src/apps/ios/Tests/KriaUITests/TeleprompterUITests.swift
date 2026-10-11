@@ -60,9 +60,14 @@ import XCTest
         let window = windowElement(app)
         XCTAssertTrue(window.waitForExistence(timeout: 5))
         let original = window.frame
-        scrollOptions(app, to: app.buttons["teleprompter-pause-text"])
+        XCTAssertTrue(app.buttons["teleprompter-pause-text"].isHittable)
+        XCTAssertTrue(app.buttons["Start prompter"].exists)
         app.buttons["teleprompter-pause-text"].tap()
-        XCTAssertTrue(app.buttons["Pause rehearsal"].exists)
+        XCTAssertTrue(app.buttons["Stop prompter"].exists)
+        app.buttons["teleprompter-pause-text"].tap()
+        XCTAssertTrue(app.buttons["Start prompter"].exists)
+        app.buttons["teleprompter-pause-text"].tap()
+        XCTAssertTrue(app.buttons["Stop prompter"].exists)
 
         let resize = app.buttons["teleprompter-window-resize"]
         XCTAssertTrue(resize.isHittable)
@@ -70,7 +75,7 @@ import XCTest
         resizeStart.press(forDuration: 0.15, thenDragTo: resizeStart.withOffset(CGVector(dx: -80, dy: -20)))
         XCTAssertEqual(window.frame.width, original.width - 80, accuracy: 5,
                        "Resizing follows finger travel in screen coordinates.")
-        XCTAssertTrue(app.buttons["Pause rehearsal"].exists, "Resizing must not send the script body its pause/scroll gesture.")
+        XCTAssertTrue(app.buttons["Stop prompter"].exists, "Resizing must not send the script body its pause/scroll gesture.")
 
         let shrunk = window.frame
         let move = app.buttons["teleprompter-window-move"]
@@ -79,7 +84,7 @@ import XCTest
         moveStart.press(forDuration: 0.15, thenDragTo: moveStart.withOffset(CGVector(dx: 35, dy: 25)))
         XCTAssertEqual(window.frame.minX, shrunk.minX + 35, accuracy: 5,
                        "Moving follows finger travel even while the grip itself moves.")
-        XCTAssertTrue(app.buttons["Pause rehearsal"].exists, "Moving must keep the current rehearsal running.")
+        XCTAssertTrue(app.buttons["Stop prompter"].exists, "Moving must keep the current rehearsal running.")
         assertWindowStaysClearOfRecord(window, app: app)
         capture(app, "Transparent window moved and resized")
 
@@ -87,7 +92,7 @@ import XCTest
         // have scrolled above the clip. Drag the visible reading area below the grip.
         let textStart = window.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.7))
         textStart.press(forDuration: 0.15, thenDragTo: textStart.withOffset(CGVector(dx: 0, dy: -25)))
-        XCTAssertTrue(app.buttons["Rehearse"].exists, "Dragging text still pauses and repositions the script.")
+        XCTAssertTrue(app.buttons["Start prompter"].exists, "Dragging text still pauses and repositions the script.")
     }
 
     func testScriptIsSavedAndCameraFailureKeepsItEditable() {
@@ -121,21 +126,24 @@ import XCTest
         capture(app, "Script at accessibility size")
         let field = app.textViews["teleprompter-script-editor"]
         field.tap()
-        field.typeText("Read at a comfortable pace.")
+        field.typeText("Read this opening at a comfortable pace, then keep the key point clear for every viewer. Pause when you need a breath, return to the previous line, and continue with the same calm rhythm until the final call to action.")
         app.buttons["teleprompter-open-camera"].tap()
         XCTAssertTrue(app.staticTexts["teleprompter-camera-error"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Close camera"].isHittable)
         let record = app.buttons["teleprompter-record"]
         XCTAssertTrue(record.isHittable)
         XCTAssertFalse(record.isEnabled)
-        XCTAssertTrue(app.buttons["Next line"].exists)
-        scrollOptions(app, to: app.buttons["Use steady scrolling"])
+        XCTAssertTrue(app.buttons["Next line"].isHittable)
+        XCTAssertTrue(app.buttons["Use steady scrolling"].isHittable)
         app.buttons["Use steady scrolling"].tap()
-        scrollOptions(app, to: app.buttons["teleprompter-pause-text"])
+        XCTAssertTrue(app.buttons["teleprompter-pause-text"].isHittable)
+        XCTAssertTrue(app.buttons["Start prompter"].exists)
         app.buttons["teleprompter-pause-text"].tap()
-        XCTAssertTrue(app.buttons["Pause rehearsal"].exists)
+        XCTAssertTrue(app.buttons["Stop prompter"].exists)
         app.buttons["teleprompter-pause-text"].tap()
-        XCTAssertTrue(app.buttons["Rehearse"].exists)
+        XCTAssertTrue(app.buttons["Start prompter"].exists)
+        // Let the native label transition finish before the visual attachment.
+        Thread.sleep(forTimeInterval: 0.9)
         capture(app, "Camera controls at accessibility size")
         openWindowSettings(app)
         scrollWindowSettings(app, to: app.buttons["teleprompter-background-solid"])

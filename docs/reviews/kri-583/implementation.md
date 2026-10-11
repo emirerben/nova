@@ -4,7 +4,7 @@ Ticket: https://linear.app/kria/issue/KRI-583/iphone-record-talking-videos-with-
 Branch: `codex/kri-583-iphone-teleprompter`
 Base: `b33471508f87cdf622ebcdcf301a158a57b1203b`
 QA status: `DONE_WITH_CONCERNS` — native window/capture checks passed; current
-Kria component alignment and remaining release checks are listed below.
+Kria component alignment, visible transport controls and remaining release checks are listed below.
 
 ## Creator flow
 
@@ -213,6 +213,49 @@ Low-battery-interrupted physical result:
 `/private/tmp/kri-583-kria-components-device-ui.xcresult`.
 Private camera screenshots and test screen recordings remain outside the repository.
 
+## Independent visible recording and prompter controls
+
+Record / Stop recording and Start prompter / Stop prompter now stay outside the
+camera options scroller. Kria's existing Ink CTA and secondary capsule styles
+keep the controls beside one another when they fit and stack them at larger
+text sizes or constrained widths. The prompter's multiline label is centered
+with vertical space at accessibility sizes. Stopping the prompter pauses at the
+current script position; starting resumes it. Recording keeps its independent
+state. Back a line and pace remain in options, and manual line controls plus
+Reduce Motion's steady-scroll opt-in stay directly reachable.
+
+The existing normal-size and accessibility UI journeys now exercise
+Start → Stop → Start without scrolling to the transport. The physical-device
+journey checks prompter pause/resume/pause immediately after real capture starts,
+then finalizes the take with the prompter paused. Test names and inventory stay
+unchanged; capture/model/store/geometry code is unchanged.
+
+Verification of the initial control placement passed all five teleprompter UI
+journeys without retries and all 93 offline iOS orchestration checks. The final
+normal-size window/transport and largest-text control/settings journeys passed
+again without retries after the label-spacing refinement. Repository result
+verification confirms all five initial and both final selected tests executed.
+The unchanged settings, recovery and orchestration checks reuse the earlier
+results; unchanged core/model tests reuse the previous full-unit result.
+Simulator and signed device builds passed for the final product source.
+
+Initial five-journey UI result: `/private/tmp/kri-583-visible-controls-ui.xcresult`.
+Final two-journey UI result: `/private/tmp/kri-583-visible-controls-final-ui.xcresult`.
+Offline checks: `/private/tmp/kri-583-visible-controls-orchestration.log`.
+Private fixture screenshots were inspected for normal and largest text sizes.
+The largest-text journey passed once more after allowing 0.9 seconds for the
+native Start/Stop label transition before the screenshot; its settled attachment
+confirms the centered multiline label fits without overlap or clipping.
+That final snapshot result is `/private/tmp/kri-583-visible-controls-snapshot-ui.xcresult`.
+
+The physical recheck did not start: Xcode could not find the destination after
+the iPhone disconnected. CoreDevice reported the paired phone as unavailable
+with no tunnel, and xctrace listed it under Devices Offline. This is an
+installation/test environment blocker, not a camera test failure. The previous
+Kria-restyle QA build remains installed; this new controls build is prepared but
+not yet installed. Prior physical recording evidence is reused for the unchanged
+capture core, without claiming these final controls were tested on hardware.
+
 ## Physical iPhone release check still required
 
 1. Record spoken words with a visible clap; check saved picture/audio sync.
@@ -232,8 +275,9 @@ TestFlight.
 
 Implementation and hardware fixes are committed on the branch above in
 `/private/tmp/nova-kri-583-iphone-teleprompter`. No branch push, PR, merge or
-release was performed. The dedicated QA app remains installed on the paired
-iPhone. The latest pre-ship check passed its mechanical gates against fetched
-`origin/main` (`900b94070`). It reports newer overlapping changes in intake,
+release was performed. The previous dedicated QA app remains installed on the
+paired iPhone; installation of the latest visible-controls build waits for the
+phone to reconnect. The earlier pre-ship check, before the visible-controls refinement, passed its
+mechanical gates against fetched `origin/main` (`900b94070`). It reports newer overlapping changes in intake,
 attachments, QA transport and the UI test manifest. Integrate and revalidate
 those changes before opening/merging a PR. No release metadata was edited.

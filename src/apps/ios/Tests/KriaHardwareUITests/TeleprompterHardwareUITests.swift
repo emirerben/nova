@@ -65,11 +65,29 @@ import XCTest
         record.tap()
         let stop = app.buttons["teleprompter-stop-recording"]
         XCTAssertTrue(stop.waitForExistence(timeout: 10), "Stop appears only after AVFoundation confirms recording started.")
+        let prompter = app.buttons["teleprompter-pause-text"]
+        XCTAssertTrue(prompter.isHittable)
+        XCTAssertTrue(app.buttons["Stop prompter"].exists)
+        prompter.tap()
+        XCTAssertTrue(app.buttons["Start prompter"].exists)
+        XCTAssertTrue(stop.isEnabled && stop.isHittable,
+                      "Pausing the prompter must leave the active recording control available.")
+        prompter.tap()
+        XCTAssertTrue(app.buttons["Stop prompter"].exists)
+        prompter.tap()
+        XCTAssertTrue(app.buttons["Start prompter"].exists)
+        XCTAssertTrue(stop.isEnabled && stop.isHittable,
+                      "Stopping the prompter must not stop the camera capture.")
         // Presenting settings and manipulating the window during capture must not interrupt
         // AVFoundation. This screenshot is compared with the saved movie after the run.
         setWindowBackground("glass", in: app, fontChangesAllowed: false)
         moveAndResizeWindow(in: app, avoiding: stop)
         XCTAssertTrue(stop.isEnabled)
+        if app.buttons["Stop prompter"].exists { prompter.tap() }
+        XCTAssertTrue(app.buttons["Start prompter"].exists,
+                      "The prompter is paused (or has reached its end) before recording stops.")
+        XCTAssertTrue(stop.isEnabled && stop.isHittable,
+                      "Pausing the prompter before finalizing must keep camera capture active.")
         screenshot(app, named: "Physical glass window adjusted while recording")
         wait(seconds: 5.5)
         stop.tap()

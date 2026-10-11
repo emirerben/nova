@@ -297,7 +297,8 @@ private struct TeleprompterCaptureControls: View {
             }
             .frame(maxHeight: optionsHeight)
             .accessibilityIdentifier("teleprompter-capture-options")
-            recordButton
+            manualReadingControls
+            captureActions
         }.padding(16).kriaGlassPanel(cornerRadius: 24).padding(.horizontal, 16)
     }
 
@@ -322,20 +323,21 @@ private struct TeleprompterCaptureControls: View {
                     .accessibilityIdentifier("teleprompter-pace")
                 HStack { Text("Slower"); Spacer(); Text("Faster") }.font(KriaFont.body(12))
             }
-            Group {
-                if manual {
-                    pairedActions(first: "Previous line", firstAction: script.backLine, second: "Next line", secondAction: script.nextLine)
-                } else {
-                    pairedActions(first: recording ? (script.isPlaying ? "Pause text" : "Resume text") : (script.isPlaying ? "Pause rehearsal" : "Rehearse"), firstAction: {
-                        if script.isPlaying { script.pause() } else { script.resume() }
-                    }, firstIdentifier: "teleprompter-pause-text", second: "Back a line", secondAction: script.backLine)
-                }
-            }
-            if manual, let enableAutomaticScroll {
-                Button("Use steady scrolling", action: enableAutomaticScroll).buttonStyle(KriaSecondaryButtonStyle())
+            if !manual {
+                Button("Back a line", action: script.backLine).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
                     .frame(maxWidth: .infinity)
             }
             if script.hasEnded { Text("End of script").font(KriaFont.body(13)) }
+        }
+    }
+
+    @ViewBuilder private var manualReadingControls: some View {
+        if manual {
+            pairedActions(first: "Previous line", firstAction: script.backLine, second: "Next line", secondAction: script.nextLine)
+            if let enableAutomaticScroll {
+                Button("Use steady scrolling", action: enableAutomaticScroll).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
+                    .frame(maxWidth: .infinity)
+            }
         }
     }
 
@@ -350,18 +352,46 @@ private struct TeleprompterCaptureControls: View {
         else { HStack(spacing: 8) { actions } }
     }
 
-    private var recordButton: some View {
-            Button(action: recording ? stop : record) {
-                Group {
-                    if usesAccessibilityLayout {
-                        Text(recording ? "Stop recording" : "Record")
-                    } else {
-                        Label(recording ? "Stop recording" : "Record", systemImage: recording ? "stop.fill" : "record.circle")
-                    }
-                }.fixedSize(horizontal: false, vertical: true)
-            }.buttonStyle(KriaInkCTAButtonStyle(height: 52))
-            .disabled(!recording && camera.phase != .ready)
-                .accessibilityIdentifier(recording ? "teleprompter-stop-recording" : "teleprompter-record")
+    @ViewBuilder private var captureActions: some View {
+        if usesAccessibilityLayout {
+            VStack(spacing: 8) { actionButtons }
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { actionButtons }
+                VStack(spacing: 8) { actionButtons }
+            }
+        }
+    }
+
+    @ViewBuilder private var actionButtons: some View {
+        Button(action: recording ? stop : record) {
+            Group {
+                if usesAccessibilityLayout {
+                    Text(recording ? "Stop recording" : "Record")
+                } else {
+                    Label(recording ? "Stop recording" : "Record", systemImage: recording ? "stop.fill" : "record.circle")
+                }
+            }.fixedSize(horizontal: false, vertical: true)
+        }
+        .buttonStyle(KriaInkCTAButtonStyle(height: 52))
+        .frame(maxWidth: .infinity)
+        .disabled(!recording && camera.phase != .ready)
+        .accessibilityIdentifier(recording ? "teleprompter-stop-recording" : "teleprompter-record")
+
+        if !manual {
+            Button {
+                if script.isPlaying { script.pause() } else { script.resume() }
+            } label: {
+                Text(script.isPlaying ? "Stop prompter" : "Start prompter")
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, usesAccessibilityLayout ? 8 : 0)
+            }
+            .buttonStyle(KriaSecondaryButtonStyle(minHeight: 52))
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("teleprompter-pause-text")
+        }
     }
 }
 
