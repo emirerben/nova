@@ -269,7 +269,14 @@ def _verify_contract_pin(
     source_audio = _verify_recipe_source_identity(
         assembly, request.identity.variant_id, request.recipe
     )
-    return contract.digest, verify_phone_recipe(contract, request.recipe, source_audio=source_audio)
+    from app.services.length_policy_state import read_length_policy  # noqa: PLC0415
+
+    return contract.digest, verify_phone_recipe(
+        contract,
+        request.recipe,
+        source_audio=source_audio,
+        length_policy=read_length_policy(assembly, contract),
+    )
 
 
 def verify_device_record_contract(job: Any, record: dict, status: DeviceRenderStatus) -> None:

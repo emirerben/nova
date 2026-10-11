@@ -291,6 +291,12 @@ def _rebind_editor_render_contract(
     generation = str(prep.get("generation") or "")
     if not generation:
         raise CreatorRenderContractError("I couldn't verify this edit's approved revision.")
+    from app.services.length_policy_state import (  # noqa: PLC0415
+        read_length_policy,
+        stamp_length_policy,
+    )
+
+    length_policy = read_length_policy(assembly, contract)
     variant = next(v for v in assembly.get("variants", []) if v.get("variant_id") == variant_id)
     sections = prep.get("sections") or {}
     changes: dict[str, Any] = {"generation_id": generation}
@@ -326,7 +332,7 @@ def _rebind_editor_render_contract(
         # number from the submitted slots (or guided revision); the prior
         # variant duration is deliberately not authority for a trim.
         duration = prep.get("expected_duration_s")
-        if isinstance(duration, (int, float)) and duration > 0:
+        if length_policy is None and isinstance(duration, (int, float)) and duration > 0:
             changes["duration_s"] = float(duration)
         slots = (prep.get("guided_revision") or {}).get("segments") or []
         order = tuple(
@@ -342,8 +348,16 @@ def _rebind_editor_render_contract(
                 "This timeline edit needs a source-identified editor revision before it can render."
             )
     revisions = dict(revisions or {})
-    revisions[variant_id] = contract.rebind(**changes).model_dump(mode="json")
+    rebound = contract.rebind(**changes)
+    revisions[variant_id] = rebound.model_dump(mode="json")
     assembly[CONTRACT_REVISIONS_FIELD] = revisions
+    if length_policy is not None:
+        staged.assembly_plan = stamp_length_policy(
+            assembly,
+            (staged.all_candidates or {}).get("creator_strategy") or {},
+            rebound,
+            mode=length_policy.check_mode,
+        )
 
 
 def prepare_phone_editor_commit(

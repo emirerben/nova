@@ -1518,7 +1518,7 @@ class EditProposalSnapshot(BaseModel):
                         raise ValueError("mixed-media photos may only be used once")
                     image_ids.add(ref.media_id)
                     continue
-                minimum_video_s = 0.1 if quick_mixed_timing else 0.4
+                minimum_video_s = 0.1
                 if ref.duration_s is not None:
                     # A short video is never left out for being short: a cut may
                     # be shorter than the floor when it shows the whole clip.

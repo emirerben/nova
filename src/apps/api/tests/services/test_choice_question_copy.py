@@ -90,7 +90,9 @@ def _texts() -> dict[str, str]:
     plain = CreativeStrategy(
         edit_format="montage", target_duration_s=15, target_duration_requested=True
     )
-    add("duration_vs_count", plain, _brief(_timing(15)), _rows(30, seconds=3.0))
+    # Included footage has the founder-approved 100 ms floor.  151 clips make
+    # the 15-second request infeasible without relying on the retired 0.8s floor.
+    add("duration_vs_count", plain, _brief(_timing(15)), _rows(151, seconds=3.0))
     add(
         "order_basis",
         CreativeStrategy(edit_format="montage", ordering_choice="chronological"),

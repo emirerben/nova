@@ -35,7 +35,13 @@ _ROUTE = (
     "pins capture-time order, so it asks once with the honest options. The other two route "
     "threads have capture times and ask nothing."
 )
-LEGITIMATE_ASKS: dict[str, str] = {"east_run": _ROUTE}
+LEGITIMATE_ASKS: dict[str, str] = {
+    "east_run": _ROUTE,
+    # The footage pool itself is only 6.5 seconds, so the 15-second request
+    # cannot be met without reuse. This is a capacity conflict, independent of
+    # the 100 ms per-included-source floor.
+    "vlog_restructure": "available footage is 6.5 seconds for a 15-second request",
+}
 
 THREADS = [pytest.param(path, id=path.stem) for path in discover_fixture_paths()]
 

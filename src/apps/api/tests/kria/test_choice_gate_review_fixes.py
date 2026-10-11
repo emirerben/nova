@@ -44,6 +44,11 @@ from tests.kria.test_choice_conflict_gate import (
 
 # ── P1-A ─────────────────────────────────────────────────────────────────────
 
+CONFLICT_CLIPS = 41
+FITTING_CLIPS = 30
+REQUESTED_SECONDS = 3
+EXTENDED_SECONDS = 4.1
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -75,10 +80,13 @@ def test_the_prod_fecf9337_shape_asks_nothing() -> None:
 @pytest.mark.asyncio
 async def test_an_explicit_brief_length_still_asks_and_quotes_the_requirement(monkeypatch) -> None:
     result = await _gate(
-        monkeypatch, _planned(seconds=15), rows=_rows(30), brief=_brief(_timing(15))
+        monkeypatch,
+        _planned(seconds=REQUESTED_SECONDS),
+        rows=_rows(CONFLICT_CLIPS),
+        brief=_brief(_timing(REQUESTED_SECONDS)),
     )
     assert result.plan.choice_question["kind"] == "duration_vs_count"
-    assert 'Your brief says "Keep 15 seconds"' in result.plan.response
+    assert 'Your brief says "Keep 3 seconds"' in result.plan.response
     assert "You asked for" not in result.plan.response
 
 
@@ -103,16 +111,15 @@ async def test_the_creators_selection_is_what_is_counted(monkeypatch) -> None:
 async def test_fewer_chooses_within_the_selection_and_never_re_adds_excluded_clips(
     monkeypatch,
 ) -> None:
-    """30 selected of 42, brief 15 s: asks about 30 (not 42) and `fewer` keeps to the 30."""
-    selected = [f"c{i:02d}" for i in range(0, 42, 1) if i % 7 != 0][:30]
-    assert len(selected) == 30
-    planned = _planned(seconds=15, media_scope="selected", selected_media_ids=selected)
-    rows, brief = _rows(42), _brief(_timing(15))
+    """A bounded 50-item selection can still conflict at a short named duration."""
+    selected = [f"c{i:02d}" for i in range(50)]
+    planned = _planned(seconds=4, media_scope="selected", selected_media_ids=selected)
+    rows, brief = _rows(60), _brief(_timing(4))
     first = await _gate(monkeypatch, planned, rows=rows, brief=brief)
     question = first.plan.choice_question
     assert question["kind"] == "duration_vs_count"
-    assert "uses 30 clips" in first.plan.response and "42" not in first.plan.response
-    assert "24" in question["options"][0]["label"]  # 30 x 0.8 s
+    assert "uses 50 clips" in first.plan.response and "60" not in first.plan.response
+    assert "5" in question["options"][0]["label"]
     asked = _asked(first)
     result = await _gate(
         monkeypatch,
@@ -122,8 +129,7 @@ async def test_fewer_chooses_within_the_selection_and_never_re_adds_excluded_cli
         events=(asked, _picked(question, "fewer")),
     )
     chosen = _strategy(result)["selected_media_ids"]
-    assert len(chosen) == 18 and set(chosen) <= set(selected)
-    assert not {f"c{i:02d}" for i in range(0, 42, 7)} & set(chosen)
+    assert len(chosen) == 40 and set(chosen) <= set(selected)
 
 
 @pytest.mark.asyncio
@@ -169,8 +175,8 @@ def test_a_creator_selection_we_cannot_count_never_guesses() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model_value", [24, 18, 15])
 async def test_extend_wins_over_what_the_model_emits(monkeypatch, model_value) -> None:
-    rows, brief = _rows(30), _brief(_timing(15))
-    first = await _gate(monkeypatch, _planned(seconds=15), rows=rows, brief=brief)
+    rows, brief = _rows(CONFLICT_CLIPS), _brief(_timing(REQUESTED_SECONDS))
+    first = await _gate(monkeypatch, _planned(seconds=REQUESTED_SECONDS), rows=rows, brief=brief)
     asked = _asked(first)
     events = (asked, _picked(asked[1]["choice_question"], "extend"))
     result = await _gate(
@@ -178,22 +184,24 @@ async def test_extend_wins_over_what_the_model_emits(monkeypatch, model_value) -
     )
     strategy = _strategy(result)
     assert (
-        strategy["target_duration_s"] == 24 and strategy["choice_answers"][0]["option"] == "extend"
+        strategy["target_duration_s"] == EXTENDED_SECONDS
+        and strategy["choice_answers"][0]["option"] == "extend"
     )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model_value", [24, 18, 15])
 async def test_fewer_wins_over_what_the_model_emits(monkeypatch, model_value) -> None:
-    rows, brief = _rows(30), _brief(_timing(15))
-    first = await _gate(monkeypatch, _planned(seconds=15), rows=rows, brief=brief)
+    rows, brief = _rows(CONFLICT_CLIPS), _brief(_timing(REQUESTED_SECONDS))
+    first = await _gate(monkeypatch, _planned(seconds=REQUESTED_SECONDS), rows=rows, brief=brief)
     asked = _asked(first)
     events = (asked, _picked(asked[1]["choice_question"], "fewer"))
     result = await _gate(
         monkeypatch, _planned(seconds=model_value), rows=rows, brief=brief, events=events
     )
     strategy = _strategy(result)
-    assert strategy["target_duration_s"] == 15 and len(strategy["selected_media_ids"]) == 18
+    assert strategy["target_duration_s"] == REQUESTED_SECONDS
+    assert len(strategy["selected_media_ids"]) == FITTING_CLIPS
 
 
 @pytest.mark.asyncio
@@ -230,7 +238,7 @@ def _q(qid: str = "q1") -> dict:
             {"key": "extend", "label": "Extend it to 24 seconds", "aliases": ["longer"]},
             {
                 "key": "fewer",
-                "label": "Keep 15 seconds with 18 clips",
+                "label": "Keep 3 seconds with 30 clips",
                 "aliases": ["keep it short"],
             },
         ],
@@ -275,12 +283,12 @@ def test_after_the_re_ask_cap_a_non_answer_closes_it_but_a_restating_recovery_re
 
 def test_extend_is_capped_and_only_fewer_is_offered_beyond_it() -> None:
     strategy = CreativeStrategy(edit_format="montage")
-    brief = _brief(_timing(15))
-    rows = {"clip_assignments": _rows(30)}
-    (offered,) = collect_conflicts(strategy, brief, rows, ChoiceCapability(max_duration_s=20))
+    brief = _brief(_timing(REQUESTED_SECONDS))
+    rows = {"clip_assignments": _rows(CONFLICT_CLIPS)}
+    (offered,) = collect_conflicts(strategy, brief, rows, ChoiceCapability(max_duration_s=4))
     assert [o.key for o in offered.options] == ["fewer"]
     assert offered.recommended().key == "fewer"
-    resolved = resolve_choices(strategy, brief, rows, [], ChoiceCapability(max_duration_s=20))
+    resolved = resolve_choices(strategy, brief, rows, [], ChoiceCapability(max_duration_s=4))
     assert [o.key for o in resolved.question.options] == ["fewer"]
     (normal,) = collect_conflicts(strategy, brief, rows)
     assert [o.key for o in normal.options] == ["extend", "fewer"]
@@ -311,21 +319,23 @@ async def test_plan_live_turn_runs_the_gate_without_a_database(monkeypatch) -> N
     """Mutation guard: removing the call from ``plan_live_turn`` must fail here (the
     Postgres journey tests are not the only thing that notices)."""
     item = SimpleNamespace(
-        clip_gcs_paths=[f"clips/{i}.mp4" for i in range(30)],
-        clip_assignments=_rows(30),
+        clip_gcs_paths=[f"clips/{i}.mp4" for i in range(CONFLICT_CLIPS)],
+        clip_assignments=_rows(CONFLICT_CLIPS),
         voiceover_gcs_path=None,
         voiceover_generation=None,
         song_gcs_path=None,
         song_generation=None,
     )
     db = SimpleNamespace(get=AsyncMock(return_value=item))
-    planned = replace(_planned(seconds=15), brief_updates=())
+    planned = replace(_planned(seconds=REQUESTED_SECONDS), brief_updates=())
 
     async def _model(*_args, **_kwargs) -> PlannedKriaTurn:  # noqa: ANN002, ANN003
         return planned
 
     monkeypatch.setattr(planner, "_plan_live_turn", _model)
-    monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=_brief(_timing(15))))
+    monkeypatch.setattr(
+        planner, "load_latest_brief", AsyncMock(return_value=_brief(_timing(REQUESTED_SECONDS)))
+    )
     monkeypatch.setattr(type(planner.settings), "creative_brief_for", lambda _s, _i: True)
     monkeypatch.setattr(type(planner.settings), "brief_binding_for", lambda _s, _i: True)
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
@@ -553,10 +563,9 @@ def test_only_a_reply_to_a_later_user_turn_closes_a_question() -> None:
     assert latest_open_choice_question([asked, user, voiceover]) is None
 
 
-def test_async_events_do_not_consume_an_ask() -> None:
-    """P4: the second ask is still available after any number of async events."""
+def test_async_events_do_not_close_a_durable_question() -> None:
     strategy = CreativeStrategy(edit_format="montage")
-    rows, brief = {"clip_assignments": _rows(30)}, _brief(_timing(15))
+    rows, brief = {"clip_assignments": _rows(CONFLICT_CLIPS)}, _brief(_timing(REQUESTED_SECONDS))
     first = resolve_choices(strategy, brief, rows, []).question
     asked = _ev(
         "assistant",
@@ -573,7 +582,7 @@ def test_async_events_do_not_consume_an_ask() -> None:
     history = [asked, *noise, tag_event("user", {}, None, "hmm?")]
     assert count_asks(history, first.conflict_id, first.input_digest) == 1
     again = resolve_choices(strategy, brief, rows, history)
-    assert again.question is not None and not again.exhausted  # the ONE re-ask is intact
+    assert again.question is None and again.exhausted
 
 
 # key unification ------------------------------------------------------------
@@ -667,8 +676,13 @@ def test_a_bare_whatever_is_not_a_delegation(phrase) -> None:
 @pytest.mark.asyncio
 async def test_a_creator_without_a_brief_binding_is_not_asked_brief_questions(monkeypatch) -> None:
     monkeypatch.setattr(planner.settings, "kria_choice_questions_enabled", True)
-    planned = replace(_planned(seconds=15), media_snapshot={"clip_assignments": _rows(30)})
-    monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=_brief(_timing(15))))
+    planned = replace(
+        _planned(seconds=REQUESTED_SECONDS),
+        media_snapshot={"clip_assignments": _rows(CONFLICT_CLIPS)},
+    )
+    monkeypatch.setattr(
+        planner, "load_latest_brief", AsyncMock(return_value=_brief(_timing(REQUESTED_SECONDS)))
+    )
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
     monkeypatch.setattr(type(planner.settings), "creative_brief_for", lambda _s, _i: True)
     monkeypatch.setattr(type(planner.settings), "brief_binding_for", lambda _s, _i: False)
@@ -684,33 +698,37 @@ def test_a_single_option_is_a_statement_not_a_choice() -> None:
     strategy = CreativeStrategy(edit_format="montage")
     (offered,) = collect_conflicts(
         strategy,
-        _brief(_timing(15)),
-        {"clip_assignments": _rows(30)},
-        ChoiceCapability(max_duration_s=20),
+        _brief(_timing(REQUESTED_SECONDS)),
+        {"clip_assignments": _rows(CONFLICT_CLIPS)},
+        ChoiceCapability(max_duration_s=4),
     )
     text = choice_question_text(offered.candidate())
     assert "Which do you prefer?" not in text and "The most I can do is" in text
-    assert "Keep 15 seconds with 18 clips" in text
+    assert "Keep 3 seconds with 30 clips" in text
 
 
 # P2-5: a later restatement supersedes the answer --------------------------------
 
 
-async def _answered(monkeypatch, *, clips=31, option="extend"):  # noqa: ANN001, ANN202
-    rows, brief = _rows(clips), _brief(_timing(15))
-    first = await _gate(monkeypatch, _planned(seconds=15), rows=rows, brief=brief)
+async def _answered(monkeypatch, *, clips=CONFLICT_CLIPS, option="extend"):  # noqa: ANN001, ANN202
+    rows, brief = _rows(clips), _brief(_timing(REQUESTED_SECONDS))
+    first = await _gate(monkeypatch, _planned(seconds=REQUESTED_SECONDS), rows=rows, brief=brief)
     asked = _asked(first)
     answer = _picked(asked[1]["choice_question"], option)
     return rows, brief, [asked, tag_event("user", answer[1], None, "Extend it")]
 
 
 @pytest.mark.asyncio
-async def test_extend_gives_24_8_and_the_answer_turn_echo_keeps_it(monkeypatch) -> None:
+async def test_extend_uses_the_minimum_100ms_capacity_and_keeps_it(monkeypatch) -> None:
     rows, brief, events = await _answered(monkeypatch)
     result = await _gate(
-        monkeypatch, _planned(seconds=15), rows=rows, brief=brief, events=tuple(events)
+        monkeypatch,
+        _planned(seconds=REQUESTED_SECONDS),
+        rows=rows,
+        brief=brief,
+        events=tuple(events),
     )
-    assert _strategy(result)["target_duration_s"] == 24.8
+    assert _strategy(result)["target_duration_s"] == EXTENDED_SECONDS
 
 
 @pytest.mark.asyncio
@@ -737,7 +755,7 @@ async def test_a_later_restatement_is_never_silently_overridden(
     # It asks once more (the old answer is dropped, not re-applied) ...
     assert result.plan.turn_value == "question" and not result.plan.intents
     again = _asked(result)
-    # ... and once that second ask is spent the plan goes through UNCHANGED, never 24.8.
+    # Repeating a non-answer leaves the new length question waiting.
     events += [again, tag_event("user", {}, None, message)]
     spent = await _gate(
         monkeypatch,
@@ -746,8 +764,7 @@ async def test_a_later_restatement_is_never_silently_overridden(
         brief=brief,
         events=tuple(events),
     )
-    strategy = _strategy(spent)
-    assert strategy["target_duration_s"] == model_seconds and "choice_answers" not in strategy
+    assert spent.plan.turn_value == "progress" and not spent.plan.intents
 
 
 @pytest.mark.asyncio
@@ -755,24 +772,28 @@ async def test_a_later_message_that_keeps_the_answered_value_keeps_the_answer(mo
     rows, brief, events = await _answered(monkeypatch)
     events.append(tag_event("user", {}, None, "also make the title bigger"))
     result = await _gate(
-        monkeypatch, _planned(seconds=24.8), rows=rows, brief=brief, events=tuple(events)
+        monkeypatch,
+        _planned(seconds=EXTENDED_SECONDS),
+        rows=rows,
+        brief=brief,
+        events=tuple(events),
     )
     assert _strategy(result)["choice_answers"][0]["option"] == "extend"
 
 
 @pytest.mark.asyncio
 async def test_a_verbatim_resend_is_not_a_restatement(monkeypatch) -> None:
-    rows, brief = _rows(31), _brief(_timing(15))
-    original = tag_event("user", {}, None, "Keep 15 seconds, all clips")
-    first = await _gate(monkeypatch, _planned(seconds=15), rows=rows, brief=brief)
+    rows, brief = _rows(CONFLICT_CLIPS), _brief(_timing(REQUESTED_SECONDS))
+    original = tag_event("user", {}, None, "Keep 3 seconds, all clips")
+    first = await _gate(monkeypatch, _planned(seconds=REQUESTED_SECONDS), rows=rows, brief=brief)
     asked = _asked(first)
     answer = tag_event("user", _picked(asked[1]["choice_question"], "extend")[1], None, "Extend it")
-    resent = tag_event("user", {}, None, "Keep 15 seconds, all clips")
+    resent = tag_event("user", {}, None, "Keep 3 seconds, all clips")
     result = await _gate(
         monkeypatch,
-        _planned(seconds=15),
+        _planned(seconds=REQUESTED_SECONDS),
         rows=rows,
         brief=brief,
         events=(original, asked, answer, resent),
     )
-    assert _strategy(result)["target_duration_s"] == 24.8
+    assert _strategy(result)["target_duration_s"] == EXTENDED_SECONDS

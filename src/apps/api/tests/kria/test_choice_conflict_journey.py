@@ -37,8 +37,8 @@ from app.services.creator_render_contract import build_render_contract
 from app.tasks.kria_runtime import run_kria_turn
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 
-CLIPS = 30
-PROMPT = "Keep 15 seconds and use all of my clips"
+CLIPS = 41
+PROMPT = "Keep 3 seconds and use all of my clips"
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +61,7 @@ async def _dispose_async_engine():
 def _project(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    emit_after: int = 15,
+    emit_after: int = 3,
     order: bool = False,
     clips: int = CLIPS,
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
@@ -102,7 +102,7 @@ def _project(
                         {}
                         if order
                         else {
-                            "target_duration_s": 15 if calls["n"] == 1 else emit_after,
+                            "target_duration_s": 3 if calls["n"] == 1 else emit_after,
                             "target_duration_requested": True,
                         }
                     ),
@@ -128,8 +128,8 @@ def _project(
                         else BriefUpdate(
                             kind="timing",
                             scope="global",
-                            description="15 seconds",
-                            facts={"duration_s": 15},
+                            description="3 seconds",
+                            facts={"duration_s": 3},
                         )
                     ),
                 )
@@ -271,12 +271,12 @@ async def test_question_then_free_text_answer_then_approved_binding_carries_the_
 
     draft = _head_draft(thread_id)
     strategy = _draft_strategy(draft)
-    assert strategy["target_duration_s"] == 24
+    assert strategy["target_duration_s"] == 4.1
     (answer,) = strategy["choice_answers"]
     assert answer["option"] == "extend" and answer["requirement_ids"] == ["r1"]
     binding = BriefBinding.model_validate(draft.snapshot_json["brief_binding"])
     assert binding.choice_answers == [answer]  # approval freezes it (part of the digest)
-    assert binding.brief.requirements[0].facts["duration_s"] == 24  # the pinned requirement
+    assert binding.brief.requirements[0].facts["duration_s"] == 4.1  # the pinned requirement
 
     # 3. Approve exactly that draft; the contract rebuilt from the binding carries the answer.
     decision = await _decide(user_id, thread_id, "approve")
@@ -287,7 +287,7 @@ async def test_question_then_free_text_answer_then_approved_binding_carries_the_
         brief=binding.resolve(),
         media_snapshot=binding.media_snapshot,
     )
-    assert contract.duration_s == 24 and not contract.unresolved
+    assert contract.duration_s == 4.1 and not contract.unresolved
 
 
 @pytest.mark.asyncio
@@ -296,14 +296,14 @@ async def test_a_resent_prompt_after_the_answer_is_not_asked_again(monkeypatch) 
     await _say(user_id, thread_id, PROMPT)
     (question,) = _questions(thread_id)
     selection = {"question_id": question["question_id"], "option_key": "fewer"}
-    first = await _say(user_id, thread_id, "Keep 15 seconds with 18 clips", selection=selection)
+    first = await _say(user_id, thread_id, "Keep 3 seconds with 30 clips", selection=selection)
     assert first["status"] == "awaiting_approval"
     await _decide(user_id, thread_id, "deny")  # the creator does not approve it yet
     again = await _say(user_id, thread_id, PROMPT)  # the same prompt, a new turn
     assert again["status"] == "awaiting_approval"
     assert len(_questions(thread_id)) == 1
     strategy = _draft_strategy(_head_draft(thread_id))
-    assert strategy["target_duration_s"] == 15 and len(strategy["selected_media_ids"]) == 18
+    assert strategy["target_duration_s"] == 3 and len(strategy["selected_media_ids"]) == 30
 
 
 def _receipts(thread_id) -> dict[str, dict]:  # noqa: ANN001
@@ -327,10 +327,10 @@ async def test_the_answered_length_wins_whatever_the_model_emits_next(
     await _say(user_id, thread_id, PROMPT)
     (question,) = _questions(thread_id)
     selection = {"question_id": question["question_id"], "option_key": "extend"}
-    result = await _say(user_id, thread_id, "Extend it to 24 seconds", selection=selection)
+    result = await _say(user_id, thread_id, "Extend it to 4.1 seconds", selection=selection)
     assert result["status"] == "awaiting_approval"
     strategy = _draft_strategy(_head_draft(thread_id))
-    assert strategy["target_duration_s"] == 24
+    assert strategy["target_duration_s"] == 4.1
     assert strategy["choice_answers"][0]["option"] == "extend"
     receipt = _receipts(thread_id)["r1"]
     assert receipt["status"] == "met", receipt
@@ -346,34 +346,28 @@ async def test_the_answered_clip_subset_wins_whatever_the_model_emits_next(
     await _say(user_id, thread_id, PROMPT)
     (question,) = _questions(thread_id)
     selection = {"question_id": question["question_id"], "option_key": "fewer"}
-    result = await _say(user_id, thread_id, "Keep 15 seconds with 18 clips", selection=selection)
+    result = await _say(user_id, thread_id, "Keep 3 seconds with 30 clips", selection=selection)
     assert result["status"] == "awaiting_approval"
     strategy = _draft_strategy(_head_draft(thread_id))
-    assert strategy["target_duration_s"] == 15 and len(strategy["selected_media_ids"]) == 18
+    assert strategy["target_duration_s"] == 3 and len(strategy["selected_media_ids"]) == 30
     assert _receipts(thread_id)["r1"]["status"] == "met"
 
 
 @pytest.mark.asyncio
-async def test_unanswerable_replies_get_one_re_ask_then_the_plan_goes_through_unchanged(
+async def test_unanswerable_replies_wait_without_rendering_or_asking_again(
     monkeypatch,
 ) -> None:
     """P2-2: no default is applied and no requirement is rewritten; repeating the request
     is not an answer."""
     user_id, thread_id, _ = _project(monkeypatch)
     await _say(user_id, thread_id, PROMPT)
-    await _say(user_id, thread_id, "make it more fun")  # not an answer: re-ask ONCE
-    assert len(_questions(thread_id)) == 2
+    await _say(user_id, thread_id, "make it more fun")
+    assert len(_questions(thread_id)) == 1
     assert _head_draft(thread_id) is None
     done = await _say(user_id, thread_id, PROMPT)  # the request again is NOT an answer
-    assert done["status"] == "awaiting_approval"
-    assert len(_questions(thread_id)) == 2  # never a third
-    strategy = _draft_strategy(_head_draft(thread_id))
-    assert "choice_answers" not in strategy and strategy["target_duration_s"] == 15
-    draft = _head_draft(thread_id)
-    assert "choice_answers" not in draft.snapshot_json["brief_binding"]
-    assert draft.snapshot_json["brief_binding"]["brief"]["requirements"][0]["facts"] == {
-        "duration_s": 15
-    }
+    assert done["status"] == "completed"
+    assert len(_questions(thread_id)) == 1
+    assert _head_draft(thread_id) is None
 
 
 @pytest.mark.asyncio
@@ -447,7 +441,7 @@ async def test_flag_off_is_byte_identical_to_before(monkeypatch) -> None:
     assert _questions(thread_id) == []
     draft = _head_draft(thread_id)
     strategy = _draft_strategy(draft)
-    assert "choice_answers" not in strategy and strategy["target_duration_s"] == 15
+    assert "choice_answers" not in strategy and strategy["target_duration_s"] == 3
     assert "choice_answers" not in draft.snapshot_json["brief_binding"]
 
 
@@ -487,9 +481,7 @@ async def test_async_events_after_the_question_do_not_break_the_tap_or_the_typed
         _append_assistant(thread_id, event_type, **payload)
     if how == "tap":
         selection = {"question_id": question["question_id"], "option_key": "fewer"}
-        result = await _say(
-            user_id, thread_id, "Keep 15 seconds with 18 clips", selection=selection
-        )
+        result = await _say(user_id, thread_id, "Keep 3 seconds with 30 clips", selection=selection)
     else:
         result = await _say(user_id, thread_id, "2")  # the second listed option: fewer
     assert result["status"] == "awaiting_approval"
@@ -531,25 +523,24 @@ async def test_a_later_text_question_stops_a_typed_number_from_answering_the_car
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "restatement", ["no I want exactly 15 seconds with all of them", "make it shorter"]
+    "restatement", ["no I want exactly 3 seconds with all of them", "make it shorter"]
 )
-async def test_a_later_restatement_reopens_the_question_and_is_never_silently_24_8(
+async def test_a_later_restatement_reopens_once_and_does_not_reuse_the_old_answer(
     monkeypatch, restatement: str
 ) -> None:
-    user_id, thread_id, _ = _project(monkeypatch, clips=31)
-    await _say(user_id, thread_id, "Keep 15 seconds and use all of my 31 clips")
+    user_id, thread_id, _ = _project(monkeypatch)
+    await _say(user_id, thread_id, PROMPT)
     (question,) = _questions(thread_id)
     selection = {"question_id": question["question_id"], "option_key": "extend"}
-    first = await _say(user_id, thread_id, "Extend it to 24.8 seconds", selection=selection)
+    first = await _say(user_id, thread_id, "Extend it to 4.1 seconds", selection=selection)
     assert first["status"] == "awaiting_approval"
-    assert _draft_strategy(_head_draft(thread_id))["target_duration_s"] == 24.8
+    assert _draft_strategy(_head_draft(thread_id))["target_duration_s"] == 4.1
     await _decide(user_id, thread_id, "deny")
     revision = _head_draft(thread_id).draft_revision
-    await _say(user_id, thread_id, restatement)  # the model emits 15 again
+    await _say(user_id, thread_id, restatement)
     assert len(_questions(thread_id)) == 2  # it asks once more ...
-    assert _head_draft(thread_id).draft_revision == revision  # ... and drafts nothing at 24.8
-    done = await _say(user_id, thread_id, restatement + "!")  # the second ask is spent
-    assert done["status"] == "awaiting_approval"
-    strategy = _draft_strategy(_head_draft(thread_id))
-    assert strategy["target_duration_s"] == 15 and "choice_answers" not in strategy
+    assert _head_draft(thread_id).draft_revision == revision
+    done = await _say(user_id, thread_id, restatement + "!")
+    assert done["status"] == "completed"
+    assert _head_draft(thread_id).draft_revision == revision
     assert len(_questions(thread_id)) == 2

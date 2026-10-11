@@ -320,6 +320,68 @@ field registered in `_POST_V1_FIELD_DEFAULTS` while it holds its default, and
 stored v1 contract that must keep reading. Register a new field there in the same
 change that adds it.
 
+## KRI-493 length ownership audit (base `ab315dbbc`)
+
+This is a code-referenced base audit, not proof that the KRI-492/493 final
+policy has landed. A target row must be rechecked against final selector and
+compiler receipts before it is marked verified.
+
+The server-owned provenance path now derives creator duration from creator text,
+brief timing, or an authoritative answer through `length_policy.creator_duration_s`,
+then writes `creator_duration_s` and `target_duration_requested`
+(`src/apps/api/app/agents/main_creator.py:604-612,665-678`). Draft sanitization
+uses the same policy and refuses a client-supplied marker
+(`src/apps/api/app/kria/drafts.py:43-82`). The schema serializer still retains an
+explicitly approved 24 seconds (`src/apps/api/app/agents/_schemas/creator_agent.py:546-555`).
+The contract projects duration only with that provenance or an equivalent live
+brief/answer (`src/apps/api/app/services/creator_render_contract.py:945-983`).
+The former non-24 raw-value compatibility fallback is no longer the policy
+source; final workers consume the stamped creator-duration state. Final
+draft/build parity remains an acceptance gap until its receipts are shown.
+
+The verifier comparison is actual rendered duration against the owner below.
+Selection order, pools, pins, and `use_all` affect membership or order; they do
+not own duration. A selected owner may grow to the approved cap.
+
+| Supported shape | Phone owner at base | Cloud owner at base | Verifier comparison | Base verdict / target acceptance |
+| --- | --- | --- | --- | --- |
+| Plain/silent montage | Footage allocation (`edit_direction_planner`: 0.8 s normal floor, 1.2 s default cut/image capacity, 3 s minimum) | Classic/guided montage allocation | Measured recipe/renderer duration against an explicit contract | `matches` only with measured output; otherwise `missing`. Target: explicit creator length ±10%. |
+| User song, background | Song/background window | Scheduling library bed follows footage; there is no authoritative catalog-song selected section | Phone compares song window and picture coverage; cloud has no user-song verifier | Phone `matches` with song evidence; cloud `missing`. Target: background section owns length. |
+| User song, lip-sync | Lip-sync song/video timeline; `window_start_s` is an existing source-window coordinate (`src/apps/api/app/services/clip_speech.py:242-245`) | No supported cloud user-song owner | Phone compares song/video window; cloud cannot prove it | Phone `matches` with window evidence; cloud `missing`. Target: 120-second song cap and explicit `cloud user_song unsupported`. |
+| Recorded voiceover montage | Recording duration / voiceover compiler; the phone compiler consumes exact decision/source windows and does not choose them (`src/apps/api/app/pipeline/phone_voiceover_montage_plan.py:191-215`) | Recording duration in cloud narration path | Compare actual output to recording receipt, not strategy default | `matches` with narration evidence; otherwise `missing`. Target: VO recording owns length. |
+| Talking/subtitled original speech | Source take and applied cleanup windows | Source take where the selected cloud adapter supports the route | Compare measured take-derived duration and cleanup receipt | `matches` only with measured take evidence; otherwise `missing`. |
+| Continuous voice | Voice-behind-footage composer; voice and picture spans are distinct | Cloud composer where enabled | Compare voice span, picture span, and chosen silent tail | `matches` with composer receipt; otherwise `missing`. Target: durable answer evidence. |
+| Montage with speech excerpts | Chosen recording and excerpt windows | Route-specific excerpt renderer where enabled | Compare source ids, excerpt windows, and measured output | `missing` where only generic montage metadata exists. Target: excerpt windows own length. |
+| Explicit creator length | `target_duration_requested` → contract → selected compiler | Same contract → cloud adapter if it consumes duration | Actual rendered duration versus requested duration | `matches`, `differs`, or `missing` only from receipts; normalized 24 is never evidence. |
+
+`best_parts.select_best_parts` now exposes source windows, a 120-second approved
+cap, a 0.1-second included floor, and typed capacity conflicts
+(`src/apps/api/app/pipeline/best_parts.py:16-18,149-220`). The ordinary silent
+montage still has its 0.8-second readability floor, 1.2-second default cut, and
+3-second proposal minimum. Image holds are conditional: 1.2 seconds is the
+preferred hold and 3 seconds is the profiled capacity when the source permits;
+these are capacity/planning values, not creator intent. Those conflicts are
+receipts and must not become render failures by themselves. The durable choice
+path is `collect_conflicts` (`choice_questions.py:1589`),
+`fold_scoped_answers` (`choice_questions.py:1672`), and `resolve_choices`
+(`choice_questions.py:2015`); it owns answer persistence and digest invalidation,
+not the final render duration.
+
+The complete natural-owner declaration is
+`src/apps/api/app/services/length_policy.py:23-81`: every supported format
+(`montage`, `talking_head`, `day_vlog`, `single_hero`, `subtitled`,
+`narrated`, `narrated_planned`, `narrated_ready`, `slides`) declares all four
+audio sources (`licensed_music`, `original_audio`, `voiceover`, `user_song`).
+The effective owner is generation-bound in
+`src/apps/api/app/services/length_policy_state.py:21-58` with generation id and
+contract digest. The approved mode is frozen into the generation and defaults to `log_only`
+(`src/apps/api/app/config.py:27`) and is carried through phone, cloud, and
+editor checks. A selected, server-frozen licensed-music section is song-owned;
+if the catalog section is missing or cannot be frozen, planning falls back to
+footage ownership. A derived duration never becomes creator proof: only creator
+text, a live brief timing requirement, or an authoritative scoped answer can
+set the ±10% creator target.
+
 ## Plan-authority stamp
 
 `KRIA_PLAN_AUTHORITY_ENABLED` (default on) is read once, where a job's contract is
@@ -333,7 +395,7 @@ renders differently because of it yet.
 
 | Requirement | Phone evidence | Cloud evidence | Current rule |
 | --- | --- | --- | --- |
-| Duration | Compiled recipe duration within the accepted tolerance | Renderer measured duration (`actual_duration_s` or measured `duration_s`) | Compare actual output; never compare desired metadata. Not pinned on take-length formats (`TAKE_LENGTH_EDIT_FORMATS`: Talking `subtitled` keeps the take minus speech-cleanup pauses; the narrated family and a voiceover montage run as long as the voiceover) -- no compiler trims those to a named length, and the brief receipt tells the creator so (job e1c5f89e, 2026-10-06). |
+| Duration | Compiled recipe duration within the accepted tolerance | Renderer measured duration (`actual_duration_s` or measured `duration_s`) | Compare actual output against the generation-frozen owner. There is no take-length exemption: missing owner receipts are `missing`, and only creator proof activates the ±10% target. |
 | Recorded voice | Audible `VoiceoverRenderAsset` on an audio track | `narration_applied`, set only when the mixer reports the recording is in the output file | Guided and classic honour it; missing evidence declines |
 | Camera audio (require / forbid) | Audible original assets, source IDs, and complete mute-window coverage | `source_audio_ids` + `source_audio_state` from the audio graph actually mixed | Guided honours and proves it; classic declines up front; named sources decline everywhere |
 | Chronological order | Every selected clip has capture evidence; recipe picture sequence matches resolved IDs | `actual_clip_order` / `picture_timeline` from the rendered moments | Guided: gated before render, then verified; classic declines up front |

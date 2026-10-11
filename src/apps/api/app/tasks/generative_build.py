@@ -39,7 +39,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -2940,18 +2940,17 @@ def _run_generative_job_impl(
             if settings.clip_intents_enabled
             else None
         )
-        # CreativeStrategy supplies balanced/24s defaults for planning.  Those
-        # defaults are not confirmed render constraints: applying them here
-        # would change ordinary Creator renders. Only non-default values that
-        # survived the typed API boundary become worker inputs.
-        raw_target_duration_s = raw_creator_strategy.get("target_duration_s")
+        # Only the server-owned duration stamp is a creator constraint. The
+        # model/client target and its requested marker are planning hints and
+        # must never turn an unnamed footage edit into a fixed-length edit.
+        stamped_duration = (
+            getattr(creator_strategy, "creator_duration_s", None)
+            if creator_strategy is not None
+            else None
+        )
         creator_target_duration_s = (
-            float(raw_target_duration_s)
-            if raw_target_duration_s is not None
-            and (
-                raw_creator_strategy.get("target_duration_requested") is True
-                or float(raw_target_duration_s) != 24
-            )
+            float(stamped_duration)
+            if isinstance(stamped_duration, (int, float)) and stamped_duration > 0
             else None
         )
         creator_video_reuse_policy = raw_creator_strategy.get("video_reuse_policy")
@@ -3575,6 +3574,13 @@ def _run_generative_job_impl(
         # kill a running ffmpeg thread, but each tonemap holds its own 600s timeout
         # and the failing task's worker is recycled, so the orphan is bounded.
         match_phase_t0 = time.monotonic()
+        # An approved creator brief can freeze the licensed song and its exact
+        # source window. Resolve it before starting the matcher: a retry must
+        # consume the approved selection, while an approved footage fallback
+        # must not silently promote itself back to a catalog song.
+        frozen_music_status, frozen_music_track = _approved_licensed_music_track(
+            immutable_job_plan, job_id=job_id
+        )
         pool = ThreadPoolExecutor(max_workers=3)
         try:
             prework_started = time.monotonic()
@@ -3587,8 +3593,10 @@ def _run_generative_job_impl(
                 job_id=job_id,
             )
             fut_text = pool.submit(_text_then_style)
-            if _narrated_voiceover:
+            if _narrated_voiceover or frozen_music_status == "fallback_footage":
                 fut_match = pool.submit(lambda: None)
+            elif frozen_music_status == "selected":
+                fut_match = pool.submit(lambda: frozen_music_track)
             else:
                 fut_match = pool.submit(_match_best_track, clip_metas, job_id=job_id)
             tonemap_t0 = time.monotonic()
@@ -5163,6 +5171,10 @@ def _run_phone_voiceover_montage_job(
                 # KRI-306: only an explicit creator choice moves the canvas;
                 # None keeps today's portrait default byte-identical.
                 orientation=_creator_shape_orientation(all_candidates),
+                approved_length_plan=_approved_length_plan_envelope(snapshot),
+                approved_runtime_generations={
+                    binding.proxy_path: str(binding.generation) for binding in bindings
+                },
             )
 
             gcs_to_media_id = {binding.proxy_path: binding.media_id for binding in bindings}
@@ -5333,6 +5345,105 @@ def _load_unified_montage_inputs(job_id: str) -> tuple[Any, list[dict], Any]:
                 ]
         # Legacy jobs retain their immutable creator_request. Never import live memory.
     return user_id, assignments, brief
+
+
+def _approved_length_plan_envelope(snapshot: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Return the immutable approved envelope without changing legacy loaders."""
+    binding = snapshot.get("creator_brief_binding")
+    if not isinstance(binding, Mapping):
+        return None
+    media_snapshot = binding.get("media_snapshot")
+    if not isinstance(media_snapshot, Mapping):
+        return None
+    envelope = media_snapshot.get("length_plan")
+    if envelope is None:
+        return None
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.services.length_planning import LENGTH_PLAN_VERSION  # noqa: PLC0415
+
+    BriefBinding.model_validate(binding).resolve()
+    if not isinstance(envelope, Mapping) or envelope.get("version") != LENGTH_PLAN_VERSION:
+        raise ValueError("approved_length_plan_invalid")
+    if envelope.get("conflicts"):
+        raise ValueError("approved_length_plan_needs_choice")
+    return envelope
+
+
+def _approved_best_parts_decisions(
+    envelope: Mapping[str, Any],
+    *,
+    clip_id_to_gcs: Mapping[str, str],
+    clip_id_to_local: Mapping[str, str],
+    probe_map: Mapping[str, Any],
+    runtime_generations: Mapping[str, str] | None = None,
+) -> tuple[list[GenerativeAssemblyStepDecision], list[dict[str, Any]]]:
+    """Map frozen media windows to this worker's ephemeral clip IDs strictly."""
+    from app.services.length_planning import read_length_plan  # noqa: PLC0415
+
+    sources = envelope.get("sources")
+    if not isinstance(sources, list):
+        raise ValueError("approved_length_plan_invalid_sources")
+    ids_by_path: dict[str, list[str]] = {}
+    for clip_id, path in clip_id_to_gcs.items():
+        ids_by_path.setdefault(str(path), []).append(clip_id)
+    runtime = []
+    resolved_ids: dict[str, str] = {}
+    live_generations = dict(runtime_generations or {})
+    if not runtime_generations:
+        from app.storage import object_metadata  # noqa: PLC0415
+
+        paths = {str(source.get("gcs_path")) for source in sources if isinstance(source, Mapping)}
+        for path in paths:
+            if not path:
+                raise ValueError("approved_length_plan_stale_source")
+            try:
+                live_generations[path] = str(object_metadata(path).generation)
+            except Exception as exc:  # noqa: BLE001 - approved source must be recoverable
+                raise ValueError("approved_length_plan_stale_source") from exc
+    for source in sources:
+        if not isinstance(source, Mapping):
+            raise ValueError("approved_length_plan_invalid_source")
+        media_id, path = source.get("media_id"), source.get("gcs_path")
+        matches = ids_by_path.get(str(path)) if isinstance(path, str) else None
+        if not isinstance(media_id, str) or not matches or len(matches) != 1:
+            raise ValueError("approved_length_plan_stale_source")
+        clip_id = matches[0]
+        local = clip_id_to_local.get(clip_id)
+        probe = probe_map.get(local)
+        duration = getattr(probe, "duration_s", None)
+        if not isinstance(duration, (int, float)) or duration <= 0:
+            raise ValueError("approved_length_plan_stale_source")
+        generation = live_generations.get(path)
+        if not generation:
+            raise ValueError("approved_length_plan_stale_source")
+        runtime.append(
+            SimpleNamespace(
+                media_id=media_id,
+                # `read_length_plan` validates the approved gcs_path against
+                # this runtime projection's proxy_path.  The cloud worker has
+                # no PhoneSourceBinding, so carry the ingested GCS path here.
+                proxy_path=path,
+                duration_s=float(duration),
+                storage_generation=generation,
+            )
+        )
+        resolved_ids[media_id] = clip_id
+    parts = read_length_plan(envelope, runtime)
+    if parts is None:
+        raise ValueError("approved_length_plan_missing")
+    decisions = [
+        GenerativeAssemblyStepDecision(
+            clip_id=resolved_ids[part.media_id],
+            source_path=clip_id_to_local.get(resolved_ids[part.media_id]),
+            in_s=part.source_start_s,
+            out_s=part.source_end_s,
+            target_duration_s=part.duration_s,
+            exact_window=True,
+            moment_extra={"best_parts_reason": part.reason, "best_parts_score": part.score},
+        )
+        for part in parts
+    ]
+    return decisions, [part.receipt() for part in parts]
 
 
 def _first_user_message(job_id: str) -> str:
@@ -5869,6 +5980,7 @@ def _run_phone_unified_montage_job(
         facts_for_prompt,
     )
     from app.services.device_render import DEVICE_RENDER_FIELD  # noqa: PLC0415
+    from app.services.length_policy import creator_duration_s  # noqa: PLC0415
     from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
     from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
@@ -5896,7 +6008,11 @@ def _run_phone_unified_montage_job(
         raise UnsupportedPhonePlan("every montage clip needs its phone source binding")
 
     user_id, assignments, brief = _load_unified_montage_inputs(job_id)
+    approved_length_plan = _approved_length_plan_envelope(snapshot)
     view = brief_view(brief)
+    # The bound brief is the server-owned proof for a creator length. A raw
+    # strategy target is deliberately not proof at this worker boundary.
+    creator_duration_proven = creator_duration_s(brief=brief) is not None
     by_assignment_path = {str(row.get("gcs_path")): row for row in assignments}
     facts_on = settings.clip_facts_for(user_id)
     strategy = all_candidates.get("creator_strategy") or {}
@@ -5994,6 +6110,8 @@ def _run_phone_unified_montage_job(
                 ],
                 visuals=visuals,
                 output_orientation=_creator_shape_orientation(all_candidates),
+                creator_duration_proven=creator_duration_proven,
+                approved_length_plan=approved_length_plan,
             )
     # Complete the initial text lane before the canonical generation is pinned.
     # This uses the request already bound to this job, never a newer thread message.
@@ -8782,6 +8900,7 @@ def _guided_execution_plan(
         )
         job_owner_id = getattr(job, "user_id", None)
         job_item_id = getattr(job, "content_plan_item_id", None)
+        approved_length_plan = _approved_length_plan_envelope(job.assembly_plan or {})
 
     from app.services.creator_execution_contract import validate_execution_binding  # noqa: PLC0415
     from app.services.guided_speech_cleanup import derivative_path_ok  # noqa: PLC0415
@@ -9085,10 +9204,21 @@ def _guided_execution_plan(
             or getattr(snapshot, "user_song", None) is not None
         ):
             _emit_plan_blocks(job_id, [_plan_block("music", "deciding")])
+        frozen_music = (
+            approved_length_plan.get("licensed_music")
+            if isinstance(approved_length_plan, Mapping)
+            else None
+        )
+        if frozen_music is not None and not isinstance(frozen_music, Mapping):
+            raise ValueError("approved_licensed_music_invalid")
+        frozen_status = frozen_music.get("status") if isinstance(frozen_music, Mapping) else None
+        if frozen_status not in {None, "selected", "fallback_footage"}:
+            raise ValueError("approved_licensed_music_invalid")
         matched = (
             None
             if (
-                getattr(snapshot, "narration", None) is not None
+                frozen_status is not None
+                or getattr(snapshot, "narration", None) is not None
                 or getattr(snapshot, "user_song", None) is not None
             )
             else _match_best_track(matcher_clip_metas(snapshot), job_id=job_id)
@@ -9096,9 +9226,31 @@ def _guided_execution_plan(
         track_payload = None
         from app.pipeline.guided_story import COMPILER_VERSION  # noqa: PLC0415
 
+        if frozen_status == "selected":
+            required = ("track_id", "title", "start_s", "end_s", "catalog_duration_s")
+            if not all(frozen_music.get(key) is not None for key in required):
+                raise ValueError("approved_licensed_music_stale")
+            start_s = float(frozen_music["start_s"])
+            end_s = float(frozen_music["end_s"])
+            catalog_duration_s = float(frozen_music["catalog_duration_s"])
+            if not (0 <= start_s < end_s <= catalog_duration_s):
+                raise ValueError("approved_licensed_music_stale")
+            track_payload = {
+                "track_id": str(frozen_music["track_id"]),
+                "title": str(frozen_music["title"]),
+                "artist": frozen_music.get("artist"),
+                "start_s": round(start_s, 3),
+                "end_s": round(end_s, 3),
+                "catalog_duration_s": catalog_duration_s,
+                "beat_timestamps_s": [
+                    round(float(beat), 3) for beat in (frozen_music.get("beat_timestamps_s") or [])
+                ],
+            }
         matched_duration = getattr(matched, "duration_s", None) if matched is not None else None
-        if matched is not None and (
-            (matched_duration is not None and matched_duration > 0) or COMPILER_VERSION < 6
+        if (
+            track_payload is None
+            and matched is not None
+            and ((matched_duration is not None and matched_duration > 0) or COMPILER_VERSION < 6)
         ):
             config = matched.track_config or {}
             requested_start = float(config.get("best_start_s", 0.0) or 0.0)
@@ -16981,10 +17133,14 @@ def _run_regenerate_variant(
             or ((job.all_candidates or {}).get("brief") or {}).get("creator_request")
             or ""
         )[:1000]
-        raw_target_duration_s = raw_creator_strategy.get("target_duration_s")
+        stamped_duration = (
+            getattr(creator_strategy, "creator_duration_s", None)
+            if creator_strategy is not None
+            else None
+        )
         creator_target_duration_s = (
-            float(raw_target_duration_s)
-            if raw_target_duration_s is not None and float(raw_target_duration_s) != 24
+            float(stamped_duration)
+            if isinstance(stamped_duration, (int, float)) and stamped_duration > 0
             else None
         )
         creator_video_reuse_policy = raw_creator_strategy.get("video_reuse_policy")
@@ -19993,6 +20149,87 @@ def _match_best_track(clip_metas: list, *, job_id: str) -> MusicTrack | None:
         return None
 
 
+def _approved_licensed_music_track(
+    snapshot: Mapping[str, Any], *, job_id: str
+) -> tuple[Literal["legacy", "selected", "fallback_footage"], MusicTrack | None]:
+    """Resolve an approved licensed-music choice without changing catalog state.
+
+    The creator brief is immutable render input.  Legacy snapshots deliberately
+    retain matcher behavior; an explicit footage fallback deliberately suppresses
+    it.  A selected track is copied before overlaying the approved beat window so
+    the SQLAlchemy instance loaded from the catalog is never mutated.
+    """
+    envelope = _approved_length_plan_envelope(snapshot)
+    frozen = envelope.get("licensed_music") if isinstance(envelope, Mapping) else None
+    if frozen is None:
+        return "legacy", None
+    if not isinstance(frozen, Mapping):
+        raise ValueError("approved_licensed_music_invalid")
+    status = frozen.get("status")
+    if status == "fallback_footage":
+        return "fallback_footage", None
+    if status != "selected":
+        raise ValueError("approved_licensed_music_invalid")
+
+    required = ("track_id", "title", "artist", "start_s", "end_s", "catalog_duration_s")
+    if any(frozen.get(key) is None for key in required):
+        raise ValueError("approved_licensed_music_stale")
+    try:
+        track_id = str(uuid.UUID(str(frozen["track_id"])))
+        start_s = float(frozen["start_s"])
+        end_s = float(frozen["end_s"])
+        catalog_duration_s = float(frozen["catalog_duration_s"])
+        beats = [float(beat) for beat in (frozen.get("beat_timestamps_s") or [])]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("approved_licensed_music_stale") from exc
+    if not (
+        math.isfinite(start_s)
+        and math.isfinite(end_s)
+        and math.isfinite(catalog_duration_s)
+        and 0 <= start_s < end_s <= catalog_duration_s
+        and all(math.isfinite(beat) and beat >= 0 for beat in beats)
+    ):
+        raise ValueError("approved_licensed_music_stale")
+
+    with _sync_session() as db:
+        track = db.get(MusicTrack, track_id)
+    if track is None:
+        from app.services.creator_render_contract import (  # noqa: PLC0415
+            CreatorRenderContractError,
+        )
+
+        raise CreatorRenderContractError(
+            "The approved licensed music track is no longer available.",
+            decline_reason="evidence_missing",
+            field_path="licensed_music.track_id",
+            alternative="Choose another song or render with footage audio.",
+        )
+
+    # A shallow copy is sufficient: the mutable catalog config and beat list are
+    # replaced below, while audio_gcs_path remains the exact DB-owned asset.
+    resolved = copy.copy(track)
+    resolved.title = str(frozen["title"])
+    resolved.artist = str(frozen["artist"])
+    resolved.duration_s = catalog_duration_s
+    resolved.beat_timestamps_s = [round(beat, 3) for beat in beats]
+    resolved.track_config = {
+        **dict(track.track_config or {}),
+        "best_start_s": round(start_s, 3),
+        "best_end_s": round(end_s, 3),
+        # Private marker consumed only by `_effective_music_window`; it prevents
+        # a newer catalog rank-one section from moving this approved window.
+        "_approved_frozen_music_window": True,
+    }
+    log.info(
+        "generative_approved_licensed_music_resolved",
+        job_id=job_id,
+        track_id=track_id,
+        start_s=round(start_s, 3),
+        end_s=round(end_s, 3),
+    )
+    return "selected", resolved
+
+
 # ── Footage-derived sizing ───────────────────────────────────────────────────────
 
 
@@ -20045,6 +20282,20 @@ def _effective_music_window(
 ) -> dict[str, Any]:
     """Resolve one song window for recipe, lyrics, preview persistence, and mix."""
     from app.services.music_sections import track_config_with_rank_one  # noqa: PLC0415
+
+    frozen_cfg = dict(track.track_config or {})
+    if frozen_cfg.get("_approved_frozen_music_window") is True:
+        # The approved end is a contract value, not a suggestion to be clamped
+        # to current footage or snapped to a newly analyzed beat grid.
+        start_s = float(frozen_cfg["best_start_s"])
+        end_s = float(frozen_cfg["best_end_s"])
+        return {
+            "start_s": start_s,
+            "end_s": end_s,
+            "duration_s": round(end_s - start_s, 3),
+            "track_config": frozen_cfg,
+            "validated": True,
+        }
 
     cfg = _fit_section_to_footage(track_config_with_rank_one(track), fallback_footage_s)
     if requested_duration_s is None:
@@ -20751,6 +21002,198 @@ def _assembly_step_to_decision(
     )
 
 
+def _best_parts_decision_windows(
+    steps: list[GenerativeAssemblyStepDecision],
+    *,
+    clip_metas: Sequence[Any],
+    clip_id_to_local: Mapping[str, str],
+    probe_map: Mapping[str, Any],
+    target_duration_s: float | None = None,
+) -> tuple[list[GenerativeAssemblyStepDecision], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Project one deterministic best-part window per already-selected clip.
+
+    This runs only where footage owns timing (or a known voiceover must be
+    covered). Duplicate/missing sources deliberately keep the existing authored
+    assembly: replacing them would silently drop or loop a source.
+    """
+    from app.pipeline.best_parts import select_best_parts  # noqa: PLC0415
+
+    ids = [step.clip_id for step in steps]
+    if (
+        not ids
+        or len(ids) != len(set(ids))
+        or any(clip_id not in clip_id_to_local for clip_id in ids)
+    ):
+        return (
+            steps,
+            [],
+            [
+                {
+                    "code": "source_pool_unsupported",
+                    "message": (
+                        "The selected footage pool cannot be represented as one window per source."
+                    ),
+                }
+            ],
+        )
+    by_id = {str(getattr(meta, "clip_id", "")): meta for meta in clip_metas}
+    sources: list[dict[str, Any]] = []
+    for clip_id in ids:
+        meta = by_id.get(clip_id)
+        path = clip_id_to_local[clip_id]
+        duration = getattr(probe_map.get(path), "duration_s", None)
+        if meta is None or not isinstance(duration, (int, float)) or duration <= 0:
+            return (
+                steps,
+                [],
+                [
+                    {
+                        "code": "source_capacity_unknown",
+                        "message": (
+                            "A selected source has no authoritative duration for best-parts timing."
+                        ),
+                    }
+                ],
+            )
+        sources.append(
+            {
+                "media_id": clip_id,
+                "duration_s": float(duration),
+                "analysis": {"best_moments": list(getattr(meta, "best_moments", None) or [])},
+            }
+        )
+    result = select_best_parts(sources, target_duration_s=target_duration_s)
+    conflicts = [
+        {
+            "code": conflict.code,
+            "requested_duration_s": conflict.requested_duration_s,
+            "available_duration_s": conflict.available_duration_s,
+            "message": conflict.message,
+        }
+        for conflict in result.conflicts
+    ]
+    if conflicts or len(result.parts) != len(steps):
+        return steps, result.receipt(), conflicts
+    by_part = {part.media_id: part for part in result.parts}
+    rewritten = [
+        step.model_copy(
+            update={
+                "in_s": by_part[step.clip_id].source_start_s,
+                "out_s": by_part[step.clip_id].source_end_s,
+                "target_duration_s": by_part[step.clip_id].duration_s,
+                "exact_window": True,
+            }
+        )
+        for step in steps
+    ]
+    return rewritten, result.receipt(), []
+
+
+def _best_parts_source_decisions(
+    source_ids: Sequence[str],
+    *,
+    clip_metas: Sequence[Any],
+    clip_id_to_local: Mapping[str, str],
+    probe_map: Mapping[str, Any],
+    slots: Sequence[Mapping[str, Any]],
+    target_duration_s: float | None,
+) -> tuple[list[GenerativeAssemblyStepDecision], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Select the resolved source pool before the matcher can discard or repeat it."""
+    from app.pipeline.best_parts import select_best_parts  # noqa: PLC0415
+
+    ids = [str(clip_id) for clip_id in source_ids]
+    if not ids or len(ids) != len(set(ids)):
+        return (
+            [],
+            [],
+            [
+                {
+                    "code": "source_pool_unsupported",
+                    "message": "The resolved source pool is empty or repeated.",
+                }
+            ],
+        )
+    meta_by_id = {str(getattr(meta, "clip_id", "")): meta for meta in clip_metas}
+    sources: list[dict[str, Any]] = []
+    for clip_id in ids:
+        path = clip_id_to_local.get(clip_id)
+        duration = getattr(probe_map.get(path), "duration_s", None) if path else None
+        if not isinstance(duration, (int, float)) or duration <= 0:
+            return (
+                [],
+                [],
+                [
+                    {
+                        "code": "source_capacity_unknown",
+                        "message": (
+                            "A resolved source has no authoritative duration for best-parts timing."
+                        ),
+                    }
+                ],
+            )
+        meta = meta_by_id.get(clip_id)
+        sources.append(
+            {
+                "media_id": clip_id,
+                "duration_s": float(duration),
+                # Missing analysis deliberately becomes the selector's disclosed fallback.
+                "analysis": {"best_moments": list(getattr(meta, "best_moments", None) or [])},
+            }
+        )
+    result = select_best_parts(
+        sources,
+        target_duration_s=target_duration_s,
+        minimum_total_duration_s=3.0 if target_duration_s is None else None,
+    )
+    conflicts = [
+        {
+            "code": conflict.code,
+            "requested_duration_s": conflict.requested_duration_s,
+            "available_duration_s": conflict.available_duration_s,
+            "message": conflict.message,
+        }
+        for conflict in result.conflicts
+    ]
+    receipt = result.receipt()
+    if conflicts or len(result.parts) != len(ids):
+        return [], receipt, conflicts
+    template_slots = list(slots) or [{}]
+    decisions: list[GenerativeAssemblyStepDecision] = []
+    modeled_slot_keys = {
+        "target_duration_s",
+        "transition_in",
+        "transition_duration_s",
+        "exact_window",
+        "slot_type",
+        "rate",
+    }
+    receipt_by_id = {str(row["media_id"]): row for row in receipt}
+    for index, part in enumerate(result.parts):
+        slot = dict(template_slots[min(index, len(template_slots) - 1)] or {})
+        decisions.append(
+            GenerativeAssemblyStepDecision(
+                clip_id=part.media_id,
+                source_path=clip_id_to_local.get(part.media_id),
+                in_s=part.source_start_s,
+                out_s=part.source_end_s,
+                target_duration_s=part.duration_s,
+                rate=slot.get("rate"),
+                transition_in=slot.get("transition_in"),
+                transition_duration_s=slot.get("transition_duration_s"),
+                exact_window=True,
+                slot_type=slot.get("slot_type"),
+                slot_extra={
+                    key: value for key, value in slot.items() if key not in modeled_slot_keys
+                },
+                moment_extra={
+                    "best_parts_reason": receipt_by_id[part.media_id]["reason"],
+                    "best_parts_score": part.score,
+                },
+            )
+        )
+    return decisions, receipt, []
+
+
 def _creator_shape_orientation(all_candidates: dict | None) -> str | None:
     """KRI-306: the orientation the creator explicitly chose, else None (= default)."""
     from app.services.render_shape import shape_from_all_candidates  # noqa: PLC0415
@@ -20806,6 +21249,8 @@ def _decide_generative_variant(
     orientation: str | None = None,
     strict_day_vlog: bool = False,
     strict_single_hero: bool = False,
+    approved_length_plan: Mapping[str, Any] | None = None,
+    approved_runtime_generations: Mapping[str, str] | None = None,
 ) -> GenerativeVariantDecision:
     """Decide one variant's shot selection, music, and text/transition
     parameters -- the pure, no-media-processing half of the pre-split
@@ -21080,12 +21525,15 @@ def _decide_generative_variant(
         # else (True/None/absent) as "legacy baked".
         base["lyrics_baked"] = False
     variant_t0 = time.monotonic()
+    selected_best_parts_receipt: list[dict[str, Any]] = []
+    selected_best_parts_conflicts: list[dict[str, Any]] = []
     try:
         plan_t0 = time.monotonic()
         beats: list[float] = []
         effective_music_window: dict[str, Any] | None = None
         voiceover_local: str | None = None
         voiceover_target_s = available_footage_s
+        voiceover_recording_s: float | None = None
 
         # Slot-count floor: shot-assigned clips each get a guaranteed slot; for
         # pool-only jobs (no narrative_order) use total analyzed clip count so
@@ -21174,9 +21622,15 @@ def _decide_generative_variant(
             voiceover_local = os.path.join(variant_dir, "voiceover_src")
             download_to_file(voiceover_gcs_path, voiceover_local)
             voice_dur = _probe_duration(voiceover_local)
+            voiceover_recording_s = voice_dur if voice_dur > 0 else None
             _cands = [available_footage_s, _VOICEOVER_MAX_DURATION_S]
             if voice_dur > 0:
                 _cands.append(voice_dur)
+            if creator_target_duration_s is not None:
+                # A proven creator choice is an executable voiceover target,
+                # never merely a receipt. The preflight gate has already
+                # rejected targets beyond the selected footage/voice capacity.
+                _cands.append(creator_target_duration_s)
             voiceover_target_s = min(_cands)
             recipe_dict = _build_no_music_recipe(
                 clip_metas, voiceover_target_s, min_slots=min_slots, pacing=creator_pacing
@@ -21406,7 +21860,54 @@ def _decide_generative_variant(
             recipe_dict["min_slots"] = max(int(recipe_dict.get("min_slots", 0) or 0), min_slots)
 
         recipe = build_recipe(recipe_dict)
-        if assembly_steps_override is not None:
+        preselected_steps: list[GenerativeAssemblyStepDecision] | None = None
+        use_best_parts_pool = (
+            assembly_steps_override is None
+            and not strict_day_vlog
+            and not strict_single_hero
+            and (track is None or voiceover_gcs_path is not None)
+            and spec.get("archetype") not in {"talking_head", "narrated"}
+            # Legacy pure-decision callers have no source probe snapshot at
+            # all; they cannot claim an authoritative exact window. Real
+            # dispatch carries probes and fails closed below for any missing
+            # member of the resolved pool.
+            and bool(probe_map)
+        )
+        if approved_length_plan is not None:
+            preselected_steps, selected_best_parts_receipt = _approved_best_parts_decisions(
+                approved_length_plan,
+                clip_id_to_gcs=clip_id_to_gcs,
+                clip_id_to_local=clip_id_to_local,
+                probe_map=probe_map,
+                runtime_generations=approved_runtime_generations,
+            )
+        elif use_best_parts_pool:
+            resolved_pool = narrative_order or [
+                str(getattr(meta, "clip_id", "")) for meta in clip_metas
+            ]
+            selection_target = (
+                voiceover_target_s if voiceover_gcs_path else creator_target_duration_s
+            )
+            (
+                preselected_steps,
+                selected_best_parts_receipt,
+                selected_best_parts_conflicts,
+            ) = _best_parts_source_decisions(
+                resolved_pool,
+                clip_metas=clip_metas,
+                clip_id_to_local=clip_id_to_local,
+                probe_map=probe_map,
+                slots=recipe_dict.get("slots") or [],
+                target_duration_s=selection_target,
+            )
+            if selected_best_parts_conflicts:
+                raise ValueError(
+                    "best_parts_selection_unavailable: "
+                    + str(selected_best_parts_conflicts[0].get("code") or "unknown")
+                )
+        if preselected_steps is not None:
+            steps = [_assembly_step_from_decision(step) for step in preselected_steps]
+        elif assembly_steps_override is not None:
             # Timeline-override path: the user's exact-window slots ARE the
             # plan — skip consolidate_slots and match() entirely.
             steps = list(assembly_steps_override)
@@ -21508,6 +22009,30 @@ def _decide_generative_variant(
         raise
 
     assembly_steps = [_assembly_step_to_decision(step, clip_id_to_local) for step in steps]
+    best_parts_receipt = selected_best_parts_receipt
+    best_parts_conflicts = selected_best_parts_conflicts
+    # Songs own their beat/window timing, and an explicit creator length keeps
+    # the authored recipe. Otherwise persist the same exact analysis windows
+    # that downstream phone/cloud assembly receives.
+    if (
+        track is None
+        and not best_parts_receipt
+        and assembly_steps_override is None
+        and bool(probe_map)
+    ):
+        best_parts_target = voiceover_recording_s if voiceover_gcs_path else None
+        assembly_steps, best_parts_receipt, best_parts_conflicts = _best_parts_decision_windows(
+            assembly_steps,
+            clip_metas=clip_metas,
+            clip_id_to_local=clip_id_to_local,
+            probe_map=probe_map,
+            target_duration_s=best_parts_target,
+        )
+        if best_parts_conflicts:
+            raise ValueError(
+                "best_parts_selection_unavailable: "
+                + str(best_parts_conflicts[0].get("code") or "unknown")
+            )
     _step_durations = [
         s.target_duration_s for s in assembly_steps if s.target_duration_s is not None
     ]
@@ -21561,6 +22086,8 @@ def _decide_generative_variant(
             "intro_overlay_params": _at_params,
             "agent_text_intro_px": _agent_text_intro_px,
             "single_hero_order": single_hero_order,
+            "best_parts": best_parts_receipt,
+            "best_parts_conflicts": best_parts_conflicts,
         },
     )
 

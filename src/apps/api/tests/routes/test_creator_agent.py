@@ -3236,6 +3236,8 @@ def test_creator_route_uses_pinned_narration_duration_without_explicit_total(
 
     assert _pinned_narration_target_duration_s(manifest) == 44.688
     assert strategy.target_duration_s == 44.688
+    assert strategy.target_duration_requested is None
+    assert strategy.creator_duration_s is None
 
     explicit = _apply_explicit_render_intent(
         strategy,
@@ -3243,6 +3245,34 @@ def test_creator_route_uses_pinned_narration_duration_without_explicit_total(
         manifest=manifest,
     )
     assert explicit.target_duration_s == 12
+
+
+def test_fallback_stamps_only_creator_authored_duration_not_pinned_narration(monkeypatch) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "creator_prompt_fidelity_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=True,
+        narration={
+            "gcs_path": "voiceover-uploads/user/item/voice.webm",
+            "generation": "voice-generation-1",
+            "duration_s": 44.688,
+        },
+        media=[{"media_id": "clip-1", "kind": "video"}],
+        guided_capability_enabled=True,
+    )
+
+    derived = _fallback_strategy(manifest, user_message="Make a narrated edit.")
+    explicit = _fallback_strategy(manifest, user_message="Make it 24 seconds.")
+
+    assert derived.target_duration_s == 44.688
+    assert derived.target_duration_requested is None
+    assert derived.creator_duration_s is None
+    assert explicit.target_duration_s == 24
+    assert explicit.target_duration_requested is True
+    assert explicit.creator_duration_s == 24
 
 
 def test_creator_route_keeps_exact_creator_authored_title_copy(monkeypatch) -> None:

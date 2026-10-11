@@ -825,6 +825,18 @@ def _song_reference(track: dict[str, Any] | None, *, duration_s: float) -> dict[
         return None
     start_s = requested_start
     end_s = start_s + duration_s
+    if track.get("end_s") is not None:
+        try:
+            selected_end = float(track["end_s"])
+        except (TypeError, ValueError) as exc:
+            raise GuidedStoryError(
+                "guided_story_music_section_invalid", "The approved music section is unreadable."
+            ) from exc
+        if not math.isfinite(selected_end) or end_s > selected_end + 0.001:
+            raise GuidedStoryError(
+                "guided_story_music_section_exceeded",
+                "This edit needs a length choice before it can extend the selected music section.",
+            )
     if end_s > catalog_duration + 0.001:
         return None
     return GuidedStorySongReference(

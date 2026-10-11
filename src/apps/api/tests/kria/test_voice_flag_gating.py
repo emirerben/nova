@@ -83,7 +83,7 @@ def test_the_collector_itself_needs_the_route_flag_and_keeps_the_legacy_exemptio
         target_duration_s=20,
         target_duration_requested=True,
     )
-    snapshot = {"clip_assignments": _voice_rows(voice_s=60.0, pictures=30)}
+    snapshot = {"clip_assignments": _voice_rows(voice_s=60.0, pictures=201)}
     brief = _brief(_timing(20))
     off = collect_conflicts(strategy, brief, snapshot, ChoiceCapability())
     assert off == [], "route not available: legacy exemption for montage_audio, no voice question"

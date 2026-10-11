@@ -28,6 +28,7 @@ from app.agents._schemas.edit_format import (
 from app.models import Job
 from app.pipeline.caption_language import parse_caption_language_request
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
+from app.schemas.edit_proposal import recognize_total_duration_s
 from app.schemas.montage_preset import (
     DEFAULT_MONTAGE_PRESET,
     coerce_montage_preset,
@@ -521,9 +522,33 @@ def build_generative_job(
             stamp_plan_authority,
         )
 
-        persisted_strategy = CreativeStrategy.model_validate(creator_strategy).model_dump(
-            mode="json", exclude_none=True
+        # The factory is also reachable from request-facing callers.  A typed
+        # strategy is not proof that a client authored its hidden provenance:
+        # erase markers/answers first, then stamp only the creator request the
+        # caller supplied.  A later verified BriefBinding may supersede this.
+        incoming = dict(creator_strategy)
+        for field in (
+            "target_duration_requested",
+            "creator_duration_s",
+            "choice_answers",
+            "selected_music_section",
+        ):
+            incoming.pop(field, None)
+        typed_strategy = CreativeStrategy.model_validate(incoming)
+        requested_duration_s = recognize_total_duration_s(creator_request)
+        typed_strategy = typed_strategy.model_copy(
+            update={
+                "target_duration_requested": (True if requested_duration_s is not None else None),
+                "creator_duration_s": requested_duration_s,
+                "target_duration_s": (
+                    requested_duration_s
+                    if requested_duration_s is not None
+                    else typed_strategy.target_duration_s
+                ),
+                "choice_answers": None,
+            }
         )
+        persisted_strategy = typed_strategy.model_dump(mode="json", exclude_none=True)
         all_candidates["creator_strategy"] = persisted_strategy
         # Bind the first typed requirement projection to the same immutable
         # generation that content-plan dispatch later enriches with its pinned
@@ -541,6 +566,14 @@ def build_generative_job(
         )
         if contract is not None:
             creator_contract = {CONTRACT_FIELD: contract.model_dump(mode="json")}
+            from app.services.length_policy_state import stamp_length_policy  # noqa: PLC0415
+
+            creator_contract = stamp_length_policy(
+                creator_contract,
+                persisted_strategy,
+                contract,
+                mode=settings.creator_duration_check_mode,
+            )
             all_candidates[REQUIREMENT_VERSION_FIELD] = 1
             # KRI-470 kill switch, evaluated once here and persisted as a plain
             # JSON key (no migration). Workers read the stamp, never the flag.

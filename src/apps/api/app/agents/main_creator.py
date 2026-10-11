@@ -42,6 +42,7 @@ from app.schemas.edit_proposal import (
     turkish_media_scope,
 )
 from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
+from app.services.length_policy import creator_duration_s
 
 # Named sound effects are model-read with verbatim licensed_sfx evidence (v35).
 # KRI-178: reaction beats (name/word-triggered photo/sticker + sound pop-ins,
@@ -604,6 +605,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     if input.brief_enabled
                     else input.creator_request or input.user_message
                 )
+                requested_duration_s = creator_duration_s(
+                    creator_texts=[*user_messages, request_contract]
+                )
                 timing = recognize_mixed_media_timing("\n".join([*user_messages, request_contract]))
                 combined_request = "\n".join([*user_messages, request_contract])
                 latest_cut_s = recognize_round_robin_cadence(input.user_message)
@@ -661,11 +665,19 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 strategy = action.strategy.model_copy(
                     update={
                         # Server-owned approval provenance.  Read this from
-                        # the raw payload before the normalizer copies the
-                        # default 24s onto every strategy; a model-provided
-                        # marker is never trusted.
+                        # creator text, never from the model's always-present
+                        # planning field or its marker.
                         "target_duration_requested": (
-                            True if "target_duration_s" in raw_strategy else None
+                            True if requested_duration_s is not None else None
+                        ),
+                        "creator_duration_s": requested_duration_s,
+                        "selected_music_section": None,
+                        # Preserve the actual requested target rather than a
+                        # conflicting model-selected duration.
+                        "target_duration_s": (
+                            requested_duration_s
+                            if requested_duration_s is not None
+                            else action.strategy.target_duration_s
                         ),
                         # KRI-374: server-owned, like `resolved_clip_intents`: a
                         # model-authored per-take song placement is never trusted.

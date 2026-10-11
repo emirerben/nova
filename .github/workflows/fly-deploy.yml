@@ -32,6 +32,24 @@ on:
       - ".vercelignore"
   workflow_dispatch:
     inputs:
+      expected_sha:
+        description: "Optional immutable main revision expected by this dispatch"
+        required: false
+        default: ""
+        type: string
+      creator_duration_check_mode:
+        description: "Creator duration-contract behavior for this release"
+        required: false
+        default: "log_only"
+        type: choice
+        options:
+          - log_only
+          - enforce
+      length_promotion_evidence:
+        description: "KRI-499 promotion evidence JSON; required when enforcing"
+        required: false
+        default: ""
+        type: string
       acknowledge_failed_backfill_machine_id:
         description: "Optional exact stopped failed backfill Machine ID to release before a fix deploy"
         required: false
@@ -62,6 +80,76 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify immutable manual dispatch revision
+        if: github.event_name == 'workflow_dispatch' && inputs.expected_sha != ''
+        env:
+          EXPECTED_SHA_INPUT: ${{ inputs.expected_sha }}
+          CHECKED_OUT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA_INPUT" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::expected_sha must be a 40-character lowercase SHA"
+            exit 1
+          }
+          [[ "$EXPECTED_SHA_INPUT" == "$CHECKED_OUT_SHA" ]] || {
+            echo "::error::expected_sha does not match the checked-out main revision"
+            exit 1
+          }
+
+      - name: Validate creator duration rollout mode
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CREATOR_DURATION_CHECK_MODE: ${{ inputs.creator_duration_check_mode }}
+        run: |
+          set -euo pipefail
+          [[ "$CREATOR_DURATION_CHECK_MODE" == "log_only" || "$CREATOR_DURATION_CHECK_MODE" == "enforce" ]] || {
+            echo "::error::creator_duration_check_mode must be log_only or enforce"
+            exit 1
+          }
+
+      - name: Set up Python for KRI-499 promotion validation
+        if: github.event_name == 'workflow_dispatch' && inputs.creator_duration_check_mode == 'enforce'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Install KRI-499 promotion validator dependencies
+        if: github.event_name == 'workflow_dispatch' && inputs.creator_duration_check_mode == 'enforce'
+        working-directory: src/apps/api
+        run: python -m pip install .
+
+      - name: Validate KRI-499 enforcement promotion evidence
+        if: github.event_name == 'workflow_dispatch' && inputs.creator_duration_check_mode == 'enforce'
+        env:
+          LENGTH_PROMOTION_EVIDENCE: ${{ inputs.length_promotion_evidence }}
+          EXPECTED_SHA: ${{ github.sha }}
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import sys
+
+          from app.services.contract_check_rollout import validate_promotion
+
+          raw = os.environ.get("LENGTH_PROMOTION_EVIDENCE", "")
+          if not raw:
+              raise SystemExit("::error::length_promotion_evidence is required for enforce")
+          try:
+              evidence = json.loads(raw)
+          except json.JSONDecodeError as exc:
+              raise SystemExit(f"::error::length_promotion_evidence is not valid JSON: {exc}")
+          if not isinstance(evidence, dict):
+              raise SystemExit("::error::length_promotion_evidence must be a JSON object")
+          report = validate_promotion(evidence).to_dict()
+          print(json.dumps(report, sort_keys=True))
+          if report["candidate_sha"] != os.environ["EXPECTED_SHA"]:
+              raise SystemExit("::error::promotion evidence candidate_sha does not match github.sha")
+          if report["status"] != "passed":
+              raise SystemExit("::error::promotion evidence remains pending")
+          PY
+
       - name: Install flyctl
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         with:
@@ -76,15 +164,36 @@ jobs:
           GITHUB_REF: ${{ github.ref }}
         run: bash scripts/run-video-poster-backfill.sh --acquire-deploy-guard
 
+      - name: Resolve creator duration mode from guarded fleet
+        id: creator-duration-mode
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.creator_duration_check_mode || '' }}
+        run: |
+          set -euo pipefail
+          machines_json="$(flyctl machine list --app nova-video --json)"
+          resolver_args=(--machines-json "$machines_json")
+          if [[ -n "$REQUESTED_MODE" ]]; then
+            resolver_args+=(--requested-mode "$REQUESTED_MODE")
+          fi
+          resolved_mode="$(python scripts/ci/resolve-creator-duration-mode.py "${resolver_args[@]}")"
+          [[ "$resolved_mode" == "log_only" || "$resolved_mode" == "enforce" ]] || {
+            echo "::error::creator duration mode resolver returned an invalid mode"
+            exit 1
+          }
+          echo "mode=$resolved_mode" >> "$GITHUB_OUTPUT"
+
       - name: Deploy
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           EXPECTED_SHA: ${{ github.sha }}
+          CREATOR_DURATION_CHECK_MODE: ${{ steps.creator-duration-mode.outputs.mode }}
         run: |
           chmod +x scripts/fly-deploy-with-retry.sh
           timeout --signal=TERM --kill-after=60s 2100s \
             scripts/fly-deploy-with-retry.sh \
             --remote-only \
+            --env "CREATOR_DURATION_CHECK_MODE=${CREATOR_DURATION_CHECK_MODE}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}"
 
       - name: Verify exact deployed image, unmanaged guard, and health

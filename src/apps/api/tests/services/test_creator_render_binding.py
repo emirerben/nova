@@ -73,14 +73,25 @@ def test_raw_model_provenance_is_not_trusted() -> None:
     assert output.action.strategy.target_duration_requested is True
 
 
-def test_client_draft_duration_provenance_is_derived_from_raw_duration() -> None:
+def test_model_duration_field_is_not_duration_proof_without_creator_text() -> None:
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        _raw_strategy(target_duration_s=30, provenance=True),
+        _input().model_copy(update={"user_message": "Make this energetic."}),
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.target_duration_requested is None
+    assert output.action.strategy.creator_duration_s is None
+
+
+def test_client_draft_duration_provenance_rejects_raw_duration_and_marker() -> None:
     explicit = _sanitize_strategy_duration_provenance(
         {"target_duration_s": 24, "target_duration_requested": False}
     )
     spoofed = _sanitize_strategy_duration_provenance({"target_duration_requested": True})
 
-    assert explicit["target_duration_s"] == 24
-    assert explicit["target_duration_requested"] is True
+    assert "target_duration_s" not in explicit
+    assert "target_duration_requested" not in explicit
     assert "target_duration_s" not in spoofed
     assert "target_duration_requested" not in spoofed
 
@@ -107,6 +118,7 @@ def test_explicit_default_duration_binds_to_factory_generation() -> None:
         user_id=uuid.uuid4(),
         clip_paths=["users/u/plan/i/clip.mp4"],
         creator_strategy=output.action.strategy.model_dump(mode="json", exclude_none=True),
+        creator_request="Make it 24 seconds.",
     )
 
     contract = read_render_contract(job.assembly_plan)
@@ -114,6 +126,39 @@ def test_explicit_default_duration_binds_to_factory_generation() -> None:
     assert contract.generation_id == job.assembly_plan["creator_generation_id"]
     assert CONTRACT_FIELD in job.assembly_plan
     assert contract.duration_s == 24
+
+
+def test_factory_rejects_forged_duration_stamp_without_creator_request() -> None:
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/clip.mp4"],
+        creator_strategy={
+            "target_duration_s": 24,
+            "target_duration_requested": True,
+            "creator_duration_s": 24,
+        },
+    )
+
+    persisted = job.all_candidates["creator_strategy"]
+    contract = read_render_contract(job.assembly_plan)
+    assert "creator_duration_s" not in persisted
+    assert persisted.get("target_duration_requested") is None
+    assert contract is not None and contract.duration_s is None
+
+
+def test_factory_stamps_explicit_creator_request_not_conflicting_strategy_value() -> None:
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/clip.mp4"],
+        creator_strategy={"target_duration_s": 62, "creator_duration_s": 62},
+        creator_request="Make it 24 seconds.",
+    )
+
+    persisted = job.all_candidates["creator_strategy"]
+    contract = read_render_contract(job.assembly_plan)
+    assert persisted["creator_duration_s"] == 24
+    assert persisted["target_duration_s"] == 24
+    assert contract is not None and contract.duration_s == 24
 
 
 def test_noncreator_job_keeps_legacy_assembly_shape() -> None:

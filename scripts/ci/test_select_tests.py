@@ -499,7 +499,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/services/cloud_render_contract.py",
-                (True, "covered", "kri-524-creation"),
+                (True, "covered", "kri-492-length-ownership,kri-524-creation"),
             ),
             (
                 "src/apps/api/app/kria/planner.py",

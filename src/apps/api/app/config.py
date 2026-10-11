@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # Executor behavior is intentionally owned by the render pipeline; this
     # setting only declares the rollout control plane default.
     cloud_render_execution_enabled: bool = True
+    # Frozen into each newly approved generation; workers do not read this flag.
+    creator_duration_check_mode: Literal["log_only", "enforce"] = "log_only"
 
     # Phone rendering remains off until a capability group has device evidence.
     phone_rendering_enabled: bool = False

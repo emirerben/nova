@@ -2,6 +2,35 @@
   "schema_version": 1,
   "journeys": [
     {
+      "id": "kri-492-length-ownership",
+      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py",
+      "paths": [
+        "src/apps/api/app/services/length_policy.py",
+        "src/apps/api/app/services/length_policy_state.py",
+        "src/apps/api/app/services/contract_check_rollout.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/cloud_render_contract.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/app/services/phone_editor.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/app/services/device_render.py",
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/routes/creator_agent.py",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/_schemas/creator_agent.py",
+        "src/apps/api/app/kria/drafts.py",
+        "src/apps/api/app/pipeline/best_parts.py",
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/tests/services/test_length_policy_state.py",
+        "scripts/ci/replay-creator-contracts.py",
+        "scripts/ci/check-length-promotion.py",
+        "scripts/ci/creator-contract-replay.schema.json",
+        "scripts/ci/fixtures/kri492-creator-contracts.json",
+        "scripts/ios/kri-492-length-e2e.py",
+        "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift"
+      ]
+    },
+    {
       "id": "kri-524-creation",
       "fixture_generator": "scripts/ios/kri-524-creation-e2e.py",
       "xctest": "KriaTests/DeviceMontageRenderE2ETests/testCapturedCreationWordsRetimedThenExportOnTheIPhone",
