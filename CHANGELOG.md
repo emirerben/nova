@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.221.0] - 2026-10-11
+
+### Changed
+- feat(creator): unify length ownership, selection, and safe enforcement (KRI-492) (#1540) <!-- release-pr: 1540 -->
+
 ## [0.78.220.0] - 2026-10-11
 
 ### Changed
