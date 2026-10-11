@@ -398,6 +398,7 @@ def cleanup_job_storage_manifest(
     manifest: JobStorageManifest,
     *,
     now: datetime,
+    protected_paths: set[str] | None = None,
     prefix_timeout_s: float = 3.0,
     prefix_limit: int = JOB_STORAGE_PREFIX_ATTEMPT_LIMIT,
     exact_limit: int = JOB_STORAGE_EXACT_ATTEMPT_LIMIT,
@@ -431,7 +432,10 @@ def cleanup_job_storage_manifest(
             retained_prefixes.append(entry)
             continue
         prefixes_attempted += 1
-        result = delete_prefix_verified(entry.prefix, timeout_s=prefix_timeout_s)
+        kwargs: dict[str, object] = {"timeout_s": prefix_timeout_s}
+        if protected_paths:
+            kwargs["exclude_paths"] = protected_paths
+        result = delete_prefix_verified(entry.prefix, **kwargs)
         if result.status == "verified_empty":
             prefixes_verified += 1
             verified_parent_prefixes.append(entry.prefix)
@@ -443,6 +447,10 @@ def cleanup_job_storage_manifest(
     failed_exact: list[str] = []
     exact_attempted = 0
     for path in manifest.exact_paths:
+        if protected_paths and path in protected_paths:
+            # Its consumer/library now owns cleanup, including exact-only
+            # manifests passed directly to this helper.
+            continue
         # A verified parent-prefix re-list is already a stronger absence proof
         # and avoids two extra storage calls per known key on large jobs.
         if any(path.startswith(parent) for parent in verified_parent_prefixes):

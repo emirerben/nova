@@ -581,8 +581,12 @@ def delete_prefix_verified(
     prefix: str,
     *,
     timeout_s: float | None = None,
+    exclude_paths: set[str] | None = None,
 ) -> PrefixDeletionResult:
-    """Delete a prefix and prove the result with a successful empty re-list.
+    """Delete unprotected keys and prove no unprotected objects remain.
+
+    Exact ``exclude_paths`` transfer cleanup ownership to a live consumer or
+    library source. A verified result leaves those keys intact.
 
     Storage transport failures are represented by ``unavailable`` instead of
     being confused with an already-empty prefix. A successful re-list with
@@ -598,6 +602,7 @@ def delete_prefix_verified(
     do not hold database locks.
     """
     normalized = _validate_delete_prefix(prefix)
+    excluded = frozenset(path for path in (exclude_paths or ()) if path.startswith(normalized))
     if timeout_s is not None and timeout_s <= 0:
         raise ValueError("timeout_s must be positive")
 
@@ -617,6 +622,11 @@ def delete_prefix_verified(
         assert timeout_s is not None
         return min(timeout_s, remaining)
 
+    # Protected keys can appear first in a capped listing. Extend each bounded
+    # page by their exact count, then filter them before applying the deletion
+    # cap, so a library-adopted sibling cannot starve unadopted cleanup.
+    scan_cap = None if object_cap is None else object_cap + len(excluded) + 1
+
     if _uses_local_storage():
         try:
             directory = local_object_path(normalized.rstrip("/"))
@@ -625,7 +635,10 @@ def delete_prefix_verified(
                 for path in directory.rglob("*"):
                     if deadline is not None and time.monotonic() >= deadline:
                         raise TimeoutError("verified prefix deletion budget exhausted")
-                    if path.is_file():
+                    if path.is_file() and (
+                        f"{normalized.rstrip('/')}/{path.relative_to(directory).as_posix()}"
+                        not in excluded
+                    ):
                         listed_paths.append(path)
                         if object_cap is not None and len(listed_paths) > object_cap:
                             break
@@ -658,7 +671,10 @@ def delete_prefix_verified(
                 for path in directory.rglob("*"):
                     if deadline is not None and time.monotonic() >= deadline:
                         raise TimeoutError("verified prefix deletion budget exhausted")
-                    if path.is_file():
+                    if path.is_file() and (
+                        f"{normalized.rstrip('/')}/{path.relative_to(directory).as_posix()}"
+                        not in excluded
+                    ):
                         remaining_paths.append(path)
                         if object_cap is not None:
                             break
@@ -697,17 +713,19 @@ def delete_prefix_verified(
 
     bucket = _get_client().bucket(settings.storage_bucket)
     list_kwargs: dict[str, object] = {"prefix": normalized}
-    if object_cap is not None:
+    if scan_cap is not None:
         # max_results + matching page_size ensures the iterator cannot amplify
         # one bounded attempt into multiple list RPCs.
-        list_kwargs.update(max_results=object_cap + 1, page_size=object_cap + 1)
+        list_kwargs.update(max_results=scan_cap, page_size=scan_cap)
     if timeout_s is not None:
         try:
             list_kwargs.update(timeout=request_timeout(), retry=None)
         except TimeoutError:
             return PrefixDeletionResult(status="unavailable", remaining=None)
     try:
-        listed_blobs = list(bucket.list_blobs(**list_kwargs))
+        listed_blobs = [
+            blob for blob in bucket.list_blobs(**list_kwargs) if blob.name not in excluded
+        ]
     except SoftTimeLimitExceeded:
         raise
     except Exception:  # noqa: BLE001 — unavailable is distinct from empty
@@ -733,12 +751,14 @@ def delete_prefix_verified(
 
     try:
         proof_kwargs: dict[str, object] = {"prefix": normalized}
-        if object_cap is not None:
+        if scan_cap is not None:
             # Empty/non-empty is the only proof needed after a bounded pass.
-            proof_kwargs.update(max_results=1, page_size=1)
+            proof_kwargs.update(max_results=len(excluded) + 1, page_size=len(excluded) + 1)
         if timeout_s is not None:
             proof_kwargs.update(timeout=request_timeout(), retry=None)
-        remaining = sum(1 for _ in bucket.list_blobs(**proof_kwargs))
+        remaining = sum(
+            1 for blob in bucket.list_blobs(**proof_kwargs) if blob.name not in excluded
+        )
     except SoftTimeLimitExceeded:
         raise
     except Exception:  # noqa: BLE001 — never claim completion without the proof

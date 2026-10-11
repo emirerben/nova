@@ -399,7 +399,8 @@ def test_delete_confirm_deletes_in_fk_safe_order_and_dispatches_purge() -> None:
     account_outbox = next(
         row
         for row in added_rows
-        if row is not outbox and getattr(row, "object_prefixes", None) == [f"users/{user.id}/"]
+        if row is not outbox
+        and getattr(row, "object_prefixes", None) == [f"users/{user.id}/", f"{user.id}/"]
     )
     assert account_outbox.object_paths == [f"tiktok-publish/{publication_id}.mp4"]
     assert account_outbox.next_attempt_at is not None
