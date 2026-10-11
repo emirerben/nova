@@ -121,4 +121,70 @@ import XCTest
         XCTAssertEqual(SongTimelineMath.tickStep(pixelsPerSecond: 60), 1)
         XCTAssertEqual(SongTimelineMath.tickStep(pixelsPerSecond: 6), 10)
     }
+
+    // MARK: video preview (which take is on screen, and where in its own footage)
+
+    private func slot(_ time: Double, _ segments: [SongTimelineState.Segment], deltas: [String: Double],
+                      durations: [String: Double] = [:]) -> SongTimelineMath.PreviewSlot {
+        SongTimelineMath.previewSlot(at: time, segments: segments, delta: { deltas[$0] }, clipDuration: { durations[$0] ?? 8 })
+    }
+
+    func testATakeThatStartsBeforeTheSongPlaysFromInsideItsFootage() {
+        // delta -3: the take began 3 s before the song, so at song second 1 it is 4 s into the footage.
+        let result = slot(1, [segment("a", 0, 5)], deltas: ["a": -3])
+        XCTAssertEqual(result, .clip(mediaID: "a", takeTime: 4))
+        XCTAssertEqual(slot(0, [segment("a", 0, 5)], deltas: ["a": -3]), .clip(mediaID: "a", takeTime: 3))
+    }
+
+    func testWhereTwoVisibleTakesOverlapTheOneThatStartsLaterWins() {
+        let segments = [segment("a", 0, 12), segment("b", 8, 20)]
+        let deltas = ["a": 0.0, "b": 8.0]
+        XCTAssertEqual(slot(7.9, segments, deltas: deltas), .clip(mediaID: "a", takeTime: 7.9))
+        XCTAssertEqual(slot(8, segments, deltas: deltas), .clip(mediaID: "b", takeTime: 0), "the cut is at the later take's start")
+        XCTAssertEqual(slot(10, segments, deltas: deltas), .clip(mediaID: "b", takeTime: 2), "inside the overlap the later take shows")
+        XCTAssertEqual(slot(12, segments, deltas: deltas), .clip(mediaID: "b", takeTime: 4), "after the earlier take ends only the later one is left")
+    }
+
+    func testAHiddenTakeIsNeverShownEvenWhereNothingElseCovers() {
+        let segments = [segment("a", 0, 5), segment("h", 8, 10, hidden: true), segment("b", 14, 20)]
+        let deltas = ["a": 0.0, "h": 8.0, "b": 14.0]
+        XCTAssertEqual(slot(9, segments, deltas: deltas), .gap, "the hidden take's span is an empty spot as far as the video goes")
+        XCTAssertEqual(slot(1, [segment("h", 0, 9, hidden: true), segment("a", 2, 9)], deltas: ["h": 0, "a": 2]), .beforeFirst)
+    }
+
+    func testGapsAndTheEndsOfTheArrangementHaveNoClip() {
+        let segments = [segment("a", 4, 12), segment("b", 22, 30)]
+        let deltas = ["a": 4.0, "b": 22.0]
+        XCTAssertEqual(slot(2, segments, deltas: deltas), .beforeFirst)
+        XCTAssertEqual(slot(15, segments, deltas: deltas), .gap)
+        XCTAssertEqual(slot(40, segments, deltas: deltas), .afterLast)
+        XCTAssertEqual(slot(5, [], deltas: [:]), .noClips)
+        XCTAssertEqual(slot(5, [segment("h", 0, 9, hidden: true)], deltas: ["h": 0]), .noClips, "nothing visible is nothing placed")
+    }
+
+    func testBoundariesBelongToTheNextTakeAndTheVeryEndBelongsToNoOne() {
+        let segments = [segment("a", 4, 12), segment("b", 12, 20)]
+        let deltas = ["a": 4.0, "b": 12.0]
+        XCTAssertEqual(slot(4, segments, deltas: deltas), .clip(mediaID: "a", takeTime: 0), "exactly on a start: the take has begun")
+        XCTAssertEqual(slot(12, segments, deltas: deltas), .clip(mediaID: "b", takeTime: 0), "exactly on a boundary: the next take")
+        XCTAssertEqual(slot(20, segments, deltas: deltas), .afterLast, "the end of the last take is already past it")
+        guard case .clip(let id, let takeTime) = slot(11.999, segments, deltas: deltas) else { return XCTFail("a take covers 11.999") }
+        XCTAssertEqual(id, "a", "just before the boundary the earlier take still shows")
+        XCTAssertEqual(takeTime, 7.999, accuracy: 1e-9)
+    }
+
+    func testTakeTimeStaysInsideTheFootageAndBadInputIsSafe() {
+        XCTAssertEqual(slot(9.5, [segment("a", 0, 10)], deltas: ["a": 0], durations: ["a": 6]), .clip(mediaID: "a", takeTime: 6), "a short take holds its last frame")
+        XCTAssertEqual(slot(.nan, [segment("a", 0, 10)], deltas: ["a": 0]), .clip(mediaID: "a", takeTime: 0))
+        XCTAssertEqual(slot(-5, [segment("a", 2, 10)], deltas: ["a": 2]), .beforeFirst)
+        XCTAssertEqual(slot(5, [segment("a", 0, 10)], deltas: [:]), .gap, "a take with no known start is not shown")
+    }
+
+    func testTheVideoOnlyReseeksOnceItHasDriftedPastTheTolerance() {
+        XCTAssertFalse(SongTimelineMath.shouldReseek(videoTime: 3.00, targetTime: 3.10))
+        XCTAssertFalse(SongTimelineMath.shouldReseek(videoTime: 3.00, targetTime: 3.14))
+        XCTAssertTrue(SongTimelineMath.shouldReseek(videoTime: 3.00, targetTime: 3.20))
+        XCTAssertTrue(SongTimelineMath.shouldReseek(videoTime: 3.30, targetTime: 3.00), "behind or ahead alike")
+        XCTAssertTrue(SongTimelineMath.shouldReseek(videoTime: .nan, targetTime: 3), "an unknown video time is re-synced")
+    }
 }

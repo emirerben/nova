@@ -248,6 +248,7 @@
     "src/apps/ios/Kria/Core/SongTimelineMath.swift": "creation",
     "src/apps/ios/Kria/Features/SongTimelinePlayback.swift": "creation",
     "src/apps/ios/Kria/Features/SongTimelineSurface.swift": "creation",
+    "src/apps/ios/Kria/Features/SongTimelinePreview.swift": "creation",
     "src/apps/ios/Kria/Features/SongTimelineControls.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/SongOrderUITests.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/SongRangeUITests.swift": "creation",

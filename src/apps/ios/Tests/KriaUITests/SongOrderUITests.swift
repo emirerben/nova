@@ -88,6 +88,15 @@ final class SongOrderUITests: XCTestCase {
         return minutes * 60 + seconds
     }
 
+    /// The preview's accessibility value is "Clip 1 · 0:02.0, video at 0:02.1": the chip, then the real video position.
+    private func previewVideoTime(_ app: XCUIApplication) -> Double {
+        let value = (any(app, "song-timeline-preview").value as? String) ?? ""
+        guard let tail = value.components(separatedBy: "video at ").last, value.contains("video at ") else { return -1 }
+        let parts = tail.split(separator: ":")
+        guard parts.count == 2, let minutes = Double(parts[0]), let seconds = Double(parts[1]) else { return -1 }
+        return minutes * 60 + seconds
+    }
+
     private func drawerIsOpen(_ app: XCUIApplication) -> Bool { app.buttons["drawer-new-chat"].exists }
 
     /// KRI-561: with `song_order_placements` the same question is the song timeline (KRI-575: editor-style).
@@ -109,6 +118,12 @@ final class SongOrderUITests: XCTestCase {
         XCTAssertFalse(app.buttons["song-timeline-reset"].exists)
         XCTAssertEqual(playhead(app), 4, accuracy: 0.05, "the first paint shows the first clip, not blank song")
 
+        // The preview shows the clip under the playhead (the fixture gives clip 1 a real, generated original).
+        let videoPreview = any(app, "song-timeline-preview")
+        XCTAssertTrue(videoPreview.exists)
+        XCTAssertEqual(videoPreview.label, "Preview, clip 1")
+        XCTAssertTrue((videoPreview.value as? String ?? "").hasPrefix("Clip 1 · 0:00.0"), videoPreview.value as? String ?? "nil")
+
         // The play button plays the song from the playhead and the playhead follows the audio; pause holds it.
         let play = app.buttons["song-timeline-play"]
         bringIntoView(play, in: app)
@@ -117,6 +132,10 @@ final class SongOrderUITests: XCTestCase {
         let moving = NSPredicate { _, _ in self.playhead(app) > 4.6 }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: moving, object: nil)], timeout: 8), .completed, "the playhead advances while the song plays")
         XCTAssertEqual(play.label, "Pause song")
+        // The video follows the song: its position tracks (playhead - 4 s, the clip's start) while playing.
+        let videoMoving = NSPredicate { _, _ in self.previewVideoTime(app) > 0.3 }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: videoMoving, object: nil)], timeout: 8), .completed, "the preview video plays")
+        XCTAssertEqual(previewVideoTime(app), playhead(app) - 4, accuracy: 0.6, "the video stays in step with the song")
         play.tap()
         let held = playhead(app)
         Thread.sleep(forTimeInterval: 0.7)
@@ -152,6 +171,13 @@ final class SongOrderUITests: XCTestCase {
         let next = app.buttons["song-timeline-next"]
         bringIntoView(next, in: app)
         next.tap()
+        XCTAssertEqual(playhead(app), 12, accuracy: 0.05)
+        XCTAssertTrue(videoPreview.label.contains("Empty spot: nothing plays here"), "an empty spot is a calm tile, not a blank: \(videoPreview.label)")
+        next.tap()
+        XCTAssertEqual(playhead(app), 21.5, accuracy: 0.05)
+        XCTAssertTrue(videoPreview.label.contains("This clip isn't on this iPhone"), "no local original: say so instead of spinning: \(videoPreview.label)")
+        XCTAssertTrue((videoPreview.value as? String ?? "").hasPrefix("Clip 2 ·"))
+        app.buttons["song-timeline-prev"].tap()
         XCTAssertEqual(playhead(app), 12, accuracy: 0.05)
         let fill = app.buttons["song-timeline-action-fill"]
         XCTAssertTrue(fill.waitForExistence(timeout: 5))
@@ -196,10 +222,12 @@ final class SongOrderUITests: XCTestCase {
         point(0.15, rulerY).press(forDuration: 0.05, thenDragTo: point(0.6, rulerY))
         XCTAssertFalse(drawerIsOpen(app), "a drag on the timeline must not open the projects drawer")
         XCTAssertEqual(playhead(app), 0, accuracy: 0.05, "dragging right pulls earlier song under the playhead (clamped at the start)")
+        XCTAssertEqual(any(app, "song-timeline-preview").label, "Preview. Before your first clip")
         // Leftward drag moves it later.
         point(0.85, rulerY).press(forDuration: 0.05, thenDragTo: point(0.3, rulerY))
         XCTAssertFalse(drawerIsOpen(app))
         XCTAssertGreaterThan(playhead(app), 5, "dragging left seeks later in the song")
+        XCTAssertEqual(any(app, "song-timeline-preview").label, "Preview, clip 1", "scrubbing changes which clip the preview shows")
 
         // A swipe that starts ON a clip pans; it does not move the clip and does not open the drawer.
         app.buttons["song-timeline-prev"].tap()

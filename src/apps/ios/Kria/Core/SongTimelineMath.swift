@@ -91,4 +91,48 @@ enum SongTimelineMath {
         guard pixelsPerSecond > 0, fingerTravel.isFinite else { return startDelta + (clockShift.isFinite ? clockShift : 0) }
         return startDelta + Double(fingerTravel / pixelsPerSecond) + (clockShift.isFinite ? clockShift : 0)
     }
+
+    // MARK: video preview
+
+    /// What the preview shows for a song time.
+    enum PreviewSlot: Equatable {
+        /// A placed clip covers this time; `takeTime` is how far into the clip's own footage it is.
+        case clip(mediaID: String, takeTime: Double)
+        /// Between two clips: an empty spot.
+        case gap
+        case beforeFirst
+        case afterLast
+        /// Nothing is placed on the song at all.
+        case noClips
+    }
+
+    /// The take that is on screen at song time `time`. Only visible (non-hidden) blocks count; a block covers
+    /// `start <= t < end`, so on a boundary the NEXT block is already showing. Where two visible blocks overlap the
+    /// one that starts LATER wins, i.e. the cut is at the later block's start. (The server's tiler instead cuts
+    /// inside an overlap on a lyric line, else a beat; the preview cannot know those, so it is an approximation.)
+    /// A take's own time is `time - delta`, which is positive even when the take starts before the song (negative
+    /// delta), and is kept inside the footage.
+    static func previewSlot(at time: Double, segments: [SongTimelineState.Segment],
+                            delta: (String) -> Double?, clipDuration: (String) -> Double) -> PreviewSlot {
+        let t = time.isFinite ? max(0, time) : 0
+        let visible = segments.filter { !$0.hidden }
+        guard let firstStart = visible.map(\.start).min(), let lastEnd = visible.map(\.end).max() else { return .noClips }
+        let covering = visible.filter { $0.start <= t && t < $0.end }
+        // Latest start wins; among equal starts the earlier-listed block keeps the spot.
+        var winner: SongTimelineState.Segment?
+        for segment in covering where winner.map({ segment.start > $0.start }) ?? true { winner = segment }
+        if let winner, let origin = delta(winner.mediaID) {
+            let length = max(0, clipDuration(winner.mediaID))
+            return .clip(mediaID: winner.mediaID, takeTime: min(max(t - origin, 0), length))
+        }
+        if t < firstStart { return .beforeFirst }
+        if t >= lastEnd { return .afterLast }
+        return .gap
+    }
+
+    /// True when the video has drifted far enough from where the song says it should be to need a re-seek.
+    static func shouldReseek(videoTime: Double, targetTime: Double, tolerance: Double = 0.15) -> Bool {
+        guard videoTime.isFinite, targetTime.isFinite else { return true }
+        return abs(videoTime - targetTime) > tolerance
+    }
 }

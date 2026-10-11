@@ -49,7 +49,12 @@ struct SongTimelineCard: View {
         self.projectID = projectID
         self.mode = mode
         self.configuration = configuration
-        self.previewURL = previewURL ?? { SongOrderPreviewSource.localURL(projectID: projectID, mediaID: $0) }
+        self.previewURL = previewURL ?? { mediaID in
+            #if DEBUG
+            if let fixture = SongTimelineFixture.clipURL(mediaID: mediaID) { return fixture }
+            #endif
+            return SongOrderPreviewSource.localURL(projectID: projectID, mediaID: mediaID)
+        }
         let initial = SongTimelineState(question: question, media: media, songDurationS: songDurationS)
         _state = State(initialValue: initial)
         // First paint shows content, not blank song: the playhead starts on the first clip.
@@ -118,6 +123,9 @@ struct SongTimelineCard: View {
     /// Everything that scrolls or drags sideways: no drag in here may open the projects drawer.
     private func timelineBlock(isSending: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            SongTimelinePreview(
+                clock: clock, state: state, clipNumber: { number($0) }, media: { attached($0) },
+                localURL: { previewURL($0) }, onToggle: { playback.togglePlayback() })
             SongTimelineSurface(
                 state: state, question: question, clock: clock, selection: selection, bars: bars,
                 songSeconds: songSeconds, isSending: isSending,
