@@ -2786,10 +2786,19 @@ caption lane, reported the ask as unmet and the job died as `phone_plan_unsuppor
   captions", "altyazı istemiyorum", wins, and the LAST line that speaks of captions
   decides). The model's `caption_style` is a style choice only (`karaoke`/`kinetic` or a
   word-by-word ask => `word`, else whole lyric `sentence`s); it never turns lyrics on by
-  itself. **Who reads what:** the planner (chat, before a job) judges the raw request, the
-  brief and the latest message together; the worker judges the saved `creator_request`
-  (which already carries the brief). A creator who does not want the song ask says "no
-  captions" and the next turn proceeds without it.
+  itself. **Who reads what (KRI-578):** the planner (chat, before a job) judges the raw
+  request, the brief and the latest message together, ONCE, via
+  `song_captions.song_captions_pin`, and pins the result as the server-owned
+  `CreativeStrategy.song_captions` (`"word"` / `"sentence"` / unset; only when a creator
+  song is attached; a model-written value is overwritten in `adapt_creator_action`). A
+  plan-authority job (stamp + pinned contract) reads ONLY that pin
+  (`_plan_phone_user_song_montage(plan_authority=True)`); if the pin is set and the song is
+  gone the worker asks for it (`_decline_pinned_song_captions_without_song`). Unstamped jobs,
+  and stamped jobs approved before the field existed (no pin: they render without lyric
+  captions until re-planned), keep the old re-read of the saved `creator_request`
+  (`_creator_request_text`, a `legacy_unstamped` reader in `test_raw_chat_text_readers.py`).
+  A creator who does not want the song ask says "no captions" and the next turn proceeds
+  without it.
 - **Pinned data.** `EditProposalSnapshot.song_captions` (`SongCaptionTrack`: the whole
   song's words in song seconds + `line_end`). It is server-authored (PATCH pins it like
   `text_composition`), excluded from the public proposal response/OpenAPI and omitted

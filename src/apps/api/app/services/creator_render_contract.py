@@ -433,6 +433,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "user_song_planner",
         "song_sync",
         "resolved_song_takes[]",
+        "song_captions",
     ),
     # Named required treatment with no evidence anywhere.
     **_rules(

@@ -670,6 +670,8 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         # KRI-374: server-owned, like `resolved_clip_intents`: a
                         # model-authored per-take song placement is never trusted.
                         "resolved_song_takes": None,
+                        # KRI-578: the caption pin is the planner's call, never the model's.
+                        "song_captions": None,
                         # KRI-476: server-owned conflict answers, never model-authored.
                         "choice_answers": None,
                         "mixed_media_timing": timing,
