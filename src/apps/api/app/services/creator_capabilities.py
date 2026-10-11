@@ -34,6 +34,7 @@ from app.agents._schemas.creator_policy import (
     CAPABILITY_PHONE_STILL_IMAGES,
     CAPABILITY_PHONE_VISUAL_VIDEOS,
     CAPABILITY_USER_SONG,
+    GUIDED_VOICEOVER_NATIVE_ONLY_CODE,
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
@@ -225,8 +226,14 @@ def resolve_creator_manifest(
     phone_rendering_allowed: bool = False,
     phone_visuals_only: bool = False,
     user_song_item: object | None = None,
+    runs_guided_voiceover: bool = True,
 ) -> ResolvedCreatorManifest:
     """Resolve a descriptive v1 manifest from server state and policy.
+
+    ``runs_guided_voiceover`` (KRI-598) is False for a planner that has no
+    guided-proposal step (runtime v2): a recorded voiceover's ``guided_voiceover`` is
+    then unavailable with ``GUIDED_VOICEOVER_NATIVE_ONLY_CODE``, so the model never
+    picks a contract the planner can't run. A manifest without a voiceover is unchanged.
 
     ``user_song_item`` (KRI-374) is the PlanItem (or any object with the same
     ``song_*`` attributes) read through ``getattr`` only: ``song_gcs_path``,
@@ -740,6 +747,20 @@ def resolve_creator_manifest(
         capabilities[CAPABILITY_REACTION_BEATS] = _unavailable(
             "phone_talking_only",
             "reaction beats are only available on an iPhone talking-to-camera edit",
+        )
+    if has_voiceover and not runs_guided_voiceover:
+        # KRI-598: runtime v2 downgraded every guided_voiceover_v1 strategy to the native
+        # edit, losing what the contract carried (prod thread f77a5c16 lost a photo beat).
+        # This reason is what the model reads, and its retry feedback if it picks one.
+        visuals = (
+            "a Visuals photo or video shows only on a spoken word, via reaction_beats"
+            if capabilities[CAPABILITY_REACTION_BEATS].available
+            else "Visuals photos and videos cannot be timed to it here"
+        )
+        capabilities[CAPABILITY_GUIDED_VOICEOVER] = _unavailable(
+            GUIDED_VOICEOVER_NATIVE_ONLY_CODE,
+            "This chat cannot run guided_voiceover_v1: leave execution_contract unset. The "
+            'voiceover edit uses the project\'s own clips ("all" = every clip); ' + visuals + ".",
         )
 
     # KRI-374: the creator's own song. Added to `capabilities` ONLY when a song is

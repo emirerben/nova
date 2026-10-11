@@ -41,6 +41,7 @@ from app.agents._schemas.creator_policy import (
 )
 from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
 from app.kria.reply_language import current_reply_language, say
+from app.kria.voiceover_scope import resolve_native_all_scope
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PINNED_TEXT_MAX_CHARS
 from app.services.creator_capabilities import (
     TALKING_CLIP_INTENTS_DROPPED_NOTICE,
@@ -608,6 +609,10 @@ def check_strategy_for_runtime_v2(
         # rewrite the selection and could refuse a project that has no video.
         strategy = strategy.model_copy(update={"execution_contract": None})
         notices.append(localize_known_message(USER_SONG_CONTRACT_NOTICE))
+    # KRI-598: "use all my clips" on a native-only voiceover edit is every own clip.
+    strategy, scope_notices = resolve_native_all_scope(manifest, strategy)
+    notices.extend(scope_notices)
+
     if strategy.execution_contract is not None:
         downgraded = _downgrade_guided_voiceover(manifest, strategy)
         if isinstance(downgraded, RefusedStrategy):

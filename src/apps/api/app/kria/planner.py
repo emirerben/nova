@@ -2897,7 +2897,10 @@ async def _plan_scoped_turn(
     """
     from app.kria import plan_review  # noqa: PLC0415
 
-    manifest, _ = await resolve_item_creator_context(db, item, persona=persona)
+    # KRI-598: runtime v2 has no guided-proposal step, so it never offers guided voiceover.
+    manifest, _ = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
 
     def _planned(plan: KriaTurnPlan) -> PlannedKriaTurn:
         return PlannedKriaTurn(
@@ -3102,7 +3105,9 @@ async def _plan_live_turn(
             item = await db.get(PlanItem, item_id, populate_existing=True)
             plan = await db.get(ContentPlan, item.content_plan_id, populate_existing=True)
             persona = await db.get(Persona, plan.persona_id, populate_existing=True)
-    manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
+    manifest, media_context = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
     # A pending creative-copy discussion must reach Main Creator, never the editor
     # shortcut (which could otherwise stage/render unrelated text before wording is
     # settled). The durable fold reads all events, not the model's bounded context.
@@ -3649,7 +3654,9 @@ async def extract_deferred_brief(
     persona = await db.get(Persona, plan.persona_id) if plan is not None else None
     if plan is None or plan.user_id != creator_id or persona is None:
         return (), None
-    manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
+    manifest, media_context = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
     prior_brief = await load_latest_brief(db, thread_id)
     inputs = await _load_creator_inputs(
         db,
