@@ -53,6 +53,7 @@ from app.schemas.user_song import (
     SongWord,
     TakeAlignment,
 )
+from app.services.song_range import restrict_alignment_to_range, song_range_of
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -200,6 +201,7 @@ def _read_song(item_id: uuid.UUID) -> dict[str, Any] | None:
             "path": str(item.song_gcs_path),
             "generation": int(item.song_generation),
             "duration_s": float(item.song_duration_s or 0.0),
+            "range": song_range_of(item),
             "analysis": dict(item.song_analysis) if isinstance(item.song_analysis, dict) else None,
             "alignment": dict(item.song_alignment)
             if isinstance(item.song_alignment, dict)
@@ -598,10 +600,11 @@ def ensure_song_alignment(
     song = _read_song(identifier)
     if song is None:
         return None, None
-    return (
-        _analysis_current(song["analysis"], song["generation"]),
-        _alignment_current(song["alignment"], song["generation"]),
-    )
+    alignment = _alignment_current(song["alignment"], song["generation"])
+    if alignment is not None:
+        # KRI-580: the creator's stretch of the song (None = the whole song).
+        alignment = restrict_alignment_to_range(alignment, song.get("range"))
+    return _analysis_current(song["analysis"], song["generation"]), alignment
 
 
 def ensure_song_analysis(item_id: uuid.UUID | str) -> SongAnalysis | None:

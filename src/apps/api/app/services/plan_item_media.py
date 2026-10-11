@@ -290,6 +290,9 @@ def mutate_plan_item_media(
     if song_changed:
         item.song_analysis = None
         item.song_alignment = None
+        # KRI-580: a range the creator gave for the previous song means nothing for this one.
+        item.song_range_start_s = None
+        item.song_range_end_s = None
     if edit_format is not _UNSET:
         item.edit_format = str(edit_format)
     if audio_mode is not _UNSET:
