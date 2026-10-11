@@ -143,7 +143,8 @@ def build_length_plan(
     is_single_hero = strategy.get("edit_format") == "single_hero"
     # A proven creator target changes the owner label, not the source-window
     # allocator: footage still supplies the exact realizable windows.
-    if eligible and is_single_hero:
+    single_hero_eligible = is_single_hero and eligible
+    if single_hero_eligible:
         physical_durations = {source["media_id"]: source["duration_s"] for source in sources}
         hero_order = _single_hero_order(
             [
@@ -176,7 +177,22 @@ def build_length_plan(
             minimum_duration_s=minimums,
             maximum_duration_s=maximums,
         )
-        requested = creator_target_s if creator_target_s is not None else natural_parts.duration_s
+        requested = (
+            creator_target_s
+            if creator_target_s is not None
+            else natural_duration_s
+            if natural_duration_s is not None
+            else natural_parts.duration_s
+        )
+        physical_allowable_s = sum(
+            min(
+                source["duration_s"],
+                source["maximum_duration_s"]
+                if source["maximum_duration_s"] is not None
+                else source["duration_s"],
+            )
+            for source in hero_sources
+        )
         # One 3-second hero and a 100 ms inclusion for every cutaway is the
         # smallest realizable composition. As with the portable source floor,
         # accept that tiny adjustment only when it remains inside the creator's
@@ -189,17 +205,21 @@ def build_length_plan(
             and creator_duration_matches(composition_floor, creator_target_s)
         ):
             requested = composition_floor
+        natural_floor_expansion = (
+            creator_target_s is None
+            and natural_duration_s is None
+            and requested < composition_floor
+            and physical_allowable_s >= composition_floor
+        )
+        if natural_floor_expansion:
+            requested = composition_floor
         available_footage_s = (
-            sum(
-                min(
-                    source["duration_s"],
-                    source["maximum_duration_s"]
-                    if source["maximum_duration_s"] is not None
-                    else source["duration_s"],
-                )
-                for source in hero_sources
+            physical_allowable_s
+            if (
+                creator_target_s is not None
+                or natural_duration_s is not None
+                or natural_floor_expansion
             )
-            if creator_target_s is not None
             else natural_parts.duration_s
         )
         try:
@@ -231,15 +251,20 @@ def build_length_plan(
                 conflict for selected in slot_results for conflict in selected.conflicts
             )
             actual_duration = round(sum(part.duration_s for part in parts), 3)
-            if creator_target_s is not None and not creator_duration_matches(
-                actual_duration, creator_target_s
+            required_duration = (
+                creator_target_s if creator_target_s is not None else natural_duration_s
+            )
+            if required_duration is not None and (
+                not creator_duration_matches(actual_duration, required_duration)
+                if creator_target_s is not None
+                else abs(actual_duration - required_duration) > 0.001
             ):
                 pre_conflicts.append(
                     BestPartsConflict(
                         "insufficient_capacity",
-                        creator_target_s,
+                        required_duration,
                         actual_duration,
-                        "The single-hero source windows cannot reach the requested duration.",
+                        "The single-hero source windows cannot reach the required duration.",
                     )
                 )
             result = BestPartsResult(
@@ -315,7 +340,7 @@ def build_length_plan(
         )
     missing_ids = set(selected_ids) - set(by_id)
     max_source_count = 4 if is_single_hero else 80
-    if eligible and len(sources) > max_source_count:
+    if (eligible or single_hero_eligible) and len(sources) > max_source_count:
         conflicts.append(
             {
                 "code": "source_count_limit",
@@ -355,7 +380,7 @@ def build_length_plan(
         "target_duration_s": creator_target_s,
         "natural_duration_s": natural_duration_s,
         "capacity_raw_s": capacity_raw_s,
-        "window_eligible": eligible,
+        "window_eligible": eligible or single_hero_eligible,
         "capacity_s": result.capacity_s if result is not None else None,
         "max_source_count": max_source_count,
         "sources": [

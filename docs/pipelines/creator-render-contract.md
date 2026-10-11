@@ -353,7 +353,7 @@ CI replays all complete captured successful jobs, capped at the latest 100. The
 committed packet contains all 23 complete available snapshots. `base_sha` identifies
 the actual comparison revision; `capture_base_sha` preserves original capture
 provenance. To reproduce, export base outcomes using the harness against the archived
-base API, then evaluate the candidate with `--baseline-outcomes`, `--base-sha`, and
+base API, then evaluate the candidate with `--baseline`, `--base-sha`, and
 `--candidate-sha`. Missing replay inputs cannot count as passing. Minimized captures
 prove structural behavior, not original visual/text equality.
 

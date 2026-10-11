@@ -268,3 +268,73 @@ def test_single_hero_plan_preserves_policy_order_and_blocks_over_budget_or_sourc
         },
     )
     assert "source_count_limit" in [conflict["code"] for conflict in too_many["conflicts"]]
+
+
+@pytest.mark.parametrize("case", ["mixed", "voiceover", "licensed_song", "unreachable_clock"])
+def test_kri492_bounded_windows_and_single_hero_audio_clocks(case: str) -> None:
+    if case == "mixed":
+        strategy = {
+            "edit_format": "montage",
+            "audio_strategy": "original_audio",
+            "mixed_media_timing": {
+                "image_hold": "very_fast",
+                "video_hold": "longer",
+                "boundary_style": "cut",
+            },
+        }
+        plan = build_length_plan(
+            strategy,
+            {
+                "clip_assignments": [
+                    {
+                        "media_id": "video",
+                        "generation": "1",
+                        "duration_s": 10,
+                        "analysis": {"best_moments": [{"start_s": 0, "end_s": 10}]},
+                    },
+                    {"media_id": "still", "generation": "1", "kind": "image"},
+                ]
+            },
+            creator_target_s=3.8,
+        )
+        assert plan["conflicts"] == []
+        durations = [
+            window["source_end_s"] - window["source_start_s"] for window in plan["windows"]
+        ]
+        assert durations == [3.0, 0.8]
+        compiled = plan_unified_montage(
+            [_clip("video", duration_s=10), _clip("still", kind="image", duration_s=0)],
+            strategy=strategy,
+            approved_length_plan=plan,
+        )
+        assert compiled.duration_s == 3.8
+        return
+
+    strategy = {"edit_format": "single_hero", "audio_strategy": "voiceover"}
+    if case == "licensed_song":
+        strategy = {
+            "edit_format": "single_hero",
+            "audio_strategy": "licensed_music",
+            "selected_music_section": {"start_s": 0, "end_s": 20},
+        }
+    snapshot = {
+        "clip_assignments": [
+            {"media_id": "hero", "duration_s": 20, "hook_score": 9},
+            {"media_id": "support", "duration_s": 20, "hook_score": 5},
+        ]
+    }
+    if case != "licensed_song":
+        strategy["voiceover_duration_s"] = 20
+    if case == "unreachable_clock":
+        snapshot["clip_assignments"][0]["duration_s"] = 5
+
+    plan = build_length_plan(strategy, snapshot)
+
+    if case == "unreachable_clock":
+        assert "insufficient_capacity" in [conflict["code"] for conflict in plan["conflicts"]]
+    else:
+        assert plan["conflicts"] == []
+        durations = [
+            window["source_end_s"] - window["source_start_s"] for window in plan["windows"]
+        ]
+        assert durations == [14.0, 6.0]

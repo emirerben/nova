@@ -11,7 +11,7 @@ The ordinary schema default of 24 seconds never establishes creator intent. `cre
 Source references (paths relative to the repository):
 
 - **P**: `src/apps/api/app/services/length_policy.py`, `natural_length_owner`, `creator_duration_s`, `creator_duration_matches`.
-- **L**: `src/apps/api/app/services/length_planning.py`, `build_length_plan`, `read_length_plan`; `src/apps/api/app/pipeline/best_parts.py`, `select_best_parts`.
+- **L**: `src/apps/api/app/services/length_planning.py`, `build_length_plan`, `read_length_plan`; `src/apps/api/app/pipeline/best_parts.py`, `select_best_parts`; `src/apps/api/app/services/single_hero_policy.py`, shared hero ordering and composition allocation.
 - **D**: `src/apps/api/app/tasks/content_plan_build.py`, phone dispatch gates; `src/apps/api/app/services/phone_rollout.py`, `phone_render_supported_formats`, `phone_user_song_supported`, `phone_talking_head_supported`.
 - **G**: `src/apps/api/app/tasks/generative_build.py`, `_approved_length_plan_envelope`, `_decide_generative_variant`, `_effective_music_window`; `src/apps/api/app/pipeline/unified_montage.py`, approved window reader; `src/apps/api/app/pipeline/phone_voiceover_montage_plan.py`, exact decision window consumption.
 - **V**: `src/apps/api/app/services/length_policy_state.py`, `LengthPolicyState`, `check_creator_duration`; `src/apps/api/app/services/creator_render_contract.py`, `verify_phone_recipe`; `src/apps/api/app/services/cloud_render_contract.py`, cloud validation and adapter declarations; `src/apps/api/app/kria/brief_checks.py`, `_check_timing`.
@@ -22,6 +22,8 @@ Source references (paths relative to the repository):
 Owner/source codes: **F** selected footage windows; **T** speech take minus approved pauses; **V** recording; **S** song placements/selected section. Licensed music is F until the server selects and freezes a section, then S. Any creator-proven target overrides these within ±10%.
 
 Selection codes: **B** server-selected best parts, exact windows and selection receipts consumed by compilers (L/G); **A** song alignment or frozen music section, preserving approved placements (G); **T** approved speech/cleanup windows, preserving spoken continuity; **V** selected picture windows fitted to the recording, preserving narration. Silent footage uses B. A creator target cannot authorize looping, retiming, dropping required clips, or changing audio by itself; infeasible constraints enter Q before rendering.
+
+Best-parts allocation uses the creator-proven target first, then a recorded voiceover or frozen licensed section's natural duration, then footage highlights. An unreachable natural audio clock produces a capacity conflict rather than silently shortening the edit. User-song placements retain their song-owned alignment and are excluded from this best-parts window allocator; a declared song owner alone does not make that path eligible.
 
 Phone codes: **M** montage family behind account enrollment/approval gates; **MV** M plus verified narration capability and narration rollout; **MS** M plus user-song rollout (phone only); **ST** single-clip subtitled plus subtitled/archetype rollout; **NV** narrated plus narration/archetype rollout; **NT** narrated self-narration: one clip through ST, or multiple clips through verified talking-head rollout. **U** explicitly unsupported. All phone verdicts depend on D and the recipe's verified capabilities.
 
@@ -71,6 +73,8 @@ Verifier codes: **R** generation-bound creator target versus measured recipe/exp
 ## Budget, durable choice, and compatibility
 
 Silent best parts cap at 120 seconds. Every included clip has at least 0.1 seconds. Fair allocation redistributes unused capacity; valid moments rank by energy and earliest start breaks ties. Missing analysis produces a disclosed deterministic fallback receipt. `use_all` may grow to the cap; short sources, coverage above capacity, more than 80 portable sources, and cap conflicts produce a focused constraint question. Readability preferences (ordinary 0.8-second cuts and 1.2-second image holds) do not become creator intent. The portable compiler minimum is 3 seconds; a target already within ±10% of that minimum does not need a question.
+
+Mixed-media hold limits bound allocation separately from physical source duration, preserving valid late video coordinates. Single-hero edits require one hero and one to three cutaways, at most four sources, with at least 60% hero duration and a 3-second minimum hero. The inclusion floor may raise a creator's 3-second target to 3.1 seconds for one cutaway while retaining the original target, within ±10%. A source count, order, or duration that cannot satisfy this composition enters the durable choice gate.
 
 The approved `length_plan` persists exact windows, capacities, source storage identity, generation, selection reasons, and analysis provenance. Phone unified/voiceover and cloud classic/unified consume those windows; an authored assembly override retains its own approved timing. No compiler silently chooses a new best-parts window for the same approved plan. `read_length_plan` rejects stale identity, generation, duration, and incomplete coverage. Speech continuity and song placement remain separate constraints.
 

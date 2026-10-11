@@ -172,6 +172,20 @@ def _extend_around(
     )
 
 
+def _limit_part_duration(part: BestPart, maximum_duration_s: float) -> BestPart:
+    """Apply an allocation ceiling before any later expansion is considered."""
+
+    if part.duration_s <= maximum_duration_s + 1e-8:
+        return part
+    return BestPart(
+        part.media_id,
+        part.source_start_s,
+        round(part.source_start_s + maximum_duration_s, 3),
+        part.score,
+        part.reason,
+    )
+
+
 def select_best_parts(
     sources: Sequence[Any],
     *,
@@ -205,12 +219,14 @@ def select_best_parts(
             if media_id and duration > 0:
                 unusable_ids.append(media_id)
             continue
-        selected.append(part)
-        raw_capacities.append(duration)
         requested_maximum = _number(maximums.get(media_id))
-        allocation_maxima.append(
+        allocation_maximum = (
             duration if requested_maximum is None else min(duration, max(0.0, requested_maximum))
         )
+        part = _limit_part_duration(part, allocation_maximum)
+        selected.append(part)
+        raw_capacities.append(duration)
+        allocation_maxima.append(allocation_maximum)
     capacities = [
         min(part.source_end_s - part.source_start_s, allocation_maximum)
         for part, allocation_maximum in zip(selected, allocation_maxima, strict=True)
