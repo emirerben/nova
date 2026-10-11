@@ -2556,6 +2556,249 @@ class StorageRetentionEntry(Base):
     )
 
 
+class MediaAsset(Base):
+    """Creator-owned catalogue identity; cloud copies live on immutable sources."""
+
+    __tablename__ = "media_assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    # Device declarations are intentionally distinct from server-verified source bytes.
+    original_declared_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_byte_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    original_availability: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="device_only"
+    )
+    metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    creator_context: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    archived_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("id", "user_id", name="uq_media_assets_id_user"),
+        CheckConstraint("kind IN ('video','image','audio')", name="ck_media_assets_kind"),
+        CheckConstraint(
+            "original_availability IN ('device_only','cloud_backed')",
+            name="ck_media_assets_original_availability",
+        ),
+        CheckConstraint(
+            "status IN ('pending','processing','ready','failed')", name="ck_media_assets_status"
+        ),
+        CheckConstraint(
+            "original_byte_count IS NULL OR original_byte_count >= 0", name="ck_media_assets_bytes"
+        ),
+        Index("idx_media_assets_user_created", "user_id", "created_at"),
+    )
+
+
+class MediaAssetSource(Base):
+    """One immutable server object generation belonging to a media asset."""
+
+    __tablename__ = "media_asset_sources"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    object_path: Mapped[str] = mapped_column(Text, nullable=False)
+    object_generation: Mapped[str] = mapped_column(Text, nullable=False)
+    uploaded_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+    byte_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="available")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("id", "user_id", "asset_id", name="uq_media_asset_sources_id_owner_asset"),
+        ForeignKeyConstraint(
+            ["asset_id", "user_id"],
+            ["media_assets.id", "media_assets.user_id"],
+            name="fk_media_asset_sources_asset_owner",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "role IN ('original','analysis_proxy','thumbnail')", name="ck_media_asset_sources_role"
+        ),
+        CheckConstraint(
+            "status IN ('available','missing','deleting','deleted')",
+            name="ck_media_asset_sources_status",
+        ),
+        CheckConstraint("byte_count >= 0", name="ck_media_asset_sources_bytes"),
+        UniqueConstraint(
+            "user_id",
+            "object_path",
+            "object_generation",
+            name="uq_media_asset_sources_object_generation",
+        ),
+        Index("idx_media_asset_sources_asset", "user_id", "asset_id", "created_at"),
+    )
+
+
+class MediaAssetReference(Base):
+    """A consumer-held reference; deleting a consumer only deletes this row."""
+
+    __tablename__ = "media_asset_references"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    creation_thread_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=True
+    )
+    plan_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=True
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["asset_id", "user_id"],
+            ["media_assets.id", "media_assets.user_id"],
+            name="fk_media_asset_references_asset_owner",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["source_id", "user_id", "asset_id"],
+            [
+                "media_asset_sources.id",
+                "media_asset_sources.user_id",
+                "media_asset_sources.asset_id",
+            ],
+            name="fk_media_asset_references_source_owner_asset",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "(creation_thread_id IS NOT NULL)::int + (plan_item_id IS NOT NULL)::int + (job_id IS NOT NULL)::int = 1",
+            name="ck_media_asset_references_one_consumer",
+        ),
+        Index("idx_media_asset_references_asset", "user_id", "asset_id", "created_at"),
+    )
+
+
+class MediaAssetAnalysis(Base):
+    """Versioned reusable analysis fact pinned to an immutable source."""
+
+    __tablename__ = "media_asset_analyses"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    analyzer: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    schema_version: Mapped[str] = mapped_column(Text, nullable=False)
+    source_identity: Mapped[str] = mapped_column(Text, nullable=False)
+    result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        "attempt_token", UUID(as_uuid=True), nullable=True
+    )
+    lease_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["asset_id", "user_id"],
+            ["media_assets.id", "media_assets.user_id"],
+            name="fk_media_asset_analyses_asset_owner",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["source_id", "user_id", "asset_id"],
+            [
+                "media_asset_sources.id",
+                "media_asset_sources.user_id",
+                "media_asset_sources.asset_id",
+            ],
+            name="fk_media_asset_analyses_source_owner_asset",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "status IN ('queued','analyzing','ready','failed')",
+            name="ck_media_asset_analyses_status",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "asset_id",
+            "source_id",
+            "analyzer",
+            "model",
+            "prompt_version",
+            "schema_version",
+            name="uq_media_asset_analyses_version",
+        ),
+        Index("idx_media_asset_analyses_lease", "status", "lease_expires_at"),
+    )
+
+
+class MediaCollection(Base):
+    __tablename__ = "media_collections"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("id", "user_id", name="uq_media_collections_id_user"),
+        Index("idx_media_collections_user_updated", "user_id", "updated_at"),
+    )
+
+
+class MediaCollectionMember(Base):
+    __tablename__ = "media_collection_members"
+
+    collection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["collection_id", "user_id"],
+            ["media_collections.id", "media_collections.user_id"],
+            name="fk_media_collection_members_collection_owner",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["asset_id", "user_id"],
+            ["media_assets.id", "media_assets.user_id"],
+            name="fk_media_collection_members_asset_owner",
+            ondelete="CASCADE",
+        ),
+    )
+
+
 class BillingReconciliation(Base):
     """Daily, delayed comparison of Cloud Billing export and settled AI usage."""
 

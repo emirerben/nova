@@ -10,6 +10,7 @@ from sqlalchemy import and_, func, or_, select
 
 from app.database import sync_session
 from app.models import TemporaryMediaUpload
+from app.services import media_library_retention
 from app.services.job_storage_paths import project_media_reference_lock_key
 from app.storage import delete_object_best_effort
 from app.worker import celery_app
@@ -91,6 +92,13 @@ def cleanup_expired_temporary_uploads(
             .all()
         )
         for row in rows:
+            # A future ingest flow may transfer a reservation to a durable
+            # source between discovery and this locked recheck.  Cleanup never
+            # owns adopted bytes; retention handles those source generations.
+            if media_library_retention.is_durable_library_path(
+                row.object_path, row.user_id
+            ) and media_library_retention.path_is_adopted_by_library(db, row.object_path):
+                continue
             row.status = "cleanup_pending"
             row.cleanup_claimed_at = current
             row.delete_attempts = int(row.delete_attempts or 0) + 1

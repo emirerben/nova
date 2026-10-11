@@ -512,6 +512,11 @@ class Settings(BaseSettings):
     # capped at 24 hours so account deletion leaves at most a short-lived cache
     # copy; PostgreSQL rows are removed immediately by the creator FK cascade.
     media_analysis_cache_ttl_days: int = Field(default=90, ge=1, le=365)
+    # KRI-384 rollout controls. The additive ownership contract ships before
+    # upload/library clients; reuse and proposals activate independently only
+    # after their API and physical-device evidence is complete.
+    media_library_enabled: bool = False
+    media_collection_proposals_enabled: bool = False
     # Daily comparison of delayed Standard Usage Cost export with Nova's
     # settled reservation ledger. Targets and project attribution stay JSON so
     # both billing accounts can be added without shipping account IDs in git.

@@ -21,6 +21,8 @@ from app.models import (
     ContentPlan,
     Job,
     JobClip,
+    MediaAssetReference,
+    MediaAssetSource,
     Persona,
     PlanItem,
     PlanItemAsset,
@@ -28,6 +30,7 @@ from app.models import (
     StorageRetentionManifest,
     TikTokPublication,
 )
+from app.services import media_library_retention
 from app.services.job_storage_paths import (
     JOB_OUTPUT_PREFIXES,
     normalize_job_storage_path,
@@ -114,6 +117,22 @@ def _protected_references(db: Any) -> tuple[set[str], set[uuid.UUID]]:
         ).where(TikTokPublication.visibility_status.in_(("unknown", "draft", "private", "public")))
     ):
         paths.update(_walk_paths((row.source_object_path, row.snapshot_object_path)))
+    # A library reference may target one source or all sources of an asset.
+    # Include those paths in the broad manifest-time guard as well as the
+    # execution-time source recheck, so shared catalogue bytes are not warned
+    # merely because an older Job happened to name the same object.
+    for source in db.scalars(
+        select(MediaAssetSource).join(
+            MediaAssetReference,
+            (MediaAssetReference.user_id == MediaAssetSource.user_id)
+            & (MediaAssetReference.asset_id == MediaAssetSource.asset_id)
+            & (
+                (MediaAssetReference.source_id == MediaAssetSource.id)
+                | MediaAssetReference.source_id.is_(None)
+            ),
+        )
+    ):
+        paths.add(source.object_path)
     # A current job protects all of its own inputs/outputs, including a path
     # that an older inactive job also happens to reference. Without this pass,
     # only the active job ID was protected and a shared generation could enter
@@ -187,6 +206,22 @@ def _entry_is_protected(db: Any, entry: StorageRetentionEntry) -> bool:
 
     owner_id = entry.creator_id
     path = entry.object_path
+    library_source = db.scalar(
+        select(MediaAssetSource)
+        .where(
+            MediaAssetSource.user_id == owner_id,
+            MediaAssetSource.object_path == path,
+            MediaAssetSource.object_generation == entry.object_generation,
+        )
+        .limit(1)
+    )
+    if library_source is not None:
+        # Catalogue membership is deliberately absent here.  Only a live
+        # consumer reference or a newer source-use clock protects the bytes.
+        if not media_library_retention.source_is_delete_eligible(
+            db, library_source, now=datetime.now(UTC)
+        ):
+            return True
     active_job_ids: set[uuid.UUID] = set()
     for row in db.execute(
         select(
@@ -272,6 +307,24 @@ def _previous_scan_cursor(db: Any) -> tuple[datetime, uuid.UUID] | None:
         if updated_at.tzinfo is None:
             updated_at = updated_at.replace(tzinfo=UTC)
         return updated_at, uuid.UUID(str(summary["cursor_job_id"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _previous_library_scan_cursor(db: Any) -> tuple[datetime, uuid.UUID] | None:
+    summary = db.scalar(
+        select(StorageRetentionManifest.summary_json)
+        .where(StorageRetentionManifest.status.in_(("completed", "rejected")))
+        .order_by(StorageRetentionManifest.generated_at.desc())
+        .limit(1)
+    )
+    if not isinstance(summary, dict):
+        return None
+    try:
+        last_used_at = datetime.fromisoformat(str(summary["library_cursor_last_used_at"]))
+        if last_used_at.tzinfo is None:
+            last_used_at = last_used_at.replace(tzinfo=UTC)
+        return last_used_at, uuid.UUID(str(summary["library_cursor_source_id"]))
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -435,6 +488,13 @@ def build_retention_manifest(*, now: datetime | None = None) -> str | None:
         owner_ids = {job.user_id for job in jobs}
         source_reference_times = _owner_source_reference_times(db, owner_ids)
         prior_warning_times = _prior_warning_times(db, owner_ids)
+        library_scan = media_library_retention.source_candidates(
+            db,
+            now=now,
+            limit=settings.storage_retention_scan_jobs,
+            cursor=_previous_library_scan_cursor(db),
+        )
+        library_candidates, library_cursor, library_wrapped = library_scan
 
     counts: dict[str, Any] = {
         "warn": 0,
@@ -483,10 +543,34 @@ def build_retention_manifest(*, now: datetime | None = None) -> str | None:
             )
             counts[action] += 1
             counts["bytes"] += metadata.size
+    for candidate in library_candidates:
+        identity = (candidate.object_path, candidate.object_generation)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        candidates.append(
+            {
+                "job_id": None,
+                "creator_id": candidate.creator_id,
+                "object_path": candidate.object_path,
+                "object_generation": candidate.object_generation,
+                "action": candidate.action,
+                "reason": candidate.reason,
+                "eligible_at": candidate.eligible_at,
+                "size_bytes": candidate.byte_count,
+            }
+        )
+        counts[candidate.action] += 1
+        counts["bytes"] += candidate.byte_count
     if jobs:
         counts["cursor_updated_at"] = jobs[-1].updated_at.isoformat()
         counts["cursor_job_id"] = str(jobs[-1].id)
     counts["cursor_wrapped"] = wrapped
+    counts["library_sources"] = len(library_candidates)
+    counts["library_cursor_wrapped"] = library_wrapped
+    if library_cursor is not None:
+        counts["library_cursor_last_used_at"] = library_cursor[0].isoformat()
+        counts["library_cursor_source_id"] = str(library_cursor[1])
 
     with sync_session() as db:
         # A second beat/task may have completed the remote scan concurrently.
@@ -631,6 +715,18 @@ def execute_retention_manifest(manifest_id: str) -> dict[str, int]:
                     db.commit()
                     results["skipped"] += 1
                     continue
+                is_library_source = (
+                    db.scalar(
+                        select(MediaAssetSource.id)
+                        .where(
+                            MediaAssetSource.user_id == entry.creator_id,
+                            MediaAssetSource.object_path == entry.object_path,
+                            MediaAssetSource.object_generation == entry.object_generation,
+                        )
+                        .limit(1)
+                    )
+                    is not None
+                )
                 warned_at = db.scalar(
                     select(StorageRetentionEntry.created_at)
                     .where(
@@ -645,7 +741,7 @@ def execute_retention_manifest(manifest_id: str) -> dict[str, int]:
                 )
                 if (
                     entry.status == "pending"
-                    and entry.reason == "inactive_source_or_editable"
+                    and entry.reason in ("inactive_source_or_editable", "inactive_library_source")
                     and warned_at is None
                 ):
                     entry.status = "skipped"
@@ -660,6 +756,18 @@ def execute_retention_manifest(manifest_id: str) -> dict[str, int]:
                 if entry.status == "pending":
                     if now < eligible_at:
                         entry.status = "skipped"
+                        manifest.execution_lease_expires_at = datetime.now(UTC) + _EXECUTION_LEASE
+                        db.commit()
+                        results["skipped"] += 1
+                        continue
+                    # This is deliberately the final operation before the
+                    # retention tombstone commit.  A warning-lead or
+                    # eligibility skip must leave the source available.
+                    if is_library_source and not media_library_retention.mark_source_deleting(
+                        db, entry, now=datetime.now(UTC)
+                    ):
+                        entry.status = "skipped"
+                        entry.error_detail = "library_source_reused_or_referenced"
                         manifest.execution_lease_expires_at = datetime.now(UTC) + _EXECUTION_LEASE
                         db.commit()
                         results["skipped"] += 1
@@ -724,6 +832,13 @@ def execute_retention_manifest(manifest_id: str) -> dict[str, int]:
                     # clearing it here could admit a stale reference after an
                     # outcome-unknown delete.
                     entry.error_detail = error_detail
+                if terminal_status is not None:
+                    media_library_retention.finish_source_deletion(
+                        db,
+                        entry,
+                        deleted=terminal_status == "deleted",
+                        missing=terminal_status == "skipped" and retire_status == "skipped",
+                    )
                 if retire_status is not None:
                     db.execute(
                         update(StorageRetentionEntry)

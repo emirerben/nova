@@ -32,7 +32,7 @@ from sqlalchemy import and_, delete, func, or_, select
 
 from app.config import settings
 from app.database import sync_session
-from app.models import ContentPlan, Job, JobStorageDeletion, PlanItem
+from app.models import ContentPlan, Job, JobStorageDeletion, MediaAssetSource, PlanItem
 from app.services.job_storage_deletion import (
     cleanup_job_storage_manifest,
     parse_job_storage_manifest,
@@ -114,6 +114,17 @@ def _project_manifest_owner(object_prefixes: list[str]) -> uuid.UUID | None:
     return None
 
 
+def _library_storage_owner(path: str) -> uuid.UUID | None:
+    """Identify the two durable namespaces allowed by library registration."""
+    parts = path.split("/")
+    candidate = parts[1] if len(parts) > 2 and parts[0] == "users" else parts[0]
+    try:
+        owner = uuid.UUID(candidate)
+    except (TypeError, ValueError):
+        return None
+    return owner if candidate == str(owner) else None
+
+
 def _filter_referenced_project_storage(
     object_paths: list[str],
     object_prefixes: list[str],
@@ -168,6 +179,19 @@ def _project_storage_references(db, owner_id: uuid.UUID) -> set[str]:
     return references
 
 
+def _library_storage_references(db, owner_id: uuid.UUID) -> set[str]:
+    # Adoption transfers cleanup responsibility to the library's generation-
+    # pinned retention policy, even when the original project is removed.
+    return set(
+        db.scalars(
+            select(MediaAssetSource.object_path).where(
+                MediaAssetSource.user_id == owner_id,
+                MediaAssetSource.status != "deleted",
+            )
+        ).all()
+    )
+
+
 @contextmanager
 def _guard_project_storage_targets(
     object_paths: list[str], object_prefixes: list[str]
@@ -181,13 +205,23 @@ def _guard_project_storage_targets(
     first and the creator's subsequent metadata validation fails safely.
     """
 
-    owner_id = _project_manifest_owner(object_prefixes)
-    if owner_id is None:
+    owner_ids = {
+        owner
+        for target in [*object_paths, *object_prefixes]
+        if (owner := _library_storage_owner(target)) is not None
+    }
+    if not owner_ids:
         yield object_paths, object_prefixes
         return
     with sync_session() as db:
-        db.execute(select(func.pg_advisory_xact_lock(project_media_reference_lock_key(owner_id))))
-        references = _project_storage_references(db, owner_id)
+        references: set[str] = set()
+        for owner_id in sorted(owner_ids):
+            db.execute(
+                select(func.pg_advisory_xact_lock(project_media_reference_lock_key(owner_id)))
+            )
+        for owner_id in sorted(owner_ids):
+            references.update(_project_storage_references(db, owner_id))
+            references.update(_library_storage_references(db, owner_id))
         yield _filter_referenced_project_storage(object_paths, object_prefixes, references)
 
 
@@ -485,7 +519,8 @@ def purge_job_storage(outbox_id: str) -> dict:
             error = f"{failed_count} {target_label} could not be deleted"
     elif isinstance(payload, list):
         try:
-            deleted, failed = cleanup_job_storage_paths(payload)
+            with _guard_project_storage_targets(payload, []) as (guarded_paths, _):
+                deleted, failed = cleanup_job_storage_paths(guarded_paths)
         except SoftTimeLimitExceeded:
             raise
         except Exception as exc:  # noqa: BLE001 — lease recovery handles outages
@@ -501,7 +536,17 @@ def purge_job_storage(outbox_id: str) -> dict:
         now = datetime.now(UTC)
         try:
             manifest = parse_job_storage_manifest(payload, job_id=job_id)
-            cleanup = cleanup_job_storage_manifest(manifest, now=now)
+            with _guard_project_storage_targets(
+                list(manifest.exact_paths), [entry.prefix for entry in manifest.prefixes]
+            ) as (guarded_paths, guarded_prefixes):
+                guarded_manifest = type(manifest)(
+                    exact_paths=tuple(guarded_paths),
+                    prefixes=tuple(
+                        entry for entry in manifest.prefixes if entry.prefix in guarded_prefixes
+                    ),
+                    legacy=manifest.legacy,
+                )
+                cleanup = cleanup_job_storage_manifest(guarded_manifest, now=now)
         except SoftTimeLimitExceeded:
             # Do not overwrite the committed manifest when Celery's execution
             # budget expires; the processing lease makes it recoverable.

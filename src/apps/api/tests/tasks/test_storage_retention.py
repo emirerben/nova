@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, tuple_
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, OperationalError, ProgrammingError
 
@@ -142,6 +142,70 @@ def test_private_device_narration_binding_stays_in_retention_references() -> Non
 
     _sources, current = storage_retention._job_references(db, job)
     assert path in current
+
+
+def test_completed_manifest_cursor_advances_the_next_bounded_job_page() -> None:
+    """A completed first page must not make later old jobs scan forever stale."""
+    owner_id = uuid.uuid4()
+    job_ids = sorted((uuid.uuid4(), uuid.uuid4()), key=str)
+    now = datetime.now(UTC)
+    old = now - timedelta(days=settings.storage_retention_superseded_days + 1)
+    manifest_ids: list[uuid.UUID] = []
+    with sync_session() as db:
+        db.add(User(id=owner_id, email=f"retention-cursor-{owner_id}@test.local"))
+        db.flush()
+        for job_id in job_ids:
+            db.add(
+                Job(
+                    id=job_id,
+                    user_id=owner_id,
+                    status="completed",
+                    job_type="template",
+                    raw_storage_path=f"users/{owner_id}/jobs/{job_id}/source.mp4",
+                    created_at=old,
+                    updated_at=old,
+                )
+            )
+        completed = StorageRetentionManifest(
+            status="completed",
+            generated_at=now + timedelta(days=365),
+            report_only_until=now,
+            summary_json={
+                "cursor_updated_at": old.isoformat(),
+                "cursor_job_id": str(job_ids[0]),
+            },
+        )
+        db.add(completed)
+        db.commit()
+        manifest_ids.append(completed.id)
+
+    try:
+        with sync_session() as db:
+            cursor = storage_retention._previous_scan_cursor(db)
+            assert cursor == (old, job_ids[0])
+            next_page = db.scalars(
+                select(Job)
+                .where(
+                    Job.user_id == owner_id,
+                    tuple_(Job.updated_at, Job.id) > cursor,
+                )
+                .order_by(Job.updated_at.asc(), Job.id.asc())
+                .limit(1)
+            ).all()
+        assert [job.id for job in next_page] == [job_ids[1]]
+    finally:
+        with sync_session() as db:
+            db.execute(
+                text("DELETE FROM storage_retention_entries WHERE manifest_id = ANY(:ids)"),
+                {"ids": manifest_ids},
+            )
+            db.execute(
+                text("DELETE FROM storage_retention_manifests WHERE id = ANY(:ids)"),
+                {"ids": manifest_ids},
+            )
+            db.execute(text("DELETE FROM jobs WHERE user_id = :owner"), {"owner": owner_id})
+            db.execute(text("DELETE FROM users WHERE id = :owner"), {"owner": owner_id})
+            db.commit()
 
 
 def test_reference_writer_trigger_shares_the_owner_retention_lock(approved_manifest) -> None:
