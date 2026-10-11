@@ -194,6 +194,7 @@ jobs:
             scripts/fly-deploy-with-retry.sh \
             --remote-only \
             --env "CREATOR_DURATION_CHECK_MODE=${CREATOR_DURATION_CHECK_MODE}" \
+            --env "CREATOR_DURATION_CHECK_REVISION=${GITHUB_SHA}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}"
 
       - name: Verify exact deployed image, unmanaged guard, and health

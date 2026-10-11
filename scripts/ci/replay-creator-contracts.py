@@ -84,14 +84,17 @@ def replay(
     candidate: Callable[[Mapping[str, Any]], Mapping[str, Any]],
     *,
     candidate_sha: str | None = None,
+    base_sha: str | None = None,
 ) -> dict[str, Any]:
     captures = validate_snapshot(snapshot)
+    comparison_base_sha = base_sha or snapshot["base_sha"]
     if (
         baseline.get("schema_version") != 1
-        or baseline.get("base_sha") != snapshot["base_sha"]
-        or baseline.get("evaluator_sha") != snapshot["base_sha"]
+        or baseline.get("base_sha") != comparison_base_sha
+        or baseline.get("evaluator_sha") != comparison_base_sha
+        or baseline.get("capture_base_sha", baseline.get("base_sha")) != snapshot["base_sha"]
     ):
-        raise ReplayError("baseline outcomes are absent or not bound to snapshot base_sha")
+        raise ReplayError("baseline outcomes are absent or not bound to comparison and capture base SHAs")
     baseline_outcomes = baseline.get("outcomes")
     if not isinstance(baseline_outcomes, Mapping):
         raise ReplayError("baseline lacks outcomes")
@@ -115,7 +118,8 @@ def replay(
         rows.append({"id": capture_id, "baseline": before, "candidate": after, "newly_blocking": regression})
     return {
         "schema_version": 1,
-        "base_sha": snapshot["base_sha"],
+        "base_sha": comparison_base_sha,
+        "capture_base_sha": snapshot["base_sha"],
         "candidate_sha": candidate_sha,
         "available_count": snapshot["available_count"],
         "input_count": snapshot["available_count"],
@@ -205,7 +209,8 @@ def export_outcomes(snapshot: Mapping[str, Any], *, evaluator_sha: str) -> dict[
     captures = validate_snapshot(snapshot)
     return {
         "schema_version": 1,
-        "base_sha": snapshot["base_sha"],
+        "base_sha": evaluator_sha,
+        "capture_base_sha": snapshot["base_sha"],
         "evaluator_sha": evaluator_sha,
         "outcomes": {
             capture["id"]: _outcome(
@@ -221,6 +226,7 @@ def main() -> None:
     parser.add_argument("--snapshot", type=Path, required=True)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--candidate-sha", required=True)
+    parser.add_argument("--base-sha")
     parser.add_argument("--export-outcomes", action="store_true")
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
@@ -230,7 +236,11 @@ def main() -> None:
         if args.baseline is not None:
             raise ReplayError("--export-outcomes cannot use --baseline")
         args.report.write_text(
-            json.dumps(export_outcomes(snapshot, evaluator_sha=args.candidate_sha), indent=2, sort_keys=True)
+            json.dumps(
+                export_outcomes(snapshot, evaluator_sha=args.base_sha or snapshot["base_sha"]),
+                indent=2,
+                sort_keys=True,
+            )
             + "\n"
         )
         return
@@ -241,6 +251,7 @@ def main() -> None:
         load_json(args.baseline),
         evaluate_candidate,
         candidate_sha=args.candidate_sha,
+        base_sha=args.base_sha,
     )
     args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     if report["baseline_declining_capture_ids"]:

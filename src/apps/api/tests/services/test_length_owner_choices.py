@@ -71,6 +71,34 @@ def test_unknown_song_capacity_does_not_invent_a_question():
     assert not any(item.kind == CONFLICT_LENGTH_VS_NATURAL for item in found)
 
 
+def test_unplaced_lipsync_track_never_offers_its_full_recording_as_an_edit():
+    found = collect_conflicts(
+        {"audio_strategy": "user_song", "song_sync": "lipsync"},
+        brief(24),
+        {"song_duration_s": 180},
+    )
+    assert not any(item.kind == CONFLICT_LENGTH_VS_NATURAL for item in found)
+
+
+def test_unsupported_long_song_window_never_offers_an_invalid_duration():
+    found = collect_conflicts({"audio_strategy": "user_song"}, brief(24), {"song_duration_s": 180})
+    assert not any(item.kind == CONFLICT_LENGTH_VS_NATURAL for item in found)
+
+
+def test_supported_long_song_trim_offers_only_executable_durations():
+    from app.agents._schemas.creator_agent import CreativeStrategy
+
+    found = choice(
+        {"audio_strategy": "user_song"},
+        {"song_duration_s": 180, "song_trim_supported": True},
+        24,
+    )
+    assert found.effects[OPT_ACCEPT_NATURAL]["strategy"]["target_duration_s"] == 120
+    assert "remaining" in found.options[-1].description
+    for effect in found.effects.values():
+        CreativeStrategy.model_validate({"audio_strategy": "user_song", **effect["strategy"]})
+
+
 def _parts(seconds):
     return [{"media_id": "clip", "source_start_s": 0, "source_end_s": seconds}]
 
@@ -106,6 +134,22 @@ def test_lipsync_uses_placed_song_alignment_window_not_full_track_length():
         20,
     )
     assert found.effects[OPT_ACCEPT_NATURAL]["strategy"]["target_duration_s"] == 14
+
+
+def test_lipsync_alignment_accepts_a_zero_delta_take_when_joining_durations():
+    found = collect_conflicts(
+        {"audio_strategy": "user_song", "song_sync": "lipsync"},
+        brief(20),
+        {
+            "song_alignment": {
+                "takes": {
+                    "a": {"delta_s": 0, "duration_s": 10},
+                    "b": {"delta_s": 10, "duration_s": 10},
+                }
+            }
+        },
+    )
+    assert not any(item.kind == CONFLICT_LENGTH_VS_NATURAL for item in found)
 
 
 def test_answer_is_replayed_until_selected_footage_changes_then_reopens():

@@ -67,7 +67,9 @@ def _evidence(**overrides):
         "deployment_started_epoch_s": 99,
         "clean_observations": [
             {
-                "timestamp_epoch_s": clean_since,
+                "interval_start_epoch_s": clean_since,
+                "interval_end_epoch_s": clean_since + 12 * 60 * 60,
+                "stream_complete": True,
                 "check_mode": "log_only",
                 "check_observations": 1,
                 "check_declines": 0,
@@ -75,7 +77,9 @@ def _evidence(**overrides):
                 "worker_revision": candidate,
             },
             {
-                "timestamp_epoch_s": clean_since + 24 * 60 * 60,
+                "interval_start_epoch_s": clean_since + 12 * 60 * 60,
+                "interval_end_epoch_s": clean_since + 24 * 60 * 60,
+                "stream_complete": True,
                 "check_mode": "log_only",
                 "check_observations": 1,
                 "check_declines": 0,
@@ -147,7 +151,74 @@ def test_promotion_rejects_fake_shas_and_idle_or_untimestamped_observations() ->
     )
     assert report.status == "pending"
     assert "base_sha must be a 40-character lowercase hex SHA" in report.reasons
-    assert "missing clean observations" in report.reasons
+    assert "clean observations are not log_only contract checks" in report.reasons
+
+
+def test_promotion_requires_one_continuous_complete_observation_stream() -> None:
+    evidence = _evidence()
+    evidence["clean_observations"][1]["interval_start_epoch_s"] += 1
+    report = validate_promotion(evidence, now_epoch_s=100 + 24 * 60 * 60)
+    assert report.status == "pending"
+    assert "clean observations do not cover one continuous 24-hour stream" in report.reasons
+
+    evidence = _evidence()
+    del evidence["clean_observations"][0]["stream_complete"]
+    report = validate_promotion(evidence, now_epoch_s=100 + 24 * 60 * 60)
+    assert report.status == "pending"
+    assert "clean observations are not log_only contract checks" in report.reasons
+
+
+def test_promotion_rejects_endpoint_only_or_non_finite_observations() -> None:
+    evidence = _evidence(
+        clean_observations=[
+            {
+                "timestamp_epoch_s": 100,
+                "check_mode": "log_only",
+                "check_observations": 1,
+                "check_declines": 0,
+                "api_revision": "b" * 40,
+                "worker_revision": "b" * 40,
+            }
+        ]
+    )
+    report = validate_promotion(evidence, now_epoch_s=100 + 24 * 60 * 60)
+    assert report.status == "pending"
+    assert "clean observations are not log_only contract checks" in report.reasons
+
+    evidence = _evidence()
+    evidence["clean_observations"][0]["interval_end_epoch_s"] = float("inf")
+    report = validate_promotion(evidence, now_epoch_s=100 + 24 * 60 * 60)
+    assert report.status == "pending"
+    assert "clean observations lack valid contiguous interval check counts" in report.reasons
+
+
+def test_promotion_keeps_malformed_clean_evidence_pending_without_raising() -> None:
+    evidence = _evidence(clean_since_epoch_s="not-a-timestamp")
+    report = validate_promotion(evidence, now_epoch_s=100 + 24 * 60 * 60)
+    assert report.status == "pending"
+    assert "missing clean-hour evidence" in report.reasons
+
+    evidence = _evidence()
+    evidence["clean_observations"][0]["check_declines"] = False
+    report = validate_promotion(evidence, now_epoch_s=100 + 24 * 60 * 60)
+    assert report.status == "pending"
+    assert "clean observations lack valid contract-check decline counts" in report.reasons
+
+
+def test_promotion_rejects_invalid_or_duplicate_affected_paths_without_raising() -> None:
+    report = validate_promotion(
+        _evidence(affected_supported_paths=["phone", {"unhashable": "path"}]),
+        now_epoch_s=100 + 24 * 60 * 60,
+    )
+    assert report.status == "pending"
+    assert "affected supported paths must be unique nonempty strings" in report.reasons
+
+    report = validate_promotion(
+        _evidence(affected_supported_paths=["phone", "phone"]),
+        now_epoch_s=100 + 24 * 60 * 60,
+    )
+    assert report.status == "pending"
+    assert "affected supported paths must be unique nonempty strings" in report.reasons
 
 
 def test_promotion_requires_bounded_replay_and_measured_canary_fields() -> None:
@@ -170,4 +241,13 @@ def test_promotion_requires_bounded_replay_and_measured_canary_fields() -> None:
     assert (
         "replay is not base/candidate bound or does not cover its bounded inputs" in report.reasons
     )
+    assert "canary lacks measured export success at candidate revisions" in report.reasons
+
+
+@pytest.mark.parametrize("duration", [float("nan"), float("inf"), float("-inf")])
+def test_promotion_rejects_non_finite_export_measurements(duration) -> None:
+    evidence = _evidence()
+    evidence["canary_evidence"][0]["export_duration_s"] = duration
+    report = validate_promotion(evidence, now_epoch_s=100 + 24 * 60 * 60)
+    assert report.status == "pending"
     assert "canary lacks measured export success at candidate revisions" in report.reasons

@@ -7,6 +7,7 @@ not read settings or feature flags, so an in-flight job cannot change policy.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -170,8 +171,14 @@ def validate_promotion(
     if evidence.get("newly_blocking_declines") != 0:
         reasons.append("candidate newly blocks a successful captured job")
     affected = evidence.get("affected_supported_paths")
-    if not isinstance(affected, list) or not affected:
-        reasons.append("missing affected supported paths")
+    valid_affected_paths = (
+        isinstance(affected, list)
+        and bool(affected)
+        and all(isinstance(path, str) and path.strip() for path in affected)
+        and len(set(affected)) == len(affected)
+    )
+    if not valid_affected_paths:
+        reasons.append("affected supported paths must be unique nonempty strings")
     deployment_started = evidence.get("deployment_started_epoch_s")
     clean_since = evidence.get("clean_since_epoch_s")
     now = int(time.time()) if now_epoch_s is None else now_epoch_s
@@ -180,36 +187,54 @@ def validate_promotion(
         and isinstance(deployment_started, int)
         and deployment_started >= 0
     )
-    if isinstance(clean_since, bool) or not isinstance(clean_since, int) or clean_since < 0:
+    valid_clean_since = (
+        not isinstance(clean_since, bool) and isinstance(clean_since, int) and clean_since >= 0
+    )
+    if not valid_clean_since:
         reasons.append("missing clean-hour evidence")
     elif now - clean_since < 24 * 60 * 60:
         reasons.append("fewer than 24 clean hours")
     elif not valid_deployment or clean_since < deployment_started:
         reasons.append("clean window predates candidate deployment")
     observations = evidence.get("clean_observations")
-    if not isinstance(observations, list) or len(observations) < 2:
+    if not isinstance(observations, list) or not observations:
         reasons.append("missing clean observations")
     else:
-        timestamps: list[int] = []
+        intervals: list[tuple[int, int]] = []
+        total_observations = 0
         for observation in observations:
-            if not isinstance(observation, Mapping) or observation.get("check_mode") != LOG_ONLY:
+            if (
+                not isinstance(observation, Mapping)
+                or observation.get("check_mode") != LOG_ONLY
+                or observation.get("stream_complete") is not True
+            ):
                 reasons.append("clean observations are not log_only contract checks")
                 break
-            timestamp = observation.get("timestamp_epoch_s")
+            interval_start = observation.get("interval_start_epoch_s")
+            interval_end = observation.get("interval_end_epoch_s")
             count = observation.get("check_observations")
             if (
-                isinstance(timestamp, bool)
-                or not isinstance(timestamp, int)
-                or timestamp < 0
-                or timestamp > now
+                isinstance(interval_start, bool)
+                or not isinstance(interval_start, int)
+                or isinstance(interval_end, bool)
+                or not isinstance(interval_end, int)
+                or interval_start < 0
+                or interval_end <= interval_start
+                or interval_end > now
+                or (valid_deployment and interval_start < deployment_started)
                 or isinstance(count, bool)
                 or not isinstance(count, int)
-                or count <= 0
+                or count < 0
             ):
-                reasons.append("clean observations lack valid timestamped check counts")
+                reasons.append("clean observations lack valid contiguous interval check counts")
                 break
-            timestamps.append(timestamp)
-            if observation.get("check_declines") != 0:
+            intervals.append((interval_start, interval_end))
+            total_observations += count
+            declines = observation.get("check_declines")
+            if isinstance(declines, bool) or not isinstance(declines, int) or declines < 0:
+                reasons.append("clean observations lack valid contract-check decline counts")
+                break
+            if declines != 0:
                 reasons.append("clean window contains contract-check declines")
                 break
             if (
@@ -218,12 +243,17 @@ def validate_promotion(
             ):
                 reasons.append("clean observations do not match candidate revisions")
                 break
-        if timestamps and (
-            min(timestamps) > clean_since
-            or max(timestamps) < clean_since + 24 * 60 * 60
-            or (valid_deployment and min(timestamps) < deployment_started)
-        ):
-            reasons.append("clean observations do not cover the full 24-hour window")
+        if intervals and valid_clean_since:
+            intervals.sort()
+            contiguous = intervals[0][0] == clean_since and all(
+                previous[1] == current[0] for previous, current in zip(intervals, intervals[1:])
+            )
+            if (
+                not contiguous
+                or intervals[-1][1] < clean_since + 24 * 60 * 60
+                or total_observations <= 0
+            ):
+                reasons.append("clean observations do not cover one continuous 24-hour stream")
     canary_evidence = evidence.get("canary_evidence")
     if not isinstance(canary_evidence, list) or not canary_evidence:
         reasons.append("missing measured canary evidence")
@@ -233,7 +263,7 @@ def validate_promotion(
             for item in canary_evidence
             if isinstance(item, Mapping) and isinstance(item.get("path"), str)
         }
-        for path in affected if isinstance(affected, list) else ():
+        for path in affected if valid_affected_paths else ():
             item = by_path.get(path)
             if (
                 not isinstance(item, Mapping)
@@ -242,6 +272,7 @@ def validate_promotion(
                 or item.get("worker_revision") != candidate_sha
                 or not isinstance(item.get("export_duration_s"), (int, float))
                 or isinstance(item.get("export_duration_s"), bool)
+                or not math.isfinite(item.get("export_duration_s"))
                 or item.get("export_duration_s") <= 0
                 or isinstance(item.get("frame_count"), bool)
                 or not isinstance(item.get("frame_count"), int)

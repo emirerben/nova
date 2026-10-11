@@ -178,6 +178,7 @@ def select_best_parts(
     target_duration_s: float | None = None,
     cap_duration_s: float = MAX_BEST_PARTS_DURATION_S,
     minimum_duration_s: Mapping[str, float] | None = None,
+    maximum_duration_s: Mapping[str, float] | None = None,
     minimum_total_duration_s: float | None = None,
 ) -> BestPartsResult:
     """Choose every source's strongest valid window and allocate its duration.
@@ -189,8 +190,10 @@ def select_best_parts(
     cap = _number(cap_duration_s)
     cap = max(0.0, cap if cap is not None else MAX_BEST_PARTS_DURATION_S)
     minimums = minimum_duration_s or {}
+    maximums = maximum_duration_s or {}
     selected: list[BestPart] = []
     raw_capacities: list[float] = []
+    allocation_maxima: list[float] = []
     unusable_ids: list[str] = []
     for source in sources:
         media_id, duration, _analysis = _source_fields(source)
@@ -204,7 +207,14 @@ def select_best_parts(
             continue
         selected.append(part)
         raw_capacities.append(duration)
-    capacities = [part.source_end_s - part.source_start_s for part in selected]
+        requested_maximum = _number(maximums.get(media_id))
+        allocation_maxima.append(
+            duration if requested_maximum is None else min(duration, max(0.0, requested_maximum))
+        )
+    capacities = [
+        min(part.source_end_s - part.source_start_s, allocation_maximum)
+        for part, allocation_maximum in zip(selected, allocation_maxima, strict=True)
+    ]
     floors = [
         min(capacity, max(MIN_INCLUDED_PART_S, _number(minimums.get(part.media_id)) or 0.0))
         for part, capacity in zip(selected, capacities, strict=True)
@@ -229,7 +239,7 @@ def select_best_parts(
     # This is a selector safety floor, not a replacement for a creator target.
     # An explicit target remains exactly that target, including one below 3s.
     if requested_raw is None and minimum_total is not None and minimum_total > 0:
-        raw_capacity = round(sum(raw_capacities), 3)
+        raw_capacity = round(sum(allocation_maxima), 3)
         if raw_capacity < minimum_total - 1e-8:
             conflicts.append(
                 BestPartsConflict(
@@ -243,16 +253,16 @@ def select_best_parts(
         elif not unusable_ids and capacity < minimum_total - 1e-8:
             requested = minimum_total
             capacity = raw_capacity
-            floors = [part.duration_s for part in selected]
+            floors = list(capacities)
             extend_for_minimum = True
     # A proven creator target can use unused capacity around the chosen best
     # moment. The moment chooses *where* the window starts; it is not a hidden
     # cap on an otherwise achievable target.
     if requested_raw is not None and not unusable_ids and requested_raw > capacity + 1e-8:
-        raw_capacity = round(sum(raw_capacities), 3)
-        if requested_raw <= min(raw_capacity, cap) + 1e-8:
-            capacity = raw_capacity
-            floors = [part.duration_s for part in selected]
+        allocation_capacity = round(sum(allocation_maxima), 3)
+        if requested_raw <= min(allocation_capacity, cap) + 1e-8:
+            capacity = allocation_capacity
+            floors = list(capacities)
             extend_for_target = True
     if requested_raw is not None and requested_raw <= 0:
         conflicts.append(
@@ -308,7 +318,7 @@ def select_best_parts(
             tuple(selected), round(requested, 3), 0.0, capacity, tuple(conflicts)
         )
     allocation_capacities = (
-        raw_capacities if (extend_for_minimum or extend_for_target) else capacities
+        allocation_maxima if (extend_for_minimum or extend_for_target) else capacities
     )
     durations = _fair_durations(allocation_capacities, actual_target, floors)
     if extend_for_minimum or extend_for_target:

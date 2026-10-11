@@ -407,8 +407,10 @@ def test_the_voice_clip_is_not_counted_against_the_readable_floor() -> None:
     # 201 pictures need 20.1 s at the included-source floor.  The continuous
     # voice track must not be counted as another picture.
     assert collect_conflicts(strategy, _brief(_timing(24)), snapshot, cap) == []
-    tight = strategy.model_copy(update={"target_duration_s": 20})
-    kinds = [c.kind for c in collect_conflicts(tight, _brief(_timing(20)), snapshot, cap)]
+    fits = strategy.model_copy(update={"target_duration_s": 20})
+    assert collect_conflicts(fits, _brief(_timing(20)), snapshot, cap) == []
+    tight = strategy.model_copy(update={"target_duration_s": 18})
+    kinds = [c.kind for c in collect_conflicts(tight, _brief(_timing(18)), snapshot, cap)]
     assert kinds == ["duration_vs_count"]
 
 

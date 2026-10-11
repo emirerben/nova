@@ -1675,7 +1675,8 @@ def _song_alignment_capacity_s(snapshot: Mapping[str, Any] | None, rows: list[An
         if end is None:
             end = _number(placement.get("song_end_s"))
         if start is None:
-            start = _number(placement.get("delta_s"))
+            raw_delta = placement.get("delta_s")
+            start = 0.0 if raw_delta == 0 else _number(raw_delta)
         if end is None and start is not None:
             duration = _number(placement.get("duration_s")) or row_durations.get(
                 str(placement.get("media_id"))
@@ -1710,9 +1711,15 @@ def _natural_capacity_s(
                     _number(row.get("duration_s")) or 0 for row in rows if isinstance(row, Mapping)
                 )
                 return owner, min(end - start, raw_capacity or end - start), True
-        duration = _song_alignment_capacity_s(snapshot, rows) or _snapshot_number(
+        placed_duration = _song_alignment_capacity_s(snapshot, rows) or _snapshot_number(
+            snapshot, ("song_placement", "duration_s")
+        )
+        if strategy.get("song_sync") == "lipsync" and placed_duration is None:
+            # The recording's full length says nothing about the placed takes.
+            # Wait for source-backed alignment instead of offering invented timing.
+            return None
+        duration = placed_duration or _snapshot_number(
             snapshot,
-            ("song_placement", "duration_s"),
             ("user_song", "duration_s"),
             ("song", "duration_s"),
             ("song_analysis", "duration_s"),
@@ -1778,7 +1785,6 @@ def _length_vs_natural(
     *,
     snapshot: Mapping[str, Any] | None,
 ) -> UnresolvedChoice | None:
-    del cap
     durations, requirement_ids, quoted = _requested_durations(brief)
     if len(set(durations)) != 1 or not durations:
         return None
@@ -1791,12 +1797,23 @@ def _length_vs_natural(
     if natural is None:
         return None
     owner, capacity, can_trim = natural
+    source_capacity = capacity
+    if capacity > cap.max_duration_s:
+        if not can_trim:
+            # There is no executable alternative until a supported source
+            # window is known. Never offer a value the public schema rejects.
+            return None
+        capacity = cap.max_duration_s
     asked = durations[0]
     # A ten-percent tolerance avoids a needless card for ordinary source timing
     # rounding (e.g. a 24.0s voice rendered as 23.8s).
     if abs(asked - capacity) <= max(0.01, asked * 0.10):
         return None
     if owner == "footage" and asked < 3 <= capacity:
+        from app.services.length_policy import creator_duration_matches  # noqa: PLC0415
+
+        if creator_duration_matches(3, asked):
+            return None
         capacity = 3.0
         can_trim = False
     if owner == "footage" and 3 <= asked < capacity:
@@ -1816,6 +1833,11 @@ def _length_vs_natural(
         if owner == "voiceover"
         else f"The video follows the {source} without reuse or a silent extension."
     )
+    if source_capacity > capacity:
+        natural_description = (
+            f"Use a supported {capacity_s}-second window of the {source}; "
+            "the remaining source is left out."
+        )
     options = [
         _option(
             OPT_ACCEPT_NATURAL,
@@ -1898,7 +1920,10 @@ def _source_coverage(
     )
     if sources and raw_duration < 3:
         codes.add("snapshot_min_duration")
-    if len(sources) > 80:
+    source_limit = envelope.get("max_source_count", 80)
+    if type(source_limit) is not int or not 1 <= source_limit <= 80:
+        source_limit = 80
+    if len(sources) > source_limit:
         codes.add("source_count_limit")
     if envelope.get("target_duration_s") is None and "insufficient_capacity" in codes:
         codes.add("natural_source_capacity")
@@ -1915,10 +1940,25 @@ def _source_coverage(
             "source_count_limit",
             "natural_source_capacity",
             "authored_hold_coverage",
+            "single_hero_order_conflict",
+            "insufficient_media",
+            "duration_out_of_bounds",
         }
     ):
         return None
-    if "authored_hold_coverage" in codes:
+    if "single_hero_order_conflict" in codes:
+        reason = (
+            "The selected order conflicts with the single-hero composition. "
+            "Choose the hero first, followed by its supporting clips."
+        )
+        label = "Update the selected clips"
+    elif "insufficient_media" in codes or "duration_out_of_bounds" in codes:
+        reason = (
+            "Choose a hero clip with at least 3 seconds and usable supporting clips "
+            "so the hero can keep at least 60% of this edit."
+        )
+        label = "Update the selected clips"
+    elif "authored_hold_coverage" in codes:
         requested = envelope.get("target_duration_s")
         reason = (
             f"The requested {requested:g} seconds cannot include these clips with their "
@@ -1927,7 +1967,7 @@ def _source_coverage(
         label = "Update the selected clips"
     elif "source_count_limit" in codes:
         reason = (
-            "Choose at most 80 clips for this edit so the portable recipe can include each one."
+            f"Choose at most {source_limit} clips for this edit so the recipe can include each one."
         )
         label = "Choose fewer clips"
     elif "natural_source_capacity" in codes:
@@ -1968,7 +2008,9 @@ def _source_coverage(
                 aliases=("update footage", "add footage", "choose fewer clips"),
             ),
         ),
-        input_digest=_digest(CONFLICT_SOURCE_COVERAGE, envelope.get("sources"), sorted(codes)),
+        input_digest=_digest(
+            CONFLICT_SOURCE_COVERAGE, envelope.get("sources"), source_limit, sorted(codes)
+        ),
     )
 
 

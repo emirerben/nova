@@ -164,6 +164,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -172,28 +174,42 @@ jobs:
       - name: Install offline replay dependencies
         working-directory: src/apps/api
         run: pip install -e '.[dev]'
+      - name: Resolve immutable comparison base
+        id: comparison-base
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+          else
+            base_sha="$(git merge-base origin/main HEAD)"
+          fi
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::could not resolve an immutable replay base SHA"
+            exit 1
+          }
+          echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
       - name: Export actual base verifier outcomes
         env:
-          BASE_SHA: ab315dbbc22c28e04e68e8f37b38980a3ad572c9
+          BASE_SHA: ${{ steps.comparison-base.outputs.sha }}
         run: |
           mkdir -p test-results/kri-499/base
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
           git archive "$BASE_SHA" | tar -x -C test-results/kri-499/base
           PYTHONPATH="$GITHUB_WORKSPACE/test-results/kri-499/base/src/apps/api" \
-            STORAGE_BUCKET=replay DATABASE_URL=postgresql://replay:replay@localhost/replay \
+            STORAGE_BUCKET=replay DATABASE_URL=postgresql://replay@localhost/replay \
             python3 scripts/ci/replay-creator-contracts.py \
               --snapshot scripts/ci/fixtures/kri492-creator-contracts.json \
-              --candidate-sha "$BASE_SHA" --export-outcomes \
+              --candidate-sha "$BASE_SHA" --base-sha "$BASE_SHA" --export-outcomes \
               --report test-results/kri-499/base-outcomes.json
       - name: Replay candidate creator contracts with enforced duration policy
         env:
           PYTHONPATH: ${{ github.workspace }}/src/apps/api
           STORAGE_BUCKET: replay
-          DATABASE_URL: postgresql://replay:replay@localhost/replay
+          DATABASE_URL: postgresql://replay@localhost/replay
         run: |
           python3 scripts/ci/replay-creator-contracts.py \
             --snapshot scripts/ci/fixtures/kri492-creator-contracts.json \
             --baseline test-results/kri-499/base-outcomes.json \
+            --base-sha "${{ steps.comparison-base.outputs.sha }}" \
             --candidate-sha "${{ github.sha }}" \
             --report test-results/kri-499/replay-report.json
       - uses: actions/upload-artifact@v4
@@ -341,7 +357,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/src/apps/api
           STORAGE_BUCKET: replay
-          DATABASE_URL: postgresql://replay:replay@localhost/replay
+          DATABASE_URL: postgresql://replay@localhost/replay
           KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}
         run: |
           python3 -m pytest tests/services/test_length_policy_state.py \

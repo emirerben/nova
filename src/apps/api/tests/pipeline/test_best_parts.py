@@ -151,6 +151,25 @@ def test_explicit_target_extends_the_selected_best_moment_using_raw_capacity():
     assert result.parts[0].reason == "best_moment_extended_for_target"
 
 
+def test_per_source_maximum_limits_allocation_but_uses_physical_source_coordinates():
+    result = select_best_parts(
+        [source("late", 10, [{"start_s": 7, "end_s": 10, "energy": 9}])],
+        target_duration_s=3,
+        maximum_duration_s={"late": 3},
+    )
+
+    assert result.ok
+    assert result.capacity_s == 3
+    assert [(part.source_start_s, part.source_end_s) for part in result.parts] == [(7, 10)]
+
+    over_budget = select_best_parts(
+        [source("late", 10, [{"start_s": 7, "end_s": 10, "energy": 9}])],
+        target_duration_s=4,
+        maximum_duration_s={"late": 3},
+    )
+    assert [conflict.code for conflict in over_budget.conflicts] == ["insufficient_capacity"]
+
+
 def unified_clip(media_id, duration, moments):
     return UnifiedClip(
         media_id=media_id,

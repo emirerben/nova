@@ -1,6 +1,6 @@
 import pytest
 
-from app.pipeline.unified_montage import UnifiedClip
+from app.pipeline.unified_montage import UnifiedClip, plan_unified_montage
 from app.services.length_planning import build_length_plan, read_length_plan
 
 
@@ -97,3 +97,174 @@ def test_reader_rejects_non_finite_or_missing_stored_duration(duration: float | 
     }
     with pytest.raises(ValueError, match="duration"):
         read_length_plan(envelope, [_clip("a")])
+
+
+def test_source_capacity_inside_creator_tolerance_uses_exact_available_windows() -> None:
+    plan = build_length_plan(
+        {"edit_format": "montage", "audio_strategy": "original_audio"},
+        {"clip_assignments": [{"media_id": "a", "duration_s": 9.5}]},
+        creator_target_s=10.0,
+    )
+    assert plan["target_duration_s"] == 10.0
+    assert plan["owner"] == "creator"
+    assert plan["conflicts"] == []
+    assert plan["windows"][0]["source_end_s"] == 9.5
+
+
+def test_snapshot_minimum_inside_creator_tolerance_preserves_requested_target() -> None:
+    plan = build_length_plan(
+        {"edit_format": "montage", "audio_strategy": "original_audio"},
+        {"clip_assignments": [{"media_id": "a", "duration_s": 10.0}]},
+        creator_target_s=2.9,
+    )
+    assert plan["target_duration_s"] == 2.9
+    assert plan["conflicts"] == []
+    assert plan["windows"][0]["source_end_s"] == 3.0
+
+
+def test_mixed_media_plan_caps_allocation_without_losing_late_video_coordinates() -> None:
+    plan = build_length_plan(
+        {
+            "edit_format": "montage",
+            "audio_strategy": "original_audio",
+            "mixed_media_timing": {
+                "image_hold": "very_fast",
+                "video_hold": "longer",
+                "boundary_style": "cut",
+            },
+        },
+        {
+            "clip_assignments": [
+                {
+                    "media_id": "video",
+                    "generation": "1",
+                    "duration_s": 10,
+                    "analysis": {"best_moments": [{"start_s": 7, "end_s": 10, "energy": 9}]},
+                },
+                {"media_id": "still", "generation": "1", "kind": "image", "duration_s": None},
+            ]
+        },
+        creator_target_s=3.65,
+    )
+
+    assert plan["conflicts"] == []
+    assert plan["sources"][0]["duration_s"] == 10
+    assert plan["capacity_raw_s"] == 3.65
+    windows = [
+        (window["media_id"], window["source_start_s"], window["source_end_s"])
+        for window in plan["windows"]
+    ]
+    assert windows == [
+        ("video", 7.0, 10.0),
+        ("still", 0.0, 0.65),
+    ]
+    compiled = plan_unified_montage(
+        [_clip("video", duration_s=10), _clip("still", kind="image", duration_s=0)],
+        strategy={
+            "mixed_media_timing": {
+                "image_hold": "very_fast",
+                "video_hold": "longer",
+                "boundary_style": "cut",
+            }
+        },
+        approved_length_plan=plan,
+    )
+    compiled_windows = [
+        (cut.media_id, cut.source_start_s, cut.source_end_s) for cut in compiled.snapshot.fast_cuts
+    ]
+    assert compiled_windows == windows
+    over_budget = build_length_plan(
+        {
+            "edit_format": "montage",
+            "audio_strategy": "original_audio",
+            "mixed_media_timing": {
+                "image_hold": "very_fast",
+                "video_hold": "longer",
+                "boundary_style": "cut",
+            },
+        },
+        {
+            "clip_assignments": [
+                {"media_id": "video", "duration_s": 10},
+                {"media_id": "still", "kind": "image", "duration_s": None},
+            ]
+        },
+        creator_target_s=8,
+    )
+    assert over_budget["capacity_raw_s"] == 3.65
+    assert "insufficient_capacity" in [conflict["code"] for conflict in over_budget["conflicts"]]
+
+
+def test_single_hero_plan_preserves_policy_order_and_blocks_over_budget_or_source_count() -> None:
+    strategy = {"edit_format": "single_hero", "audio_strategy": "original_audio"}
+    snapshot = {
+        "clip_assignments": [
+            {
+                "media_id": "hero",
+                "generation": "1",
+                "duration_s": 20,
+                "analysis": {
+                    "hook_score": 9,
+                    "best_moments": [{"start_s": 1, "end_s": 1.2, "energy": 9}],
+                },
+            },
+            {
+                "media_id": "support",
+                "generation": "1",
+                "duration_s": 10,
+                "analysis": {"hook_score": 4},
+            },
+        ]
+    }
+
+    plan = build_length_plan(strategy, snapshot, creator_target_s=20)
+
+    assert plan["conflicts"] == []
+    assert plan["max_source_count"] == 4
+    assert [window["media_id"] for window in plan["windows"]] == ["hero", "support"]
+    assert [window["source_end_s"] - window["source_start_s"] for window in plan["windows"]] == [
+        14.0,
+        6.0,
+    ]
+    compiled = plan_unified_montage(
+        [_clip("hero", duration_s=20), _clip("support", duration_s=10)],
+        strategy=strategy,
+        approved_length_plan=plan,
+    )
+    assert compiled.duration_s == 20
+
+    tolerance_floor = build_length_plan(strategy, snapshot, creator_target_s=3)
+    assert tolerance_floor["target_duration_s"] == 3
+    assert tolerance_floor["conflicts"] == []
+    assert tolerance_floor["capacity_raw_s"] == 3.1
+    floor_durations = [
+        window["source_end_s"] - window["source_start_s"] for window in tolerance_floor["windows"]
+    ]
+    assert floor_durations == [3.0, 0.1]
+
+    over_budget = build_length_plan(strategy, snapshot, creator_target_s=40)
+    assert "insufficient_capacity" in [conflict["code"] for conflict in over_budget["conflicts"]]
+    constrained_hero = build_length_plan(
+        strategy,
+        {
+            "clip_assignments": [
+                {"media_id": "hero", "duration_s": 5, "hook_score": 9},
+                {"media_id": "support", "duration_s": 20, "hook_score": 4},
+            ]
+        },
+        creator_target_s=20,
+    )
+    assert constrained_hero["capacity_raw_s"] == pytest.approx(8.333)
+    assert "insufficient_capacity" in [
+        conflict["code"] for conflict in constrained_hero["conflicts"]
+    ]
+    too_many = build_length_plan(
+        strategy,
+        {
+            "clip_assignments": [
+                {"media_id": f"clip-{index}", "duration_s": 10, "hook_score": index}
+                for index in range(5)
+            ]
+        },
+    )
+    assert "source_count_limit" in [conflict["code"] for conflict in too_many["conflicts"]]

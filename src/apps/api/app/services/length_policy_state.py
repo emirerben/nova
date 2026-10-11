@@ -6,17 +6,21 @@ import math
 from collections.abc import Mapping
 from typing import Any, Literal
 
-import structlog
 from pydantic import BaseModel, ConfigDict
 
 from app.services.contract_check_rollout import GenerationCheckRollout, run_contract_check
 from app.services.creator_render_contract import CreatorRenderContractError
-from app.services.length_policy import LengthOwner, length_owner, natural_length_owner
+from app.services.length_check_observation import emit_length_check_observation
+from app.services.length_policy import (
+    LengthOwner,
+    creator_duration_matches,
+    length_owner,
+    natural_length_owner,
+)
 
 LENGTH_POLICY_FIELD = "creator_length_policy"
 LENGTH_POLICIES_FIELD = "creator_length_policies"
 DURATION_CHECK = "creator_duration"
-log = structlog.get_logger(__name__)
 
 
 class LengthPolicyState(BaseModel):
@@ -92,7 +96,7 @@ def check_creator_duration(
     def verify() -> None:
         if not math.isfinite(actual_duration_s) or actual_duration_s <= 0:
             raise decline_type("This export has no valid measured duration.")
-        if abs(actual_duration_s - requested) > requested * 0.10 + 1e-9:
+        if not creator_duration_matches(actual_duration_s, requested):
             raise decline_type(
                 f"You asked for {requested:g} seconds; this edit is {actual_duration_s:g} seconds."
             )
@@ -121,7 +125,7 @@ def check_creator_duration(
         "outcome": result.outcome,
         "blocking": result.blocking,
     }
-    log.info("creator_length_check", **observation)
+    emit_length_check_observation(check_mode=result.mode, outcome=result.outcome)
     if result.blocking:
         raise decline_type(result.decline_message)
     return observation

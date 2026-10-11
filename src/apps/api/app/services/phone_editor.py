@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -332,7 +333,15 @@ def _rebind_editor_render_contract(
         # number from the submitted slots (or guided revision); the prior
         # variant duration is deliberately not authority for a trim.
         duration = prep.get("expected_duration_s")
-        if length_policy is None and isinstance(duration, (int, float)) and duration > 0:
+        # A validated timeline Save is creator-authored timing for this new
+        # generation. It supersedes the previous target without changing a
+        # sibling variant's original contract or policy stamp.
+        if (
+            not isinstance(duration, bool)
+            and isinstance(duration, (int, float))
+            and math.isfinite(duration)
+            and duration > 0
+        ):
             changes["duration_s"] = float(duration)
         slots = (prep.get("guided_revision") or {}).get("segments") or []
         order = tuple(

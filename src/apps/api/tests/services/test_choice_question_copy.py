@@ -90,9 +90,10 @@ def _texts() -> dict[str, str]:
     plain = CreativeStrategy(
         edit_format="montage", target_duration_s=15, target_duration_requested=True
     )
-    # Included footage has the founder-approved 100 ms floor.  151 clips make
-    # the 15-second request infeasible without relying on the retired 0.8s floor.
-    add("duration_vs_count", plain, _brief(_timing(15)), _rows(151, seconds=3.0))
+    # Included footage has the founder-approved 100 ms floor.  41 clips need
+    # 4.1 seconds, which exceeds a 3-second request's 10% allowance.
+    count_strategy = plain.model_copy(update={"target_duration_s": 3})
+    add("duration_vs_count", count_strategy, _brief(_timing(3)), _rows(41, seconds=3.0))
     add(
         "order_basis",
         CreativeStrategy(edit_format="montage", ordering_choice="chronological"),

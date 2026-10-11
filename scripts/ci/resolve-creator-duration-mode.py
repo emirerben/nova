@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 
 Mode = Literal["log_only", "enforce"]
-ENVIRONMENT_KEY = "CREATOR_DURATION_CHECK_MODE"
+CHECK_MODE_SETTING = "CREATOR_DURATION_CHECK_MODE"
 VALID_MODES = {"log_only", "enforce"}
 
 
@@ -50,10 +50,10 @@ def resolve_mode(machines: Sequence[object], *, requested_mode: str | None) -> M
         if environment is None:
             observed.append(None)
         elif isinstance(environment, Mapping):
-            if ENVIRONMENT_KEY not in environment:
+            if CHECK_MODE_SETTING not in environment:
                 observed.append(None)
             else:
-                value = environment[ENVIRONMENT_KEY]
+                value = environment[CHECK_MODE_SETTING]
                 observed.append(value if isinstance(value, str) else "<malformed>")
         else:
             observed.append("<malformed>")

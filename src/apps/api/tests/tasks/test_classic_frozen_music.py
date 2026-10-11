@@ -65,14 +65,60 @@ def test_selected_classic_music_clones_catalog_track_and_preserves_approved_wind
     assert catalog_track.track_config == {"best_start_s": 1.0, "best_end_s": 45.0}
     assert catalog_track.beat_timestamps_s == [1.0]
 
-    # Live rank-one sections and footage capacity cannot move an approved range.
+    # An absent target keeps the creator-approved section exactly as approved.
     window = gb._effective_music_window(
-        track, requested_start_s=0.0, requested_duration_s=2.0, fallback_footage_s=3.0
+        track, requested_start_s=0.0, requested_duration_s=None, fallback_footage_s=3.0
     )
     assert window["validated"] is True
     assert window["start_s"] == pytest.approx(12.25)
     assert window["end_s"] == pytest.approx(31.75)
     assert window["duration_s"] == pytest.approx(19.5)
+
+
+def test_selected_classic_music_trims_the_approved_section_to_an_accepted_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_track = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000111",
+        title="Live title",
+        artist="Live artist",
+        duration_s=90.0,
+        beat_timestamps_s=[1.0],
+        track_config={"best_start_s": 1.0, "best_end_s": 45.0},
+        audio_gcs_path="music/00000000-0000-0000-0000-000000000111/audio.mp3",
+    )
+    monkeypatch.setattr(gb, "_sync_session", lambda: _catalog(catalog_track))
+    _status, track = gb._approved_licensed_music_track(_snapshot(_frozen_music()), job_id="j1")
+
+    window = gb._effective_music_window(
+        track, requested_start_s=0.0, requested_duration_s=10.0, fallback_footage_s=3.0
+    )
+
+    assert window["validated"] is True
+    assert window["start_s"] == pytest.approx(12.25)
+    assert window["end_s"] == pytest.approx(22.25)
+    assert window["duration_s"] == pytest.approx(10.0)
+
+
+def test_selected_classic_music_rejects_a_target_longer_than_the_approved_section(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_track = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000111",
+        title="Live title",
+        artist="Live artist",
+        duration_s=90.0,
+        beat_timestamps_s=[1.0],
+        track_config={"best_start_s": 1.0, "best_end_s": 45.0},
+        audio_gcs_path="music/00000000-0000-0000-0000-000000000111/audio.mp3",
+    )
+    monkeypatch.setattr(gb, "_sync_session", lambda: _catalog(catalog_track))
+    _status, track = gb._approved_licensed_music_track(_snapshot(_frozen_music()), job_id="j1")
+
+    with pytest.raises(ValueError, match="cannot satisfy"):
+        gb._effective_music_window(
+            track, requested_start_s=0.0, requested_duration_s=22.0, fallback_footage_s=3.0
+        )
 
 
 def test_fallback_footage_suppresses_classic_music_resolution(
@@ -145,3 +191,26 @@ def test_approved_best_parts_decisions_accepts_the_real_source_identity_shape() 
             "reason": "approved",
         }
     ]
+
+
+def test_creator_target_within_tolerance_can_use_the_full_approved_section(monkeypatch):
+    catalog_track = SimpleNamespace(
+        id=_frozen_music()["track_id"],
+        title="Live",
+        artist="Live",
+        duration_s=60,
+        beat_timestamps_s=[],
+        track_config={},
+        audio_gcs_path="music/audio.mp3",
+    )
+    monkeypatch.setattr(gb, "_sync_session", lambda: _catalog(catalog_track))
+    _, track = gb._approved_licensed_music_track(_snapshot(_frozen_music()), job_id="j")
+    window = gb._effective_music_window(
+        track,
+        requested_start_s=0,
+        requested_duration_s=20,
+        fallback_footage_s=40,
+    )
+    assert window["start_s"] == 12.25
+    assert window["end_s"] == 31.75
+    assert window["duration_s"] == 19.5

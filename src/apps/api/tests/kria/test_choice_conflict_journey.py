@@ -322,7 +322,7 @@ async def test_the_answered_length_wins_whatever_the_model_emits_next(
 ) -> None:
     """P1-B: iOS sends the label as the message, so an obedient model emits 24 while the
     brief still says 15; a stubborn one re-emits 15; another invents 18. All three mint
-    the draft with the ANSWERED length and green receipts (no "Partly: 15 seconds")."""
+    the draft with the ANSWERED length. A draft has no executed-duration receipt yet."""
     user_id, thread_id, _ = _project(monkeypatch, emit_after=emit_after)
     await _say(user_id, thread_id, PROMPT)
     (question,) = _questions(thread_id)
@@ -332,8 +332,7 @@ async def test_the_answered_length_wins_whatever_the_model_emits_next(
     strategy = _draft_strategy(_head_draft(thread_id))
     assert strategy["target_duration_s"] == 4.1
     assert strategy["choice_answers"][0]["option"] == "extend"
-    receipt = _receipts(thread_id)["r1"]
-    assert receipt["status"] == "met", receipt
+    assert "r1" not in _receipts(thread_id)
     assert len(_questions(thread_id)) == 1
 
 
@@ -350,7 +349,7 @@ async def test_the_answered_clip_subset_wins_whatever_the_model_emits_next(
     assert result["status"] == "awaiting_approval"
     strategy = _draft_strategy(_head_draft(thread_id))
     assert strategy["target_duration_s"] == 3 and len(strategy["selected_media_ids"]) == 30
-    assert _receipts(thread_id)["r1"]["status"] == "met"
+    assert "r1" not in _receipts(thread_id)
 
 
 @pytest.mark.asyncio

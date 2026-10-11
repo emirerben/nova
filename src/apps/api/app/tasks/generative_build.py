@@ -128,6 +128,14 @@ from app.services.job_phases import (
     record_sub_phase,
 )
 from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX, owned_job_output_path
+from app.services.single_hero_policy import (
+    _SINGLE_HERO_MAX_SUPPORTING_CLIPS,
+    _SINGLE_HERO_MIN_CLIPS,
+    _SINGLE_HERO_MIN_HERO_RATIO,
+    SingleHeroPolicyError,
+    _build_single_hero_recipe,
+    _single_hero_order,
+)
 from app.services.speech_cleanup import SpeechCleanupFailure
 from app.services.speech_cleanup_outcome import (
     # Moved to the service so device-export completion writes the same receipt.
@@ -420,26 +428,10 @@ _MIN_TALKING_HEAD_SPINE_WITH_BROLL_S = 2.0
 _SMART_MUSIC_CANDIDATE_LIMIT = 80
 _DAY_VLOG_MAX_TRANSITION_S = 0.2
 _DAY_VLOG_MIN_SHOTS = 2
-# Single-hero is intentionally a small, strict composition: one owned hero
-# clip plus at most three supporting cutaways.  The hero must occupy at least
-# 60% of the planned timeline; the explicit duration cap is the same product
-# ceiling used by the rest of the generative renderer.
-_SINGLE_HERO_MIN_CLIPS = 2
-_SINGLE_HERO_MAX_SUPPORTING_CLIPS = 3
-_SINGLE_HERO_MIN_HERO_RATIO = 0.60
-_SINGLE_HERO_MIN_HERO_DURATION_S = 3.0
 
 
 class DayVlogPolicyError(RuntimeError):
     """A day-vlog contract failure that must never downgrade to montage."""
-
-    def __init__(self, reason: str, message: str):
-        self.reason = reason
-        super().__init__(message)
-
-
-class SingleHeroPolicyError(RuntimeError):
-    """A single-hero contract failure that must never downgrade to montage."""
 
     def __init__(self, reason: str, message: str):
         self.reason = reason
@@ -457,131 +449,6 @@ class SlidePostPolicyError(RuntimeError):
     def __init__(self, reason: str, message: str):
         self.reason = reason
         super().__init__(message)
-
-
-def _single_hero_order(
-    clip_metas: list,
-    clip_id_to_local: dict[str, str],
-    clip_durations_s: dict[str, float] | None = None,
-) -> list[str]:
-    """Return a deterministic hero plus only positively-probed support clips.
-
-    Production callers pass the ingest probe map.  A missing, non-finite, or
-    non-positive duration is not usable footage for a strict single-hero
-    composition and is filtered before ranking, so the policy fails with the
-    stable ``insufficient_media`` reason instead of producing a zero-length
-    support slot.
-    """
-
-    durations = clip_durations_s
-    available = [
-        meta
-        for meta in clip_metas
-        if (
-            (clip_id := str(getattr(meta, "clip_id", "") or "")) in clip_id_to_local
-            and (
-                durations is None
-                or (
-                    isinstance(durations.get(clip_id), (int, float))
-                    and math.isfinite(float(durations[clip_id]))
-                    and float(durations[clip_id]) > 0.0
-                )
-            )
-        )
-    ]
-    ranked = sorted(
-        enumerate(available),
-        key=lambda pair: (-float(getattr(pair[1], "hook_score", 0.0) or 0.0), pair[0]),
-    )
-    return [
-        str(meta.clip_id)
-        for _, meta in ranked[: 1 + _SINGLE_HERO_MAX_SUPPORTING_CLIPS]
-        if str(getattr(meta, "clip_id", "") or "")
-    ]
-
-
-def _build_single_hero_recipe(
-    order: list[str],
-    *,
-    available_footage_s: float,
-    clip_durations_s: dict[str, float] | None = None,
-    max_duration_s: float,
-) -> dict:
-    """Build the strict one-hero/short-cutaway slot policy.
-
-    The hero is capped by the source duration and the overall duration is
-    reduced when necessary to preserve the 60% dominance invariant.  This
-    makes the policy explicit and prevents ``allow_slowdown_fill=False`` from
-    accidentally turning a short hero into a supporting clip at render time.
-    """
-
-    if len(order) < _SINGLE_HERO_MIN_CLIPS:
-        raise SingleHeroPolicyError(
-            "insufficient_media",
-            "single_hero requires one usable hero clip and at least one cutaway.",
-        )
-    durations = clip_durations_s or {}
-    hero_id = order[0]
-    hero_source_s = float(durations.get(hero_id, 0.0) or 0.0)
-    if hero_source_s < _SINGLE_HERO_MIN_HERO_DURATION_S:
-        raise SingleHeroPolicyError(
-            "insufficient_media",
-            "single_hero hero clip is too short for the minimum dominant duration.",
-        )
-    support_ids = order[1 : 1 + _SINGLE_HERO_MAX_SUPPORTING_CLIPS]
-    support_source_s = sum(max(0.0, float(durations.get(cid, 0.0) or 0.0)) for cid in support_ids)
-    if support_source_s <= 0:
-        raise SingleHeroPolicyError(
-            "insufficient_media",
-            "single_hero requires at least one usable supporting cutaway.",
-        )
-    target_total = min(float(available_footage_s), float(max_duration_s))
-    # A hero cannot dominate beyond its source; shrink the overall target to
-    # preserve hero dominance rather than stretching or silently downgrading.
-    target_total = min(target_total, hero_source_s / _SINGLE_HERO_MIN_HERO_RATIO)
-    if target_total <= 0:
-        raise SingleHeroPolicyError("insufficient_media", "single_hero has no usable duration.")
-    hero_duration = min(hero_source_s, max(_SINGLE_HERO_MIN_HERO_DURATION_S, target_total * 0.70))
-    support_total = target_total - hero_duration
-    if support_total <= 0 or hero_duration / target_total < _SINGLE_HERO_MIN_HERO_RATIO:
-        raise SingleHeroPolicyError(
-            "duration_out_of_bounds",
-            "single_hero could not preserve hero dominance.",
-        )
-    per_support = support_total / len(support_ids)
-    slots = []
-    for index, clip_id in enumerate(order[: 1 + _SINGLE_HERO_MAX_SUPPORTING_CLIPS]):
-        duration = hero_duration if index == 0 else per_support
-        slots.append(
-            {
-                "position": index + 1,
-                "target_duration_s": round(duration, 3),
-                "slot_type": "hero" if index == 0 else "cutaway",
-                "energy": 7.0 if index == 0 else 5.0,
-                "priority": 10 if index == 0 else 4,
-                "text_overlays": [],
-                "transition_in": "cut",
-                "transition_duration_s": 0.0,
-                "speed_factor": 1.0,
-            }
-        )
-    return {
-        "shot_count": len(slots),
-        "total_duration_s": round(sum(slot["target_duration_s"] for slot in slots), 3),
-        "hook_duration_s": round(hero_duration, 3),
-        "slots": slots,
-        "beat_timestamps_s": [],
-        "sync_style": "freeform",
-        "pacing_style": "medium",
-        "color_grade": "none",
-        "copy_tone": "creator-led",
-        "caption_style": "none",
-        "transition_style": "cut",
-        "creative_direction": "single hero with supporting cutaways",
-        "interstitials": [],
-        "required_clips_min": len(slots),
-        "required_clips_max": len(slots),
-    }
 
 
 def _validate_single_hero_steps(
@@ -3973,6 +3840,7 @@ def _run_generative_job_impl(
                         creator_resolved_clip_intents=creator_resolved_clip_intents,
                         creator_request=creator_request,
                         strict_day_vlog=True,
+                        approved_length_plan=_approved_length_plan_envelope(immutable_job_plan),
                     )
                 elif spec.get("archetype") == "single_hero":
                     result = _render_generative_variant(
@@ -4003,6 +3871,7 @@ def _run_generative_job_impl(
                         creator_resolved_clip_intents=creator_resolved_clip_intents,
                         creator_request=creator_request,
                         strict_single_hero=True,
+                        approved_length_plan=_approved_length_plan_envelope(immutable_job_plan),
                     )
                 else:
                     result = _render_generative_variant(
@@ -4036,6 +3905,7 @@ def _run_generative_job_impl(
                         speech_cleanup_fallback_reason=archetype_fallback_reason,
                         creator_resolved_clip_intents=creator_resolved_clip_intents,
                         creator_request=creator_request,
+                        approved_length_plan=_approved_length_plan_envelope(immutable_job_plan),
                     )
                 _raise_marked_snapshot_result_failure(
                     result,
@@ -17109,6 +16979,7 @@ def _run_regenerate_variant(
             log.info("generative_regenerate_cancelled_job_skipped", job_id=job_id)
             return
         all_candidates = job.all_candidates or {}
+        approved_length_plan = _approved_length_plan_envelope(job.assembly_plan or {})
         regen_cloud_evidence = _cloud_evidence_context_for(job.assembly_plan or {}, all_candidates)
         from app.services.creator_direction_snapshot import snapshot_from_container  # noqa: PLC0415
 
@@ -18089,6 +17960,7 @@ def _run_regenerate_variant(
                 orientation=effective_orientation,
                 strict_day_vlog=existing.get("resolved_archetype") == "day_vlog",
                 strict_single_hero=existing.get("resolved_archetype") == "single_hero",
+                approved_length_plan=approved_length_plan,
             )
 
     # E1: the token check covers BOTH terminal branches (ready and failed) —
@@ -20285,15 +20157,35 @@ def _effective_music_window(
 
     frozen_cfg = dict(track.track_config or {})
     if frozen_cfg.get("_approved_frozen_music_window") is True:
-        # The approved end is a contract value, not a suggestion to be clamped
-        # to current footage or snapped to a newly analyzed beat grid.
+        # The approved start and section identity are contract values, not
+        # suggestions to be clamped to current footage or snapped to a newer
+        # beat grid. A proven shorter target may end this same section early.
         start_s = float(frozen_cfg["best_start_s"])
-        end_s = float(frozen_cfg["best_end_s"])
+        approved_end_s = float(frozen_cfg["best_end_s"])
+        approved_duration_s = approved_end_s - start_s
+        if requested_duration_s is None:
+            end_s = approved_end_s
+        else:
+            duration_s = float(requested_duration_s)
+            from app.services.length_policy import creator_duration_matches  # noqa: PLC0415
+
+            if not math.isfinite(duration_s) or duration_s <= 0:
+                raise ValueError("Approved song section cannot satisfy the requested length")
+            if duration_s > approved_duration_s:
+                if not creator_duration_matches(approved_duration_s, duration_s):
+                    raise ValueError("Approved song section cannot satisfy the requested length")
+                duration_s = approved_duration_s
+            end_s = start_s + duration_s
+        cfg = {
+            **frozen_cfg,
+            "best_start_s": round(start_s, 3),
+            "best_end_s": round(end_s, 3),
+        }
         return {
             "start_s": start_s,
             "end_s": end_s,
             "duration_s": round(end_s - start_s, 3),
-            "track_config": frozen_cfg,
+            "track_config": cfg,
             "validated": True,
         }
 
@@ -21873,7 +21765,11 @@ def _decide_generative_variant(
             # member of the resolved pool.
             and bool(probe_map)
         )
-        if approved_length_plan is not None:
+        if (
+            approved_length_plan is not None
+            and approved_length_plan.get("window_eligible") is True
+            and assembly_steps_override is None
+        ):
             preselected_steps, selected_best_parts_receipt = _approved_best_parts_decisions(
                 approved_length_plan,
                 clip_id_to_gcs=clip_id_to_gcs,
@@ -22015,7 +21911,8 @@ def _decide_generative_variant(
     # the authored recipe. Otherwise persist the same exact analysis windows
     # that downstream phone/cloud assembly receives.
     if (
-        track is None
+        use_best_parts_pool
+        and track is None
         and not best_parts_receipt
         and assembly_steps_override is None
         and bool(probe_map)
@@ -23033,7 +22930,10 @@ def _render_generative_variant(**kwargs: Any) -> dict[str, Any]:
             partial_base, exc, job_id=job_id, variant_id=variant_id, variant_t0=variant_t0
         )
     try:
-        return _process_generative_variant(decision, **kwargs)
+        process_kwargs = dict(kwargs)
+        process_kwargs.pop("approved_length_plan", None)
+        process_kwargs.pop("approved_runtime_generations", None)
+        return _process_generative_variant(decision, **process_kwargs)
     except Exception as exc:  # noqa: BLE001 - see docstring: this is the legacy contract
         return _finish_generative_variant_failure(
             decision.base,

@@ -4,11 +4,21 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from types import SimpleNamespace
 from typing import Any
 
-from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
-from app.schemas.edit_proposal import MixedMediaTimingProfile, mixed_media_hold_bounds
-from app.services.length_policy import length_owner, natural_length_owner
+from app.pipeline.best_parts import BestPart, BestPartsConflict, BestPartsResult, select_best_parts
+from app.schemas.edit_proposal import (
+    MixedMediaTimingProfile,
+    mixed_media_hold_bounds,
+    uses_quick_photo_long_video_timing,
+)
+from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
+from app.services.single_hero_policy import (
+    SingleHeroPolicyError,
+    _build_single_hero_recipe,
+    _single_hero_order,
+)
 
 LENGTH_PLAN_VERSION = 1
 # A still has no measured source duration.  This is deliberately kept here,
@@ -41,6 +51,7 @@ def _sources(
     profile = (
         MixedMediaTimingProfile.model_validate(raw_profile) if raw_profile is not None else None
     )
+    timing_bounds_apply = uses_quick_photo_long_video_timing(profile)
     for row in rows:
         if not isinstance(row, Mapping) or not isinstance(row.get("media_id"), str):
             continue
@@ -51,11 +62,11 @@ def _sources(
         duration_s = _number(row.get("duration_s"))
         analysis = row.get("analysis")
         analysis = dict(analysis) if isinstance(analysis, Mapping) else {}
+        bounds = mixed_media_hold_bounds(kind, profile) if timing_bounds_apply else None
         if kind == "image":
             # Photos are rendered as synthetic holds.  Seed the selector with
             # the normal 1.2s montage hold, while retaining 3s of capacity for
             # a requested or minimum-duration allocation.
-            bounds = mixed_media_hold_bounds("image", profile) if profile is not None else None
             duration_s = bounds.maximum_s if bounds else _STILL_CAPACITY_S
             preferred_s = bounds.preferred_s if bounds else _STILL_PREFERRED_WINDOW_S
             analysis["best_moments"] = [{"start_s": 0.0, "end_s": preferred_s, "energy": 0.0}]
@@ -69,9 +80,15 @@ def _sources(
                 "gcs_path": row.get("gcs_path", row.get("proxy_path")),
                 "kind": kind,
                 "duration_s": duration_s or 0.0,
-                "minimum_duration_s": bounds.minimum_s
-                if kind == "image" and profile is not None
-                else 0.1,
+                "minimum_duration_s": bounds.minimum_s if bounds is not None else 0.1,
+                # Allocation policy is distinct from video source duration:
+                # the latter remains in the approved identity envelope so a
+                # late analysed moment (for example 7s–10s of a 10s clip)
+                # stays valid when the allowed rendered hold is only 3s.
+                "maximum_duration_s": bounds.maximum_s if bounds is not None else None,
+                "hook_score": _number(analysis.get("hook_score"))
+                or _number(row.get("hook_score"))
+                or 0.0,
                 "analysis": analysis,
             }
         )
@@ -122,10 +139,127 @@ def build_length_plan(
         if natural_owner == "song"
         else None
     )
+    pre_conflicts: list[BestPartsConflict] = []
+    is_single_hero = strategy.get("edit_format") == "single_hero"
     # A proven creator target changes the owner label, not the source-window
     # allocator: footage still supplies the exact realizable windows.
-    if eligible:
+    if eligible and is_single_hero:
+        physical_durations = {source["media_id"]: source["duration_s"] for source in sources}
+        hero_order = _single_hero_order(
+            [
+                SimpleNamespace(clip_id=source["media_id"], hook_score=source["hook_score"])
+                for source in sources
+            ],
+            {source["media_id"]: source["media_id"] for source in sources},
+            physical_durations,
+        )
+        pinned_order = [media_id for media_id in dict.fromkeys(order_ids) if media_id in by_id]
+        if pinned_order and pinned_order != hero_order:
+            pre_conflicts.append(
+                BestPartsConflict(
+                    "single_hero_order_conflict",
+                    float(len(pinned_order)),
+                    float(len(hero_order)),
+                    "The approved source order conflicts with the required "
+                    "single-hero composition.",
+                )
+            )
+        hero_sources = [by_id[media_id] for media_id in hero_order]
+        maximums = {
+            source["media_id"]: source["maximum_duration_s"]
+            for source in hero_sources
+            if source["maximum_duration_s"] is not None
+        }
+        minimums = {source["media_id"]: source["minimum_duration_s"] for source in hero_sources}
+        natural_parts = select_best_parts(
+            hero_sources,
+            minimum_duration_s=minimums,
+            maximum_duration_s=maximums,
+        )
+        requested = creator_target_s if creator_target_s is not None else natural_parts.duration_s
+        # One 3-second hero and a 100 ms inclusion for every cutaway is the
+        # smallest realizable composition. As with the portable source floor,
+        # accept that tiny adjustment only when it remains inside the creator's
+        # approved duration tolerance; retain their original target on the
+        # envelope for the answer/audit boundary.
+        composition_floor = 3.0 + 0.1 * max(0, len(hero_order) - 1)
+        if (
+            creator_target_s is not None
+            and requested < composition_floor
+            and creator_duration_matches(composition_floor, creator_target_s)
+        ):
+            requested = composition_floor
+        available_footage_s = (
+            sum(
+                min(
+                    source["duration_s"],
+                    source["maximum_duration_s"]
+                    if source["maximum_duration_s"] is not None
+                    else source["duration_s"],
+                )
+                for source in hero_sources
+            )
+            if creator_target_s is not None
+            else natural_parts.duration_s
+        )
+        try:
+            recipe = _build_single_hero_recipe(
+                hero_order,
+                available_footage_s=available_footage_s,
+                clip_durations_s={
+                    source["media_id"]: source["duration_s"] for source in hero_sources
+                },
+                max_duration_s=requested,
+            )
+        except SingleHeroPolicyError as exc:
+            pre_conflicts.append(BestPartsConflict(exc.reason, requested, 0.0, str(exc)))
+            result = BestPartsResult((), round(requested, 3), 0.0, 0.0)
+        else:
+            slot_results = [
+                select_best_parts(
+                    [by_id[media_id]],
+                    target_duration_s=slot["target_duration_s"],
+                    minimum_duration_s={media_id: by_id[media_id]["minimum_duration_s"]},
+                    maximum_duration_s={media_id: by_id[media_id]["maximum_duration_s"]}
+                    if by_id[media_id]["maximum_duration_s"] is not None
+                    else {},
+                )
+                for media_id, slot in zip(hero_order, recipe["slots"], strict=True)
+            ]
+            parts = tuple(part for selected in slot_results for part in selected.parts)
+            selector_conflicts = tuple(
+                conflict for selected in slot_results for conflict in selected.conflicts
+            )
+            actual_duration = round(sum(part.duration_s for part in parts), 3)
+            if creator_target_s is not None and not creator_duration_matches(
+                actual_duration, creator_target_s
+            ):
+                pre_conflicts.append(
+                    BestPartsConflict(
+                        "insufficient_capacity",
+                        creator_target_s,
+                        actual_duration,
+                        "The single-hero source windows cannot reach the requested duration.",
+                    )
+                )
+            result = BestPartsResult(
+                parts,
+                round(requested, 3),
+                actual_duration,
+                round(sum(selected.capacity_s for selected in slot_results), 3),
+                selector_conflicts,
+            )
+    elif eligible:
         budget = creator_target_s if creator_target_s is not None else natural_duration_s
+        raw_capacity = min(120.0, round(sum(source["duration_s"] for source in ordered_sources), 3))
+        if creator_target_s is not None and creator_target_s <= 120:
+            # Source bounds and the portable minimum can satisfy a target
+            # within its approved tolerance without inventing more footage.
+            # Keep the creator's original target in the contract/envelope.
+            if budget > raw_capacity and creator_duration_matches(raw_capacity, creator_target_s):
+                budget = raw_capacity
+            if budget < 3 <= raw_capacity and creator_duration_matches(3, creator_target_s):
+                budget = 3.0
         coverage_floor = round(sum(source["minimum_duration_s"] for source in ordered_sources), 3)
         if budget is not None and budget < coverage_floor <= budget * 1.1:
             budget = coverage_floor
@@ -136,9 +270,22 @@ def build_length_plan(
             minimum_duration_s={
                 source["media_id"]: source["minimum_duration_s"] for source in ordered_sources
             },
+            maximum_duration_s={
+                source["media_id"]: source["maximum_duration_s"]
+                for source in ordered_sources
+                if source["maximum_duration_s"] is not None
+            },
         )
     windows = result.receipt() if result is not None else []
-    conflicts = (
+    conflicts = [
+        {
+            "code": conflict.code,
+            "requested_duration_s": conflict.requested_duration_s,
+            "available_duration_s": conflict.available_duration_s,
+            "message": conflict.message,
+        }
+        for conflict in pre_conflicts
+    ] + (
         [
             {
                 "code": conflict.code,
@@ -167,13 +314,14 @@ def build_length_plan(
             }
         )
     missing_ids = set(selected_ids) - set(by_id)
-    if eligible and len(sources) > 80:
+    max_source_count = 4 if is_single_hero else 80
+    if eligible and len(sources) > max_source_count:
         conflicts.append(
             {
                 "code": "source_count_limit",
                 "requested_duration_s": creator_target_s,
-                "available_duration_s": 120.0,
-                "message": "The portable recipe can include at most 80 sources.",
+                "available_duration_s": float(max_source_count),
+                "message": f"The portable recipe can include at most {max_source_count} sources.",
             }
         )
     if missing_ids:
@@ -185,21 +333,35 @@ def build_length_plan(
                 "message": "Some selected clips no longer have usable source metadata.",
             }
         )
+    physical_capacity_s = min(
+        120.0, round(sum(source["duration_s"] for source in ordered_sources), 3)
+    )
+    # Durable clarification reads ``capacity_raw_s`` rather than the transient
+    # selector receipt. For bounded mixed-media edits it must therefore expose
+    # the largest policy-compliant allocation, not the measured video runtime.
+    # Single-hero is stricter: its recipe can reduce otherwise usable footage
+    # to preserve the hero share, so the actual allocated total is the only
+    # safe alternate duration for an impossible creator target.
+    if is_single_hero and result is not None:
+        capacity_raw_s = result.duration_s
+    elif any(source["maximum_duration_s"] is not None for source in ordered_sources):
+        capacity_raw_s = result.capacity_s if result is not None else 0.0
+    else:
+        capacity_raw_s = physical_capacity_s
     plan: dict[str, Any] = {
         "version": LENGTH_PLAN_VERSION,
         "owner": owner,
         "natural_owner": natural_owner,
         "target_duration_s": creator_target_s,
         "natural_duration_s": natural_duration_s,
-        "capacity_raw_s": min(
-            120.0, round(sum(source["duration_s"] for source in ordered_sources), 3)
-        ),
+        "capacity_raw_s": capacity_raw_s,
         "window_eligible": eligible,
         "capacity_s": result.capacity_s if result is not None else None,
+        "max_source_count": max_source_count,
         "sources": [
             {
-                key: source[key]
-                for key in (
+                field_name: source[field_name]
+                for field_name in (
                     "media_id",
                     "generation",
                     "storage_generation",

@@ -5,6 +5,7 @@ import pytest
 
 
 SCRIPT = Path(__file__).with_name("replay-creator-contracts.py")
+FIXTURE = SCRIPT.parent / "fixtures/kri492-creator-contracts.json"
 spec = importlib.util.spec_from_file_location("creator_replay", SCRIPT)
 replay_script = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(replay_script)
@@ -74,5 +75,34 @@ def test_candidate_newly_declining_successful_capture_fails_replay() -> None:
 def test_baseline_must_be_bound_to_capture_base_sha() -> None:
     value = baseline()
     value["base_sha"] = "b" * 40
-    with pytest.raises(replay_script.ReplayError, match="base_sha"):
+    with pytest.raises(replay_script.ReplayError, match="base SHAs"):
         replay_script.replay(snapshot(), value, lambda _: {"declined": False})
+
+
+def test_historical_capture_can_compare_a_new_explicit_base(monkeypatch) -> None:
+    comparison_base = "b" * 40
+    monkeypatch.setattr(replay_script, "evaluate_candidate", lambda _: {"declined": False})
+    captured_snapshot = replay_script.load_json(FIXTURE)
+    exported = replay_script.export_outcomes(captured_snapshot, evaluator_sha=comparison_base)
+
+    report = replay_script.replay(
+        captured_snapshot, exported, lambda _: {"declined": False}, base_sha=comparison_base
+    )
+
+    assert report["base_sha"] == comparison_base
+    assert report["capture_base_sha"] == captured_snapshot["base_sha"]
+    assert exported["base_sha"] == comparison_base
+    assert exported["capture_base_sha"] == captured_snapshot["base_sha"]
+
+
+def test_explicit_comparison_base_rejects_a_mismatched_evaluator(monkeypatch) -> None:
+    monkeypatch.setattr(replay_script, "evaluate_candidate", lambda _: {"declined": False})
+    value = replay_script.export_outcomes(snapshot(), evaluator_sha="b" * 40)
+    with pytest.raises(replay_script.ReplayError, match="comparison"):
+        replay_script.replay(snapshot(), value, lambda _: {"declined": False}, base_sha="c" * 40)
+
+
+def test_legacy_snapshot_base_remains_the_default_comparison_base() -> None:
+    report = replay_script.replay(snapshot(), baseline(), lambda _: {"declined": False})
+    assert report["base_sha"] == "a" * 40
+    assert report["capture_base_sha"] == "a" * 40

@@ -129,9 +129,10 @@ render route, and returns typed `UnresolvedChoice` items (`kind`, `field_path`,
 `requirement_ids`, `options`, `input_digest`) in a fixed priority order. One question per
 turn.
 
-**Evidence rule.** A question needs something the CREATOR said, i.e. a live brief
-requirement. The Creator model must always emit `target_duration_s` and the server stamps
-`target_duration_requested` whenever it did, so neither is evidence of a stated length.
+**Evidence rule.** A question needs creator-authored timing or an authoritative answered
+duration choice. Model field presence and a non-default value are not evidence.
+`length_policy.creator_duration_s` stamps `target_duration_requested` only from that
+proof; model-only targets remain derived suggestions, including an explicit model 24.
 
 **The gate depends on the model emitting the `timing` requirement.** `duration_vs_count` can only
 compare a length the live brief carries. Main Creator prompt `2026-10-06-v44` emitted it for
@@ -146,7 +147,8 @@ their timing, and "chronological order" / the talk-to-camera request invent no l
 recording per case, so treat it as evidence, not a guarantee. The same run showed two
 side effects: the model now often drops the `select` requirement ("all my clips", "6 best
 clips") and, on 12-clip montages, picks `archetype: day_vlog`, which EXEMPTS the length question
-(the 8 s request no longer asks). The committed cassettes
+(the 8 s request no longer asks). These are observations of the older gate; KRI-492 replaces
+those duration exemptions with the shared owner and capacity policy. The committed cassettes
 (`tests/fixtures/agent_evals/main_creator/kri470_gate_*`, with `_v44` before-pictures) replay
 structurally and ignore the prompt text; `tests/kria/test_creator_gate_live_cassettes.py` pins the
 model-output -> gate chain, including the archetype exemption.
@@ -171,7 +173,8 @@ Guards: `tests/services/test_request_following_kri522.py`, overlay fixture
 
 | Kind | Evidence required | Detector | Options (all executable today) | Persisted field | Exempt (never asks) |
 | --- | --- | --- | --- | --- | --- |
-| `duration_vs_count` | A live brief `timing` requirement with `duration_s` (quoted in the question) | N clips (the selection the draft carries when it has one, else the snapshot; minus clips outside a resolved `include` intent) cannot each get the readable-shot floor (`unified_montage.MIN_READABLE_SHOT_S`, 0.8 s) in that length | `extend` (the length N x floor needs, if within the 120 s cap), `fewer` (the clips that fit, evenly spaced WITHIN the selection, never re-adding an excluded clip); flash-cutting is never offered | `target_duration_s` + requested flag (extend), or `selected_media_ids` + `media_scope=selected` + the length (fewer); the pinned brief timing requirement is updated to match | Strategy-only lengths; non-montage formats; a live `select` requirement with no resolved subset; a selection whose clips fit; `montage_cadence`, `mixed_media_timing`, `montage_audio`, `archetype`, `execution_contract`; `audio_strategy` voiceover / user_song, `song_sync` (those planners never read the strategy length) |
+| `duration_vs_count` | A live brief `timing` requirement with `duration_s` (quoted in the question) | The resolved included clips cannot each receive the 0.1 s floor within the creator target's ±10% tolerance | `extend` (N x floor, within 120 s), `fewer` (evenly spaced WITHIN the selection, never re-adding exclusions) | Authoritative duration proof or selected subset; pinned timing is superseded to match | Model-only lengths, unresolved subsets, or coverage that fits. Natural song/voice/take conflicts use the owner detector. |
+| `length_vs_natural` / `source_coverage` | Creator timing plus source-backed capacity, or impossible included-source coverage | Shared owner, approved windows, source durations, portable minimum/cap, and pins | Only achievable durations or subsets; no unplaced lip-sync timing or unsupported song trim is invented | Durable scoped answer bound to the source/owner/input digest | Missing capacity waits for source-backed planning; compatible targets do not ask. |
 | `order_basis` | A live brief `order` requirement, or `ordering_choice=chronological` | (a) a capture-order requirement (`capture_time`, `chronological`, `route`, `time`, `shot_order`) and some selected clip has no capture time (the contract's own condition); (b) a key-less or unknown-key rule ("clips 1, 2, 3 in that sequence") the contract cannot verify | `attachment_order` ("Use the order you added the clips"), `unordered` ("Continue without a fixed order"). A creator-typed sequence is NOT offered: nothing can receive one yet | `choice_answers[]`; the contract carries `order_basis="attachment_order"` + `order_ids`, or `order_required=false` | Rule (b) when the server already placed the sequence (a resolved `order` intent with assignments) |
 | `text_placement` | A live brief dictated shot text | The literal appears on two or more draft shots | One `On shot N` option per matching shot | `choice_answers[]`; the contract sets that requirement's `shot_index` | A text with no matching label (a planner miss) |
 | `title_text` | A live brief `text` requirement with `scope=title` and NO literal | The draft renders through the unified phone montage (`brief_checks.defers_to_unified_montage`: phone-proxy clips, enrolled account, montage-family format, non-voiceover audio) and the renderer would burn no title: `unified_montage.title_source_exists` (the SAME `_title` the render calls: `strategy.opening_title`, a title/global literal, or `title_from_facts`) is false. The detector needs `ChoiceCapability.creator_id`; callers that do not pass it never get this question | `no_title` ("Continue without a title", NOT marked recommended; a delegation such as "you decide" is not an answer and re-asks once with the explanation). Matched exactly after normalisation against a broad alias set (`no`, `none`, `skip`, `no title please`, `don't add a title`, `leave it off`, `başlık olmasın`, `başlıksız`, ...) and never by substring, so "No Plans" is a title, not an answer. Typed words are NOT an option, they become the literal through the normal brief extraction. We never offer to write the words (on-screen text is the creator's: KRI-255) | `choice_answers[]`; `answered_brief` supersedes the wordless title requirement in the pinned copy, so the render-time receipt no longer blocks; disclosed ("I'm leaving the title off...") | A title with words; `opening_title`; a global literal or brief facts to title from; any draft the unified montage does not render (cloud, voiceover, non-montage formats; their draft-time receipts judge it); no `creator_id`; a speech-excerpt draft (`strategy.montage_audio` preserving source audio with source ids, which becomes `contract.audio_source_ids` and takes `run_phone_speech_montage_job`: no title handling, never blocks on one). A legacy contract-less draft that the dispatcher sends to the speech lane anyway cannot be known at draft time |
@@ -227,10 +230,10 @@ reaches the strategy or the pinned brief) and the gate asks once more, within th
 after the cap the plan goes through unchanged and the old answer is never silently
 re-applied.
 
-**Never a default.** The same question is asked at most twice. After that nothing is
-chosen for the creator and no requirement is rewritten: the plan goes through and the
-receipts state what is unmet; an unverifiable order becomes ONE plain message quoting the
-two ways forward. Only an explicit delegation ("you choose", "you decide", "up to you", "surprise me"; a bare "whatever" is not one)
+**Never a default.** Length and source-coverage conflicts get one card per unchanged
+input digest. The pre-approval backstop keeps unanswered conflicts pending with a plain
+explanation; it does not dispatch after the ask limit. Other choices retain their
+two-card limit and existing receipt/backstop behavior. Only an explicit delegation ("you choose", "you decide", "up to you", "surprise me"; a bare "whatever" is not one)
 picks the recommended option, recorded as `source="creator_delegated"` and disclosed.
 
 `title_text` is the exception to "the plan goes through": a wordless title cannot render, so
@@ -320,67 +323,81 @@ field registered in `_POST_V1_FIELD_DEFAULTS` while it holds its default, and
 stored v1 contract that must keep reading. Register a new field there in the same
 change that adds it.
 
-## KRI-493 length ownership audit (base `ab315dbbc`)
+## Shared length ownership (KRI-492)
 
-This is a code-referenced base audit, not proof that the KRI-492/493 final
-policy has landed. A target row must be rechecked against final selector and
-compiler receipts before it is marked verified.
+The [36-pair phone/cloud audit](../reviews/kri-492-length-ownership.md) records each
+format/audio combination, support conditions, natural source, exact selection,
+verifier, and current qualification. `length_policy.py` declares one typed owner:
+`creator`, `song`, `voiceover`, `take`, or `footage`. New format/audio combinations
+require a declaration. A creator-named target uses ±10%; otherwise song placements
+or a frozen music section, recorded narration, cleaned take, or selected best parts
+provide the clock. Derived lengths remain notes, not creator proof.
 
-The server-owned provenance path now derives creator duration from creator text,
-brief timing, or an authoritative answer through `length_policy.creator_duration_s`,
-then writes `creator_duration_s` and `target_duration_requested`
-(`src/apps/api/app/agents/main_creator.py:604-612,665-678`). Draft sanitization
-uses the same policy and refuses a client-supplied marker
-(`src/apps/api/app/kria/drafts.py:43-82`). The schema serializer still retains an
-explicitly approved 24 seconds (`src/apps/api/app/agents/_schemas/creator_agent.py:546-555`).
-The contract projects duration only with that provenance or an equivalent live
-brief/answer (`src/apps/api/app/services/creator_render_contract.py:945-983`).
-The former non-24 raw-value compatibility fallback is no longer the policy
-source; final workers consume the stamped creator-duration state. Final
-draft/build parity remains an acceptance gap until its receipts are shown.
+`length_planning.py` freezes exact best-parts windows once at server planning, with
+source identities, capacity, deterministic ranking/fallback receipts, and generation.
+Phone and cloud compilers read that envelope. The silent cap is 120 seconds and
+included-source floor is 0.1 seconds; unused capacity is fairly redistributed.
+Infeasible targets and coverage use the durable scoped choice gate before approval.
+An authored assembly override keeps its own approved timing.
 
-The verifier comparison is actual rendered duration against the owner below.
-Selection order, pools, pins, and `use_all` affect membership or order; they do
-not own duration. A selected owner may grow to the approved cap.
+`creator_length_policy` lives beside the v1 contract and binds its generation and
+digest, preserving the stored schema. Historical contracts without that state retain
+legacy verification. New explicit-duration checks default to `log_only`; audio,
+ordering, text, and recipe-integrity checks retain their independent requirements.
+The approved check mode is frozen per generation. An editor rebind changes only its
+variant's policy. Draft receipts cannot call a model target measured output.
 
-| Supported shape | Phone owner at base | Cloud owner at base | Verifier comparison | Base verdict / target acceptance |
-| --- | --- | --- | --- | --- |
-| Plain/silent montage | Footage allocation (`edit_direction_planner`: 0.8 s normal floor, 1.2 s default cut/image capacity, 3 s minimum) | Classic/guided montage allocation | Measured recipe/renderer duration against an explicit contract | `matches` only with measured output; otherwise `missing`. Target: explicit creator length ±10%. |
-| User song, background | Song/background window | Scheduling library bed follows footage; there is no authoritative catalog-song selected section | Phone compares song window and picture coverage; cloud has no user-song verifier | Phone `matches` with song evidence; cloud `missing`. Target: background section owns length. |
-| User song, lip-sync | Lip-sync song/video timeline; `window_start_s` is an existing source-window coordinate (`src/apps/api/app/services/clip_speech.py:242-245`) | No supported cloud user-song owner | Phone compares song/video window; cloud cannot prove it | Phone `matches` with window evidence; cloud `missing`. Target: 120-second song cap and explicit `cloud user_song unsupported`. |
-| Recorded voiceover montage | Recording duration / voiceover compiler; the phone compiler consumes exact decision/source windows and does not choose them (`src/apps/api/app/pipeline/phone_voiceover_montage_plan.py:191-215`) | Recording duration in cloud narration path | Compare actual output to recording receipt, not strategy default | `matches` with narration evidence; otherwise `missing`. Target: VO recording owns length. |
-| Talking/subtitled original speech | Source take and applied cleanup windows | Source take where the selected cloud adapter supports the route | Compare measured take-derived duration and cleanup receipt | `matches` only with measured take evidence; otherwise `missing`. |
-| Continuous voice | Voice-behind-footage composer; voice and picture spans are distinct | Cloud composer where enabled | Compare voice span, picture span, and chosen silent tail | `matches` with composer receipt; otherwise `missing`. Target: durable answer evidence. |
-| Montage with speech excerpts | Chosen recording and excerpt windows | Route-specific excerpt renderer where enabled | Compare source ids, excerpt windows, and measured output | `missing` where only generic montage metadata exists. Target: excerpt windows own length. |
-| Explicit creator length | `target_duration_requested` → contract → selected compiler | Same contract → cloud adapter if it consumes duration | Actual rendered duration versus requested duration | `matches`, `differs`, or `missing` only from receipts; normalized 24 is never evidence. |
+### Replay and enforcement promotion
 
-`best_parts.select_best_parts` now exposes source windows, a 120-second approved
-cap, a 0.1-second included floor, and typed capacity conflicts
-(`src/apps/api/app/pipeline/best_parts.py:16-18,149-220`). The ordinary silent
-montage still has its 0.8-second readability floor, 1.2-second default cut, and
-3-second proposal minimum. Image holds are conditional: 1.2 seconds is the
-preferred hold and 3 seconds is the profiled capacity when the source permits;
-these are capacity/planning values, not creator intent. Those conflicts are
-receipts and must not become render failures by themselves. The durable choice
-path is `collect_conflicts` (`choice_questions.py:1589`),
-`fold_scoped_answers` (`choice_questions.py:1672`), and `resolve_choices`
-(`choice_questions.py:2015`); it owns answer persistence and digest invalidation,
-not the final render duration.
+CI replays all complete captured successful jobs, capped at the latest 100. The
+committed packet contains all 23 complete available snapshots. `base_sha` identifies
+the actual comparison revision; `capture_base_sha` preserves original capture
+provenance. To reproduce, export base outcomes using the harness against the archived
+base API, then evaluate the candidate with `--baseline-outcomes`, `--base-sha`, and
+`--candidate-sha`. Missing replay inputs cannot count as passing. Minimized captures
+prove structural behavior, not original visual/text equality.
 
-The complete natural-owner declaration is
-`src/apps/api/app/services/length_policy.py:23-81`: every supported format
-(`montage`, `talking_head`, `day_vlog`, `single_hero`, `subtitled`,
-`narrated`, `narrated_planned`, `narrated_ready`, `slides`) declares all four
-audio sources (`licensed_music`, `original_audio`, `voiceover`, `user_song`).
-The effective owner is generation-bound in
-`src/apps/api/app/services/length_policy_state.py:21-58` with generation id and
-contract digest. The approved mode is frozen into the generation and defaults to `log_only`
-(`src/apps/api/app/config.py:27`) and is carried through phone, cloud, and
-editor checks. A selected, server-frozen licensed-music section is song-owned;
-if the catalog section is missing or cannot be frozen, planning falls back to
-footage ownership. A derived duration never becomes creator proof: only creator
-text, a live brief timing requirement, or an authoritative scoped answer can
-set the ±10% creator target.
+Fly Deploy sets `CREATOR_DURATION_CHECK_REVISION` to the exact deployed SHA and
+`CREATOR_DURATION_CHECK_MODE` to the selected mode. The verifier emits sanitized
+`creator_length_check` JSON observations with mode, counts, timestamp, and revision;
+no creator text or job identity is logged. The operator must independently verify
+both API and worker revisions and the completeness of the uninterrupted log stream.
+An event's revision fields alone do not establish fleet deployment.
+
+After at least 24 actual continuous clean hours, collect the verified JSONL stream:
+
+```sh
+python scripts/ci/collect-length-checks.py --fleet-proof /private/tmp/fleet-proof.json \
+  --journal /private/tmp/length-observations.json \
+  --interval-start START_EPOCH --interval-end END_EPOCH --stream-complete < /private/tmp/fly-checks.jsonl
+```
+
+The fleet proof supplies `expected_candidate_sha`, matching `api_revision` and
+`worker_revision`, `deployment_started_epoch_s`, a fresh `timestamp_epoch_s` (within
+five minutes), and nonempty `log_source_provenance`. The collector validates this
+operator-supplied proof; it does not authenticate Fly. Missing, malformed, stale,
+disconnected, wrong-revision, empty, or declined observations remain pending. Its
+journal contains only aggregate counts, intervals, and revisions.
+
+Combine the journal's `clean_observations` with schema-version-1 promotion evidence:
+base/candidate SHAs; complete successful replay counts bound to those SHAs; zero
+newly blocking declines; deployment/clean-window timestamps; unique
+`affected_supported_paths`; and one measured successful export per affected path.
+Every canary records exact API/worker revisions, timestamp, duration, frame count,
+command, app build, fixture SHA-256, and source provenance. Local synthetic exports
+alone do not qualify as deployed canaries.
+
+From the checkout matching the candidate SHA, prepare the immutable dispatch:
+
+```sh
+PYTHONPATH=src/apps/api src/apps/api/.venv/bin/python scripts/ci/prepare-length-promotion.py \
+  --evidence /private/tmp/length-promotion.json --repo-root .
+```
+
+The tool emits a reviewable command; it does not dispatch. The repository's Fly
+Deploy workflow rechecks main against `expected_sha` and validates all evidence
+before setting `enforce`. Normal release approval is required. Insufficient real
+observations keep KRI-492–499 open until promotion and deployed verification finish.
 
 ## Plan-authority stamp
 

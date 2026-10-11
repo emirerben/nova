@@ -15,7 +15,9 @@ SCRIPT = ROOT / "scripts/ci/prepare-length-promotion.py"
 
 
 def _head_sha() -> str:
-    return subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+    return subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True
+    ).strip()
 
 
 def _passing_evidence(candidate_sha: str) -> dict[str, object]:
@@ -40,17 +42,11 @@ def _passing_evidence(candidate_sha: str) -> dict[str, object]:
         "clean_since_epoch_s": deployed,
         "clean_observations": [
             {
-                "timestamp_epoch_s": deployed,
+                "interval_start_epoch_s": deployed,
+                "interval_end_epoch_s": now,
+                "stream_complete": True,
                 "check_mode": "log_only",
-                "check_observations": 1,
-                "check_declines": 0,
-                "api_revision": candidate_sha,
-                "worker_revision": candidate_sha,
-            },
-            {
-                "timestamp_epoch_s": now,
-                "check_mode": "log_only",
-                "check_observations": 2,
+                "check_observations": 3,
                 "check_declines": 0,
                 "api_revision": candidate_sha,
                 "worker_revision": candidate_sha,
@@ -78,7 +74,14 @@ def _run(evidence: Path) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(ROOT / "src/apps/api")
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "--evidence", str(evidence), "--repo-root", str(ROOT)],
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--evidence",
+            str(evidence),
+            "--repo-root",
+            str(ROOT),
+        ],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -87,7 +90,9 @@ def _run(evidence: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_prepare_prints_exact_enforcement_dispatch_for_valid_evidence(tmp_path: Path) -> None:
+def test_prepare_prints_exact_enforcement_dispatch_for_valid_evidence(
+    tmp_path: Path,
+) -> None:
     evidence_path = tmp_path / "proof with spaces.json"
     candidate = _head_sha()
     evidence_path.write_text(json.dumps(_passing_evidence(candidate)))
@@ -103,7 +108,9 @@ def test_prepare_prints_exact_enforcement_dispatch_for_valid_evidence(tmp_path: 
     assert "length_promotion_evidence=$(cat '" in plan["next_command"]
 
 
-def test_prepare_refuses_pending_evidence_without_printing_dispatch(tmp_path: Path) -> None:
+def test_prepare_refuses_pending_evidence_without_printing_dispatch(
+    tmp_path: Path,
+) -> None:
     evidence_path = tmp_path / "pending.json"
     evidence_path.write_text(json.dumps({"schema_version": 1}))
 

@@ -7,6 +7,7 @@ independent proof that the creator asked for a particular output duration.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
 from typing import Literal
 
@@ -19,6 +20,18 @@ from app.services.choice_questions import (
 )
 
 LengthOwner = Literal["creator", "song", "voiceover", "take", "footage"]
+
+
+def creator_duration_matches(actual_s: float, requested_s: float) -> bool:
+    """Whether a finite measured length meets the creator's ten-percent target."""
+    return bool(
+        math.isfinite(actual_s)
+        and math.isfinite(requested_s)
+        and actual_s > 0
+        and requested_s > 0
+        and abs(actual_s - requested_s) <= requested_s * 0.10 + 1e-9
+    )
+
 
 # This is intentionally a complete, hand-declared matrix rather than a
 # fallback rule over EDIT_FORMATS. Adding an edit format must name its natural
