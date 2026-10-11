@@ -70,6 +70,45 @@ class SongLine(BaseModel):
     text: str
 
 
+# KRI-569: the most lyric words a snapshot carries (a ~4 minute song is ~700 words).
+MAX_SONG_CAPTION_WORDS = 2000
+
+
+class SongCaptionWord(BaseModel):
+    """One sung word in SONG seconds; ``line_end`` closes a lyric line."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    text: str = Field(min_length=1, max_length=80)
+    start_s: float = Field(ge=0)
+    end_s: float = Field(ge=0)
+    line_end: bool = Field(default=False, exclude_if=lambda value: value is False)
+
+
+class SongCaptionTrack(BaseModel):
+    """The creator's song lyrics, pinned to one song generation (KRI-569).
+
+    Every word of the song is kept (not only the approved window), so a later
+    window move can re-project captions without re-transcribing. The compiler
+    maps song time to output time with the plan's ``user_song`` window.
+    """
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    song_generation: int
+    caption_style: Literal["sentence", "word"] = "sentence"
+    words: list[SongCaptionWord] = Field(min_length=1, max_length=MAX_SONG_CAPTION_WORDS)
+
+    @model_validator(mode="after")
+    def _ordered_words(self) -> SongCaptionTrack:
+        previous = 0.0
+        for word in self.words:
+            if word.end_s < word.start_s or word.start_s + 1e-3 < previous:
+                raise ValueError("song caption words must be ordered")
+            previous = word.start_s
+        return self
+
+
 class SongAnalysis(BaseModel):
     """What we learn about the uploaded song once, at attach time."""
 

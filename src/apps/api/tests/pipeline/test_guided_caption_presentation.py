@@ -101,3 +101,37 @@ def test_word_style_and_authored_text_are_independent():
     assert result[0] == title
     assert [row["text"] for row in result[1:]] == ["we", "go"]
     assert all(row["text_color"] == "#123456" for row in result[1:])
+
+
+def lyric(index, text, start, end, *, line_end=False):
+    return {**cue(index, text, start, end), **({"caption_line_end": True} if line_end else {})}
+
+
+def test_a_lyric_line_ends_without_punctuation_and_the_marker_never_leaves():
+    rows = [
+        lyric(1, "hold", 0, 0.2),
+        lyric(2, "me", 0.2, 0.4),
+        lyric(3, "close", 0.4, 0.6, line_end=True),
+        lyric(4, "dance", 0.8, 1),
+        lyric(5, "tonight", 1, 1.2, line_end=True),
+    ]
+    result = project_guided_caption_overlays(rows, {"style": "sentence"})
+    assert [row["text"] for row in result] == ["hold me close"] * 3 + ["dance tonight"] * 2
+    assert not any("caption_line_end" in row for row in result)
+    plain = project_guided_caption_overlays(
+        [lyric(1, "a", 0, 0.2, line_end=True)], {"style": "word"}
+    )
+    assert not any("caption_line_end" in row for row in plain)
+    bare = project_guided_caption_overlays([lyric(1, "a", 0, 0.2, line_end=True)], None)
+    assert not any("caption_line_end" in row for row in bare)
+
+
+def test_a_highlighted_line_restarts_after_a_lyric_line_end():
+    rows = [
+        lyric(1, "hold", 0, 0.2),
+        lyric(2, "me", 0.2, 0.4, line_end=True),
+        lyric(3, "dance", 0.4, 0.6),
+    ]
+    result = project_guided_caption_overlays(rows, {"appearance": {"highlight_spoken_word": True}})
+    # Without the marker these three words (no gap, no punctuation) would share one line.
+    assert [row["text"] for row in result] == ["hold me", "hold me", "dance"]

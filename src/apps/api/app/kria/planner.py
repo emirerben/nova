@@ -63,7 +63,11 @@ from app.kria.brief import (
 from app.kria.brief_route import loose_text
 from app.kria.contracts import KriaTurnPlan
 from app.kria.reply_language import current_reply_language, say
-from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
+from app.kria.strategy_policy import (
+    RefusedStrategy,
+    check_strategy_for_runtime_v2,
+    song_captions_refusal,
+)
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -1848,6 +1852,31 @@ async def _plan_creator_action(
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
             )
+        if settings.song_captions_enabled and settings.user_song_montage_enabled:
+            # KRI-569: lyric captions come from the creator's uploaded song; ask for it
+            # now instead of minting a render that cannot caption anything.
+            need_song = song_captions_refusal(
+                manifest,
+                checked.strategy,
+                creator_text="\n".join(
+                    text
+                    for text in (
+                        getattr(inputs, "raw_creator_request", None),
+                        brief_request,
+                        user_message,
+                    )
+                    if isinstance(text, str) and text
+                ),
+            )
+            if need_song is not None:
+                log.info("kria_strategy_refused", thread_id=str(thread_id), code=need_song.code)
+                return PlannedKriaTurn(
+                    plan=KriaTurnPlan(
+                        mode="respond", turn_value="question", response=need_song.question
+                    ),
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                )
         policy_notices = checked.notices
         summary = " ".join([action.summary.strip(), *policy_notices]).strip()
         action = action.model_copy(update={"strategy": checked.strategy, "summary": summary})

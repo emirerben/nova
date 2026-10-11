@@ -508,6 +508,40 @@ import KriaMediaEngine
         XCTAssertEqual(document.textElements.dropFirst().map(\.endS), [0.1, 0.4, 0.7, 1.0])
     }
 
+    // KRI-569: lyric captions have no terminal punctuation; the server flags the last
+    // word of each lyric line with `source_params.line_end`, and sentence mode must
+    // break there instead of merging the whole song into one display. Words without
+    // the flag (narration) keep the punctuation rule.
+    func testSentenceCaptionProjectionBreaksLyricLinesAtLineEnd() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 4,
+            trimIn: 0, trimOut: 4, sourceDuration: 4, slotID: "slot")
+        let plain: [String: JSONValue] = ["source_params": .object(["source": .string("caption_cue"), "origin": .string("song")])]
+        let lineEnd: [String: JSONValue] = ["source_params": .object([
+            "source": .string("caption_cue"), "origin": .string("song"), "line_end": .bool(true)])]
+        let words: [(String, Double, [String: JSONValue])] = [
+            ("hello", 0.0, plain), ("darkness", 0.4, lineEnd),
+            ("my", 1.0, plain), ("old", 1.4, plain), ("friend", 1.8, lineEnd),
+        ]
+        let captions: [EditorTextElement] = words.enumerated().map { offset, word in
+            EditorTextElement(id: "song-caption-\(offset)", text: word.0, startS: word.1, endS: word.1 + 0.3,
+                role: "generative_sequence", raw: word.2)
+        }
+        let document = EditorDocument(textElements: captions, captionMeta: ["style": .string("sentence")])
+        let items: [NativeEditorTimelineItem] = captions.map { element in
+            NativeEditorTimelineItem(selection: .init(kind: .text, id: element.id), start: element.startS, end: element.endS)
+        }
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let recipe = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source]).recipe
+
+        let rendered = recipe.textLayers.filter { $0.id.hasPrefix("caption-") || $0.id.hasPrefix("song-caption-") }
+        let displays = rendered.map { $0.runs.map(\.text).joined(separator: " ") }
+        XCTAssertEqual(displays, ["hello darkness", "hello darkness", "my old friend", "my old friend", "my old friend"])
+        XCTAssertEqual(document.textElements.map(\.text), ["hello", "darkness", "my", "old", "friend"],
+                       "the projection is render-only; the document keeps one element per word")
+    }
+
     // KRI-110: every font the Captions Style tab offers must resolve to its
     // registry file for a caption-tagged text element, the same file the
     // backend's registry names — "Inter" is deliberately the guided caption's

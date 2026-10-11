@@ -431,6 +431,9 @@ class UnifiedMontagePlan:
     # stored proposal payloads stay wire-compatible.
     best_parts_receipt: list[dict[str, Any]] = field(default_factory=list)
     best_parts_conflicts: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-569: the song's lyrics placed as captions ({status, style, words, lines}). Empty
+    # when no lyric captions were planned, so every earlier record is unchanged.
+    caption_receipt: dict[str, Any] = field(default_factory=dict)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -464,6 +467,7 @@ class UnifiedMontagePlan:
             if self.best_parts_conflicts
             else {}
         )
+        captions = {"captions": dict(self.caption_receipt)} if self.caption_receipt else {}
         pins = (
             {"pinned_texts": [pin.model_dump(mode="json") for pin in self.snapshot.pinned_texts]}
             if self.snapshot.pinned_texts
@@ -505,6 +509,7 @@ class UnifiedMontagePlan:
             **speech,
             **best_parts,
             **best_parts_conflicts,
+            **captions,
         }
 
         if self.snapshot.text_composition is not None:
