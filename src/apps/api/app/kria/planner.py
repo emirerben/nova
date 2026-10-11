@@ -1778,6 +1778,83 @@ def ground_pinned_texts(
     return kept, len(pins) - len(kept)
 
 
+# KRI-591: number words a creator may type for a title hold. Turkish both with and without
+# diacritics ("üç"/"uc"): phone keyboards often drop them. A word only counts right before a
+# seconds unit, so "bir"/"on"/"altı" never read as a number elsewhere in the sentence.
+_HOLD_NUMBER_WORDS = {
+    "one": 1.0,
+    "two": 2.0,
+    "three": 3.0,
+    "four": 4.0,
+    "five": 5.0,
+    "six": 6.0,
+    "seven": 7.0,
+    "eight": 8.0,
+    "nine": 9.0,
+    "ten": 10.0,
+    "bir": 1.0,
+    "iki": 2.0,
+    "üç": 3.0,
+    "uc": 3.0,
+    "dört": 4.0,
+    "dort": 4.0,
+    "beş": 5.0,
+    "bes": 5.0,
+    "altı": 6.0,
+    "alti": 6.0,
+    "yedi": 7.0,
+    "sekiz": 8.0,
+    "dokuz": 9.0,
+    "on": 10.0,
+}
+_HOLD_SECONDS = re.compile(
+    r"(?<![\w.:])(\d+(?:[.,]\d+)?|"
+    + "|".join(sorted(_HOLD_NUMBER_WORDS, key=len, reverse=True))
+    + r")\s*-?\s*(?:s|sn|secs?|seconds?|saniye\w*|segs?|segundos?|sekunden?|secondes?|second[io])"
+    r"(?!\w)"
+)
+
+
+def _hold_key(text: str) -> str:
+    """`_pin_key` without the combining dot a Turkish capital "İ" casefolds into, so a
+    creator typing "SANİYE" still says "saniye"."""
+    return _pin_key(text).replace("\N{COMBINING DOT ABOVE}", "")
+
+
+def title_hold_grounded(
+    hold_s: float,
+    *,
+    evidence: str | None,
+    user_sources: Sequence[str],
+    strip: Sequence[str | None] = (),
+) -> bool:
+    """KRI-591: whether the creator's own words state this title hold.
+
+    The model must quote the hold (`render_intent_evidence.opening_title_duration_s`): the
+    excerpt has to be the creator's own words (a verbatim piece of one of their messages,
+    compared like pinned text) and say this number of seconds ("2 saniye", "2,5 sn",
+    "for two seconds", "3-second"). The on-screen copy in ``strip`` is removed first, so
+    "ROME IN 3 DAYS" cannot ground a 3 s hold, and a bare count ("7 klip") is not seconds.
+    """
+
+    quoted = _pin_key(evidence or "")
+    if not quoted or not any(quoted in _pin_key(source) for source in user_sources if source):
+        return False
+    text = _hold_key(quoted)
+    for on_screen in strip:
+        key = _hold_key(on_screen or "")
+        if key:
+            text = text.replace(key, " ")
+    for match in _HOLD_SECONDS.finditer(text):
+        token = match.group(1)
+        value = _HOLD_NUMBER_WORDS.get(token)
+        if value is None:
+            value = float(token.replace(",", "."))
+        if abs(value - hold_s) < 1e-6:
+            return True
+    return False
+
+
 async def _plan_creator_action(
     db: AsyncSession,
     *,
@@ -1847,6 +1924,33 @@ async def _plan_creator_action(
                     ),
                     "summary": f"{action.summary.strip()} I left out on-screen text that "
                     "wasn't in your words.".strip(),
+                }
+            )
+    if isinstance(action, ProposeStrategy) and action.strategy.opening_title_duration_s is not None:
+        # KRI-591: a title hold is a creator-stated setting (KRI-476 asks before a renderer
+        # drops it), so it must be the creator's own seconds, like the title is their own
+        # words. A hold the model wrote itself is dropped here, before the policy asks about
+        # a length nobody gave ("tam 3 saniye tutamıyor" on `Başlık: "Tigre'de bir gün"`).
+        hold_strategy = action.strategy
+        if not title_hold_grounded(
+            hold_strategy.opening_title_duration_s,
+            evidence=getattr(action.render_intent_evidence, "opening_title_duration_s", None),
+            user_sources=user_sources,
+            strip=(
+                hold_strategy.opening_title,
+                hold_strategy.closing_title,
+                *(hold_strategy.shot_labels or ()),
+                *(pin.text for pin in hold_strategy.pinned_texts or ()),
+            ),
+        ):
+            log.info(
+                "kria_title_hold_ungrounded",
+                thread_id=str(thread_id),
+                hold_s=hold_strategy.opening_title_duration_s,
+            )
+            action = action.model_copy(
+                update={
+                    "strategy": hold_strategy.model_copy(update={"opening_title_duration_s": None})
                 }
             )
     if isinstance(action, ProposeStrategy):
