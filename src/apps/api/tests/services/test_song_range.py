@@ -183,10 +183,13 @@ def test_the_question_for_the_real_job_stops_guessing_at_far_repeats() -> None:
 
 
 def test_a_repeated_verse_no_longer_splits_the_group() -> None:
-    """The failure this feature exists for. A, B and C were filmed back to back (20-56 s), but B's
-    words ALSO match a repeat of the verse at 90 s, and that guess scores far higher. Without a range
-    B lands at 90 s, far from A and C, and the planner keeps one side. With the stretch the
-    creator filmed in, B lands where it belongs and the three stay one continuous run."""
+    """The failure this feature exists for.
+
+    A, B and C were filmed back to back (20-56 s), but B's words ALSO match a repeat of the verse
+    at 90 s, and that guess scores far higher. Without a range B lands at 90 s, far from A and C,
+    and the planner keeps one side. With the stretch the creator filmed in, B lands where it
+    belongs and the three stay one continuous run.
+    """
     clips = [take("A", 12.0), take("B", 12.0), take("C", 12.0)]
     alignment = SongAlignment(
         song_generation=7,
