@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -173,7 +173,10 @@ def test_source_identity_and_asset_declared_identity_are_immutable() -> None:
         )
 
 
-def test_consumer_delete_keeps_shared_source_and_analysis_and_account_delete_purges() -> None:
+@pytest.mark.parametrize("delete_consumer_first", [False, True])
+def test_consumer_delete_keeps_shared_source_and_analysis_and_account_delete_purges(
+    delete_consumer_first: bool,
+) -> None:
     with _engine.begin() as connection:
         user_id = _insert_user(connection)
         asset_id = _insert_asset(connection, user_id)
@@ -202,14 +205,12 @@ def test_consumer_delete_keeps_shared_source_and_analysis_and_account_delete_pur
             VALUES (:id, :user_id, :asset_id, :source_id, 'clip', 'test', '1', '1', 'source:gen-1')"""),
             {"id": uuid.uuid4(), "user_id": user_id, "asset_id": asset_id, "source_id": source_id},
         )
-        connection.execute(text("DELETE FROM jobs WHERE id = :id"), {"id": job_id})
-        assert (
-            connection.scalar(
-                text("SELECT count(*) FROM media_asset_references WHERE asset_id = :id"),
-                {"id": asset_id},
-            )
-            == 0
-        )
+        if delete_consumer_first:
+            connection.execute(text("DELETE FROM jobs WHERE id = :id"), {"id": job_id})
+        assert connection.scalar(
+            text("SELECT count(*) FROM media_asset_references WHERE asset_id = :id"),
+            {"id": asset_id},
+        ) == (0 if delete_consumer_first else 1)
         assert (
             connection.scalar(
                 text("SELECT count(*) FROM media_asset_sources WHERE id = :id"), {"id": source_id}
@@ -223,6 +224,28 @@ def test_consumer_delete_keeps_shared_source_and_analysis_and_account_delete_pur
             )
             == 1
         )
+        if not delete_consumer_first:
+            # Existing Jobs are explicitly removed by account erasure before
+            # the user (their legacy FK is RESTRICT). Threads cascade from
+            # the user, so keep a live source-pinned thread reference here.
+            connection.execute(text("DELETE FROM jobs WHERE id = :id"), {"id": job_id})
+            thread_id = uuid.uuid4()
+            connection.execute(
+                text("INSERT INTO creation_threads (id, creator_id) VALUES (:id, :owner)"),
+                {"id": thread_id, "owner": user_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO media_asset_references (id, user_id, asset_id, source_id, creation_thread_id) VALUES (:id, :owner, :asset, :source, :thread)"
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "owner": user_id,
+                    "asset": asset_id,
+                    "source": source_id,
+                    "thread": thread_id,
+                },
+            )
         connection.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
         assert (
             connection.scalar(
@@ -236,6 +259,103 @@ def test_consumer_delete_keeps_shared_source_and_analysis_and_account_delete_pur
             )
             == 0
         )
+
+
+@pytest.mark.parametrize("asset_wide", [False, True])
+def test_reference_use_and_removal_reset_source_inactivity(asset_wide: bool) -> None:
+    with _engine.begin() as connection:
+        user_id = _insert_user(connection)
+        asset_id = _insert_asset(connection, user_id)
+        source_id = _insert_source(connection, user_id, asset_id)
+        old_activity = datetime.now(UTC) - timedelta(days=100)
+        connection.execute(
+            text("UPDATE media_asset_sources SET last_used_at = :old WHERE id = :id"),
+            {"old": old_activity, "id": source_id},
+        )
+        job_id = uuid.uuid4()
+        connection.execute(
+            text(
+                "INSERT INTO jobs (id, user_id, raw_storage_path, status, job_type) VALUES (:id, :owner, 'users/job.mp4', 'queued', 'default')"
+            ),
+            {"id": job_id, "owner": user_id},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO media_asset_references (id, user_id, asset_id, source_id, job_id) VALUES (:id, :owner, :asset, :source, :job)"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "owner": user_id,
+                "asset": asset_id,
+                "source": None if asset_wide else source_id,
+                "job": job_id,
+            },
+        )
+        assert (
+            connection.scalar(
+                text("SELECT last_used_at FROM media_asset_sources WHERE id = :id"),
+                {"id": source_id},
+            )
+            > old_activity
+        )
+        connection.execute(
+            text("UPDATE media_asset_sources SET last_used_at = :old WHERE id = :id"),
+            {"old": old_activity, "id": source_id},
+        )
+        connection.execute(text("DELETE FROM jobs WHERE id = :id"), {"id": job_id})
+        assert (
+            connection.scalar(
+                text("SELECT last_used_at FROM media_asset_sources WHERE id = :id"),
+                {"id": source_id},
+            )
+            > old_activity
+        )
+        connection.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+
+
+def test_asset_wide_reference_ignores_expired_history_but_explicit_source_is_rejected() -> None:
+    with _engine.begin() as connection:
+        user_id = _insert_user(connection)
+        asset_id = _insert_asset(connection, user_id)
+        source_id = _insert_source(connection, user_id, asset_id)
+        connection.execute(
+            text("UPDATE media_asset_sources SET status = 'deleted' WHERE id = :id"),
+            {"id": source_id},
+        )
+        job_id = uuid.uuid4()
+        connection.execute(
+            text(
+                "INSERT INTO jobs (id, user_id, raw_storage_path, status, job_type) VALUES (:id, :owner, 'users/job.mp4', 'queued', 'default')"
+            ),
+            {"id": job_id, "owner": user_id},
+        )
+        _assert_rejected(
+            connection,
+            text(
+                "INSERT INTO media_asset_references (id, user_id, asset_id, source_id, job_id) VALUES (:id, :owner, :asset, :source, :job)"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "owner": user_id,
+                "asset": asset_id,
+                "source": source_id,
+                "job": job_id,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO media_asset_references (id, user_id, asset_id, job_id) VALUES (:id, :owner, :asset, :job)"
+            ),
+            {"id": uuid.uuid4(), "owner": user_id, "asset": asset_id, "job": job_id},
+        )
+        assert (
+            connection.scalar(
+                text("SELECT status FROM media_asset_sources WHERE id = :id"), {"id": source_id}
+            )
+            == "deleted"
+        )
+        connection.execute(text("DELETE FROM jobs WHERE id = :id"), {"id": job_id})
+        connection.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
 
 
 def test_reference_writer_rejects_retention_tombstone() -> None:
@@ -290,3 +410,41 @@ def test_reference_writer_rejects_retention_tombstone() -> None:
             """),
             {"id": uuid.uuid4(), "user_id": user_id, "asset_id": asset_id, "job_id": job_id},
         )
+
+
+@pytest.mark.parametrize("asset_wide", [False, True])
+def test_reference_writer_serializes_with_retention_owner_lock(asset_wide: bool) -> None:
+    with _engine.begin() as connection:
+        user_id = _insert_user(connection)
+        asset_id = _insert_asset(connection, user_id)
+        source_id = _insert_source(connection, user_id, asset_id)
+        thread_id = uuid.uuid4()
+        connection.execute(
+            text("INSERT INTO creation_threads (id, creator_id) VALUES (:id, :owner)"),
+            {"id": thread_id, "owner": user_id},
+        )
+    try:
+        with _engine.begin() as holder:
+            holder.execute(
+                text("SELECT pg_advisory_xact_lock(project_media_reference_lock_key_0103(:owner))"),
+                {"owner": user_id},
+            )
+            with _engine.connect() as writer:
+                writer.execute(text("SET LOCAL lock_timeout = '100ms'"))
+                with pytest.raises(DBAPIError, match="lock timeout"):
+                    writer.execute(
+                        text(
+                            "INSERT INTO media_asset_references (id, user_id, asset_id, source_id, creation_thread_id) VALUES (:id, :owner, :asset, :source, :thread)"
+                        ),
+                        {
+                            "id": uuid.uuid4(),
+                            "owner": user_id,
+                            "asset": asset_id,
+                            "source": None if asset_wide else source_id,
+                            "thread": thread_id,
+                        },
+                    )
+                writer.rollback()
+    finally:
+        with _engine.begin() as connection:
+            connection.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})

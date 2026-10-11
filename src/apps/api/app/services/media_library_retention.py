@@ -100,6 +100,10 @@ def source_is_delete_eligible(
 
 
 def prior_warning_at(db: Any, source: MediaAssetSource) -> datetime | None:
+    """Return a pending warning from this source's current inactivity window."""
+    warning_threshold = source_last_activity(source) + timedelta(
+        days=settings.storage_retention_warning_days
+    )
     return db.scalar(
         select(StorageRetentionEntry.created_at)
         .where(
@@ -107,6 +111,8 @@ def prior_warning_at(db: Any, source: MediaAssetSource) -> datetime | None:
             StorageRetentionEntry.object_path == source.object_path,
             StorageRetentionEntry.object_generation == source.object_generation,
             StorageRetentionEntry.action == "warn",
+            StorageRetentionEntry.status == "pending",
+            StorageRetentionEntry.created_at >= warning_threshold,
         )
         .order_by(StorageRetentionEntry.created_at.asc())
         .limit(1)

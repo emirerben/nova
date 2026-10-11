@@ -98,6 +98,9 @@ def cleanup_expired_temporary_uploads(
             if media_library_retention.is_durable_library_path(
                 row.object_path, row.user_id
             ) and media_library_retention.path_is_adopted_by_library(db, row.object_path):
+                row.status = "adopted"
+                row.cleanup_claimed_at = None
+                row.last_error = None
                 continue
             row.status = "cleanup_pending"
             row.cleanup_claimed_at = current

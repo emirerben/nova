@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,6 +17,7 @@ from app.database import AsyncSessionLocal, sync_session
 from app.models import JobStorageDeletion, MediaAsset, MediaAssetSource, User
 from app.routes import me
 from app.services.job_storage_deletion import build_job_storage_manifest
+from app.storage import PrefixDeletionResult
 from app.tasks import account_lifecycle
 
 if not (make_url(settings.database_url).database or "").endswith("_test"):
@@ -51,35 +53,79 @@ def owned_source():
         db.commit()
 
 
-@pytest.mark.parametrize("versioned", [False, True])
-def test_project_deletion_transfers_adopted_bytes_to_library_retention(
-    owned_source, monkeypatch, versioned
+@pytest.mark.parametrize("shape", ["legacy", "v2", "project"])
+def test_project_deletion_preserves_adopted_source_and_cleans_unadopted_siblings(
+    owned_source, monkeypatch, tmp_path: Path, shape: str
 ):
     owner_id, source_id, job_id, path = owned_source
     prefix = f"{owner_id}/{job_id}/"
-    payload = (
-        build_job_storage_manifest(
+    sibling = f"{prefix}unadopted.mp4"
+    root = tmp_path / "storage"
+    for object_path, contents in ((path, b"adopted"), (sibling, b"unadopted")):
+        target = root / object_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(contents)
+    monkeypatch.setattr(settings, "storage_provider", "local")
+    monkeypatch.setattr(settings, "e2e_fixtures", True)
+    monkeypatch.setattr(settings, "local_storage_root", str(root))
+    if shape == "legacy":
+        payload: list[str] | dict = [path]
+    elif shape == "v2":
+        payload = build_job_storage_manifest(
             job_id=job_id,
             exact_paths=[path],
             prefixes=[prefix],
             not_before=datetime.now(UTC) - timedelta(seconds=1),
         ).to_payload()
-        if versioned
-        else [path]
-    )
+    else:
+        payload = {
+            "_creation_project_exact_paths": [path],
+            "_creation_project_prefixes": [prefix],
+        }
     with sync_session() as db:
         outbox = JobStorageDeletion(job_id=job_id, object_paths=payload)
         db.add(outbox)
         db.commit()
         outbox_id = outbox.id
-    for method in ("delete_object_best_effort", "delete_object_once", "delete_prefix_verified"):
-        monkeypatch.setattr(
-            "app.storage." + method, lambda *_a, **_k: pytest.fail("adopted bytes deleted")
-        )
     result = account_lifecycle.purge_job_storage.run(str(outbox_id))
     assert result["status"] == "completed"
-    assert result["deleted"] == 0
+    assert (root / path).read_bytes() == b"adopted"
+    if shape == "legacy":
+        # Legacy manifests have no prefix target and therefore make no prefix
+        # call; exact adopted key filtering leaves the sibling untouched.
+        assert (root / sibling).read_bytes() == b"unadopted"
+    else:
+        assert not (root / sibling).exists()
     with sync_session() as db:
+        assert db.get(MediaAssetSource, source_id).status == "available"
+
+
+def test_project_prefix_outage_retains_v2_outbox_and_adopted_source(owned_source, monkeypatch):
+    owner_id, source_id, job_id, path = owned_source
+    prefix = f"{owner_id}/{job_id}/"
+    payload = build_job_storage_manifest(
+        job_id=job_id,
+        exact_paths=[path],
+        prefixes=[prefix],
+        not_before=datetime.now(UTC) - timedelta(seconds=1),
+    ).to_payload()
+    with sync_session() as db:
+        outbox = JobStorageDeletion(job_id=job_id, object_paths=payload)
+        db.add(outbox)
+        db.commit()
+        outbox_id = outbox.id
+    monkeypatch.setattr(
+        "app.storage.delete_prefix_verified",
+        lambda _prefix, **_kwargs: PrefixDeletionResult(status="unavailable", remaining=None),
+    )
+
+    result = account_lifecycle.purge_job_storage.run(str(outbox_id))
+
+    assert result["status"] == "pending"
+    with sync_session() as db:
+        outbox = db.get(JobStorageDeletion, outbox_id)
+        assert outbox.status == "pending"
+        assert outbox.object_paths["prefixes"][0]["prefix"] == prefix
         assert db.get(MediaAssetSource, source_id).status == "available"
 
 

@@ -715,30 +715,39 @@ def execute_retention_manifest(manifest_id: str) -> dict[str, int]:
                     db.commit()
                     results["skipped"] += 1
                     continue
-                is_library_source = (
-                    db.scalar(
-                        select(MediaAssetSource.id)
-                        .where(
-                            MediaAssetSource.user_id == entry.creator_id,
-                            MediaAssetSource.object_path == entry.object_path,
-                            MediaAssetSource.object_generation == entry.object_generation,
-                        )
-                        .limit(1)
-                    )
-                    is not None
-                )
-                warned_at = db.scalar(
-                    select(StorageRetentionEntry.created_at)
+                library_source = db.scalar(
+                    select(MediaAssetSource)
                     .where(
-                        StorageRetentionEntry.creator_id == entry.creator_id,
-                        StorageRetentionEntry.object_path == entry.object_path,
-                        StorageRetentionEntry.object_generation == entry.object_generation,
-                        StorageRetentionEntry.action == "warn",
-                        StorageRetentionEntry.created_at <= datetime.now(UTC) - _MIN_WARNING_LEAD,
+                        MediaAssetSource.user_id == entry.creator_id,
+                        MediaAssetSource.object_path == entry.object_path,
+                        MediaAssetSource.object_generation == entry.object_generation,
                     )
-                    .order_by(StorageRetentionEntry.created_at.asc())
                     .limit(1)
                 )
+                is_library_source = library_source is not None
+                warned_at = (
+                    media_library_retention.prior_warning_at(db, library_source)
+                    if library_source is not None
+                    else db.scalar(
+                        select(StorageRetentionEntry.created_at)
+                        .where(
+                            StorageRetentionEntry.creator_id == entry.creator_id,
+                            StorageRetentionEntry.object_path == entry.object_path,
+                            StorageRetentionEntry.object_generation == entry.object_generation,
+                            StorageRetentionEntry.action == "warn",
+                            StorageRetentionEntry.created_at
+                            <= datetime.now(UTC) - _MIN_WARNING_LEAD,
+                        )
+                        .order_by(StorageRetentionEntry.created_at.asc())
+                        .limit(1)
+                    )
+                )
+                if (
+                    library_source is not None
+                    and warned_at is not None
+                    and warned_at > datetime.now(UTC) - _MIN_WARNING_LEAD
+                ):
+                    warned_at = None
                 if (
                     entry.status == "pending"
                     and entry.reason in ("inactive_source_or_editable", "inactive_library_source")

@@ -260,11 +260,15 @@ def test_library_source_deletes_only_after_a_durable_seven_day_warning(
     )
     delete = MagicMock()
     monkeypatch.setattr(storage_retention.storage, "delete_object_generation", delete)
+    with sync_session() as db:
+        db.get(MediaAssetSource, source.id).last_used_at = datetime.now(UTC) - timedelta(days=100)
+        db.commit()
     manifest_id = _approved_library_entry(
         source,
         action="delete",
         reason="inactive_library_source",
-        warning_created_at=datetime.now(UTC) - timedelta(days=7, seconds=1),
+        # It is both seven days old and after this source's day-83 threshold.
+        warning_created_at=datetime.now(UTC) - timedelta(days=8),
     )
 
     assert storage_retention.execute_retention_manifest(str(manifest_id)) == {
@@ -279,3 +283,41 @@ def test_library_source_deletes_only_after_a_durable_seven_day_warning(
     )
     with sync_session() as db:
         assert db.get(MediaAssetSource, source.id).status == "deleted"
+
+
+def test_reuse_invalidates_an_old_warning_until_the_current_window_is_warned(
+    library_source: tuple[MediaAssetSource, uuid.UUID], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _ = library_source
+    now = datetime.now(UTC)
+    # The source was warned during its first inactive window, then used again.
+    # At the next day 90 it must issue a new warning rather than deleting.
+    with sync_session() as db:
+        source_row = db.get(MediaAssetSource, source.id)
+        source_row.created_at = now - timedelta(days=200)
+        source_row.last_used_at = now - timedelta(days=90)
+        db.commit()
+
+    stale_warning_at = now - timedelta(days=100)
+    manifest_id = _approved_library_entry(
+        source,
+        action="delete",
+        reason="inactive_library_source",
+        warning_created_at=stale_warning_at,
+    )
+    with sync_session() as db:
+        candidates, _, _ = media_library_retention.source_candidates(db, now=now, limit=10)
+    ours = [candidate for candidate in candidates if candidate.source_id == source.id]
+    assert [(candidate.action, candidate.reason) for candidate in ours] == [
+        ("warn", "inactive_library_source_warning")
+    ]
+
+    monkeypatch.setattr(settings, "storage_retention_delete_enabled", True)
+    monkeypatch.setattr(storage_retention.storage, "delete_object_generation", pytest.fail)
+    assert storage_retention.execute_retention_manifest(str(manifest_id)) == {
+        "deleted": 0,
+        "skipped": 1,
+        "failed": 0,
+    }
+    with sync_session() as db:
+        assert db.get(MediaAssetSource, source.id).status == "available"

@@ -313,7 +313,15 @@ def upgrade() -> None:
         BEGIN
             owner_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.user_id ELSE NEW.user_id END;
             PERFORM pg_advisory_xact_lock(project_media_reference_lock_key_0103(owner_id));
-            IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+            IF TG_OP = 'DELETE' THEN
+                -- Removing a consumer starts a new inactivity window. A
+                -- source pinned for months must receive a fresh warning.
+                UPDATE media_asset_sources SET last_used_at = clock_timestamp()
+                WHERE user_id = OLD.user_id AND asset_id = OLD.asset_id
+                  AND (OLD.source_id IS NULL OR id = OLD.source_id)
+                  AND status IN ('available','missing');
+                RETURN OLD;
+            END IF;
             IF NEW.creation_thread_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM creation_threads t WHERE t.id = NEW.creation_thread_id AND t.creator_id = NEW.user_id) THEN
                 RAISE EXCEPTION 'media reference creation thread has another owner';
             END IF;
@@ -328,10 +336,18 @@ def upgrade() -> None:
                   ON entry.creator_id = source.user_id AND entry.object_path = source.object_path AND entry.object_generation = source.object_generation
                 WHERE source.user_id = NEW.user_id AND source.asset_id = NEW.asset_id
                   AND (NEW.source_id IS NULL OR source.id = NEW.source_id)
+                  -- Asset-wide use covers current sources, not retained
+                  -- history of expired generations. Explicit expired-source
+                  -- references remain forbidden.
+                  AND (NEW.source_id IS NOT NULL OR source.status <> 'deleted')
                   AND (source.status IN ('deleting','deleted') OR (entry.action = 'delete' AND entry.status IN ('deleting','deleted')))
             ) THEN
                 RAISE EXCEPTION 'media reference raced with retention tombstone' USING ERRCODE = '40001';
             END IF;
+            UPDATE media_asset_sources SET last_used_at = clock_timestamp()
+            WHERE user_id = NEW.user_id AND asset_id = NEW.asset_id
+              AND (NEW.source_id IS NULL OR id = NEW.source_id)
+              AND status IN ('available','missing');
             RETURN NEW;
         END $$
     """)

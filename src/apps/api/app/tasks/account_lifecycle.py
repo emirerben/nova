@@ -80,7 +80,9 @@ def cleanup_job_storage_paths(object_paths: list[str]) -> tuple[int, list[str]]:
     return deleted, failed
 
 
-def cleanup_job_storage_prefixes(object_prefixes: list[str]) -> tuple[int, list[str]]:
+def cleanup_job_storage_prefixes(
+    object_prefixes: list[str], *, protected_paths: set[str] | None = None
+) -> tuple[int, list[str]]:
     """Delete project/job prefixes and preserve any failed prefix for retry."""
     from app.storage import delete_prefix_verified  # noqa: PLC0415
 
@@ -90,7 +92,10 @@ def cleanup_job_storage_prefixes(object_prefixes: list[str]) -> tuple[int, list[
         if not isinstance(prefix, str) or not prefix.strip():
             continue
         try:
-            result = delete_prefix_verified(prefix, timeout_s=5.0)
+            kwargs: dict[str, object] = {"timeout_s": 5.0}
+            if protected_paths:
+                kwargs["exclude_paths"] = protected_paths
+            result = delete_prefix_verified(prefix, **kwargs)
             deleted += result.deleted
             if result.status != "verified_empty":
                 failed.append(prefix)
@@ -132,11 +137,7 @@ def _filter_referenced_project_storage(
 ) -> tuple[list[str], list[str]]:
     return (
         [path for path in object_paths if path not in references],
-        [
-            prefix
-            for prefix in object_prefixes
-            if not any(path.startswith(prefix) for path in references)
-        ],
+        object_prefixes,
     )
 
 
@@ -195,7 +196,7 @@ def _library_storage_references(db, owner_id: uuid.UUID) -> set[str]:
 @contextmanager
 def _guard_project_storage_targets(
     object_paths: list[str], object_prefixes: list[str]
-) -> Iterator[tuple[list[str], list[str]]]:
+) -> Iterator[tuple[list[str], list[str], set[str]]]:
     """Lock reference creation and re-check it while deleting project media.
 
     Project uploads can be reused by other edits after the DELETE transaction
@@ -211,7 +212,7 @@ def _guard_project_storage_targets(
         if (owner := _library_storage_owner(target)) is not None
     }
     if not owner_ids:
-        yield object_paths, object_prefixes
+        yield object_paths, object_prefixes, set()
         return
     with sync_session() as db:
         references: set[str] = set()
@@ -222,7 +223,10 @@ def _guard_project_storage_targets(
         for owner_id in sorted(owner_ids):
             references.update(_project_storage_references(db, owner_id))
             references.update(_library_storage_references(db, owner_id))
-        yield _filter_referenced_project_storage(object_paths, object_prefixes, references)
+        paths, prefixes = _filter_referenced_project_storage(
+            object_paths, object_prefixes, references
+        )
+        yield paths, prefixes, references
 
 
 @celery_app.task(name="tasks.send_account_deletion_email", max_retries=0)
@@ -497,9 +501,12 @@ def purge_job_storage(outbox_id: str) -> dict:
             with _guard_project_storage_targets(object_paths, object_prefixes) as (
                 guarded_paths,
                 guarded_prefixes,
+                protected_paths,
             ):
                 deleted, failed = cleanup_job_storage_paths(guarded_paths)
-                prefix_deleted, failed_prefixes = cleanup_job_storage_prefixes(guarded_prefixes)
+                prefix_deleted, failed_prefixes = cleanup_job_storage_prefixes(
+                    guarded_prefixes, protected_paths=protected_paths
+                )
                 deleted += prefix_deleted
         except SoftTimeLimitExceeded:
             raise
@@ -519,7 +526,7 @@ def purge_job_storage(outbox_id: str) -> dict:
             error = f"{failed_count} {target_label} could not be deleted"
     elif isinstance(payload, list):
         try:
-            with _guard_project_storage_targets(payload, []) as (guarded_paths, _):
+            with _guard_project_storage_targets(payload, []) as (guarded_paths, _, _):
                 deleted, failed = cleanup_job_storage_paths(guarded_paths)
         except SoftTimeLimitExceeded:
             raise
@@ -538,7 +545,7 @@ def purge_job_storage(outbox_id: str) -> dict:
             manifest = parse_job_storage_manifest(payload, job_id=job_id)
             with _guard_project_storage_targets(
                 list(manifest.exact_paths), [entry.prefix for entry in manifest.prefixes]
-            ) as (guarded_paths, guarded_prefixes):
+            ) as (guarded_paths, guarded_prefixes, protected_paths):
                 guarded_manifest = type(manifest)(
                     exact_paths=tuple(guarded_paths),
                     prefixes=tuple(
@@ -546,7 +553,9 @@ def purge_job_storage(outbox_id: str) -> dict:
                     ),
                     legacy=manifest.legacy,
                 )
-                cleanup = cleanup_job_storage_manifest(guarded_manifest, now=now)
+                cleanup = cleanup_job_storage_manifest(
+                    guarded_manifest, now=now, protected_paths=protected_paths
+                )
         except SoftTimeLimitExceeded:
             # Do not overwrite the committed manifest when Celery's execution
             # budget expires; the processing lease makes it recoverable.

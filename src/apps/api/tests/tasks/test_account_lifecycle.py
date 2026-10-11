@@ -205,11 +205,12 @@ def test_project_storage_revalidation_preserves_new_job_and_plan_references() ->
         with _guard_project_storage_targets(
             [shared_job_clip, shared_plan_clip, private_output],
             [thread_prefix, plan_prefix, "jobs/job-1/"],
-        ) as (paths, prefixes):
+        ) as (paths, prefixes, protected_paths):
             assert context.__exit__.call_count == 0
 
     assert paths == [private_output]
-    assert prefixes == ["jobs/job-1/"]
+    assert prefixes == [thread_prefix, plan_prefix, "jobs/job-1/"]
+    assert protected_paths == {"jobs/source.mp4", shared_job_clip, shared_plan_clip}
     assert context.__exit__.call_count == 1
     assert "pg_advisory_xact_lock" in str(session.execute.call_args_list[0].args[0])
 
