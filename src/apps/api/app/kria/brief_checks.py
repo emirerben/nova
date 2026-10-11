@@ -125,7 +125,8 @@ class NarratedStepFact:
 
     ``labels`` are the creator's own words for the shot ("the balloons"), ``placed`` the
     first/last seats a resolved order intent gave it, and ``text`` what the voiceover says
-    while the clip is on screen.
+    while the clip is on screen. ``out_of_sequence``: the clip is part of a described
+    sequence the voiceover placed in another order (KRI-590).
     """
 
     media_id: str = ""
@@ -134,6 +135,7 @@ class NarratedStepFact:
     start_s: float = 0.0
     end_s: float = 0.0
     text: str = ""
+    out_of_sequence: bool = False
 
 
 @dataclass(frozen=True)
@@ -746,6 +748,7 @@ def plan_facts_from_narrated_alignment(record: Mapping[str, Any] | None) -> Plan
                 start_s=float(start) if isinstance(start, (int, float)) else 0.0,
                 end_s=float(end) if isinstance(end, (int, float)) else 0.0,
                 text=" ".join(str(row.get("text") or "").split()),
+                out_of_sequence=row.get("out_of_sequence") is True,
             )
         )
     basis = record.get("ordering_basis")
@@ -3535,11 +3538,55 @@ def _narrated_anchors(
     return anchors
 
 
+def _voice_moved_names(req: BriefRequirement, steps: Sequence[NarratedStepFact]) -> list[str]:
+    """The creator's names, in screen order, for the clips of a described sequence that the
+    voiceover placed in another order (KRI-590) and that this requirement's words mention."""
+    wording = _loose_req(req)
+    names: list[str] = []
+    for step in steps:
+        if not step.out_of_sequence:
+            continue
+        for name in step.labels:
+            core = _label_core(name)
+            if (
+                core
+                and _contains_text(wording, core)
+                and not any(_same_group(name, n) for n in names)
+            ):
+                names.append(name)
+    return names
+
+
+def _followed_voice_reason(names: Sequence[str]) -> str:
+    def joined(conjunction: str) -> str:
+        if len(names) == 1:
+            return names[0]
+        return f"{', '.join(names[:-1])} {conjunction} {names[-1]}"
+
+    return say(
+        en=(
+            f"Your voiceover mentions {joined('and')} in a different order, so I followed "
+            "the voiceover."
+        ),
+        tr=(
+            f"Seslendirmende {joined('ve')} farklı bir sırayla geçiyor, ben de "
+            "seslendirmeyi takip ettim."
+        ),
+    )
+
+
 def _check_narrated_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    """A stated first / last clip is met when that clip really opens / closes the edit."""
+    """A stated first / last clip is met when that clip really opens / closes the edit.
+
+    A described sequence the voiceover overrode (KRI-590: the worker kept the narration's
+    order) is never "met": an order ask that names those clips reads partly, with why.
+    """
     steps = facts.narrated_steps or ()
     anchors = _narrated_anchors(req, steps)
+    moved = _voice_moved_names(req, steps)
     if not anchors or not steps:
+        if moved:
+            return _receipt(req, "partial", _followed_voice_reason(moved))
         # No seat to judge: the voiceover sets this edit's order, so any other ordering
         # rule stays unverified, exactly as before the render recorded anything.
         return _receipt(req, "partial", _CANT_CHECK_ORDER_RULE)
@@ -3570,6 +3617,8 @@ def _check_narrated_order(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         )
     if problems:
         return _receipt(req, unmet, " ".join(problems))
+    if moved:
+        return _receipt(req, "partial", _followed_voice_reason(moved))
     if unknown:
         return _receipt(req, "partial", _CANT_CONFIRM_ORDER)
     return _receipt(req, "met", None)

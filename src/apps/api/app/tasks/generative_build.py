@@ -39,7 +39,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -8085,6 +8085,7 @@ def _narrated_alignment_record(
     caption_language: str | None,
     spoken_language: str | None,
     caption_language_request: str | None,
+    out_of_sequence_media_ids: Collection[str] = (),
 ) -> dict[str, Any]:
     """The receipt record of a phone Voiceover edit (KRI-533): what the worker pinned.
 
@@ -8092,7 +8093,9 @@ def _narrated_alignment_record(
     creator's labels for the shot (resolved clip intents, matched on either the basename
     or the phone source id), the first/last seats a resolved order intent gave it, the
     window, and the transcript words spoken over it. ``plan_facts_from_narrated_alignment``
-    reads this back; nothing here is model-claimed.
+    reads this back; nothing here is model-claimed. A step whose clip belongs to a
+    described sequence the voiceover overrode (``out_of_sequence_media_ids``, KRI-590)
+    also carries ``"out_of_sequence": True``; every other row is unchanged.
     """
     labels_by_key: dict[str, list[str]] = {}
     placed_by_key: dict[str, list[dict[str, str]]] = {}
@@ -8139,6 +8142,7 @@ def _narrated_alignment_record(
                 "start_s": round(float(step.start_s), 3),
                 "end_s": round(float(step.end_s), 3),
                 "text": spoken[:_NARRATED_STEP_TEXT_CHARS],
+                **({"out_of_sequence": True} if media_id in out_of_sequence_media_ids else {}),
             }
         )
     return {
@@ -8436,6 +8440,8 @@ def _run_phone_narrated_job(
             script_steps = _narrated_script_steps(filming_guide)
             steps: list[NarratedPhoneStep] = []
             aligned = None  # KRI-533: set by the alignment agent in the branch below
+            # KRI-590: described-sequence clips the voiceover placed in another order.
+            moved_clip_ids: list[str] = []
             if len(script_steps) >= 2:
                 clip_assignments = _narrated_clip_assignments(
                     filming_guide, narrative_order, clip_id_to_local
@@ -8497,7 +8503,7 @@ def _run_phone_narrated_job(
                         job_id=job_id,
                     )
                 if aligned is not None:
-                    ordered_ids, step_timings = aligned
+                    ordered_ids, step_timings, moved_clip_ids = aligned
                     step_clip_ids = list(ordered_ids)
                 else:
                     if snapshot.get("creator_brief_binding") and len(ordered_ids) > 1:
@@ -8665,6 +8671,9 @@ def _run_phone_narrated_job(
                 caption_language=detected_lang if cues else None,
                 spoken_language=spoken_lang if cues else None,
                 caption_language_request=caption_language_req,
+                out_of_sequence_media_ids=frozenset(
+                    _media_id_for_clip(clip_id) for clip_id in moved_clip_ids
+                ),
             )
             narrated_failures = _narrated_alignment_receipts(
                 narrated_record, narrated_brief, bound=bool(snapshot.get("creator_brief_binding"))
@@ -23864,16 +23873,23 @@ def _narrated_clip_alignment_steps(
     pinned_first: list[str] | None = None,
     pinned_last: list[str] | None = None,
     ordered_groups: list[list[str]] | None = None,
-) -> tuple[list[str], list[Any]] | None:
+) -> tuple[list[str], list[Any], list[str]] | None:
     """Ask the alignment agent where each clip should start, failing open.
 
-    Returns ``(clip_ids_in_screen_order, step_timings)`` or ``None`` when the
-    caller must use the legacy equal-bucket split (any precondition miss, agent
-    failure, invalid placement or timeline too short). Every outcome is recorded
+    Returns ``(clip_ids_in_screen_order, step_timings, moved_clip_ids)`` or ``None``
+    when the caller must use the legacy equal-bucket split (any precondition miss,
+    agent failure, invalid placement or timeline too short). Every outcome is recorded
     on the job's pipeline trace; this function never raises. ``order_locked`` fixes
     the whole order (filming guide); ``pinned_first`` / ``pinned_last`` fix only
     how the video opens / closes (a creator's "end on X"); ``ordered_groups`` is the
     creator's described sequence. Clips not in ``clip_ids`` are dropped from both.
+
+    The described sequence is the one ask the narration may override (KRI-590): "show X
+    when I say Y" cues reach this as a sequence in the order they were typed, and the
+    voiceover may say them in another order. Then the placements are kept in the
+    narration's order, ``sequence_overridden`` is recorded on the trace, and
+    ``moved_clip_ids`` lists the described-sequence clips (empty when it was kept) so the
+    render receipts never call that order met.
     """
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -23957,6 +23973,16 @@ def _narrated_clip_alignment_steps(
                     {"clip_id": cid, "start_s": start} for cid, start in zip(order, starts)
                 ],
             )
+        moved = (
+            [clip_id for group in groups for clip_id in group] if output.sequence_overridden else []
+        )
+        if moved:
+            log.info(
+                "narrated_clip_alignment_sequence_overridden",
+                job_id=job_id,
+                described_sequence=groups,
+                screen_order=order,
+            )
         record_pipeline_event(
             "narrated",
             "narrated_clip_alignment",
@@ -23965,6 +23991,9 @@ def _narrated_clip_alignment_steps(
                 "order_locked": order_locked,
                 **pins,
                 "resorted": output.resorted,
+                # KRI-590: the voiceover reached the described-sequence clips in another
+                # order and the narration's order was kept (see `clips` for that order).
+                "sequence_overridden": output.sequence_overridden,
                 "prompt_version": NarratedClipAlignmentAgent.spec.prompt_version,
                 "clips": [
                     {
@@ -23981,7 +24010,11 @@ def _narrated_clip_alignment_steps(
                 ],
             },
         )
-        return [clip_id for clip_id, _timing in resolved], [timing for _id, timing in resolved]
+        return (
+            [clip_id for clip_id, _timing in resolved],
+            [timing for _id, timing in resolved],
+            moved,
+        )
     except Exception as exc:  # noqa: BLE001 -- alignment is best effort
         return _fallback("agent_error", error=f"{type(exc).__name__}: {str(exc)[:200]}")
 

@@ -2788,12 +2788,22 @@ def check_narrated_clip_alignment(
             failures.append("pinned opening clips are not first, in order")
         if tail and placed[len(placed) - len(tail) :] != tail:
             failures.append("pinned closing clips are not last, in order")
+        # KRI-590: the described sequence is a preference the narration may override, but
+        # an override must never be silent: the flag the worker records has to match.
         position_of = {clip_id: i for i, clip_id in enumerate(placed)}
-        for before, after in zip(input.ordered_groups, input.ordered_groups[1:]):
-            if all(c in position_of for c in [*before, *after]) and max(
-                position_of[c] for c in before
-            ) > min(position_of[c] for c in after):
-                failures.append(f"clips {before} must all come before {after}")
+        broken = [
+            (before, after)
+            for before, after in zip(input.ordered_groups, input.ordered_groups[1:])
+            if all(c in position_of for c in [*before, *after])
+            and max(position_of[c] for c in before) > min(position_of[c] for c in after)
+        ]
+        if bool(broken) != output.sequence_overridden:
+            failures.append(
+                f"sequence_overridden={output.sequence_overridden} but the described "
+                f"sequence is {'broken at ' + str(broken) if broken else 'kept'}"
+            )
+    elif output.sequence_overridden:
+        failures.append("sequence_overridden is only possible in PINNED mode")
     index_by_word = {str(word.get("word_id")): i for i, word in enumerate(input.words)}
     start_by_word = {
         str(word.get("word_id")): float(word.get("start_s") or 0.0) for word in input.words
