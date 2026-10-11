@@ -10,6 +10,7 @@ import asyncio
 import contextvars
 import copy
 import functools
+import hashlib
 import json
 import re
 import time
@@ -93,6 +94,7 @@ from app.services.choice_questions import (
     choice_question_text,
     detect_order_vs_group,
     fold_choice_answers,
+    length_inputs_waiting,
     resolve_choices,
     tag_event,
 )
@@ -141,6 +143,128 @@ from app.services.song_order import (
 from app.services.song_range import restrict_alignment_to_range, song_range_of
 
 log = structlog.get_logger()
+
+
+def _enrich_best_parts_snapshot(
+    strategy: Mapping[str, Any], media_snapshot: dict | None, brief: CreativeBrief | None
+) -> dict | None:
+    """Attach source-bounded footage capacity before the choice collector runs."""
+    if not isinstance(media_snapshot, dict):
+        return media_snapshot
+    from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
+    from app.services.length_planning import build_length_plan  # noqa: PLC0415
+    from app.services.length_policy import creator_duration_s, natural_length_owner  # noqa: PLC0415
+
+    if natural_length_owner(strategy) not in {"footage", "voiceover", "song"}:
+        return media_snapshot
+    rows = media_snapshot.get("clip_assignments")
+    if not isinstance(rows, list):
+        return media_snapshot
+    selected = tuple(
+        dict.fromkeys(str(value) for value in strategy.get("selected_media_ids") or [])
+    )
+    del rows
+    creator_target = strategy.get("creator_duration_s")
+    creator_target_s = creator_duration_s(brief=brief) or (
+        float(creator_target)
+        if isinstance(creator_target, (int, float)) and creator_target > 0
+        else None
+    )
+    contract = build_render_contract(
+        strategy,
+        generation_id="length-planning",
+        brief=brief,
+        media_snapshot=media_snapshot,
+    )
+    recording = media_snapshot.get("voiceover_duration_s")
+    if recording is None and isinstance(media_snapshot.get("voiceover"), dict):
+        recording = media_snapshot["voiceover"].get("duration_s")
+    length_plan = build_length_plan(
+        {**strategy, "voiceover_duration_s": recording},
+        media_snapshot,
+        creator_target_s=creator_target_s,
+        selected_ids=selected,
+        order_ids=contract.order_ids if contract is not None else (),
+    )
+    enriched = dict(media_snapshot)
+    enriched["length_plan"] = length_plan
+    # Keep legacy readers and their receipts stable while approved workers move
+    # to the versioned envelope.
+    enriched["best_parts"] = list(length_plan["windows"])
+    enriched["best_parts_capacity_s"] = length_plan["capacity_s"]
+    enriched["best_parts_conflicts"] = [
+        {"code": item["code"], "message": item["message"]} for item in length_plan["conflicts"]
+    ]
+    return enriched
+
+
+async def _freeze_licensed_music_section(
+    db: Any, strategy: Mapping[str, Any], snapshot: dict | None, *, job_id: str
+) -> dict[str, Any] | None:
+    """Match once in a real live session and return an immutable catalog section."""
+    if not isinstance(db, AsyncSession) or not isinstance(snapshot, dict):
+        return None
+    if strategy.get("audio_strategy", "licensed_music") != "licensed_music":
+        return None
+    if strategy.get("has_voiceover") or strategy.get("voice_mode") == "continuous":
+        return None
+    rows = snapshot.get("clip_assignments")
+    if not isinstance(rows, list) or not rows:
+        return {"status": "fallback_footage"}
+    selected = {str(value) for value in strategy.get("selected_media_ids") or []}
+    playable = [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and isinstance(row.get("duration_s"), (int, float))
+        and not isinstance(row.get("duration_s"), bool)
+        and 0.1 <= row["duration_s"] < float("inf")
+        and (not selected or str(row.get("media_id")) in selected)
+    ]
+    if not playable:
+        return {"status": "fallback_footage"}
+    from app.pipeline.agents.gemini_analyzer import ClipMeta  # noqa: PLC0415
+    from app.services.music_sections import track_config_with_rank_one  # noqa: PLC0415
+    from app.tasks.generative_build import _match_best_track  # noqa: PLC0415
+
+    metas = [
+        ClipMeta(
+            clip_id=str(row["media_id"]),
+            transcript="",
+            hook_text="",
+            hook_score=7.0,
+            best_moments=list((row.get("analysis") or {}).get("best_moments") or []),
+            detected_subject=str((row.get("analysis") or {}).get("description") or ""),
+            clip_path=str(row.get("gcs_path") or row.get("proxy_path") or ""),
+        )
+        for row in playable
+        if row.get("media_id")
+    ]
+    track = await asyncio.to_thread(_match_best_track, metas, job_id=job_id)
+    if track is None:
+        return {"status": "fallback_footage"}
+    cfg = track_config_with_rank_one(track)
+    start = cfg.get("best_start_s")
+    end = cfg.get("best_end_s")
+    catalog_duration = float(getattr(track, "duration_s", 0) or 0)
+    if (
+        isinstance(start, bool)
+        or isinstance(end, bool)
+        or not isinstance(start, (int, float))
+        or not isinstance(end, (int, float))
+        or not 0 <= start < end <= catalog_duration < float("inf")
+    ):
+        return {"status": "fallback_footage"}
+    return {
+        "status": "selected",
+        "track_id": str(track.id),
+        "title": str(getattr(track, "title", "")),
+        "artist": str(getattr(track, "artist", "")),
+        "start_s": float(start),
+        "end_s": float(end),
+        "catalog_duration_s": catalog_duration,
+        "beat_timestamps_s": list(getattr(track, "beat_timestamps_s", None) or []),
+    }
 
 
 @dataclass(frozen=True)
@@ -2635,10 +2759,45 @@ async def _gate_unresolved_choices(
             with suppress(BriefUpdateBatchError):
                 brief = apply_updates(brief, planned.brief_updates, source_turn_id=None)
     events = await _load_thread_events(db, thread_id)
+    music_inputs = {
+        "media": (planned.media_snapshot or {}).get("clip_assignments"),
+        "selected": strategy.get("selected_media_ids"),
+        "audio": strategy.get("audio_strategy", "licensed_music"),
+    }
+    music_input_digest = hashlib.sha256(
+        json.dumps(music_inputs, sort_keys=True, default=str).encode()
+    ).hexdigest()
+    frozen_music = None
+    for role, payload in reversed(events):
+        question = payload.get("choice_question") if isinstance(payload, dict) else None
+        context = question.get("length_context") if isinstance(question, dict) else None
+        if (
+            role == "assistant"
+            and isinstance(context, dict)
+            and context.get("input_digest") == music_input_digest
+        ):
+            frozen_music = context.get("licensed_music")
+            break
+    if frozen_music is None:
+        frozen_music = await _freeze_licensed_music_section(
+            db, strategy, planned.media_snapshot, job_id=str(thread_id)
+        )
+    if frozen_music is not None:
+        strategy = {**strategy, "selected_music_section": frozen_music}
+    if frozen_music is not None:
+        apply_intent = apply_intent.model_copy(
+            update={"arguments": {**arguments, "strategy": strategy}}
+        )
+        plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
+        planned = replace(planned, plan=plan)
+        arguments = apply_intent.arguments
+    enriched_snapshot = _enrich_best_parts_snapshot(strategy, planned.media_snapshot, brief)
+    if enriched_snapshot is not planned.media_snapshot:
+        planned = replace(planned, media_snapshot=enriched_snapshot)
     resolution = resolve_choices(
         strategy,
         answered_brief(brief, strategy),
-        planned.media_snapshot,
+        enriched_snapshot,
         events,
         ChoiceCapability(
             max_duration_s=float(MAX_PROPOSAL_DURATION_S),
@@ -2667,13 +2826,29 @@ async def _gate_unresolved_choices(
                 ),
             )
         candidate = resolution.question.candidate()
+        question = build_choice_question(candidate)
+        if frozen_music is not None:
+            question["length_context"] = {
+                "input_digest": music_input_digest,
+                "licensed_music": frozen_music,
+            }
         asked = KriaTurnPlan(
             mode="respond",
             turn_value="question",
             response=choice_question_text(candidate),
-            choice_question=build_choice_question(candidate),
+            choice_question=question,
         )
         return replace(planned, plan=asked)
+    waiting = length_inputs_waiting(resolution)
+    if waiting is not None:
+        return replace(
+            planned,
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="progress",
+                response=waiting,
+            ),
+        )
     if not resolution.answers:
         return planned
     summary = " ".join([str(arguments.get("summary") or ""), *resolution.notices]).strip()
@@ -2683,7 +2858,11 @@ async def _gate_unresolved_choices(
         }
     )
     return replace(
-        planned, plan=plan.model_copy(update={"intents": [rewritten, *plan.intents[1:]]})
+        planned,
+        plan=plan.model_copy(update={"intents": [rewritten, *plan.intents[1:]]}),
+        media_snapshot=_enrich_best_parts_snapshot(
+            resolution.strategy, enriched_snapshot, answered_brief(brief, resolution.strategy)
+        ),
     )
 
 

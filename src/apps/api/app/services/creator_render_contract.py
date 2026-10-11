@@ -18,7 +18,6 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents._schemas.creator_agent import CreativeStrategy
-from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.brief import CreativeBrief
 from app.kria.brief_route import chapter_list
 from app.kria.recipes_v2 import EditRecipeV2
@@ -44,17 +43,10 @@ from app.services.clip_order_sequence import (
     stated_anchors,
     unresolved_questions,
 )
+from app.services.length_policy import creator_duration_s, length_owner
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
-# Edit formats whose length is set by the footage, not by a target: a Talking
-# edit keeps the whole take (minus speech-cleanup pauses) and a voiceover edit
-# runs as long as the voiceover. `brief_checks._check_timing` reports the same
-# rule to the creator (KRI-142). A declared `talking_head` is not here: its
-# cloud assembler caps the output at the target, and the phone only reaches a
-# multi-clip Talking head through the narrated family.
-TAKE_LENGTH_EDIT_FORMATS: frozenset[str] = frozenset({"subtitled", *NARRATED_EDIT_FORMATS})
-
 # KRI-470 kill-switch stamp in Job.all_candidates. Written once at contract stamp
 # time when KRIA_PLAN_AUTHORITY_ENABLED is on; workers branch on the stamp and
 # never on the live flag. Absent = legacy behaviour.
@@ -182,16 +174,28 @@ _CLIP_INTENT_LEAVES = (
 FIELD_MATRIX: dict[str, FieldRule] = {
     # Hard requirements projected by build_render_contract.
     **_rules(
-        "supported",
-        "render_contract:duration",
+        "upstream_resolved",
+        "duration_policy:proposal",
         "target_duration_s",
-        note="pinned only when target_duration_requested is true; a default is not a requirement",
+        note="model planning value; cannot establish creator duration provenance",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "duration_policy:provenance",
+        "target_duration_requested",
+        note="legacy marker; never sufficient proof on its own",
     ),
     **_rules(
         "supported",
         "render_contract:duration",
-        "target_duration_requested",
-        note="server provenance: only an explicit request becomes a duration requirement",
+        "creator_duration_s",
+        note="server-derived creator target from text, approved brief, or authoritative answer",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "length_planning:approved_music",
+        "selected_music_section",
+        note="server-frozen catalog section in the approved generation; consumed by both compilers",
     ),
     **_rules(
         "supported",
@@ -979,35 +983,24 @@ def build_render_contract(
     # choice (the answer rewrites it). A user-song item's
     # length is owned by the song window, never by a model-chosen target. Legacy
     # brief-less non-song strategies keep the marker behaviour unchanged.
-    # A Talking (subtitled) edit runs as long as the take and a voiceover edit (the
-    # narrated family, or a montage spined by a recorded voiceover) as long as the
-    # voiceover: no compiler trims those to a named length, so a length the creator
-    # asked for is not a fact the recipe can prove (the brief receipt already says
-    # the length follows the take or the voiceover). Pinning it refused every such
-    # edit at the pin step (job e1c5f89e, 2026-10-06: a 68 s Talking take approved
-    # with "keep it under 45 seconds").
-    length_is_pinnable = typed is None or not (
-        typed.edit_format in TAKE_LENGTH_EDIT_FORMATS or typed.audio_strategy == "voiceover"
+    # A frozen brief/answered conflict is newer and more authoritative than a
+    # strategy stamp that may have survived an earlier request.  Only without
+    # that authority can the persisted server stamp prove a target.
+    authoritative_duration_s = creator_duration_s(
+        brief=brief,
+        authoritative_answers=answers.values() if brief is not None else (),
     )
-    is_user_song = bool(typed and typed.audio_strategy == "user_song")
-    duration_answered = (
-        answers.get(CONFLICT_DURATION_VS_COUNT) is not None
-        or answers.get(CONFLICT_VOICE_VS_DURATION) is not None
-    )
-    brief_names_duration = bool(
-        brief is not None
-        and any(r.kind == "timing" and r.facts.get("duration_s") is not None for r in brief.live())
-    )
-    strategy_duration_is_evidence = duration_answered or (
-        not is_user_song and (brief is None or brief_names_duration)
-    )
+    stamped_duration = raw.get("creator_duration_s")
+    proven_duration_s = authoritative_duration_s
     if (
-        length_is_pinnable
-        and strategy_duration_is_evidence
-        and raw.get("target_duration_requested") is True
-        and "target_duration_s" in raw
+        proven_duration_s is None
+        and isinstance(stamped_duration, (int, float))
+        and stamped_duration > 0
     ):
-        durations.append(float(raw["target_duration_s"]))
+        proven_duration_s = float(stamped_duration)
+    owner = length_owner(typed or raw, creator_duration_proven=proven_duration_s is not None)
+    if owner == "creator" and proven_duration_s is not None:
+        durations.append(proven_duration_s)
     order_required = bool(typed and typed.ordering_choice == "chronological")
     attachment_order = False
     hidden_ids: frozenset[str] = frozenset()
@@ -1051,7 +1044,7 @@ def build_render_contract(
     if brief:
         for requirement in brief.live():
             if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
-                if not length_is_pinnable:
+                if owner != "creator":
                     continue
                 answered = answers.get(CONFLICT_DURATION_VS_COUNT) or answers.get(
                     CONFLICT_VOICE_VS_DURATION
@@ -1595,6 +1588,7 @@ def verify_phone_recipe(
     *,
     source_audio: Mapping[str, bool] | None = None,
     composition: CompositionCommitments | None = None,
+    length_policy: Any = None,
 ) -> list[dict[str, Any]]:
     """Check a compiled phone recipe against the pinned contract.
 
@@ -1607,7 +1601,16 @@ def verify_phone_recipe(
         raise unresolved_decline(contract.unresolved[0])
     manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
     receipts: list[dict[str, Any]] = []
-    if contract.duration_s is not None:
+    if length_policy is not None:
+        from app.services.length_policy_state import check_creator_duration  # noqa: PLC0415
+
+        try:
+            observation = check_creator_duration(contract, recipe.duration, state=length_policy)
+        except CreatorRenderContractError as exc:
+            raise _phone_decline("duration_s", str(exc)) from exc
+        if observation is not None:
+            receipts.append(observation)
+    elif contract.duration_s is not None:
         drift = abs(recipe.duration - contract.duration_s)
         allowed = (
             max(0.1, 1 / recipe.frame_rate)

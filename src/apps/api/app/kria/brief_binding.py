@@ -121,16 +121,34 @@ def snapshot_media(item: object) -> dict:
     """Keep the approved source identities AND analysis, in the existing draft/job.
 
     Analysis answers may be enriched later, but cannot replace evidence used by an
-    accepted plan. Source paths are server-owned and never accepted from a client.
+    accepted plan. Source paths and timing are server-owned and never accepted
+    from a client.  The scalar durations are the attach-time probes; song
+    analysis supplies the same song duration plus authoritative lyric/section
+    timing when the analysis is ready.  No output target is used as a fallback.
     """
+    voiceover_duration_s = getattr(item, "voiceover_duration_s", None)
+    song_duration_s = getattr(item, "song_duration_s", None)
     return copy.deepcopy(
         {
             "clip_paths": list(getattr(item, "clip_gcs_paths", None) or []),
             "clip_assignments": list(getattr(item, "clip_assignments", None) or []),
             "voiceover_path": getattr(item, "voiceover_gcs_path", None),
             "voiceover_generation": getattr(item, "voiceover_generation", None),
+            # Keep both the scalar and named shape: KRI-497 capacity readers
+            # can consume this without deriving a duration from a strategy.
+            "voiceover_duration_s": voiceover_duration_s,
+            "voiceover": (
+                {"duration_s": voiceover_duration_s}
+                if isinstance(voiceover_duration_s, (int, float)) and voiceover_duration_s > 0
+                else None
+            ),
             "song_path": getattr(item, "song_gcs_path", None),
             "song_generation": getattr(item, "song_generation", None),
+            "song_duration_s": song_duration_s,
+            # SongAnalysis contains the source duration and its timed lines;
+            # SongAlignment records server-resolved per-take song positions.
+            "song_analysis": getattr(item, "song_analysis", None),
+            "song_alignment": getattr(item, "song_alignment", None),
         }
     )
 

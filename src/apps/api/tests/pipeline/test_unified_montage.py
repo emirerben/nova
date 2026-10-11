@@ -289,8 +289,9 @@ def test_a_label_lasts_at_least_its_reading_time_and_is_capped_by_the_clip():
     assert durations["c1"] == pytest.approx(1.5)  # the whole clip, no more
     assert "c1" in plan.short_label_clip_ids
     assert "c0" not in plan.short_label_clip_ids
-    # An unlabelled cut keeps the classic fast-cut length.
-    assert durations["c2"] == pytest.approx(1.2)
+    # Footage-owned timing retains its deterministic full-source fallback.
+    assert durations["c2"] == pytest.approx(5.0)
+    assert plan.record()["best_parts"][-1]["reason"] == "analysis_fallback"
 
 
 def test_cuts_are_frame_aligned_and_sum_to_the_proposal():
@@ -386,10 +387,14 @@ def test_creator_title_remains_visible_in_the_compiled_plan():
 def test_long_clips_and_a_stated_length_are_honoured_for_single_hero_and_day_vlog():
     # One 20s clip with a 12s ask, and three 20s clips with a 45s ask, are not
     # cut down to a 3s beat each.
-    single = plan_unified_montage([clip(0, duration=20.0)], strategy={"target_duration_s": 12})
+    single = plan_unified_montage(
+        [clip(0, duration=20.0)], strategy={"target_duration_s": 12}, creator_duration_proven=True
+    )
     assert single.duration_s == pytest.approx(12.0)
     vlog = plan_unified_montage(
-        [clip(i, duration=20.0) for i in range(3)], strategy={"target_duration_s": 45}
+        [clip(i, duration=20.0) for i in range(3)],
+        strategy={"target_duration_s": 45},
+        creator_duration_proven=True,
     )
     assert vlog.duration_s == pytest.approx(45.0)
 
@@ -695,7 +700,10 @@ def test_a_photo_holds_like_a_cut_and_never_past_a_beat_of_attention():
 
     # A stated length with little footage grows the photo only to its cap.
     stretched = plan_unified_montage(
-        [clip(0, duration=2.0)], visuals=[photo], strategy={"target_duration_s": 30}
+        [clip(0, duration=2.0)],
+        visuals=[photo],
+        strategy={"target_duration_s": 30},
+        creator_duration_proven=True,
     )
     cut = next(cut for cut in stretched.snapshot.fast_cuts if cut.media_id == photo.media_id)
     assert (cut.source_start_s, cut.source_end_s) == (0.0, 3.0)
@@ -824,7 +832,9 @@ def test_the_reported_reunion_thread_plans_and_compiles():
         for index, duration in enumerate(durations)
     ]
     photos = [visual(1), visual(2)]
-    plan = plan_unified_montage(videos, strategy={"target_duration_s": 15}, visuals=photos)
+    plan = plan_unified_montage(
+        videos, strategy={"target_duration_s": 15}, visuals=photos, creator_duration_proven=True
+    )
 
     assert plan.duration_s == pytest.approx(15.0, abs=0.05)
     assert _pattern(plan) == "CCPCCPCC"

@@ -94,7 +94,7 @@ def _duration_choice():
         description="Keep 15 seconds",
         facts={"duration_s": 15},
     )
-    found = collect_conflicts({}, _brief(timing), {"clip_assignments": _rows(30)})
+    found = collect_conflicts({}, _brief(timing), {"clip_assignments": _rows(166)})
     assert [c.kind for c in found] == [CONFLICT_DURATION_VS_COUNT]
     return found[0]
 
@@ -398,8 +398,8 @@ def test_duration_question_turkish_labels_and_typed_answers() -> None:
     assert "klip" in fewer.label
     assert english.options[0].label in extend.aliases
     assert english.options[1].label in fewer.aliases
-    assert found.intro == 'İsteğinde "Keep 15 seconds" yazıyor ama bu düzenlemede 30 klip var.'
-    assert "Maalesef" in text and "30 klibin" in text
+    assert found.intro == 'İsteğinde "Keep 15 seconds" yazıyor ama bu düzenlemede 166 klip var.'
+    assert "Maalesef" in text and "166 klibin" in text
     question = _question(found.candidate())
     for reply in (
         "uzat",
@@ -421,15 +421,15 @@ def test_duration_question_turkish_labels_and_typed_answers() -> None:
 
 def test_duration_question_in_english_is_unchanged() -> None:
     found = _duration_choice()
-    assert found.intro == 'Your brief says "Keep 15 seconds" and this edit uses 30 clips.'
-    assert found.options[0].label == "Extend it to 24 seconds"
-    assert found.options[1].label == "Keep 15 seconds with 18 clips"
+    assert found.intro == 'Your brief says "Keep 15 seconds" and this edit uses 166 clips.'
+    assert found.options[0].label == "Extend it to 16.6 seconds"
+    assert found.options[1].label == "Keep 15 seconds with 150 clips"
     assert found.options[0].description == (
-        "Every clip gets at least 0.8 seconds, so all 30 stay in."
+        "Every clip gets at least 0.1 seconds, so all 166 stay in."
     )
     assert found.reason == (
-        "30 clips can't each stay on screen long enough to be seen in 15 seconds "
-        "(each needs about 0.8 seconds)."
+        "166 clips can't each stay on screen long enough to be seen in 15 seconds "
+        "(each needs about 0.1 seconds)."
     )
 
 

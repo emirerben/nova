@@ -142,6 +142,13 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         try await assertCase("creation_words_retimed")
     }
 
+    /// KRI-492: the server fixture saves and reloads a creator-approved
+    /// 24-second binding, then compiles and validates the device recipe before
+    /// this existing exporter renders its measured completion artifact.
+    func testApprovedTwentyFourSecondLengthThenExportOnTheIPhone() async throws {
+        try await assertCase("kri492_length_24")
+    }
+
     func testCompoundWordTrimSavedThenExportOnTheIPhone() async throws {
         try await assertCase("compound_words_trim_save", expectedCreationProvenance: "authored_editor_fixture")
     }

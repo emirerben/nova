@@ -599,6 +599,19 @@ class CreativeStrategy(_CreatorModel):
     target_duration_requested: SkipJsonSchema[bool | None] = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # Server-owned numeric proof of the creator's requested output duration.
+    # Unlike the model's planning target, this is copied only from creator text,
+    # a pinned brief, or an authoritative choice effect.  It lets later job
+    # assembly reject a forged/stale boolean marker without changing the strict
+    # CreatorRenderContract wire schema.
+    creator_duration_s: SkipJsonSchema[ProposalDuration | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # Server-frozen catalog selection; never model-authored and intentionally
+    # absent from the public strategy schema.
+    selected_music_section: SkipJsonSchema[dict[str, Any] | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     render_program: RenderProgram = "guided"
     selected_media_ids: list[str] = Field(default_factory=list, max_length=MAX_CREATOR_MEDIA_REFS)
     optional_treatments: list[OptionalTreatment] = Field(default_factory=list, max_length=4)

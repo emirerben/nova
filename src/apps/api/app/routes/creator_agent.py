@@ -1503,11 +1503,23 @@ def _apply_explicit_render_intent(
     elif re.search(r"\bbalanced\s+(?:pace|pacing)\b", request, re.IGNORECASE):
         updates["pacing"] = "balanced"
 
+    # The aggregate request is useful for recovering a scheduling target, but
+    # only the current creator message can prove a duration requirement.  In
+    # particular, neither a model field nor pinned narration may acquire that
+    # provenance on a later turn.
+    explicit_duration_s = recognize_total_duration_s(latest_user_message)
     target_duration_s = recognize_total_duration_s(request)
     if target_duration_s is None and manifest is not None:
         target_duration_s = _pinned_narration_target_duration_s(manifest)
     if target_duration_s is not None:
         updates["target_duration_s"] = target_duration_s
+    semantic_updates["target_duration_requested"] = (
+        True if explicit_duration_s is not None else None
+    )
+    semantic_updates["creator_duration_s"] = explicit_duration_s
+    semantic_updates["selected_music_section"] = None
+    if explicit_duration_s is not None:
+        semantic_updates["target_duration_s"] = explicit_duration_s
     updates.update(semantic_updates)
     updates["omitted_copy_targets"] = [
         target for target, value in (approved_creative_copy or {}).items() if value is None
@@ -2336,8 +2348,9 @@ def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStra
         )
 
     requested_duration_s = recognize_total_duration_s(user_message)
-    if requested_duration_s is None:
-        requested_duration_s = _pinned_narration_target_duration_s(manifest)
+    scheduled_duration_s = requested_duration_s
+    if scheduled_duration_s is None:
+        scheduled_duration_s = _pinned_narration_target_duration_s(manifest)
     max_duration_s = int(
         getattr(
             getattr(manifest, "limits", None),
@@ -2345,7 +2358,7 @@ def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStra
             MAX_PROPOSAL_DURATION_S,
         )
     )
-    target_duration_s = max(3, min(max_duration_s, requested_duration_s or 24))
+    target_duration_s = max(3, min(max_duration_s, scheduled_duration_s or 24))
 
     return CreativeStrategy(
         direction="fast_montage" if render_program == "guided" else "native",
@@ -2356,10 +2369,10 @@ def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStra
         pacing="balanced",
         target_duration_s=target_duration_s,
         # The conservative fallback's 24s is a local default, not an
-        # approved duration requirement.  A duration recovered from the
-        # creator's request or pinned narration is explicit and retains its
-        # provenance through later policy normalization.
+        # approved duration requirement.  Pinned narration is a scheduling
+        # target, not an authored output-length request.
         target_duration_requested=True if requested_duration_s is not None else None,
+        creator_duration_s=requested_duration_s,
         render_program=render_program,
         mixed_media_timing=mixed_media_timing,
         selected_media_ids=(
@@ -2435,6 +2448,11 @@ def _model_strategy_hygiene(strategy: CreativeStrategy) -> CreativeStrategy:
     update: dict[str, Any] = {
         "resolved_clip_intents": None,
         "resolved_song_takes": None,
+        # Both duration fields are server-owned.  The Main Creator stamps
+        # them from the latest creator message; a route-level fallback does
+        # the same in `_apply_explicit_render_intent`.
+        "target_duration_requested": None,
+        "creator_duration_s": None,
         # KRI-476: conflict answers are written only by the Kria planner gate.
         "choice_answers": None,
     }
@@ -3036,7 +3054,7 @@ async def _run_planning_turn(
         strategy = (
             action.strategy
             if isinstance(action, ProposeStrategy)
-            else _fallback_strategy(manifest, user_message=creator_request)
+            else _fallback_strategy(manifest, user_message=user_message)
         )
         summary = (
             action.summary
@@ -3693,7 +3711,7 @@ async def _run_planning_turn(
             strategy = normalize_creator_strategy_media(
                 manifest,
                 _apply_explicit_render_intent(
-                    _fallback_strategy(manifest, user_message=creator_request).model_copy(
+                    _fallback_strategy(manifest, user_message=user_message).model_copy(
                         update={
                             "video_reuse_policy": reuse_policy,
                             "montage_cadence": cadence,
