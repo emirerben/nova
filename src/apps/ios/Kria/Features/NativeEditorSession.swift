@@ -1208,6 +1208,12 @@ struct NativeEditorTemporaryVideo {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-legacy-visuals") {
             itemID = "fixture-visual-item"
         }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-drawing") {
+            // KRI-589: Save goes through the real request encoder to a stub transport (no account, no server).
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-drawing-item"
+            variantKey = "initial"
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source") { loadState = .loading }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-song-reference") {
             previewVariant = NativeEditorUITestFixtures.songReferenceVariant
@@ -4099,7 +4105,9 @@ struct NativeEditorTemporaryVideo {
         drawing.drawDurationS = min(1.2, window.end - window.start)
         guard drawing.isValid else { visualError = "That drawing can’t be saved."; return false }
         transactDocument(section: .drawings) { $0.drawings.append(drawing) }
+        // Show it finished: the playhead moves to where the pen lifts, so Done never leaves an empty-looking frame.
         select(.init(kind: .drawing, id: drawing.id), seekToStart: false)
+        seek(to: timelineProjection.projectBaseTime(min(drawing.endS - 0.05, drawing.startS + drawing.drawDurationS)))
         return true
     }
 

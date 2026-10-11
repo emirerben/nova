@@ -173,7 +173,9 @@
       "KriaUITests/NativeQuickAddMenuUITests/testPlusOpensMenuWithThreeOptions",
       "KriaUITests/NativeQuickAddMenuUITests/testTappingOutsideTheMenuDismissesIt",
       "KriaUITests/NativeQuickAddMenuUITests/testTappingPlusAgainClosesTheMenu",
-      "KriaUITests/NativeQuickAddMenuUITests/testTextOptionStartsTextCreation"
+      "KriaUITests/NativeQuickAddMenuUITests/testTextOptionStartsTextCreation",
+      "KriaUITests/DrawingJourneyUITests/testDrawDoneTrimSaveReopenPersists",
+      "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -257,6 +259,10 @@
     "src/apps/ios/Kria/Core/ReviewPlan.swift": "creation",
     "src/apps/ios/Kria/Core/ReviewPlanModel.swift": "creation",
     "src/apps/ios/Kria/Features/ReviewPlanView.swift": "creation",
-    "src/apps/ios/Kria/Features/ReviewPlanUITestFixture.swift": "creation"
+    "src/apps/ios/Kria/Features/ReviewPlanUITestFixture.swift": "creation",
+    "src/apps/ios/Kria/Core/EditorDrawing.swift": "editor",
+    "src/apps/ios/Kria/Core/NativeDrawingSketch.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeDrawingViews.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/DrawingJourneyUITests.swift": "editor"
   }
 }

@@ -345,15 +345,16 @@ struct NativeEditorView: View {
                         .accessibilityIdentifier("native-editor-caption-stale-preview")
                     }
                 }
+                .accessibilityIdentifier("native-editor-preview")
                 .overlay {
                     // KRI-589: the finger canvas in Draw mode, else the selected drawing's move / scale / rotate layer.
+                    // After the preview's identifier: a parent's identifier masks its children's.
                     if drawMode != nil {
                         NativeDrawingCanvas(sketch: sketch)
                     } else if let selection = session.selection, selection.kind == .drawing {
                         NativeDrawingTransformLayer(session: session, id: selection.id)
                     }
                 }
-                .accessibilityIdentifier("native-editor-preview")
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
                 .overlay(alignment: .bottomTrailing) {
