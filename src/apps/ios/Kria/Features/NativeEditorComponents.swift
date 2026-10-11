@@ -12,6 +12,8 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
     case captions = "Captions"
     case visuals = "Visuals"
     case sounds = "Sounds"
+    /// KRI-589: shown only when the variant opens `drawings.add`.
+    case draw = "Draw"
 
     var id: String { rawValue }
 
@@ -22,6 +24,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .captions: "captions.bubble"
         case .visuals: "camera.filters"
         case .sounds: "waveform"
+        case .draw: "pencil.tip"
         }
     }
 
@@ -32,6 +35,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .captions: "Turn captions on or off and choose a style"
         case .visuals: "Browse visual lanes and adjust supported effects"
         case .sounds: "Adjust music and add sound effects"
+        case .draw: "Draw on the video with your finger"
         }
     }
 }
@@ -275,6 +279,7 @@ struct NativeEditorTimeline: View {
     /// tool the bottom rail already opens for them.
     var onSelectVisual: () -> Void = {}
     var onSelectText: () -> Void = {}
+    var onSelectDrawing: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 6) {
@@ -306,7 +311,7 @@ struct NativeEditorTimeline: View {
             }
             NativeMiniStrip(
                 session: session, bottomClearance: bottomClearance, isCovered: isCovered,
-                onSelectVisual: onSelectVisual, onSelectText: onSelectText
+                onSelectVisual: onSelectVisual, onSelectText: onSelectText, onSelectDrawing: onSelectDrawing
             )
                 .frame(maxHeight: .infinity)
                 .accessibilityIdentifier("native-editor-mini-strip")
@@ -500,7 +505,10 @@ struct NativeEditorToolRail: View {
     let selected: NativeEditorTool?
     var availableWidth: CGFloat = 328
     var connected = false
+    /// The Draw tool is offered only when the server opens drawings for this variant.
+    var showsDraw = false
     let onSelect: (NativeEditorTool) -> Void
+    private var tools: [NativeEditorTool] { NativeEditorTool.allCases.filter { $0 != .kria && ($0 != .draw || showsDraw) } }
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
@@ -508,7 +516,7 @@ struct NativeEditorToolRail: View {
 
     var body: some View {
         HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
-            ForEach(NativeEditorTool.allCases.filter { $0 != .kria }) { tool in
+            ForEach(tools) { tool in
                 Button { onSelect(tool) } label: {
                     VStack(spacing: 4) {
                         Image(systemName: tool.icon)
@@ -523,7 +531,7 @@ struct NativeEditorToolRail: View {
                             .minimumScaleFactor(0.7)
                     }
                     .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
-                    .frame(width: min(NativeEditorIslandMetrics.toolWidth, max(44, (availableWidth - 22) / 4)), height: NativeEditorIslandMetrics.toolHeight)
+                    .frame(width: min(NativeEditorIslandMetrics.toolWidth, max(44, (availableWidth - 22) / CGFloat(tools.count))), height: NativeEditorIslandMetrics.toolHeight)
                     .background {
                         if selected == tool {
                             if shouldReduceMotion {
