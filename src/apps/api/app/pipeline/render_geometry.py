@@ -12,7 +12,7 @@ import json
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -314,11 +314,25 @@ def _face_protection_box(raw: NormalizedBox) -> NormalizedBox:
     padding thin; sides and chin stay generously padded.
     """
 
+    return pad_face_box(clamp_face_width(raw))
+
+
+def clamp_face_width(raw: NormalizedBox) -> NormalizedBox:
+    """A raw Haar box wider than 55% of its frame narrowed to a centered
+    head-size box (the background-merge case `_face_protection_box` describes)."""
+
     if raw.width > 0.55:
         center_x = (raw.left + raw.right) / 2
-        raw = NormalizedBox(
+        return NormalizedBox(
             max(0.0, center_x - 0.275), raw.top, min(1.0, center_x + 0.275), raw.bottom
         )
+    return raw
+
+
+def pad_face_box(raw: NormalizedBox) -> NormalizedBox:
+    """The protection padding around a face box, in the box's own normalized
+    units: thin above the hairline, generous at the sides and under the chin."""
+
     return NormalizedBox(
         max(0.0, raw.left - 0.06),
         max(0.0, raw.top - 0.02),
@@ -327,16 +341,21 @@ def _face_protection_box(raw: NormalizedBox) -> NormalizedBox:
     )
 
 
-def _face_region_at(at_s: float, raw_box: dict[str, Any]) -> ProtectedRegion:
+def _face_region_at(
+    at_s: float, raw_box: dict[str, Any], *, raw_boxes: bool = False
+) -> ProtectedRegion:
+    box = NormalizedBox(**raw_box)
     return ProtectedRegion(
         start_s=max(0.0, at_s - 0.5),
         end_s=at_s + 0.5,
-        box=_face_protection_box(NormalizedBox(**raw_box)),
+        box=box if raw_boxes else _face_protection_box(box),
         kind="face",
     )
 
 
-def _partial_samples_from_stream(stdout: str | None) -> tuple[list[ProtectedRegion], int, int]:
+def _partial_samples_from_stream(
+    stdout: str | None, *, raw_boxes: bool = False
+) -> tuple[list[ProtectedRegion], int, int]:
     """Rebuild whatever the worker streamed before it was killed.
 
     The worker emits one ``{"anchor": {...}}`` line per anchor (flushed), so a
@@ -362,7 +381,7 @@ def _partial_samples_from_stream(stdout: str | None) -> tuple[list[ProtectedRegi
                 decoded += 1
             raw_box = anchor.get("box")
             if raw_box:
-                regions.append(_face_region_at(at_s, raw_box))
+                regions.append(_face_region_at(at_s, raw_box, raw_boxes=raw_boxes))
         except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             continue
     return regions, attempted, decoded
@@ -375,6 +394,7 @@ def sample_face_regions(
     max_samples: int = 12,
     timeout_s: float = 2.0,
     count_decoded: bool = False,
+    raw_boxes: bool = False,
 ) -> tuple[list[ProtectedRegion], dict[str, Any]]:
     """Sample faces in a killable subprocess so the wall-clock budget is real.
 
@@ -382,6 +402,11 @@ def sample_face_regions(
     identical) adds a ``decoded`` field — the number of anchors that produced a
     decodable frame — which the caption-placement chooser uses as its coverage
     denominator (plan 011 Feature C).
+
+    ``raw_boxes`` (default off ⇒ unchanged) returns the detector's own boxes
+    instead of `_face_protection_box`'s clamped + padded ones, for a caller that
+    maps the face into another frame first (KRI-547 face-filled crop) and pads
+    it there.
 
     A timeout keeps the anchors the worker already streamed (``partial: True``)
     instead of reporting zero. Losing them was catastrophic rather than
@@ -412,7 +437,7 @@ def sample_face_regions(
         # `subprocess.run` kills the child and re-collects its output before
         # re-raising, so partial stdout is available here.
         partial, partial_attempted, partial_decoded = _partial_samples_from_stream(
-            exc.stdout if isinstance(exc.stdout, str) else None
+            exc.stdout if isinstance(exc.stdout, str) else None, raw_boxes=raw_boxes
         )
         receipt: dict[str, Any] = {
             "attempted": partial_attempted or len(anchors),
@@ -441,7 +466,11 @@ def sample_face_regions(
             if raw_decoded is not None:
                 decoded = int(raw_decoded)
             for sample in payload.get("samples") or []:
-                regions.append(_face_region_at(max(0.0, float(sample["at_s"])), sample["box"]))
+                regions.append(
+                    _face_region_at(
+                        max(0.0, float(sample["at_s"])), sample["box"], raw_boxes=raw_boxes
+                    )
+                )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             regions = []
             worker_error = f"bad_payload:{type(exc).__name__}"
@@ -919,6 +948,43 @@ def _center_for_overlay(overlay: dict[str, Any]) -> tuple[float, float]:
     return x, y
 
 
+# KRI-547 `hug_corners`: how far a flush corner card sits from the frame edges
+# (canvas width for x, canvas height for y) -- about 22 px and 38 px on 1080x1920.
+_CORNER_INSET_FRAC = 0.02
+_SHRINKS = (1.0, 0.85, 0.70, 0.55)
+
+
+def _flush_corner_trial(
+    overlay: dict[str, Any],
+    *,
+    footprint: MediaFootprint,
+    canvas: Canvas,
+    original_x: float,
+    fits: Callable[[NormalizedBox], bool],
+) -> dict[str, Any] | None:
+    """The first top corner (the card's own side first), flush against the frame
+    edges, and the largest shrink at which the card ``fits``; ``None`` if none."""
+    base_scale = float(overlay.get("scale") or 0.3)
+    sides = (1, -1) if original_x >= 0.5 else (-1, 1)
+    for side in sides:
+        for shrink in _SHRINKS:
+            scale = base_scale * shrink
+            width = min(1.0, max(0.05, scale))
+            height = width * canvas.width / canvas.height / max(0.01, footprint.aspect_ratio)
+            half_w = width / 2
+            x_frac = 1 - _CORNER_INSET_FRAC - half_w if side > 0 else _CORNER_INSET_FRAC + half_w
+            trial = {
+                **overlay,
+                "position": "custom",
+                "x_frac": round(x_frac, 4),
+                "y_frac": round(_CORNER_INSET_FRAC + height / 2, 4),
+                "scale": scale,
+            }
+            if fits(_box_for_overlay(trial, footprint=footprint, canvas=canvas)):
+                return trial
+    return None
+
+
 def arbitrate_media_overlays(
     overlays: list[dict[str, Any]],
     *,
@@ -926,8 +992,20 @@ def arbitrate_media_overlays(
     footprints_by_id: dict[str, MediaFootprint] | None = None,
     max_iou: float = 0.02,
     canvas: Canvas = PORTRAIT,
+    strict_kinds: frozenset[str] = frozenset(),
+    hug_corners: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Reposition, shrink, then omit decorative PiP overlays on collisions."""
+    """Reposition, shrink, then omit decorative PiP overlays on collisions.
+
+    KRI-547 (both default off, so every existing caller is unchanged): a
+    protected region whose ``kind`` is in ``strict_kinds`` tolerates NO overlap
+    at all instead of ``max_iou`` (the face core of a face-filled speaker: a card
+    may sit on hair or background, never on the eyes, nose or mouth), and
+    ``hug_corners`` adds, after the fixed grid, the two TOP corners with the
+    card flush against the frame edges (`_CORNER_INSET_FRAC`) at every shrink --
+    on a close-up the only free space is the strip beside the head, which the
+    grid's 0.2/0.8 centres miss.
+    """
 
     resolved: list[dict[str, Any]] = []
     receipts: list[dict[str, Any]] = []
@@ -972,12 +1050,21 @@ def arbitrate_media_overlays(
             continue
         footprint = footprints_by_id.get(str(overlay.get("id")), MediaFootprint())
         collision_boxes = [
-            *[region.box for region in protected_regions if region.overlaps(start_s, end_s)],
+            *[
+                region.box
+                for region in protected_regions
+                if region.overlaps(start_s, end_s) and region.kind not in strict_kinds
+            ],
             *[
                 box
                 for occupied_start, occupied_end, box in occupied
                 if start_s < occupied_end and occupied_start < end_s
             ],
+        ]
+        strict_boxes = [
+            region.box
+            for region in protected_regions
+            if region.overlaps(start_s, end_s) and region.kind in strict_kinds
         ]
         accepted: dict[str, Any] | None = None
         original_x, original_y = _center_for_overlay(overlay)
@@ -1014,11 +1101,24 @@ def arbitrate_media_overlays(
                     "scale": float(overlay.get("scale") or 0.3) * shrink,
                 }
                 box = _box_for_overlay(trial, footprint=footprint, canvas=canvas)
-                if all(box.iou(protected) <= max_iou for protected in collision_boxes):
+                if all(box.iou(protected) <= max_iou for protected in collision_boxes) and all(
+                    box.intersection_area(protected) <= 0 for protected in strict_boxes
+                ):
                     accepted = trial
                     break
             if accepted is not None:
                 break
+        if accepted is None and hug_corners:
+            accepted = _flush_corner_trial(
+                overlay,
+                footprint=footprint,
+                canvas=canvas,
+                original_x=original_x,
+                fits=lambda box: (
+                    all(box.iou(protected) <= max_iou for protected in collision_boxes)
+                    and all(box.intersection_area(protected) <= 0 for protected in strict_boxes)
+                ),
+            )
         if accepted is None:
             receipts.append({"id": overlay.get("id"), "decision": "omitted_no_safe_candidate"})
             continue
