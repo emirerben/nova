@@ -2973,7 +2973,9 @@ def _run_generative_job_impl(
                     "single_hero is disabled by EDIT_FORMAT_SINGLE_HERO_ENABLED.",
                 )
         if render_intent_value == "slides":
-            if all_candidates.get("slides_renderer_version") != SLIDES_RENDERER_VERSION:
+            # v1 jobs (queued before the framing deploy) render identically for an unframed
+            # draft, so a v2 worker accepts them instead of failing them with "retry it".
+            if all_candidates.get("slides_renderer_version") not in {1, SLIDES_RENDERER_VERSION}:
                 raise SlidePostPolicyError(
                     "renderer_version_mismatch",
                     "This slide-post job was created by an incompatible API worker; retry it.",
@@ -9734,6 +9736,8 @@ def _build_slide_post_result(
     from app.pipeline.slide_post import profiles as slide_profiles  # noqa: PLC0415
     from app.services.pipeline_trace import render_stage_timer  # noqa: PLC0415
 
+    # `canvas` is the post's PREVIEW canvas; each slide exports on `slide_canvas`
+    # (a landscape slide is 1920x1080 on the TikTok photo profile -- KRI-44).
     canvas = slide_profiles.PLATFORM_PROFILES[platform_profile].canvas
     validation = slide_profiles.validate(
         platform_profile,
@@ -9785,9 +9789,11 @@ def _build_slide_post_result(
                 f"_n{slide_build.SLIDE_IMAGE_NORMALIZER_VERSION}" if kind == "image" else ""
             )
             wm_suffix = f"_wm{slide_build.SLIDE_WATERMARK_VERSION}"
+            export_canvas = slide_build.slide_canvas(platform_profile, edits)
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
-                f"{fingerprint}_{canvas[0]}x{canvas[1]}_{edits_digest}{norm_suffix}{wm_suffix}.{ext}"
+                f"{fingerprint}_{export_canvas[0]}x{export_canvas[1]}_"
+                f"{edits_digest}{norm_suffix}{wm_suffix}.{ext}"
             )
             normalized_local = os.path.join(tmpdir, f"norm_{index:02d}.{ext}")
             if storage.object_exists(normalized_key):
@@ -9805,11 +9811,11 @@ def _build_slide_post_result(
                     storage.download_to_file(asset["gcs_path"], source_local)
                 if kind == "image":
                     slide_build.normalize_image_slide(
-                        source_local, normalized_local, canvas=canvas, edits=edits
+                        source_local, normalized_local, canvas=export_canvas, edits=edits
                     )
                 else:
                     slide_build.normalize_video_slide(
-                        source_local, normalized_local, canvas=canvas, edits=edits
+                        source_local, normalized_local, canvas=export_canvas, edits=edits
                     )
                 storage.upload_local_file(
                     normalized_local,
@@ -9824,6 +9830,7 @@ def _build_slide_post_result(
                 seg_local,
                 kind=kind,
                 canvas=canvas,
+                source_canvas=export_canvas,
                 hold_s=(
                     slide_build.DEFAULT_IMAGE_HOLD_S
                     if kind == "image"
@@ -9836,7 +9843,12 @@ def _build_slide_post_result(
                 cover_kind = kind
             bundle_slides.append(
                 slide_build.BundleSlideFile(
-                    local_path=normalized_local, kind=kind, index=index, alt=asset["alt"]
+                    local_path=normalized_local,
+                    kind=kind,
+                    index=index,
+                    alt=asset["alt"],
+                    width=width,
+                    height=height,
                 )
             )
             resolved_slides.append(
@@ -9896,6 +9908,10 @@ def _build_slide_post_result(
             # Same for exports rendered before the current watermark: they
             # re-render rather than download without it.
             "watermark_version": slide_build.SLIDE_WATERMARK_VERSION,
+            # The renderer contract this export was built by (KRI-44 framing):
+            # lives beside the other freshness stamps because the variant-level
+            # key is not carried through every write path.
+            "renderer_version": SLIDES_RENDERER_VERSION,
             "validation": {
                 "ok": validation.ok,
                 "errors": [

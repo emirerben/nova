@@ -151,7 +151,7 @@ def analyze_clip_assignment(
                     )
                 analysis = result or {}
                 if dims:
-                    analysis.update({"width": dims[0], "height": dims[1]})
+                    analysis.update({"width": dims[0], "height": dims[1], "dims_upright": True})
                 analysis["has_alpha"] = has_alpha
             else:
                 if run_context is None:

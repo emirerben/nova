@@ -293,7 +293,9 @@ def test_a_guided_snapshot_on_a_native_plan_is_one_mismatch_and_still_renders_gu
 
 def test_the_cloud_slides_entry_agrees(monkeypatch) -> None:
     h = _cloud(monkeypatch, edit_format="slides", clips=0)
-    h.job.all_candidates["slides_renderer_version"] = 1
+    from app.agents._schemas.edit_format import SLIDES_RENDERER_VERSION  # noqa: PLC0415
+
+    h.job.all_candidates["slides_renderer_version"] = SLIDES_RENDERER_VERSION
     h.run()
     assert h.calls == ["_run_slide_post_job"]
     assert h.mismatches == []

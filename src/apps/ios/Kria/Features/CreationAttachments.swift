@@ -45,6 +45,10 @@ struct AttachmentSheet: View {
     @StateObject private var songPreview = CreationVoiceRecorder()
     @State private var uploadingSong = false
     @State private var songUploadError: String?
+    /// KRI-580: the "Where in the song did you film?" sheet, and whether the server said the feature is off.
+    @State private var showsSongRange = false
+    @State private var songRangeUnavailable = false
+    @State private var pendingSongRangeEvent: SongRangeEvent?
 
     init(
         projectID: UUID,
@@ -205,6 +209,10 @@ struct AttachmentSheet: View {
                 Button("Discard recording", role: .destructive) { recorder.discard(); dismiss() }
                 Button("Keep recording", role: .cancel) { }
             } message: { Text("Your recording has not been added yet.") }
+            .sheet(isPresented: $showsSongRange) {
+                let song = CreationAttachedMedia.song(thread?.state ?? [:])
+                SongRangeSheet(duration: song?.durationS, existing: song?.filmingRange, submit: submitSongRange)
+            }
             .task {
                 guard pollsVisuals else { return }
                 while !Task.isCancelled {
@@ -436,16 +444,42 @@ struct AttachmentSheet: View {
         default: media.filter { $0.kind == "video" }
         }
     }
+    /// The range row shows only when the server offers it, a song is attached and its length is known and long
+    /// enough to hold a range. It never appears for footage or voiceover.
+    private func offersSongRange(for attachment: CreationAttachedMedia) -> Bool {
+        capabilities?.songFilmingRangeEnabled == true && !songRangeUnavailable && attachment.isSong
+            && SongRangeMath.pickableSeconds(duration: attachment.durationS) != nil
+    }
+    private func submitSongRange(_ range: SongFilmingRange?) async -> SongRangeSubmission {
+        let event = SongRangeEvent.reusing(pendingSongRangeEvent, range: range)
+        pendingSongRangeEvent = event
+        let result = await SongRangeSubmission.submit(client: model.api, threadID: projectID, range: range, clientEventID: event.id)
+        switch result {
+        case .saved(let updated):
+            pendingSongRangeEvent = nil
+            model.uploads.publishUpdatedThread(updated, projectID: projectID)
+        case .unavailable:
+            pendingSongRangeEvent = nil
+            songRangeUnavailable = true
+        case .failed: break
+        }
+        return result
+    }
     private func attachedList(role: CreationMediaRole) -> some View {
         VStack(spacing: 10) {
             ForEach(attachedMedia(for: role)) { attachment in
-                HStack(spacing: 12) {
-                    CreationAttachmentThumbnail(media: attachment)
-                    Text(attachment.displayName).font(KriaFont.body(14)).lineLimit(1)
-                    Spacer()
-                    Button { Task { await removeAttached(attachment) } } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
-                        .accessibilityLabel("Remove \(attachment.displayName)")
-                        .disabled(removingMedia || !pendingRecords.filter { $0.projectID == projectID }.isEmpty)
+                VStack(spacing: 8) {
+                    HStack(spacing: 12) {
+                        CreationAttachmentThumbnail(media: attachment)
+                        Text(attachment.displayName).font(KriaFont.body(14)).lineLimit(1)
+                        Spacer()
+                        Button { Task { await removeAttached(attachment) } } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
+                            .accessibilityLabel("Remove \(attachment.displayName)")
+                            .disabled(removingMedia || !pendingRecords.filter { $0.projectID == projectID }.isEmpty)
+                    }
+                    if offersSongRange(for: attachment) {
+                        SongRangeRow(range: attachment.filmingRange, isEnabled: !removingMedia && pendingRecords.filter { $0.projectID == projectID }.isEmpty) { showsSongRange = true }
+                    }
                 }
             }
             if let mediaRemovalError {

@@ -624,6 +624,11 @@ class Settings(BaseSettings):
     # `song_order_placements` and the app falls back to the reorder card. Only effective
     # while USER_SONG_MONTAGE_ENABLED holds.
     song_order_timeline_enabled: bool = True
+    # KRI-580: the creator can say which stretch of the song they filmed in; takes are then matched
+    # only there (a repeated verse elsewhere stops splitting the group). Kill switch:
+    # `fly secrets set SONG_FILMING_RANGE_ENABLED=false` + restart (api + worker): the capability
+    # drops, the setter 404s and any stored range is ignored (the whole song is matched, as before).
+    song_filming_range_enabled: bool = True
     # KRI-569: "add captions" on a creator-song montage shows the song's lyrics as the
     # standard caption lane (same style/font/text controls as narration captions); without
     # a song the chat asks for it instead of failing the render. Kill switch:
@@ -1708,6 +1713,12 @@ class Settings(BaseSettings):
     # 404s. Capability `slide_post_chat_edit`. Apply: `fly secrets set
     # SLIDE_POST_CHAT_EDIT_ENABLED=true --app nova-video` + restart (api).
     slide_post_chat_edit_enabled: bool = False
+    # KRI-44: per-slide framing (crop + Vertical/Landscape). Off: the slide-post PUT
+    # keeps each slide's stored `framing` and ignores incoming values, the chat op
+    # `set_slide_framing` is unavailable, and capability `slide_post_framing` is
+    # false. Dual-flag with the iOS capability. Apply: `fly secrets set
+    # SLIDE_POST_FRAMING_ENABLED=true --app nova-video` (api + worker) + restart.
+    slide_post_framing_enabled: bool = False
     # KRI-557: provider-marked Gemini thought summaries for native creation and
     # slide-post calls. Deploy dark; enable after production canary with
     # THOUGHT_SUMMARIES_ENABLED=true for API and Celery processes after canary.

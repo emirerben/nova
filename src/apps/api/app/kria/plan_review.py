@@ -137,6 +137,7 @@ NEVER_IN_SCOPE = frozenset(
         "repeat_last_edit",
         "set_slide_cover",
         "set_post_caption",
+        "set_slide_framing",
     }
 )
 # Sections whose lanes include text bars.

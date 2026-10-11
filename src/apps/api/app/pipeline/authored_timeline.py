@@ -136,21 +136,11 @@ def prepare_authored_assembly(
         if row.get("source_kind") == "image":
             source = local_by_path[path]
             if row.get("source_crop"):
-                from PIL import Image
+                from app.pipeline.image_crop import crop_image_file
 
-                crop = row["source_crop"]
-                with Image.open(source) as image:
-                    width, height = image.size
-                    cropped = image.crop(
-                        (
-                            round(crop["x"] * width),
-                            round(crop["y"] * height),
-                            round((crop["x"] + crop["width"]) * width),
-                            round((crop["y"] + crop["height"]) * height),
-                        )
-                    )
-                    source = os.path.join(tmpdir, f"authored_crop_{index}.png")
-                    cropped.save(source)
+                source = crop_image_file(
+                    source, row["source_crop"], os.path.join(tmpdir, f"authored_crop_{index}.png")
+                )
             _render_image_moment(source, output, duration_s=duration, **common)
         else:
             _render_video_moment(

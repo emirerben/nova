@@ -5172,6 +5172,48 @@ struct NativeEditorTemporaryVideo {
         return canEditSection(section)
     }
 
+    // MARK: Crop (KRI-44)
+
+    /// The Crop button is offered only when the server EXPLICITLY lists `clips.source_crop`. A variant with no
+    /// `clips` capability group (legacy cloud template and montage renders) cannot crop, and `canEditOperation`'s
+    /// fall-back to the timeline section would wrongly say yes.
+    var serverOffersClipCrop: Bool { document.capabilities["clips.source_crop"] != nil }
+    var canCropClips: Bool { document.capabilities["clips.source_crop"]?.editable == true }
+
+    /// Why Crop is greyed out for the selected clip, or nil when it is available.
+    func cropBlockedReason(for selection: EditorSelection?) -> String? {
+        guard let selection, selection.kind == .clip else { return "Select a clip to crop it." }
+        if !canCropClips { return document.capabilities["clips.source_crop"]?.reason.map(nativeEditorWireLabel) ?? "Crop isn’t available for this edit." }
+        if let slotID = timelineClips.first(where: { $0.id.uuidString == selection.id })?.slotID,
+           document.clips.first(where: { $0.id == slotID })?.raw["layout"]?.stringValue == "supporting_card" {
+            return "Supporting cards keep their own layout."
+        }
+        return nil
+    }
+
+    /// What the crop is shown in: the video canvas.
+    var cropOutputAspect: CGFloat {
+        EditorDocument.canonicalOrientation(document.orientation) == "landscape" ? 16.0 / 9.0 : 9.0 / 16.0
+    }
+
+    /// The real upright frame a crop is drawn on: the clip's source at its source-in time (a photo's own pixels).
+    /// Reads the same prepared media the preview plays, so nothing new is downloaded when the preview is ready.
+    func cropSourceFrame(for selection: EditorSelection) async -> UIImage? {
+        let source: ResolvedEditorSource?
+        var time: TimeInterval = 0
+        switch selection.kind {
+        case .clip:
+            guard let clip = timelineClips.first(where: { $0.id.uuidString == selection.id }) else { return nil }
+            source = clip.sourceClipIndex.flatMap { resolvedSources?[$0] }
+            time = clip.trimIn
+        case .mediaOverlay: source = resolvedMedia["overlay:" + selection.id]
+        case .visualBlock: source = resolvedMedia["visual:" + selection.id] ?? authoredVisualSources["visual:" + selection.id]
+        default: source = nil
+        }
+        guard let url = source?.url else { return nil }
+        return await KriaCropFrameLoader.image(at: url, time: time)
+    }
+
     func operationCapability(_ key: String) -> EditorCapability? { document.capabilities[key] }
     func operationCapabilityReason(_ key: String) -> String? { document.capabilities[key]?.reason }
     func readOnlyReason(forOperation key: String) -> String? { operationCapabilityReason(key) }

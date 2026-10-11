@@ -4387,8 +4387,19 @@ def _render_moments(
     for index, moment in enumerate(plan["story_timeline"]):
         output = os.path.join(tmpdir, f"moment_{index:02d}.mp4")
         if moment["kind"] == "image":
+            image_source = local_by_id[moment["media_id"]]
+            if moment.get("source_crop"):
+                # A creator crop on a photo (KRI-44): cut the upright region first,
+                # then the normal still render cover-fits it into the canvas.
+                from app.pipeline.image_crop import crop_image_file  # noqa: PLC0415
+
+                image_source = crop_image_file(
+                    image_source,
+                    moment["source_crop"],
+                    os.path.join(tmpdir, f"moment_crop_{index:02d}.png"),
+                )
             _render_image_moment(
-                local_by_id[moment["media_id"]],
+                image_source,
                 output,
                 duration_s=float(moment["duration_s"]),
                 layout=moment["layout"],

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.218.0] - 2026-10-11
+
+### Changed
+- feat(kria): tell us which part of the song you filmed in; takes match only there (KRI-580) (#1538) <!-- release-pr: 1538 -->
+
+## [0.78.217.0] - 2026-10-11
+
+### Changed
+- feat: crop for photos, clips and slides, plus vertical/landscape slides (KRI-44) (#1532) <!-- release-pr: 1532 -->
+
 ## [0.78.216.0] - 2026-10-11
 
 ### Changed
