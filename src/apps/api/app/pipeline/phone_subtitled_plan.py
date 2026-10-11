@@ -27,6 +27,9 @@ speaker `TimelineClip` carries a `MediaTransform(scale=contain/cover)` that the
 engine applies about the canvas center over black
 (`app.pipeline.phone_recipe_shared.fit_transform`). With ``"fill"`` (and for
 square sources) the clip is center-cropped, like the cloud's own fill path.
+KRI-547: when the creator asked for a vertical, face-in-frame video, the worker
+passes ``speaker_position_x`` instead -- the cover fill slid sideways onto the
+speaker's face (`app.pipeline.phone_speaker_framing`).
 
 With ``lanes=None`` (or an all-empty `PhoneSubtitledLanes`) and
 ``visuals=()``, this compiler's output is byte-identical to the pre-KRI-174
@@ -72,6 +75,7 @@ from app.pipeline.phone_captions import (
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import (
     display_dims,
+    face_fill_transform,
     fit_transform,
     landscape_fit_from_recipe,  # noqa: F401 - re-export, moved to phone_recipe_shared (KRI-285)
     snap_text_overshoot,
@@ -184,6 +188,7 @@ def compile_phone_subtitled_plan(
     landscape_fit: Literal["fill", "fit"] = "fill",
     text_elements: Sequence[Mapping[str, Any]] = (),
     text_elements_user_edited: bool = False,
+    speaker_position_x: float | None = None,
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
 
@@ -299,6 +304,15 @@ def compile_phone_subtitled_plan(
     variant flag that picks the karaoke settle color. Empty (the default) is
     byte-identical to the pre-KRI-467 recipe.
 
+    ``speaker_position_x`` (KRI-547, optional) face-fills a LANDSCAPE speaker
+    clip instead: identity scale (the engine's cover fill) shifted this many
+    canvas pixels to the right on EVERY speaker `TimelineClip`, clamped so no
+    black edge shows (`phone_recipe_shared.face_fill_transform`). It wins over
+    ``landscape_fit`` -- the caller (`phone_speaker_framing`) only passes it for
+    a confirmed face window the creator asked for, and drops it when they pick
+    black bars. Ignored for portrait/square sources; ``None`` (the default) is
+    byte-identical to the pre-KRI-547 recipe.
+
     Rejects (all `UnsupportedPhonePlan`, fail-closed):
       - zero or more than one binding.
       - a non-video source (no probed width/height).
@@ -323,7 +337,14 @@ def compile_phone_subtitled_plan(
             "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
         )
     display_width, display_height = _display_dims(original)
-    speaker_transform = fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit)
+    if speaker_position_x is not None and display_width > display_height:
+        speaker_transform = face_fill_transform(
+            display_width, display_height, _STORY_CANVAS, speaker_position_x
+        )
+    else:
+        speaker_transform = fit_transform(
+            display_width, display_height, _STORY_CANVAS, landscape_fit
+        )
 
     duration_s = float(original.duration_s)
     # An explicit `keep_segments` (editor Save reconstructing a previously

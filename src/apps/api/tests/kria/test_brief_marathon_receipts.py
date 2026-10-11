@@ -283,19 +283,23 @@ def test_a_beat_that_was_heard_but_had_no_room_is_not_called_unheard() -> None:
     }
     facts = plan_facts_from_phone_variant(_variant(phone_beat_receipt=receipt_data))
     assert facts.unheard_beat_triggers == ()
+    assert facts.beat_room_drops == (("the medal", "no_room"),)
 
-    # The sentence's own guessed words match no beat and were not unheard: the pop-ins are
-    # judged as a whole (a guess never makes a "No pop-in for X" verdict) and no times are
-    # quoted, which would belong to the other word.
+    # KRI-547: the medal pop-in was heard but had no room on screen. That used to read
+    # "met" (the other word's pop-in judged as a whole) -- a Done for a photo that never
+    # showed. Like a never-heard word, the dropped pop-in now owns the verdict and says why.
+    no_room = (
+        "There was no room on screen for the medal without covering your face or the captions."
+    )
     receipt = check_requirement(R4, facts)
-    assert receipt.status == "met"
-    assert receipt.reason is None
+    assert receipt.status == "not_possible"
+    assert receipt.reason == no_room
 
-    # A word the creator quoted is certain, and a missing one is named.
+    # A word the creator quoted gets the same honest reason, not "No pop-in for the medal".
     quoted = _req("q1", "timing", 'show the medal photo when voiceover says "the medal"')
     named = check_requirement(quoted, facts)
-    assert named.status == "partial"
-    assert named.reason == "No pop-in for the medal."
+    assert named.status == "not_possible"
+    assert named.reason == no_room
 
 
 def test_nothing_placed_and_nothing_heard_is_not_possible() -> None:
