@@ -2222,6 +2222,74 @@
         "title": "DraftWriteBody",
         "type": "object"
       },
+      "DrawingStroke": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "title": "Color",
+            "type": "string"
+          },
+          "opacity": {
+            "default": 1.0,
+            "maximum": 1.0,
+            "minimum": 0.1,
+            "title": "Opacity",
+            "type": "number"
+          },
+          "points": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "maxItems": 1500,
+            "minItems": 2,
+            "title": "Points",
+            "type": "array"
+          },
+          "seed": {
+            "default": 0,
+            "maximum": 2147483647,
+            "minimum": 0,
+            "title": "Seed",
+            "type": "integer"
+          },
+          "texture": {
+            "default": "pen",
+            "enum": [
+              "pen",
+              "marker",
+              "highlighter",
+              "neon",
+              "chalk",
+              "spray"
+            ],
+            "title": "Texture",
+            "type": "string"
+          },
+          "width_frac": {
+            "maximum": 0.08,
+            "minimum": 0.004,
+            "title": "Width Frac",
+            "type": "number"
+          }
+        },
+        "required": [
+          "color",
+          "width_frac",
+          "points"
+        ],
+        "title": "DrawingStroke",
+        "type": "object"
+      },
       "EditRecipeV1": {
         "additionalProperties": false,
         "description": "Portable, validated edit description; it contains no storage internals.",
@@ -2278,6 +2346,7 @@
                 "stillImages",
                 "visualVideos",
                 "sourceCrop",
+                "freehandDrawing",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -2345,6 +2414,14 @@
           "canvas": {
             "$ref": "#/components/schemas/Canvas"
           },
+          "drawing_layers": {
+            "items": {
+              "$ref": "#/components/schemas/PortableDrawingLayer"
+            },
+            "maxItems": 12,
+            "title": "Drawing Layers",
+            "type": "array"
+          },
           "frame_rate": {
             "default": 30,
             "exclusiveMinimum": true,
@@ -2389,6 +2466,7 @@
                 "stillImages",
                 "visualVideos",
                 "sourceCrop",
+                "freehandDrawing",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -2731,6 +2809,17 @@
             "title": "Deletions",
             "type": "array"
           },
+          "drawings": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 12,
+            "nullable": true,
+            "title": "Drawings",
+            "type": "array"
+          },
           "editor_state_version": {
             "default": null,
             "minimum": 1,
@@ -2979,6 +3068,11 @@
             "title": "Carousel Moment",
             "type": "boolean"
           },
+          "drawings": {
+            "default": false,
+            "title": "Drawings",
+            "type": "boolean"
+          },
           "landscape_fit": {
             "default": false,
             "title": "Landscape Fit",
@@ -3103,6 +3197,7 @@
               "visual_block",
               "motion_scene",
               "camera_effect",
+              "drawing",
               "carousel",
               "lyric_line"
             ],
@@ -3323,6 +3418,17 @@
             },
             "maxItems": 100,
             "title": "Deletions",
+            "type": "array"
+          },
+          "drawings": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 12,
+            "nullable": true,
+            "title": "Drawings",
             "type": "array"
           },
           "editor_state_version": {
@@ -6411,6 +6517,110 @@
           "urls"
         ],
         "title": "PoolUploadUrlsResponse",
+        "type": "object"
+      },
+      "PortableDrawingLayer": {
+        "additionalProperties": false,
+        "properties": {
+          "canvas_aspect": {
+            "exclusiveMaximum": true,
+            "exclusiveMinimum": true,
+            "maximum": 5.0,
+            "minimum": 0.2,
+            "title": "Canvas Aspect",
+            "type": "number"
+          },
+          "center_x": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Center X",
+            "type": "number"
+          },
+          "center_y": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Center Y",
+            "type": "number"
+          },
+          "draw_duration": {
+            "maximum": 10.0,
+            "minimum": 0.2,
+            "title": "Draw Duration",
+            "type": "number"
+          },
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "End",
+            "type": "number"
+          },
+          "entrance": {
+            "enum": [
+              "draw",
+              "fade",
+              "none"
+            ],
+            "title": "Entrance",
+            "type": "string"
+          },
+          "exit": {
+            "enum": [
+              "none",
+              "fade"
+            ],
+            "title": "Exit",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "rotation_deg": {
+            "maximum": 180,
+            "minimum": -180,
+            "title": "Rotation Deg",
+            "type": "number"
+          },
+          "scale": {
+            "maximum": 3.0,
+            "minimum": 0.2,
+            "title": "Scale",
+            "type": "number"
+          },
+          "start": {
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Start",
+            "type": "number"
+          },
+          "strokes": {
+            "items": {
+              "$ref": "#/components/schemas/DrawingStroke"
+            },
+            "maxItems": 60,
+            "minItems": 1,
+            "title": "Strokes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "start",
+          "end",
+          "canvas_aspect",
+          "center_x",
+          "center_y",
+          "scale",
+          "rotation_deg",
+          "entrance",
+          "draw_duration",
+          "exit",
+          "strokes"
+        ],
+        "title": "PortableDrawingLayer",
         "type": "object"
       },
       "PortableTextLayer": {
