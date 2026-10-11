@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.215.0] - 2026-10-11
+
+### Changed
+- fix(kria): a lip-sync arrangement no longer fails on an invented 108 s or on sub-second holes (KRI-579) (#1537) <!-- release-pr: 1537 -->
+
 ## [0.78.214.0] - 2026-10-11
 
 ### Changed
