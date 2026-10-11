@@ -46,7 +46,7 @@ import XCTest
 
         // All backgrounds render above the genuine preview. Window manipulation must leave
         // the native capture session ready and its Record control exposed.
-        setWindowBackground("glass", in: app)
+        setWindowBackground("glass", in: app, fontChangesAllowed: true)
         screenshot(app, named: "Physical glass window over camera")
         setWindowBackground("solid", in: app)
         screenshot(app, named: "Physical solid window over camera")
@@ -67,7 +67,7 @@ import XCTest
         XCTAssertTrue(stop.waitForExistence(timeout: 10), "Stop appears only after AVFoundation confirms recording started.")
         // Presenting settings and manipulating the window during capture must not interrupt
         // AVFoundation. This screenshot is compared with the saved movie after the run.
-        setWindowBackground("glass", in: app)
+        setWindowBackground("glass", in: app, fontChangesAllowed: false)
         moveAndResizeWindow(in: app, avoiding: stop)
         XCTAssertTrue(stop.isEnabled)
         screenshot(app, named: "Physical glass window adjusted while recording")
@@ -115,13 +115,20 @@ import XCTest
     }
 
     #if !targetEnvironment(simulator)
-    private func setWindowBackground(_ appearance: String, in app: XCUIApplication) {
+    private func setWindowBackground(_ appearance: String, in app: XCUIApplication, fontChangesAllowed: Bool? = nil) {
         let grip = app.buttons["teleprompter-window-move"]
         XCTAssertTrue(grip.waitForExistence(timeout: 5))
         grip.tap()
         let choice = app.buttons["teleprompter-background-\(appearance)"]
         XCTAssertTrue(choice.waitForExistence(timeout: 5))
         choice.tap()
+        if let fontChangesAllowed {
+            let font = app.steppers["teleprompter-text-size"]
+            XCTAssertTrue(font.waitForExistence(timeout: 5))
+            XCTAssertEqual(font.isEnabled, fontChangesAllowed,
+                           "Font changes belong to preparation; recording keeps text layout stable.")
+            screenshot(app, named: fontChangesAllowed ? "Kria window settings before capture" : "Kria window settings during capture")
+        }
         app.buttons["teleprompter-window-settings-close"].tap()
         let window = app.descendants(matching: .any).matching(identifier: "teleprompter-window").firstMatch
         XCTAssertTrue((window.value as? String)?.localizedCaseInsensitiveContains(appearance) == true)

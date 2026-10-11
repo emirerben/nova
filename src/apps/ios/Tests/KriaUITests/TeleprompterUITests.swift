@@ -13,9 +13,12 @@ import XCTest
 
         openWindowSettings(app)
         app.buttons["teleprompter-background-glass"].tap()
+        scrollWindowSettings(app, to: app.sliders["teleprompter-window-width"])
         app.sliders["teleprompter-window-width"].adjust(toNormalizedSliderPosition: 0.35)
+        scrollWindowSettings(app, to: app.sliders["teleprompter-window-height"])
         app.sliders["teleprompter-window-height"].adjust(toNormalizedSliderPosition: 0.6)
         let preferredHeight = app.sliders["teleprompter-window-height"].value as? String
+        scrollWindowSettings(app, to: app.buttons["Move right"])
         app.buttons["Move right"].tap()
         app.buttons["teleprompter-window-settings-close"].tap()
         XCTAssertTrue(window.waitForExistence(timeout: 5))
@@ -37,8 +40,11 @@ import XCTest
         XCTAssertEqual(window.frame.minX, saved.minX, accuracy: 2)
 
         openWindowSettings(app)
+        scrollWindowSettings(app, to: app.sliders["teleprompter-window-height"])
         XCTAssertEqual(app.sliders["teleprompter-window-height"].value as? String, preferredHeight)
+        scrollWindowSettings(app, to: app.buttons["teleprompter-background-solid"])
         app.buttons["teleprompter-background-solid"].tap()
+        scrollWindowSettings(app, to: app.buttons["teleprompter-window-reset"])
         app.buttons["teleprompter-window-reset"].tap()
         app.buttons["teleprompter-window-settings-close"].tap()
         XCTAssertTrue((window.value as? String)?.localizedCaseInsensitiveContains("solid") == true)
@@ -131,6 +137,22 @@ import XCTest
         app.buttons["teleprompter-pause-text"].tap()
         XCTAssertTrue(app.buttons["Rehearse"].exists)
         capture(app, "Camera controls at accessibility size")
+        openWindowSettings(app)
+        scrollWindowSettings(app, to: app.buttons["teleprompter-background-solid"])
+        XCTAssertTrue(app.buttons["teleprompter-background-solid"].isHittable)
+        app.buttons["teleprompter-background-solid"].tap()
+        let font = app.steppers["teleprompter-text-size"]
+        let increaseFont = app.buttons["teleprompter-text-size-Increment"]
+        scrollWindowSettings(app, to: increaseFont)
+        XCTAssertTrue(increaseFont.isHittable)
+        XCTAssertTrue(font.isEnabled)
+        let previousFontLabel = font.label
+        increaseFont.tap()
+        XCTAssertNotEqual(font.label, previousFontLabel, "The reachable text-size control must change the font size.")
+        capture(app, "Kria text window settings at accessibility size")
+        app.buttons["teleprompter-window-settings-close"].tap()
+        XCTAssertTrue(app.buttons["Close camera"].isHittable)
+        XCTAssertTrue(record.isHittable)
     }
 
     func testPreviousTakeAndFailedIntakeKeepTheRecordingRecoverable() {
@@ -207,6 +229,22 @@ import XCTest
         scrollOptions(app, to: settings)
         settings.tap()
         XCTAssertTrue(app.buttons["teleprompter-window-settings-close"].waitForExistence(timeout: 5))
+    }
+
+    private func scrollWindowSettings(_ app: XCUIApplication, to element: XCUIElement) {
+        let options = app.scrollViews["teleprompter-window-options"]
+        XCTAssertTrue(options.waitForExistence(timeout: 5))
+        for _ in 0..<16 {
+            if element.isHittable { return }
+            // A downward swipe at the top dismisses the medium sheet. Scroll only
+            // toward an offscreen target. SwiftUI may report an empty clipped frame.
+            let targetFrame = element.frame
+            let viewportFrame = options.frame
+            XCTContext.runActivity(named: "Kria settings target \(targetFrame), viewport \(viewportFrame)") { _ in }
+            if !targetFrame.isEmpty && targetFrame.maxY < viewportFrame.minY { options.swipeDown() }
+            else { options.swipeUp() }
+        }
+        XCTAssertTrue(element.isHittable)
     }
 
     private func assertWindowStaysClearOfRecord(_ window: XCUIElement, app: XCUIApplication) {

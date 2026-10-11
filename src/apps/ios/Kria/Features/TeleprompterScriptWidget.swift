@@ -65,7 +65,7 @@ struct TeleprompterScriptWidget: View {
                     moveGrip
                     resizeGrip.offset(x: max(0, proxy.size.width - 44), y: max(0, proxy.size.height - 44))
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             }
         }
         .accessibilityElement(children: .contain)
@@ -83,8 +83,8 @@ struct TeleprompterScriptWidget: View {
         let textWidth = max(1, width - inset * 2 - trailingGutter)
         return Text(line.text)
             .font(.custom(font.fontName, fixedSize: font.pointSize))
-            .foregroundStyle(.white)
-            .shadow(color: .black.opacity(preference.appearance == .transparent ? 0.95 : 0.45), radius: 1.2, x: 0, y: 1)
+            .foregroundStyle(preference.appearance == .transparent ? KriaColor.paper : KriaColor.ink)
+            .shadow(color: KriaColor.ink.opacity(preference.appearance == .transparent ? 0.9 : 0.16), radius: 1.2, x: 0, y: 1)
             .lineLimit(1)
             .frame(width: textWidth, alignment: .leading)
             .position(x: inset + textWidth / 2, y: marker + line.anchor - model.scrollPosition)
@@ -94,23 +94,14 @@ struct TeleprompterScriptWidget: View {
         if preference.appearance == .transparent {
             Color.clear
         } else if preference.appearance == .solid || KriaTransparency.isReduced(reduceTransparency) {
-            Color.black
+            KriaColor.paper
         } else {
-            Rectangle().fill(.ultraThinMaterial).overlay(Color.black.opacity(0.54))
+            Color.clear.kriaFloatingSurface(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
     }
 
     private var moveGrip: some View {
-        Button(action: openSettings) {
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .background(Color.black.opacity(0.36), in: RoundedRectangle(cornerRadius: 10))
-        }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Move text window")
-            .accessibilityIdentifier("teleprompter-window-move")
+        KriaFloatingIconButton(kind: .move, label: "Move text window", identifier: "teleprompter-window-move", action: openSettings)
             .highPriorityGesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
                 .onChanged { value in
                     if moveStartPreference == nil { moveStartPreference = preference }
@@ -121,16 +112,7 @@ struct TeleprompterScriptWidget: View {
     }
 
     private var resizeGrip: some View {
-        Button(action: openSettings) {
-            Image(systemName: "arrow.down.right")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .background(Color.black.opacity(0.36), in: RoundedRectangle(cornerRadius: 10))
-        }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Resize text window")
-            .accessibilityIdentifier("teleprompter-window-resize")
+        KriaFloatingIconButton(kind: .resize, label: "Resize text window", identifier: "teleprompter-window-resize", action: openSettings)
             .highPriorityGesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
                 .onChanged { value in
                     if resizeStartPreference == nil { resizeStartPreference = preference }

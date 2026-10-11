@@ -36,6 +36,7 @@ struct TeleprompterScreen: View {
             }
         }
         .background(KriaColor.paper)
+        .kriaPage()
         .interactiveDismissDisabled(flow.captureBusy || flow.usingTake)
         .task {
             await flow.load()
@@ -58,7 +59,9 @@ struct TeleprompterScreen: View {
             Button("Discard take", role: .destructive) { flow.discardSelected() }
         } message: { Text("Your script and any previous take stay saved.") }
         .sheet(isPresented: $showsWindowSettings) {
-            TeleprompterWindowSettings(script: flow.script, canvas: readingCanvas, persist: { flow.persistDraft() })
+            TeleprompterWindowSettings(script: flow.script, canvas: readingCanvas, canChangeFont: !flow.captureBusy, persist: { flow.persistDraft() })
+                .environment(\.dynamicTypeSize, dynamicTypeSize)
+                .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
         }
     }
 
@@ -66,9 +69,7 @@ struct TeleprompterScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Read your script while filming yourself.")
-                        .font(KriaFont.body(18)).foregroundStyle(KriaColor.ink)
-                    Text("Script").font(KriaFont.body(14).weight(.semibold))
+                    AttachmentHeading(title: "Your script", subtitle: "Read your script while filming yourself.")
                     TeleprompterScriptEditor(script: flow.script) { flow.persistDraft() }
                     TeleprompterReadEstimate(script: flow.script)
                     Text("Your script is saved with this edit on this iPhone.")
@@ -77,8 +78,8 @@ struct TeleprompterScreen: View {
                 }.padding(20)
             }
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("Record with script").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { closeButton } }
+            .toolbar(.hidden, for: .navigationBar)
+            .safeAreaInset(edge: .top) { WorkspaceTopRow(title: "Record with script", leading: { Color.clear.frame(width: 44, height: 44) }, trailing: { closeButton }).background(KriaColor.paper) }
             .safeAreaInset(edge: .bottom) {
                 TeleprompterOpenCameraButton(script: flow.script) { Task { await flow.openCamera() } }
                     .padding(.horizontal, 20).padding(.vertical, 12).background(KriaColor.paper)
@@ -102,18 +103,21 @@ struct TeleprompterScreen: View {
                                            openSettings: { showsWindowSettings = true })
                 VStack(spacing: 8) {
                     HStack {
-                        Button { closeCapture() } label: {
-                            Image(systemName: "xmark").font(.system(size: 18, weight: .semibold)).frame(width: 44, height: 44)
-                                .background(Color.black.opacity(0.7), in: Circle())
-                        }.accessibilityLabel(flow.captureBusy ? "Stop and review take" : "Close camera")
+                        KriaGlassCloseButton(identifier: "teleprompter-close", label: flow.captureBusy ? "Stop and review take" : "Close camera", action: closeCapture)
                         Spacer()
+                        Button { showsWindowSettings = true } label: {
+                            HStack(spacing: 6) { KriaIcon(.settings); if !dynamicTypeSize.isAccessibilitySize { Text("Text window") } }
+                                .font(KriaFont.body(13).weight(.semibold)).padding(.horizontal, 12).frame(minHeight: 44)
+                        }
+                        .buttonStyle(.plain).kriaFloatingSurface(Capsule()).accessibilityLabel("Text window")
+                        .accessibilityIdentifier("teleprompter-window-settings")
                     }.padding(.horizontal, 12)
                     Spacer(minLength: 8)
                     cameraBottom
                         .background(GeometryReader { proxy in
                             Color.clear.preference(key: TeleprompterCaptureControlsHeight.self, value: proxy.size.height)
                         })
-                }.foregroundStyle(.white).padding(.top, 8).padding(.bottom, 16)
+                }.foregroundStyle(KriaColor.ink).padding(.top, 8).padding(.bottom, 16)
             }
             .onAppear { readingCanvas = canvas }
             .onChange(of: geometry.size) { _, _ in readingCanvas = canvas }
@@ -131,18 +135,22 @@ struct TeleprompterScreen: View {
             }
             if let error = flow.error { errorText(error).padding(.horizontal, 16) }
             if flow.stage == .countdown {
-                Text("\(flow.countdown)").font(KriaFont.body(48).weight(.bold))
-                    .accessibilityLabel("Recording in \(flow.countdown)")
-                Button("Cancel countdown") { flow.cancelCountdown() }.frame(minHeight: 44)
-                    .accessibilityIdentifier("teleprompter-cancel-countdown")
+                VStack(spacing: 12) {
+                    Text("\(flow.countdown)").font(KriaFont.display(48).weight(.bold))
+                        .accessibilityLabel("Recording in \(flow.countdown)")
+                    Button("Cancel countdown") { flow.cancelCountdown() }.buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
+                        .accessibilityIdentifier("teleprompter-cancel-countdown")
+                }.padding(16).kriaGlassPanel(cornerRadius: 24)
             } else if flow.stage == .starting || flow.stage == .finalizing {
-                ProgressView(flow.stage == .starting ? "Starting recording…" : "Saving take…").tint(.white).padding(16)
+                HStack(spacing: 10) {
+                    KriaSpinner()
+                    Text(flow.stage == .starting ? "Starting recording…" : "Saving take…").font(KriaFont.body(15).weight(.semibold))
+                }.padding(16).kriaGlassPanel(cornerRadius: 24)
             } else {
                 TeleprompterCaptureControls(script: flow.script, camera: flow.camera,
                     recording: flow.stage == .recording,
                     manual: manualScrolling,
                     enableAutomaticScroll: UIAccessibility.isVoiceOverRunning ? nil : { allowsAutomaticScroll = true },
-                    windowSettings: { showsWindowSettings = true },
                     record: { flow.record(manual: manualScrolling) },
                     stop: { flow.stop() })
             }
@@ -180,11 +188,11 @@ struct TeleprompterScreen: View {
                         Button("Retake") { Task { await flow.retake() } }.buttonStyle(KriaSecondaryButtonStyle())
                             .disabled(flow.usingTake || flow.queueAccepted).accessibilityIdentifier("teleprompter-retake")
                         if let previous = flow.pendingTake, previous.id != take.id {
-                            Button("Previous take") { flow.previousTake() }.frame(minHeight: 44)
+                            Button("Previous take") { flow.previousTake() }.buttonStyle(KriaSecondaryButtonStyle())
                                 .disabled(flow.usingTake || flow.queueAccepted)
                             Text("Returning to the previous take discards this candidate.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                         }
-                        Button("Discard take", role: .destructive) { confirmsDiscard = true }.frame(minHeight: 44)
+                        Button("Discard take", role: .destructive) { confirmsDiscard = true }.buttonStyle(KriaSecondaryButtonStyle())
                             .disabled(flow.usingTake || flow.queueAccepted)
                     } else if flow.needsMetadataRetry {
                         if let error = flow.error { errorText(error) }
@@ -194,14 +202,13 @@ struct TeleprompterScreen: View {
                         Button("Edit script") { flow.editScript() }.buttonStyle(KriaPrimaryButtonStyle())
                     }
                 }.padding(20)
-            }.navigationTitle("Review take").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .topBarTrailing) { closeButton.disabled(flow.usingTake) } }
+            }.toolbar(.hidden, for: .navigationBar)
+                .safeAreaInset(edge: .top) { WorkspaceTopRow(title: "Review take", leading: { Color.clear.frame(width: 44, height: 44) }, trailing: { closeButton.disabled(flow.usingTake) }).background(KriaColor.paper) }
         }
     }
 
     private var closeButton: some View {
-        Button { flow.persistDraft(); dismiss() } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
-            .accessibilityLabel("Close, keeping script and take").accessibilityIdentifier("teleprompter-close")
+        KriaGlassCloseButton(identifier: "teleprompter-close", label: "Close, keeping script and take") { flow.persistDraft(); dismiss() }
     }
     private func closeCapture() {
         if flow.stage == .countdown { flow.cancelCountdown(); flow.editScript() }
@@ -225,7 +232,7 @@ private struct TeleprompterScriptEditor: View {
         TextEditor(text: Binding(get: { script.text }, set: { script.updateText($0); save() }))
             .font(KriaFont.body(20)).foregroundStyle(KriaColor.ink)
             .frame(minHeight: 240)
-            .padding(8).background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16))
+            .padding(12).background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(KriaColor.line))
             .accessibilityLabel("Script").accessibilityIdentifier("teleprompter-script-editor")
     }
@@ -259,14 +266,14 @@ private struct TeleprompterCameraErrorCard: View {
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxHeight: accessibilityLayout ? 210 : 170)
-        .padding(16).background(Color.black.opacity(0.85), in: RoundedRectangle(cornerRadius: 16)).padding(.horizontal, 16)
+        .padding(16).kriaGlassPanel(cornerRadius: 20).padding(.horizontal, 16)
     }
 
     @ViewBuilder private var actions: some View {
-        Button("Edit script", action: editScript).buttonStyle(.bordered).fixedSize(horizontal: false, vertical: true)
+        Button("Edit script", action: editScript).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44)).fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("teleprompter-edit-script")
-        Button("Try again", action: retry).buttonStyle(.bordered).fixedSize(horizontal: false, vertical: true)
-        Button("Settings", action: openSettings).buttonStyle(.bordered).fixedSize(horizontal: false, vertical: true)
+        Button("Try again", action: retry).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44)).fixedSize(horizontal: false, vertical: true)
+        Button("Settings", action: openSettings).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44)).fixedSize(horizontal: false, vertical: true)
     }
 }
 private struct TeleprompterCaptureControls: View {
@@ -276,12 +283,11 @@ private struct TeleprompterCaptureControls: View {
     let recording: Bool
     let manual: Bool
     let enableAutomaticScroll: (() -> Void)?
-    let windowSettings: () -> Void
     let record: () -> Void
     let stop: () -> Void
 
     private var usesAccessibilityLayout: Bool { dynamicTypeSize.isAccessibilitySize }
-    private var optionsHeight: CGFloat { usesAccessibilityLayout ? 200 : 260 }
+    private var optionsHeight: CGFloat { usesAccessibilityLayout ? 200 : 156 }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -292,7 +298,7 @@ private struct TeleprompterCaptureControls: View {
             .frame(maxHeight: optionsHeight)
             .accessibilityIdentifier("teleprompter-capture-options")
             recordButton
-        }.padding(16).background(Color.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 20)).padding(.horizontal, 16)
+        }.padding(16).kriaGlassPanel(cornerRadius: 24).padding(.horizontal, 16)
     }
 
     private var options: some View {
@@ -316,30 +322,32 @@ private struct TeleprompterCaptureControls: View {
                     .accessibilityIdentifier("teleprompter-pace")
                 HStack { Text("Slower"); Spacer(); Text("Faster") }.font(KriaFont.body(12))
             }
-            VStack(spacing: 8) {
+            Group {
                 if manual {
-                    Button("Previous line") { script.backLine() }.frame(maxWidth: .infinity, minHeight: 44)
-                    Button("Next line") { script.nextLine() }.frame(maxWidth: .infinity, minHeight: 44)
+                    pairedActions(first: "Previous line", firstAction: script.backLine, second: "Next line", secondAction: script.nextLine)
                 } else {
-                    Button(recording ? (script.isPlaying ? "Pause text" : "Resume text") : (script.isPlaying ? "Pause rehearsal" : "Rehearse")) {
+                    pairedActions(first: recording ? (script.isPlaying ? "Pause text" : "Resume text") : (script.isPlaying ? "Pause rehearsal" : "Rehearse"), firstAction: {
                         if script.isPlaying { script.pause() } else { script.resume() }
-                    }.frame(maxWidth: .infinity, minHeight: 44).accessibilityIdentifier("teleprompter-pause-text")
-                    Button("Back a line") { script.backLine() }.frame(maxWidth: .infinity, minHeight: 44)
+                    }, firstIdentifier: "teleprompter-pause-text", second: "Back a line", secondAction: script.backLine)
                 }
-            }.font(KriaFont.body(14))
+            }
             if manual, let enableAutomaticScroll {
-                Button("Use steady scrolling", action: enableAutomaticScroll).frame(maxWidth: .infinity, minHeight: 44)
-                    .font(KriaFont.body(14))
+                Button("Use steady scrolling", action: enableAutomaticScroll).buttonStyle(KriaSecondaryButtonStyle())
+                    .frame(maxWidth: .infinity)
             }
             if script.hasEnded { Text("End of script").font(KriaFont.body(13)) }
-            Button("Text window", action: windowSettings).frame(maxWidth: .infinity, minHeight: 44)
-                .accessibilityIdentifier("teleprompter-window-settings")
-            if !recording {
-                Button("Start of script") { script.reset() }.frame(maxWidth: .infinity, minHeight: 44)
-                Stepper("Text size \(Int(script.fontSize))", value: Binding(get: { Double(script.fontSize) }, set: { script.setFontSize(CGFloat($0)) }), in: 18...32, step: 2)
-                    .font(KriaFont.body(14)).fixedSize(horizontal: false, vertical: true)
-            }
         }
+    }
+
+    @ViewBuilder private func pairedActions(first: String, firstAction: @escaping () -> Void, firstIdentifier: String? = nil,
+                                            second: String, secondAction: @escaping () -> Void) -> some View {
+        let actions = Group {
+            Button(first, action: firstAction).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
+                .accessibilityIdentifier(firstIdentifier ?? "teleprompter-action-\(first.lowercased())")
+            Button(second, action: secondAction).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
+        }
+        if usesAccessibilityLayout { VStack(spacing: 8) { actions } }
+        else { HStack(spacing: 8) { actions } }
     }
 
     private var recordButton: some View {
@@ -350,9 +358,9 @@ private struct TeleprompterCaptureControls: View {
                     } else {
                         Label(recording ? "Stop recording" : "Record", systemImage: recording ? "stop.fill" : "record.circle")
                     }
-                }.font(KriaFont.body(18).weight(.semibold)).fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, minHeight: 56).background(Color.red, in: Capsule())
-            }.disabled(!recording && camera.phase != .ready)
+                }.fixedSize(horizontal: false, vertical: true)
+            }.buttonStyle(KriaInkCTAButtonStyle(height: 52))
+            .disabled(!recording && camera.phase != .ready)
                 .accessibilityIdentifier(recording ? "teleprompter-stop-recording" : "teleprompter-record")
     }
 }
@@ -383,61 +391,96 @@ private struct TeleprompterWindowOverlay: View {
 private struct TeleprompterWindowSettings: View {
     @ObservedObject var script: TeleprompterScript
     let canvas: CGRect
+    let canChangeFont: Bool
     let persist: () -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Background") {
-                    HStack {
-                        appearanceButton(.transparent, title: "Transparent")
-                        appearanceButton(.glass, title: "Glass")
-                        appearanceButton(.solid, title: "Solid")
-                    }
-                }
-                Section("Size") {
-                    Slider(value: Binding(get: { Double(preference.widthFraction) }, set: {
-                        apply(TeleprompterWindowPreference(appearance: preference.appearance, normalizedX: preference.normalizedX,
-                                                           normalizedY: preference.normalizedY, widthFraction: CGFloat($0), preferredHeight: preference.preferredHeight))
-                    }), in: 0.35...1)
-                    .accessibilityLabel("Text window width").accessibilityValue("\(Int(preference.widthFraction * 100)) percent")
-                    .accessibilityIdentifier("teleprompter-window-width")
-                    Slider(value: Binding(get: { Double(preference.preferredHeight) }, set: {
-                        apply(TeleprompterWindowPreference(appearance: preference.appearance, normalizedX: preference.normalizedX,
-                                                           normalizedY: preference.normalizedY, widthFraction: preference.widthFraction, preferredHeight: CGFloat($0)))
-                    }), in: 96...320)
-                    .accessibilityLabel("Text window height").accessibilityValue("\(Int(preference.preferredHeight)) points")
-                    .accessibilityIdentifier("teleprompter-window-height")
-                }
-                Section("Position") {
-                    HStack { Button("Move up") { move(.init(width: 0, height: -30)) }; Button("Move down") { move(.init(width: 0, height: 30)) } }
-                        .buttonStyle(.borderless)
-                    HStack { Button("Move left") { move(.init(width: -30, height: 0)) }; Button("Move right") { move(.init(width: 30, height: 0)) } }
-                        .buttonStyle(.borderless)
-                    Button("Reset window") {
-                        apply(.init(appearance: preference.appearance))
-                    }.accessibilityIdentifier("teleprompter-window-reset")
-                }
+        VStack(spacing: 0) {
+            WorkspaceTopRow(title: "Text window", leading: { Color.clear.frame(width: 44, height: 44) }, trailing: {
+                KriaGlassCloseButton(identifier: "teleprompter-window-settings-close", label: "Close text window settings") { dismiss() }
+            })
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    KriaSectionLabel(title: "Background")
+                    backgroundChoices
+                    KriaSectionLabel(title: "Size")
+                    sliderControls
+                    KriaSectionLabel(title: "Position")
+                    moveControls
+                    KriaSectionLabel(title: "Reading")
+                    Button("Start of script") { script.reset() }.buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity)
+                    Stepper("Text size \(Int(script.fontSize))", value: Binding(get: { Double(script.fontSize) }, set: { script.setFontSize(CGFloat($0)); persist() }), in: 18...32, step: 2)
+                        .font(KriaFont.body(15)).disabled(!canChangeFont).accessibilityIdentifier("teleprompter-text-size")
+                    Button("Reset window") { apply(.init(appearance: preference.appearance)) }
+                        .buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity).accessibilityIdentifier("teleprompter-window-reset")
+                }.padding(20)
             }
-            .navigationTitle("Text window").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() }.accessibilityIdentifier("teleprompter-window-settings-close") } }
+            .accessibilityIdentifier("teleprompter-window-options")
+        }
+        .kriaPage().background(KriaColor.paper)
+    }
+
+    private var sliderControls: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Width \(Int(preference.widthFraction * 100))%").font(KriaFont.body(14).weight(.semibold))
+            Slider(value: Binding(get: { Double(preference.widthFraction) }, set: { apply(.init(appearance: preference.appearance, normalizedX: preference.normalizedX, normalizedY: preference.normalizedY, widthFraction: CGFloat($0), preferredHeight: preference.preferredHeight)) }), in: 0.35...1)
+                .tint(KriaColor.sky).accessibilityLabel("Text window width").accessibilityValue("\(Int(preference.widthFraction * 100)) percent").accessibilityIdentifier("teleprompter-window-width")
+            Text("Height \(Int(preference.preferredHeight)) points").font(KriaFont.body(14).weight(.semibold))
+            Slider(value: Binding(get: { Double(preference.preferredHeight) }, set: { apply(.init(appearance: preference.appearance, normalizedX: preference.normalizedX, normalizedY: preference.normalizedY, widthFraction: preference.widthFraction, preferredHeight: CGFloat($0))) }), in: 96...320)
+                .tint(KriaColor.sky).accessibilityLabel("Text window height").accessibilityValue("\(Int(preference.preferredHeight)) points").accessibilityIdentifier("teleprompter-window-height")
         }
     }
 
-    private func appearanceButton(_ appearance: TeleprompterWindowAppearance, title: String) -> some View {
-        Button(title) { apply(.init(appearance: appearance, normalizedX: preference.normalizedX, normalizedY: preference.normalizedY,
-                                    widthFraction: preference.widthFraction, preferredHeight: preference.preferredHeight)) }
-            .buttonStyle(.borderedProminent).tint(preference.appearance == appearance ? KriaColor.sky : .gray)
-            .accessibilityIdentifier("teleprompter-background-\(appearance.rawValue)")
-            .accessibilityAddTraits(preference.appearance == appearance ? .isSelected : [])
+    @ViewBuilder private var backgroundChoices: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 8) {
+                appearanceButton(.transparent, title: "Transparent")
+                appearanceButton(.glass, title: "Glass")
+                appearanceButton(.solid, title: "Solid")
+            }
+        } else {
+            HStack(spacing: 8) {
+                appearanceButton(.transparent, title: "Transparent")
+                appearanceButton(.glass, title: "Glass")
+                appearanceButton(.solid, title: "Solid")
+            }
+        }
+    }
+
+    private var moveControls: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 8) { Button("Move up") { move(.init(width: 0, height: -30)) }; Button("Move down") { move(.init(width: 0, height: 30)) }; Button("Move left") { move(.init(width: -30, height: 0)) }; Button("Move right") { move(.init(width: 30, height: 0)) } }
+            } else {
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) { Button("Move up") { move(.init(width: 0, height: -30)) }; Button("Move down") { move(.init(width: 0, height: 30)) } }
+                    HStack(spacing: 8) { Button("Move left") { move(.init(width: -30, height: 0)) }; Button("Move right") { move(.init(width: 30, height: 0)) } }
+                }
+            }
+        }
+        .buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
+    }
+
+    @ViewBuilder private func appearanceButton(_ appearance: TeleprompterWindowAppearance, title: String) -> some View {
+        if preference.appearance == appearance {
+            Button(title) { setAppearance(appearance) }.buttonStyle(KriaPrimaryButtonStyle(fill: KriaColor.sky))
+                .accessibilityIdentifier("teleprompter-background-\(appearance.rawValue)").accessibilityAddTraits(.isSelected)
+        } else {
+            Button(title) { setAppearance(appearance) }.buttonStyle(KriaSecondaryButtonStyle())
+                .accessibilityIdentifier("teleprompter-background-\(appearance.rawValue)")
+        }
     }
     private func move(_ offset: CGSize) {
         let minimumHeight = TeleprompterScriptWidget.minimumHeight(fontSize: script.fontSize, dynamicTypeSize: dynamicTypeSize)
         apply(TeleprompterWindowGeometry.moving(preference, in: canvas, by: offset, minimumHeight: minimumHeight))
     }
     private var preference: TeleprompterWindowPreference { script.windowPreference }
+    private func setAppearance(_ appearance: TeleprompterWindowAppearance) {
+        apply(.init(appearance: appearance, normalizedX: preference.normalizedX, normalizedY: preference.normalizedY,
+                    widthFraction: preference.widthFraction, preferredHeight: preference.preferredHeight))
+    }
     private func apply(_ value: TeleprompterWindowPreference) { script.setWindowPreference(value); persist() }
 }
 private struct TeleprompterElapsed: View {
@@ -446,7 +489,7 @@ private struct TeleprompterElapsed: View {
         SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { _ in
             let elapsed = max(0, ProcessInfo.processInfo.systemUptime - (start ?? ProcessInfo.processInfo.systemUptime))
             Label(DurationFormatter.clock(elapsed), systemImage: "circle.fill")
-                .font(KriaFont.body(14).monospacedDigit()).foregroundStyle(.white)
+                .font(KriaFont.body(14).monospacedDigit()).foregroundStyle(KriaColor.ink)
         }.accessibilityLabel("Recording")
     }
 }

@@ -3,8 +3,8 @@
 Ticket: https://linear.app/kria/issue/KRI-583/iphone-record-talking-videos-with-a-steady-scroll-teleprompter
 Branch: `codex/kri-583-iphone-teleprompter`
 Base: `b33471508f87cdf622ebcdcf301a158a57b1203b`
-QA status: `DONE_WITH_CONCERNS` — native window/capture checks passed; final
-hardware visual confirmation and remaining release checks are listed below.
+QA status: `DONE_WITH_CONCERNS` — native window/capture checks passed; current
+Kria component alignment and remaining release checks are listed below.
 
 ## Creator flow
 
@@ -146,12 +146,72 @@ Nine-test UI result: `ui.2i2jGf/ui.xcresult`.
 Final UI result: `/private/tmp/kri-583-window-final-class-ui.xcresult`.
 Passed physical window result: `/private/tmp/kri-583-window-final-device-ui.xcresult`.
 
-The final hardware visual recheck did not execute an application test: Xcode
+That phase's hardware visual recheck did not execute an application test: Xcode
 first requested an unlocked phone, then the runner exited with code 74 before
 connecting. The final QA build installs successfully under its isolated identity.
 Real-camera results above precede only the last visual/clipping and exact-drag
 refinements; those have separate final simulator validation. Real-server intake,
 spoken sync and additional devices remain unverified.
+
+## Kria component alignment
+
+The teleprompter now uses Kria's existing native components throughout the script,
+camera, settings and review flow. WorkspaceTopRow and KriaGlassCloseButton provide
+shared chrome; AttachmentHeading, KriaSectionLabel and Inter use the existing
+hierarchy. Preparation/review actions use the shared primary and secondary capsule
+styles, and Record/Stop use KriaInkCTAButtonStyle. Countdown, saving and camera
+recovery use Kria glass panels and the existing spinner.
+
+The movable reading window uses Kria's floating material for Glass and opaque
+Paper with Ink text for Solid, with Paper as the reduced-transparency fallback.
+Transparent remains clear, with Paper reading text and an Ink shadow. Shared
+44-point floating icon buttons and the Kria outline icon set supply move/resize
+handles. Material is kept below identified controls to preserve accessibility
+frames. Drag behavior, script timing, geometry, capture and persistence are unchanged.
+
+Camera options are more compact. Text window settings sit beside Close at the
+top, while pace, rehearsal/line controls and Record/Stop stay in the bottom glass
+panel. Text size and Start of script are in the scrollable Text window sheet.
+Background/position choices stack at accessibility text sizes, Record/Stop stays
+outside the options scroller, and font changes are disabled while capture is busy.
+The settings sheet explicitly inherits the presenting Dynamic Type size so its
+typography and layout match the script/camera, including accessibility overrides.
+
+- Simulator and signed physical-device builds passed. The final restyle installed
+  successfully under the separate `com.kria.teleprompter.qa` identity on the
+  paired iPhone; production/dev app identities were not replaced.
+- The first native UI run verified nine selected tests passed without retry.
+  All five teleprompter journeys then passed against the final review-button
+  styling, including exact drag travel, saved window preferences and recovery.
+  Four creation/editor smoke checks passed on that app build; their unchanged
+  results are reused after the final sheet-only accessibility correction.
+- Expanded settings checks identified a test helper that dismissed the medium
+  sheet by swiping down at the top. It now scrolls toward offscreen controls and
+  handles empty clipped frames. Screenshot inspection also found and fixed the
+  sheet's missing Dynamic Type override. The normal-size settings persistence
+  journey passed again after that fix. At the largest text size, verification
+  targets the native Stepper's Increment button and checks a real font-size
+  change; the Stepper container itself is not an interactive touch target.
+  The final focused accessibility test passed without retry, including an
+  enabled, hittable Increment button, changed font label and visible camera
+  Close/Record controls after dismissing settings. Its screenshot confirms
+  enlarged Inter labels and vertically stacked Kria actions in the sheet.
+- All 93 offline iOS orchestration checks passed. The unchanged model/store/
+  geometry code reuses the prior 1,509-test unit result rather than claiming a
+  new full-unit run for this presentation-only change.
+- Inspected screenshots show Kria's shared glass window, Paper window, settings,
+  script and review surfaces. The phone run reached genuine camera preview and
+  changed all three backgrounds before a system low-battery shutdown warning
+  blocked move/Record interactions. That interrupted run is not a passing camera
+  result and did not expose an app capture failure.
+
+Initial native UI result: `/private/tmp/kri-583-kria-components-ui.xcresult`.
+Five-journey UI result: `/private/tmp/kri-583-kria-components-final-class-ui.xcresult`.
+Normal-size settings recheck: `/private/tmp/kri-583-kria-components-scroll-ui.xcresult`.
+Final accessibility button check: `/private/tmp/kri-583-kria-components-stepper-ui.xcresult`.
+Low-battery-interrupted physical result:
+`/private/tmp/kri-583-kria-components-device-ui.xcresult`.
+Private camera screenshots and test screen recordings remain outside the repository.
 
 ## Physical iPhone release check still required
 
