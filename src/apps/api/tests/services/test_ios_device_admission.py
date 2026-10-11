@@ -187,6 +187,56 @@ def test_current_native_cloud_only_creation_is_unsupported(client: TestClient, p
     assert response.json()["problem"]["code"] == "device_render_unsupported"
 
 
+_NATIVE_HEADERS = {
+    "Authorization": "Bearer not-a-real-jwt",
+    "X-Kria-Client-Protocol": str(settings.kria_minimum_client_protocol),
+}
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("PUT", "/plan-items/item-id/slide-post"),
+        ("POST", "/plan-items/item-id/slide-post/propose"),
+        ("POST", "/plan-items/item-id/slide-post/chat-edit"),
+    ],
+)
+@pytest.mark.parametrize("fixture_name", ["client", "native_only_client"])
+def test_native_slide_post_draft_writes_pass_the_fence(
+    request: pytest.FixtureRequest, fixture_name: str, method: str, path: str
+) -> None:
+    """KRI-581: slide posts render on the phone and are saved by the server, so the
+    native fence must not refuse a draft save, proposal or chat edit. With a fake JWT
+    the request gets past admission and fails authentication instead."""
+    test_client: TestClient = request.getfixturevalue(fixture_name)
+
+    response = test_client.request(method, path, headers=_NATIVE_HEADERS)
+
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/plan-items/item-id/slide-post/generate",
+        "/plan-items/item-id/slide-post/compose",
+        "/plan-items/item-id/slide-post/render",
+        "/plan-items/item-id/slide-post/",
+    ],
+)
+@pytest.mark.parametrize("fixture_name", ["client", "native_only_client"])
+def test_native_slide_post_server_renders_stay_refused(
+    request: pytest.FixtureRequest, fixture_name: str, path: str
+) -> None:
+    """Only the server-render sub-routes (and unknown ones) have no device contract."""
+    test_client: TestClient = request.getfixturevalue(fixture_name)
+
+    response = test_client.post(path, headers=_NATIVE_HEADERS)
+
+    assert response.status_code == 422
+    assert response.json()["problem"]["code"] == "device_render_unsupported"
+
+
 @pytest.mark.parametrize(
     "path",
     [
