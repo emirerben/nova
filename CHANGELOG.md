@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.220.0] - 2026-10-11
+
+### Changed
+- feat(ios): shift lyric captions in the live preview when the song start changes (KRI-576) (#1542) <!-- release-pr: 1542 -->
+
 ## [0.78.219.0] - 2026-10-11
 
 ### Changed
