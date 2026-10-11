@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.214.0] - 2026-10-11
+
+### Changed
+- fix(creator): pin described-shot labels from resolved label intents (KRI-568) (#1531) <!-- release-pr: 1531 -->
+
 ## [0.78.213.0] - 2026-10-11
 
 ### Changed
