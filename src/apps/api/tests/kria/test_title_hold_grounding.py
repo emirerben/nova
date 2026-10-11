@@ -247,6 +247,40 @@ def test_grounding_reads_the_creators_own_seconds() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("title", "evidence", "hold", "kept"),
+    [
+        # PR 1548 review: the title's own text also occurs inside the stated seconds.
+        ("3", 'Keep the title "3" for 3 seconds', 3.0, True),
+        ("one", 'Show "one" for one second', 1.0, True),
+        ("two", 'Put "two" on screen for two seconds', 2.0, True),
+        ("GO", 'Show "GO" for two seconds', 2.0, True),
+        # Seconds that are part of the on-screen copy are still not a hold.
+        ("3 SECONDS TO MIDNIGHT", 'Open with "3 SECONDS TO MIDNIGHT"', 3.0, False),
+        ("3 seconds", 'Title "3 seconds" for 2 seconds', 2.0, True),
+        ("3 seconds", 'Title "3 seconds" for 2 seconds', 3.0, False),
+    ],
+    ids=[
+        "digit-title",
+        "one-title",
+        "two-title",
+        "control",
+        "copy-only",
+        "copy-and-hold",
+        "copy-hold-mismatch",
+    ],
+)
+def test_a_title_that_matches_the_seconds_keeps_the_stated_hold(
+    title: str, evidence: str, hold: float, kept: bool
+) -> None:
+    assert (
+        planner.title_hold_grounded(
+            hold, evidence=evidence, user_sources=[evidence], strip=(title,)
+        )
+        is kept
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("hold_evidence", "kept"),

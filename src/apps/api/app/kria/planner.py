@@ -1833,19 +1833,26 @@ def title_hold_grounded(
     The model must quote the hold (`render_intent_evidence.opening_title_duration_s`): the
     excerpt has to be the creator's own words (a verbatim piece of one of their messages,
     compared like pinned text) and say this number of seconds ("2 saniye", "2,5 sn",
-    "for two seconds", "3-second"). The on-screen copy in ``strip`` is removed first, so
-    "ROME IN 3 DAYS" cannot ground a 3 s hold, and a bare count ("7 klip") is not seconds.
+    "for two seconds", "3-second"). Seconds that lie inside the on-screen copy in ``strip``
+    never count, so "3 SECONDS TO MIDNIGHT" cannot ground a 3 s hold, while a title that
+    merely equals the number ('title "3" for 3 seconds') keeps the stated hold. A bare count
+    ("7 klip") is not seconds.
     """
 
     quoted = _pin_key(evidence or "")
     if not quoted or not any(quoted in _pin_key(source) for source in user_sources if source):
         return False
     text = _hold_key(quoted)
+    copy_spans: list[tuple[int, int]] = []
     for on_screen in strip:
         key = _hold_key(on_screen or "")
-        if key:
-            text = text.replace(key, " ")
+        start = text.find(key) if key else -1
+        while start != -1:
+            copy_spans.append((start, start + len(key)))
+            start = text.find(key, start + 1)
     for match in _HOLD_SECONDS.finditer(text):
+        if any(lo <= match.start() and match.end() <= hi for lo, hi in copy_spans):
+            continue
         token = match.group(1)
         value = _HOLD_NUMBER_WORDS.get(token)
         if value is None:
