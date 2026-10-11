@@ -206,6 +206,10 @@
       "paths": [
         "src/apps/api/app/agents/_schemas/drawing.py",
         "src/apps/api/app/kria/portable_drawing.py",
+        "src/apps/api/app/kria/recipes.py",
+        "src/apps/api/app/kria/recipes_v2.py",
+        "src/apps/api/app/pipeline/phone_recipe_shared.py",
+        "src/apps/api/app/pipeline/speech_cut_state.py",
         "src/apps/api/tests/agents/test_drawing_schema.py",
         "src/apps/api/tests/kria/test_drawing_compile.py",
         "tests/fixtures/drawing-parity/",

@@ -127,6 +127,12 @@ def test_fixture_through_the_real_phone_save(monkeypatch, case: dict) -> None:
     assert ("freehandDrawing" in pinned.required_capabilities) is bool(case["expected_layers"])
 
 
+def _canonical(recipe) -> dict:
+    dumped = recipe.model_dump(mode="json")
+    dumped["required_capabilities"] = sorted(dumped["required_capabilities"])
+    return dumped
+
+
 def test_with_drawings_clamps_to_each_cut_and_strips_cleanly(monkeypatch) -> None:
     """A drawing is stored once and re-clamped on every build: the same lane yields a clamped
     layer on a shorter cut and the full one on a longer cut; stripping restores the recipe."""
@@ -143,7 +149,8 @@ def test_with_drawings_clamps_to_each_cut_and_strips_cleanly(monkeypatch) -> Non
     stripped = with_drawings(full, None)
     assert stripped.drawing_layers == []
     assert "freehandDrawing" not in stripped.required_capabilities
-    assert stripped.model_dump(mode="json") == recipe.model_dump(mode="json")
+    # `required_capabilities` is a set: its list order in a dump follows the hash seed.
+    assert _canonical(stripped) == _canonical(recipe)
 
 
 def test_a_sliver_window_compiles_and_never_breaks_a_later_save(monkeypatch) -> None:
