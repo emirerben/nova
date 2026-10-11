@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.216.0] - 2026-10-11
+
+### Changed
+- feat(media): add creator-owned library contracts and retention (KRI-384) (#1534) <!-- release-pr: 1534 -->
+
 ## [0.78.215.0] - 2026-10-11
 
 ### Changed

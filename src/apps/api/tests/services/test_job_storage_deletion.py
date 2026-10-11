@@ -80,6 +80,28 @@ def test_exact_manifest_retains_supported_shared_input_namespaces(legacy: bool) 
     assert manifest.exact_paths == tuple(exact_paths)
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_exact_cleanup_transfers_protected_keys_without_remote_delete(monkeypatch, legacy):
+    job_id, owner_id = uuid.uuid4(), uuid.uuid4()
+    path = f"{owner_id}/{job_id}/source.mp4"
+    manifest = manifests.JobStorageManifest(exact_paths=(path,), legacy=legacy)
+    monkeypatch.setattr(
+        storage, "delete_object_once", lambda *_a, **_k: pytest.fail("protected key deleted")
+    )
+    monkeypatch.setattr(
+        storage,
+        "delete_object_best_effort",
+        lambda *_a, **_k: pytest.fail("protected key deleted"),
+    )
+
+    result = manifests.cleanup_job_storage_manifest(
+        manifest, now=datetime.now(UTC), protected_paths={path}
+    )
+
+    assert result.complete
+    assert result.exact_deleted == 0
+
+
 def test_v2_manifest_rejects_prefix_outside_job_allowlist() -> None:
     job_id = uuid.uuid4()
     payload = {
