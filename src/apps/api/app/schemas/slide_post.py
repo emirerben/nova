@@ -301,14 +301,13 @@ class SlideRef(BaseModel):
 
 
 def _portrait_slide(slide: SlideRef) -> SlideRef:
+    """A slide that was landscape goes back to the post's shape, crop and all: a
+    rectangle chosen for 16:9 would be mis-shaped for 4:5 (the iPhone does the same)."""
     framing = slide.edits.framing if slide.edits else None
     if framing is None or framing.orientation == "portrait":
         return slide
     assert slide.edits is not None
-    edits = slide.edits.model_copy(
-        update={"framing": framing.model_copy(update={"orientation": "portrait"})}
-    )
-    return slide.model_copy(update={"edits": edits})
+    return slide.model_copy(update={"edits": slide.edits.model_copy(update={"framing": None})})
 
 
 class SlidePostDraft(BaseModel):
@@ -479,8 +478,12 @@ def merge_legacy_text_edits(
                 "look_preset": incoming.look_preset,
                 "texts": [t.model_dump(mode="python") for t in texts],
                 **(
-                    {"framing": incoming.framing.model_dump(mode="python")}
-                    if incoming.framing is not None
+                    {
+                        "framing": incoming.framing.model_dump(mode="python")
+                        if incoming.framing is not None
+                        else None
+                    }
+                    if "framing" in incoming.model_fields_set
                     else {}
                 ),
             }

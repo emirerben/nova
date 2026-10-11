@@ -24,6 +24,9 @@ def crop_image_file(source: str, crop: Mapping[str, float], out_path: str) -> st
 
     with Image.open(source) as opened:
         image = ImageOps.exif_transpose(opened)
+        if image.mode not in ("RGB", "RGBA", "L", "LA"):
+            # CMYK/palette/16-bit files can't all be written as PNG as-is.
+            image = image.convert("RGBA" if "transparency" in image.info else "RGB")
         width, height = image.size
         left = min(width - 1, max(0, round(crop["x"] * width)))
         top = min(height - 1, max(0, round(crop["y"] * height)))

@@ -912,6 +912,12 @@ def _framing_assets(n: int = 3, aspect: float | None = 4 / 3) -> list[SimpleName
     assets = [_asset() for _ in range(n)]
     for a in assets:
         a.aspect = aspect
+        # Only dimensions stamped upright count (photos analysed earlier are raw).
+        a.analysis = (
+            {"width": 4000, "height": round(4000 / aspect), "dims_upright": True}
+            if aspect
+            else None
+        )
     return assets
 
 
@@ -1035,3 +1041,32 @@ class TestSlideFraming:
             step1.draft, assets, [{"op": "set_slide_framing", "all": True, "reset": True}]
         )
         assert _framing_of(step2.draft, 0) is None
+
+    def test_photos_analysed_before_the_upright_stamp_refuse_a_focus_crop(self, monkeypatch):
+        _framing_on(monkeypatch)
+        assets = _framing_assets(1)
+        assets[0].analysis = {"width": 4000, "height": 3000}  # raw shape, no dims_upright
+        snapshot = build_slide_post_snapshot(_draft(assets), _by_id(assets), user_id=USER_ID)
+        assert "source_aspect" not in snapshot["slots"][0]
+        assert not _parse(snapshot, [{"op": "set_slide_framing", "all": True, "focus": "top"}]).ops
+
+    def test_a_video_slide_cannot_be_cropped_and_all_skips_it(self, monkeypatch):
+        _framing_on(monkeypatch)
+        assets = _framing_assets(2)
+        draft = _draft(assets)
+        draft = draft.model_copy(
+            update={
+                "slides": [draft.slides[0], draft.slides[1].model_copy(update={"kind": "video"})]
+            }
+        )
+        snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+        named = _parse(
+            snapshot, [{"op": "set_slide_framing", "slide_indexes": [1], "focus": "top"}]
+        )
+        assert not named.ops
+        compiled = compile_slide_post_ops(
+            draft,
+            _parse(snapshot, [{"op": "set_slide_framing", "all": True, "focus": "top"}]).ops,
+        )
+        assert _framing_of(compiled.draft, 0) is not None
+        assert _framing_of(compiled.draft, 1) is None

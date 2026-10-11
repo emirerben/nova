@@ -72,7 +72,7 @@ def test_slide_intent_routes_before_the_clip_paths_check(monkeypatch) -> None:
 def test_slide_intent_renderer_version_mismatch_fails_closed(monkeypatch) -> None:
     """A mixed API/worker deploy must never silently coerce a stale-fenced
     slides job to montage (risk #5) — it must raise, not fall through."""
-    job = _slides_job(slides_renderer_version=SLIDES_RENDERER_VERSION - 1)
+    job = _slides_job(slides_renderer_version=0)
     monkeypatch.setattr(gb, "_sync_session", _session)
     monkeypatch.setattr(gb, "_lock_owned_entry_job", lambda _db, _job_id: (job, None))
     monkeypatch.setattr(

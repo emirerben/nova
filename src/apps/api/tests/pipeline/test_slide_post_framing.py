@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -128,6 +129,40 @@ class TestFramingRender:
             assert rgb.getpixel((540, 1820))[:3] == pytest.approx((0, 0, 0), abs=12)  # bottom bar
             assert max(rgb.getpixel((540, 960))[:3]) > 100  # the slide itself
 
+    def test_a_sliver_crop_still_renders(self, tmp_path):
+        src, out = tmp_path / "src.png", tmp_path / "out.jpg"
+        _quadrant_image(src, size=1000)
+        sliver = {"x": 0.001, "y": 0.001, "width": 0.0004, "height": 0.0004}
+        edits = SlideEdits(framing=SlideFraming(source_crop=sliver))
+        normalize_image_slide(str(src), str(out), canvas=PORTRAIT, edits=edits)
+        assert probe_dimensions(str(out)) == PORTRAIT
+
+    def test_a_video_slide_ignores_a_stored_crop(self, tmp_path):
+        from app.pipeline.slide_post.build import normalize_video_slide  # noqa: PLC0415
+
+        src, out = tmp_path / "src.mp4", tmp_path / "out.mp4"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=s=320x240:d=1",
+                "-pix_fmt",
+                "yuv420p",
+                str(src),
+            ],
+            check=True,
+        )
+        edits = SlideEdits(
+            framing=SlideFraming(source_crop={"x": 0, "y": 0, "width": 0.5, "height": 0.5})
+        )
+        normalize_video_slide(str(src), str(out), canvas=PORTRAIT, edits=edits)
+        assert probe_dimensions(str(out)) == PORTRAIT
+
     def test_landscape_is_ignored_on_instagram(self):
         edits = SlideEdits(framing=SlideFraming(orientation="landscape"))
         assert slide_canvas("instagram_carousel", edits) == (1080, 1350)
@@ -181,7 +216,7 @@ class TestFramingContracts:
         draft = SlidePostDraft(
             platform_profile="instagram_carousel", slides=[_slide("a", landscape), _slide("b")]
         )
-        assert draft.slides[0].edits.framing.orientation == "portrait"
+        assert draft.slides[0].edits.framing is None
         tiktok = SlidePostDraft(platform_profile="tiktok_photo", slides=[_slide("a", landscape)])
         assert tiktok.slides[0].edits.framing.orientation == "landscape"
 
@@ -220,6 +255,34 @@ class TestFramingSaveMerge:
         incoming = [_slide("a", CROP)]
         out = merge_stored_framing(_stored(None), incoming, accept_incoming=True)
         assert out[0].edits.framing == CROP
+
+    def test_explicit_null_clears_even_when_the_client_omits_texts(self):
+        from app.schemas.slide_post import merge_legacy_text_edits  # noqa: PLC0415
+
+        stored_edits = SlideEdits(texts=[SlideTextElement(id="t1", text="hi")], framing=CROP)
+        stored = SlidePostDraft(
+            platform_profile="tiktok_photo",
+            slides=[_slide("a").model_copy(update={"edits": stored_edits})],
+        )
+        incoming = [
+            SlideRef.model_validate(
+                {**_slide("a").model_dump(), "edits": {"look_preset": "none", "framing": None}}
+            )
+        ]
+        merged = merge_stored_framing(
+            stored, merge_legacy_text_edits(stored, incoming), accept_incoming=True
+        )
+        assert merged[0].edits.framing is None
+        assert merged[0].edits.texts is not None  # the legacy merge still protects the text
+
+    def test_instagram_fallback_drops_the_landscape_crop_like_the_phone(self):
+        landscape = SlideFraming(
+            orientation="landscape", source_crop={"x": 0, "y": 0, "width": 0.5, "height": 0.5}
+        )
+        draft = SlidePostDraft(
+            platform_profile="instagram_carousel", slides=[_slide("a", landscape), _slide("b")]
+        )
+        assert draft.slides[0].edits.framing is None
 
     def test_flag_off_ignores_incoming_framing(self):
         out = merge_stored_framing(_stored(None), [_slide("a", CROP)], accept_incoming=False)

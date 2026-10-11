@@ -229,6 +229,9 @@ def _video_clips(
                     "a color grade cannot be combined with letterboxed landscape fit"
                 )
             if old is not None:
+                # A repointed slot is a different picture: it never inherits the old
+                # source's crop unless the slot sends one (KRI-44).
+                update.setdefault("source_crop", None)
                 clips.append(old.model_copy(update={**update, "transform": transform}))
             else:
                 clips.append(TimelineClip(**update, transform=transform, look=default_look))

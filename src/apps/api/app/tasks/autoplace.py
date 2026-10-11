@@ -1895,6 +1895,10 @@ def analyze_pool_asset(
                     # migration) — rule (g) + the FE low-res warning read them.
                     if dims:
                         final["width"], final["height"] = dims
+                        if asset.kind == "image":
+                            # Photos analysed before KRI-44 hold the raw (un-rotated) shape;
+                            # this stamp is how a crop tells the two apart.
+                            final["dims_upright"] = True
                     if has_alpha is not None:
                         final["has_alpha"] = has_alpha
                     asset.analysis = final

@@ -124,6 +124,17 @@ def _coerce_set_slide_framing(name: str, payload: dict, snapshot: dict, state: A
     changes: list[dict[str, Any]] = []
     for index in indexes:
         slot = slots[index]
+        if slot.get("media_kind") == "video":
+            # Crop and landscape are for photos; video slides keep the plain cover fit
+            # on every renderer. "all" quietly skips them, a named video is refused.
+            if payload.get("all") is True:
+                continue
+            state.reject(
+                op=name,
+                reason="capability_unavailable",
+                detail="Videos in a slide post can't be cropped or turned landscape.",
+            )
+            return None
         slide_id = slot.get("media_id")
         if slot.get("removed") or not isinstance(slide_id, str) or not slide_id:
             state.reject(op=name, reason="stale_target", detail="that slide is no longer available")

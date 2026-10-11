@@ -506,7 +506,7 @@ def normalize_video_slide(
         ) as edit_fragment,
         _text_pngs(edits, canvas=canvas, out_path=out_path) as pngs,
     ):
-        vf = f"{_scale_crop_filter(canvas, _framing_crop(edits))},fps=30"
+        vf = f"{_scale_crop_filter(canvas)},fps=30"  # video slides are never cropped (KRI-44)
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
         cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", src_path]

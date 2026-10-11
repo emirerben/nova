@@ -3107,7 +3107,9 @@ def _run_generative_job_impl(
                     "single_hero is disabled by EDIT_FORMAT_SINGLE_HERO_ENABLED.",
                 )
         if render_intent_value == "slides":
-            if all_candidates.get("slides_renderer_version") != SLIDES_RENDERER_VERSION:
+            # v1 jobs (queued before the framing deploy) render identically for an unframed
+            # draft, so a v2 worker accepts them instead of failing them with "retry it".
+            if all_candidates.get("slides_renderer_version") not in {1, SLIDES_RENDERER_VERSION}:
                 raise SlidePostPolicyError(
                     "renderer_version_mismatch",
                     "This slide-post job was created by an incompatible API worker; retry it.",

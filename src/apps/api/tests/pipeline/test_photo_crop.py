@@ -98,3 +98,11 @@ def test_guided_photo_moment_renders_the_cropped_region(tmp_path):
         # Only the red quadrant is on screen: every corner and the centre are red.
         for point in ((20, 20), (1060, 20), (540, 960), (20, 1900), (1060, 1900)):
             assert _near(rgb.getpixel(point), RED), point
+
+
+def test_a_cmyk_jpeg_can_be_cropped(tmp_path):
+    source = tmp_path / "print.jpg"
+    Image.new("CMYK", (40, 60), (0, 255, 255, 0)).save(source, format="JPEG")
+    out = crop_image_file(str(source), TOP_LEFT, str(tmp_path / "crop.png"))
+    with Image.open(out) as img:
+        assert img.size == (20, 30)

@@ -110,8 +110,10 @@ def ffmpeg_crop_filter(crop: CropRect | dict[str, float] | None) -> str:
     """
     if crop is None:
         return ""
+    # max(2, ...): a sliver rectangle must not floor to a zero-size crop, which
+    # ffmpeg rejects and which would fail the whole post's render every time.
     return (
-        f"crop=trunc(iw*{_num(crop['width'])}/2)*2:"
-        f"trunc(ih*{_num(crop['height'])}/2)*2:"
+        f"crop=max(2\\,trunc(iw*{_num(crop['width'])}/2)*2):"
+        f"max(2\\,trunc(ih*{_num(crop['height'])}/2)*2):"
         f"trunc(iw*{_num(crop['x'])}):trunc(ih*{_num(crop['y'])})"
     )

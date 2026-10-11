@@ -174,15 +174,21 @@ def _framing_of(slide: SlideRef) -> tuple[str, dict[str, float] | None]:
 
 
 def _asset_upright_aspect(asset: Any) -> float | None:
-    """Width / height of the photo as displayed, or None when unknown."""
+    """Width / height of the photo as displayed, or None when unknown.
+
+    Only dimensions stamped `dims_upright` count: photos analysed before KRI-44
+    were measured on the raw (EXIF-unrotated) pixels, so trusting them would hand
+    a rotated iPhone portrait the wrong crop shape.
+    """
+    analysis = getattr(asset, "analysis", None)
+    if not isinstance(analysis, dict) or analysis.get("dims_upright") is not True:
+        return None
+    w, h = analysis.get("width"), analysis.get("height")
+    if all(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 for v in (w, h)):
+        return round(float(w) / float(h), 4)
     aspect = getattr(asset, "aspect", None)
     if isinstance(aspect, (int, float)) and not isinstance(aspect, bool) and aspect > 0:
         return round(float(aspect), 4)
-    analysis = getattr(asset, "analysis", None)
-    if isinstance(analysis, dict):
-        w, h = analysis.get("width"), analysis.get("height")
-        if all(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 for v in (w, h)):
-            return round(float(w) / float(h), 4)
     return None
 
 
@@ -252,7 +258,11 @@ def build_slide_post_snapshot(
             orientation, crop = _framing_of(slide)
             slot["orientation"] = orientation
             slot["cropped"] = crop is not None
-            source_aspect = _asset_upright_aspect(assets_by_id.get(slide.asset_id))
+            source_aspect = (
+                _asset_upright_aspect(assets_by_id.get(slide.asset_id))
+                if slide.kind == "image"
+                else None
+            )
             if source_aspect is not None:
                 slot["source_aspect"] = source_aspect
         slots.append(slot)

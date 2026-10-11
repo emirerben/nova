@@ -349,12 +349,12 @@ def _is_image(row: dict[str, Any]) -> bool:
     return row.get("media_kind") == "image"
 
 
-def _clip_capability(state: Any, key: str) -> bool:
+def _clip_capability(state: Any, key: str, *, default: bool = True) -> bool:
     caps = _ops()._editor_capabilities(state.job, state.variant)
     clips = caps.get("clips") if isinstance(caps, dict) else None
     entry = clips.get(key) if isinstance(clips, dict) else None
     if entry is None:
-        return True
+        return default
     return entry is True or (isinstance(entry, dict) and entry.get("editable") is True)
 
 
@@ -387,7 +387,7 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
         on_device or not guided or not _clip_capability(state, "playback_rate")
     ):
         raise _err("Speed changes are not available for this edit")
-    if "source_crop" in patch and not _clip_capability(state, "source_crop"):
+    if "source_crop" in patch and not _clip_capability(state, "source_crop", default=False):
         raise _err("Cropping is not available for this edit")
     if ("transition_after" in patch or "transition_duration_s" in patch) and (
         not _clip_capability(state, "transitions")
