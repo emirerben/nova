@@ -323,3 +323,127 @@ def clip_length_ask(req: BriefRequirement) -> tuple[float, bool, bool] | None:
         bool(re.search(r"\b(first|ilk)\b", tail)),
         bool(re.search(r"\b(last|son)\b", tail)),
     )
+
+
+# KRI-596: "the best six moments from the long takes, each very short" / "en iyi altı anı
+# seç, her biri çok kısa". A number of moments, shots or cuts, and whether each must be
+# short. "Keep it short" is the whole video's length, never a moment ask.
+MOMENT_SHORT_MAX_S = 3.0
+_MOMENT_NOUNS = frozenset(
+    {
+        "moment",
+        "moments",
+        "shot",
+        "shots",
+        "cut",
+        "cuts",
+        "clip",
+        "clips",
+        "part",
+        "parts",
+        "scene",
+        "scenes",
+        "highlight",
+        "highlights",
+        "bit",
+        "bits",
+        "snippet",
+        "snippets",
+        "an",
+        "ani",
+        "anlar",
+        "anlari",
+        "andan",
+        "sahne",
+        "sahneler",
+        "sahneyi",
+        "sahnesi",
+        "kesit",
+        "kesitler",
+        "kesiti",
+        "parca",
+        "parcalar",
+        "parcayi",
+        "kare",
+        "kareler",
+        "cekim",
+        "cekimler",
+        "klip",
+        "klipler",
+    }
+)
+_MOMENT_FILLERS = frozenset(
+    {
+        "best",
+        "very",
+        "short",
+        "quick",
+        "fast",
+        "great",
+        "good",
+        "nice",
+        "different",
+        "small",
+        "tiny",
+        "little",
+        "en",
+        "iyi",
+        "guzel",
+        "kisa",
+        "cok",
+        "hizli",
+        "farkli",
+    }
+)
+_SHORT_MOMENTS = re.compile(
+    r"\b(?:each|every one|all)(?: of them)? (?:very |really |super )?(?:short|quick|brief)\b"
+    r"|\b(?:short|quick|brief|snappy|fast) (?:moments?|shots?|cuts?|clips?|bits?|parts?"
+    r"|scenes?|snippets?)\b"
+    r"|\bher biri (?:cok )?kisa\b|\bkisa (?:an|ani|anlar\w*|sahne\w*|kesit\w*|parca\w*"
+    r"|cekim\w*|klip\w*)\b"
+)
+
+
+@dataclass(frozen=True)
+class MomentAsk:
+    """How many moments the creator wants, and whether each must be short."""
+
+    count: int | None = None
+    short: bool = False
+
+
+def moment_ask(req: BriefRequirement) -> MomentAsk | None:
+    from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
+
+    if req.kind == "text":
+        return None
+    text = req.description or ""
+    tokens = fold_tokens(text)
+    count: int | None = None
+    fact = req.facts.get("moment_count")
+    if isinstance(fact, int) and not isinstance(fact, bool) and 2 <= fact <= 30:
+        count = fact
+    for index, token in enumerate(tokens):
+        if count is not None:
+            break
+        if not token.isdigit() or not 2 <= int(token) <= 30:
+            continue
+        for follower in tokens[index + 1 : index + 4]:
+            if follower in _MOMENT_NOUNS:
+                count = int(token)
+                break
+            if follower not in _MOMENT_FILLERS:
+                break
+    short = bool(_SHORT_MOMENTS.search(" ".join(tokens)))
+    if count is None and not short:
+        return None
+    return MomentAsk(count=count, short=short)
+
+
+def brief_moment_ask(brief: Any) -> MomentAsk | None:
+    """The brief's first moment ask, if any."""
+    for req in getattr(brief, "requirements", None) or []:
+        ask = moment_ask(req)
+        if ask is not None:
+            return ask
+    return None
