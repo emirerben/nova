@@ -15,12 +15,14 @@ from app.schemas.user_song import (
 )
 from app.services.song_order import (
     INVALID_CODE,
+    SONG_ORDER_ANSWER_MESSAGE,
     STALE_CODE,
     SongOrderError,
     build_song_order_question,
     fold_song_orders,
     latest_open_song_order_question,
     load_ready_alignment,
+    model_text,
     resolve_uncertain_takes,
     resolved_song_takes_payload,
     takes_needing_order,
@@ -569,3 +571,20 @@ def test_an_old_question_without_reasons_still_parses() -> None:
     }
     parsed = SongOrderQuestion.model_validate(old)
     assert parsed.items[0].reason is None and parsed.items[0].likelihood is None
+
+
+# -- KRI-575: the echo of a structured answer is never read as the creator's request ----------
+
+
+def test_a_structured_song_answer_is_read_as_a_neutral_sentence_not_its_echo_text():
+    echo = "Use this arrangement: clip 4 at 0:00, clip 5 at 0:44, clip 3 at 1:14, clip 2 at 1:40"
+    payload = {"song_order": {"question_id": "q", "ordered_media_ids": ["a"]}}
+    assert model_text(payload, echo) == SONG_ORDER_ANSWER_MESSAGE
+    # No digits or times for a model to turn into an order / duration requirement.
+    assert not any(ch.isdigit() for ch in SONG_ORDER_ANSWER_MESSAGE)
+
+
+@pytest.mark.parametrize("payload", [None, {}, {"song_order": None}, {"choice_selection": {}}])
+def test_every_other_message_is_read_verbatim(payload):
+    assert model_text(payload, "make it 20 seconds") == "make it 20 seconds"
+    assert model_text(payload, None) == ""

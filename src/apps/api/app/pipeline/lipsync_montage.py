@@ -100,6 +100,12 @@ MIN_BROLL_PIECE_MS = 600
 # A gap bridge may dip this close to a take's own first/last frame (a cover
 # margin is 300 ms; 100 ms still clears the unclean edge frames).
 DIP_MARGIN_MS = 100
+# KRI-575: a hole this small between two takes the creator placed is footage nobody filmed
+# (they arranged the clips by hand, so the sub-second miss is not intent). It matches the song
+# timeline card, which only calls an uncovered stretch an empty spot from 0.6 s up.
+HOLE_CLOSE_MAX_MS = 600
+# No take is slid further than this to close holes: lips drift off the song by the slide.
+HOLE_CLOSE_SLIP_CAP_MS = 800
 MAX_WINDOW_MS = MAX_PROPOSAL_DURATION_S * 1000
 MIN_TOTAL_MS = int(MIN_TOTAL_S * 1000)
 # Two candidate positions closer than this are the same position.
@@ -345,6 +351,9 @@ class _Placed:
     full_start: int = 0
     full_end: int = 0
     method: str | None = None  # how the aligner found it: "audio" | "lyrics"
+    # KRI-575: how far (ms, + later / - earlier) the take was slid off the creator's position to
+    # close a sub-second hole to its neighbour; 0 when it sits exactly where it was placed.
+    slipped_ms: int = 0
 
 
 @dataclass
@@ -385,6 +394,67 @@ def _coverage(
     start = max(0, delta_ms + max(COVER_MARGIN_MS, m0))
     end = min(song_ms, delta_ms + min(duration_ms - COVER_MARGIN_MS, m1))
     return start, end, true_end, full_start, full_end
+
+
+def close_small_holes(
+    pins: Mapping[str, int],
+    durations_ms: Mapping[str, int],
+    weights: Mapping[str, float],
+    *,
+    max_hole_ms: int = HOLE_CLOSE_MAX_MS,
+    slip_cap_ms: int = HOLE_CLOSE_SLIP_CAP_MS,
+) -> dict[str, int]:
+    """Pinned song positions (media_id -> delta_ms) with sub-second holes between takes closed.
+
+    A hole between two consecutive takes is song time NEITHER of them has footage for (the creator
+    dropped a clip 0.2 s after the previous one ends), so no gap rule can bridge it: the montage
+    split and kept one side. Consecutive takes whose holes are each ``0 < hole <= max_hole_ms``
+    form a run; one take of the run stays exactly where it is (the anchor) and the others slide
+    toward it by the holes between them, so every hole closes. The anchor is the one minimising the
+    weighted total slide (``weights``: how much that take's position is worth, e.g. its measured
+    likelihood), so a strong lyric match stays put and a hand-placed take absorbs the drift.
+    A run needing a slide over ``slip_cap_ms`` is left untouched, as is anything with a larger
+    hole or an overlap (the tiler's business).
+    """
+    order = sorted(pins, key=lambda m: (pins[m], m))
+    if len(order) < 2:
+        return dict(pins)
+
+    def hole(a: str, b: str) -> int:
+        return pins[b] - (pins[a] + durations_ms[a])
+
+    runs: list[list[str]] = [[order[0]]]
+    for previous, following in zip(order, order[1:], strict=False):
+        if 0 < hole(previous, following) <= max_hole_ms:
+            runs[-1].append(following)
+        else:
+            runs.append([following])
+
+    out = dict(pins)
+    for run in runs:
+        if len(run) < 2:
+            continue
+        holes = [hole(a, b) for a, b in zip(run, run[1:], strict=False)]
+        best: tuple[float, int, dict[str, int]] | None = None
+        for anchor in range(len(run)):
+            slides: dict[str, int] = {}
+            total = 0
+            for i in range(anchor - 1, -1, -1):  # left of the anchor: slide later
+                total += holes[i]
+                slides[run[i]] = total
+            total = 0
+            for i in range(anchor + 1, len(run)):  # right of the anchor: slide earlier
+                total += holes[i - 1]
+                slides[run[i]] = -total
+            if any(abs(value) > slip_cap_ms for value in slides.values()):
+                continue
+            cost = sum(weights.get(m, 1.0) * abs(value) for m, value in slides.items())
+            if best is None or (cost, anchor) < (best[0], best[1]):
+                best = (cost, anchor, slides)
+        if best is not None:
+            for media_id, slide in best[2].items():
+                out[media_id] = pins[media_id] + slide
+    return out
 
 
 def _place_takes(
@@ -437,6 +507,8 @@ def _place_takes(
     exclude: dict[str, str] = {}
     creator_choice: dict[str, str] = {}  # media_id -> position_basis
     creator_confirmed: dict[str, bool] = {}
+    slipped: dict[str, int] = {}
+    measured: dict[str, float] = {}
     if creator_choices:
         # The creator's answer (``resolve_with_order``) already decided these takes:
         # pin a candidate / stacked position, or keep the take as B-roll.
@@ -450,6 +522,29 @@ def _place_takes(
             pinned[media_id] = _ms(delta)
             creator_choice[media_id] = str(choice.get("position_basis") or "creator_position")
             creator_confirmed[media_id] = bool(choice.get("confirmed_by_creator"))
+        # The creator arranged these by hand: close sub-second holes between neighbours instead
+        # of letting them split the montage (KRI-575).
+        durations_ms = {clip.media_id: int(math.floor(clip.duration_s * 1000)) for clip in takes}
+        # How well the aligner measured each take at the position the creator chose (0 for a
+        # hand-placed one): a take slid to close a hole keeps this likelihood, since it is the
+        # same measured match offset by a fraction of a second.
+        measured = {
+            media_id: max(
+                (c.likelihood for c in specs[media_id].candidates if abs(c.delta_ms - delta) <= 50),
+                default=0.0,
+            )
+            for media_id, delta in pinned.items()
+        }
+        weights = {media_id: max(value, 0.2) for media_id, value in measured.items()}
+        closed = close_small_holes(
+            pinned,
+            durations_ms,
+            weights,
+            max_hole_ms=HOLE_CLOSE_MAX_MS,
+            slip_cap_ms=HOLE_CLOSE_SLIP_CAP_MS,
+        )
+        slipped = {m: closed[m] - pinned[m] for m in pinned if closed[m] != pinned[m]}
+        pinned = closed
         assignment = run(pinned, exclude)
         confirmed_order = None
     else:
@@ -518,11 +613,16 @@ def _place_takes(
             claim.delta_ms,
             status,
             creator_confirmed.get(clip.media_id, False),
-            likelihood=claim.likelihood,
+            likelihood=(
+                max(claim.likelihood, measured.get(clip.media_id, 0.0))
+                if slipped.get(clip.media_id)
+                else claim.likelihood
+            ),
             margin=claim.margin,
             position_basis=basis,
             match_ms=claim.match_ms,
             method=claim.method,
+            slipped_ms=slipped.get(clip.media_id, 0),
         )
     for media_id, item in list(placed.items()):
         (
@@ -1056,6 +1156,8 @@ def plan_lipsync_montage(
                 "likelihood": round(b.placed.likelihood, 4),
                 "margin": round(b.placed.margin, 4),
                 "position_basis": b.placed.position_basis,
+                # Only when a sub-second hole was closed by sliding this take (KRI-575).
+                **({"slipped_s": b.placed.slipped_ms / 1000} if b.placed.slipped_ms else {}),
             }
             for b in blocks
             if b.placed is not None

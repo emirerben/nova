@@ -2437,7 +2437,26 @@ Flow:
    `CREATOR_PLACED_WEIGHT` (0.5) when span selection must pick one side of a hole it
    cannot fill. **Known limit:** an interior gap that neither neighbour footage nor
    tray clips can fill still splits the montage (one side is dropped as
-   `gap_unfillable`); the card says so instead of promising a fill. Playback:
+   `gap_unfillable`); the card says so instead of promising a fill (a hole under 0.6 s is
+   not that: see below). **Sub-second holes (KRI-575/579).** A hand-made arrangement rarely
+   abuts exactly: each take started 0.07-0.2 s after the previous one's footage ended (song
+   time NO take has footage for), the gap ladder could not bridge it, and the montage split
+   into islands (job 1c598df5 kept one 29 s take of five). For an explicit arrangement
+   (`creator_choices`), `close_small_holes` (`lipsync_montage.py`) closes every hole of
+   `0 < hole <= HOLE_CLOSE_MAX_MS` (600 ms, the card's "empty spot" threshold): per run of
+   such neighbours it picks one anchor take and slides the others toward it by the holes
+   between them, choosing the anchor that minimises the weighted slide (weight = measured
+   likelihood, floor 0.2), so strong lyric matches stay put when they can. No take slides
+   over `HOLE_CLOSE_SLIP_CAP_MS` (800 ms): such a run is left untouched. A slid take keeps
+   its measured likelihood (same match, offset by a fraction of a second) so span selection
+   still counts it, and its receipt row carries `slipped_s`. Aligner-only layouts are
+   unchanged. **The answer echo is not a request.** The visible text of a song-order answer
+   ("Use this arrangement: clip 4 at 0:00, ...") is transcript copy.
+   `services/song_order.model_text` returns a neutral sentence for any user event carrying
+   `song_order`; the planner's model conversation, the full-creator-request builder, the
+   claimed turn message and the deferred brief extractor all read it, so the arrangement can
+   no longer become an `order` requirement or an invented `timing` (duration) requirement
+   that fails a finished draft. Playback:
    `GET /creation-threads/{id}/song-audio?generation=N` returns a 15-minute signed URL
    pinned to the object generation (409 `song_changed` if the song was replaced or
    removed; 404 when disabled). Kill switch `SONG_ORDER_TIMELINE_ENABLED=false` (api

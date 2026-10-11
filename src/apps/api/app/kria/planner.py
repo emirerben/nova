@@ -132,6 +132,7 @@ from app.services.song_order import (
     build_song_order_question,
     fold_song_orders,
     load_ready_alignment,
+    model_text,
     resolve_creator_placements,
     resolve_uncertain_takes,
     resolved_song_takes_payload,
@@ -418,7 +419,7 @@ def _full_creator_request(rows: list[CreationThreadEvent], *, current_message: s
     an earlier constraint.
     """
     messages = [
-        str(row.content).strip()
+        model_text(getattr(row, "payload", None), row.content).strip()
         for row in rows
         if row.role == "user" and row.content and str(row.content).strip()
     ]
@@ -1225,7 +1226,9 @@ async def _load_editor_target(
     )
     rows.reverse()
     conversation = [
-        {"role": row.role, "content": str(row.content)[:1000]} for row in rows if row.content
+        {"role": row.role, "content": model_text(getattr(row, "payload", None), row.content)[:1000]}
+        for row in rows
+        if row.content
     ]
     return _EditorTarget(
         job_id=job.id, snapshot=snapshot, conversation=conversation, variant=variant
@@ -1481,7 +1484,12 @@ async def _load_creator_inputs(
         item_context=item_summary,
         media_context=media_context,
         conversation=[
-            {"role": row.role, "content": str(row.content)[:1000]} for row in rows if row.content
+            {
+                "role": row.role,
+                "content": model_text(getattr(row, "payload", None), row.content)[:1000],
+            }
+            for row in rows
+            if row.content
         ],
         capability_manifest=manifest,
         creative_copy_state=compact_copy_state,

@@ -62,6 +62,21 @@ _POSITION_EPS_S = 1e-3
 # conflict choice). Tapped answers, never free text: see `thread_keeps_lipsync`.
 _STRUCTURED_ANSWER_KEYS = ("choice_selection", "clip_selection")
 
+# KRI-575: the visible echo of a song-order answer ("Use this arrangement: clip 4 at 0:00, clip 5
+# at 0:44, ...") is transcript copy; the answer is the structured `song_order` payload. Read as
+# the creator's own words it became an `order` requirement plus an invented `timing` requirement
+# (duration 108 s from "clip 2 at 1:40") that failed a finished draft. Everything that feeds the
+# creator's words to a model reads this instead.
+SONG_ORDER_ANSWER_MESSAGE = "I confirmed where my clips go on the song timeline."
+
+
+def model_text(payload: Any, content: Any) -> str:
+    """A user event's text as a model should read it (structured song answers are neutral)."""
+    if isinstance(payload, Mapping) and isinstance(payload.get(SONG_ORDER_ANSWER_KEY), Mapping):
+        return SONG_ORDER_ANSWER_MESSAGE
+    return str(content or "")
+
+
 STALE_CODE = "song_order_stale"
 INVALID_CODE = "song_order_invalid"
 
