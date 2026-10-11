@@ -2,7 +2,7 @@
   "id": "clarify-thirty-clips-in-fifteen-seconds",
   "incident": {
     "ticket": "KRI-476",
-    "summary": "Must ask: 30 clips cannot read in a 15s edit, and the creator was never asked to extend the length or use fewer clips."
+    "summary": "Must ask: 30 clips cannot read in a 15s edit, and the creator was never asked to extend the length or use fewer clips. Current policy note: 30 clips fit within 15s at the 0.1s minimum per included clip, so this historical expectation now resolves without a question."
   },
   "kind": "clarification",
   "approved": {
@@ -201,12 +201,7 @@
       "resolved": true
     },
     "question": {
-      "kind": "duration_vs_count",
-      "min_options": 2,
-      "option_keys": [
-        "extend",
-        "fewer"
-      ]
+      "no_question": true
     },
     "route": {
       "platform": "phone",

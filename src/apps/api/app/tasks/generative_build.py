@@ -21550,7 +21550,6 @@ def _decide_generative_variant(
         effective_music_window: dict[str, Any] | None = None
         voiceover_local: str | None = None
         voiceover_target_s = available_footage_s
-        voiceover_recording_s: float | None = None
 
         # Slot-count floor: shot-assigned clips each get a guaranteed slot; for
         # pool-only jobs (no narrative_order) use total analyzed clip count so
@@ -21639,7 +21638,6 @@ def _decide_generative_variant(
             voiceover_local = os.path.join(variant_dir, "voiceover_src")
             download_to_file(voiceover_gcs_path, voiceover_local)
             voice_dur = _probe_duration(voiceover_local)
-            voiceover_recording_s = voice_dur if voice_dur > 0 else None
             _cands = [available_footage_s, _VOICEOVER_MAX_DURATION_S]
             if voice_dur > 0:
                 _cands.append(voice_dur)
@@ -21878,18 +21876,6 @@ def _decide_generative_variant(
 
         recipe = build_recipe(recipe_dict)
         preselected_steps: list[GenerativeAssemblyStepDecision] | None = None
-        use_best_parts_pool = (
-            assembly_steps_override is None
-            and not strict_day_vlog
-            and not strict_single_hero
-            and (track is None or voiceover_gcs_path is not None)
-            and spec.get("archetype") not in {"talking_head", "narrated"}
-            # Legacy pure-decision callers have no source probe snapshot at
-            # all; they cannot claim an authoritative exact window. Real
-            # dispatch carries probes and fails closed below for any missing
-            # member of the resolved pool.
-            and bool(probe_map)
-        )
         if (
             approved_length_plan is not None
             and approved_length_plan.get("window_eligible") is True
@@ -21902,30 +21888,6 @@ def _decide_generative_variant(
                 probe_map=probe_map,
                 runtime_generations=approved_runtime_generations,
             )
-        elif use_best_parts_pool:
-            resolved_pool = narrative_order or [
-                str(getattr(meta, "clip_id", "")) for meta in clip_metas
-            ]
-            selection_target = (
-                voiceover_target_s if voiceover_gcs_path else creator_target_duration_s
-            )
-            (
-                preselected_steps,
-                selected_best_parts_receipt,
-                selected_best_parts_conflicts,
-            ) = _best_parts_source_decisions(
-                resolved_pool,
-                clip_metas=clip_metas,
-                clip_id_to_local=clip_id_to_local,
-                probe_map=probe_map,
-                slots=recipe_dict.get("slots") or [],
-                target_duration_s=selection_target,
-            )
-            if selected_best_parts_conflicts:
-                raise ValueError(
-                    "best_parts_selection_unavailable: "
-                    + str(selected_best_parts_conflicts[0].get("code") or "unknown")
-                )
         if preselected_steps is not None:
             steps = [_assembly_step_from_decision(step) for step in preselected_steps]
         elif assembly_steps_override is not None:
@@ -22032,29 +21994,6 @@ def _decide_generative_variant(
     assembly_steps = [_assembly_step_to_decision(step, clip_id_to_local) for step in steps]
     best_parts_receipt = selected_best_parts_receipt
     best_parts_conflicts = selected_best_parts_conflicts
-    # Songs own their beat/window timing, and an explicit creator length keeps
-    # the authored recipe. Otherwise persist the same exact analysis windows
-    # that downstream phone/cloud assembly receives.
-    if (
-        use_best_parts_pool
-        and track is None
-        and not best_parts_receipt
-        and assembly_steps_override is None
-        and bool(probe_map)
-    ):
-        best_parts_target = voiceover_recording_s if voiceover_gcs_path else None
-        assembly_steps, best_parts_receipt, best_parts_conflicts = _best_parts_decision_windows(
-            assembly_steps,
-            clip_metas=clip_metas,
-            clip_id_to_local=clip_id_to_local,
-            probe_map=probe_map,
-            target_duration_s=best_parts_target,
-        )
-        if best_parts_conflicts:
-            raise ValueError(
-                "best_parts_selection_unavailable: "
-                + str(best_parts_conflicts[0].get("code") or "unknown")
-            )
     _step_durations = [
         s.target_duration_s for s in assembly_steps if s.target_duration_s is not None
     ]

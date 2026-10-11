@@ -344,6 +344,9 @@ An authored assembly override keeps its own approved timing.
 digest, preserving the stored schema. Historical contracts without that state retain
 legacy verification. New explicit-duration checks default to `log_only`; audio,
 ordering, text, and recipe-integrity checks retain their independent requirements.
+Historical jobs without an approved window envelope also retain their existing
+matching and contiguous-slot behavior during regeneration. Source probes alone
+do not authorize replanning their windows.
 The approved check mode is frozen per generation. An editor rebind changes only its
 variant's policy. Draft receipts cannot call a model target measured output.
 

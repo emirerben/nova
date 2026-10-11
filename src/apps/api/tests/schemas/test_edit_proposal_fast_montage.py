@@ -192,17 +192,29 @@ def test_image_layout_recognizes_latest_explicit_creator_instruction(
 
 
 def test_fast_montage_snapshot_rejects_subminimum_video_cut() -> None:
-    with pytest.raises(ValidationError, match="video cuts must be at least 0.4s"):
+    invalid_cut = FastMontageCut.model_construct(
+        cut_id="video-cut",
+        media_id="clip-1",
+        source_start_s=0,
+        source_end_s=0.05,
+        output_duration_s=0.05,
+        role="hook",
+        transition="none",
+        beat_align=False,
+    )
+    with pytest.raises(ValidationError, match="video cuts must be at least 0.1s"):
         _snapshot(
+            video_reuse_policy="allow_repeat",
             fast_cuts=[
+                invalid_cut,
                 FastMontageCut(
-                    cut_id="video-cut",
+                    cut_id="video-cut-2",
                     media_id="clip-1",
-                    source_start_s=0,
-                    source_end_s=0.3,
-                    output_duration_s=0.3,
-                    role="hook",
-                )
+                    source_start_s=0.05,
+                    source_end_s=3.0,
+                    output_duration_s=2.95,
+                    role="payoff",
+                ),
             ]
         )
 
