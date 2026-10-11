@@ -13,12 +13,15 @@ Visuals no spoken word places, and own clips beyond what one native edit takes.
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
+
 from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
 from app.agents._schemas.creator_policy import (
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     native_voiceover_all_scope,
     own_video_ids,
 )
+from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.reply_language import say
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
@@ -71,11 +74,50 @@ def _placed_visuals(manifest: ResolvedCreatorManifest, strategy: CreativeStrateg
     return placed
 
 
+def lost_visual_asks(
+    manifest: ResolvedCreatorManifest,
+    strategy: CreativeStrategy,
+    requested_media: Mapping[str, str] | None,
+) -> dict[str, str]:
+    """Visuals a live brief requirement asks for that this native voiceover edit loses.
+
+    PR 1556 review: a native voiceover edit shows a Visuals photo or video (anything but
+    the project's own clips) only through a reaction beat or the closing shot. One the
+    brief asks for (``requested_media``, from ``app.kria.brief.requested_media``) that no
+    beat or closing shot places is lost, whether the Main Creator parse repaired a guided
+    contract away or the model answered natively and forgot the beat. Maps each lost
+    medium to the requirement's words. Own clips are selection (KRI-593), never asked
+    about here, and a strategy that still carries the contract is left to the KRI-594
+    downgrade, so nothing is asked twice.
+    """
+
+    if (
+        not requested_media
+        or not manifest.has_voiceover
+        or strategy.edit_format not in NARRATED_EDIT_FORMATS
+        or strategy.execution_contract is not None
+    ):
+        return {}
+    own = set(own_video_ids(manifest))
+    known = {media.media_id for media in manifest.media}
+    placed = _placed_visuals(manifest, strategy)
+    return {
+        media_id: words
+        for media_id, words in requested_media.items()
+        if media_id in known and media_id not in own and media_id not in placed
+    }
+
+
 def resolve_native_all_scope(
-    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+    manifest: ResolvedCreatorManifest,
+    strategy: CreativeStrategy,
+    *,
+    asked: Collection[str] = (),
 ) -> tuple[CreativeStrategy, list[str]]:
     """``media_scope: "all"`` on a native-only voiceover edit -> every own clip.
 
+    ``asked`` are the lost Visuals the caller already names in its own words
+    (``lost_visual_asks``); the generic "not tied to a word" notice covers only the rest.
     Returns the strategy unchanged (and no notices) for anything else.
     """
 
@@ -85,7 +127,7 @@ def resolve_native_all_scope(
     notices: list[str] = []
     placed = _placed_visuals(manifest, strategy)
     if any(
-        media.media_id not in placed
+        media.media_id not in placed and media.media_id not in asked
         for media in manifest.media
         if media.media_id.startswith("asset-") or media.kind != "video"
     ):
@@ -113,5 +155,6 @@ __all__ = [
     "VOICEOVER_ALL_CLIPS_CAP_NOTICE",
     "VOICEOVER_VISUALS_LEFT_OUT_NOTICE",
     "VOICEOVER_VISUALS_UNTIMED_NOTICE",
+    "lost_visual_asks",
     "resolve_native_all_scope",
 ]

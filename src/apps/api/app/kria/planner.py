@@ -1867,15 +1867,17 @@ async def _plan_creator_action(
                 if settings.brief_binding_for(creator_id) and settings.kria_choice_questions_enabled
                 else {}
             ),
-            # KRI-594: only a guided-voiceover downgrade reads these: the creator's words
-            # ("7 klibin hepsini kullan" counts the clips) and the media their live brief
-            # asks for in any turn ("kırkayak" -> the bathtub photo), so it never drops one.
+            # KRI-594/KRI-598: the creator's words ("7 klibin hepsini kullan" counts the
+            # clips) and the media their live brief asks for in any turn ("kırkayak" -> the
+            # bathtub photo). Not only a turn that still carries the guided contract needs
+            # them: the Main Creator parse drops that contract on runtime v2, and a native
+            # answer can forget the beat just the same. Omitted when neither applies.
             **(
                 {
                     "creator_text": "\n".join(source for source in user_sources if source),
                     "requested_media": dict(requested_media or {}),
                 }
-                if action.strategy.execution_contract is not None
+                if action.strategy.execution_contract is not None or requested_media
                 else {}
             ),
         )

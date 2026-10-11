@@ -44,7 +44,7 @@ from app.agents._schemas.creator_policy import (
 )
 from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
 from app.kria.reply_language import current_reply_language, say
-from app.kria.voiceover_scope import resolve_native_all_scope
+from app.kria.voiceover_scope import lost_visual_asks, resolve_native_all_scope
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PINNED_TEXT_MAX_CHARS
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
@@ -737,7 +737,9 @@ def check_strategy_for_runtime_v2(
     Both keywords serve a guided-voiceover downgrade (KRI-594): ``creator_text`` is the
     creator's own words (it tells an "all 7 clips" ask apart from "all my photos and
     videos"); ``requested_media`` maps each medium a live brief requirement asks for to that
-    requirement's words (`app.kria.brief.requested_media`).
+    requirement's words (`app.kria.brief.requested_media`). ``requested_media`` also serves
+    the native voiceover edit with no contract (KRI-598): a Visual it asks for that no
+    reaction beat or closing shot places is named and asked about, never dropped silently.
     """
 
     original = strategy
@@ -763,8 +765,16 @@ def check_strategy_for_runtime_v2(
         # rewrite the selection and could refuse a project that has no video.
         strategy = strategy.model_copy(update={"execution_contract": None})
         notices.append(localize_known_message(USER_SONG_CONTRACT_NOTICE))
+    # KRI-598: a Visual the brief asks for that no spoken word places is lost on the native
+    # voiceover edit: named in the creator's words, and asked about below.
+    lost_asks = lost_visual_asks(manifest, strategy, requested_media)
+    kinds = {media.media_id: media.kind for media in manifest.media}
+    notices.extend(
+        _asked_media_left_out_notice(kinds.get(media_id), words)
+        for media_id, words in lost_asks.items()
+    )
     # KRI-598: "use all my clips" on a native-only voiceover edit is every own clip.
-    strategy, scope_notices = resolve_native_all_scope(manifest, strategy)
+    strategy, scope_notices = resolve_native_all_scope(manifest, strategy, asked=lost_asks)
     notices.extend(scope_notices)
 
     if strategy.execution_contract is not None:
@@ -795,8 +805,9 @@ def check_strategy_for_runtime_v2(
         # that specialist, so keep the selection the model boundary normalized.
         checked = checked.model_copy(update={"selected_media_ids": strategy.selected_media_ids})
     all_notices = (*notices, *(localize_known_message(n) for n in edit_plan.notices))
-    if ask_before_simplifying and _drops_requested_action(
-        baseline, checked, stated_settings=ask_about_stated_settings
+    if ask_before_simplifying and (
+        lost_asks
+        or _drops_requested_action(baseline, checked, stated_settings=ask_about_stated_settings)
     ):
         # The creator-stated setting that was dropped comes first: a notice alone (e.g.
         # Visuals left out of a voiceover edit) may not be what made this a question.

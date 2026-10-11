@@ -54,13 +54,22 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.agents._runtime import SchemaError
-from app.agents._schemas.creator_agent import CapabilityAvailability
+from app.agents._schemas.creator_agent import CapabilityAvailability, CreativeStrategy
 from app.agents._schemas.creator_policy import (
     CAPABILITY_GUIDED_VOICEOVER,
     GUIDED_VOICEOVER_NATIVE_ONLY_CODE,
 )
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.kria import planner
+from app.kria.brief import CreativeBrief, requested_media
+from app.kria.reply_language import reply_language_for
+from app.kria.strategy_policy import (
+    GUIDED_VOICEOVER_DOWNGRADE_NOTICE,
+    VISUALS_NEED_A_WORD_NOTICE,
+    CheckedStrategy,
+    RefusedStrategy,
+    check_strategy_for_runtime_v2,
+)
 from app.kria.voiceover_scope import VOICEOVER_VISUALS_LEFT_OUT_NOTICE
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
 from app.services import creator_capabilities as capabilities
@@ -68,6 +77,10 @@ from app.services import creator_sessions
 from app.services.clip_intent_planning import PlannedIntentResolution
 from app.services.clip_intent_resolution import IntentClip, IntentResolution
 from app.tasks import content_plan_build, generative_build
+
+# KRI-594's record of the prod brief turn 3 planned against (r1-r9, r5 = the bathtub photo
+# on "kırkayak"), shared so both incidents judge the same requirements.
+from tests.kria.test_voiceover_downgrade_losses import PHOTO_ASK, TIGRE_BRIEF
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "kri598_tigre_voiceover_turns.json"
 CASE: dict[str, Any] = json.loads(FIXTURE.read_text())
@@ -77,6 +90,10 @@ RIVER = "analysis-proxy-ios-ECCB47EC-0C2C-4F64-917F-85FB8039C9D7.mp4"
 KITCHEN = "analysis-proxy-ios-80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4"
 LAPTOP = "analysis-proxy-ios-CFBEC1AE-2523-49F2-B675-04576EAED824.mp4"
 BATHROOM = "analysis-proxy-ios-A9859821-B374-42D6-9F07-F9C4734506C7.mp4"
+BRIEF_WITHOUT_PHOTO_ASK = CreativeBrief(
+    version=TIGRE_BRIEF.version,
+    requirements=[req for req in TIGRE_BRIEF.requirements if req.id != "r5"],
+)
 TURN3 = CASE["turns"][2]
 TITLE = "Tigre’de bir gün"
 
@@ -181,10 +198,20 @@ def _resolution() -> PlannedIntentResolution:
     )
 
 
-async def _plan(monkeypatch: pytest.MonkeyPatch, raw: str, *, manifest=None, turn=None):
+async def _plan(
+    monkeypatch: pytest.MonkeyPatch,
+    raw: str,
+    *,
+    manifest=None,
+    turn=None,
+    brief: CreativeBrief | None = None,
+):
+    """`brief` is the live Creative Brief the planner read the asked-for media from."""
+
     manifest = manifest if manifest is not None else _manifest()
     turn = turn or TURN3
     agent_input = _agent_input(turn, manifest)
+    asked = requested_media(brief, (media.media_id for media in manifest.media))
     output = MainCreatorAgent(model_client=None).parse(raw, agent_input)
     monkeypatch.setattr(
         planner, "plan_and_resolve_clip_intents", AsyncMock(return_value=_resolution())
@@ -210,6 +237,7 @@ async def _plan(monkeypatch: pytest.MonkeyPatch, raw: str, *, manifest=None, tur
         ),
         output=output,
         brief_request=turn["creator_request"],
+        requested_media=asked,
     )
 
 
@@ -414,7 +442,8 @@ async def test_a_contract_on_a_v2_voiceover_is_repaired_into_a_plan(
 ) -> None:
     """A contract the v2 manifest never offers is dropped at the parse, not refused: a
     refusal spends a retry, and three refusals end the turn ("I couldn't turn that into a
-    plan"). The planner then plans every own clip and only adds notices."""
+    plan"). With no live ask for the bathtub photo (a brief without r5), the planner then
+    plans every own clip and only adds the notice that the photo is not tied to a word."""
 
     raw = _raw(
         _strategy(execution_contract="guided_voiceover_v1", reaction_beats=None, **model_scope)
@@ -424,15 +453,137 @@ async def test_a_contract_on_a_v2_voiceover_is_repaired_into_a_plan(
     parsed = agent.parse(raw, _agent_input(TURN3, _manifest()))
     assert parsed.action.strategy.execution_contract is None
 
-    planned = await _plan(monkeypatch, raw)
+    planned = await _plan(monkeypatch, raw, brief=BRIEF_WITHOUT_PHOTO_ASK)
     drafted = _drafted(planned)
     strategy = drafted["strategy"]
     assert strategy.get("execution_contract") is None
     assert strategy["render_program"] == "native"
     assert strategy["media_scope"] == "selected"
     assert sorted(strategy["selected_media_ids"]) == sorted(OWN)
-    # The answer had no beat for the bathtub photo: said, not asked.
+    # Nobody asked for the bathtub photo: said, not asked.
     assert VOICEOVER_VISUALS_LEFT_OUT_NOTICE in drafted["summary"]
+
+
+# 11 + 12 (PR 1556 review) ------------------------------------------------------------
+
+
+def _asks_about_the_bathtub_photo(question: str) -> None:
+    """The question names the photo in the creator's own (brief) words, once, and says
+    nothing generic about Visuals."""
+
+    assert question.count(PHOTO_ASK) == 1, question
+    for generic in (
+        VOICEOVER_VISUALS_LEFT_OUT_NOTICE,
+        VISUALS_NEED_A_WORD_NOTICE,
+        GUIDED_VOICEOVER_DOWNGRADE_NOTICE,
+    ):
+        assert generic not in question
+
+
+@pytest.mark.parametrize(
+    "model_scope",
+    [
+        # (a) The prod turn-3 answer: the contract over all media, no beats.
+        {"execution_contract": "guided_voiceover_v1", "media_scope": "all"},
+        # (e) A native answer that simply forgot the beat.
+        {"media_scope": "selected", "selected_media_ids": OWN},
+        {"media_scope": "all"},
+    ],
+    ids=["repaired-contract", "native-selected", "native-all"],
+)
+async def test_a_photo_the_brief_asks_for_is_asked_about_when_no_word_places_it(
+    prod_profile, monkeypatch, model_scope
+) -> None:
+    """The prod brief (r1-r9) still carries r5: the bathtub photo on "kırkayak". The native
+    voiceover edit can show a Visual only on a spoken word, so an answer without that beat
+    loses it -- whether the contract was repaired at the parse or the model answered
+    natively. That is a question naming the photo, never a silent draft."""
+
+    raw = _raw(_strategy(reaction_beats=None, **model_scope))
+
+    planned = await _plan(monkeypatch, raw, brief=TIGRE_BRIEF)
+
+    assert planned.plan.mode == "respond", planned.plan.intents
+    question = planned.plan.response
+    _asks_about_the_bathtub_photo(question)
+    assert question.startswith('This version leaves out the photo you asked for: "')
+    assert question.endswith("Should I make a simpler version?")
+
+    with reply_language_for("tr"):
+        turkish = await _plan(monkeypatch, raw, brief=TIGRE_BRIEF)
+    assert turkish.plan.mode == "respond"
+    assert turkish.plan.response.startswith('Bu sürümde istediğin fotoğraf yok: "')
+    assert turkish.plan.response.endswith("Daha sade bir sürüm yapayım mı?")
+
+
+def test_the_contract_reaching_the_kri594_downgrade_asks_the_same_question(
+    prod_profile,
+) -> None:
+    """(b) Where the contract survives to the policy (a manifest that still offers it), the
+    KRI-594 downgrade asks about the photo: the same question as the native path, once,
+    with no generic Visuals notice next to it."""
+
+    v1 = _manifest(runs_guided_voiceover=True)
+    strategy = CreativeStrategy.model_validate(
+        _strategy(
+            execution_contract="guided_voiceover_v1",
+            media_scope="all",
+            render_program="guided",
+            reaction_beats=None,
+        )
+    )
+    asked = requested_media(TIGRE_BRIEF, (media.media_id for media in v1.media))
+
+    refused = check_strategy_for_runtime_v2(
+        v1, strategy, ask_before_simplifying=True, requested_media=asked
+    )
+    native = check_strategy_for_runtime_v2(
+        _manifest(),
+        strategy.model_copy(update={"execution_contract": None, "render_program": "native"}),
+        ask_before_simplifying=True,
+        requested_media=asked,
+    )
+
+    assert isinstance(refused, RefusedStrategy) and isinstance(native, RefusedStrategy)
+    _asks_about_the_bathtub_photo(refused.question)
+    assert refused.question == native.question
+    assert refused.code == native.code == "simplification_requires_choice"
+
+
+async def test_the_photo_placed_on_its_word_is_planned_not_asked_about(
+    prod_profile, monkeypatch
+) -> None:
+    """(c) The beat on "kırkayak" places the photo r5 asks for: a plan, no question."""
+
+    drafted = _drafted(await _plan(monkeypatch, _raw(_strategy()), brief=TIGRE_BRIEF))
+
+    assert [(b["trigger"], b["visual_id"]) for b in drafted["strategy"]["reaction_beats"]] == [
+        ("kırkayak", PHOTO)
+    ]
+    assert PHOTO_ASK not in drafted["summary"]
+    assert VOICEOVER_VISUALS_LEFT_OUT_NOTICE not in drafted["summary"]
+
+
+async def test_a_visual_nobody_asked_for_is_only_a_notice(prod_profile, monkeypatch) -> None:
+    """(d) Visuals the brief never asked for stay notice-only; the brief's own-clip cues
+    (r4, r6) are selection, which this check never asks about."""
+
+    planned = await _plan(
+        monkeypatch, _raw(_strategy(reaction_beats=None)), brief=BRIEF_WITHOUT_PHOTO_ASK
+    )
+
+    drafted = _drafted(planned)
+    assert VOICEOVER_VISUALS_LEFT_OUT_NOTICE in drafted["summary"]
+    assert PHOTO_ASK not in drafted["summary"]
+    checked = check_strategy_for_runtime_v2(
+        _manifest(),
+        CreativeStrategy.model_validate(
+            _strategy(reaction_beats=None, media_scope="selected", selected_media_ids=OWN)
+        ),
+        ask_before_simplifying=True,
+        requested_media=requested_media(BRIEF_WITHOUT_PHOTO_ASK, [*OWN, PHOTO]),
+    )
+    assert isinstance(checked, CheckedStrategy), getattr(checked, "question", None)
 
 
 def test_a_contract_on_a_v1_manifest_that_cannot_run_it_is_still_refused(prod_profile) -> None:
