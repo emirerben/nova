@@ -26,7 +26,6 @@ final class AppleTextAccessibilityUITests: XCTestCase {
         let content = app.descendants(matching: .any)["native-editor-text-content"].firstMatch
         XCTAssertTrue(content.waitForExistence(timeout: 3))
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        attachScreenshot(app, name: "Large text inspector edit")
         XCTAssertTrue(content.isHittable, "the text box should remain reachable at accessibility text size")
         XCTAssertGreaterThanOrEqual(content.frame.minX, viewport.minX)
         XCTAssertLessThanOrEqual(content.frame.maxX, viewport.maxX)
@@ -39,10 +38,9 @@ final class AppleTextAccessibilityUITests: XCTestCase {
         let alignRight = app.buttons["Align text right"]
         let size = app.textFields["native-editor-text-size"]
         let inspector = app.scrollViews["native-editor-text-inspector-scroll"]
-        attachScreenshot(app, name: "Large text inspector initial")
-        for control in [font, alignRight, size] {
+        // First and last controls bound the scroll range; alignRight is revealed and tapped below.
+        for control in [font, size] {
             reveal(control, in: inspector)
-            if !control.isHittable { attachScreenshot(app, name: "Unreachable " + control.identifier) }
             XCTAssertTrue(control.waitForExistence(timeout: 3))
             XCTAssertTrue(control.isHittable, "\(control.identifier) should remain reachable at accessibility text size")
             XCTAssertGreaterThanOrEqual(control.frame.minX, viewport.minX)
@@ -53,7 +51,6 @@ final class AppleTextAccessibilityUITests: XCTestCase {
 
         let color = app.buttons["Text color #E7DDF5"]
         reveal(color, in: inspector)
-        attachScreenshot(app, name: "Large text inspector color")
         XCTAssertTrue(color.waitForExistence(timeout: 3))
         XCTAssertTrue(color.isHittable)
         XCTAssertGreaterThanOrEqual(color.frame.minX, viewport.minX)

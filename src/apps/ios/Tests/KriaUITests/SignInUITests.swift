@@ -35,11 +35,8 @@ import XCTest
             let apple = app.descendants(matching: .any)["signin.apple"].firstMatch
             XCTAssertTrue(apple.waitForExistence(timeout: 3), "Sign in with Apple should be present unless the build is Google-only")
         }
-    }
 
-    func testSignInEmailOpensReviewerSheetAndCancelReturns() {
-        let app = launch()
-        let email = app.buttons["signin.email"]
+        // Email opens the reviewer sheet and Cancel returns to the provider list.
         reveal(email, app: app)
         email.tap()
         XCTAssertTrue(app.textFields["signin.email.field"].waitForExistence(timeout: 5))

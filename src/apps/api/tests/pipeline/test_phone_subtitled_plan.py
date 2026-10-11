@@ -1601,3 +1601,51 @@ def test_fullscreen_cards_remap_for_a_cut_like_pip_cards():
     assert dropped == {"gone"}
     assert remapped.overlays[0].display_mode == "fullscreen"
     assert remapped.overlays[0].start_s == pytest.approx(3.0)
+
+
+# --- KRI-548: captions clear the device watermark ------------------------------
+
+
+def _ink_on_watermark(recipe) -> list[str]:
+    """Run texts whose ink (glyphs + outline) meets the Kria mark's keep-out."""
+    from app.pipeline import text_overlay_skia as cloud
+    from app.pipeline.phone_captions import (
+        CAPTION_FONT_FAMILY,
+        caption_ink_box,
+        watermark_keepout_rect,
+    )
+
+    typeface = cloud._resolve_typeface_for_overlay({"font_family": CAPTION_FONT_FAMILY}).typeface
+    left, top, right, bottom = watermark_keepout_rect(recipe.canvas.width, recipe.canvas.height)
+    touching = []
+    for layer in recipe.text_layers:
+        for run in layer.runs:
+            ink = caption_ink_box(run, typeface)
+            if ink[0] < right and ink[2] > left and ink[1] < bottom and ink[3] > top:
+                touching.append(run.text)
+    return touching
+
+
+@pytest.mark.parametrize("style", ["sentence", "word"])
+def test_talking_captions_clear_the_device_watermark(monkeypatch, style):
+    """Prod 2026-10-08: this Turkish cue's first line ran under the Kria mark
+    on a phone Talking render (its İ was hidden)."""
+    text = "İlk durak Moda'da, deniz kenarında küçücük bir yer."
+    cue = {"text": text, "start_s": 0.5, "end_s": 3.0}
+    if style == "word":
+        cue["words"] = [
+            {"text": word, "start_s": 0.5 + 0.3 * i, "end_s": 0.8 + 0.3 * i}
+            for i, word in enumerate(text.split())
+        ]
+    recipe = compile_phone_subtitled_plan(
+        (_binding(duration_s=10.0),), caption_cues=[cue], caption_style=style
+    )
+
+    assert _ink_on_watermark(recipe) == []
+    (layer,) = recipe.text_layers
+    assert (layer.start, layer.end) == (0.5, 3.0)
+    assert " ".join(run.text for run in layer.runs) == text
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)

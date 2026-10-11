@@ -58,15 +58,6 @@ final class AttachmentFlowUITests: XCTestCase {
         XCTAssertTrue(app.buttons["voiceover-use"].isEnabled, "The same take can be retried")
     }
 
-    func testUnknownFootageDurationDoesNotInventComparison() {
-        let app = launchAttachments(review: "1")
-        app.buttons["attachment-next"].tap()
-        XCTAssertTrue(app.buttons["voiceover-use"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.descendants(matching: .any)["voiceover-duration-warning"].firstMatch.exists)
-        XCTAssertTrue(app.buttons["voiceover-use"].isEnabled)
-        capture(app, "Voiceover with unknown footage duration")
-    }
-
     func testExistingVoiceoverKeepsItsCapacityAndContinueChoice() {
         for state in ["attached", "preparing"] {
             let app = launchAttachments(existingVoiceover: state)

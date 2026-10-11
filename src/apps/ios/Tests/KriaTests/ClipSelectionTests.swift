@@ -208,6 +208,15 @@ final class ClipSelectionTests: XCTestCase {
         XCTAssertEqual(answers[0]["media_ids"] as? [String], ["a", "b"], "candidate order, suggestion kept")
     }
 
+    func testSkipSubmissionEncodesSkippedTrueWithNoAnswersOrNoneKeys() throws {
+        let data = try JSONEncoder().encode(ClipSelectionSubmission.skip(try question()))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["question_id"] as? String, "q1")
+        XCTAssertEqual(json["skipped"] as? Bool, true)
+        XCTAssertEqual((json["answers"] as? [Any])?.count, 0)
+        XCTAssertEqual((json["none_keys"] as? [String]), [])
+    }
+
     func testMessageTextComposition() throws {
         let q = try question()
         let positions = ["a": 1, "b": 7, "c": 3, "d": 2]

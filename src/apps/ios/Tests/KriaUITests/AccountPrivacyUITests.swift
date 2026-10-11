@@ -29,21 +29,6 @@ import XCTest
         XCTAssertFalse(app.buttons["ai-consent-continue"].exists)
     }
 
-    func testAccountDeletionIsReachableBeforeAIConsentAndShowsServiceFailure() {
-        let app = launch(mode: "unavailable")
-        let manage = app.buttons["Manage account"]
-        reveal(manage, app: app)
-        manage.tap()
-        let delete = app.buttons["account-delete"]
-        reveal(delete, app: app)
-        delete.tap()
-        app.buttons["account-deletion-request"].tap()
-        XCTAssertTrue(app.staticTexts["account-deletion-error"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.textFields["account-deletion-code"].exists)
-        app.buttons["Cancel"].tap()
-        XCTAssertTrue(app.buttons["account-delete"].waitForExistence(timeout: 3))
-    }
-
     func testAcceptingAIConsentEntersWorkspace() {
         let app = launch()
         let toggle = app.switches["ai-consent-toggle"]

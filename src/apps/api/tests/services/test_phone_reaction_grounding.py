@@ -1185,3 +1185,152 @@ def test_trigger_vocabulary_prompt_is_bounded() -> None:
     assert prompt is not None
     assert len(prompt) <= rg._VOCABULARY_PROMPT_MAX_CHARS
     assert prompt.startswith("player0 surname0, player1 surname1")
+
+
+# --- KRI-550: "every" caps -----------------------------------------------------
+
+# T3 Kadıköy (prod 2026-10-08), the words around every "kahve" with their real Whisper
+# timings: nine hits, plus "kahveciye" at 2.66 s, which is a different word.
+_T3_WORDS = [
+    _word("Kadıköy'de", 1.16, 1.74),
+    _word("en", 1.74, 2.04),
+    _word("sevdiğim", 2.04, 2.38),
+    _word("3", 2.38, 2.66),
+    _word("kahveciye", 2.66, 3.18),
+    _word("götürüyorum.", 3.18, 3.76),
+    _word("4", 4.74, 5.08),
+    _word("kahve", 5.08, 5.40),
+    _word("içiyorum,", 5.40, 5.72),
+    _word("İlk", 7.72, 7.80),
+    _word("durak", 7.80, 8.04),
+    _word("Buranın", 10.42, 10.60),
+    _word("kahve", 10.60, 10.96),
+    _word("Filtre", 12.90, 13.18),
+    _word("kahve", 13.18, 13.52),
+    _word("efsane.", 13.52, 14.08),
+    _word("ama", 16.64, 16.84),
+    _word("kahve", 16.84, 17.16),
+    _word("Sabah", 18.54, 18.74),
+    _word("kahve", 18.74, 19.00),
+    _word("dolu,", 23.82, 24.12),
+    _word("kahve", 24.38, 24.54),
+    _word("kokusu", 24.54, 24.84),
+    _word("Kahve", 27.64, 27.78),
+    _word("içip", 27.78, 28.00),
+    _word("iyi", 29.92, 30.08),
+    _word("kahve", 30.08, 30.40),
+    _word("nerede", 30.40, 30.62),
+    _word("Hadi", 32.42, 32.54),
+    _word("kahve", 32.54, 32.98),
+    _word("sizden.", 32.98, 33.34),
+]
+_T3_KAHVE_AT_S = [5.08, 10.6, 13.18, 16.84, 18.74, 24.38, 27.64, 30.08, 32.54]
+_CLINK = _sfx("sfx-clink", "Glass clink")
+
+
+def _kahve_beat(**changes) -> dict:  # noqa: ANN003
+    # The prod beat, except `sound` names the catalog id: these pin the cap, not the
+    # description matcher.
+    beat = {
+        "sound": "sfx-clink",
+        "beat_id": "kahve-sesi",
+        "trigger": "kahve",
+        "occurrence": "every",
+        "visual_role": "sticker",
+    }
+    beat.update(changes)
+    return beat
+
+
+def _ground_sounds(monkeypatch, beats: list[dict], words: list[dict], duration_s: float):
+    _patch(monkeypatch, assets=[], sfx=[_CLINK])
+    return rg.ground_phone_reaction_beats(
+        _open_session,
+        job_id="j-kri550",
+        beats=beats,
+        closing=None,
+        words=words,
+        duration_s=duration_s,
+        clip_path=None,
+    )
+
+
+def test_t3_every_kahve_gets_its_sound_and_kahveciye_does_not(monkeypatch):
+    result = _ground_sounds(monkeypatch, [_kahve_beat()], _T3_WORDS, 33.6)
+
+    assert [round(s.at_s, 2) for s in result.sound_effects] == _T3_KAHVE_AT_S
+    assert [p["at_s"] for p in result.receipt["placed"]] == _T3_KAHVE_AT_S
+    assert {p["sound_label"] for p in result.receipt["placed"]} == {"Glass clink"}
+    assert result.receipt["unplaced"] == []
+
+
+def test_first_occurrence_still_places_only_the_first_kahve(monkeypatch):
+    result = _ground_sounds(monkeypatch, [_kahve_beat(occurrence="first")], _T3_WORDS, 33.6)
+
+    assert [round(s.at_s, 2) for s in result.sound_effects] == [5.08]
+    assert [p["at_s"] for p in result.receipt["placed"]] == [5.08]
+    assert result.receipt["unplaced"] == []
+
+
+def _repeated(trigger: str, times: int, *, start_s: float = 0.0, step_s: float = 1.0) -> list:
+    return [_word(trigger, start_s + i * step_s, start_s + i * step_s + 0.3) for i in range(times)]
+
+
+def test_hits_past_the_per_beat_cap_are_reported_not_dropped(monkeypatch):
+    heard = rg.MAX_REACTION_OCCURRENCES + 6
+    result = _ground_sounds(monkeypatch, [_kahve_beat()], _repeated("kahve", heard), heard + 2.0)
+
+    assert len(result.sound_effects) == rg.MAX_REACTION_OCCURRENCES
+    assert len(result.receipt["placed"]) == rg.MAX_REACTION_OCCURRENCES
+    assert result.receipt["unplaced"] == [
+        {
+            "beat_id": "kahve-sesi",
+            "trigger": "kahve",
+            "reason": rg.OCCURRENCE_CAP_REASON,
+            "at_s": float(i),
+        }
+        for i in range(rg.MAX_REACTION_OCCURRENCES, heard)
+    ]
+
+
+def test_beats_share_one_budget_and_a_later_first_beat_still_lands(monkeypatch):
+    # Three "every" words said 24 times each, then one "first" word: the beat lanes
+    # stay inside MAX_REACTION_PLACEMENTS (each placement is a recipe clip, and a track
+    # over 100 clips loses the whole lane), and the last beat keeps its one pop-in.
+    words: list[dict] = []
+    for i in range(rg.MAX_REACTION_OCCURRENCES):
+        for j, trigger in enumerate(("alpha", "bravo", "charlie")):
+            at = i * 1.2 + j * 0.4
+            words.append(_word(trigger, at, at + 0.3))
+    words.append(_word("delta", 40.0, 40.3))
+    beats = [_kahve_beat(beat_id=f"b-{t}", trigger=t) for t in ("alpha", "bravo", "charlie")] + [
+        _kahve_beat(beat_id="b-delta", trigger="delta", occurrence="first")
+    ]
+
+    result = _ground_sounds(monkeypatch, beats, words, 45.0)
+
+    placed: dict[str, int] = {}
+    for entry in result.receipt["placed"]:
+        placed[entry["beat_id"]] = placed.get(entry["beat_id"], 0) + 1
+    skipped: dict[str, int] = {}
+    for entry in result.receipt["unplaced"]:
+        assert entry["reason"] == rg.OCCURRENCE_CAP_REASON
+        skipped[entry["beat_id"]] = skipped.get(entry["beat_id"], 0) + 1
+    assert len(result.sound_effects) == rg.MAX_REACTION_PLACEMENTS
+    assert placed == {"b-alpha": 24, "b-bravo": 22, "b-charlie": 1, "b-delta": 1}
+    assert skipped == {"b-bravo": 2, "b-charlie": 23}
+
+
+def test_a_beat_that_placed_nothing_reports_only_its_own_reason(monkeypatch):
+    heard = rg.MAX_REACTION_OCCURRENCES + 6
+    result = _ground_sounds(
+        monkeypatch,
+        [_kahve_beat(sound="a totally unmatched sound")],
+        _repeated("kahve", heard),
+        heard + 2.0,
+    )
+
+    assert result.receipt["placed"] == []
+    assert result.receipt["unplaced"] == [
+        {"beat_id": "kahve-sesi", "trigger": "kahve", "reason": "sound_not_found"}
+    ]
