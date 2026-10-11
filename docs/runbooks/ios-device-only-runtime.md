@@ -26,6 +26,12 @@ task starts. Stop rollout on any unsupported format being offered, missing
 voice/captions, stuck device export, or new native cloud render. Record UTC
 time, deployed SHA, build, Job IDs, and outcomes without media URLs or user IDs.
 
+Slide posts render on the iPhone and are saved by the server, so the fence lets
+`PUT /plan-items/{id}/slide-post`, `.../propose` and `.../chat-edit` through
+(KRI-581). `.../generate`, `.../compose` and unknown slide-post sub-routes mint a
+server render and stay refused with `device_render_unsupported`. A save also skips
+the automatic server re-render of an older cloud-rendered post; the draft still saves.
+
 This fence does not replace the broader `IOS_DEVICE_ONLY_MODE` / cloud executor
 cutover below. That rollout also retires web creation and has its own signed
 device, drain, and 24-hour hold points. Emergency rollback of the native-only

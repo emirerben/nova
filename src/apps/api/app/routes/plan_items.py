@@ -4542,11 +4542,19 @@ def _new_slide_post_binding(
     )
 
 
-async def _maybe_rebuild_slide_post(item: PlanItem, user_id: uuid.UUID, db: AsyncSession) -> None:
+async def _maybe_rebuild_slide_post(
+    item: PlanItem,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+    *,
+    native_client: bool = False,
+) -> None:
     """After a draft write, rebuild the rendered variant if one already exists.
 
     A draft saved BEFORE the first Generate has nothing to rebuild — Generate
-    itself will pick it up. This only fires for a post-render edit.
+    itself will pick it up. This only fires for a post-render edit. Under the
+    iPhone-only rollout the draft still saves, but an old server render is not
+    replaced: the phone renders the post itself (KRI-581).
     """
     if item.current_job_id is None:
         return
@@ -4559,6 +4567,13 @@ async def _maybe_rebuild_slide_post(item: PlanItem, user_id: uuid.UUID, db: Asyn
     )
     if slides_variant is None or slides_variant.get("resolved_archetype") != "slides":
         return
+    from app.services.cloud_render_policy import cloud_render_mutation_block_reason  # noqa: PLC0415
+
+    if (
+        cloud_render_mutation_block_reason(job, variant=slides_variant, native_client=native_client)
+        is not None
+    ):
+        return
     pending_publish = dispatch_slide_post_edit(job, "slides", publish=False)
     await db.commit()
     await _publish_committed_variant_render(pending_publish, db)
@@ -4570,6 +4585,7 @@ async def put_slide_post_draft(
     body: SlidePostDraftBody,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClient = False,
 ) -> PlanItemResponse:
     """Save a manually-edited slide-post draft: reorder, add, remove, cover,
     caption, or platform-profile change. Rebuilds the rendered variant when
@@ -4643,7 +4659,7 @@ async def put_slide_post_draft(
     item.slide_post = new_draft.model_dump(mode="json")
     flag_modified(item, "slide_post")
     await db.commit()
-    await _maybe_rebuild_slide_post(item, user.id, db)
+    await _maybe_rebuild_slide_post(item, user.id, db, native_client=native_client)
     reloaded = await _load_owned_item(item_id, user.id, db)
     return plan_item_response(reloaded)
 
