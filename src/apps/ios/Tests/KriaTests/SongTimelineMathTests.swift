@@ -187,4 +187,23 @@ import XCTest
         XCTAssertTrue(SongTimelineMath.shouldReseek(videoTime: 3.30, targetTime: 3.00), "behind or ahead alike")
         XCTAssertTrue(SongTimelineMath.shouldReseek(videoTime: .nan, targetTime: 3), "an unknown video time is re-synced")
     }
+
+    // MARK: dropping a tray clip on the lane
+
+    func testTheTimeUnderAFingerFollowsThePlayheadAndZoom() {
+        XCTAssertEqual(SongTimelineMath.time(atX: 180, now: 10, playheadX: 180, pixelsPerSecond: 30), 10, "under the playhead is now")
+        XCTAssertEqual(SongTimelineMath.time(atX: 270, now: 10, playheadX: 180, pixelsPerSecond: 30), 13, accuracy: 1e-9)
+        XCTAssertEqual(SongTimelineMath.time(atX: 0, now: 10, playheadX: 180, pixelsPerSecond: 30), 4, accuracy: 1e-9)
+        XCTAssertEqual(SongTimelineMath.time(atX: 100, now: 2, playheadX: 180, pixelsPerSecond: 60), 2 - 80.0 / 60, accuracy: 1e-9, "may be before the song: the state clamps it")
+        XCTAssertEqual(SongTimelineMath.time(atX: 100, now: 7, playheadX: 180, pixelsPerSecond: 0), 7, "no zoom: stay at now")
+        XCTAssertEqual(SongTimelineMath.time(atX: CGFloat.nan, now: 7, playheadX: 180, pixelsPerSecond: 30), 7)
+    }
+
+    func testOnlyAReleaseInsideTheLanesDropsAClip() {
+        let lanes = CGRect(x: 20, y: 400, width: 340, height: 160)
+        XCTAssertTrue(SongTimelineMath.isDropOverLanes(CGPoint(x: 100, y: 480), lanes: lanes))
+        XCTAssertFalse(SongTimelineMath.isDropOverLanes(CGPoint(x: 100, y: 700), lanes: lanes), "released on the tray or elsewhere: cancelled")
+        XCTAssertFalse(SongTimelineMath.isDropOverLanes(CGPoint(x: 10, y: 480), lanes: lanes))
+        XCTAssertFalse(SongTimelineMath.isDropOverLanes(CGPoint(x: CGFloat.nan, y: 480), lanes: lanes))
+    }
 }

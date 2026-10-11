@@ -282,13 +282,45 @@ struct SongTimelineState: Equatable {
     private static let epsilon = 1e-6
 
     enum Refusal: Equatable {
-        case hidden
         case tooLong(maxSeconds: Int)
         var message: String {
             switch self {
-            case .hidden: "That clip would be hidden behind another one."
             case .tooLong(let seconds): "That makes the video longer than \(seconds) seconds."
             }
+        }
+    }
+
+    /// A neighbour that was shifted to make room for the clip being placed. Its footage offset is untouched, so its
+    /// `delta` (and with it where in the song it plays) changed: it is no longer at the position the server measured.
+    struct Moved: Equatable {
+        let mediaID: String
+        let from: Double
+        let to: Double
+    }
+
+    /// What a move did, so the card can say so. A `refusal` means nothing changed.
+    struct MoveOutcome: Equatable {
+        /// Other clips pushed aside (still on the song), by new position.
+        var moved: [Moved] = []
+        /// Clips pushed aside with nowhere to go: they are in the tray now.
+        var sentToTray: [String] = []
+        var refusal: Refusal?
+
+        var displacedAnything: Bool { !moved.isEmpty || !sentToTray.isEmpty }
+
+        /// "Clip 2 moved over to make room." / "Clips 2 and 3 didn't fit and went to the tray." (nil when nothing happened).
+        func message(clipNumber: (String) -> Int) -> String? {
+            if let refusal { return refusal.message }
+            var parts: [String] = []
+            if !moved.isEmpty { parts.append(Self.sentence(moved.map(\.mediaID), clipNumber, "moved over to make room.")) }
+            if !sentToTray.isEmpty { parts.append(Self.sentence(sentToTray, clipNumber, "didn't fit and went to the tray.")) }
+            return parts.isEmpty ? nil : parts.joined(separator: " ")
+        }
+
+        private static func sentence(_ ids: [String], _ clipNumber: (String) -> Int, _ tail: String) -> String {
+            let numbers = ids.map(clipNumber).sorted().map(String.init)
+            guard numbers.count > 1, let last = numbers.last else { return "Clip \(numbers.first ?? "") \(tail)" }
+            return "Clips \(numbers.dropLast().joined(separator: ", ")) and \(last) \(tail)"
         }
     }
 
@@ -404,34 +436,39 @@ struct SongTimelineState: Equatable {
     // MARK: editing
 
     /// Puts a tray take into an empty spot. Uses the take's own best candidate that starts inside the spot,
-    /// else the spot's start. Returns why it was refused, or nil.
+    /// else the spot's start. A take longer than the spot pushes its neighbours aside.
     @discardableResult
-    mutating func place(_ mediaID: String, inGap gap: Gap) -> Refusal? {
-        guard question.item(for: mediaID) != nil else { return nil }
+    mutating func place(_ mediaID: String, inGap gap: Gap) -> MoveOutcome {
+        guard question.item(for: mediaID) != nil else { return MoveOutcome() }
         let inside = (question.item(for: mediaID)?.candidates ?? []).filter {
             max(0, $0.deltaS) >= gap.start - Self.epsilon && max(0, $0.deltaS) < gap.end
         }
         let delta = inside.max { $0.likelihood < $1.likelihood }?.deltaS ?? gap.start
-        return apply(mediaID, delta: delta)
+        return commit(mediaID, delta: delta)
     }
 
-    /// "Add to the song" for a tray take when there is no empty spot to tap: its likeliest candidate that fits,
-    /// else straight after the last visible clip (or at the start of the song with nothing placed).
+    /// "Add to the song" for a tray take when there is no empty spot to tap: its likeliest candidate that lands
+    /// without pushing anything, else straight after the last visible clip (or the start of the song with nothing placed).
     @discardableResult
-    mutating func placeAnywhere(_ mediaID: String) -> Refusal? {
-        guard let item = question.item(for: mediaID) else { return nil }
+    mutating func placeAnywhere(_ mediaID: String) -> MoveOutcome {
+        guard let item = question.item(for: mediaID) else { return MoveOutcome() }
         for candidate in item.candidates.sorted(by: { $0.likelihood > $1.likelihood }) {
-            if apply(mediaID, delta: candidate.deltaS) == nil { return nil }
+            let result = plan(mediaID, delta: candidate.deltaS)
+            if result.outcome.refusal == nil, !result.outcome.displacedAnything {
+                placed = result.placed
+                return result.outcome
+            }
         }
         let lastEnd = segments().filter { !$0.hidden }.map(\.end).max() ?? 0
-        return apply(mediaID, delta: lastEnd)
+        return commit(mediaID, delta: clamped(mediaID, lastEnd))
     }
 
-    /// Moves (or places) a take so it starts at `toDelta`, snapping to one of its candidates within 0.25 s.
+    /// Moves (or places) a take so it starts at `toDelta`, snapping to one of its candidates within 0.25 s. The take
+    /// lands exactly there; any other clip it would cover is pushed aside (see `plan`).
     @discardableResult
-    mutating func move(_ mediaID: String, toDelta raw: Double) -> Refusal? {
-        guard question.item(for: mediaID) != nil, raw.isFinite else { return nil }
-        return apply(mediaID, delta: snapped(mediaID, raw))
+    mutating func move(_ mediaID: String, toDelta raw: Double) -> MoveOutcome {
+        guard question.item(for: mediaID) != nil, raw.isFinite else { return MoveOutcome() }
+        return commit(mediaID, delta: snapped(mediaID, raw))
     }
 
     /// The delta a drop at `raw` lands on: a candidate within the snap tolerance, else `raw` clamped and rounded to 0.1 s.
@@ -455,18 +492,143 @@ struct SongTimelineState: Equatable {
 
     mutating func reset() { placed = seed }
 
-    private mutating func apply(_ mediaID: String, delta: Double) -> Refusal? {
+    /// A copy with the move applied, for showing where things would land while a clip is still being dragged.
+    func previewing(_ mediaID: String, toDelta raw: Double) -> SongTimelineState {
+        var copy = self
+        copy.move(mediaID, toDelta: raw)
+        return copy
+    }
+
+    private mutating func commit(_ mediaID: String, delta: Double) -> MoveOutcome {
+        let result = plan(mediaID, delta: delta)
+        if result.outcome.refusal == nil { placed = result.placed }
+        return result.outcome
+    }
+
+    // MARK: pushing aside
+
+    private struct PushPlan {
+        /// New delta per displaced clip; nil = it did not fit and goes to the tray.
+        var moves: [(mediaID: String, delta: Double?)] = []
+        var trayCount = 0
+        var totalShift = 0.0
+    }
+
+    /// Places `mediaID` at `delta` and pushes aside every other visible clip it overlaps. The placed clip is the
+    /// anchor and never moves. A clip it overlaps goes to whichever side needs the smaller shift (a tie goes right)
+    /// and the clips behind it are pushed along, keeping order and staying adjacent. Left pushes stop at 0 and right
+    /// pushes at the song's end: a clip that would cross either goes to the tray, and a side that keeps every clip
+    /// placed beats one that does not. If the video then exceeds the cap, the pushed clips farthest from the anchor go
+    /// to the tray until it fits; an anchor longer than the cap by itself is refused.
+    private func plan(_ mediaID: String, delta: Double) -> (placed: [String: Double], outcome: MoveOutcome) {
+        var outcome = MoveOutcome()
+        let anchor = range(of: mediaID, delta: delta)
+        if anchor.end - anchor.start > maxWindowS + Self.epsilon {
+            outcome.refusal = .tooLong(maxSeconds: Int(maxWindowS.rounded()))
+            return (placed, outcome)
+        }
         var next = placed
         next[mediaID] = delta
-        let before = tile(placed), after = tile(next)
-        let newlyHidden = Set(after.filter(\.hidden).map(\.mediaID)).subtracting(before.filter(\.hidden).map(\.mediaID))
-        if !newlyHidden.isEmpty || after.first(where: { $0.mediaID == mediaID })?.hidden == true { return .hidden }
-        let newSpan = Self.span(of: after)
-        if newSpan > maxWindowS + Self.epsilon, newSpan > Self.span(of: before) + Self.epsilon {
-            return .tooLong(maxSeconds: Int(maxWindowS.rounded()))
+        var originals: [String: Double] = [:]
+        var trayed: [String] = []
+        // One round normally; another only when pushing a clip away uncovers a seed block that was hidden under it.
+        for _ in 0..<(placed.count + 2) {
+            let visible = tile(next.filter { $0.key != mediaID }).filter { !$0.hidden }
+            let hits = visible.indices.filter { Self.overlap(visible[$0], anchor) > Self.epsilon }
+            guard let first = hits.first, let last = hits.last else { break }
+            let push = bestPush(visible, hits: first...last, anchor: anchor, deltas: next)
+            for move in push.moves {
+                if originals[move.mediaID] == nil { originals[move.mediaID] = next[move.mediaID] }
+                next[move.mediaID] = move.delta
+                if move.delta == nil { trayed.append(move.mediaID) }
+            }
         }
-        placed = next
-        return nil
+        let before = Self.span(of: tile(placed))
+        var span = Self.span(of: tile(next))
+        if span > maxWindowS + Self.epsilon {
+            let center = (anchor.start + anchor.end) / 2
+            let pushed = originals.keys.filter { next[$0] != nil }.sorted { distance($0, from: center, in: next) > distance($1, from: center, in: next) }
+            for id in pushed where span > maxWindowS + Self.epsilon {
+                next[id] = nil
+                trayed.append(id)
+                span = Self.span(of: tile(next))
+            }
+            if span > maxWindowS + Self.epsilon, span > before + Self.epsilon {
+                outcome.refusal = .tooLong(maxSeconds: Int(maxWindowS.rounded()))
+                return (placed, outcome)
+            }
+        }
+        outcome.moved = originals.compactMap { id, old in
+            next[id].flatMap { abs($0 - old) > 1e-9 ? Moved(mediaID: id, from: old, to: $0) : nil }
+        }.sorted { ($0.to, $0.mediaID) < ($1.to, $1.mediaID) }
+        let order = Dictionary(uniqueKeysWithValues: captureOrder.enumerated().map { ($1, $0) })
+        outcome.sentToTray = Array(Set(trayed)).sorted { (order[$0] ?? .max) < (order[$1] ?? .max) }
+        return (next, outcome)
+    }
+
+    private func distance(_ mediaID: String, from center: Double, in deltas: [String: Double]) -> Double {
+        guard let delta = deltas[mediaID] else { return 0 }
+        let block = range(of: mediaID, delta: delta)
+        return abs((block.start + block.end) / 2 - center)
+    }
+
+    private static func overlap(_ segment: Segment, _ anchor: (start: Double, end: Double)) -> Double {
+        min(segment.end, anchor.end) - max(segment.start, anchor.start)
+    }
+
+    /// Tries every way of splitting the overlapped clips into "go left" (an earlier prefix) and "go right" and keeps
+    /// the one that sends the fewest clips to the tray, then shifts the least; a tie prefers right.
+    private func bestPush(_ visible: [Segment], hits: ClosedRange<Int>, anchor: (start: Double, end: Double),
+                          deltas: [String: Double]) -> PushPlan {
+        var best: PushPlan?
+        for split in hits.lowerBound...(hits.upperBound + 1) {
+            let candidate = simulatePush(visible, split: split, anchor: anchor, deltas: deltas)
+            guard let current = best else { best = candidate; continue }
+            if candidate.trayCount < current.trayCount
+                || (candidate.trayCount == current.trayCount && candidate.totalShift < current.totalShift - 1e-6) {
+                best = candidate
+            }
+        }
+        return best ?? PushPlan()
+    }
+
+    /// Clips before `split` are pushed left of the anchor (nearest first), the rest right of it.
+    private func simulatePush(_ visible: [Segment], split: Int, anchor: (start: Double, end: Double),
+                              deltas: [String: Double]) -> PushPlan {
+        var plan = PushPlan()
+        var limit = anchor.start
+        var index = split - 1
+        while index >= 0 {
+            let segment = visible[index]
+            guard segment.end > limit + Self.epsilon, let current = deltas[segment.mediaID] else { break }
+            let target = limit - duration(for: segment.mediaID)
+            if target >= -Self.epsilon {
+                plan.moves.append((segment.mediaID, target))
+                plan.totalShift += abs(current - target)
+                limit = max(0, target)
+            } else {
+                plan.moves.append((segment.mediaID, nil))
+                plan.trayCount += 1
+            }
+            index -= 1
+        }
+        limit = anchor.end
+        index = split
+        while index < visible.count {
+            let segment = visible[index]
+            guard segment.start < limit - Self.epsilon, let current = deltas[segment.mediaID] else { break }
+            let target = current + (limit - segment.start)
+            if songDurationS.map({ target + duration(for: segment.mediaID) <= $0 + Self.epsilon }) ?? true {
+                plan.moves.append((segment.mediaID, target))
+                plan.totalShift += abs(target - current)
+                limit = target + duration(for: segment.mediaID)
+            } else {
+                plan.moves.append((segment.mediaID, nil))
+                plan.trayCount += 1
+            }
+            index += 1
+        }
+        return plan
     }
 
     // MARK: tiling

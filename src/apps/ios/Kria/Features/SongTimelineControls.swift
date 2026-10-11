@@ -130,13 +130,14 @@ struct SongTimelineTransport: View {
 
 // MARK: - Action bar
 
-/// What you can do with the selected clip or empty spot. Tapping a clip never moves it: the buttons do, and a
-/// press-and-hold on the clip lifts it.
+/// What you can do with the selected clip (placed or in the tray) or empty spot. Any clip can start at the playhead
+/// ("Move here" / "Add here"); a placed one can also be nudged or sent back to the tray. Dragging a clip works too.
 struct SongTimelineActionBar: View {
     struct Actions {
         var moveToTray: () -> Void
         var nudgeEarlier: () -> Void
         var nudgeLater: () -> Void
+        /// Starts the selected clip at the playhead.
         var here: () -> Void
         var preview: () -> Void
         var fill: () -> Void
@@ -152,10 +153,15 @@ struct SongTimelineActionBar: View {
             switch selection {
             case .block:
                 SongTimelineWrap(spacing: 8) {
-                    chip("Move to tray", id: "to-tray", action: actions.moveToTray)
+                    chip("Move here", id: "here", label: "Move this clip to start at the playhead", prominent: true, action: actions.here)
                     chip("−0.5 s", id: "earlier", label: "Move half a second earlier", action: actions.nudgeEarlier)
                     chip("+0.5 s", id: "later", label: "Move half a second later", action: actions.nudgeLater)
-                    chip("Here", id: "here", label: "Start at the playhead", action: actions.here)
+                    chip("Move to tray", id: "to-tray", action: actions.moveToTray)
+                    chip("Preview clip", id: "preview", action: actions.preview)
+                }
+            case .tray:
+                SongTimelineWrap(spacing: 8) {
+                    chip("Add here", id: "here", label: "Add this clip to start at the playhead", prominent: true, action: actions.here)
                     chip("Preview clip", id: "preview", action: actions.preview)
                 }
             case .gap:
@@ -163,7 +169,7 @@ struct SongTimelineActionBar: View {
                     chip("Fill with a clip", id: "fill", prominent: true, action: actions.fill)
                 }
             case nil:
-                Text("Slide the timeline to move the playhead. Tap a clip or an empty spot to edit it.")
+                Text("Drag a clip, or pick one and press Move here at the playhead.")
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(minHeight: 44, alignment: .leading)
@@ -185,35 +191,127 @@ struct SongTimelineActionBar: View {
 
 // MARK: - Tray
 
+/// The clips left off the song. Tap one to select it (then Add here, or drag it); press and hold, then drag, to lift
+/// it onto the lanes: the card shows a floating copy under the finger and places the clip where it is released.
 struct SongTimelineTray: View {
+    struct Drag {
+        var began: (String) -> Void
+        var moved: (String, CGPoint) -> Void
+        var ended: (String, CGPoint) -> Void
+        var cancelled: () -> Void
+    }
+
     let clips: [(id: String, media: CreationAttachedMedia, number: Int)]
     let isSending: Bool
-    let fillsSelectedSpot: Bool
+    let selectedID: String?
+    let drag: Drag
     let onTap: (String) -> Void
+    let onMoveHere: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Tray").font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(clips, id: \.id) { clip in
-                        Button { if !isSending { onTap(clip.id) } } label: {
-                            VStack(spacing: 4) {
-                                CreationAttachmentThumbnail(media: clip.media)
-                                    .background(RoundedRectangle(cornerRadius: 8).fill(KriaColor.zinc.opacity(0.12)))
-                                Text("Clip \(clip.number)").font(KriaFont.body(11).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                            }
-                            .frame(minWidth: 52, minHeight: 44)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(fillsSelectedSpot
-                            ? "Clip \(clip.number), in the tray, double tap to put it in the selected empty spot"
-                            : "Clip \(clip.number), in the tray, double tap for options")
-                        .accessibilityIdentifier("song-timeline-tray-\(clip.id)")
-                    }
+                    ForEach(clips, id: \.id) { clip in chip(clip) }
                 }
             }
         }
     }
+
+    private func chip(_ clip: (id: String, media: CreationAttachedMedia, number: Int)) -> some View {
+        let selected = selectedID == clip.id
+        return VStack(spacing: 4) {
+            CreationAttachmentThumbnail(media: clip.media)
+                .background(RoundedRectangle(cornerRadius: 8).fill(KriaColor.zinc.opacity(0.12)))
+            Text("Clip \(clip.number)").font(KriaFont.body(11).weight(.semibold)).foregroundStyle(KriaColor.ink)
+        }
+        .padding(6)
+        .frame(minWidth: 52, minHeight: 44)
+        .background(selected ? KriaColor.sky.opacity(0.45) : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { if !isSending { onTap(clip.id) } }
+        .gesture(SongTimelineTrayDragRecognizer(isEnabled: !isSending) { handleDrag($0, clip.id) })
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityLabel("Clip \(clip.number), in the tray")
+        .accessibilityHint("Double tap to select, then use Add here. Press and hold, then drag, to place it on the song.")
+        .accessibilityAction(named: "Add here") { if !isSending { onMoveHere(clip.id) } }
+        .accessibilityIdentifier("song-timeline-tray-\(clip.id)")
+    }
+
+    private func handleDrag(_ press: UILongPressGestureRecognizer, _ id: String) {
+        let point = press.location(in: nil)
+        switch press.state {
+        case .began: drag.began(id); drag.moved(id, point)
+        case .changed: drag.moved(id, point)
+        case .ended: drag.ended(id, point)
+        case .cancelled, .failed: drag.cancelled()
+        default: break
+        }
+    }
+}
+
+/// Press and hold (0.25 s) then drag. Holding first keeps a quick sideways flick scrolling the tray, and the
+/// recognizer fails if the finger moves before the hold completes.
+struct SongTimelineTrayDragRecognizer: UIGestureRecognizerRepresentable {
+    let isEnabled: Bool
+    let handler: (UILongPressGestureRecognizer) -> Void
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var isEnabled = true
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool { isEnabled }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { false }
+    }
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UILongPressGestureRecognizer {
+        let press = UILongPressGestureRecognizer()
+        press.minimumPressDuration = 0.25
+        press.allowableMovement = 10
+        press.delegate = context.coordinator
+        return press
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: UILongPressGestureRecognizer, context: Context) { context.coordinator.isEnabled = isEnabled }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UILongPressGestureRecognizer, context: Context) { handler(recognizer) }
+}
+
+/// Switches the scroll views around the tray off while a clip is being dragged out of it (the chat's vertical scroll
+/// and the tray's own), so the drag does not also scroll them. The probe view sits in the tray, so the scroll views
+/// are found by walking up from it.
+@MainActor final class SongTimelineScrollFreezer {
+    fileprivate weak var anchor: UIView?
+    private var frozen: [UIScrollView] = []
+
+    func freeze() {
+        thaw()
+        var view = anchor?.superview
+        while let current = view {
+            if let scroll = current as? UIScrollView, scroll.panGestureRecognizer.isEnabled {
+                scroll.panGestureRecognizer.isEnabled = false
+                frozen.append(scroll)
+            }
+            view = current.superview
+        }
+    }
+
+    func thaw() {
+        for scroll in frozen { scroll.panGestureRecognizer.isEnabled = true }
+        frozen = []
+    }
+}
+
+struct SongTimelineScrollFreezeProbe: UIViewRepresentable {
+    let freezer: SongTimelineScrollFreezer
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        freezer.anchor = view
+        return view
+    }
+    func updateUIView(_ view: UIView, context: Context) { freezer.anchor = view }
 }

@@ -135,4 +135,18 @@ enum SongTimelineMath {
         guard videoTime.isFinite, targetTime.isFinite else { return true }
         return abs(videoTime - targetTime) > tolerance
     }
+
+    // MARK: dropping onto the lanes
+
+    /// The song time under a finger at `x` (in the lanes' own coordinates): the playhead is `now`, and every
+    /// `pixelsPerSecond` points to its right is one second later.
+    static func time(atX x: CGFloat, now: Double, playheadX: CGFloat, pixelsPerSecond: CGFloat) -> Double {
+        guard x.isFinite, pixelsPerSecond > 0 else { return now }
+        return now + Double((x - playheadX) / pixelsPerSecond)
+    }
+
+    /// A tray clip is dropped only when released over the lanes; anywhere else cancels the drag.
+    static func isDropOverLanes(_ point: CGPoint, lanes: CGRect) -> Bool {
+        point.x.isFinite && point.y.isFinite && lanes.contains(point)
+    }
 }

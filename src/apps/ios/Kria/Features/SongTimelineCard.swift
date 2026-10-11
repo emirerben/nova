@@ -24,11 +24,27 @@ struct SongTimelineCard: View {
 
     @State private var state: SongTimelineState
     @State private var sheet: Sheet?
-    @State private var notice: String?
+    @State private var notice: Notice?
     @State private var audio: AudioStatus = .loading
     @State private var bars: [Float] = []
     @State private var selection: SongTimelineSelection?
+    @State private var trayDrag: TrayDrag?
+    @State private var surfaceFrame: CGRect = .zero
+    @State private var cardFrame: CGRect = .zero
+    @State private var freezer = SongTimelineScrollFreezer()
     @StateObject private var playback: SongTimelinePlayback
+
+    /// An inline line under the timeline: a refusal (error) or a plain "moved over to make room" (information).
+    struct Notice: Equatable {
+        let text: String
+        let isError: Bool
+    }
+
+    /// A tray clip being dragged: its floating copy follows `point` (global coordinates).
+    struct TrayDrag: Equatable {
+        let mediaID: String
+        var point: CGPoint
+    }
 
     enum AudioStatus: Equatable { case loading, ready(SongAudioFile), unavailable }
     enum Sheet: Identifiable, Equatable {
@@ -95,11 +111,13 @@ struct SongTimelineCard: View {
             }
             .padding(14)
             .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(alignment: .topLeading) { trayGhost }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { cardFrame = $0 }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("song-timeline-card")
             .task { await prepareAudio() }
-            .onDisappear { playback.pause() }
-            .onReceive(NotificationCenter.default.publisher(for: .kriaAudioCaptureWillStart)) { _ in playback.pause() }
+            .onDisappear { playback.pause(); endTrayDrag() }
+            .onReceive(NotificationCenter.default.publisher(for: .kriaAudioCaptureWillStart)) { _ in playback.pause(); endTrayDrag() }
             .onChange(of: sheet) { _, opened in if opened != nil { playback.pause() } }
             .sheet(item: $sheet) { sheetContent($0, isSending: isSending) }
         }
@@ -128,8 +146,9 @@ struct SongTimelineCard: View {
                 localURL: { previewURL($0) }, onToggle: { playback.togglePlayback() })
             SongTimelineSurface(
                 state: state, question: question, clock: clock, selection: selection, bars: bars,
-                songSeconds: songSeconds, isSending: isSending,
+                songSeconds: songSeconds, isSending: isSending, externalDrag: externalDrag(),
                 clipNumber: { number($0) }, media: { attached($0) }, actions: surfaceActions(isSending: isSending))
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { surfaceFrame = $0 }
             SongTimelineTransport(
                 clock: clock, stops: stops, canPlay: playback.canPlay && !isSending,
                 onPlayPause: { playback.togglePlayback() }, onPrevious: { jump(forward: false) }, onNext: { jump(forward: true) })
@@ -186,6 +205,7 @@ struct SongTimelineCard: View {
             liftBegan: { id in notice = nil; playback.pause(); selection = .block(id) },
             commitMove: { id, raw in commitMove(id, toDelta: raw) },
             nudge: { id, seconds in nudge(id, by: seconds) },
+            moveHere: { moveHere($0) },
             seek: { playback.seek(to: $0) })
     }
 
@@ -194,8 +214,8 @@ struct SongTimelineCard: View {
             moveToTray: { moveSelectionToTray() },
             nudgeEarlier: { if case .block(let id)? = selection { nudge(id, by: -0.5) } },
             nudgeLater: { if case .block(let id)? = selection { nudge(id, by: 0.5) } },
-            here: { if case .block(let id)? = selection { commitMove(id, toDelta: clock.currentTime) } },
-            preview: { if case .block(let id)? = selection { sheet = .block(id) } },
+            here: { moveHereSelected() },
+            preview: { previewSelected() },
             fill: { if case .gap(let index)? = selection { sheet = .gap(index) } })
     }
 
@@ -222,37 +242,69 @@ struct SongTimelineCard: View {
         }
     }
 
-    private func commitMove(_ id: String, toDelta raw: Double) {
-        let refusal = state.move(id, toDelta: raw)
-        notice = refusal?.message
-        if refusal == nil { announceMoved(id) }
+    // MARK: moving clips
+
+    /// Says what a move did: a refusal in red, "moved over to make room" in grey, nothing when it was a plain move.
+    private func report(_ outcome: SongTimelineState.MoveOutcome, for id: String) {
+        if let refusal = outcome.refusal {
+            notice = Notice(text: refusal.message, isError: true)
+            UIAccessibility.post(notification: .announcement, argument: refusal.message)
+        } else if let text = outcome.message(clipNumber: { number($0) }) {
+            notice = Notice(text: text, isError: false)
+            UIAccessibility.post(notification: .announcement, argument: text)
+        } else {
+            notice = nil
+            announceMoved(id)
+        }
+    }
+
+    /// A clip was dropped (or sent to the playhead) at `raw`. Clips it lands on are pushed aside, never refused.
+    private func commitMove(_ id: String, toDelta raw: Double, followWithPlayhead: Bool = false) {
+        report(state.move(id, toDelta: raw), for: id)
         reconcileSelection()
+        finishPlacing(id, followWithPlayhead: followWithPlayhead)
     }
 
     private func nudge(_ id: String, by seconds: Double) {
         guard let current = state.delta(of: id) else { return }
-        let refusal = state.move(id, toDelta: current + seconds)
-        notice = refusal?.message
-        if let refusal {
-            UIAccessibility.post(notification: .announcement, argument: refusal.message)
-        } else {
-            announceMoved(id)
-        }
+        report(state.move(id, toDelta: current + seconds), for: id)
         reconcileSelection()
+    }
+
+    /// "Move here" / "Add here": the clip starts at the playhead, whether it was on the song or in the tray.
+    private func moveHere(_ id: String) {
+        notice = nil
+        commitMove(id, toDelta: clock.currentTime, followWithPlayhead: true)
+    }
+
+    private func moveHereSelected() {
+        switch selection {
+        case .block(let id)?, .tray(let id)?: moveHere(id)
+        default: break
+        }
+    }
+
+    private func previewSelected() {
+        switch selection {
+        case .block(let id)?: sheet = .block(id)
+        case .tray(let id)?: sheet = .tray(id)
+        default: break
+        }
     }
 
     private func moveSelectionToTray() {
         guard case .block(let id)? = selection else { return }
         state.moveToTray(id)
         notice = nil
-        selection = nil
+        selection = .tray(id)
     }
 
     /// Empty spots renumber whenever the arrangement changes, so a selected spot never survives an edit; a clip
-    /// that left the song cannot stay selected either.
+    /// that left the song cannot stay selected as a placed one, and a tray clip that was placed is no longer in the tray.
     private func reconcileSelection() {
         switch selection {
-        case .block(let id)?: if !state.isPlaced(id) { selection = nil }
+        case .block(let id)?: if !state.isPlaced(id) { selection = .tray(id) }
+        case .tray(let id)?: if state.isPlaced(id) { selection = .block(id) }
         case .gap?: selection = nil
         case nil: break
         }
@@ -263,34 +315,81 @@ struct SongTimelineCard: View {
         UIAccessibility.post(notification: .announcement, argument: "Clip \(number(id)) now starts at \(DurationFormatter.clock(start))")
     }
 
-    // MARK: tray, notes, footer
+    // MARK: tray
 
     private func trayRow(isSending: Bool) -> some View {
-        var selectedGap = false
-        if case .gap? = selection { selectedGap = true }
-        return SongTimelineTray(
-            clips: state.tray.map { ($0, attached($0), number($0)) }, isSending: isSending, fillsSelectedSpot: selectedGap,
-            onTap: { id in trayTapped(id) })
+        SongTimelineTray(
+            clips: state.tray.map { ($0, attached($0), number($0)) }, isSending: isSending, selectedID: selectedTrayID,
+            drag: trayDragCallbacks, onTap: { id in notice = nil; selection = .tray(id) }, onMoveHere: { moveHere($0) })
+            .background(SongTimelineScrollFreezeProbe(freezer: freezer))
     }
 
-    /// With an empty spot selected the tapped clip fills it; otherwise the clip's options open.
-    private func trayTapped(_ id: String) {
-        notice = nil
-        if case .gap(let index)? = selection, let gap = state.gaps().first(where: { $0.index == index }) {
-            notice = state.place(id, inGap: gap)?.message
-            finishPlacing(id)
-        } else {
-            sheet = .tray(id)
+    private var selectedTrayID: String? {
+        if case .tray(let id)? = selection { return id }
+        return nil
+    }
+
+    private var trayDragCallbacks: SongTimelineTray.Drag {
+        SongTimelineTray.Drag(
+            began: { id in
+                notice = nil; playback.pause(); freezer.freeze(); selection = .tray(id)
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            },
+            moved: { id, point in trayDrag = TrayDrag(mediaID: id, point: point) },
+            ended: { id, point in dropTrayClip(id, at: point) },
+            cancelled: { endTrayDrag() })
+    }
+
+    private func endTrayDrag() {
+        freezer.thaw()
+        trayDrag = nil
+    }
+
+    /// Released over the lanes: the clip starts at the song time under the finger. Anywhere else cancels.
+    private func dropTrayClip(_ id: String, at point: CGPoint) {
+        endTrayDrag()
+        guard SongTimelineMath.isDropOverLanes(point, lanes: laneDropRect) else { return }
+        commitMove(id, toDelta: songTime(atGlobalX: point.x), followWithPlayhead: true)
+    }
+
+    /// The lanes plus the ruler above them: the generous target for a drop.
+    private var laneDropRect: CGRect {
+        CGRect(x: surfaceFrame.minX, y: surfaceFrame.minY + SongTimelineSurface.Layout.rulerTop,
+               width: surfaceFrame.width, height: SongTimelineSurface.Layout.total - SongTimelineSurface.Layout.rulerTop)
+    }
+
+    private func songTime(atGlobalX x: CGFloat) -> Double {
+        SongTimelineMath.time(atX: x - surfaceFrame.minX, now: clock.currentTime, playheadX: surfaceFrame.width / 2,
+                              pixelsPerSecond: clock.pixelsPerSecond)
+    }
+
+    /// While a tray clip is over the lanes the timeline previews where it would land.
+    private func externalDrag() -> SongTimelineExternalDrag? {
+        guard let trayDrag, SongTimelineMath.isDropOverLanes(trayDrag.point, lanes: laneDropRect) else { return nil }
+        return SongTimelineExternalDrag(mediaID: trayDrag.mediaID, rawDelta: songTime(atGlobalX: trayDrag.point.x))
+    }
+
+    /// The floating copy of the tray clip under the finger.
+    @ViewBuilder private var trayGhost: some View {
+        if let trayDrag {
+            CreationAttachmentThumbnail(media: attached(trayDrag.mediaID))
+                .background(KriaColor.butter, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .shadow(color: KriaColor.ink.opacity(0.25), radius: 6, y: 3)
+                .position(x: trayDrag.point.x - cardFrame.minX, y: trayDrag.point.y - cardFrame.minY - 44)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .accessibilityIdentifier("song-timeline-tray-ghost")
         }
     }
 
     /// After a clip lands on the song: select it and put the playhead on it.
-    private func finishPlacing(_ id: String) {
+    private func finishPlacing(_ id: String, followWithPlayhead: Bool = true) {
         if state.isPlaced(id) {
             selection = .block(id)
-            if let segment = state.segments().first(where: { $0.mediaID == id }) { playback.seek(to: segment.start) }
-        } else {
-            selection = nil
+            if followWithPlayhead, let segment = state.segments().first(where: { $0.mediaID == id }) { playback.seek(to: segment.start) }
+        } else if case .block? = selection {
+            selection = .tray(id)
         }
     }
 
@@ -309,8 +408,8 @@ struct SongTimelineCard: View {
                 .accessibilityIdentifier("song-timeline-footer-note")
         }
         if let notice {
-            Text(notice)
-                .font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.failureText)
+            Text(notice.text)
+                .font(KriaFont.body(12).weight(.semibold)).foregroundStyle(notice.isError ? KriaColor.failureText : KriaColor.mutedInk)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("song-timeline-notice")
         }
@@ -347,7 +446,7 @@ struct SongTimelineCard: View {
                 title: gap.map { "Fill \(DurationFormatter.clock($0.start)) to \(DurationFormatter.clock($0.end))" } ?? "Fill this spot",
                 clips: clips.map { ($0, attached($0), number($0)) },
                 onPick: { id in
-                    if let gap { notice = state.place(id, inGap: gap)?.message }
+                    if let gap { report(state.place(id, inGap: gap), for: id) }
                     finishPlacing(id)
                     self.sheet = nil
                 },
@@ -356,13 +455,13 @@ struct SongTimelineCard: View {
             SongTimelineTakeSheet(
                 mediaID: id, title: "Clip \(number(id))", detail: Self.detail(for: question.item(for: id), start: state.delta(of: id)),
                 previewURL: previewURL(id), primaryTitle: "Move to tray", primaryID: "song-timeline-to-tray",
-                primary: { state.moveToTray(id); notice = nil; selection = nil; self.sheet = nil },
+                primary: { state.moveToTray(id); notice = nil; selection = .tray(id); self.sheet = nil },
                 onClose: { self.sheet = nil })
         case .tray(let id):
             SongTimelineTakeSheet(
                 mediaID: id, title: "Clip \(number(id))", detail: Self.detail(for: question.item(for: id), start: nil),
                 previewURL: previewURL(id), primaryTitle: "Add to the song", primaryID: "song-timeline-add-\(id)",
-                primary: { notice = state.placeAnywhere(id)?.message; finishPlacing(id); self.sheet = nil },
+                primary: { report(state.placeAnywhere(id), for: id); finishPlacing(id); self.sheet = nil },
                 onClose: { self.sheet = nil })
         }
     }

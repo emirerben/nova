@@ -97,6 +97,12 @@ final class SongOrderUITests: XCTestCase {
         return minutes * 60 + seconds
     }
 
+    /// m:ss like the app's labels (rounded to the nearest second).
+    private func clock(_ seconds: Double) -> String {
+        let rounded = max(0, Int(seconds.rounded()))
+        return String(format: "%d:%02d", rounded / 60, rounded % 60)
+    }
+
     private func drawerIsOpen(_ app: XCUIApplication) -> Bool { app.buttons["drawer-new-chat"].exists }
 
     /// KRI-561: with `song_order_placements` the same question is the song timeline (KRI-575: editor-style).
@@ -204,10 +210,72 @@ final class SongOrderUITests: XCTestCase {
         XCTAssertFalse(app.buttons["song-timeline-use"].exists)
     }
 
-    /// KRI-575 (TestFlight: "sliding in the block moves the screen to open the left bar"): a sideways drag anywhere
-    /// on the timeline moves the playhead and never the projects drawer; a plain swipe on a clip pans instead of
-    /// moving the clip; press-and-hold lifts the clip.
-    func testSlidingTheTimelineScrubsInsteadOfOpeningTheDrawerAndHoldLiftsAClip() {
+    /// Drags the empty ruler left in steps of a fifth of the lane (about 2.4 s each) until the playhead reaches `time`.
+    private func scrub(_ app: XCUIApplication, to time: Double, lanes: XCUIElement) {
+        func point(_ x: CGFloat) -> XCUICoordinate { lanes.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.19)) }
+        var guardCount = 0
+        while playhead(app) < time, guardCount < 8 {
+            point(0.8).press(forDuration: 0.05, thenDragTo: point(0.6))
+            guardCount += 1
+        }
+    }
+
+    /// KRI-575 follow-up: "I should be able to move any video, included or not, to anywhere in the song". The
+    /// playhead is where "Move here" / "Add here" puts the selected clip, and anything it lands on is pushed aside.
+    func testMoveHereWorksForAnyClipAndPushesNeighboursAside() {
+        let app = launch(songOrder: "1")
+        sendClips(app)
+        let lanes = any(app, "song-timeline-scroll")
+        XCTAssertTrue(lanes.waitForExistence(timeout: 15))
+        bringIntoView(lanes, in: app)
+
+        // A TRAY clip: scrub into the empty spot, select it (tapping only selects) and press Add here.
+        scrub(app, to: 12.1, lanes: lanes)
+        let here = playhead(app)
+        XCTAssertTrue((12.1...16).contains(here), "scrubbed into the empty spot: \(here)")
+        let chip = app.buttons["song-timeline-tray-fixture-clip-3"]
+        bringIntoView(chip, in: app)
+        chip.tap()
+        XCTAssertEqual(playhead(app), here, accuracy: 0.05, "selecting a tray clip leaves the playhead alone")
+        XCTAssertTrue(app.buttons["song-timeline-tray-fixture-clip-3"].isSelected, "the chip is highlighted")
+        let add = app.buttons["song-timeline-action-here"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        XCTAssertEqual(add.label, "Add this clip to start at the playhead")
+        bringIntoView(add, in: app)
+        add.tap()
+        let placed = app.buttons["song-timeline-block-fixture-clip-3"]
+        XCTAssertTrue(placed.waitForExistence(timeout: 5), "the tray clip is on the song")
+        XCTAssertTrue(placed.label.contains("starts at \(clock(here))"), "it starts at the playhead: \(placed.label)")
+        XCTAssertFalse(app.buttons["song-timeline-tray-fixture-clip-3"].exists)
+
+        // A PLACED clip onto others: clip 1 (4 s) moves to the playhead over clip 3 and clip 2, which move over.
+        for _ in 0..<4 where abs(playhead(app) - 4) > 0.05 { app.buttons["song-timeline-prev"].tap() }
+        XCTAssertEqual(playhead(app), 4, accuracy: 0.05)
+        scrub(app, to: 14.2, lanes: lanes)
+        let target = playhead(app)
+        let moveHere = app.buttons["song-timeline-action-here"]
+        XCTAssertEqual(moveHere.label, "Move this clip to start at the playhead")
+        bringIntoView(moveHere, in: app)
+        moveHere.tap()
+        let first = app.buttons["song-timeline-block-fixture-clip"]
+        XCTAssertTrue(first.label.contains("starts at \(clock(target))"), "clip 1 landed on the playhead: \(first.label)")
+        let notice = any(app, "song-timeline-notice")
+        XCTAssertTrue(notice.waitForExistence(timeout: 3), "pushing something aside is announced, not silent")
+        XCTAssertTrue(notice.label.contains("moved over to make room"), notice.label)
+        XCTAssertFalse(notice.label.contains("longer than"), "no refusal: the clips it landed on moved aside")
+
+        // The echo lists every take once, placed ones in song order.
+        bringIntoView(app.buttons["song-timeline-use"], in: app)
+        app.buttons["song-timeline-use"].tap()
+        let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@",
+            "order[", "placements[", "fixture-clip@", "fixture-clip-3@")).firstMatch
+        XCTAssertTrue(echo.waitForExistence(timeout: 10), "server received the pushed arrangement")
+    }
+
+    /// KRI-575 (TestFlight: "sliding in the block moves the screen to open the left bar"): a sideways drag on empty
+    /// lane moves the playhead and never the projects drawer, while a drag that starts on a clip moves that clip at
+    /// once (no press and hold). A tray clip can be dragged out onto the lanes too.
+    func testDraggingMovesPlacedAndTrayClipsWhileEmptyLaneScrubsAndTheDrawerStaysShut() {
         let app = launch(songOrder: "1")
         sendClips(app)
         let lanes = any(app, "song-timeline-scroll")
@@ -229,24 +297,27 @@ final class SongOrderUITests: XCTestCase {
         XCTAssertGreaterThan(playhead(app), 5, "dragging left seeks later in the song")
         XCTAssertEqual(any(app, "song-timeline-preview").label, "Preview, clip 1", "scrubbing changes which clip the preview shows")
 
-        // A swipe that starts ON a clip pans; it does not move the clip and does not open the drawer.
+        // A drag that starts ON a clip moves the clip at once; the playhead stays and the drawer stays shut.
         app.buttons["song-timeline-prev"].tap()
         let first = app.buttons["song-timeline-block-fixture-clip"]
         XCTAssertTrue(first.isHittable)
-        let before = playhead(app)
-        first.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).press(forDuration: 0.05, thenDragTo: first.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
-        XCTAssertFalse(drawerIsOpen(app))
-        XCTAssertNotEqual(playhead(app), before, "swiping on a clip seeks")
-        XCTAssertTrue(first.label.contains("starts at 0:04"), "swiping a clip must not move it: \(first.label)")
-
-        // Press and hold, then drag: the clip lifts and moves earlier by about two seconds.
-        app.buttons["song-timeline-next"].tap()
-        app.buttons["song-timeline-prev"].tap()
         XCTAssertEqual(playhead(app), 4, accuracy: 0.05)
-        first.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.7, thenDragTo: first.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)))
+        first.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.05, thenDragTo: first.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)))
         XCTAssertFalse(drawerIsOpen(app))
-        XCTAssertFalse(first.label.contains("starts at 0:04"), "the lifted clip moved: \(first.label)")
+        XCTAssertFalse(first.label.contains("starts at 0:04"), "the dragged clip moved: \(first.label)")
+        XCTAssertEqual(playhead(app), 4, accuracy: 0.05, "dragging a clip does not scrub")
         XCTAssertTrue(app.buttons["song-timeline-reset"].waitForExistence(timeout: 3), "the arrangement changed")
+
+        // A tray clip: press, hold, drag it onto the lanes and let go. It lands where it was released.
+        let chip = app.buttons["song-timeline-tray-fixture-clip-3"]
+        bringIntoView(chip, in: app)
+        XCTAssertTrue(lanes.isHittable, "the lanes and the tray are both on screen")
+        chip.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.5, thenDragTo: point(0.8, 0.5))
+        XCTAssertFalse(drawerIsOpen(app))
+        XCTAssertTrue(app.buttons["song-timeline-block-fixture-clip-3"].waitForExistence(timeout: 5), "the tray clip was dropped onto the song")
+        XCTAssertFalse(app.buttons["song-timeline-tray-fixture-clip-3"].exists)
+        let label = app.buttons["song-timeline-block-fixture-clip-3"].label
+        XCTAssertTrue(label.contains("starts at 0:0"), "dropped near the playhead plus a few seconds: \(label)")
     }
 
     func testOrderQuestionFallsBackToTextWhenServerDoesNotAdvertiseIt() {

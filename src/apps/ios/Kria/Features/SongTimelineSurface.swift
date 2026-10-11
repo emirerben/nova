@@ -5,6 +5,14 @@ import UIKit
 enum SongTimelineSelection: Equatable {
     case block(String)
     case gap(Int)
+    /// A clip waiting in the tray.
+    case tray(String)
+}
+
+/// A tray clip being dragged over the lanes: where it would start if released now.
+struct SongTimelineExternalDrag: Equatable {
+    let mediaID: String
+    let rawDelta: Double
 }
 
 /// What the lanes ask the card to do. The card owns the arrangement (`SongTimelineState`), the audio and the notices.
@@ -15,18 +23,25 @@ struct SongTimelineSurfaceActions {
     /// A finger took the lanes: playback pauses. Returns whether it was playing, to resume afterwards.
     var scrubBegan: () -> Bool
     var scrubEnded: (Bool) -> Void
-    /// A clip was lifted (press and hold): playback pauses and the clip is selected.
+    /// A clip was picked up by dragging it: playback pauses and the clip is selected.
     var liftBegan: (String) -> Void
     /// A lifted clip was dropped with this raw start (the card snaps and validates it).
     var commitMove: (String, Double) -> Void
     var nudge: (String, Double) -> Void
+    /// VoiceOver's "Move here": the clip starts at the playhead.
+    var moveHere: (String) -> Void
     /// Moves the playhead to a time (keeps the audio following when it is playing).
     var seek: (Double) -> Void
 }
 
-/// Lets the lift gesture switch the pan off the instant a clip is picked up (a flag, not state: it must be seen
-/// by the pan recognizer on the very next touch sample, before SwiftUI re-renders).
-final class SongTimelinePanGate { var isBlocked = false }
+/// Where the clips are on screen (global coordinates), so the lane recognizer can tell at touch-down whether a finger
+/// landed on a clip (it then drags that clip) or on empty lane (it scrubs). Plain storage, not state: it is read on
+/// the very first touch sample, before SwiftUI could re-render.
+final class SongTimelineLaneGate {
+    var blocks: [(mediaID: String, rect: CGRect)] = []
+    /// The clip under the finger at touch-down, nil for empty lane or ruler.
+    var touchedBlockID: String?
+}
 
 /// The song timeline lanes, laid out like the editor's `NativeMiniStrip`: a fixed playhead in the middle of the
 /// viewport and every lane positioned from the clock, so panning the lanes seeks the song. Lanes top to bottom: the
@@ -52,6 +67,8 @@ struct SongTimelineSurface: View {
     /// Length of the song's audio on the axis.
     let songSeconds: Double
     let isSending: Bool
+    /// A tray clip being dragged over the lanes (the card tracks the finger).
+    var externalDrag: SongTimelineExternalDrag?
     let clipNumber: (String) -> Int
     let media: (String) -> CreationAttachedMedia
     let actions: SongTimelineSurfaceActions
@@ -70,19 +87,16 @@ struct SongTimelineSurface: View {
         var panStartTime: Double = 0
         var panResume = false
         var panActive = false
+        var isLifting = false
         var globalFrame: CGRect = .zero
         var pinchBase: CGFloat?
     }
 
     @State private var lift: Lift?
     @State private var scratch = Scratch()
-    @State private var gate = SongTimelinePanGate()
+    @State private var gate = SongTimelineLaneGate()
     @State private var edgeScroller = NativeTimelineEdgeScroller()
-    @GestureState private var touchX: TouchSample?
-    @GestureState private var liftGestureActive = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    struct TouchSample: Equatable { let down: CGFloat; let latest: CGFloat }
 
     private struct Axis {
         let now: Double
@@ -102,38 +116,59 @@ struct SongTimelineSurface: View {
         GeometryReader { proxy in
             let width = max(1, proxy.size.width)
             let axis = Axis(now: clock.currentTime, playheadX: width / 2, pps: clock.pixelsPerSecond, width: width)
-            lanes(axis)
+            let shown = displayedState()
+            lanes(axis, shown: shown)
                 .frame(width: width, height: Layout.total, alignment: .topLeading)
                 .clipped()
                 .contentShape(Rectangle())
-                .gesture(SongTimelinePanRecognizer(gate: gate) { handlePan($0) })
+                .gesture(SongTimelineLaneRecognizer(gate: gate) { handleLane($0) })
                 .simultaneousGesture(magnifyGesture)
                 .onAppear { clock.fit(viewportWidth: width) }
                 .onChange(of: width) { _, newWidth in clock.fit(viewportWidth: newWidth) }
         }
         .frame(height: Layout.total)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { scratch.globalFrame = $0 }
-        .onChange(of: liftGestureActive) { _, active in
-            // A drop ends the gesture normally (and the lift with it); anything still lifted here was cancelled.
-            if !active, lift != nil { cancelLift() }
-        }
         .onDisappear { cancelLift() }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("song-timeline-scroll")
     }
 
-    private func lanes(_ axis: Axis) -> some View {
-        let segments = state.segments()
-        let gaps = state.gaps()
+    /// What the lanes draw: the real arrangement, or while a clip is being dragged the arrangement as it would be
+    /// if dropped right now (neighbours pushed aside), so the creator sees the result before letting go.
+    private func displayedState() -> SongTimelineState {
+        if let lift { return state.previewing(lift.mediaID, toDelta: rawDelta(lift)) }
+        if let externalDrag { return state.previewing(externalDrag.mediaID, toDelta: externalDrag.rawDelta) }
+        return state
+    }
+
+    private var draggedID: String? { lift?.mediaID ?? externalDrag?.mediaID }
+
+    private func lanes(_ axis: Axis, shown: SongTimelineState) -> some View {
+        let segments = shown.segments()
+        let gaps = draggedID == nil ? shown.gaps() : []
+        gate.blocks = blockRects(segments, axis)
         return ZStack(alignment: .topLeading) {
             Color.clear.contentShape(Rectangle()).onTapGesture { actions.clearSelection() }.accessibilityHidden(true)
             trackBackgrounds(axis)
-            waveform(axis)
+            waveform(axis, shown: shown)
             outsideRegions(axis, segments: segments)
             ruler(axis)
             ForEach(gaps) { gapView($0, axis) }
-            ForEach(segments) { blockView($0, axis) }
+            ForEach(segments) { segment in
+                if segment.mediaID == draggedID { ghostView(segment, axis) } else { blockView(segment, axis) }
+            }
+            floatingBlock(axis)
             playhead(axis)
+        }
+    }
+
+    /// Each clip's rectangle in global coordinates, topmost last, for the lane recognizer's touch-down test.
+    private func blockRects(_ segments: [SongTimelineState.Segment], _ axis: Axis) -> [(mediaID: String, rect: CGRect)] {
+        let origin = scratch.globalFrame.origin
+        return segments.map { segment in
+            let width = max(44, CGFloat(segment.end - segment.start) * axis.pps)
+            let local = CGRect(x: axis.x(segment.start), y: Layout.clipTop, width: width, height: Layout.clipHeight)
+            return (segment.mediaID, local.offsetBy(dx: origin.x, dy: origin.y))
         }
     }
 
@@ -171,10 +206,10 @@ struct SongTimelineSurface: View {
         .accessibilityHidden(true)
     }
 
-    private func waveform(_ axis: Axis) -> some View {
+    private func waveform(_ axis: Axis, shown: SongTimelineState) -> some View {
         let drawn = bars
         let seconds = songSeconds
-        let placed = placedRange()
+        let placed = placedRange(shown)
         return ZStack(alignment: .topLeading) {
             Canvas { context, _ in
                 if let placed {
@@ -214,8 +249,8 @@ struct SongTimelineSurface: View {
         }
     }
 
-    private func placedRange() -> ClosedRange<Double>? {
-        let visible = state.segments().filter { !$0.hidden }
+    private func placedRange(_ shown: SongTimelineState) -> ClosedRange<Double>? {
+        let visible = shown.segments().filter { !$0.hidden }
         guard let start = visible.first?.start, let end = visible.map(\.end).max(), end > start else { return nil }
         return start...end
     }
@@ -284,11 +319,6 @@ struct SongTimelineSurface: View {
 
     // MARK: blocks and gaps
 
-    private func liveRange(_ segment: SongTimelineState.Segment) -> (start: Double, end: Double) {
-        guard let lift, lift.mediaID == segment.mediaID else { return (segment.start, segment.end) }
-        return state.range(of: segment.mediaID, delta: state.snapped(segment.mediaID, rawDelta(lift)))
-    }
-
     private func rawDelta(_ lift: Lift) -> Double {
         SongTimelineMath.liftedDelta(startDelta: lift.startDelta, fingerTravel: lift.fingerX - lift.anchorX,
                                      pixelsPerSecond: clock.pixelsPerSecond, clockShift: clock.currentTime - lift.clockAtStart)
@@ -300,25 +330,20 @@ struct SongTimelineSurface: View {
 
     private func blockView(_ segment: SongTimelineState.Segment, _ axis: Axis) -> some View {
         let id = segment.mediaID
-        let range = liveRange(segment)
-        let x = axis.x(range.start)
-        let width = max(44, CGFloat(range.end - range.start) * axis.pps)
-        let isLifted = lift?.mediaID == id
+        let x = axis.x(segment.start)
+        let width = max(44, CGFloat(segment.end - segment.start) * axis.pps)
         let uncertain = question.item(for: id)?.status.isUncertain ?? true
         return blockFace(id: id, width: width, uncertain: uncertain, hidden: segment.hidden,
-                         selected: selection == .block(id), lifted: isLifted)
+                         selected: selection == .block(id), lifted: false)
             .onTapGesture { actions.selectBlock(id) }
-            .simultaneousGesture(touchTracker)
-            .simultaneousGesture(liftGesture(id))
             .accessibilityElement(children: .ignore)
             .accessibilityAddTraits(selection == .block(id) ? [.isButton, .isSelected] : .isButton)
             .frame(width: width, height: Layout.clipHeight)
             .offset(x: x, y: Layout.clipTop)
-            .scaleEffect(isLifted && !reduceMotion ? 1.04 : 1)
-            .zIndex(isLifted ? 2 : 1)
+            .zIndex(1)
             .allowsHitTesting(isOnScreen(x: x, width: width, axis: axis))
             .accessibilityLabel(blockLabel(segment))
-            .accessibilityHint("Double tap to select. Swipe up or down to move by half a second.")
+            .accessibilityHint("Double tap to select. Swipe up or down to move by half a second. Drag to move it anywhere on the song.")
             .accessibilityAdjustableAction { direction in
                 guard !isSending else { return }
                 switch direction {
@@ -329,7 +354,34 @@ struct SongTimelineSurface: View {
             }
             .accessibilityAction(named: "Move later") { if !isSending { actions.nudge(id, 0.5) } }
             .accessibilityAction(named: "Move earlier") { if !isSending { actions.nudge(id, -0.5) } }
+            .accessibilityAction(named: "Move here") { if !isSending { actions.moveHere(id) } }
             .accessibilityIdentifier("song-timeline-block-\(id)")
+    }
+
+    /// Where the clip being dragged will land (after snapping and pushing), as a soft placeholder.
+    private func ghostView(_ segment: SongTimelineState.Segment, _ axis: Axis) -> some View {
+        let width = max(44, CGFloat(segment.end - segment.start) * axis.pps)
+        return RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(KriaColor.butter.opacity(0.6))
+            .frame(width: width, height: Layout.clipHeight)
+            .offset(x: axis.x(segment.start), y: Layout.clipTop)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .accessibilityIdentifier("song-timeline-ghost")
+    }
+
+    /// The clip being dragged, following the finger exactly (not snapped).
+    @ViewBuilder private func floatingBlock(_ axis: Axis) -> some View {
+        if let lift {
+            let range = state.range(of: lift.mediaID, delta: rawDelta(lift))
+            let width = max(44, CGFloat(range.end - range.start) * axis.pps)
+            blockFace(id: lift.mediaID, width: width, uncertain: false, hidden: false, selected: false, lifted: true)
+                .frame(width: width, height: Layout.clipHeight)
+                .offset(x: axis.x(range.start), y: Layout.clipTop - 4)
+                .zIndex(3)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
     }
 
     private func blockLabel(_ segment: SongTimelineState.Segment) -> String {
@@ -411,23 +463,41 @@ struct SongTimelineSurface: View {
 
     // MARK: pan = seek
 
-    private func handlePan(_ pan: UIPanGestureRecognizer) {
+    /// One recognizer for the whole lane. A finger that lands on a clip drags that clip (immediately, no long press);
+    /// one that lands on empty lane or the ruler scrubs the playhead. Either way only a mostly-horizontal drag begins,
+    /// so a vertical one still scrolls the chat.
+    private func handleLane(_ pan: UIPanGestureRecognizer) {
+        let finger = pan.location(in: nil).x
         switch pan.state {
         case .began:
-            scratch.panStartTime = clock.currentTime
-            scratch.panResume = actions.scrubBegan()
-            scratch.panActive = true
+            if let id = gate.touchedBlockID, !isSending {
+                let travel = pan.translation(in: pan.view).x
+                beginLift(id, anchorX: finger - travel, fingerX: finger)
+            } else {
+                scratch.panStartTime = clock.currentTime
+                scratch.panResume = actions.scrubBegan()
+                scratch.panActive = true
+            }
         case .changed:
-            guard scratch.panActive else { return }
-            let travel = pan.translation(in: pan.view).x
-            clock.seek(to: scratch.panStartTime - Double(travel / max(1, clock.pixelsPerSecond)))
-        case .ended, .cancelled, .failed:
-            guard scratch.panActive else { return }
-            scratch.panActive = false
-            actions.scrubEnded(scratch.panResume)
+            if scratch.isLifting {
+                moveLift(to: finger)
+            } else if scratch.panActive {
+                let travel = pan.translation(in: pan.view).x
+                clock.seek(to: scratch.panStartTime - Double(travel / max(1, clock.pixelsPerSecond)))
+            }
+        case .ended:
+            if scratch.isLifting { dropLift() } else { endScrub() }
+        case .cancelled, .failed:
+            if scratch.isLifting { cancelLift() } else { endScrub() }
         default:
             break
         }
+    }
+
+    private func endScrub() {
+        guard scratch.panActive else { return }
+        scratch.panActive = false
+        actions.scrubEnded(scratch.panResume)
     }
 
     private var magnifyGesture: some Gesture {
@@ -442,31 +512,9 @@ struct SongTimelineSurface: View {
 
     // MARK: lift and move
 
-    /// Touch-down and latest finger x, so the lift is measured from where the finger first landed (the long press
-    /// recognises before the first drag sample arrives, and its travel would otherwise be lost).
-    private var touchTracker: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .global)
-            .updating($touchX) { value, touch, _ in touch = TouchSample(down: value.startLocation.x, latest: value.location.x) }
-    }
-
-    private func liftGesture(_ id: String) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.3, maximumDistance: 10)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
-            .updating($liftGestureActive) { _, active, _ in active = true }
-            .onChanged { value in
-                guard case .second(true, let drag) = value else { return }
-                if lift == nil {
-                    let anchor = drag == nil ? touchX?.latest : touchX?.down
-                    beginLift(id, anchorX: anchor ?? drag?.startLocation.x ?? 0, fingerX: drag?.location.x ?? anchor ?? 0)
-                }
-                if let drag { moveLift(to: drag.location.x) }
-            }
-            .onEnded { _ in dropLift() }
-    }
-
     private func beginLift(_ id: String, anchorX: CGFloat, fingerX: CGFloat) {
         guard !isSending, lift == nil, let startDelta = state.delta(of: id) else { return }
-        gate.isBlocked = true
+        scratch.isLifting = true
         actions.liftBegan(id)
         lift = Lift(mediaID: id, startDelta: startDelta, anchorX: anchorX, clockAtStart: clock.currentTime, fingerX: fingerX, lastSnap: nil)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -519,7 +567,7 @@ struct SongTimelineSurface: View {
     private func endLift() {
         edgeScroller.stop()
         edgeScroller.onTick = nil
-        gate.isBlocked = false
+        scratch.isLifting = false
         lift = nil
     }
 }
@@ -559,23 +607,31 @@ private struct SongTimelineThumbnail: View {
     private var placeholder: some View { Image(systemName: "video").foregroundStyle(KriaColor.mutedInk) }
 }
 
-// MARK: - Pan recognizer
+// MARK: - Lane recognizer
 
 /// Pan that only BEGINS for a mostly-horizontal drag, so the chat's own vertical scroll keeps working over the
-/// lanes (a SwiftUI `DragGesture` here swallows it, see `DragSelectRecognizer`). It is switched off while a clip is
-/// lifted so the lift owns the touch.
-struct SongTimelinePanRecognizer: UIGestureRecognizerRepresentable {
-    let gate: SongTimelinePanGate
+/// lanes (a SwiftUI `DragGesture` here swallows it, see `DragSelectRecognizer`). At touch-down it records which clip
+/// (if any) is under the finger; the handler then drags that clip or, for empty lane, scrubs.
+struct SongTimelineLaneRecognizer: UIGestureRecognizerRepresentable {
+    let gate: SongTimelineLaneGate
     let handler: (UIPanGestureRecognizer) -> Void
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        let gate: SongTimelinePanGate
-        init(gate: SongTimelinePanGate) { self.gate = gate }
+        let gate: SongTimelineLaneGate
+        init(gate: SongTimelineLaneGate) { self.gate = gate }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            let point = touch.location(in: nil)
+            gate.touchedBlockID = gate.blocks.last { $0.rect.contains(point) }?.mediaID
+            return true
+        }
+
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            guard !gate.isBlocked, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
             let translation = pan.translation(in: pan.view)
             return DragSelect.isHorizontalIntent(translation: CGSize(width: translation.x, height: translation.y))
         }
+
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                                shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
     }
