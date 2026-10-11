@@ -862,9 +862,9 @@ def repair_creator_user_song(
 ) -> tuple[CreativeStrategy, list[str]]:
     """KRI-374: validate and repair the uploaded-song fields of a strategy.
 
-    * Not a ``user_song`` strategy: a stray ``song_sync`` / ``resolved_song_takes``
-      is dropped silently and the strategy is otherwise returned untouched, so
-      every existing strategy compiles byte-identically.
+    * Not a ``user_song`` strategy: a stray ``song_sync`` / ``resolved_song_takes`` /
+      ``song_captions`` (KRI-578) is dropped silently and the strategy is otherwise returned
+      untouched, so every existing strategy compiles byte-identically.
     * ``user_song`` the manifest cannot carry: ``UserSongUnavailableError``
       (``user_song_phone_only`` / ``user_song_missing``).
     * ``song_sync`` unset: repaired to ``background`` with a notice.
@@ -874,9 +874,15 @@ def repair_creator_user_song(
     """
 
     if strategy.audio_strategy != USER_SONG_AUDIO_STRATEGY:
-        if strategy.song_sync is None and strategy.resolved_song_takes is None:
+        if (
+            strategy.song_sync is None
+            and strategy.resolved_song_takes is None
+            and strategy.song_captions is None
+        ):
             return strategy, []
-        return strategy.model_copy(update={"song_sync": None, "resolved_song_takes": None}), []
+        return strategy.model_copy(
+            update={"song_sync": None, "resolved_song_takes": None, "song_captions": None}
+        ), []
 
     require_user_song(manifest)
     notices: list[str] = []

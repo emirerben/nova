@@ -5576,12 +5576,17 @@ def _plan_phone_user_song_montage(
     creator_order: list[int],
     output_orientation: str | None = None,
     creator_text: str = "",
+    plan_authority: bool = False,
 ) -> Any:
     """Plan the creator-song montage, with the song's lyrics as captions when asked (KRI-569).
 
     ``creator_text`` is the creator's own request (and the brief written from it): lyric
     captions are planned only when those words ask for captions. A song with no words
     to caption is a ``UserSongPlanDeclined`` question, never a silent caption-free edit.
+
+    KRI-578: a plan-authority job (``plan_authority``) never re-reads the request. The
+    planner decided once and pinned it as ``strategy["song_captions"]``; that value (and
+    only that) says whether, and in which style, the lyrics become captions.
     """
     plan, analysis = _plan_phone_user_song_core(
         job_id,
@@ -5595,7 +5600,11 @@ def _plan_phone_user_song_montage(
         creator_order=creator_order,
         output_orientation=output_orientation,
     )
-    if settings.song_captions_enabled and _song_captions_wanted(creator_text, strategy):
+    if plan_authority:
+        pinned = strategy.get("song_captions")
+        if settings.song_captions_enabled and pinned in ("word", "sentence"):
+            _attach_song_captions(plan, analysis, strategy, style=pinned)
+    elif settings.song_captions_enabled and _song_captions_wanted(creator_text, strategy):
         _attach_song_captions(plan, analysis, strategy, creator_text)
     return plan
 
@@ -5611,7 +5620,11 @@ SONG_CAPTIONS_NEED_SONG_MESSAGE = "Add the song you lip-synced to and I'll capti
 
 
 def _creator_request_text(all_candidates: dict) -> str:
-    """The creator's saved request (with the brief written from it), never a later message."""
+    """The creator's saved request (with the brief written from it), never a later message.
+
+    KRI-578: LEGACY (unstamped) jobs only. A plan-authority job reads the planner's pinned
+    ``strategy["song_captions"]`` instead and never calls this.
+    """
     raw = all_candidates.get("creator_request")
     if not raw and isinstance(all_candidates.get("brief"), dict):
         raw = all_candidates["brief"].get("creator_request")
@@ -5637,6 +5650,24 @@ def _decline_song_captions_without_song(creator_text: str, strategy: Any) -> Non
         raise UserSongPlanDeclined(SONG_CAPTIONS_NEED_SONG_MESSAGE)
 
 
+def _decline_pinned_song_captions_without_song(strategy: Any) -> None:
+    """KRI-578: a plan-authority job whose approved plan pinned lyric captions has no song.
+
+    The planner only pins the captions when a creator song is attached, so reaching this
+    means the song went missing after approval: ask for it, never a bare failure. No
+    request text is read; the pin is the whole decision.
+    """
+    from app.pipeline.phone_guided_plan import UserSongPlanDeclined  # noqa: PLC0415
+
+    if (
+        settings.song_captions_enabled
+        and settings.user_song_montage_enabled
+        and isinstance(strategy, dict)
+        and strategy.get("song_captions") in ("word", "sentence")
+    ):
+        raise UserSongPlanDeclined(SONG_CAPTIONS_NEED_SONG_MESSAGE)
+
+
 def _song_captions_wanted(creator_text: str, strategy: dict) -> bool:
     """The creator's own words ask for captions (never the model's caption default alone)."""
     from app.pipeline.song_captions import captions_requested  # noqa: PLC0415
@@ -5644,16 +5675,23 @@ def _song_captions_wanted(creator_text: str, strategy: dict) -> bool:
     return captions_requested([creator_text], strategy.get("caption_style"))
 
 
-def _attach_song_captions(plan: Any, analysis: Any, strategy: dict, creator_text: str) -> None:
-    """Pin the song's words on the plan's snapshot and note it in the plan record."""
+def _attach_song_captions(
+    plan: Any, analysis: Any, strategy: dict, creator_text: str = "", *, style: str | None = None
+) -> None:
+    """Pin the song's words on the plan's snapshot and note it in the plan record.
+
+    ``style`` is the planner's pinned decision (KRI-578); without it (legacy jobs) the
+    style is read from ``creator_text``.
+    """
     from app.kria.brief_checks import text_asks_for_word_captions  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import UserSongPlanDeclined  # noqa: PLC0415
     from app.pipeline.song_captions import caption_style_for, track_from_analysis  # noqa: PLC0415
     from app.schemas.edit_proposal import EditProposalSnapshot  # noqa: PLC0415
 
-    style = caption_style_for(
-        strategy.get("caption_style"), word_ask=text_asks_for_word_captions(creator_text)
-    )
+    if style is None:
+        style = caption_style_for(
+            strategy.get("caption_style"), word_ask=text_asks_for_word_captions(creator_text)
+        )
     track = track_from_analysis(analysis, caption_style=style)
     if track is None or plan.snapshot.user_song is None:
         raise UserSongPlanDeclined(_SONG_CAPTIONS_NO_WORDS_MESSAGE)
@@ -6020,6 +6058,11 @@ def _run_phone_unified_montage_job(
     if not clip_paths or any(path not in binding_by_path for path in clip_paths):
         raise UnsupportedPhonePlan("every montage clip needs its phone source binding")
 
+    # KRI-578: a plan-authority job (stamp + pinned contract) takes the lyric-caption
+    # decision from the approved strategy; only legacy jobs re-read the saved request.
+    from app.services.creator_render_contract import stamped_plan_contract  # noqa: PLC0415
+
+    plan_authority = stamped_plan_contract(snapshot, all_candidates) is not None
     user_id, assignments, brief = _load_unified_montage_inputs(job_id)
     view = brief_view(brief)
     by_assignment_path = {str(row.get("gcs_path")): row for row in assignments}
@@ -6104,10 +6147,14 @@ def _run_phone_unified_montage_job(
                     if isinstance(value, int) and not isinstance(value, bool)
                 ],
                 output_orientation=_creator_shape_orientation(all_candidates),
-                creator_text=_creator_request_text(all_candidates),
+                creator_text="" if plan_authority else _creator_request_text(all_candidates),
+                plan_authority=plan_authority,
             )
         else:
-            _decline_song_captions_without_song(_creator_request_text(all_candidates), strategy)
+            if plan_authority:
+                _decline_pinned_song_captions_without_song(strategy)
+            else:
+                _decline_song_captions_without_song(_creator_request_text(all_candidates), strategy)
             plan = plan_unified_montage(
                 clips,
                 view,

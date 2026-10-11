@@ -178,11 +178,13 @@ def adapt_creator_action(
     server_clip_intents: list[ClipIntent] | None = None,
     server_resolved_clip_intents: list[ResolvedClipIntent] | None = None,
     server_resolved_song_takes: list[dict[str, Any]] | None = None,
+    server_song_captions: str | None = None,
     ordering_choice: str | None = None,
 ) -> KriaTurnPlan:
     """``server_resolved_song_takes`` (KRI-374) is the ONLY way ``resolved_song_takes``
     survives into the draft: it is server-owned (the song-order gate writes it after the
-    creator answered), so whatever a model-authored strategy carried is discarded here."""
+    creator answered), so whatever a model-authored strategy carried is discarded here.
+    ``server_song_captions`` (KRI-578) is the same for the lyric-caption decision."""
     if isinstance(action, AskUser):
         if settings.kria_choice_questions_enabled:
             # KRI-476: the agent's own options become tappable (and stay listed in the
@@ -253,6 +255,8 @@ def adapt_creator_action(
         "clip_intents": requested_intents or None,
         "resolved_clip_intents": server_resolved_clip_intents or None,
         "resolved_song_takes": server_resolved_song_takes or None,
+        # KRI-578: the plan-time lyric-caption decision; a model-authored value is dropped.
+        "song_captions": server_song_captions,
         # KRI-282: server-owned, always overwritten (a model-authored value is dropped).
         "ordering_choice": ordering_choice,
         # KRI-476: likewise; the gate in `plan_live_turn` is the only writer.
@@ -1703,6 +1707,7 @@ async def _plan_creator_action(
                 )
     policy_notices: tuple[str, ...] = ()
     server_song_takes: list[dict[str, Any]] | None = None
+    server_song_captions: str | None = None
     if isinstance(action, ProposeStrategy) and action.strategy.pinned_texts:
         grounded_pins, dropped_pins = ground_pinned_texts(
             action.strategy.pinned_texts,
@@ -1742,21 +1747,20 @@ async def _plan_creator_action(
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
             )
+        song_caption_text = "\n".join(
+            text
+            for text in (
+                getattr(inputs, "raw_creator_request", None),
+                brief_request,
+                user_message,
+            )
+            if isinstance(text, str) and text
+        )
         if settings.song_captions_enabled and settings.user_song_montage_enabled:
             # KRI-569: lyric captions come from the creator's uploaded song; ask for it
             # now instead of minting a render that cannot caption anything.
             need_song = song_captions_refusal(
-                manifest,
-                checked.strategy,
-                creator_text="\n".join(
-                    text
-                    for text in (
-                        getattr(inputs, "raw_creator_request", None),
-                        brief_request,
-                        user_message,
-                    )
-                    if isinstance(text, str) and text
-                ),
+                manifest, checked.strategy, creator_text=song_caption_text
             )
             if need_song is not None:
                 log.info("kria_strategy_refused", thread_id=str(thread_id), code=need_song.code)
@@ -1808,6 +1812,26 @@ async def _plan_creator_action(
             server_song_takes = gate.resolved_takes
             action = action.model_copy(
                 update={"strategy": _with_resolved_song_takes(action.strategy, gate.resolved_takes)}
+            )
+        if (
+            settings.song_captions_enabled
+            and settings.user_song_montage_enabled
+            # Only a strategy that plays the creator's song can caption its lyrics (any other
+            # strategy has its song fields dropped by `repair_creator_user_song`).
+            and action.strategy.audio_strategy == "user_song"
+        ):
+            # KRI-578: decide the lyric captions ONCE, here, from the creator's own words.
+            # The song-order gate above may have rebuilt the strategy, so this reads the
+            # final one; the worker of a plan-authority job reads only this pin.
+            from app.pipeline.song_captions import song_captions_pin  # noqa: PLC0415
+
+            # Brief-off turns carry the creator's whole thread in `inputs.creator_request`
+            # (the latest message alone would pin None on "make the cuts faster"); history
+            # first so the latest message still wins the last-line rule.
+            history = getattr(inputs, "creator_request", None)
+            server_song_captions = song_captions_pin(
+                "\n".join(t for t in (history, song_caption_text) if isinstance(t, str) and t),
+                action.strategy.caption_style,
             )
     intent_clips = inputs.intent_clips
     creator_request = brief_request or inputs.creator_request
@@ -1981,6 +2005,7 @@ async def _plan_creator_action(
                 server_clip_intents=planned.requested_intents,
                 server_resolved_clip_intents=planned.resolution.intents,
                 server_resolved_song_takes=server_song_takes,
+                server_song_captions=server_song_captions,
                 ordering_choice=ordering_choice,
             ),
             manifest_hash=manifest.manifest_hash,
@@ -2006,7 +2031,11 @@ async def _plan_creator_action(
             context_hash=manifest.context_hash,
         )
     return PlannedKriaTurn(
-        plan=adapt_creator_action(action, server_resolved_song_takes=server_song_takes),
+        plan=adapt_creator_action(
+            action,
+            server_resolved_song_takes=server_song_takes,
+            server_song_captions=server_song_captions,
+        ),
         manifest_hash=manifest.manifest_hash,
         context_hash=manifest.context_hash,
         policy_notices=policy_notices,
