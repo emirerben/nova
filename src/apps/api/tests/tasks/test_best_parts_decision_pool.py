@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+from app.services.length_planning import build_length_plan
 from app.tasks import generative_build as gb
 
 
@@ -28,6 +29,28 @@ def test_decision_keeps_full_resolved_pool_when_matcher_would_repeat_analyzed_cl
         "match",
         lambda *args, **kwargs: matcher_called.append(True),
     )
+    approved_length_plan = build_length_plan(
+        {"edit_format": "montage", "audio_strategy": "original_audio"},
+        {
+            "clip_assignments": [
+                {
+                    "media_id": "a",
+                    "gcs_path": "gs://a",
+                    "generation": "1",
+                    "duration_s": 5,
+                    "analysis": {"best_moments": [{"start_s": 0, "end_s": 5, "energy": 9}]},
+                },
+                {
+                    "media_id": "b",
+                    "gcs_path": "gs://b",
+                    "generation": "1",
+                    "duration_s": 5,
+                    "analysis": {"best_moments": []},
+                },
+            ]
+        },
+        order_ids=["a", "b"],
+    )
 
     decision = gb._decide_generative_variant(
         job_id="pool",
@@ -39,7 +62,7 @@ def test_decision_keeps_full_resolved_pool_when_matcher_would_repeat_analyzed_cl
             SimpleNamespace(clip_id="a", best_moments=[{"start_s": 0, "end_s": 5, "energy": 9}])
         ],
         clip_id_to_local={"a": "/a", "b": "/b"},
-        clip_id_to_gcs={},
+        clip_id_to_gcs={"a": "gs://a", "b": "gs://b"},
         probe_map={"/a": SimpleNamespace(duration_s=5), "/b": SimpleNamespace(duration_s=5)},
         available_footage_s=10,
         agent_text=None,
@@ -47,6 +70,8 @@ def test_decision_keeps_full_resolved_pool_when_matcher_would_repeat_analyzed_cl
         variant_dir=str(tmp_path),
         narrative_order=["a", "b"],
         creator_video_reuse_policy="once",
+        approved_length_plan=approved_length_plan,
+        approved_runtime_generations={"gs://a": "1", "gs://b": "1"},
     )
 
     assert not matcher_called
@@ -76,6 +101,16 @@ def test_voiceover_proven_target_is_the_actual_exact_window_budget(monkeypatch, 
         "build_recipe",
         lambda _: SimpleNamespace(beat_timestamps_s=[], color_grade="none"),
     )
+    approved_length_plan = build_length_plan(
+        {"edit_format": "montage", "audio_strategy": "voiceover"},
+        {
+            "clip_assignments": [
+                {"media_id": "a", "gcs_path": "gs://a", "generation": "1", "duration_s": 6},
+                {"media_id": "b", "gcs_path": "gs://b", "generation": "1", "duration_s": 6},
+            ]
+        },
+        creator_target_s=12,
+    )
 
     decision = gb._decide_generative_variant(
         job_id="voice",
@@ -91,13 +126,15 @@ def test_voiceover_proven_target_is_the_actual_exact_window_budget(monkeypatch, 
             SimpleNamespace(clip_id="b", best_moments=[]),
         ],
         clip_id_to_local={"a": "/a", "b": "/b"},
-        clip_id_to_gcs={},
+        clip_id_to_gcs={"a": "gs://a", "b": "gs://b"},
         probe_map={"/a": SimpleNamespace(duration_s=6), "/b": SimpleNamespace(duration_s=6)},
         available_footage_s=12,
         agent_text=None,
         agent_form={},
         variant_dir=str(tmp_path),
         creator_target_duration_s=12,
+        approved_length_plan=approved_length_plan,
+        approved_runtime_generations={"gs://a": "1", "gs://b": "1"},
     )
 
     assert decision.extras["voiceover_target_s"] == 12
@@ -115,6 +152,20 @@ def test_decision_discloses_three_second_expansion_of_a_short_best_moment(monkey
         "build_recipe",
         lambda _: SimpleNamespace(beat_timestamps_s=[], color_grade="none"),
     )
+    approved_length_plan = build_length_plan(
+        {"edit_format": "montage", "audio_strategy": "original_audio"},
+        {
+            "clip_assignments": [
+                {
+                    "media_id": "a",
+                    "gcs_path": "gs://a",
+                    "generation": "1",
+                    "duration_s": 5,
+                    "analysis": {"best_moments": [{"start_s": 0, "end_s": 2, "energy": 9}]},
+                }
+            ]
+        },
+    )
     decision = gb._decide_generative_variant(
         job_id="minimum",
         rank=1,
@@ -123,12 +174,14 @@ def test_decision_discloses_three_second_expansion_of_a_short_best_moment(monkey
             SimpleNamespace(clip_id="a", best_moments=[{"start_s": 0, "end_s": 2, "energy": 9}])
         ],
         clip_id_to_local={"a": "/a"},
-        clip_id_to_gcs={},
+        clip_id_to_gcs={"a": "gs://a"},
         probe_map={"/a": SimpleNamespace(duration_s=5)},
         available_footage_s=5,
         agent_text=None,
         agent_form={},
         variant_dir=str(tmp_path),
+        approved_length_plan=approved_length_plan,
+        approved_runtime_generations={"gs://a": "1"},
     )
 
     assert (decision.assembly_steps[0].in_s, decision.assembly_steps[0].out_s) == (0, 3)
@@ -145,6 +198,21 @@ def test_natural_minimum_is_three_seconds_total_not_per_clip(monkeypatch, tmp_pa
         "build_recipe",
         lambda _: SimpleNamespace(beat_timestamps_s=[], color_grade="none"),
     )
+    approved_length_plan = build_length_plan(
+        {"edit_format": "montage", "audio_strategy": "original_audio"},
+        {
+            "clip_assignments": [
+                {
+                    "media_id": media_id,
+                    "gcs_path": f"gs://{media_id}",
+                    "generation": "1",
+                    "duration_s": 5,
+                    "analysis": {"best_moments": [{"start_s": 1, "end_s": 1.2, "energy": energy}]},
+                }
+                for media_id, energy in (("a", 9), ("b", 8))
+            ]
+        },
+    )
     decision = gb._decide_generative_variant(
         job_id="minimum-total",
         rank=1,
@@ -154,12 +222,14 @@ def test_natural_minimum_is_three_seconds_total_not_per_clip(monkeypatch, tmp_pa
             SimpleNamespace(clip_id="b", best_moments=[{"start_s": 1, "end_s": 1.2, "energy": 8}]),
         ],
         clip_id_to_local={"a": "/a", "b": "/b"},
-        clip_id_to_gcs={},
+        clip_id_to_gcs={"a": "gs://a", "b": "gs://b"},
         probe_map={"/a": SimpleNamespace(duration_s=5), "/b": SimpleNamespace(duration_s=5)},
         available_footage_s=10,
         agent_text=None,
         agent_form={},
         variant_dir=str(tmp_path),
+        approved_length_plan=approved_length_plan,
+        approved_runtime_generations={"gs://a": "1", "gs://b": "1"},
     )
 
     assert decision.duration_s == 3
@@ -238,7 +308,7 @@ def test_silent_footage_uses_only_the_proven_creator_target(monkeypatch, tmp_pat
             SimpleNamespace(clip_id="b", best_moments=[]),
         ],
         clip_id_to_local={"a": "/a", "b": "/b"},
-        clip_id_to_gcs={},
+        clip_id_to_gcs={"a": "gs://a", "b": "gs://b"},
         probe_map={"/a": SimpleNamespace(duration_s=15), "/b": SimpleNamespace(duration_s=15)},
         available_footage_s=30,
         agent_text=None,
@@ -246,8 +316,25 @@ def test_silent_footage_uses_only_the_proven_creator_target(monkeypatch, tmp_pat
         variant_dir=str(tmp_path),
     )
 
-    proven = gb._decide_generative_variant(**kwargs, creator_target_duration_s=12)
-    raw_marker = gb._decide_generative_variant(**kwargs)
+    snapshot = {
+        "clip_assignments": [
+            {"media_id": "a", "gcs_path": "gs://a", "generation": "1", "duration_s": 15},
+            {"media_id": "b", "gcs_path": "gs://b", "generation": "1", "duration_s": 15},
+        ]
+    }
+    strategy = {"edit_format": "montage", "audio_strategy": "original_audio"}
+    runtime_generations = {"gs://a": "1", "gs://b": "1"}
+    proven = gb._decide_generative_variant(
+        **kwargs,
+        creator_target_duration_s=12,
+        approved_length_plan=build_length_plan(strategy, snapshot, creator_target_s=12),
+        approved_runtime_generations=runtime_generations,
+    )
+    raw_marker = gb._decide_generative_variant(
+        **kwargs,
+        approved_length_plan=build_length_plan(strategy, snapshot),
+        approved_runtime_generations=runtime_generations,
+    )
 
     assert proven.duration_s == 12
     assert raw_marker.duration_s == 30

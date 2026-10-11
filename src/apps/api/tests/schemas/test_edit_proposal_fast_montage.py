@@ -215,7 +215,7 @@ def test_fast_montage_snapshot_rejects_subminimum_video_cut() -> None:
                     output_duration_s=2.95,
                     role="payoff",
                 ),
-            ]
+            ],
         )
 
 
