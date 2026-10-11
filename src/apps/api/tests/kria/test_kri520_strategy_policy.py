@@ -17,8 +17,8 @@ from app.agents._schemas.creator_policy import (
 from app.kria.reply_language import reply_language_for
 from app.kria.strategy_policy import (
     CAPTIONS_KEPT_NOTICE,
-    GUIDED_VOICEOVER_DOWNGRADE_NOTICE,
     TRANSCRIPT_LABELS_DROPPED_NOTICE,
+    VISUALS_NEED_A_WORD_NOTICE,
     CheckedStrategy,
     RefusedStrategy,
     check_strategy_for_runtime_v2,
@@ -73,9 +73,9 @@ def test_guided_voiceover_downgrade_notice_in_turkish(prod_profile) -> None:
         turkish = check_strategy_for_runtime_v2(_narrated_manifest(), _guided_strategy())
 
     assert isinstance(english, CheckedStrategy) and isinstance(turkish, CheckedStrategy)
-    assert GUIDED_VOICEOVER_DOWNGRADE_NOTICE in english.notices
-    assert GUIDED_VOICEOVER_DOWNGRADE_NOTICE not in turkish.notices
-    assert turkish.notices[0].startswith("Visuals'taki fotoğraf ve videolar henüz seslendirmeye")
+    assert VISUALS_NEED_A_WORD_NOTICE in english.notices
+    assert VISUALS_NEED_A_WORD_NOTICE not in turkish.notices
+    assert turkish.notices[0].startswith("Seslendirmeli düzenlemede Visuals'taki fotoğraflar")
     assert turkish.strategy == english.strategy
 
 
