@@ -9,7 +9,7 @@ into these layers by the same rules, frozen in
 * a drawing starting at or after the timeline end is dropped;
 * ``end`` is clamped to the timeline duration and the drawing is dropped when
   fewer than ``MIN_DRAWING_DURATION_S`` remain;
-* ``draw_duration`` is clamped to ``end - start``;
+* ``draw_duration`` is clamped to ``end - start`` (so a layer's floor is the 0.1s minimum window);
 * order is preserved;
 * everything else (strokes, transform, canvas aspect, fades) is copied through.
 """
@@ -45,7 +45,7 @@ class PortableDrawingLayer(BaseModel):
     scale: float = Field(ge=0.2, le=3.0)
     rotation_deg: float = Field(ge=-180, le=180)
     entrance: DrawingEntrance
-    draw_duration: float = Field(ge=0.2, le=10.0)
+    draw_duration: float = Field(ge=0.1, le=10.0)
     exit: DrawingExit
     strokes: list[DrawingStroke] = Field(min_length=1, max_length=MAX_STROKES_PER_DRAWING)
 

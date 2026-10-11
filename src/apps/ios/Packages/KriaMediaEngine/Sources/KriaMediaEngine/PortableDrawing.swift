@@ -106,7 +106,7 @@ public struct PortableDrawingLayer: Codable, Equatable, Sendable {
               canvasAspect > 0.2, canvasAspect < 5,
               (0...1).contains(centerX), (0...1).contains(centerY),
               (0.2...3).contains(scale), (-180...180).contains(rotationDeg),
-              (0.2...DrawingLimits.maxDrawDuration).contains(drawDuration),
+              (DrawingLimits.minDuration...DrawingLimits.maxDrawDuration).contains(drawDuration),
               drawDuration <= end - start + 1e-6,
               (1...DrawingLimits.maxStrokesPerDrawing).contains(strokes.count),
               strokes.reduce(0, { $0 + $1.points.count }) <= DrawingLimits.maxPointsPerDrawing
