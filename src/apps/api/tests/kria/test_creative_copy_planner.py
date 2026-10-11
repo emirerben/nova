@@ -137,7 +137,7 @@ def _planned_strategy() -> PlannedKriaTurn:
 
 @pytest.mark.asyncio
 async def test_gate_retains_approved_text_without_generic_choice_answers(monkeypatch) -> None:
-    snapshot = {"clip_assignments": [{"media_id": "clip-1", "kind": "video"}]}
+    snapshot = {"clip_assignments": [{"media_id": "clip-1", "kind": "video", "duration_s": 3}]}
     digest = media_digest(snapshot)
     planned = replace(
         _planned_strategy(),
@@ -164,7 +164,7 @@ async def test_gate_retains_approved_text_without_generic_choice_answers(monkeyp
 
 @pytest.mark.asyncio
 async def test_gate_retains_cancelled_copy_target_as_omitted(monkeypatch) -> None:
-    snapshot = {"clip_assignments": [{"media_id": "clip-1", "kind": "video"}]}
+    snapshot = {"clip_assignments": [{"media_id": "clip-1", "kind": "video", "duration_s": 3}]}
     digest = media_digest(snapshot)
     planned = replace(
         _planned_strategy(),

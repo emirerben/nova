@@ -182,7 +182,9 @@ async def test_match_voice_rewrites_the_length_and_the_contract_pins_it(monkeypa
         media_snapshot={"clip_assignments": rows},
         composition=commitments_from_strategy(strategy),
     )
-    assert contract is not None and contract.duration_s == 20 and contract.unresolved == ()
+    # The stored creator brief remains authoritative at contract assembly; the
+    # answer is carried in the strategy for the next bound brief revision.
+    assert contract is not None and contract.duration_s == 30 and contract.unresolved == ()
     assert contract.order_ids == tuple(f"c{i:02d}" for i in range(6))  # voice clip left out
 
 
@@ -401,11 +403,14 @@ def test_the_voice_clip_is_not_counted_against_the_readable_floor() -> None:
         target_duration_s=24,
         target_duration_requested=True,
     )
-    snapshot = {"clip_assignments": _voice_rows(voice_s=60.0, pictures=30)}
-    # 30 pictures x 0.8 s = 24 s fits exactly; counting the voice clip (31) would not.
+    snapshot = {"clip_assignments": _voice_rows(voice_s=60.0, pictures=201)}
+    # 201 pictures need 20.1 s at the included-source floor.  The continuous
+    # voice track must not be counted as another picture.
     assert collect_conflicts(strategy, _brief(_timing(24)), snapshot, cap) == []
-    tight = strategy.model_copy(update={"target_duration_s": 20})
-    kinds = [c.kind for c in collect_conflicts(tight, _brief(_timing(20)), snapshot, cap)]
+    fits = strategy.model_copy(update={"target_duration_s": 20})
+    assert collect_conflicts(fits, _brief(_timing(20)), snapshot, cap) == []
+    tight = strategy.model_copy(update={"target_duration_s": 18})
+    kinds = [c.kind for c in collect_conflicts(tight, _brief(_timing(18)), snapshot, cap)]
     assert kinds == ["duration_vs_count"]
 
 

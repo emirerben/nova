@@ -179,6 +179,7 @@ from app.schemas.slide_post import (
     bump_slide_post_version,
     canonicalize_slide_post_brief_binding,
     merge_legacy_text_edits,
+    merge_stored_framing,
     parse_slide_post,
 )
 from app.services.ai_usage_headers import paid_call_headers
@@ -4616,6 +4617,11 @@ async def put_slide_post_draft(
     try:
         # Old clients omit `texts`; keep the stored rich text (KRI-299).
         body.slides = merge_legacy_text_edits(current, body.slides)
+        # Old clients/web omit `framing`; keep the stored crop (KRI-44). While
+        # SLIDE_POST_FRAMING_ENABLED is off, incoming framing is ignored.
+        body.slides = merge_stored_framing(
+            current, body.slides, accept_incoming=settings.slide_post_framing_enabled
+        )
         if current is None:
             new_draft = SlidePostDraft(
                 platform_profile=platform_profile,
@@ -5027,6 +5033,9 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         return False
     if not isinstance(validation, dict) or validation.get("errors"):
         return False
+    from app.agents._schemas.edit_format import (  # noqa: PLC0415
+        SLIDES_FRAMING_RENDERER_VERSION,
+    )
     from app.pipeline.slide_post.build import (  # noqa: PLC0415
         SLIDE_IMAGE_NORMALIZER_VERSION,
         SLIDE_WATERMARK_VERSION,
@@ -5036,6 +5045,12 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         return False  # rendered before the current image decode recipe: re-render
     if slide_post.get("watermark_version") != SLIDE_WATERMARK_VERSION:
         return False  # rendered before the current watermark: re-render
+    if any(ref.edits is not None and ref.edits.framing is not None for ref in draft.slides):
+        # A worker older than the framing renderer drops crop/landscape silently,
+        # so its output must never read as the current export (KRI-44).
+        stamped = slide_post.get("renderer_version")
+        if not isinstance(stamped, int) or stamped < SLIDES_FRAMING_RENDERER_VERSION:
+            return False
     expected_ids = [str(ref.asset_id) for ref in draft.slides]
     rendered_ids = [str(row.get("asset_id")) for row in rendered if isinstance(row, dict)]
     if len(rendered) != len(expected_ids) or len(rendered_ids) != len(expected_ids):

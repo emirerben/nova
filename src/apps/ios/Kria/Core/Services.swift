@@ -114,7 +114,7 @@ protocol SlidePostProposalClient: Sendable {
     func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
 }
 
-protocol KriaAPIClient: SlidePostProposalClient, Sendable {
+protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
     func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse
     func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse
@@ -297,6 +297,7 @@ extension KriaAPIClient {
     func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity) async throws -> DeviceRenderRetryAck { throw APIError.unsupported }
 
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
+    func setSongRange(threadID: UUID, range: SongFilmingRange?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
     func deleteProject(_ project: ProjectSummary) async throws { throw APIError.unsupported }
 
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted {
@@ -1017,6 +1018,16 @@ struct KriaAPI: KriaAPIClient {
         self.refreshCoordinator = .shared
         _ = Self.checkedEditorOperationIDs
     }
+    /// KRI-580: `PUT creation-threads/{id}/song-range`. A nil range clears it (both ends null = the whole song).
+    func setSongRange(threadID: UUID, range: SongFilmingRange?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
+        let body: [String: JSONValue] = [
+            "start_s": range.map { .number($0.start) } ?? .null,
+            "end_s": range.map { .number($0.end) } ?? .null,
+            "client_event_id": .string(clientEventID),
+            "expected_revision": .number(Double(expectedRevision)),
+        ]
+        return try await request(path: "creation-threads/\(threadID.uuidString)/song-range", method: "PUT", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
+    }
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread {
         let body: [String: JSONValue] = ["title": .string(title), "expected_revision": .number(Double(project.serverRevision)), "client_event_id": .string(clientEventID)]
         return try await request(path: "creation-threads/\(project.id.uuidString)", method: "PATCH", bodyData: JSONEncoder().encode(body), decode: CreationThread.self)
@@ -1341,7 +1352,8 @@ struct KriaAPI: KriaAPIClient {
             #if DEBUG
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
-            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data), retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)))
+            let problem = Self.decodeProblem(from: data)
+            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data), retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init), code: problem?.code, problemMessage: problem?.message))
         }
         if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return empty }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return try decoder.decode(T.self, from: data)
@@ -1770,7 +1782,13 @@ struct RequestFailureDetail: Equatable, Sendable, CustomStringConvertible {
     let message: String?
     /// Seconds from the response's `Retry-After` header (429/503), when it was a plain number.
     let retryAfter: TimeInterval?
-    init(_ message: String?, retryAfter: TimeInterval? = nil) {
+    /// The runtime-v2 problem envelope's `code` and `message` (`{"problem": {...}}`), when the route sent that
+    /// instead of a `detail` string. Kept apart from `message` so existing error copy is unchanged.
+    let code: String?
+    let problemMessage: String?
+    init(_ message: String?, retryAfter: TimeInterval? = nil, code: String? = nil, problemMessage: String? = nil) {
+        self.code = code
+        self.problemMessage = problemMessage?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.message = trimmed?.isEmpty == false ? trimmed : nil
         self.retryAfter = retryAfter.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }

@@ -243,8 +243,8 @@ def _timing_update(seconds: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------------------------
 
 
-async def test_v44_stated_8s_with_all_12_clips_asks_duration_vs_count(monkeypatch):
-    """Before-picture (v44): timing + select recorded, a plain montage (no archetype): asks."""
+async def test_v44_stated_8s_with_all_12_clips_fits_included_source_floor(monkeypatch):
+    """The recording remains a valid plain montage at the 100 ms included-source floor."""
     cassette, raw = _raw("a_v44")
     kinds = {u["kind"] for u in raw["brief_updates"]}
     assert {"timing", "select"} <= kinds
@@ -255,8 +255,7 @@ async def test_v44_stated_8s_with_all_12_clips_asks_duration_vs_count(monkeypatc
 
     gated = await _gate_turn(monkeypatch, cassette, raw_output=raw, resolved=resolved)
 
-    question = _assert_asks(gated, "duration_vs_count")
-    assert {o["key"] for o in question["options"]} == {"extend", "fewer"}
+    _assert_silent(gated)
 
 
 async def test_no_include_intent_keeps_duration_gate_silent_when_a_select_is_live(monkeypatch):
@@ -286,17 +285,15 @@ async def test_v45_8s_brief_is_exempted_by_the_models_own_archetype(monkeypatch)
     _assert_silent(gated)
 
 
-async def test_v45_8s_brief_asks_once_the_archetype_exemption_is_removed(monkeypatch):
-    """The same v45 recording with only the archetype cleared (a synthetic edit): the timing
-    requirement the v45 prompt now guarantees is, on its own, enough for the gate to ask."""
+async def test_v45_8s_brief_fits_once_the_archetype_exemption_is_removed(monkeypatch):
+    """Clearing the archetype leaves a valid 12-clip, 8-second edit at the new floor."""
     cassette, raw = _raw("a")
     raw = json.loads(json.dumps(raw))
     raw["action"]["strategy"]["archetype"] = None
 
     gated = await _gate_turn(monkeypatch, cassette, raw_output=raw, resolved=[])
 
-    question = _assert_asks(gated, "duration_vs_count")
-    assert {o["key"] for o in question["options"]} == {"extend", "fewer"}
+    _assert_silent(gated)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -322,8 +319,8 @@ async def test_stated_60s_reaches_the_brief_and_stays_silent(monkeypatch):
     _assert_silent(gated)
 
 
-async def test_30_clips_in_15s_synthetic_brief_asks(monkeypatch):
-    """What a lost/limited timing requirement would have hidden: 30 clips in 15 s must ask
+async def test_41_clips_in_3s_synthetic_brief_asks(monkeypatch):
+    """What a lost/limited timing requirement would have hidden: 41 clips in 3 s must ask
     (a plain montage: the recorded archetype exemption is cleared, see case A)."""
     cassette, raw = _raw("a")
     media = [
@@ -331,13 +328,13 @@ async def test_30_clips_in_15s_synthetic_brief_asks(monkeypatch):
             "media_id": f"clip-{i}",
             "kind": "video",
             "duration_s": 6.0,
-            "facts": [{"kind": "capture_time", "value": f"2026-09-20T07:{i:02d}:00Z"}],
+            "facts": [{"kind": "capture_time", "value": f"2026-09-20T07:{i % 60:02d}:00Z"}],
         }
-        for i in range(1, 31)
+        for i in range(1, 42)
     ]
     raw = json.loads(json.dumps(raw))
-    raw["brief_updates"] = [_timing_update(15)]
-    raw["action"]["strategy"]["target_duration_s"] = 15
+    raw["brief_updates"] = [_timing_update(3)]
+    raw["action"]["strategy"]["target_duration_s"] = 3
     raw["action"]["strategy"]["archetype"] = None
     ids = [m["media_id"] for m in media]
 

@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.221.0] - 2026-10-11
+
+### Changed
+- feat(creator): unify length ownership, selection, and safe enforcement (KRI-492) (#1540) <!-- release-pr: 1540 -->
+
+## [0.78.220.0] - 2026-10-11
+
+### Changed
+- feat(ios): shift lyric captions in the live preview when the song start changes (KRI-576) (#1542) <!-- release-pr: 1542 -->
+
+## [0.78.219.0] - 2026-10-11
+
+### Changed
+- feat(captions): pin the lyric-caption decision at plan time (KRI-578) (#1541) <!-- release-pr: 1541 -->
+
+## [0.78.218.0] - 2026-10-11
+
+### Changed
+- feat(kria): tell us which part of the song you filmed in; takes match only there (KRI-580) (#1538) <!-- release-pr: 1538 -->
+
+## [0.78.217.0] - 2026-10-11
+
+### Changed
+- feat: crop for photos, clips and slides, plus vertical/landscape slides (KRI-44) (#1532) <!-- release-pr: 1532 -->
+
+## [0.78.216.0] - 2026-10-11
+
+### Changed
+- feat(media): add creator-owned library contracts and retention (KRI-384) (#1534) <!-- release-pr: 1534 -->
+
+## [0.78.215.0] - 2026-10-11
+
+### Changed
+- fix(kria): a lip-sync arrangement no longer fails on an invented 108 s or on sub-second holes (KRI-579) (#1537) <!-- release-pr: 1537 -->
+
+## [0.78.214.0] - 2026-10-11
+
+### Changed
+- fix(creator): pin described-shot labels from resolved label intents (KRI-568) (#1531) <!-- release-pr: 1531 -->
+
+## [0.78.213.0] - 2026-10-11
+
+### Changed
+- fix(api): let native slide-post saves through the iPhone-only fence (KRI-581) (#1536) <!-- release-pr: 1536 -->
+
 ## [0.78.212.0] - 2026-10-11
 
 ### Changed

@@ -2,6 +2,37 @@
   "schema_version": 1,
   "journeys": [
     {
+      "id": "kri-492-length-ownership",
+      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py",
+      "paths": [
+        "src/apps/api/app/services/length_policy.py",
+        "src/apps/api/app/services/length_policy_state.py",
+        "src/apps/api/app/services/contract_check_rollout.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/cloud_render_contract.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/app/services/phone_editor.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/app/services/device_render.py",
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/routes/creator_agent.py",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/_schemas/creator_agent.py",
+        "src/apps/api/app/kria/brief_binding.py",
+        "src/apps/api/app/kria/drafts.py",
+        "src/apps/api/app/pipeline/best_parts.py",
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/tests/services/test_length_policy_state.py",
+        "src/apps/api/tests/fixtures/incidents/clarify-thirty-clips-in-fifteen-seconds.json",
+        "scripts/ci/replay-creator-contracts.py",
+        "scripts/ci/check-length-promotion.py",
+        "scripts/ci/creator-contract-replay.schema.json",
+        "scripts/ci/fixtures/kri492-creator-contracts.json",
+        "scripts/ios/kri-492-length-e2e.py",
+        "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift"
+      ]
+    },
+    {
       "id": "kri-524-creation",
       "fixture_generator": "scripts/ios/kri-524-creation-e2e.py",
       "xctest": "KriaTests/DeviceMontageRenderE2ETests/testCapturedCreationWordsRetimedThenExportOnTheIPhone",
@@ -39,7 +70,10 @@
         "src/apps/api/app/pipeline/guided_caption_presentation.py",
         "src/apps/api/app/pipeline/unified_montage.py",
         "src/apps/api/app/schemas/edit_proposal.py",
-        "src/apps/api/tests/evals/request_following/test_creation_composition.py"
+        "src/apps/api/tests/evals/request_following/test_creation_composition.py",
+        "src/apps/api/app/pipeline/image_crop.py",
+        "src/apps/api/app/pipeline/phone_voiceover_cut.py",
+        "src/apps/api/prompts/edit_copilot_ops/timeline.txt"
       ]
     },
     {
@@ -93,9 +127,11 @@
     },
     {
       "id": "slide-post-binding-recovery",
-      "api_tests": "tests/routes/test_slide_post_native_routes.py",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/pipeline/test_slide_post_framing.py",
       "xctests": [
-        "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave"
+        "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave",
+        "KriaTests/SlidePostFramingTests/testEncodingAlwaysWritesTheFramingKeySoAClearIsNeverMistakenForAnOlderApp",
+        "KriaTests/SlidePostFramingTests/testPlacementMatchesTheSharedParityFixtureWithinAHundredthOfAPixel"
       ],
       "paths": [
         "src/apps/api/app/pipeline/slide_post/build.py",
@@ -104,7 +140,14 @@
         "src/apps/api/tests/routes/test_slide_post_native_routes.py",
         "src/apps/ios/Kria/Core/SlidePost.swift",
         "src/apps/ios/Tests/KriaTests/SlidePostTests.swift",
-        "src/apps/ios/Tests/Fixtures/SlidePostBindingRoundTrip.json"
+        "src/apps/ios/Tests/Fixtures/SlidePostBindingRoundTrip.json",
+        "src/apps/api/app/kria/framing.py",
+        "src/apps/api/tests/pipeline/test_slide_post_framing.py",
+        "src/apps/ios/Kria/Core/SlidePostFraming.swift",
+        "src/apps/ios/Tests/KriaTests/SlidePostFramingTests.swift",
+        "tests/fixtures/slide-framing-parity/v1.json",
+        "src/apps/api/app/pipeline/slide_post/profiles.py",
+        "src/apps/api/prompts/edit_copilot_ops/slides.txt"
       ]
     },
     {

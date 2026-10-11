@@ -542,6 +542,95 @@ import KriaMediaEngine
                        "the projection is render-only; the document keeps one element per word")
     }
 
+    // MARK: KRI-576 lyric captions follow the song window in the preview
+
+    /// Five lyric words (0.0 ... 1.8 s) plus one ordinary overlay, over a 4 s clip; returns what the compiler drew
+    /// as (id -> (start, end)) so a test reads the rendered intervals, never the shift's own arithmetic.
+    private func compileLyrics(shift: NativeSongCaptionShift?, removedIDs: Set<String> = [],
+                               sentenceStyle: Bool = false) throws -> (layers: [String: (start: Double, end: Double)], document: EditorDocument) {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 4,
+            trimIn: 0, trimOut: 4, sourceDuration: 4, slotID: "slot")
+        let words: [(String, Double)] = [("hello", 0.0), ("darkness", 0.4), ("my", 1.0), ("old", 1.4), ("friend", 1.8)]
+        var elements: [EditorTextElement] = words.enumerated().map { offset, word in
+            var raw: [String: JSONValue] = ["source_params": .object([
+                "source": .string("caption_cue"), "origin": .string("song"), "key": .string("\(offset)")]),
+                "word_timings": .array([.object(["text": .string(word.0), "start_s": .number(word.1), "end_s": .number(word.1 + 0.3)])])]
+            if removedIDs.contains("song-caption-\(offset)") { raw["removed"] = .bool(true) }
+            return EditorTextElement(id: "song-caption-\(offset)", text: word.0, startS: word.1, endS: word.1 + 0.3,
+                                     role: "generative_sequence", raw: raw)
+        }
+        elements.append(EditorTextElement(id: "title", text: "My trip", startS: 0.2, endS: 1.2, role: "generative_sequence"))
+        let document = EditorDocument(textElements: elements, captionMeta: sentenceStyle ? ["style": .string("sentence")] : [:])
+        let items = elements.map {
+            NativeEditorTimelineItem(selection: .init(kind: .text, id: $0.id), start: $0.startS, end: $0.endS)
+        }
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let recipe = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source],
+                                          songCaptionShift: shift).recipe
+        return (Dictionary(uniqueKeysWithValues: recipe.textLayers.map { ($0.id, (start: $0.start, end: $0.end)) }), document)
+    }
+
+    func testMovingTheSongStartLaterShiftsLyricRowsEarlierAndLeavesTheDocumentAlone() throws {
+        let baseline = try compileLyrics(shift: nil)
+        let moved = try compileLyrics(shift: .init(shiftS: 0.5, windowLengthS: 4, songRemoved: false))
+        XCTAssertEqual(moved.layers["song-caption-2"]?.start ?? -1, 0.5, accuracy: 0.001)
+        XCTAssertEqual(moved.layers["song-caption-3"]?.start ?? -1, 0.9, accuracy: 0.001)
+        XCTAssertEqual(moved.layers["song-caption-4"]?.start ?? -1, 1.3, accuracy: 0.001)
+        XCTAssertEqual(moved.layers["song-caption-4"]?.end ?? -1, 1.6, accuracy: 0.001)
+        XCTAssertEqual(moved.document, baseline.document, "the shift is a render projection, the document is untouched")
+        XCTAssertEqual(moved.document.textElements.first?.startS, 0)
+    }
+
+    func testLyricRowsOutsideTheNewWindowAreHiddenWithoutFailingTheCompile() throws {
+        // Start moved 1.2 s later: hello/darkness/my now begin before the window and disappear.
+        let later = try compileLyrics(shift: .init(shiftS: 1.2, windowLengthS: 4, songRemoved: false))
+        XCTAssertNil(later.layers["song-caption-0"]); XCTAssertNil(later.layers["song-caption-1"])
+        XCTAssertNil(later.layers["song-caption-2"])
+        XCTAssertEqual(later.layers["song-caption-3"]?.start ?? -1, 0.2, accuracy: 0.001)
+        XCTAssertEqual(later.layers["song-caption-4"]?.start ?? -1, 0.6, accuracy: 0.001)
+        // A 1.0 s window: words starting within 0.2 s of its end (or after it) are hidden, nothing throws on a
+        // reversed interval.
+        let shorter = try compileLyrics(shift: .init(shiftS: 0.4, windowLengthS: 1.0, songRemoved: false))
+        XCTAssertNotNil(shorter.layers["song-caption-1"], "starts at 0.0")
+        XCTAssertNotNil(shorter.layers["song-caption-2"], "starts at 0.6")
+        XCTAssertNil(shorter.layers["song-caption-3"], "starts at 1.0 >= 1.0 - 0.2")
+        XCTAssertNil(shorter.layers["song-caption-4"])
+        // Moving the start EARLIER (negative shift) pushes rows later; the tail ones leave the window.
+        let earlier = try compileLyrics(shift: .init(shiftS: -1.0, windowLengthS: 2.5, songRemoved: false))
+        XCTAssertEqual(earlier.layers["song-caption-0"]?.start ?? -1, 1.0, accuracy: 0.001)
+        XCTAssertNil(earlier.layers["song-caption-4"], "2.8 is past the 2.5 s window")
+    }
+
+    func testRemovingTheSongHidesEveryLyricRowButNotOtherText() throws {
+        let removed = try compileLyrics(shift: .init(shiftS: 0, windowLengthS: 0, songRemoved: true))
+        XCTAssertTrue(removed.layers.keys.filter { $0.hasPrefix("song-caption-") }.isEmpty)
+        XCTAssertNotNil(removed.layers["title"])
+    }
+
+    func testNilLyricShiftRendersExactlyWhatTheDocumentHolds() throws {
+        let plain = try compileLyrics(shift: nil)
+        XCTAssertEqual(plain.layers["song-caption-2"]?.start ?? -1, 1.0, accuracy: 0.001)
+        XCTAssertEqual(plain.layers.keys.sorted(), ["song-caption-0", "song-caption-1", "song-caption-2", "song-caption-3", "song-caption-4", "title"])
+    }
+
+    func testLyricShiftNeverMovesNonSongRowsOrBringsBackDeletedWords() throws {
+        let shifted = try compileLyrics(shift: .init(shiftS: 0.5, windowLengthS: 4, songRemoved: false),
+                                        removedIDs: ["song-caption-3"])
+        XCTAssertEqual(shifted.layers["title"]?.start ?? -1, 0.2, accuracy: 0.001)
+        XCTAssertEqual(shifted.layers["title"]?.end ?? -1, 1.2, accuracy: 0.001)
+        XCTAssertNil(shifted.layers["song-caption-3"], "a word the creator deleted stays deleted")
+        XCTAssertNotNil(shifted.layers["song-caption-4"])
+    }
+
+    func testLyricShiftFollowsSentenceProjection() throws {
+        // Sentence style joins words into lines; the line ends at the next word's start, which is the shifted one.
+        let moved = try compileLyrics(shift: .init(shiftS: 0.5, windowLengthS: 4, songRemoved: false), sentenceStyle: true)
+        XCTAssertEqual(moved.layers["song-caption-2"]?.start ?? -1, 0.5, accuracy: 0.001)
+        XCTAssertEqual(moved.layers["song-caption-2"]?.end ?? -1, 0.9, accuracy: 0.001, "held to the next shifted word")
+    }
+
     // KRI-110: every font the Captions Style tab offers must resolve to its
     // registry file for a caption-tagged text element, the same file the
     // backend's registry names — "Inter" is deliberately the guided caption's

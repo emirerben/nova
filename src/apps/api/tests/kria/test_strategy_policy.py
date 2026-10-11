@@ -303,8 +303,8 @@ def test_talking_length_receipt_says_the_whole_take_is_kept() -> None:
         req, PlanFacts(clip_ids=(CLIPS[0],), duration_s=20.0, edit_format="subtitled")
     )
 
-    assert receipt.status == "partial"
-    assert "whole take" in (receipt.reason or "")
+    assert receipt.status == "met"
+    assert receipt.reason is None
 
 
 def test_receipts_reply_keeps_policy_notices_when_it_replaces_the_summary() -> None:
@@ -326,8 +326,8 @@ def test_receipts_reply_keeps_policy_notices_when_it_replaces_the_summary() -> N
         notices=(CAPTIONS_KEPT_NOTICE,),
     )
 
-    assert reply.startswith("Not everything you asked for made it in:")
-    assert reply.endswith(CAPTIONS_KEPT_NOTICE)
+    assert reply.startswith("Here is your edit. ")
+    assert CAPTIONS_KEPT_NOTICE in reply
 
 
 # --- KRI-519: photos timed to a phone voiceover ------------------------------

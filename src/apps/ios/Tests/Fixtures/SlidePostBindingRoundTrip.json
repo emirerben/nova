@@ -21,6 +21,32 @@
           }
         ]
       }
+    },
+    {
+      "id": "slide-2",
+      "asset_id": "44444444-4444-4444-4444-444444444444",
+      "kind": "image",
+      "edits": {
+        "look_preset": "none",
+        "framing": null
+      }
+    },
+    {
+      "id": "slide-3",
+      "asset_id": "55555555-5555-5555-5555-555555555555",
+      "kind": "image",
+      "edits": {
+        "look_preset": "none",
+        "framing": {
+          "orientation": "landscape",
+          "source_crop": {
+            "x": 0.1,
+            "y": 0.0,
+            "width": 0.8,
+            "height": 1.0
+          }
+        }
+      }
     }
   ],
   "cover_index": 0,

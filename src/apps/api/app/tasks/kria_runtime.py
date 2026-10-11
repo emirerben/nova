@@ -120,6 +120,7 @@ from app.services.kria_editor_ops import (
     resolve_editor_base,
 )
 from app.services.kria_editor_ops_diff import describe_diff
+from app.services.song_order import model_text
 from app.services.thought_summaries import (
     ThoughtSummaryPublisher,
     bind_thought_publisher,
@@ -1583,6 +1584,11 @@ def _owns_turn_lease(
     )
 
 
+def _model_message(source: Any) -> str:
+    """The creator's words as the planner and brief extractor should read them (KRI-575)."""
+    return model_text(getattr(source, "payload", None), getattr(source, "content", None))
+
+
 def _answers_clip_question(source: Any) -> bool:
     payload = getattr(source, "payload", None)
     if not isinstance(payload, dict):
@@ -1668,7 +1674,7 @@ def _claim(
             claimed_snapshot["live_scope"] = live_scope
         return (
             claimed_snapshot,
-            str(source.content or ""),
+            _model_message(source),
             int(turn.lease_epoch),
             int(thread.revision),
             _stored_editor_state(turn),
@@ -2371,7 +2377,7 @@ def extract_kria_brief(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         source = db.get(CreationThreadEvent, turn.source_event_id)
         if thread is None or source is None:
             return {"turn_id": turn_id, "status": "ignored"}
-        snapshot, message = _snapshot(thread), str(source.content or "")
+        snapshot, message = _snapshot(thread), _model_message(source)
     if not snapshot.get("item_id"):
         return {"turn_id": turn_id, "status": "ignored"}
     try:

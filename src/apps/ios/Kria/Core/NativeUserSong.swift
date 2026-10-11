@@ -129,6 +129,108 @@ struct NativeUserSong: Equatable, Sendable {
     }
 }
 
+extension NativeUserSong {
+    /// The latest start: it must leave `minPlayableS` of song. Nil when the song length is unknown.
+    static func maxStart(for song: NativeUserSong) -> Double? {
+        guard let songDuration = song.durationS else { return nil }
+        return max(0, songDuration - minPlayableS)
+    }
+
+    /// A pending start re-clamped to the song as it is NOW: it must leave a second of song, and (KRI-561) a
+    /// second before the creator's end, so the server never refuses it.
+    static func reclamped(_ state: EditorUserSongState, base song: NativeUserSong,
+                          acknowledged: EditorUserSongState?) -> EditorUserSongState {
+        var state = state
+        guard !state.removed, var start = state.windowStartS else { return state }
+        if let limit = maxStart(for: song) { start = min(start, limit) }
+        let context = EditorUserSongState.merged(acknowledged, state) ?? state
+        if let end = song.creatorEnd(applying: context) { start = min(start, max(0, end - minPlayableS)) }
+        state.windowStartS = start
+        return state
+    }
+
+    /// The song as the editor shows it, from explicit inputs (KRI-576: the session and the caption shift share
+    /// this one rule). Saved values (`base` plus the `acknowledged` edits) plus the unsaved `draft`; a lip-sync
+    /// window follows the singer by `lipsyncShift`; the window follows the video as it is now (`videoLength`).
+    static func effective(base: NativeUserSong, acknowledged: EditorUserSongState?, draft: EditorUserSongState?,
+                          lipsyncShift: Double, videoLength: Double) -> NativeUserSong? {
+        let state = EditorUserSongState.merged(acknowledged, draft)
+            .map { reclamped($0, base: base, acknowledged: acknowledged) }
+        let anchored = base.mode == .lipsync ? base.shifted(by: lipsyncShift) : base
+        return anchored.applying(state, videoLength: videoLength)
+    }
+}
+
+/// KRI-576: the lyric caption rows (`source_params.origin == "song"`, ids `song-caption-N`) are timed against the
+/// song window the server last projected them for. While the creator moves the start or trims a lip-sync take
+/// the live preview re-times them to the window as it is NOW, on a COPY handed to the render compiler. The
+/// document is never touched, so nothing goes dirty and Save is unaffected; the server re-projects on Save.
+///
+/// Mirrors `song_captions.window_words` for rows the document already holds: a row moves by `-shiftS`, a row
+/// that leaves `[0, windowLengthS - tailCutoffS)` is hidden. KNOWN LIMIT: the preview can shift and hide rows,
+/// not add them. Words the new window newly reaches (no row yet, or a `window_hidden` row with stale times)
+/// only appear after Save.
+struct NativeSongCaptionShift: Equatable, Sendable {
+    /// New window start minus the start the rows were timed against, in seconds.
+    let shiftS: Double
+    /// The window length now (the video, capped by what is left of the song).
+    let windowLengthS: Double
+    /// The creator removed the song: every lyric row is hidden.
+    let songRemoved: Bool
+
+    /// Server constants (`song_captions._TAIL_CUTOFF_S`, `_MIN_WORD_S`).
+    static let tailCutoffS = 0.2
+    static let minWordS = 0.12
+    static let idPrefix = "song-caption-"
+    /// Smaller than this is rounding noise, not a move.
+    static let tolerance = 0.0005
+
+    static func isSongCaption(_ element: EditorTextElement) -> Bool {
+        if element.raw["source_params"]?.objectValue?["origin"] == .string("song") { return true }
+        return element.id.hasPrefix(idPrefix)
+    }
+
+    func apply(to elements: [EditorTextElement]) -> [EditorTextElement] {
+        elements.map { Self.isSongCaption($0) ? shifted($0) : $0 }
+    }
+
+    private func rounded(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
+
+    private func hidden(_ element: EditorTextElement) -> EditorTextElement {
+        var copy = element
+        copy.raw["removed"] = .bool(true)
+        return copy
+    }
+
+    private func shifted(_ element: EditorTextElement) -> EditorTextElement {
+        // A row the creator (or an earlier window) already removed stays removed.
+        if element.raw["removed"] == .bool(true) { return element }
+        if songRemoved || windowLengthS <= 0 { return hidden(element) }
+        let length = rounded(windowLengthS)
+        guard element.startS - shiftS >= -1e-3 else { return hidden(element) }
+        let start = max(0, rounded(element.startS - shiftS))
+        if start >= length - Self.tailCutoffS { return hidden(element) }
+        var end = rounded(min(element.endS - shiftS, length))
+        if end - start < Self.minWordS { end = rounded(min(start + Self.minWordS, length)) }
+        if end <= start { return hidden(element) }
+        var copy = element
+        copy.startS = start
+        copy.endS = end
+        if copy.raw["start_s"] != nil { copy.raw["start_s"] = .number(start) }
+        if copy.raw["end_s"] != nil { copy.raw["end_s"] = .number(end) }
+        if let timings = copy.raw["word_timings"]?.arrayValue {
+            copy.raw["word_timings"] = .array(timings.map { timing in
+                guard var row = timing.objectValue,
+                      let from = row["start_s"]?.numberValue, let to = row["end_s"]?.numberValue else { return timing }
+                row["start_s"] = .number(min(max(0, rounded(from - shiftS)), length))
+                row["end_s"] = .number(min(max(0, rounded(to - shiftS)), length))
+                return .object(row)
+            })
+        }
+        return copy
+    }
+}
+
 /// Keeps a lip-sync song on the singer when the creator trims the head of the first cut, or trims the
 /// song itself (KRI-561: the video is cut to the chosen song range).
 ///

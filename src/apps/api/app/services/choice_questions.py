@@ -498,6 +498,9 @@ CONFLICT_TITLE_TEXT = "title_text"
 # KRI-479 (voice behind footage; only for a `voice_mode == "continuous"` plan).
 CONFLICT_VOICE_VS_DURATION = "voice_vs_duration"
 CONFLICT_WHICH_VOICE = "which_voice"
+CONFLICT_LENGTH_VS_NATURAL = "length_vs_natural"
+CONFLICT_SOURCE_COVERAGE = "source_coverage"
+OPT_UPDATE_FOOTAGE = "update_footage"
 # Fixed priority: an answer can change a later detector's inputs, so exactly one question
 # is asked per turn, in this order.
 CONFLICT_PRIORITY = (
@@ -505,8 +508,10 @@ CONFLICT_PRIORITY = (
     CONFLICT_WHICH_VOICE,
     CONFLICT_TEXT_PLACEMENT,
     CONFLICT_TITLE_TEXT,
+    CONFLICT_SOURCE_COVERAGE,
     CONFLICT_DURATION_VS_COUNT,
     CONFLICT_VOICE_VS_DURATION,
+    CONFLICT_LENGTH_VS_NATURAL,
 )
 
 OPT_EXTEND = "extend"
@@ -517,6 +522,8 @@ OPT_OWN_SEQUENCE = "own_sequence"
 OPT_NO_TITLE = "no_title"
 OPT_MATCH_VOICE = "match_voice"
 OPT_SILENT_TAIL = "silent_tail"
+OPT_ACCEPT_NATURAL = "accept_natural"
+OPT_TRIM_TO_REQUESTED = "trim_to_requested"
 
 # What an "order I filmed them" requirement means to the contract (brief order keys).
 ATTACHMENT_ORDER_KEY = "attachment"
@@ -657,18 +664,20 @@ def _montage_exempt(strategy: Mapping[str, Any], cap: ChoiceCapability) -> bool:
     length), and a cadence or exact photo/video timing is the creator's own cut length.
     """
 
+    from app.services.length_policy import natural_length_owner  # noqa: PLC0415
+
+    owner = natural_length_owner(strategy)
+    window_owned = owner in {"footage", "voiceover"} or (
+        owner == "song" and strategy.get("audio_strategy") == "licensed_music"
+    )
     return bool(
-        strategy.get("edit_format", "montage") != "montage"
+        (not window_owned and _continuous_voice(strategy, cap) is None)
         or strategy.get("montage_cadence")
         or strategy.get("mixed_media_timing")
         # A continuous voice (KRI-479) is composed by the voice-behind-footage composer, which
         # cuts the picture clips to the length: unlike a camera-audio excerpt montage, the
         # clips-per-length question applies to it.
         or (strategy.get("montage_audio") and _continuous_voice(strategy, cap) is None)
-        or strategy.get("archetype")
-        or strategy.get("execution_contract")
-        or strategy.get("audio_strategy") in ("voiceover", "user_song")
-        or strategy.get("song_sync")
     )
 
 
@@ -745,12 +754,12 @@ def _duration_vs_count(
         return None
     floor_s = cap.min_readable_shot_s
     if floor_s is None:
-        from app.pipeline.unified_montage import MIN_READABLE_SHOT_S  # noqa: PLC0415
+        from app.pipeline.best_parts import MIN_INCLUDED_PART_S  # noqa: PLC0415
 
-        floor_s = MIN_READABLE_SHOT_S
+        floor_s = MIN_INCLUDED_PART_S
     floor_frames = max(1, round(floor_s * _MAX_FIT_FRAMES_FPS))
     count = len(clip_ids)
-    if count * floor_frames <= round(seconds * _MAX_FIT_FRAMES_FPS):
+    if count * floor_frames <= round(seconds * 1.10 * _MAX_FIT_FRAMES_FPS):
         return None
     needed = math.ceil(count * floor_frames / _MAX_FIT_FRAMES_FPS * 10 - 1e-9) / 10
     can_extend = needed <= cap.max_duration_s
@@ -785,6 +794,7 @@ def _duration_vs_count(
                 "media_scope": "selected",
                 "target_duration_s": _clean_seconds(seconds),
                 "target_duration_requested": True,
+                "creator_duration_s": _clean_seconds(seconds),
             }
         }
     }
@@ -808,6 +818,7 @@ def _duration_vs_count(
             "strategy": {
                 "target_duration_s": _clean_seconds(needed),
                 "target_duration_requested": True,
+                "creator_duration_s": _clean_seconds(needed),
             }
         }
     return UnresolvedChoice(
@@ -1506,7 +1517,11 @@ def _voice_vs_duration(
                 )
             )
             effects[OPT_MATCH_VOICE] = {
-                "strategy": {"target_duration_s": whole, "target_duration_requested": True}
+                "strategy": {
+                    "target_duration_s": whole,
+                    "target_duration_requested": True,
+                    "creator_duration_s": whole,
+                }
             }
         if bounds is None or asked <= bounds[1]:
             options.append(
@@ -1525,6 +1540,7 @@ def _voice_vs_duration(
                 "strategy": {
                     "target_duration_s": _clean_seconds(asked),
                     "target_duration_requested": True,
+                    "creator_duration_s": _clean_seconds(asked),
                 }
             }
         if not options:
@@ -1562,7 +1578,11 @@ def _voice_vs_duration(
                 )
             )
             effects[key] = {
-                "strategy": {"target_duration_s": seconds, "target_duration_requested": True}
+                "strategy": {
+                    "target_duration_s": seconds,
+                    "target_duration_requested": True,
+                    "creator_duration_s": seconds,
+                }
             }
         intro = f"Your voice runs {_clean_seconds(length)} seconds."
         reason = (
@@ -1583,6 +1603,414 @@ def _voice_vs_duration(
         options=tuple(options),
         input_digest=digest,
         effects=effects,
+    )
+
+
+def _snapshot_number(snapshot: Mapping[str, Any] | None, *paths: tuple[str, ...]) -> float | None:
+    """First authoritative positive duration in a snapshot, never strategy data."""
+    for path in paths:
+        value: Any = snapshot
+        for key in path:
+            value = value.get(key) if isinstance(value, Mapping) else None
+        number = _number(value)
+        if number is not None:
+            return number
+    return None
+
+
+def _best_parts_capacity_s(snapshot: Mapping[str, Any] | None) -> float | None:
+    """Return selected footage capacity from the server-produced receipt only."""
+    parts = (snapshot or {}).get("best_parts")
+    if not isinstance(parts, list):
+        return None
+    durations = []
+    for part in parts:
+        if not isinstance(part, Mapping):
+            return None
+        raw_start = part.get("source_start_s")
+        start = 0.0 if raw_start == 0 else _number(raw_start)
+        end = _number(part.get("source_end_s"))
+        if start is None or end is None or end <= start:
+            return None
+        durations.append(end - start)
+    return min(120.0, sum(durations)) if durations else None
+
+
+def _song_alignment_capacity_s(snapshot: Mapping[str, Any] | None, rows: list[Any]) -> float | None:
+    """Return the placed song window when alignment supplies authoritative bounds.
+
+    A full track duration is not the duration of a lip-sync edit.  Prefer explicit
+    placement bounds and support the persisted per-take ``delta_s`` shape by joining
+    each delta to its server-snapshotted source duration.
+    """
+    alignment = (snapshot or {}).get("song_alignment")
+    if not isinstance(alignment, Mapping):
+        return None
+    row_durations = {
+        str(row.get("media_id")): _number(row.get("duration_s"))
+        for row in rows
+        if isinstance(row, Mapping) and row.get("media_id")
+    }
+    placements: list[Mapping[str, Any]] = []
+    for key in ("placements", "segments"):
+        value = alignment.get(key)
+        if isinstance(value, list):
+            placements.extend(item for item in value if isinstance(item, Mapping))
+    takes = alignment.get("takes")
+    if isinstance(takes, Mapping):
+        placements.extend(
+            {**item, "media_id": media_id}
+            for media_id, item in takes.items()
+            if isinstance(item, Mapping)
+        )
+    intervals: list[tuple[float, float]] = []
+    for placement in placements:
+        raw_start = placement.get("start_s")
+        raw_end = placement.get("end_s")
+        start = 0.0 if raw_start == 0 else _number(raw_start)
+        end = _number(raw_end)
+        if start is None:
+            raw_start = placement.get("song_start_s")
+            start = 0.0 if raw_start == 0 else _number(raw_start)
+        if end is None:
+            end = _number(placement.get("song_end_s"))
+        if start is None:
+            raw_delta = placement.get("delta_s")
+            start = 0.0 if raw_delta == 0 else _number(raw_delta)
+        if end is None and start is not None:
+            duration = _number(placement.get("duration_s")) or row_durations.get(
+                str(placement.get("media_id"))
+            )
+            end = start + duration if duration is not None else None
+        if start is not None and end is not None and end > start:
+            intervals.append((start, end))
+    if not intervals:
+        return None
+    # Song placement is one output window, including gaps bridged by B-roll.
+    return max(end for _, end in intervals) - min(start for start, _ in intervals)
+
+
+def _natural_capacity_s(
+    strategy: Mapping[str, Any], rows: list[Any], snapshot: Mapping[str, Any] | None
+) -> tuple[str, float, bool] | None:
+    """Known natural source capacity as ``(owner, seconds, can_trim)``.
+
+    The snapshot is the authority.  Missing source timing intentionally returns
+    None: a question may not invent a recording, song, or selected-footage
+    capacity from a model target.
+    """
+    from app.services.length_policy import natural_length_owner  # noqa: PLC0415
+
+    owner = natural_length_owner(strategy)
+    if owner == "song":
+        section = strategy.get("selected_music_section")
+        if isinstance(section, Mapping) and section.get("status") == "selected":
+            start, end = section.get("start_s"), section.get("end_s")
+            if isinstance(start, (int, float)) and isinstance(end, (int, float)) and end > start:
+                raw_capacity = sum(
+                    _number(row.get("duration_s")) or 0 for row in rows if isinstance(row, Mapping)
+                )
+                return owner, min(end - start, raw_capacity or end - start), True
+        placed_duration = _song_alignment_capacity_s(snapshot, rows) or _snapshot_number(
+            snapshot, ("song_placement", "duration_s")
+        )
+        if strategy.get("song_sync") == "lipsync" and placed_duration is None:
+            # The recording's full length says nothing about the placed takes.
+            # Wait for source-backed alignment instead of offering invented timing.
+            return None
+        duration = placed_duration or _snapshot_number(
+            snapshot,
+            ("user_song", "duration_s"),
+            ("song", "duration_s"),
+            ("song_analysis", "duration_s"),
+            ("song_duration_s",),
+        )
+        return (
+            (owner, duration, bool((snapshot or {}).get("song_trim_supported")))
+            if duration
+            else None
+        )
+    if owner == "voiceover":
+        recording_duration = _snapshot_number(
+            snapshot,
+            ("voiceover", "duration_s"),
+            ("narration", "duration_s"),
+            ("voiceover_duration_s",),
+        )
+        footage_duration = (
+            _snapshot_number(snapshot, ("length_plan", "capacity_raw_s"))
+            or _snapshot_number(snapshot, ("best_parts_capacity_s",))
+            or (_best_parts_capacity_s(snapshot))
+        )
+        if recording_duration is None:
+            return None
+        # Voiceover is the natural clock, but it cannot produce a longer edit than
+        # its already-selected, source-bounded footage.  A shorter footage result is
+        # executable; trimming the recording is deliberately not promised here.
+        duration = (
+            min(recording_duration, footage_duration) if footage_duration else recording_duration
+        )
+        return owner, duration, True
+    if owner == "take":
+        voice_id = _continuous_voice(strategy, ChoiceCapability(voice_route=True))
+        row = next(
+            (r for r in rows if isinstance(r, Mapping) and r.get("media_id") == voice_id), None
+        )
+        if row is None:
+            video_rows = [
+                r for r in rows if isinstance(r, Mapping) and r.get("kind", "video") != "image"
+            ]
+            row = video_rows[0] if len(video_rows) == 1 else None
+        duration = _voice_length_s(row) if isinstance(row, Mapping) else None
+        return (owner, duration, False) if duration else None
+    if owner == "footage":
+        duration = (
+            _snapshot_number(snapshot, ("length_plan", "capacity_raw_s"))
+            or _snapshot_number(snapshot, ("best_parts_capacity_s",))
+            or (_best_parts_capacity_s(snapshot))
+        )
+        if duration is None:
+            return None
+        # Selector capacity has already kept every included source at the
+        # founder-approved 100 ms floor and applied its 120-second cap.
+        return owner, min(120.0, duration), True
+    return None
+
+
+def _length_vs_natural(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    snapshot: Mapping[str, Any] | None,
+) -> UnresolvedChoice | None:
+    durations, requirement_ids, quoted = _requested_durations(brief)
+    if len(set(durations)) != 1 or not durations:
+        return None
+    # The continuous-voice montage already has its own source-aware question
+    # (including the supported silent-tail path). Do not layer a second take
+    # question over it or invalidate its saved answer/digest.
+    if strategy.get("voice_mode") == "continuous":
+        return None
+    natural = _natural_capacity_s(strategy, rows, snapshot)
+    if natural is None:
+        return None
+    owner, capacity, can_trim = natural
+    source_capacity = capacity
+    if capacity > cap.max_duration_s:
+        if not can_trim:
+            # There is no executable alternative until a supported source
+            # window is known. Never offer a value the public schema rejects.
+            return None
+        capacity = cap.max_duration_s
+    asked = durations[0]
+    # A ten-percent tolerance avoids a needless card for ordinary source timing
+    # rounding (e.g. a 24.0s voice rendered as 23.8s).
+    if abs(asked - capacity) <= max(0.01, asked * 0.10):
+        return None
+    if owner == "footage" and asked < 3 <= capacity:
+        from app.services.length_policy import creator_duration_matches  # noqa: PLC0415
+
+        if creator_duration_matches(3, asked):
+            return None
+        capacity = 3.0
+        can_trim = False
+    if owner == "footage" and 3 <= asked < capacity:
+        # Ordinary source-window allocation supports this target. Coverage
+        # conflicts have their own focused duration-vs-count question.
+        return None
+    source = {
+        "song": "song",
+        "voiceover": "voiceover with the selected footage",
+        "take": "spoken take",
+        "footage": "footage",
+    }[owner]
+    asked_s, capacity_s = _clean_seconds(asked), _clean_seconds(capacity)
+    natural_description = (
+        f"Use {capacity_s} seconds of the recording and selected footage; "
+        "the remaining recording is left out."
+        if owner == "voiceover"
+        else f"The video follows the {source} without reuse or a silent extension."
+    )
+    if source_capacity > capacity:
+        natural_description = (
+            f"Use a supported {capacity_s}-second window of the {source}; "
+            "the remaining source is left out."
+        )
+    options = [
+        _option(
+            OPT_ACCEPT_NATURAL,
+            label=(
+                f"Use the available {capacity_s} seconds",
+                f"Mevcut {capacity_s} saniyeyi kullan",
+            ),
+            description=(
+                natural_description,
+                f"Video tekrar veya sessiz uzatma olmadan {source} süresini takip eder.",
+            ),
+            recommended=asked > capacity,
+            aliases=("use available length", "use the available length", "match the source"),
+        )
+    ]
+    effects: dict[str, Mapping[str, Any]] = {
+        OPT_ACCEPT_NATURAL: {
+            "strategy": {
+                "target_duration_s": capacity_s,
+                "target_duration_requested": True,
+                "creator_duration_s": capacity_s,
+            }
+        }
+    }
+    if asked < capacity and can_trim:
+        options.insert(
+            0,
+            _option(
+                OPT_TRIM_TO_REQUESTED,
+                label=(f"Trim it to {asked_s} seconds", f"{asked_s} saniyeye kısalt"),
+                description=(
+                    f"Use the supported trim for this {source}.",
+                    f"Bu {source} için desteklenen kırpmayı kullanır.",
+                ),
+                recommended=True,
+                aliases=("trim it", "trim", "keep requested length"),
+            ),
+        )
+        effects[OPT_TRIM_TO_REQUESTED] = {
+            "strategy": {
+                "target_duration_s": asked_s,
+                "target_duration_requested": True,
+                "creator_duration_s": asked_s,
+            }
+        }
+    said = quoted or f"{asked_s} seconds"
+    return UnresolvedChoice(
+        kind=CONFLICT_LENGTH_VS_NATURAL,
+        conflict_id=CONFLICT_LENGTH_VS_NATURAL,
+        field_path="target_duration_s",
+        requirement_ids=tuple(requirement_ids),
+        intro=f'Your brief says "{said}", but the available {source} is {capacity_s} seconds.',
+        reason=(
+            f"That {source} cannot make a {asked_s}-second edit without changing the source timing."
+        ),
+        options=tuple(options),
+        input_digest=_digest(CONFLICT_LENGTH_VS_NATURAL, owner, asked, capacity, snapshot),
+        effects=effects,
+    )
+
+
+def _source_coverage(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    snapshot: Mapping[str, Any] | None,
+) -> UnresolvedChoice | None:
+    """Keep impossible included-source coverage at the durable input gate."""
+    del brief, rows, cap
+    envelope = (snapshot or {}).get("length_plan")
+    if not isinstance(envelope, Mapping):
+        return None
+    conflicts = envelope.get("conflicts") or []
+    codes = {item.get("code") for item in conflicts if isinstance(item, Mapping)}
+    sources = envelope.get("sources") or []
+    raw_duration = sum(
+        _number(source.get("duration_s")) or 0 for source in sources if isinstance(source, Mapping)
+    )
+    if sources and raw_duration < 3:
+        codes.add("snapshot_min_duration")
+    source_limit = envelope.get("max_source_count", 80)
+    if type(source_limit) is not int or not 1 <= source_limit <= 80:
+        source_limit = 80
+    if len(sources) > source_limit:
+        codes.add("source_count_limit")
+    if envelope.get("target_duration_s") is None and "insufficient_capacity" in codes:
+        codes.add("natural_source_capacity")
+    if "target_below_coverage" in codes and (
+        strategy.get("mixed_media_timing") or strategy.get("montage_cadence")
+    ):
+        codes.add("authored_hold_coverage")
+    if not codes.intersection(
+        {
+            "source_below_minimum",
+            "snapshot_min_duration",
+            "cap_below_coverage",
+            "no_usable_sources",
+            "source_count_limit",
+            "natural_source_capacity",
+            "authored_hold_coverage",
+            "single_hero_order_conflict",
+            "insufficient_media",
+            "duration_out_of_bounds",
+        }
+    ):
+        return None
+    if "single_hero_order_conflict" in codes:
+        reason = (
+            "The selected order conflicts with the single-hero composition. "
+            "Choose the hero first, followed by its supporting clips."
+        )
+        label = "Update the selected clips"
+    elif "insufficient_media" in codes or "duration_out_of_bounds" in codes:
+        reason = (
+            "Choose a hero clip with at least 3 seconds and usable supporting clips "
+            "so the hero can keep at least 60% of this edit."
+        )
+        label = "Update the selected clips"
+    elif "authored_hold_coverage" in codes:
+        requested = envelope.get("target_duration_s")
+        reason = (
+            f"The requested {requested:g} seconds cannot include these clips with their "
+            "approved holds. Choose fewer clips or change those holds before rendering."
+        )
+        label = "Update the selected clips"
+    elif "source_count_limit" in codes:
+        reason = (
+            f"Choose at most {source_limit} clips for this edit so the recipe can include each one."
+        )
+        label = "Choose fewer clips"
+    elif "natural_source_capacity" in codes:
+        natural_owner = envelope.get("natural_owner")
+        natural_duration = envelope.get("natural_duration_s")
+        reason = (
+            f"The selected {natural_owner} runs {natural_duration:g} seconds, but the footage "
+            f"can provide only {raw_duration:g} seconds without reuse. Add longer footage."
+        )
+        label = "Add longer footage"
+    elif "cap_below_coverage" in codes:
+        reason = (
+            "Choose fewer clips so each can appear for at least 0.1 seconds within 120 seconds."
+        )
+        label = "Choose fewer clips"
+    elif "source_below_minimum" in codes or "no_usable_sources" in codes:
+        reason = "Replace clips shorter than 0.1 seconds, or leave them out of this edit."
+        label = "Update the selected clips"
+    else:
+        reason = "Add footage so the selected clips can provide at least 3 seconds without reuse."
+        label = "Add longer footage"
+    return UnresolvedChoice(
+        kind=CONFLICT_SOURCE_COVERAGE,
+        conflict_id=CONFLICT_SOURCE_COVERAGE,
+        field_path="selected_media_ids",
+        requirement_ids=(),
+        intro="The selected footage cannot meet the included-clip constraints.",
+        reason=reason,
+        options=(
+            _option(
+                OPT_UPDATE_FOOTAGE,
+                label=(label, label),
+                description=(
+                    "I will wait for your updated footage before making this edit.",
+                    "Bu düzenlemeyi yapmadan önce güncel çekimlerini bekleyeceğim.",
+                ),
+                recommended=True,
+                aliases=("update footage", "add footage", "choose fewer clips"),
+            ),
+        ),
+        input_digest=_digest(
+            CONFLICT_SOURCE_COVERAGE, envelope.get("sources"), source_limit, sorted(codes)
+        ),
     )
 
 
@@ -1610,9 +2038,11 @@ def collect_conflicts(
         _order_basis,
         _text_placement,
         functools.partial(_title_text, clip_paths=clip_paths),
+        functools.partial(_source_coverage, snapshot=media_snapshot),
         _duration_vs_count,
         _which_voice,
         _voice_vs_duration,
+        functools.partial(_length_vs_natural, snapshot=media_snapshot),
     ):
         result = detector(data, brief, rows, cap)
         if isinstance(result, list):
@@ -1899,6 +2329,23 @@ class ChoiceResolution:
     superseded: tuple[str, ...] = ()
 
 
+def length_inputs_waiting(resolution: ChoiceResolution) -> str | None:
+    """An unanswered timing choice or required media update never becomes a draft."""
+    timing_kinds = {
+        CONFLICT_DURATION_VS_COUNT,
+        CONFLICT_VOICE_VS_DURATION,
+        CONFLICT_LENGTH_VS_NATURAL,
+        CONFLICT_SOURCE_COVERAGE,
+    }
+    if any(choice.kind in timing_kinds for choice in resolution.exhausted):
+        return (
+            "Your length choice is still waiting. Choose an offered option or update the footage."
+        )
+    if any(answer.get("kind") == CONFLICT_SOURCE_COVERAGE for answer in resolution.answers):
+        return "Add or update the selected footage, and I will continue with those clips."
+    return None
+
+
 def _disclosure(kind: object, option: object) -> str | None:
     """The plain-language note for an answered option (dynamic ``length_N`` keys included)."""
 
@@ -2051,13 +2498,29 @@ def resolve_choices(
         valid = bool(
             prior and prior.input_digest == choice.input_digest and prior.option_key in keys
         )
+        answer_superseded = False
         if valid and _answer_superseded(history, prior, choice, data):
             superseded.append(choice.conflict_id)
             valid = False
+            answer_superseded = True
         if valid:
             option_key = prior.option_key
             source = "creator_delegated" if prior.delegated else "creator"
-        elif count_asks(history, choice.conflict_id, choice.input_digest) >= MAX_ASKS_PER_QUESTION:
+        elif count_asks(
+            history[prior.index + 1 :] if answer_superseded else history,
+            choice.conflict_id,
+            choice.input_digest,
+        ) >= (
+            1
+            if choice.kind
+            in {
+                CONFLICT_DURATION_VS_COUNT,
+                CONFLICT_VOICE_VS_DURATION,
+                CONFLICT_LENGTH_VS_NATURAL,
+                CONFLICT_SOURCE_COVERAGE,
+            }
+            else MAX_ASKS_PER_QUESTION
+        ):
             exhausted.append(choice)
             continue
         else:
@@ -2161,6 +2624,24 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                     }
                 )
             elif (
+                kind == CONFLICT_LENGTH_VS_NATURAL
+                and option == OPT_ACCEPT_NATURAL
+                and req.kind == "timing"
+            ):
+                new = _number(data.get("target_duration_s"))
+                old = _number((req.facts or {}).get("duration_s"))
+                if new is None or old is None or abs(new - old) < 0.001:
+                    continue
+                changed[req.id] = req.model_copy(
+                    update={
+                        "facts": {**req.facts, "duration_s": data["target_duration_s"]},
+                        "description": (
+                            f"Keep {_clean_seconds(new)} seconds (the available source length, "
+                            f"instead of {_clean_seconds(old)})"
+                        ),
+                    }
+                )
+            elif (
                 kind == CONFLICT_TITLE_TEXT
                 and option == OPT_NO_TITLE
                 and req.kind == "text"
@@ -2232,6 +2713,7 @@ __all__ = [
     "CAPTURE_ORDER_KEYS",
     "CHOICE_QUESTION_VERSION",
     "CONFLICT_DURATION_VS_COUNT",
+    "CONFLICT_LENGTH_VS_NATURAL",
     "CONFLICT_ORDER_BASIS",
     "CONFLICT_PRIORITY",
     "CONFLICT_TEXT_PLACEMENT",
@@ -2242,6 +2724,8 @@ __all__ = [
     "MAX_ASKS_PER_QUESTION",
     "OPT_ATTACHMENT_ORDER",
     "OPT_EXTEND",
+    "OPT_ACCEPT_NATURAL",
+    "OPT_TRIM_TO_REQUESTED",
     "OPT_FEWER",
     "OPT_MATCH_VOICE",
     "OPT_NO_TITLE",

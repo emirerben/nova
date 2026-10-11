@@ -1038,6 +1038,31 @@ def test_analyze_image_registers_heif_decoder_before_opening(monkeypatch, tmp_pa
     assert has_alpha is False
 
 
+@pytest.mark.parametrize(
+    ("orientation", "expected_dims"),
+    [(1, (30, 20)), (3, (30, 20)), (6, (20, 30)), (8, (20, 30))],
+)
+def test_analyze_image_measures_the_upright_photo(
+    monkeypatch, tmp_path, orientation, expected_dims
+) -> None:
+    """An iPhone portrait is stored landscape with EXIF orientation 6; crop
+    rectangles (KRI-44) are in upright space, so aspect/dims must be too."""
+    from PIL import Image
+
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "gemini_api_key", None)
+    source = tmp_path / "photo.jpg"
+    exif = Image.Exif()
+    exif[0x0112] = orientation
+    Image.new("RGB", (30, 20), "#336699").save(source, format="JPEG", exif=exif)
+
+    _analysis, aspect, dims, _alpha = ap._analyze_image(str(source), "test-scope")
+
+    assert dims == expected_dims
+    assert aspect == round(expected_dims[0] / expected_dims[1], 4)
+
+
 def test_analyze_image_downscales_and_meters_submitted_jpeg(monkeypatch, tmp_path) -> None:
     from PIL import Image
 

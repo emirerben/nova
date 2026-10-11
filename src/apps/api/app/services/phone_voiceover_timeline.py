@@ -105,6 +105,12 @@ def _clip_rows(
     return rows
 
 
+def _crop_field(clip: Any) -> dict:
+    """``{"source_crop": {...}}`` for a cropped clip, else nothing (KRI-44)."""
+    crop = getattr(clip, "source_crop", None)
+    return {"source_crop": crop.model_dump()} if crop is not None else {}
+
+
 def narrated_timings_and_assignments(
     recipe: EditRecipeV2, bindings: list[PhoneSourceBinding], pool: list[str]
 ) -> tuple[list[dict], list[dict], list[dict]] | None:
@@ -141,6 +147,7 @@ def narrated_timings_and_assignments(
                 "duration_beats": None,
                 "order": len(slots),
                 "removed": False,
+                **_crop_field(clip),
             }
         )
         timings.append({"step_id": step_id, "start_s": start, "end_s": end, "confidence": 1.0})
@@ -196,6 +203,7 @@ def voiceover_ai_timeline(
             # A retimed clip plays `duration_s * playback_rate` source seconds;
             # the editor and a timeline Save must keep that speed (KRI-290).
             slot["playback_rate"] = round(float(clip.rate), 6)
+        slot.update(_crop_field(clip))
         slots.append(slot)
     return {"beat_grid": [], "slots": slots} if slots else None
 

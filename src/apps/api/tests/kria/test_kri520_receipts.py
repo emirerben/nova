@@ -336,7 +336,7 @@ def test_speech_cleanup_notes_are_turkish_and_stay_a_format_limit() -> None:
     assert receipt.reason == (
         "Onaylarken \u201cKonuşmayı temizle\u201d seçeneğini seç, uzun duraklamalar kesilir; "
         "tekrar çekim ya da belirli bir cümle henüz otomatik kesilmiyor, onu editörde kırp; "
-        "uzunluk çekimin geriye kalan kısmına göre belirleniyor, 45 sn için söz veremem"
+        "Bu taslağın uzunluğunu henüz doğrulayamıyorum."
     )
     # A limit of the format in Turkish too: it never asks for a simpler version.
     assert is_format_limit(receipt.reason)
@@ -354,7 +354,7 @@ def test_english_speech_cleanup_reason_is_unchanged() -> None:
     assert check_requirement(req, facts).reason == (
         "Choose Clean up speech when you approve and the long pauses are cut; "
         "a retake or a specific line isn't cut automatically yet, so trim that in the "
-        "editor; the length follows what's left of your take, so I can't promise 45s"
+        "editor; I can't confirm this draft's length yet."
     )
 
 
@@ -403,12 +403,17 @@ def test_a_turkish_judged_reason_is_still_judged() -> None:
 
 @pytest.mark.parametrize("language", [None, "tr"])
 def test_format_limits_are_recognised_in_both_languages(language) -> None:
-    req = _req("timing", "45 saniye olsun", duration_s=45)
+    whole_take = _req("timing", "videoyu olduğu gibi bırak", keep_whole_take=True)
+    numeric = _req("timing", "45 saniye olsun", duration_s=45)
     with reply_language_for(language):
-        talking = check_requirement(req, PlanFacts(edit_format="subtitled"))
-        voiceover = check_requirement(req, PlanFacts(edit_format="narrated"))
-    for receipt in (talking, voiceover):
-        assert is_format_limit(receipt.reason)
+        talking = check_requirement(whole_take, PlanFacts(edit_format="subtitled"))
+        voiceover = check_requirement(whole_take, PlanFacts(edit_format="narrated"))
+        plain_length = check_requirement(numeric, PlanFacts(edit_format="subtitled"))
+    assert is_format_limit(brief_checks._TALKING_KEEPS_WHOLE_TAKE)
+    assert is_format_limit(brief_checks._REASON_TR[brief_checks._TALKING_KEEPS_WHOLE_TAKE])
+    assert not is_format_limit(talking.reason)
+    assert not is_format_limit(voiceover.reason)
+    assert not is_format_limit(plain_length.reason)
     assert not is_format_limit("Bu taslak yaklaşık 40 saniye; sen 30 saniye istedin.")
 
 

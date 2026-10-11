@@ -234,8 +234,7 @@ def test_matrix_dispositions_are_valid_and_owned():
 
 # strategy fragment that sets each `supported` path -> it must change the contract.
 _SUPPORTED_FRAGMENTS = {
-    "target_duration_s": {"target_duration_s": 30, "target_duration_requested": True},
-    "target_duration_requested": {"target_duration_s": 24, "target_duration_requested": True},
+    "creator_duration_s": {"creator_duration_s": 30},
     "audio_strategy": {"audio_strategy": "voiceover"},
     "montage_audio": {"montage_audio": {"preserve_source_audio": False}},
     "montage_audio.preserve_source_audio": {"montage_audio": {"preserve_source_audio": False}},
@@ -282,11 +281,7 @@ def test_supported_paths_are_exactly_the_ones_that_change_the_contract():
     assert supported == set(_SUPPORTED_FRAGMENTS)
     baseline = _projection({})
     for path, fragment in _SUPPORTED_FRAGMENTS.items():
-        base = (
-            _projection({"target_duration_s": 24, "target_duration_requested": False})
-            if path == "target_duration_requested"
-            else baseline
-        )
+        base = baseline
         assert _projection(fragment) != base, path
 
 
@@ -458,7 +453,7 @@ def test_unresolved_requirements_decline_as_a_choice():
     assert str(exc.value) == "Pick an order."
 
 
-def test_conflicting_confirmed_durations_are_a_requirement_conflict():
+def test_live_brief_duration_supersedes_stale_strategy_stamp():
     from app.kria.brief import BriefRequirement, CreativeBrief
 
     brief = CreativeBrief(
@@ -472,13 +467,16 @@ def test_conflicting_confirmed_durations_are_a_requirement_conflict():
             )
         ]
     )
-    with pytest.raises(CreatorRenderContractError) as exc:
-        build_render_contract(
-            {"target_duration_s": 30, "target_duration_requested": True},
-            generation_id="g",
-            brief=brief,
-        )
-    assert _typed(exc) == ("requirement_conflict", "target_duration_s")
+    contract = build_render_contract(
+        {
+            "target_duration_s": 30,
+            "target_duration_requested": True,
+            "creator_duration_s": 30,
+        },
+        generation_id="g",
+        brief=brief,
+    )
+    assert contract is not None and contract.duration_s == 15
 
 
 def test_dispatch_gates_are_typed_and_return_the_contract_voice_route():
@@ -648,6 +646,7 @@ def test_explicit_opening_title_is_a_pinned_requirement() -> None:
             "opening_title": "  Hello ",
             "target_duration_s": 30,
             "target_duration_requested": True,
+            "creator_duration_s": 30,
         },
         generation_id="gen-1",
     )
@@ -660,10 +659,9 @@ def test_explicit_opening_title_is_a_pinned_requirement() -> None:
 @pytest.mark.parametrize(
     "edit_format", ["subtitled", "narrated", "narrated_planned", "narrated_ready"]
 )
-def test_a_take_length_format_never_pins_a_requested_length(edit_format: str) -> None:
-    """Job e1c5f89e (2026-10-06): a 68 s Talking take approved with "keep it under
-    45 seconds" was refused at the pin step. A Talking or voiceover edit runs as
-    long as the take or the voiceover, so the length is not a provable fact."""
+def test_an_explicit_brief_length_overrides_a_take_owner(edit_format: str) -> None:
+    """An approved timing requirement remains a requirement until the capacity
+    question resolves it; natural take duration alone is never the requirement."""
     from app.kria.brief import BriefRequirement, CreativeBrief
 
     brief = CreativeBrief(
@@ -689,7 +687,7 @@ def test_a_take_length_format_never_pins_a_requested_length(edit_format: str) ->
         brief=brief,
     )
     assert contract is not None
-    assert contract.duration_s is None
+    assert contract.duration_s == 45
     assert [item.text for item in contract.exact_texts] == ["3 sourdough mistakes"]
 
 
@@ -711,7 +709,12 @@ def test_a_voiceover_montage_runs_as_long_as_its_voiceover() -> None:
 def test_a_declared_talking_head_still_pins_its_requested_length() -> None:
     """The cloud talking-head assembler caps the cut at the target."""
     contract = build_render_contract(
-        {"edit_format": "talking_head", "target_duration_s": 30, "target_duration_requested": True},
+        {
+            "edit_format": "talking_head",
+            "target_duration_s": 30,
+            "target_duration_requested": True,
+            "creator_duration_s": 30,
+        },
         generation_id="gen-1",
     )
     assert contract is not None
@@ -720,7 +723,12 @@ def test_a_declared_talking_head_still_pins_its_requested_length() -> None:
 
 def test_a_montage_still_pins_its_requested_length() -> None:
     contract = build_render_contract(
-        {"edit_format": "montage", "target_duration_s": 30, "target_duration_requested": True},
+        {
+            "edit_format": "montage",
+            "target_duration_s": 30,
+            "target_duration_requested": True,
+            "creator_duration_s": 30,
+        },
         generation_id="gen-1",
     )
     assert contract is not None
@@ -773,6 +781,56 @@ def test_default_duration_does_not_create_a_requirement() -> None:
     )
     assert contract is not None
     assert contract.duration_s is None
+
+
+def test_only_server_proven_creator_duration_pins_the_contract() -> None:
+    unproven = build_render_contract(
+        {"target_duration_s": 30, "target_duration_requested": True}, generation_id="gen-1"
+    )
+    proven = build_render_contract(
+        {
+            "target_duration_s": 12,
+            "target_duration_requested": True,
+            "creator_duration_s": 30,
+        },
+        generation_id="gen-1",
+    )
+    assert unproven is not None and unproven.duration_s is None
+    assert proven is not None and proven.duration_s == 30
+
+
+def test_live_brief_duration_overrides_stale_strategy_stamp_after_natural_length_answer() -> None:
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    brief = CreativeBrief(
+        requirements=[
+            BriefRequirement(
+                id="length",
+                kind="timing",
+                scope="global",
+                description="Use the available 20 seconds",
+                facts={"duration_s": 20},
+            )
+        ]
+    )
+    contract = build_render_contract(
+        {
+            "target_duration_s": 30,
+            "creator_duration_s": 30,
+            "choice_answers": [
+                {
+                    "conflict": "length_vs_natural",
+                    "kind": "length_vs_natural",
+                    "option": "accept_natural",
+                    "input_digest": "a" * 64,
+                    "requirement_ids": ["length"],
+                }
+            ],
+        },
+        generation_id="g",
+        brief=brief,
+    )
+    assert contract is not None and contract.duration_s == 20
 
 
 def test_tampered_persisted_contract_is_refused() -> None:
@@ -1046,11 +1104,11 @@ def test_explicit_brief_duration_on_non_song_item_is_still_enforced():
     assert _typed(exc)[1] == "target_duration_s"
 
 
-def test_brief_less_non_song_strategy_duration_keeps_legacy_behaviour():
+def test_brief_less_model_strategy_duration_is_receipt_only():
     contract = build_render_contract(
         {"target_duration_s": 30, "target_duration_requested": True}, generation_id="g"
     )
-    assert contract is not None and contract.duration_s == 30
+    assert contract is not None and contract.duration_s is None
 
 
 def test_explicit_brief_duration_on_song_item_is_pinned_from_the_brief():
@@ -1078,3 +1136,97 @@ def test_the_contract_model_schema_is_unchanged_so_old_workers_can_still_read_it
         (Path(__file__).parents[1] / "fixtures" / "creator_render_contract.schema.json").read_text()
     )
     assert CreatorRenderContract.model_json_schema() == golden
+
+
+# --- described-shot labels placed by the clip-intent resolver (Tigre M1, 2026-10-10) -----
+
+
+def _per_clip_text_brief(*literals: str):
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    return CreativeBrief(
+        requirements=[
+            BriefRequirement(
+                id=f"r{i + 1}", kind="text", scope="per_clip", literal=text, description=text
+            )
+            for i, text in enumerate(literals)
+        ]
+    )
+
+
+def _label_intent(intent_id: str, text: str, *media_ids: str, value: bool = True) -> dict:
+    return {
+        "intent_id": intent_id,
+        "op": "label",
+        "attribute": f"the {intent_id} clip",
+        "creator_text": text,
+        "status": "resolved",
+        "assignments": [
+            {
+                "media_id": media_id,
+                "value": text if value else None,
+                "confidence": 0.95,
+                "grounding": "creator_text",
+            }
+            for media_id in media_ids
+        ],
+    }
+
+
+def test_described_shot_label_placed_by_a_resolved_label_intent_pins_that_clip():
+    """ "Mutfak, Çatı katı, Banyo, İskele on those shots": the planner emits no positional
+    ``shot_labels``; the resolver matched each word to a clip. The contract must pin those
+    clips, not refuse with "I need an explicit shot assignment" (prod thread E2260793)."""
+    contract = build_render_contract(
+        {
+            "resolved_clip_intents": [
+                _label_intent("kitchen", "Mutfak", "m1-03"),
+                _label_intent("loft", "Çatı katı", "m1-06"),
+                _label_intent("bathroom", "Banyo", "m1-01", value=False),
+                _label_intent("pier", "İskele", "m1-08", "m1-16"),
+            ]
+        },
+        generation_id="g",
+        brief=_per_clip_text_brief("Mutfak", "Çatı katı", "Banyo", "İskele"),
+    )
+    assert contract is not None and not contract.unresolved
+    assert [(t.role, t.text, t.media_id, t.shot_index) for t in contract.exact_texts] == [
+        ("clip", "Mutfak", "m1-03", None),
+        ("clip", "Çatı katı", "m1-06", None),
+        ("clip", "Banyo", "m1-01", None),
+        ("clip", "İskele", "m1-08", None),
+        ("clip", "İskele", "m1-16", None),
+    ]
+
+
+def test_positional_shot_labels_still_win_over_a_label_intent_for_the_same_words():
+    contract = build_render_contract(
+        {
+            "shot_labels": ["Mutfak"],
+            "resolved_clip_intents": [_label_intent("kitchen", "Mutfak", "m1-03")],
+        },
+        generation_id="g",
+        brief=_per_clip_text_brief("Mutfak"),
+    )
+    assert contract is not None and not contract.unresolved
+    # The strategy row and the brief row both pin shot 1; nothing points at a media id.
+    assert contract.exact_texts and all(
+        t.media_id is None and t.shot_index == 0 for t in contract.exact_texts
+    )
+
+
+def test_described_shot_label_nobody_placed_is_refused_naming_the_words():
+    from app.kria.reply_language import reply_language_for
+
+    strategy = {"resolved_clip_intents": [_label_intent("kitchen", "Mutfak", "m1-03")]}
+    brief = _per_clip_text_brief("Mutfak", "Banyo")
+    contract = build_render_contract(strategy, generation_id="g", brief=brief)
+    assert contract is not None
+    assert list(contract.unresolved) == [
+        "I couldn't tell which clip \"Banyo\" goes on, so I can't confirm that text."
+    ]
+    with reply_language_for("tr"):
+        contract = build_render_contract(strategy, generation_id="g", brief=brief)
+    assert contract is not None and list(contract.unresolved) == [
+        '"Banyo" yazısının hangi klibe gideceğini anlayamadım, o yüzden bu yazıyı doğrulayamıyorum.'
+    ]

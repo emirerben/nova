@@ -213,7 +213,7 @@ def test_an_implicit_length_follows_the_voice_up_to_the_plans_pick(monkeypatch):
 
 
 def test_a_voice_shorter_than_the_asked_length_is_a_typed_decline_not_a_shorter_video(monkeypatch):
-    world = _world(monkeypatch, strategy=_strategy(target_duration_s=30))
+    world = _world(monkeypatch, strategy=_strategy(target_duration_s=30, creator_duration_s=30))
     world.words = _words(count=40)  # ~20 s of speech for a 30 s edit
     with pytest.raises(CreatorRenderContractError) as info:
         _run(world)
@@ -225,6 +225,7 @@ def test_a_voice_shorter_than_the_asked_length_is_a_typed_decline_not_a_shorter_
 def test_a_chosen_silent_tail_keeps_the_length_with_the_voice_stopping_early(monkeypatch):
     strategy = _strategy(
         target_duration_s=30,
+        creator_duration_s=30,
         choice_answers=[
             {
                 "conflict": "voice_vs_duration",
@@ -250,11 +251,21 @@ def test_a_chosen_silent_tail_keeps_the_length_with_the_voice_stopping_early(mon
 def test_too_many_clips_for_the_length_and_too_little_footage_decline_with_a_way_forward(
     monkeypatch,
 ):
-    crowded = _world(monkeypatch, count=30, clip_s=10.0, strategy=_strategy(target_duration_s=15))
+    crowded = _world(
+        monkeypatch,
+        count=30,
+        clip_s=10.0,
+        strategy=_strategy(target_duration_s=15, creator_duration_s=15),
+    )
     with pytest.raises(CreatorRenderContractError) as info:
         _run(crowded)
     assert _decline(info).field_path == "target_duration_s"
-    short = _world(monkeypatch, count=3, clip_s=5.0, strategy=_strategy(target_duration_s=40))
+    short = _world(
+        monkeypatch,
+        count=3,
+        clip_s=5.0,
+        strategy=_strategy(target_duration_s=40, creator_duration_s=40),
+    )
     short.words = _words(count=200)
     with pytest.raises(CreatorRenderContractError) as info:
         _run(short)
@@ -372,7 +383,11 @@ def test_forty_one_clips_and_a_model_picked_length_extend_instead_of_declining(m
 
 def test_a_creator_stated_length_is_never_stretched_to_fit_the_clips(monkeypatch):
     world = _world(
-        monkeypatch, voice_s=147.7, count=41, clip_s=10.0, strategy=_strategy(target_duration_s=30)
+        monkeypatch,
+        voice_s=147.7,
+        count=41,
+        clip_s=10.0,
+        strategy=_strategy(target_duration_s=30, creator_duration_s=30),
     )
     assert world.contract.duration_s == 30
     world.words = _words(count=290)

@@ -360,8 +360,13 @@ def test_a_song_edit_skips_the_spoken_excerpt_montage(harness):
 # ── user-facing failures ─────────────────────────────────────────────────────
 
 
-def _plan_error(harness, **kwargs):
+def _plan_error(harness, *, stamp=None, **kwargs):
     job, snapshot, _bindings = harness(**kwargs)
+    if stamp is not None:
+        from app.services.creator_render_contract import CONTRACT_FIELD
+
+        _stamp_job(job, **stamp)
+        snapshot[CONTRACT_FIELD] = job.assembly_plan[CONTRACT_FIELD]  # as dispatch hands it over
     with pytest.raises(UnsupportedPhonePlan) as caught:
         gb._run_phone_unified_montage_job(
             str(job.id), snapshot, job.all_candidates, ownership_epoch=3
@@ -1093,3 +1098,111 @@ def test_user_song_flag_off_leaves_a_songless_lipsync_caption_ask_on_the_legacy_
 
     assert not fail.called
     assert job.status == "awaiting_device"
+
+
+# --- KRI-578: plan-authority jobs take the lyric-caption decision from the pinned strategy ---
+#
+# Failure modes written first:
+#   (1) a stamped job still re-reads the saved request (a caption ask in the text turns captions
+#       on, or a missing ask turns a pinned decision off);
+#   (2) the pinned style is ignored (word vs whole lines comes from the request again);
+#   (3) a pinned decision with the song gone renders silently without captions;
+#   (4) the unstamped twins above (CAPTION_REQUEST / "Add captions") change behaviour.
+
+
+def _stamp_job(job, **pin):
+    """Pin the approved contract + plan-authority stamp, as dispatch does for a stamped job."""
+    from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.services.creator_render_contract import (
+        CONTRACT_FIELD,
+        PLAN_AUTHORITY_FIELD,
+        REQUIREMENT_VERSION_FIELD,
+        build_render_contract,
+    )
+    from app.services.generative_jobs import CREATOR_RENDER_CONTRACT_VERSION
+
+    strategy = dict(job.all_candidates["creator_strategy"], **pin)
+    typed = CreativeStrategy.model_validate(strategy).model_dump(mode="json", exclude_none=True)
+    contract = build_render_contract(typed, generation_id="generation")
+    assert contract is not None
+    job.assembly_plan[CONTRACT_FIELD] = contract.model_dump(mode="json")
+    job.all_candidates.update(
+        {
+            PLAN_AUTHORITY_FIELD: 1,
+            REQUIREMENT_VERSION_FIELD: 1,
+            "creator_render_contract_version": CREATOR_RENDER_CONTRACT_VERSION,
+            "creator_strategy": typed,
+        }
+    )
+
+
+def test_a_stamped_lipsync_pinned_word_captions_render_without_a_caption_ask_in_the_request(
+    harness, composer
+):
+    job, _snapshot, _bindings = harness(
+        sync="lipsync",
+        rows=[confident("clip-a", 10), confident("clip-b", 28), confident("clip-c", 46)],
+        song_analysis=_lyrics_analysis(),
+        creator_request="Full creator request (chronological):\nMake a fast montage",
+    )
+    _stamp_job(job, song_captions="word")
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert (
+        job.assembly_plan["guided_edit"]["approved_proposal"]["song_captions"]["caption_style"]
+        == "word"
+    )
+    assert _caption_rows(job.assembly_plan["guided_story_execution_plan"])
+    assert job.assembly_plan["unified_montage"]["captions"]["style"] == "word"
+
+
+def test_a_stamped_background_song_pinned_sentence_captions_show_whole_lyric_lines(
+    harness, composer
+):
+    job, _snapshot, _bindings = harness(
+        sync="background",
+        song_analysis=_lyrics_analysis(),
+        # A karaoke default and a "word by word" ask in the text must not beat the pin.
+        creator_request="Full creator request (chronological):\nCaptions word by word",
+        strategy_extra=KARAOKE,
+    )
+    _stamp_job(job, song_captions="sentence")
+
+    gb._run_generative_job(str(job.id))
+
+    plan = job.assembly_plan["guided_story_execution_plan"]
+    assert plan["editor_caption_meta"]["style"] == "sentence"
+    assert _caption_rows(plan)
+
+
+def test_a_stamped_montage_ignores_a_captions_ask_in_the_request_text(harness, composer):
+    """The planner pinned no lyric captions: the saved request cannot turn them on."""
+    job, _snapshot, _bindings = harness(
+        sync="background",
+        song_analysis=_lyrics_analysis(),
+        creator_request=CAPTION_REQUEST,
+        strategy_extra=KARAOKE,
+    )
+    _stamp_job(job)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert "song_captions" not in job.assembly_plan["guided_edit"]["approved_proposal"]
+    assert not _caption_rows(job.assembly_plan["guided_story_execution_plan"])
+    assert "captions" not in job.assembly_plan["unified_montage"]
+
+
+def test_a_stamped_pin_with_the_song_gone_asks_for_the_song(harness):
+    message, error = _plan_error(
+        harness,
+        sync="background",
+        with_song=False,
+        creator_request="Full creator request (chronological):\nMake a fast montage",
+        strategy_extra=KARAOKE,
+        stamp={"song_captions": "word"},
+    )
+    assert isinstance(error, UserSongPlanDeclined)
+    assert message == gb.SONG_CAPTIONS_NEED_SONG_MESSAGE

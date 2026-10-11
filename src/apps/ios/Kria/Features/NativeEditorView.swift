@@ -544,6 +544,7 @@ struct NativeEditorView: View {
                                 NativeEditorContextStrip(
                                     session: session,
                                     onAdjust: { inspector = .adjust },
+                                    onCrop: { inspector = .crop(selection) },
                                     onTransition: { inspector = .selection(selection) }
                                 )
                                     .transition(panelTransition)
@@ -921,6 +922,8 @@ private enum NativeEditorInspector: Identifiable {
     case tool(NativeEditorTool)
     case selection(EditorSelection)
     case adjust
+    /// KRI-44: the shared Crop editor for the selected clip.
+    case crop(EditorSelection)
     /// KRI-306: Vertical / Landscape and Black bars / Crop for the finished video.
     case videoShape
 
@@ -929,6 +932,7 @@ private enum NativeEditorInspector: Identifiable {
         case .tool(let tool): return "tool-\(tool.rawValue)"
         case .selection(let selection): return "selection-\(selection.kind.rawValue)-\(selection.id)"
         case .adjust: return "adjust"
+        case .crop(let selection): return "crop-\(selection.kind.rawValue)-\(selection.id)"
         case .videoShape: return "video-shape"
         }
     }
@@ -948,6 +952,7 @@ private enum NativeEditorInspector: Identifiable {
             case .carousel: return "Carousel"
             }
         case .adjust: return "Adjust"
+        case .crop: return "Crop"
         case .videoShape: return "Video shape"
         }
     }
@@ -974,6 +979,7 @@ private struct NativeEditorInspectorView: View {
                 case .tool: NativeEditorUnavailableView(title: "Editor", reason: "This tool is not available for the current render.", systemImage: "lock")
                 case .selection(let selection): NativeSelectionInspector(selection: selection, session: session)
                 case .adjust: NativeAdjustInspector(session: session)
+                case .crop(let selection): NativeCropSheet(session: session, selection: selection, embedded: true)
                 case .videoShape: NativeVideoShapeInspector(session: session)
                 }
             }

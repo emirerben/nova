@@ -16,6 +16,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostChatEdit: Bool? = nil
     /// KRI-482 rollback gate for video/look slide exports. Missing stays on the server path.
     var slidePostExtendedDeviceExport: Bool? = nil
+    /// KRI-44: per-slide Crop and Vertical/Landscape. Missing = off (the Crop button stays hidden and no `framing` is authored).
+    var slidePostFraming: Bool? = nil
     /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
     var clipSelectionQuestions: Bool? = nil
     /// Server sends `song_order_question` payloads and accepts `song_order` on a turn (KRI-374). Nil/false = no order card.
@@ -23,6 +25,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// The server also sends take lengths and candidate positions with the question and accepts `placements` on the
     /// answer, which turns the order card into the song timeline. Nil/false = the vertical order list.
     var songOrderPlacements: Bool? = nil
+    /// Server accepts `PUT creation-threads/{id}/song-range` (KRI-580): the creator tells us which part of the
+    /// song they filmed in. Nil/false (older server) = no such control.
+    var songFilmingRange: Bool? = nil
     /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
     /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
     var choiceQuestions: Bool? = nil
@@ -41,10 +46,13 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostRichTextEnabled: Bool { slidePostRichText == true }
     var slidePostChatEditEnabled: Bool { slidePostChatEdit == true }
     var slidePostExtendedDeviceExportEnabled: Bool { slidePostExtendedDeviceExport == true }
+    var slidePostFramingEnabled: Bool { slidePostFraming == true }
     var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
     var songOrderQuestionsEnabled: Bool { songOrderQuestions == true }
     /// Only meaningful together with `songOrderQuestionsEnabled`.
     var songOrderPlacementsEnabled: Bool { songOrderPlacements == true }
+    /// The "Where in the song did you film?" control needs the flag AND the song affordance itself.
+    var songFilmingRangeEnabled: Bool { songFilmingRange == true && songUploadEnabled }
     /// The server's limits for a creator-uploaded song (KRI-374). Nil hides every "Add your song" surface:
     /// the server only advertises it when the feature is on for this account and this app's protocol.
     var songLimit: CreationMediaLimit? { media?[CreationMediaRole.song.capabilityKey] }
@@ -62,9 +70,11 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case slidePostRichText = "slide_post_rich_text"
         case slidePostChatEdit = "slide_post_chat_edit"
         case slidePostExtendedDeviceExport = "slide_post_extended_device_export"
+        case slidePostFraming = "slide_post_framing"
         case clipSelectionQuestions = "clip_selection_questions"
         case songOrderQuestions = "song_order_questions"
         case songOrderPlacements = "song_order_placements"
+        case songFilmingRange = "song_filming_range"
         case choiceQuestions = "choice_questions"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
         case livePlanReviewEnabled = "live_plan_review_enabled", livePlanReviewVersion = "live_plan_review_version"
@@ -87,9 +97,11 @@ extension CreationCapabilities {
         slidePostRichText = try container.decodeIfPresent(Bool.self, forKey: .slidePostRichText)
         slidePostChatEdit = try container.decodeIfPresent(Bool.self, forKey: .slidePostChatEdit)
         slidePostExtendedDeviceExport = try container.decodeIfPresent(Bool.self, forKey: .slidePostExtendedDeviceExport)
+        slidePostFraming = try container.decodeIfPresent(Bool.self, forKey: .slidePostFraming)
         clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
         songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)
         songOrderPlacements = try container.decodeIfPresent(Bool.self, forKey: .songOrderPlacements)
+        songFilmingRange = try container.decodeIfPresent(Bool.self, forKey: .songFilmingRange)
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
         creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)
         minimumClientProtocol = try container.decodeIfPresent(Int.self, forKey: .minimumClientProtocol)
@@ -271,6 +283,8 @@ struct CreationAttachedMedia: Identifiable {
     /// The server's media role (`"song"` for a creator-uploaded song, KRI-374). Nil for footage and voiceover,
     /// and for any server that does not label it.
     var role: String? = nil
+    /// The part of the song the creator said they filmed in (KRI-580); only the song's entry carries it.
+    var filmingRange: SongFilmingRange? = nil
     var isSong: Bool { role == "song" || kind == "song" }
     /// A recorded or uploaded voiceover: audio that is not the creator's song.
     var isVoiceover: Bool { kind == "audio" && !isSong }
@@ -284,7 +298,9 @@ struct CreationAttachedMedia: Identifiable {
             let duration = fields["duration_s"]?.numberValue.flatMap { value in
                 value.isFinite && value > 0 ? value : nil
             }
-            return Self(id: id, filename: fields["filename"]?.stringValue ?? "Attached media", kind: fields["kind"]?.stringValue ?? "video", previewURL: url.flatMap(URL.init(string:)), uploadPurpose: purpose, durationS: duration, role: fields["role"]?.stringValue)
+            let role = fields["role"]?.stringValue
+            let range = role == "song" ? SongFilmingRange.parse(fields["song_range"]) : nil
+            return Self(id: id, filename: fields["filename"]?.stringValue ?? "Attached media", kind: fields["kind"]?.stringValue ?? "video", previewURL: url.flatMap(URL.init(string:)), uploadPurpose: purpose, durationS: duration, role: role, filmingRange: range)
         }
     }
     /// The attached song, if the server reports one (KRI-374): a `media` entry with `role == "song"`, or a
