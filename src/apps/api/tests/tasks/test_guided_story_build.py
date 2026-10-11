@@ -643,6 +643,124 @@ def test_narrated_guided_plan_keeps_generic_context_labels_after_narration_mater
     assert job.assembly_plan["guided_story_execution_plan"] == repaired
 
 
+def test_unified_montage_room_labels_draw_once_per_clip(monkeypatch) -> None:
+    """KRI-584 (Tigre M1, job 136712e8): a montage label intent is drawn by ONE lane.
+
+    The unified montage turns resolved label intents into `clip-label-*` bars; the
+    grounded context lane read the same intents and drew each again as a corner tag.
+    Ways this guard can fail: the context lane re-draws a labelled clip on the first
+    plan, on the re-pinned plan, or on an editor revision (which re-projects a plan
+    pinned before the fix); or the dedupe drops the bar instead of the tag.
+    """
+    from app.pipeline.guided_story import compile_guided_runtime_plan
+    from app.pipeline.unified_montage import BriefView, UnifiedClip, plan_unified_montage
+    from app.schemas.guided_edit_revision import guided_editor_revision_from_approval
+
+    rooms = {"c0": "Mutfak", "c1": "Çatı katı", "c2": "Banyo"}
+    strategy = {
+        "resolved_clip_intents": [
+            {
+                "op": "label",
+                "attribute": "room",
+                "status": "resolved",
+                "intent_id": f"label_{media_id}",
+                "creator_text": text,
+                "assignments": [
+                    {
+                        "media_id": media_id,
+                        "value": text,
+                        "confidence": 1.0,
+                        "grounding": "creator_text",
+                    }
+                ],
+            }
+            for media_id, text in rooms.items()
+        ]
+    }
+    clips = [
+        UnifiedClip(
+            media_id=f"c{index}",
+            proxy_path=f"users/u/analysis-proxy-c{index}.mp4",
+            generation="1",
+            duration_s=5.0,
+            width=1080,
+            height=1920,
+        )
+        for index in range(4)
+    ]
+    montage = plan_unified_montage(clips, BriefView(), strategy=strategy, clip_intents_enabled=True)
+    raw = montage.guided_edit()
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="queued",
+        assembly_plan={"guided_edit": raw},
+        all_candidates={
+            "creator_strategy": strategy,
+            "creator_request": "Mutfak, Çatı katı, Banyo yazsın",
+        },
+    )
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, _model, _pk, **_kwargs):
+            return job
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr(gb, "_sync_session", lambda: _Session())
+    monkeypatch.setattr(gb.settings, "clip_intents_enabled", True)
+
+    def drawn(plan: dict) -> dict[str, list[str]]:
+        by_clip: dict[str, list[str]] = {}
+        for moment in plan["story_timeline"]:
+            start, end = moment["output_start_s"], moment["output_end_s"]
+            for row in [*plan["text_elements"], *plan["context_label_text_elements"]]:
+                if row["start_s"] < end - 1e-3 and row["end_s"] > start + 1e-3:
+                    by_clip.setdefault(moment["media_id"], []).append(row["text"])
+        return by_clip
+
+    plan, _track = gb._guided_execution_plan(str(job.id), raw)
+    assert drawn(plan) == {media_id: [text] for media_id, text in rooms.items()}
+    assert all(row["id"].startswith("clip-label-") for row in plan["text_elements"])
+
+    repinned, _track = gb._guided_execution_plan(str(job.id), raw)
+    assert drawn(repinned) == {media_id: [text] for media_id, text in rooms.items()}
+
+    # A plan pinned before the fix (job 136712e8) carries both lanes; an editor
+    # revision must not carry the corner duplicates forward.
+    from app.tasks.generative_build import _context_sport_text_elements
+
+    steps = [SimpleNamespace(clip_id=m["media_id"], slot={}) for m in plan["story_timeline"]]
+    legacy = {
+        **plan,
+        "context_label_text_elements": _context_sport_text_elements(
+            [
+                {"clip_id": media_id, "sport": text, "source": "grounded_label"}
+                for media_id, text in rooms.items()
+            ],
+            steps=steps,
+            resolved_plans=[{"duration_s": m["duration_s"]} for m in plan["story_timeline"]],
+            video_duration_s=plan["resolved_duration_s"],
+        ),
+    }
+    assert len(drawn(legacy)["c0"]) == 2
+    revision = guided_editor_revision_from_approval(
+        proposal_version=raw["proposal_version"],
+        media_digest=raw["media_digest"],
+        snapshot=raw["approved_proposal"],
+        execution_plan=legacy,
+    )
+    revision["state_hash"] = ""
+    runtime = compile_guided_runtime_plan(legacy, raw, revision)
+    assert drawn(runtime) == {media_id: [text] for media_id, text in rooms.items()}
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
