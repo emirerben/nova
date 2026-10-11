@@ -2479,7 +2479,28 @@ Flow:
    `song_order`; the planner's model conversation, the full-creator-request builder, the
    claimed turn message and the deferred brief extractor all read it, so the arrangement can
    no longer become an `order` requirement or an invented `timing` (duration) requirement
-   that fails a finished draft. Playback:
+   that fails a finished draft.
+   **Filming range (KRI-580).** Most songs repeat their verses, so a take's words match the song
+   at EVERY repeat and takes filmed in one stretch get placed at different repeats, far apart (the
+   planner then keeps one side). The creator can say which stretch they filmed in:
+   `PUT /creation-threads/{id}/song-range` `{start_s, end_s, client_event_id, expected_revision}`
+   (both null clears; end clamped to the song, at least 5 s; 404 `song_range_unavailable` when off,
+   409 `song_missing` with no song, 422 `song_range_invalid`). It is stored on the PlanItem
+   (`song_range_start_s/_end_s`, migration 0118, cleared whenever the song changes in
+   `mutate_plan_item_media`) and mirrored onto the thread's song media entry as `song_range` so the
+   app can show it. It is applied where alignment is READ, never where it is written
+   (`services/song_range.restrict_alignment_to_range`, called by the planner gate and by
+   `ensure_song_alignment`): every take's stored candidates are cut to
+   `[start - 3 s, end + 3 s]` (a take's position is where it STARTS; the slack covers run-ups), a take
+   left with none is `unmatched` (no evidence: it goes to the tray, never snapped to a far repeat),
+   and a take left with several is re-ranked and its margin/status/alternates re-derived. So
+   changing or clearing the range takes effect immediately and needs no re-alignment. Capability
+   `song_filming_range`; kill switch `SONG_FILMING_RANGE_ENABLED=false` (api + worker restart) drops
+   the capability, 404s the setter and ignores any stored range (whole song, as before). Deploy order:
+   API first (migration 0118 is additive and nullable). Guards: `tests/services/test_song_range.py`
+   (the real job's candidates; a repeated verse no longer splits the group),
+   `tests/kria/test_planner_song_order.py`, `tests/routes/test_creation_threads_user_song.py`.
+   Playback:
    `GET /creation-threads/{id}/song-audio?generation=N` returns a 15-minute signed URL
    pinned to the object generation (409 `song_changed` if the song was replaced or
    removed; 404 when disabled). Kill switch `SONG_ORDER_TIMELINE_ENABLED=false` (api

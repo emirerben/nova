@@ -138,6 +138,7 @@ from app.services.song_order import (
     takes_needing_order,
     thread_keeps_lipsync,
 )
+from app.services.song_range import restrict_alignment_to_range, song_range_of
 
 log = structlog.get_logger()
 
@@ -562,6 +563,7 @@ async def _song_order_gate(
         if item is None:
             raise RuntimeError("Kria target item is unavailable")
         song_generation = getattr(item, "song_generation", None)
+        song_range = song_range_of(item)
         alignment = load_ready_alignment(
             getattr(item, "song_alignment", None),
             media_ids=take_ids,
@@ -595,6 +597,10 @@ async def _song_order_gate(
         if remaining <= 0:
             return _SongGateResult(plan=_song_pending_plan())
         await asyncio.sleep(min(_SONG_ALIGNMENT_POLL_S, remaining))
+
+    # KRI-580: the creator said which stretch of the song they filmed in; a take is only matched
+    # there (a repeated verse elsewhere must not split the group).
+    alignment = restrict_alignment_to_range(alignment, song_range)
 
     if kept_strategy is not None and events is not None:
         # Only keep lip-sync for an exchange about THIS song generation.

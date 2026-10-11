@@ -1098,6 +1098,11 @@
             "title": "Slide Post Rich Text",
             "type": "boolean"
           },
+          "song_filming_range": {
+            "default": false,
+            "title": "Song Filming Range",
+            "type": "boolean"
+          },
           "song_order_placements": {
             "default": false,
             "title": "Song Order Placements",

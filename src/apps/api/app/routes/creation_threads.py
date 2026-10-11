@@ -365,6 +365,8 @@ class CreationCapabilitiesOut(BaseModel):
     # the song for playback from GET /{thread_id}/song-audio. False (or absent) = the app
     # keeps the reorder-only card and never sends `placements` (an old API would 422 it).
     song_order_placements: bool = False
+    # KRI-580: PUT /{thread_id}/song-range sets the stretch of the song the creator filmed in.
+    song_filming_range: bool = False
     # KRI-443: plan_block events follow Create and cancel-render is available.
     live_plan_review_enabled: bool = False
     # KRI-439: 2 = structured payloads, GET /plan, scoped turns and undo; 1 = the feed only.
@@ -3552,6 +3554,117 @@ async def get_song_audio(
     )
 
 
+class SongRangeBody(StrictBody):
+    """The stretch of the song the creator filmed in; both null clears it (KRI-580)."""
+
+    start_s: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    end_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    client_event_id: str = Field(min_length=1, max_length=160)
+    expected_revision: int = Field(ge=0)
+
+    @field_validator("client_event_id")
+    @classmethod
+    def validate_client_event_id(cls, value: str) -> str:
+        return _client_id(value)
+
+    @model_validator(mode="after")
+    def _both_or_neither(self) -> SongRangeBody:
+        if (self.start_s is None) != (self.end_s is None):
+            raise ValueError("start_s and end_s are set together, or both left empty")
+        if self.start_s is not None and self.end_s is not None and self.end_s <= self.start_s:
+            raise ValueError("end_s must be after start_s")
+        return self
+
+
+_SONG_RANGE_MIN_S = 5.0
+
+
+@router.put("/{thread_id}/song-range", response_model=CreationThreadOut)
+@limiter.limit("30/minute")
+async def set_song_range(
+    request: Request,
+    thread_id: str,
+    body: SongRangeBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
+) -> CreationThreadOut:
+    """Record which stretch of the song the creator filmed in (KRI-580).
+
+    Most songs repeat their verses, so a take's words match the song at every repeat and takes
+    filmed in one stretch get placed far apart. With a range the aligner's stored candidates are
+    cut to it wherever alignment is read (planner gate, render worker): no re-alignment, and
+    clearing the range restores the whole song instantly. The range lives on the PlanItem and is
+    mirrored onto the thread's song media entry so the app can show it.
+    """
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
+    if not (settings.user_song_montage_enabled and settings.song_filming_range_enabled):
+        raise RuntimeFailure(404, "song_range_unavailable", "Song range unavailable")
+    owner_id = user.id
+    thread = await _load(thread_id, user, db, lock=True, creator_id=owner_id)
+    if thread.status != "active":
+        raise HTTPException(status_code=409, detail="Creation thread is archived")
+    wanted = {"start_s": body.start_s, "end_s": body.end_s}
+    duplicate = await _duplicate(db, thread.id, body.client_event_id)
+    if duplicate:
+        if duplicate.event_type != "song_range_set" or (duplicate.payload or {}) != wanted:
+            raise HTTPException(status_code=409, detail="Idempotency key reused")
+        await db.rollback()
+        return await _response(db, await _load(thread_id, user, db, creator_id=owner_id))
+    if not matches_conversation_revision(thread, body.expected_revision):
+        raise HTTPException(status_code=409, detail="Creation thread changed")
+    if not thread.active_plan_item_id:
+        raise RuntimeFailure(409, "song_missing", "Attach a song first.")
+    item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
+    if (
+        item is None
+        or getattr(item, "audio_mode", None) != "song"
+        or not getattr(item, "song_gcs_path", None)
+    ):
+        raise RuntimeFailure(409, "song_missing", "Attach a song first.")
+    if body.start_s is not None and body.end_s is not None:
+        song_s = float(getattr(item, "song_duration_s", None) or 0.0)
+        if song_s and body.start_s >= song_s:
+            raise RuntimeFailure(422, "song_range_invalid", "That starts after your song ends.")
+        if body.end_s - body.start_s < _SONG_RANGE_MIN_S:
+            raise RuntimeFailure(
+                422, "song_range_invalid", "Pick at least five seconds of your song."
+            )
+        # A creator rounding up past the end of the song is not an error: clamp to the song.
+        end_s = min(float(body.end_s), song_s) if song_s else float(body.end_s)
+        item.song_range_start_s, item.song_range_end_s = float(body.start_s), end_s
+    else:
+        item.song_range_start_s = item.song_range_end_s = None
+    state = dict(thread.state or {})
+    media = [dict(entry) for entry in (state.get("media") or []) if isinstance(entry, dict)]
+    for entry in media:
+        if entry.get("role") == "song":
+            if item.song_range_start_s is None:
+                entry.pop("song_range", None)
+            else:
+                entry["song_range"] = {
+                    "start_s": item.song_range_start_s,
+                    "end_s": item.song_range_end_s,
+                }
+    state["media"] = media
+    thread.state = state
+    await _append(
+        db,
+        thread,
+        event_type="song_range_set",
+        role="user",
+        payload=wanted,
+        client_event_id=body.client_event_id,
+    )
+    await db.commit()
+    await db.refresh(thread)
+    return await _response(db, thread)
+
+
 @router.get("/capabilities", response_model=CreationCapabilitiesOut)
 async def capabilities(
     user: CurrentUser,
@@ -3649,6 +3762,7 @@ async def capabilities(
         },
         "song_order_questions": song_available,
         "song_order_placements": bool(song_available and settings.song_order_timeline_enabled),
+        "song_filming_range": bool(song_available and settings.song_filming_range_enabled),
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
     }

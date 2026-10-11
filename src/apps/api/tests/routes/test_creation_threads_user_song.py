@@ -566,3 +566,219 @@ async def test_song_audio_loads_the_thread_through_the_owner_scoped_loader(monke
         )
     assert err.value.status_code == 404
     signer.assert_not_called()
+
+
+# ── song-range (KRI-580) ─────────────────────────────────────────────────────
+
+
+def _range_thread(revision: int = 4):  # noqa: ANN202
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        status="active",
+        revision=revision,
+        active_plan_item_id=uuid.uuid4(),
+        state={
+            "media": [
+                {"media_id": "clip-1.mp4", "kind": "video"},
+                {"media_id": "song-1.m4a", "kind": "audio", "role": "song"},
+            ],
+            "media_count": 2,
+        },
+        runtime_version=2,
+    )
+
+
+def _range_item(**extra):  # noqa: ANN003, ANN202
+    base = dict(
+        audio_mode="song",
+        song_gcs_path="users/u/song-1.m4a",
+        song_duration_s=209.2,
+        song_range_start_s=None,
+        song_range_end_s=None,
+    )
+    base.update(extra)
+    return SimpleNamespace(**base)
+
+
+_DEFAULT = object()
+
+
+async def _set_range(monkeypatch, body, *, thread=None, item=_DEFAULT, duplicate=None):  # noqa: ANN001, ANN202
+    thread = thread or _range_thread()
+    item = _range_item() if item is _DEFAULT else item
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    db.rollback = AsyncMock()
+    appended: list[dict] = []
+
+    async def append(_db, thread_arg, **kwargs):  # noqa: ANN001, ANN202
+        thread_arg.revision += 1
+        appended.append(kwargs)
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=duplicate))
+    monkeypatch.setattr(routes, "_append", append)
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value="response"))
+    out = await routes.set_song_range(
+        _request(), str(thread.id), body, SimpleNamespace(id=uuid.uuid4()), db
+    )
+    return out, thread, item, appended, db
+
+
+def _body(start=40.0, end=110.0, *, revision=4, event="r-1"):  # noqa: ANN001, ANN202
+    return routes.SongRangeBody(
+        start_s=start, end_s=end, client_event_id=event, expected_revision=revision
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_range_is_stored_mirrored_onto_the_song_media_entry_and_logged(
+    monkeypatch,
+) -> None:
+    out, thread, item, appended, db = await _set_range(monkeypatch, _body())
+    assert out == "response"
+    assert (item.song_range_start_s, item.song_range_end_s) == (40.0, 110.0)
+    song = next(e for e in thread.state["media"] if e.get("role") == "song")
+    assert song["song_range"] == {"start_s": 40.0, "end_s": 110.0}
+    # Only the song entry carries it; the clip entry is untouched.
+    assert "song_range" not in thread.state["media"][0]
+    assert appended == [
+        {
+            "event_type": "song_range_set",
+            "role": "user",
+            "payload": {"start_s": 40.0, "end_s": 110.0},
+            "client_event_id": "r-1",
+        }
+    ]
+    db.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_range_restores_the_whole_song(monkeypatch) -> None:
+    thread = _range_thread()
+    thread.state["media"][1]["song_range"] = {"start_s": 40.0, "end_s": 110.0}
+    item = _range_item(song_range_start_s=40.0, song_range_end_s=110.0)
+    _, thread, item, appended, _ = await _set_range(
+        monkeypatch, _body(None, None), thread=thread, item=item
+    )
+    assert item.song_range_start_s is None and item.song_range_end_s is None
+    assert "song_range" not in thread.state["media"][1]
+    assert appended[0]["payload"] == {"start_s": None, "end_s": None}
+
+
+@pytest.mark.asyncio
+async def test_an_end_past_the_songs_length_is_clamped_to_the_song(monkeypatch) -> None:
+    _, _, item, _, _ = await _set_range(monkeypatch, _body(180.0, 400.0))
+    assert (item.song_range_start_s, item.song_range_end_s) == (180.0, 209.2)
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [(10.0, None), (None, 10.0), (50.0, 50.0), (60.0, 50.0), (-1.0, 50.0)],
+)
+def test_a_malformed_range_is_rejected_before_it_reaches_the_route(start, end) -> None:
+    with pytest.raises(ValidationError):
+        _body(start, end)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("start", "end", "code"),
+    [(40.0, 43.0, "song_range_invalid"), (250.0, 300.0, "song_range_invalid")],
+)
+async def test_too_short_or_past_the_end_is_422(monkeypatch, start, end, code) -> None:
+    with pytest.raises(routes.RuntimeFailure) as err:
+        await _set_range(monkeypatch, _body(start, end))
+    assert err.value.status_code == 422 and err.value.code == code
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "item",
+    [_range_item(audio_mode="kria"), _range_item(song_gcs_path=None), None],
+)
+async def test_without_a_song_there_is_nothing_to_set_a_range_on(monkeypatch, item) -> None:
+    with pytest.raises(routes.RuntimeFailure) as err:
+        await _set_range(monkeypatch, _body(), item=item)
+    assert err.value.status_code == 409 and err.value.code == "song_missing"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_revision_is_409_and_nothing_changes(monkeypatch) -> None:
+    thread, item = _range_thread(revision=9), _range_item()
+    with pytest.raises(HTTPException) as err:
+        await _set_range(monkeypatch, _body(revision=4), thread=thread, item=item)
+    assert err.value.status_code == 409
+    assert item.song_range_start_s is None
+
+
+@pytest.mark.asyncio
+async def test_a_retry_with_the_same_key_is_idempotent_and_a_reused_key_is_409(
+    monkeypatch,
+) -> None:
+    same = SimpleNamespace(event_type="song_range_set", payload={"start_s": 40.0, "end_s": 110.0})
+    out, _, item, appended, _ = await _set_range(monkeypatch, _body(), duplicate=same)
+    assert out == "response" and appended == [] and item.song_range_start_s is None
+    other = SimpleNamespace(event_type="song_range_set", payload={"start_s": 1.0, "end_s": 9.0})
+    with pytest.raises(HTTPException) as err:
+        await _set_range(monkeypatch, _body(), duplicate=other)
+    assert err.value.status_code == 409
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("off", ["song_flag", "range_flag"])
+async def test_the_setter_is_404_when_disabled(monkeypatch, off) -> None:
+    flag = "user_song_montage_enabled" if off == "song_flag" else "song_filming_range_enabled"
+    monkeypatch.setattr(settings, flag, False)
+    with pytest.raises(routes.RuntimeFailure) as err:
+        await _set_range(monkeypatch, _body())
+    assert err.value.status_code == 404 and err.value.code == "song_range_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_the_capability_is_advertised_with_the_song_and_has_its_own_kill_switch(
+    monkeypatch,
+) -> None:
+    assert (await _caps())["song_filming_range"] is True
+    monkeypatch.setattr(settings, "song_filming_range_enabled", False)
+    manifest = await _caps()
+    assert manifest["song_filming_range"] is False
+    assert manifest["song_order_questions"] is True  # the song itself is unaffected
+
+
+@pytest.mark.asyncio
+async def test_replacing_the_song_clears_the_range_for_the_new_song() -> None:
+    from app.services.plan_item_media import mutate_plan_item_media  # noqa: PLC0415
+
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        clip_gcs_paths=[],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+        voiceover_generation=None,
+        voiceover_duration_s=None,
+        song_gcs_path="users/u/old.m4a",
+        song_generation=1,
+        song_duration_s=100.0,
+        song_filename="old.m4a",
+        song_analysis={"status": "ready"},
+        song_alignment={"version": 3},
+        song_range_start_s=40.0,
+        song_range_end_s=110.0,
+        edit_format="montage",
+        audio_mode="song",
+        current_job_id=None,
+    )
+    mutate_plan_item_media(
+        item,
+        detector_policy="x",
+        current_analysis=None,
+        song_gcs_path="users/u/new.m4a",
+        song_generation=2,
+        song_duration_s=90.0,
+        song_filename="new.m4a",
+    )
+    assert item.song_range_start_s is None and item.song_range_end_s is None
+    assert item.song_alignment is None and item.song_analysis is None

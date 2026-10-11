@@ -3111,6 +3111,10 @@ class PlanItem(Base):
     # per-take song offsets). Written only by app/tasks/user_song.py.
     song_analysis: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     song_alignment: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # KRI-580: the stretch of the song the creator says they filmed in (both set or both NULL).
+    # Takes are matched only inside it; cleared whenever the song changes.
+    song_range_start_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    song_range_end_s: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Original-audio bed level for the narrated archetype (0.0 = voice only,
     # 1.0 = loudest). NULL → Kria's default level. Set via
     # PATCH /plan-items/{id}/voiceover-bed-level; threaded to build_generative_job

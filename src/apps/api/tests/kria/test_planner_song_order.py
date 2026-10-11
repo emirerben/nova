@@ -610,3 +610,47 @@ def test_the_full_creator_request_never_includes_a_song_answers_echo_text() -> N
     request = planner._full_creator_request(rows, current_message=SONG_ORDER_ANSWER_MESSAGE)
     assert request == f"Lipsync\n{SONG_ORDER_ANSWER_MESSAGE}"
     assert "0:44" not in request and "1:40" not in request
+
+
+async def test_the_gate_matches_takes_only_inside_the_stretch_the_creator_filmed_in() -> None:
+    """KRI-580: a take whose best guess is a verse repeat elsewhere is placed in the stretch."""
+    from app.schemas.user_song import PlacementCandidate  # noqa: PLC0415
+
+    far_repeat = TakeAlignment(
+        media_id="b",
+        status="ambiguous",
+        delta_s=90.0,
+        confidence=0.9,
+        likelihood=0.9,
+        margin=0.45,
+        candidates=[
+            PlacementCandidate(delta_s=90.0, likelihood=0.9, method="lyrics"),
+            PlacementCandidate(delta_s=32.0, likelihood=0.5, method="lyrics"),
+        ],
+    )
+    alignment = _alignment(
+        _conf("a", 20.0), far_repeat, TakeAlignment(media_id="c", status="unmatched")
+    )
+    plain = _item(alignment)
+    ranged = _item(alignment)
+    ranged.song_range_start_s, ranged.song_range_end_s = 15.0, 60.0
+
+    asked_plain = (await _gate(_Db(plain), _manifest("a", "b", "c"), _strategy())).plan
+    asked_ranged = (await _gate(_Db(ranged), _manifest("a", "b", "c"), _strategy())).plan
+    assert asked_plain is not None and asked_ranged is not None
+    at_plain = {i.media_id: i for i in asked_plain.song_order_question.items}
+    at_ranged = {i.media_id: i for i in asked_ranged.song_order_question.items}
+    assert at_plain["b"].song_start_s == 90.0
+    assert at_ranged["b"].song_start_s == 32.0
+    assert [c.delta_s for c in at_ranged["b"].candidates] == [32.0]
+
+
+async def test_a_stored_range_is_ignored_when_the_feature_is_switched_off(monkeypatch) -> None:
+    alignment = _alignment(_conf("a", 20.0), TakeAlignment(media_id="c", status="unmatched"))
+    item = _item(alignment)
+    item.song_range_start_s, item.song_range_end_s = 100.0, 140.0  # would drop take a (20 s)
+    monkeypatch.setattr(settings, "song_filming_range_enabled", False)
+    asked = (await _gate(_Db(item), _manifest("a", "c"), _strategy())).plan
+    assert asked is not None
+    by_id = {i.media_id: i for i in asked.song_order_question.items}
+    assert by_id["a"].song_start_s == 20.0
