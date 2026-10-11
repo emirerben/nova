@@ -176,6 +176,8 @@ FIELD_SECTIONS: dict[str, tuple[str, ...]] = {
     "visual_blocks": ("overlays",),
     "motion_scenes": ("overlays",),
     "camera_effects": ("look",),
+    # KRI-589: a scoped update can never touch freehand drawings unless overlays are in scope.
+    "drawings": ("overlays",),
     "carousel_moment": ("look",),
 }
 # Documentation of the contract table (4.3, last column); the code above is its inverse.
@@ -192,7 +194,7 @@ SECTION_COMMIT_FIELDS: dict[str, tuple[str, ...]] = {
         "mix",
     ),
     "sfx": ("sound_effects",),
-    "overlays": ("media_overlays", "visual_blocks", "motion_scenes", "text_elements"),
+    "overlays": ("media_overlays", "visual_blocks", "motion_scenes", "drawings", "text_elements"),
     "look": ("camera_effects", "carousel_moment", "caption_meta", "text_elements"),
 }
 _UNOWNED_LANES = frozenset({"orientation", "landscape_fit"})

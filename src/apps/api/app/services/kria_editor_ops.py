@@ -968,6 +968,16 @@ def build_editor_snapshot(
             for index, row in enumerate(variant.get("camera_effects") or [])
             if isinstance(row, dict)
         ]
+    drawings = [row for row in variant.get("drawings") or [] if isinstance(row, dict)]
+    if drawings:
+        # Read-only context (KRI-589): no op family edits freehand drawings, so the model is
+        # only told they exist and when, never given their strokes.
+        snapshot["drawings"] = {
+            "count": len(drawings),
+            "windows": [
+                {"start_s": row.get("start_s"), "end_s": row.get("end_s")} for row in drawings
+            ],
+        }
     guided = _guided_v2_revision(job, variant)
     if guided is not None:
         snapshot["guided_revision"] = {
@@ -1112,7 +1122,9 @@ def project_editor_draft(
         }
     # KRI-219: full-replacement lanes (same wire shape the snapshot/compile read)
     # so a turn-2 add/patch/remove indexes the turn-1 draft, not the pre-draft list.
-    for key in ("sound_effects", "camera_effects"):
+    # KRI-589: `drawings` rides along read-only: no op edits it, but a turn-2 snapshot (and the
+    # draft a chat edit hands back) must see the creator's unsaved drawings, not drop them.
+    for key in ("sound_effects", "camera_effects", "drawings"):
         if payload.get(key) is not None:
             projected[key] = copy.deepcopy(payload[key])
     mix = payload.get("mix")

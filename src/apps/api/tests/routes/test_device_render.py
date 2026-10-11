@@ -1553,3 +1553,82 @@ def test_phone_publication_drops_the_cloud_artifacts_evidence(fixture, monkeypat
     published = fixture.job.assembly_plan["variants"][0]
     assert published["video_path"] == path
     assert "cloud_evidence" not in published
+
+
+# ---- KRI-589: a build that cannot decode drawings must be told to update -----------------
+
+
+def _drawing_recipe(fixture):
+    import json
+
+    from app.kria.recipes_v2 import EditRecipeV2
+
+    document = json.loads(
+        (Path(__file__).parents[1] / "fixtures/kria_edit_recipe_v2.json").read_text()
+    )
+    document["drawing_layers"] = [
+        {
+            "id": "d1",
+            "start": 0.5,
+            "end": 1.5,
+            "canvas_aspect": 0.5625,
+            "center_x": 0.5,
+            "center_y": 0.5,
+            "scale": 1.0,
+            "rotation_deg": 0.0,
+            "entrance": "draw",
+            "draw_duration": 0.6,
+            "exit": "none",
+            "strokes": [
+                {
+                    "color": "#FF3B30",
+                    "opacity": 1.0,
+                    "width_frac": 0.012,
+                    "texture": "pen",
+                    "seed": 7,
+                    "points": [[0.1, 0.1], [0.4, 0.4]],
+                }
+            ],
+        }
+    ]
+    fixture.request = make_device_request(
+        job_id=fixture.job.id,
+        variant_id="first",
+        revision=2,
+        recipe=EditRecipeV2.model_validate(document),
+    )
+    pin_device_request(fixture.job, fixture.request, base_generation="approved")
+
+
+@pytest.mark.parametrize(
+    "protocol,status", [("4", 426), (None, 426), ("5", 200), ("6", 200)], ids=str
+)
+def test_device_render_with_drawings_demands_a_build_that_decodes_them(
+    fixture, monkeypatch, protocol, status
+):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    _drawing_recipe(fixture)
+    headers = {"X-Kria-Client-Protocol": protocol} if protocol is not None else {}
+
+    response = fixture.client.get(
+        f"/me/jobs/{fixture.job.id}/device-render?variant_id=first", headers=headers
+    )
+
+    assert response.status_code == status
+    if status == 426:
+        assert response.json()["detail"] == {
+            "code": "client_update_required",
+            "feature": "drawing",
+        }
+        # The pinned recipe is untouched: the old build is told to update, not failed.
+        assert device_record(fixture.job, "first")["status"]["phase"] == "awaiting_device"
+        fixture.db.commit.assert_not_awaited()
+
+
+def test_device_render_without_drawings_is_open_to_every_build(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    response = fixture.client.get(
+        f"/me/jobs/{fixture.job.id}/device-render?variant_id=first",
+        headers={"X-Kria-Client-Protocol": "2"},
+    )
+    assert response.status_code == 200

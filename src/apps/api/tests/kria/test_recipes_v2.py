@@ -367,3 +367,84 @@ def test_still_card_cannot_ride_a_v1_recipe():
     document["tracks"][0]["clips"][0]["still_layout"] = "supporting_card"
     with pytest.raises(ValidationError, match="plain V2 main-track clip"):
         EditRecipeV1.model_validate(document)
+
+
+# ---- KRI-589: freehand drawing layers ------------------------------------------------
+
+_DRAWING_LAYER = {
+    "id": "d1",
+    "start": 0.5,
+    "end": 1.5,
+    "canvas_aspect": 0.5625,
+    "center_x": 0.5,
+    "center_y": 0.5,
+    "scale": 1.0,
+    "rotation_deg": 0.0,
+    "entrance": "draw",
+    "draw_duration": 0.6,
+    "exit": "none",
+    "strokes": [
+        {
+            "color": "#FF3B30",
+            "opacity": 1.0,
+            "width_frac": 0.012,
+            "texture": "pen",
+            "seed": 7,
+            "points": [[0.1, 0.1], [0.4, 0.4]],
+        }
+    ],
+}
+
+
+def test_empty_drawing_layers_leave_the_recipe_byte_identical():
+    """Old recipes (and their digests) must not change: the key is absent while empty."""
+    document = json.loads(FIXTURE.read_text())
+    recipe = EditRecipeV2.model_validate(document)
+    assert "drawing_layers" not in recipe.model_dump(mode="json")
+    assert "freehandDrawing" not in recipe.required_capabilities
+    document["drawing_layers"] = []
+    assert recipe_digest(EditRecipeV2.model_validate(document)) == recipe_digest(recipe)
+
+
+def test_drawing_layers_declare_the_capability_and_change_the_digest():
+    document = json.loads(FIXTURE.read_text())
+    before = recipe_digest(EditRecipeV2.model_validate(document))
+    document["drawing_layers"] = [_DRAWING_LAYER]
+    recipe = EditRecipeV2.model_validate(document)
+    assert "freehandDrawing" in recipe.required_capabilities
+    assert recipe_digest(recipe) != before
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+@pytest.mark.parametrize("mutation", ["duplicate", "past_the_end", "draw_longer_than_window"])
+def test_drawing_layers_must_be_unique_inside_the_timeline_and_the_window(mutation):
+    document = json.loads(FIXTURE.read_text())
+    layer = dict(_DRAWING_LAYER)
+    if mutation == "duplicate":
+        document["drawing_layers"] = [layer, layer]
+    elif mutation == "past_the_end":
+        document["drawing_layers"] = [{**layer, "end": 1700.0}]
+    else:
+        document["drawing_layers"] = [{**layer, "draw_duration": 5.0}]
+    with pytest.raises(ValidationError):
+        EditRecipeV2.model_validate(document)
+
+
+def test_pilot_validator_accepts_drawings_only_when_the_device_verified_them(monkeypatch):
+    from app.config import settings
+    from app.services.phone_rollout import PhoneCapabilityUnavailable, validate_phone_pilot_recipe
+
+    document = json.loads(FIXTURE.read_text())
+    plain = EditRecipeV2.model_validate(document)
+    document["drawing_layers"] = [_DRAWING_LAYER]
+    drawn = EditRecipeV2.model_validate(document)
+    verified = [*plain.required_capabilities, "freehandDrawing"]
+
+    monkeypatch.setattr(settings, "phone_render_verified_features", verified)
+    validate_phone_pilot_recipe(drawn)
+
+    monkeypatch.setattr(settings, "phone_render_verified_features", verified[:-1])
+    validate_phone_pilot_recipe(plain)  # no drawings: unaffected
+    with pytest.raises(PhoneCapabilityUnavailable) as refused:
+        validate_phone_pilot_recipe(drawn)
+    assert "freehandDrawing" in str(refused.value.capability)

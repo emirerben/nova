@@ -1491,6 +1491,14 @@ def _format_snapshot(snapshot: dict) -> str:
                 f"{_context_row_suffix(effect, component_context_enabled)}"
             )
 
+    drawings = snapshot.get("drawings")
+    if isinstance(drawings, dict) and drawings.get("count"):
+        lines.append(
+            "\nFREEHAND DRAWINGS (read-only: the creator drew these by hand; never remove, "
+            "move or edit them, and keep clip edits from leaving them without footage): "
+            f"count={_field(drawings.get('count'), max_chars=10)}"
+        )
+
     visual_blocks = snapshot.get("visual_blocks")
     if isinstance(visual_blocks, list):
         lines.append("\nVISUAL BLOCKS (indices are authoritative for this turn):")

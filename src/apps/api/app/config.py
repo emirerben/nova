@@ -618,6 +618,15 @@ class Settings(BaseSettings):
     # `fly machine restart <id>`. Needs `musicBed` + `audioMix` in
     # PHONE_RENDER_VERIFIED_FEATURES (both already verified in prod).
     user_song_montage_enabled: bool = True
+    # KRI-589: freehand finger drawings over a device-rendered edit (own `drawings` editor
+    # lane -> `EditRecipeV2.drawing_layers`). Default TRUE; needs `freehandDrawing` in
+    # PHONE_RENDER_VERIFIED_FEATURES (fly secret) and an app build declaring
+    # `X-Kria-Client-Protocol` >= `freehand_drawing_min_client_protocol`. False: capabilities
+    # close drawings.add/edit/trim and Save 422s `drawings_disabled` for new/changed
+    # drawings; stored drawings still compile and play, and drawings.delete stays open.
+    # Apply: `fly secrets set FREEHAND_DRAWING_ENABLED=false` (api + worker) + restart.
+    freehand_drawing_enabled: bool = True
+    freehand_drawing_min_client_protocol: int = 5
     # KRI-561: the song-order question is answered on a horizontal song timeline (play the
     # song, drop clips onto song time) instead of the vertical reorder list. Kill switch:
     # `fly secrets set SONG_ORDER_TIMELINE_ENABLED=false` + restart (api): capabilities drop
