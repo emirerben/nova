@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.225.0] - 2026-10-11
+
+### Changed
+- fix(kria): face-filled vertical crop for a sideways phone Talking speaker (KRI-547) (#1507) <!-- release-pr: 1507 -->
+
 ## [0.78.224.0] - 2026-10-11
 
 ### Changed

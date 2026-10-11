@@ -17,7 +17,11 @@ from app.pipeline.phone_subtitled_plan import (
 from app.routes import generative_jobs as gj
 from app.services.device_render import device_status, pin_device_request
 from app.services.phone_editor import prepare_phone_editor_commit
-from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD
+from app.services.phone_sources import (
+    PHONE_SOURCES_FIELD,
+    PHONE_VISUALS_FIELD,
+    PhoneSourceBinding,
+)
 from app.services.phone_subtitled_editor import (
     PHONE_SUBTITLED_EDITOR_LANES_FIELD,
     project_phone_subtitled_editor_sections,
@@ -739,3 +743,74 @@ def test_a_fit_save_switches_the_letterbox_either_way_and_persists(monkeypatch, 
     _resave(job, landscape_fit="fit")
     assert all(s == 0.31640625 for s in _main_track_scales(device_status(job, "subtitled").request))
     assert job.assembly_plan["variants"][0]["landscape_fit"] == "fit"
+
+
+# --- KRI-547: a face-filled speaker on editor Save ---------------------------------------
+
+_FACE_SHIFT = 508.44
+
+
+def _face_filled_phone_job(monkeypatch, *, cut: bool):
+    """The Kadıköy shape: the letterboxed job, compiled face-filled instead, with
+    the worker's ``speaker_framing`` receipt and ``landscape_fit="fill"``."""
+    job = _letterboxed_phone_job(monkeypatch, cut=cut)
+    previous = device_status(job, "subtitled").request
+    bindings = tuple(
+        PhoneSourceBinding.model_validate(row) for row in job.assembly_plan[PHONE_SOURCES_FIELD]
+    )
+    variant = job.assembly_plan["variants"][0]
+    segments = _main_track_segments(previous)
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=variant["caption_cues"],
+        keep_segments=segments,
+        speaker_position_x=_FACE_SHIFT,
+    )
+    variant["landscape_fit"] = "fill"
+    variant["speaker_framing"] = {
+        "version": 1,
+        "mode": "face_fill",
+        "reason": "face_in_window",
+        "eligible": True,
+        "asked_by": ["r1"],
+        "window": {"left": 0.19, "right": 0.51, "position_x": _FACE_SHIFT, "fits": True},
+    }
+    pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id="subtitled", revision=2, recipe=recipe),
+        base_generation="first",
+    )
+    return job
+
+
+def _main_track_shifts(request) -> list[tuple[float, float]]:
+    track = next(t for t in request.recipe.tracks if t.id == "subtitled")
+    return [(clip.transform.scale, clip.transform.position_x) for clip in track.clips]
+
+
+@pytest.mark.parametrize("cut", [False, True])
+def test_a_face_filled_speaker_keeps_its_crop_across_a_save(monkeypatch, cut):
+    job = _face_filled_phone_job(monkeypatch, cut=cut)
+    baseline = _main_track_shifts(device_status(job, "subtitled").request)
+    assert baseline and all(shift == (1, _FACE_SHIFT) for shift in baseline)
+
+    save(job, sound_effects=[])
+
+    assert _main_track_shifts(device_status(job, "subtitled").request) == baseline
+    assert job.assembly_plan["variants"][0]["speaker_framing"]["mode"] == "face_fill"
+
+
+def test_bars_drop_the_face_crop_and_crop_brings_it_back(monkeypatch):
+    job = _face_filled_phone_job(monkeypatch, cut=True)
+
+    _resave(job, landscape_fit="fit")
+    shifts = _main_track_shifts(device_status(job, "subtitled").request)
+    assert shifts and all(shift == (0.31640625, 0) for shift in shifts)
+    framing = job.assembly_plan["variants"][0]["speaker_framing"]
+    assert (framing["mode"], framing["reason"]) == ("letterbox", "creator_chose_bars")
+
+    _resave(job, landscape_fit="fill")
+    shifts = _main_track_shifts(device_status(job, "subtitled").request)
+    assert shifts and all(shift == (1, _FACE_SHIFT) for shift in shifts)
+    framing = job.assembly_plan["variants"][0]["speaker_framing"]
+    assert (framing["mode"], framing["reason"]) == ("face_fill", "face_in_window")
