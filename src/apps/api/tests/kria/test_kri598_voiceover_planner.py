@@ -30,8 +30,9 @@ Ways this could go wrong, written down before the code (each has a case):
 6. The photo's reaction beat is lost when "all" resolves.
 7. "All" silently drops a Visual that no spoken word places, or more own clips than
    one native edit takes.
-8. A contract the model returns anyway passes silently, or fails with feedback that
-   does not say what to do instead.
+8. A contract the model returns anyway is refused at the parse: every refusal spends a
+   retry and three end the turn, a terminal failure the downgrade used to avoid. Or the
+   repair leaks into v1, where an unavailable contract must still be refused.
 9. Exact photo/video timing (`mixed_media_timing`) on a v2 voiceover edit is quietly
    accepted although nothing can honour it, or (read from the creator's words, so the
    model cannot drop it) fails the parse on every retry instead of asking.
@@ -53,6 +54,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.agents._runtime import SchemaError
+from app.agents._schemas.creator_agent import CapabilityAvailability
 from app.agents._schemas.creator_policy import (
     CAPABILITY_GUIDED_VOICEOVER,
     GUIDED_VOICEOVER_NATIVE_ONLY_CODE,
@@ -398,23 +400,64 @@ async def test_all_scope_over_the_native_cap_says_clips_were_left_out(
 # 8 + 9 -----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("scope", ["all", "selected"])
-def test_a_contract_on_a_v2_voiceover_is_refused_with_what_to_do_instead(
-    prod_profile, scope
+@pytest.mark.parametrize(
+    "model_scope",
+    [
+        # The prod turn-3 answer: the contract over all media, no beats.
+        {"media_scope": "all", "selected_media_ids": []},
+        # The contract over the cue clips; the scope reader still reads "all".
+        {"media_scope": "selected", "selected_media_ids": [RIVER, LAPTOP, KITCHEN, BATHROOM]},
+    ],
+)
+async def test_a_contract_on_a_v2_voiceover_is_repaired_into_a_plan(
+    prod_profile, monkeypatch, model_scope
 ) -> None:
-    """The prod turn-3 answer (the contract, no beats) is a retry, and the retry is told
-    to drop the contract and time the photo with reaction_beats."""
+    """A contract the v2 manifest never offers is dropped at the parse, not refused: a
+    refusal spends a retry, and three refusals end the turn ("I couldn't turn that into a
+    plan"). The planner then plans every own clip and only adds notices."""
 
-    agent = MainCreatorAgent(model_client=None)
     raw = _raw(
-        _strategy(execution_contract="guided_voiceover_v1", media_scope=scope, reaction_beats=None)
+        _strategy(execution_contract="guided_voiceover_v1", reaction_beats=None, **model_scope)
     )
+    agent = MainCreatorAgent(model_client=None)
+    # One parse, no SchemaError: the turn never spends a retry on it.
+    parsed = agent.parse(raw, _agent_input(TURN3, _manifest()))
+    assert parsed.action.strategy.execution_contract is None
+
+    planned = await _plan(monkeypatch, raw)
+    drafted = _drafted(planned)
+    strategy = drafted["strategy"]
+    assert strategy.get("execution_contract") is None
+    assert strategy["render_program"] == "native"
+    assert strategy["media_scope"] == "selected"
+    assert sorted(strategy["selected_media_ids"]) == sorted(OWN)
+    # The answer had no beat for the bathtub photo: said, not asked.
+    assert VOICEOVER_VISUALS_LEFT_OUT_NOTICE in drafted["summary"]
+
+
+def test_a_contract_on_a_v1_manifest_that_cannot_run_it_is_still_refused(prod_profile) -> None:
+    """The repair is runtime v2's: anywhere else an unavailable contract is still a retry."""
+
+    v1 = _manifest(runs_guided_voiceover=True)
+    closed = v1.model_copy(
+        update={
+            "capabilities": {
+                **v1.capabilities,
+                CAPABILITY_GUIDED_VOICEOVER: CapabilityAvailability(
+                    available=False,
+                    reason_code="unsupported_phone_audio",
+                    reason="phone rendering does not support recorded voiceover",
+                ),
+            }
+        }
+    )
+    agent = MainCreatorAgent(model_client=None)
 
     with pytest.raises(SchemaError):
-        agent.parse(raw, _agent_input(TURN3, _manifest()))
-    feedback = agent.schema_clarification()
-    assert "leave execution_contract unset" in feedback
-    assert "reaction_beats" in feedback
+        agent.parse(
+            _raw(_strategy(execution_contract="guided_voiceover_v1")), _agent_input(TURN3, closed)
+        )
+    assert "phone rendering does not support recorded voiceover" in agent.schema_clarification()
 
 
 async def test_exact_photo_video_timing_on_a_v2_voiceover_is_asked_about(

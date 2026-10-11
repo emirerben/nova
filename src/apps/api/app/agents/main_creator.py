@@ -11,6 +11,7 @@ import json
 import re
 from typing import ClassVar, Literal
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
@@ -24,6 +25,7 @@ from app.agents._schemas.creator_agent import (
 from app.agents._schemas.creator_policy import (
     CAPABILITY_DRAFT_GUIDED_PROPOSAL,
     UserSongUnavailableError,
+    native_voiceover_only,
 )
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.config import settings
@@ -43,6 +45,8 @@ from app.schemas.edit_proposal import (
 )
 from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 from app.services.length_policy import creator_duration_s
+
+log = structlog.get_logger()
 
 # Named sound effects are model-read with verbatim licensed_sfx evidence (v35).
 # KRI-178: reaction beats (name/word-triggered photo/sticker + sound pop-ins,
@@ -715,6 +719,20 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         "media_scope": resolved_scope,
                     }
                 )
+                if strategy.execution_contract is not None and native_voiceover_only(
+                    input.capability_manifest
+                ):
+                    # KRI-598: this manifest (runtime v2) never offers the guided contract.
+                    # Repair, like KRI-586's envelope repairs, instead of refusing: every
+                    # refusal spends a retry and three end the turn. The planner's policy
+                    # check then resolves "all" to every own clip and says what the native
+                    # voiceover edit leaves out.
+                    log.info(
+                        "main_creator_contract_dropped_native_only",
+                        media_scope=strategy.media_scope,
+                        reaction_beats=len(strategy.reaction_beats or ()),
+                    )
+                    strategy = strategy.model_copy(update={"execution_contract": None})
                 action = action.model_copy(
                     update={
                         "strategy": normalize_creator_strategy_media(

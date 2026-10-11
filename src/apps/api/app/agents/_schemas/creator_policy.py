@@ -478,8 +478,9 @@ def effective_render_program(
     guided_voiceover = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
     guided_voiceover_requested = _requires_guided_voiceover(manifest, strategy)
     if native_only:
-        # KRI-598: this planner can never run the guided contract. The capability's
-        # reason tells the model what to do instead (it is the retry feedback).
+        # KRI-598: this planner can never run the guided contract. The Main Creator
+        # parse drops one before it gets here; any other caller is refused with the
+        # capability's reason.
         if strategy.execution_contract is not None:
             raise MixedMediaTimingUnavailableError(
                 (guided_voiceover.reason if guided_voiceover is not None else None)
