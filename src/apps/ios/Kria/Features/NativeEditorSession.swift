@@ -384,10 +384,7 @@ struct NativeEditorTemporaryVideo {
     private var savedUserSong: NativeUserSong? { baseUserSong?.applying(acknowledgedUserSong) }
     /// The latest start: it must leave `NativeUserSong.minPlayableS` of song. The video no longer bounds it;
     /// a song that runs out before the video does simply stops.
-    private func maxUserSongStart(for song: NativeUserSong) -> Double? {
-        guard let songDuration = song.durationS else { return nil }
-        return max(0, songDuration - NativeUserSong.minPlayableS)
-    }
+    private func maxUserSongStart(for song: NativeUserSong) -> Double? { NativeUserSong.maxStart(for: song) }
     /// The video length the song follows right now.
     private func currentVideoLength(for song: NativeUserSong) -> Double { duration > 0 ? duration : song.windowLengthS }
     /// Acknowledged plus unsaved edits, with a pending start re-clamped to the CURRENT video length
@@ -399,21 +396,37 @@ struct NativeEditorTemporaryVideo {
     /// A pending start re-clamped to the song as it is NOW: it must leave a second of song, and (KRI-561) a
     /// second before the creator's end, so the server never refuses it.
     private func reclamped(_ state: EditorUserSongState) -> EditorUserSongState {
-        var state = state
-        guard !state.removed, let song = baseUserSong, var start = state.windowStartS else { return state }
-        if let limit = maxUserSongStart(for: song) { start = min(start, limit) }
-        let context = EditorUserSongState.merged(acknowledgedUserSong, state) ?? state
-        if let end = song.creatorEnd(applying: context) { start = min(start, max(0, end - NativeUserSong.minPlayableS)) }
-        state.windowStartS = start
-        return state
+        guard let song = baseUserSong else { return state }
+        return NativeUserSong.reclamped(state, base: song, acknowledged: acknowledgedUserSong)
     }
     /// The song as the editor currently shows it: saved values plus unsaved volume / start / end edits.
     /// A lip-sync window follows the singer: where the cuts now put the song start (`lipsyncSongStartShift`).
     var effectiveUserSong: NativeUserSong? {
         guard let base = baseUserSong else { return nil }
-        let anchored = base.mode == .lipsync ? base.shifted(by: lipsyncSongStartShift) : base
-        return anchored.applying(effectiveUserSongState, videoLength: currentVideoLength(for: base))
+        return NativeUserSong.effective(base: base, acknowledged: acknowledgedUserSong, draft: document.userSong,
+                                        lipsyncShift: lipsyncSongStartShift, videoLength: currentVideoLength(for: base))
     }
+
+    // MARK: KRI-576 lyric captions follow the song window in the live preview
+
+    /// The song start (in true song seconds) the document's `song-caption-N` rows were last timed against: the
+    /// loaded variant's `user_song` window, or after a Save the window the server re-projected them for.
+    /// Preview-only bookkeeping, never part of the document.
+    private var songCaptionWindowStartS: Double?
+    /// Lip-sync only: `base` stays the loaded variant's window until the next variant load, but a Save has
+    /// already folded the cuts' shift into the clean clips (`lipsyncSongStartShift` reads 0 again). This is the
+    /// shift Saved since that variant loaded, so `effective start + carry` stays the TRUE start.
+    private var songCaptionLipsyncCarryS = 0.0
+    /// How the preview re-times the lyric rows right now; nil when they already sit where the song window is.
+    var songCaptionShift: NativeSongCaptionShift? {
+        if userSongRemoved { return NativeSongCaptionShift(shiftS: 0, windowLengthS: 0, songRemoved: true) }
+        guard let anchor = songCaptionWindowStartS, let song = effectiveUserSong else { return nil }
+        let shift = song.windowStartS + songCaptionLipsyncCarryS - anchor
+        guard abs(shift) > NativeSongCaptionShift.tolerance else { return nil }
+        return NativeSongCaptionShift(shiftS: shift, windowLengthS: song.windowLengthS, songRemoved: false)
+    }
+    /// The song start as the editor shows it right now, in true song seconds.
+    private var trueSongWindowStartS: Double? { effectiveUserSong.map { $0.windowStartS + songCaptionLipsyncCarryS } }
     /// KRI-561: the server offers (and the edit allows) trimming the song.
     private var songTrimOffered: Bool { document.capabilities["user_song.trim"] != nil }
     private var songTrimEditable: Bool { document.capabilities["user_song.trim"]?.editable == true }
@@ -488,7 +501,8 @@ struct NativeEditorTemporaryVideo {
     /// `delta + source_start - output_start` (what the server derives on Save), so a head trim, a dropped
     /// cut or a song trim all keep the singer on the song. Without the takes' offsets (an older server, or
     /// the source pool not loaded yet) the first cut's head is the fallback (`NativeLipsyncSongAnchor`).
-    private var lipsyncSongStartShift: Double {
+    private var lipsyncSongStartShift: Double { lipsyncStartShift(of: document, against: cleanDocument) }
+    private func lipsyncStartShift(of document: EditorDocument, against cleanDocument: EditorDocument) -> Double {
         guard baseUserSong?.mode == .lipsync else { return 0 }
         let deltas = lipsyncDeltaByClipIndex
         if !deltas.isEmpty,
@@ -2691,12 +2705,15 @@ struct NativeEditorTemporaryVideo {
             // `liveSongVolumeActive`); only when something else is audible does the level stay baked in.
             let hasSong = audio[NativeEditorRenderCompiler.songSourceKey] != nil
             let realBed = hasSong ? effectiveSongBed : nil
+            // KRI-576: the lyric rows follow the song window as it is now; `snapshot` itself is never rewritten.
+            let lyricShift = songCaptionShift
             func compileProgram(songBed: NativeEditorSongBed?) throws -> NativeEditorRenderProgram {
                 try compiler.compile(document: snapshot, clips: clips, items: items,
                                      sources: sources, audioSources: audio, mediaSources: media,
                                      referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
                                      sourceAudioPreserved: sourceAudioPreserved || songRemoved,
-                                     songBed: songBed, deviceCaptions: rendersOnDevice)
+                                     songBed: songBed, deviceCaptions: rendersOnDevice,
+                                     songCaptionShift: lyricShift)
             }
             var program = try compileProgram(songBed: realBed.map {
                 NativeEditorSongBed(assetID: $0.assetID, sourceStart: $0.sourceStart, sourceDuration: $0.sourceDuration,
@@ -4909,6 +4926,8 @@ struct NativeEditorTemporaryVideo {
         isSaving = true; saveState = .saving
         defer { isSaving = false }
         let submittedDocument = document
+        // KRI-576: the song window this save asks the server to project the lyric rows against.
+        let submittedSongStartS = trueSongWindowStartS
         let submittedSections = changedSections
         let submittedUndoCount = undoStack.count
         let saveItemID = itemID
@@ -5019,7 +5038,8 @@ struct NativeEditorTemporaryVideo {
                         expectedJobID: saveJobID,
                         expectedVariantKey: saveVariantKey,
                         expectedThreadID: saveThreadID,
-                        expectedDocumentGeneration: response.generation
+                        expectedDocumentGeneration: response.generation,
+                        songWindowStartS: submittedSongStartS
                     )
                 } catch {
                     // A durable save must remain successful even when the
@@ -5691,6 +5711,11 @@ struct NativeEditorTemporaryVideo {
         guard !sections.isEmpty else { return }
         document.revision.baseGeneration = generation
         let acknowledgedRevision = document.revision
+        // KRI-576: the cuts this save carried now ARE the clean clips, so a lip-sync song start they moved stops
+        // reading as an unsaved shift; remember it, because the loaded variant's window stays stale until reload.
+        if sections.contains(.timeline) {
+            songCaptionLipsyncCarryS += lipsyncStartShift(of: submittedDocument, against: cleanDocument)
+        }
         for section in sections where section != .userSong {
             copy(section, from: submittedDocument, into: &cleanDocument)
         }
@@ -6085,6 +6110,9 @@ struct NativeEditorTemporaryVideo {
         previewVariant = variant ?? [:]
         // The variant is the server's word on the song: what it lists already includes saved edits.
         acknowledgedUserSong = nil
+        // KRI-576: its lyric rows were projected for that same window.
+        songCaptionWindowStartS = NativeUserSong(variant: previewVariant)?.windowStartS
+        songCaptionLipsyncCarryS = 0
         rendersOnDevice = variant?["render_destination"]?.stringValue == "device"
         guidedRevisionNumber = Self.number(variant?["editor_revision_number"]).flatMap { $0 >= 1 && $0 <= Double(Int32.max) ? Int($0) : nil }
         guard let variant else {
@@ -6221,7 +6249,8 @@ struct NativeEditorTemporaryVideo {
             expectedItemID: itemID,
             expectedJobID: jobID,
             expectedVariantKey: variantKey,
-            expectedThreadID: threadID
+            expectedThreadID: threadID,
+            songWindowStartS: NativeUserSong(variant: variant)?.windowStartS
         )
         if let key = deviceRenderKey,
            let presentation = deviceRenders?.presentations[key],
@@ -6261,7 +6290,8 @@ struct NativeEditorTemporaryVideo {
         expectedJobID: UUID?,
         expectedVariantKey: String?,
         expectedThreadID: UUID?,
-        expectedDocumentGeneration: String? = nil
+        expectedDocumentGeneration: String? = nil,
+        songWindowStartS: Double? = nil
     ) -> Bool {
         guard let returnedGeneration = variant["render_generation_id"]?.stringValue
                 ?? variant["render_finished_at"]?.stringValue,
@@ -6282,7 +6312,13 @@ struct NativeEditorTemporaryVideo {
 
         cleanDocument.textElements = authoritativeText
         cleanDocument.revision.baseGeneration = generation
-        if currentWasClean { document.textElements = authoritativeText }
+        if currentWasClean {
+            document.textElements = authoritativeText
+            // KRI-576: the adopted lyric rows sit at the window the server projected them for, so the preview
+            // shift restarts from there (no double shift). Text edited meanwhile keeps the old rows, so the old
+            // anchor stays.
+            if let songWindowStartS { songCaptionWindowStartS = songWindowStartS }
+        }
 
         func rebase(_ value: EditorDocument) -> EditorDocument {
             guard value.textElements == oldCleanText else { return value }
