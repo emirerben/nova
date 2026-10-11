@@ -1,5 +1,4 @@
 import XCTest
-import UIKit
 
 /// Physical-device failure scenarios covered here before implementation:
 /// - A real permission prompt must be limited to camera/microphone and never be bypassed by a fixture.
@@ -39,8 +38,11 @@ import UIKit
 
         app.buttons["teleprompter-open-camera"].tap()
         let record = app.buttons["teleprompter-record"]
-        triggerPermissionPrompts(in: app, untilEnabled: record)
-        XCTAssertTrue(waitUntilEnabled(record, timeout: 20), "A physical iPhone with granted camera and microphone permission should enable Record.")
+        guard triggerPermissionPrompts(in: app, untilEnabled: record) else { return }
+        guard waitUntilEnabled(record, timeout: 20) else {
+            XCTFail("A physical iPhone with granted camera and microphone permission should enable Record.")
+            return
+        }
 
         // Countdown cancellation must create no take and leave a usable Record action.
         record.tap()
@@ -54,20 +56,37 @@ import UIKit
         XCTAssertTrue(stop.waitForExistence(timeout: 10), "Stop appears only after AVFoundation confirms recording started.")
         wait(seconds: 5.5)
         stop.tap()
-        XCTAssertTrue(app.buttons["teleprompter-retake"].waitForExistence(timeout: 20), "A stopped real take reaches Review.")
-        XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled, "Review exposes a usable local take before intake.")
+        let retake = app.buttons["teleprompter-retake"]
+        guard retake.waitForExistence(timeout: 20) else {
+            XCTFail("A stopped real take reaches Review.")
+            return
+        }
+        let useTake = app.buttons["teleprompter-use-take"]
+        guard useTake.isEnabled else {
+            XCTFail("Review exposes a usable local take before intake.")
+            return
+        }
         screenshot(app, named: "Physical complete take review")
 
-        app.buttons["teleprompter-retake"].tap()
-        XCTAssertTrue(waitUntilEnabled(record, timeout: 12))
+        retake.tap()
+        guard waitUntilEnabled(record, timeout: 12) else {
+            XCTFail("Retake restores an enabled Record action.")
+            return
+        }
         record.tap()
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
         wait(seconds: 1)
         XCUIDevice.shared.press(.home)
         wait(seconds: 1)
         app.activate()
-        XCTAssertTrue(app.buttons["teleprompter-retake"].waitForExistence(timeout: 25), "Returning from background reaches interrupted-take review.")
-        XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled, "The interrupted take is playable and recoverable.")
+        guard retake.waitForExistence(timeout: 25) else {
+            XCTFail("Returning from background reaches interrupted-take review.")
+            return
+        }
+        guard useTake.isEnabled else {
+            XCTFail("The interrupted take is playable and recoverable.")
+            return
+        }
         screenshot(app, named: "Physical interrupted take review")
 
         app.buttons["teleprompter-close"].tap()
@@ -83,6 +102,9 @@ import UIKit
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        // Advertise the supported offline intake capability only. This neither replaces the real
+        // camera/review path nor invokes the fixture's placeholder render in this capture test.
+        app.launchEnvironment["KRIA_CHAT_DEVICE_RENDER"] = "ready"
         // Do not set KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE or the review fixture here: this
         // test exercises the device's real camera/microphone path.
         app.launch()
@@ -104,30 +126,76 @@ import UIKit
     }
 
     private func paste(_ text: String, into field: XCUIElement, app: XCUIApplication) {
-        UIPasteboard.general.string = text
         field.tap()
+        field.typeText(text)
+        XCTAssertTrue((field.value as? String)?.contains("recording this on an iPhone") == true,
+                      "The real TextEditor must contain the source text before copying it.")
+
+        // A test-runner pasteboard is not necessarily shared with the signed app process. Put
+        // the script on the app's own pasteboard through the visible native Select All/Copy menu,
+        // then clear and paste it back through that same menu.
         field.press(forDuration: 1)
-        // Existing native UI coverage observes this as a button on current iOS. Retain the
-        // menu-item fallback for devices that expose the older text-selection menu hierarchy.
-        let pasteButton = app.buttons["Paste"]
-        if pasteButton.waitForExistence(timeout: 3) {
-            pasteButton.tap()
-        } else {
-            let pasteMenuItem = app.menuItems["Paste"]
-            XCTAssertTrue(pasteMenuItem.waitForExistence(timeout: 3), "The real script entry path pastes creator text.")
-            pasteMenuItem.tap()
-        }
-        XCTAssertTrue((field.value as? String)?.contains("recording this on an iPhone") == true)
+        tapTextMenuAction("Select All", in: app)
+        tapTextMenuAction("Copy", in: app)
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: max(text.utf16.count, 1)))
+        XCTAssertEqual((field.value as? String) ?? "", "", "Copy is followed by clearing the real editor before Paste.")
+
+        field.press(forDuration: 1)
+        tapTextMenuAction("Paste", in: app)
+        XCTAssertTrue((field.value as? String)?.contains("recording this on an iPhone") == true,
+                      "The real script entry path restores its copied text with Paste.")
     }
 
-    private func triggerPermissionPrompts(in app: XCUIApplication, untilEnabled record: XCUIElement) {
+    private func tapTextMenuAction(_ title: String, in app: XCUIApplication) {
+        // Current iOS exposes edit-menu actions as buttons; older devices use menu items.
+        let button = app.buttons[title]
+        if button.waitForExistence(timeout: 3) {
+            button.tap()
+            return
+        }
+        let menuItem = app.menuItems[title]
+        XCTAssertTrue(menuItem.waitForExistence(timeout: 3), "Expected native \(title) action in the TextEditor menu.")
+        menuItem.tap()
+    }
+
+    private func triggerPermissionPrompts(in app: XCUIApplication, untilEnabled record: XCUIElement) -> Bool {
         // iOS presents camera and microphone privacy alerts serially. A monitor is invoked only
-        // by an interaction, so make a small bounded number of harmless taps before passively
-        // waiting for capture preparation; the monitor itself accepts no unrelated prompt.
-        for _ in 0..<3 where !record.isEnabled {
+        // by an interaction, but direct SpringBoard inspection is more reliable on a signed phone
+        // than an interruption-query callback. The monitor remains a fallback after this check.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for attempt in 1...3 where !record.isEnabled {
+            let alert = springboard.alerts.firstMatch
+            if alert.waitForExistence(timeout: 1) {
+                screenshot(springboard, named: "Observed device permission prompt \(attempt)")
+                let prompt = "\(alert.label) \(alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " "))"
+                guard isExpectedCapturePermission(prompt) else {
+                    XCTFail("Unexpected SpringBoard alert while preparing camera: \(prompt)")
+                    return false
+                }
+                guard let affirmative = alert.buttons.allElementsBoundByIndex.first(where: { isAffirmativePermissionAction($0.label) }) else {
+                    XCTFail("Expected an affirmative camera/microphone permission action, found: \(alert.buttons.allElementsBoundByIndex.map(\.label))")
+                    return false
+                }
+                affirmative.tap()
+                wait(seconds: 0.5)
+                continue
+            }
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             wait(seconds: 0.5)
         }
+        return true
+    }
+
+    private func isExpectedCapturePermission(_ prompt: String) -> Bool {
+        let normalized = prompt.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).lowercased()
+        let requestsCapture = normalized.contains("camera") || normalized.contains("camara")
+            || normalized.contains("microphone") || normalized.contains("microfone")
+        return normalized.contains("kria") && requestsCapture
+    }
+
+    private func isAffirmativePermissionAction(_ label: String) -> Bool {
+        let normalized = label.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).lowercased()
+        return normalized.hasPrefix("allow") || normalized == "ok" || normalized.hasPrefix("permitir")
     }
 
     private func waitUntilEnabled(_ element: XCUIElement, timeout: TimeInterval) -> Bool {

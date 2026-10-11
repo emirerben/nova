@@ -219,6 +219,13 @@ the Talking creation workspace remains an offline fixture. It checks countdown
 cancellation, a five-second take, background interruption and review recovery.
 A passed test must be followed by inspecting the saved movies for both audio and
 video tracks. It does not prove a real-server attachment or perceptual audio sync.
+The hardware harness seeds the clipboard through native TextEditor Select All,
+Copy and Paste; a pasteboard written by the background runner was empty in the
+signed app on the physical device. It also inspects SpringBoard permission
+alerts directly, accepting only camera/microphone requests naming Kria and the
+observed English/Portuguese affirmative actions. XCTest interruption monitors
+alone could not construct the system-alert query on this device. The test keeps
+screenshots of accepted permission prompts for review.
 
 Build the scheme for a dedicated QA bundle identifier with
 `KRIA_PRODUCT_BUNDLE_IDENTIFIER` and a matching `KRIA_GOOGLE_REDIRECT_SCHEME`.

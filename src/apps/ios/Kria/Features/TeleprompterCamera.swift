@@ -65,6 +65,10 @@ import UIKit
 
         guard await requestPermissionsIfNeeded(generation: generation) else { return }
         guard generation == operationGeneration else { return }
+        // The preview graph includes microphone input. With automatic audio configuration
+        // disabled, it needs a recording-capable audio session before startRunning, not just
+        // before the movie output starts writing. Stop auditions before acquiring that route.
+        NotificationCenter.default.post(name: .kriaAudioCaptureWillStart, object: nil)
         do {
             try await configureSession()
             guard generation == operationGeneration else { return }
@@ -192,6 +196,9 @@ import UIKit
                 var configurationOpen = false
                 var committed = false
                 do {
+                    let audio = AVAudioSession.sharedInstance()
+                    try audio.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
+                    try audio.setActive(true)
                     if self.isConfigured {
                         if !self.session.isRunning { self.session.startRunning() }
                         continuation.resume()
@@ -247,6 +254,7 @@ import UIKit
                         if !committed { self.session.commitConfiguration() }
                     }
                     self.session.stopRunning()
+                    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
                     self.movieOutput = nil
                     self.isConfigured = false
                     continuation.resume(throwing: error)
@@ -393,7 +401,8 @@ private extension TeleprompterCamera {
             guard let self else { return }
             self.recordingRequested = false
             self.stopRequested = false
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            // The session still has microphone input until the review flow tears it down.
+            // Deactivate only after stopRunning in tearDownSession.
         }
         recordingStartedAt = nil
         startRequested = false

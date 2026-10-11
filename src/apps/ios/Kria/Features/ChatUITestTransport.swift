@@ -286,7 +286,9 @@ final class CreationChatFixture: @unchecked Sendable {
                     }
                     state["media"] = media
                 }
-                append("action_select_format", payload: payload)
+                // Match the server's user event so an intentional format choice keeps
+                // the offline project alive during background capture/recovery tests.
+                append("action_select_format", role: "user", payload: payload)
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
                     append("media_added", role: "system", payload: [
                         "media": [[
