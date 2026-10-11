@@ -36,6 +36,8 @@ _TIMED_LIST_FIELDS = (
     "boundary_effects",
     "motion_scenes",
     "visual_blocks",
+    # KRI-589: freehand drawings retime like text (`_fit_drawings` finishes the job).
+    "drawings",
     "transcript",
     "overlay_transcript",
 )
@@ -468,6 +470,31 @@ def reproject_timed_records(
     return remap_timed_records(source_records, list(new_removals))
 
 
+def _fit_drawings(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Finish a retimed freehand-drawing lane (KRI-589).
+
+    The generic remap already shifted each window and dropped the drawings a cut removed
+    entirely; what is left to do is the drawing-specific part: a window the cut shrank
+    below the schema floor is dropped, and a draw-on that no longer fits its window is
+    shortened to it (never below the schema floor of 0.2 s).
+    """
+    from app.agents._schemas.drawing import MIN_DRAWING_DURATION_S  # noqa: PLC0415
+
+    out: list[dict[str, Any]] = []
+    for row in records:
+        window = float(row["end_s"]) - float(row["start_s"])
+        if window < MIN_DRAWING_DURATION_S - 1e-6:
+            continue
+        item = deepcopy(row)
+        animation = item.get("animation")
+        if isinstance(animation, dict) and animation.get("draw_duration_s") is not None:
+            animation["draw_duration_s"] = _round_time(
+                max(0.2, min(float(animation["draw_duration_s"]), window))
+            )
+        out.append(item)
+    return out
+
+
 def reproject_variant_timing(
     variant: dict[str, Any],
     *,
@@ -501,6 +528,8 @@ def reproject_variant_timing(
     for field in _TIMED_LIST_FIELDS:
         if isinstance(updated.get(field), list):
             updated[field] = reproject(updated[field])
+    if isinstance(updated.get("drawings"), list):
+        updated["drawings"] = _fit_drawings(updated["drawings"])
     for field in (
         "speech_map",
         "overlay_suggestions",

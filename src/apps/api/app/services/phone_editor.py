@@ -44,6 +44,7 @@ from app.pipeline.phone_recipe_shared import (
     PhoneSongBed,
     apply_landscape_fit,
     timeline_end_s,
+    with_drawings,
 )
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, lane_names
 from app.pipeline.phone_subtitled_plan import (
@@ -69,6 +70,7 @@ from app.services.phone_editor_sources import (
     editor_visual_bindings,
 )
 from app.services.phone_rollout import (
+    freehand_drawing_client_supported,
     phone_narrated_caption_edits_supported,
     phone_narrated_title_edits_supported,
     phone_subtitled_editor_lanes_supported,
@@ -114,7 +116,15 @@ PHONE_EDITOR_SAVED_PLAN_FIELD = "_phone_editor_saved_plan_v1"
 # phone subtitled compiler has no lane for any of them, and Save must never
 # silently apply one it can't recompile.
 _SUBTITLED_EDITOR_SECTIONS = frozenset(
-    {"sound_effects", "media_overlays", "caption_cues", "caption_meta", "landscape_fit"}
+    {
+        "sound_effects",
+        "media_overlays",
+        "caption_cues",
+        "caption_meta",
+        "landscape_fit",
+        # KRI-589: freehand drawings compile into the recipe's `drawing_layers`.
+        "drawings",
+    }
 )
 # KRI-467: ...plus its text lane (the opening title and any creator text),
 # only while `phone_subtitled_title_supported`. Every Save compiles the
@@ -126,7 +136,7 @@ _SUBTITLED_TEXT_SECTIONS = frozenset({"text_elements"})
 # always honours (KRI-280): the caption lines and their look. Every other
 # section opens only behind its own gate below, and the rest stay closed rather
 # than silently dropped on Save.
-_NARRATED_EDITOR_SECTIONS = frozenset({"caption_cues", "caption_meta"})
+_NARRATED_EDITOR_SECTIONS = frozenset({"caption_cues", "caption_meta", "drawings"})
 _NARRATED_CAPTION_SECTIONS = frozenset({"caption_cues", "caption_meta"})
 # KRI-465: ...and the opening title / text the creator adds, as `text_elements`,
 # recompiled into the pinned recipe's `title-` layers by `replace_narrated_title`
@@ -145,6 +155,10 @@ _VOICEOVER_CUT_SECTIONS = frozenset({"timeline"})
 # KRI-306: ...and the creator's bars/crop choice for sideways clips, re-applied to
 # the pinned recipe's main video track (`apply_landscape_fit`).
 _VOICEOVER_FIT_SECTIONS = frozenset({"landscape_fit"})
+# KRI-589: ...and freehand drawings, recompiled from the variant's stored lane onto the
+# pinned recipe's `drawing_layers` (`with_drawings`) on EVERY Save of every device
+# archetype, whichever sections it carries.
+_DRAWING_SECTIONS = frozenset({"drawings"})
 
 
 def _resolved_landscape_fit(
@@ -389,6 +403,17 @@ def prepare_phone_editor_commit(
 
     if not phone_rendering_allowed_for_job(job):
         raise HTTPException(422, detail={"code": "phone_rendering_unavailable"})
+    stored_drawings = next(
+        (
+            v.get("drawings")
+            for v in (job.assembly_plan or {}).get("variants", [])
+            if isinstance(v, dict) and v.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if stored_drawings and not freehand_drawing_client_supported():
+        # A recompile would pin a recipe (`drawingLayers`) this app build cannot decode.
+        raise HTTPException(426, detail={"code": "client_update_required", "feature": "drawing"})
     try:
         _rebind_editor_render_contract(
             staged,
@@ -411,6 +436,7 @@ def prepare_phone_editor_commit(
             from app.pipeline.phone_authored_timeline import compile_phone_authored_timeline
 
             recipe = compile_phone_authored_timeline(staged, variant, previous.recipe)
+            recipe = with_drawings(recipe, variant.get("drawings"))
             validate_phone_pilot_recipe(recipe, allow_editor_media=True)
             request = make_device_request(
                 job_id=job.id,
@@ -468,7 +494,7 @@ def prepare_phone_editor_commit(
             plan = copy.deepcopy(variant.get(PHONE_EDITOR_SAVED_PLAN_FIELD) or worker_plan)
             revision = prep.get("guided_revision")
             render_sections = {key for key, value in prep["sections"].items() if value}
-            if not (render_sections - {"text_elements"}):
+            if not (render_sections - {"text_elements", "drawings"}):
                 # A text-only save keeps the approved plan's device-verified timing
                 # program and swaps just the text lane, whether it came from a
                 # legacy guided editor or the v2 revision contract. Re-projecting
@@ -479,6 +505,8 @@ def prepare_phone_editor_commit(
                 # text edit was a 422 `unsupported_phone_edit` (2026-09-19 chat-edit
                 # incident, job d9a965b0). Other approved lanes, including the
                 # contextual and narration label lanes, are preserved untouched.
+                # KRI-589: a drawings-only Save is the same kind of save -- the
+                # drawings compile onto the recipe after the plan, not into it.
                 plan["text_elements"] = variant.get("text_elements") or []
             elif revision is not None:
                 plan = compile_guided_runtime_plan(
@@ -548,6 +576,10 @@ def prepare_phone_editor_commit(
                 landscape_fit=_resolved_landscape_fit(
                     variant, previous.recipe, prep.get("landscape_fit_override")
                 ),
+            )
+            # KRI-589: the revision is the guided variant's canonical lanes.
+            recipe = with_drawings(
+                recipe, revision.get("drawings") if revision is not None else None
             )
             validate_phone_pilot_recipe(recipe, allow_editor_media=allow_editor_media)
             request = make_device_request(
@@ -842,6 +874,7 @@ def _compile_subtitled_editor_commit(
         text_elements=variant.get("text_elements") or [],
         text_elements_user_edited=bool(variant.get("text_elements_user_edited")),
     )
+    recipe = with_drawings(recipe, variant.get("drawings"))
     duck_receipt = sfx_duck_receipt(lanes, recipe)
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays or cutaways))
     request = make_device_request(
@@ -1034,6 +1067,7 @@ def _compile_narrated_editor_commit(
     media_active = active_sections & _VOICEOVER_MEDIA_SECTIONS
     cut_active = bool(active_sections & _VOICEOVER_CUT_SECTIONS)
     text_active = bool(active_sections & _NARRATED_TEXT_SECTIONS)
+    drawings_active = bool(active_sections & _DRAWING_SECTIONS)
     lanes_ok = phone_voiceover_editor_lanes_supported(require_client=False)
     media_ok = phone_voiceover_editor_media_supported(require_client=False)
     text_ok = phone_narrated_title_edits_supported(require_client=False)
@@ -1045,7 +1079,7 @@ def _compile_narrated_editor_commit(
         raise ValueError("phone Voiceover titles aren't editable yet")
     # A caption edit, or a Save with nothing else to do, is a caption Save.
     caption_save = bool(caption_active) or not (
-        lanes_active or media_active or cut_active or text_active
+        lanes_active or media_active or cut_active or text_active or drawings_active
     )
     if caption_save and not phone_narrated_caption_edits_supported():
         raise ValueError("phone Narrated captions aren't editable yet")
@@ -1068,7 +1102,10 @@ def _compile_narrated_editor_commit(
     caption_cues_overridden = caption_cues is not None
     if caption_cues is None:
         caption_cues = variant.get("caption_cues") or []
-    recipe = previous.recipe
+    # KRI-589: patch from the pinned recipe WITHOUT its drawing layers (a shorter cut would
+    # leave them past the end, which the recipe validator refuses) and re-add them from the
+    # stored lane at the end, whichever sections this Save carried.
+    recipe = with_drawings(previous.recipe, None)
     if cut_active:
         bindings, pool = _voiceover_sources(staged, assembly)
         recipe = _swap_voiceover_cut(recipe, prep, bindings, pool, archetype="narrated")
@@ -1104,6 +1141,7 @@ def _compile_narrated_editor_commit(
         recipe = _commit_voiceover_media(
             recipe, assembly=assembly, variant=variant, prep=prep, video_track_id="narrated"
         )
+    recipe = with_drawings(recipe, variant.get("drawings"))
     validate_phone_pilot_recipe(recipe, allow_editor_media=_voiceover_allows_editor_media(recipe))
     request = make_device_request(
         job_id=previous.identity.job_id,
@@ -1168,8 +1206,12 @@ def _compile_voiceover_montage_editor_commit(
     lanes_active = active_sections & _VOICEOVER_LANE_SECTIONS
     media_active = active_sections & _VOICEOVER_MEDIA_SECTIONS
     cut_active = bool(active_sections & _VOICEOVER_CUT_SECTIONS)
-    if (lanes_active or not cut_active) and not phone_voiceover_editor_lanes_supported(
-        require_client=False
+    # KRI-589: a drawings-only Save touches no lane the sound-effect / Visuals rollout owns.
+    only_drawings = active_sections <= _DRAWING_SECTIONS
+    if (
+        (lanes_active or not cut_active)
+        and not only_drawings
+        and not phone_voiceover_editor_lanes_supported(require_client=False)
     ):
         raise ValueError("phone Voiceover sound effects and Visuals aren't editable yet")
     if media_active and not phone_voiceover_editor_media_supported(require_client=False):
@@ -1180,6 +1222,7 @@ def _compile_voiceover_montage_editor_commit(
         - _VOICEOVER_MEDIA_SECTIONS
         - _VOICEOVER_CUT_SECTIONS
         - _VOICEOVER_FIT_SECTIONS
+        - _DRAWING_SECTIONS
     )
     if unsupported_sections:
         name = sorted(unsupported_sections)[0]
@@ -1187,7 +1230,8 @@ def _compile_voiceover_montage_editor_commit(
     if not isinstance(previous.recipe, EditRecipeV2):
         raise ValueError("phone Voiceover edits need a pinned v2 recipe")
 
-    recipe = previous.recipe
+    # KRI-589: patch from the pinned recipe without its drawing layers (see the narrated twin).
+    recipe = with_drawings(previous.recipe, None)
     if cut_active:
         bindings, pool = _voiceover_sources(staged, assembly)
         recipe = _swap_voiceover_cut(
@@ -1205,7 +1249,9 @@ def _compile_voiceover_montage_editor_commit(
         fit_bindings, _pool = _voiceover_sources(staged, assembly)
         recipe = apply_landscape_fit(recipe, fit_bindings, fit_override)
     lane_state = None
-    if lanes_active or not cut_active or _has_editor_lanes(previous.recipe, variant):
+    if not only_drawings and (
+        lanes_active or not cut_active or _has_editor_lanes(previous.recipe, variant)
+    ):
         lane_state = _commit_voiceover_lanes(
             recipe,
             assembly=assembly,
@@ -1220,6 +1266,7 @@ def _compile_voiceover_montage_editor_commit(
         recipe = _commit_voiceover_media(
             recipe, assembly=assembly, variant=variant, prep=prep, video_track_id="montage"
         )
+    recipe = with_drawings(recipe, variant.get("drawings"))
     validate_phone_pilot_recipe(recipe, allow_editor_media=_voiceover_allows_editor_media(recipe))
     request = make_device_request(
         job_id=previous.identity.job_id,

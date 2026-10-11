@@ -30985,6 +30985,8 @@ def _merge_speech_cut_prior_state(
         "boundary_effects",
         "motion_scenes",
         "visual_blocks",
+        # KRI-589: freehand drawings are a creator-authored timed lane like the rest.
+        "drawings",
     ):
         if isinstance(prior.get(field), list):
             merged[field] = projected.get(field) or []
@@ -32164,6 +32166,10 @@ def _finalize_job_decision(
                     "smart_audio_receipt": r.get("smart_audio_receipt"),
                     "smart_shadow_comparison": r.get("smart_shadow_comparison"),
                     "boundary_effects": r.get("boundary_effects"),
+                    # KRI-589: freehand drawings survive finalization (only when present, so
+                    # a variant without any keeps a byte-identical row and a live drawing
+                    # lane is never overwritten by an absent one).
+                    **({"drawings": r["drawings"]} if r.get("drawings") else {}),
                     # TextElement lane state — MUST survive finalization for any variant
                     # whose authored text is edited through PUT /text-elements.
                     "text_elements": r.get("text_elements"),
