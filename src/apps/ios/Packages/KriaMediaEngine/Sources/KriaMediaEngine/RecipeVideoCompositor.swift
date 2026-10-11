@@ -135,10 +135,13 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     let textStore: NativeTextLayerStore?
     let cameraPulses: [CameraPulse]
     let motionScenes: NativeMotionPainter?
+    /// KRI-589 freehand drawings: painted last, above footage, motion, text and above-text media.
+    let drawings: NativeDrawingStore?
     let canvas: CGRect
     let transparentBackground: Bool
-    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, transparentBackground: Bool = false) {
+    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false) {
         self.transparentBackground = transparentBackground
+        self.drawings = drawings
         self.cameraPulses = cameraPulses
         self.motionScenes = motionScenes
         self.timeRange = timeRange
@@ -196,6 +199,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     do { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
                     catch { request.finish(with: error); return }
                 }
+                if let drawings = instruction.drawings { frame = drawings.compose(over: frame, at: time, canvas: instruction.canvas) }
                 context.render(frame, to: output, bounds: instruction.canvas, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
                 request.finish(withComposedVideoFrame: output)
             }

@@ -413,12 +413,13 @@ public struct PreviewComposition: @unchecked Sendable {
         try Task.checkCancellation()
         if composition.duration.seconds < brandedTotal { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, duration: time(brandedTotal - composition.duration.seconds))) }
         let motion = try NativeMotionPainter.make(recipe.motionScenes, assets: assetURLs, canvas: canvas, duration: total, frameRate: recipe.frameRate)
+        let drawings = recipe.drawingLayers.isEmpty ? nil : NativeDrawingStore(layers: recipe.drawingLayers, canvas: canvas)
         // Instructions must span the whole asset: when the asset outlasts them AVPlayer renders no
         // video at all (audio over black, no error), while scrubbing and export stay correct.
         let covered = max(brandedTotal, composition.duration.seconds)
         videoComposition.instructions = RecipeInstructionTiming.tiledRanges(total: covered, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: textLayers, canvas: canvas,
-                cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore)
+                cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings)
         }
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters
