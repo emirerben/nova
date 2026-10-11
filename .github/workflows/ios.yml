@@ -42,7 +42,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     # Green native runs on main took 31-54 minutes (median 42) in September
     # 2026 as one serial job. See KRI-168 in docs/runbooks/ios-development.md.
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python for portable contract checks

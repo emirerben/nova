@@ -248,4 +248,16 @@ import UIKit
         {"id":"\(PreviewFixtures.projectID.uuidString)","title":"Test","status":"active","revision":4,"runtime_version":\(runtime),"updated_at":"2026-09-10T10:00:00Z","state":{},"events":[]}
         """.utf8)
     }
+
+    func testUnknownOrPendingFootageDurationHasNoExactDurationSoNoVoiceoverComparisonIsInvented() {
+        let unavailable = FootageDurationSummary(count: 1, duration: 0, hasPendingMetadata: false, hasUnavailableDuration: true)
+        XCTAssertNil(unavailable.exactDuration)
+        XCTAssertEqual(unavailable.value, "Duration unavailable")
+        let pending = FootageDurationSummary(count: 1, duration: 3, hasPendingMetadata: true, hasUnavailableDuration: false)
+        XCTAssertNil(pending.exactDuration)
+        let empty = FootageDurationSummary(count: 0, duration: 0, hasPendingMetadata: false, hasUnavailableDuration: false)
+        XCTAssertNil(empty.exactDuration)
+        let known = FootageDurationSummary(count: 1, duration: 3, hasPendingMetadata: false, hasUnavailableDuration: false)
+        XCTAssertEqual(known.exactDuration, 3)
+    }
 }

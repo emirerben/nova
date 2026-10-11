@@ -24,46 +24,19 @@ final class NativeQuickAddMenuUITests: XCTestCase {
         add(shot)
     }
 
-    func testVideoOptionOpensAddClipSheet() {
+    func testTappingPlusAgainClosesTheMenu() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor"]
         app.launch()
 
-        app.buttons["native-editor-add-clip"].tap()
-        let video = app.descendants(matching: .any)["native-editor-add-menu-video"]
-        XCTAssertTrue(video.waitForExistence(timeout: 3))
-        video.tap()
+        let plus = app.buttons["native-editor-add-clip"]
+        plus.tap()
+        let menuItem = app.descendants(matching: .any)["native-editor-add-menu-text"]
+        XCTAssertTrue(menuItem.waitForExistence(timeout: 3))
 
-        XCTAssertTrue(app.descendants(matching: .any)["native-editor-add-clip-photos"].waitForExistence(timeout: 3))
-        // The menu itself is gone once a sheet is up.
-        XCTAssertFalse(app.descendants(matching: .any)["native-editor-add-menu-text"].exists)
-    }
-
-    func testVisualOptionOpensTheSameVisualsPanelTheToolRailOpens() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-editor"]
-        app.launch()
-
-        app.buttons["native-editor-add-clip"].tap()
-        let visual = app.descendants(matching: .any)["native-editor-add-menu-visual"]
-        XCTAssertTrue(visual.waitForExistence(timeout: 3))
-        visual.tap()
-
-        XCTAssertTrue(app.staticTexts["Add visual"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Your added photos and videos"].waitForExistence(timeout: 3))
-    }
-
-    func testTextOptionStartsTextCreation() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-editor"]
-        app.launch()
-
-        app.buttons["native-editor-add-clip"].tap()
-        let text = app.descendants(matching: .any)["native-editor-add-menu-text"]
-        XCTAssertTrue(text.waitForExistence(timeout: 3))
-        text.tap()
-
-        XCTAssertTrue(app.descendants(matching: .any)["native-editor-new-text-input"].waitForExistence(timeout: 3))
+        plus.tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: menuItem)
+        waitForExpectations(timeout: 3)
     }
 
     func testTappingOutsideTheMenuDismissesIt() {
@@ -83,37 +56,48 @@ final class NativeQuickAddMenuUITests: XCTestCase {
         waitForExpectations(timeout: 3)
     }
 
-    func testTappingPlusAgainClosesTheMenu() {
+    func testTextOptionStartsTextCreation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor"]
+        app.launch()
+
+        app.buttons["native-editor-add-clip"].tap()
+        let text = app.descendants(matching: .any)["native-editor-add-menu-text"]
+        XCTAssertTrue(text.waitForExistence(timeout: 3))
+        text.tap()
+
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-new-text-input"].waitForExistence(timeout: 3))
+    }
+
+    /// Video routes to the add-clip sheet; Visual opens the same panel the tool rail opens.
+    func testVideoAndVisualOptionsRouteToTheirSurfaces() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor"]
         app.launch()
 
         let plus = app.buttons["native-editor-add-clip"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 8))
         plus.tap()
-        let menuItem = app.descendants(matching: .any)["native-editor-add-menu-text"]
-        XCTAssertTrue(menuItem.waitForExistence(timeout: 3))
+        let video = app.descendants(matching: .any)["native-editor-add-menu-video"]
+        XCTAssertTrue(video.waitForExistence(timeout: 3))
+        video.tap()
 
-        plus.tap()
-        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: menuItem)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-add-clip-photos"].waitForExistence(timeout: 3))
+        // The menu itself is gone once a sheet is up.
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-add-menu-text"].exists)
+
+        let cancel = app.buttons["Cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 3))
+        cancel.tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.descendants(matching: .any)["native-editor-add-clip-photos"])
         waitForExpectations(timeout: 3)
-    }
 
-    func testOutroPlaceholderStillAppearsAfterTheLastClip() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text"]
-        app.launch()
+        plus.tap()
+        let visual = app.descendants(matching: .any)["native-editor-add-menu-visual"]
+        XCTAssertTrue(visual.waitForExistence(timeout: 3))
+        visual.tap()
 
-        let play = app.buttons["native-editor-play-pause"]
-        let clock = app.staticTexts["native-editor-current-time"]
-        let duration = app.staticTexts["native-editor-duration"]
-        XCTAssertTrue(play.waitForExistence(timeout: 8))
-        expectation(for: NSPredicate(format: "value == %@", "0:05.6"), evaluatedWith: duration)
-        waitForExpectations(timeout: 15)
-
-        play.tap()
-        expectation(for: NSPredicate(format: "value == %@", "0:05.6"), evaluatedWith: clock)
-        waitForExpectations(timeout: 12)
-
-        XCTAssertTrue(app.descendants(matching: .any)["native-editor-outro-placeholder"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Add visual"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Your added photos and videos"].waitForExistence(timeout: 3))
     }
 }

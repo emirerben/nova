@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+import app.services.phone_reaction_grounding as rg
 from app.agents._schemas.creator_agent import (
     CapabilityAvailability,
     CreativeStrategy,
@@ -22,17 +23,21 @@ from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_checks import (
     _SOUND_RE,
     MAX_REPLY_CHARS,
+    BeatFact,
     PlanFacts,
     _wants_beats,
     build_receipts,
     check_requirement,
+    plan_facts_from_phone_variant,
     plan_facts_from_strategy,
     reply_from_receipts,
 )
+from app.kria.reply_language import reply_language_for
 from app.services.creator_capabilities import (
     CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS,
     repair_creator_reaction_beats,
 )
+from app.services.sfx_catalog import SfxEntry
 
 _IMAGES = {
     "asset-badge.png": "BEST FOOD IN EUROPE badge",
@@ -431,3 +436,193 @@ def test_real_misses_turn_the_reply_into_a_failure_notice_within_the_cap() -> No
     reply = reply_from_receipts(brief, receipts, summary="Drafted.")
     assert reply.startswith("Not everything you asked for made it in")
     assert len(reply) <= MAX_REPLY_CHARS
+
+
+# ------------------------------------------------------------------ KRI-550 render cap
+# T3 Kadıköy (prod 2026-10-08): "kahve" was said 9 times, the render placed 8 (the old
+# per-beat cap), the receipt listed nothing unplaced and r3 read "Yapıldı". The receipts
+# below are built by the real grounding, so the "occurrence_cap" contract is pinned.
+_T3_R3 = _req("audio", id="r3", description="her 'kahve' kelimesinde küçük bir fincan sesi koy")
+_T3_R4 = _req(
+    "style",
+    id="r4",
+    description="'İlk durak' dediğinde kahve demleme videosunu köşede küçük göster",
+)
+
+
+def _cap_variant(monkeypatch: pytest.MonkeyPatch, kahve_at_s: list[float]) -> dict[str, Any]:
+    monkeypatch.setattr(rg, "_load_ready_pool_assets", lambda *a, **k: [])
+    monkeypatch.setattr(
+        rg,
+        "_load_sfx_entries",
+        lambda *a, **k: [
+            SfxEntry(id="sfx-clink", name="Glass clink", category=None, search_terms=("clink",))
+        ],
+    )
+    words = [{"text": "kahveciye", "start_s": 2.66, "end_s": 3.18}]
+    words += [{"text": "kahve", "start_s": at, "end_s": at + 0.3} for at in kahve_at_s]
+    words.append({"text": "İlk", "start_s": 60.0, "end_s": 60.1})
+    words.append({"text": "durak", "start_s": 60.1, "end_s": 60.3})
+    beats = [
+        {
+            "sound": "sfx-clink",
+            "beat_id": "kahve-sesi",
+            "trigger": "kahve",
+            "occurrence": "every",
+            "visual_role": "sticker",
+        },
+        {"sound": "sfx-clink", "beat_id": "ilk-durak", "trigger": "İlk durak"},
+    ]
+    grounded = rg.ground_phone_reaction_beats(
+        lambda: None,
+        job_id="j-kri550",
+        beats=beats,
+        closing=None,
+        words=words,
+        duration_s=70.0,
+        clip_path=None,
+    )
+    return {
+        "phone_beat_receipt": grounded.receipt,
+        "resolved_archetype": "subtitled",
+        "render_destination": "device",
+    }
+
+
+_T3_KAHVE_AT_S = [5.08, 10.6, 13.18, 16.84, 18.74, 24.38, 27.64, 30.08, 32.54]
+
+
+def test_t3_every_kahve_placed_is_met(monkeypatch: pytest.MonkeyPatch) -> None:
+    facts = plan_facts_from_phone_variant(_cap_variant(monkeypatch, _T3_KAHVE_AT_S))
+    assert facts.capped_beat_hits == ()
+    assert check_requirement(_T3_R3, facts).status == "met"
+
+
+def test_kahve_heard_past_the_cap_is_partial_with_the_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    heard = rg.MAX_REACTION_OCCURRENCES + 6
+    variant = _cap_variant(monkeypatch, [5.0 + i * 1.5 for i in range(heard)])
+    facts = plan_facts_from_phone_variant(variant)
+    assert facts.capped_beat_hits == (("kahve", 24, heard),)
+
+    receipt = check_requirement(_T3_R3, facts)
+    assert receipt.status == "partial"
+    assert receipt.reason == f'I added it on only 24 of the {heard} times you said "kahve".'
+    # Another ask is not blamed for the capped word.
+    assert check_requirement(_T3_R4, facts).status == "met"
+
+    brief = CreativeBrief(version=1, requirements=[_T3_R3, _T3_R4])
+    with reply_language_for("tr"):
+        tr_receipt = check_requirement(_T3_R3, facts)
+        reply = reply_from_receipts(
+            brief, build_receipts(brief.live(), facts, include_unchecked=True)
+        )
+    assert tr_receipt.status == "partial"
+    assert tr_receipt.reason == f'"kahve" dediğin {heard} yerden yalnızca 24 tanesine ekleyebildim.'
+    assert (
+        "- Kısmen: her 'kahve' kelimesinde küçük bir fincan sesi koy "
+        f'("kahve" dediğin {heard} yerden yalnızca 24 tanesine ekleyebildim)'
+    ) in reply
+    assert "Yapıldı: her 'kahve'" not in reply
+
+
+def test_a_capped_receipt_without_a_matching_placement_adds_no_count() -> None:
+    # Every "kahve" placement was demoted after grounding (e.g. the sound lane dropped):
+    # the ask is judged on the missing pop-in alone, never "0 of N".
+    facts = plan_facts_from_phone_variant(
+        {
+            "phone_beat_receipt": {
+                "version": 1,
+                "matcher": "phrase",
+                "placed": [],
+                "unplaced": [
+                    {"beat_id": "kahve-sesi", "trigger": "kahve", "reason": "compile_dropped"},
+                    {"beat_id": "kahve-sesi", "trigger": "kahve", "reason": "occurrence_cap"},
+                ],
+                "closing": {"status": "none", "badge": "none"},
+            },
+            "resolved_archetype": "subtitled",
+        }
+    )
+    receipt = check_requirement(_T3_R3, facts)
+    assert receipt.status != "met"
+    assert "times you said" not in (receipt.reason or "")
+
+
+def _capped_facts(trigger: str) -> PlanFacts:
+    return PlanFacts(
+        reaction_beats_available=True,
+        reaction_beats=tuple(BeatFact(trigger=trigger, sound="Glass clink") for _ in range(24)),
+        capped_beat_hits=((trigger, 24, 30),),
+    )
+
+
+@pytest.mark.parametrize(
+    ("trigger", "description", "partial"),
+    [
+        ("kahve", "her kahve dediğimde fincan sesi koy", True),
+        ("kahve", "her \u2018kahve\u2019de fincan sesi", True),
+        ("coffee", "add a cup sound every time I say coffee", True),
+        ("coffee", 'play a ding whenever I say "coffee"', True),
+        # Another word's ask, even one that mentions the capped word, is not blamed.
+        ("kahve", "'İlk durak' dediğinde kahve demleme videosunu köşede göster", False),
+        ("kahve", "'kahveciye' dediğimde zil çal", False),
+    ],
+)
+def test_the_capped_count_lands_only_on_the_ask_about_that_word(
+    trigger: str, description: str, partial: bool
+) -> None:
+    receipt = check_requirement(_req("audio", description=description), _capped_facts(trigger))
+    assert (receipt.status == "partial") is partial, receipt.reason
+    assert ("24 of the 30 times" in (receipt.reason or "")) is partial
+
+
+def test_a_photo_and_a_sound_beat_on_one_capped_word_read_once() -> None:
+    hits = [
+        {"beat_id": b, "trigger": "kahve", "at_s": float(i), "sound_label": "Clink"}
+        for b in ("cup", "sfx")
+        for i in range(24)
+    ]
+    skipped = [
+        {"beat_id": b, "trigger": "kahve", "reason": "occurrence_cap", "at_s": float(i)}
+        for b in ("cup", "sfx")
+        for i in range(24, 30)
+    ]
+    facts = plan_facts_from_phone_variant(
+        {
+            "phone_beat_receipt": {
+                "version": 1,
+                "matcher": "phrase",
+                "placed": hits,
+                "unplaced": skipped,
+                "closing": {"status": "none", "badge": "none"},
+            },
+            "resolved_archetype": "subtitled",
+        }
+    )
+    assert facts.capped_beat_hits == (("kahve", 24, 30), ("kahve", 24, 30))
+    receipt = check_requirement(_T3_R3, facts)
+    assert receipt.reason == 'I added it on only 24 of the 30 times you said "kahve".'
+
+
+def test_a_hit_demoted_after_grounding_still_counts_as_heard() -> None:
+    placed = [{"beat_id": "kahve-sesi", "trigger": "kahve", "at_s": float(i)} for i in range(23)]
+    unplaced = [{"beat_id": "kahve-sesi", "trigger": "kahve", "reason": "sound_not_found"}]
+    unplaced += [
+        {"beat_id": "kahve-sesi", "trigger": "kahve", "reason": "occurrence_cap", "at_s": float(i)}
+        for i in range(24, 30)
+    ]
+    facts = plan_facts_from_phone_variant(
+        {
+            "phone_beat_receipt": {
+                "version": 1,
+                "matcher": "phrase",
+                "placed": placed,
+                "unplaced": unplaced,
+                "closing": {"status": "none", "badge": "none"},
+            },
+            "resolved_archetype": "subtitled",
+        }
+    )
+    assert facts.capped_beat_hits == (("kahve", 23, 30),)

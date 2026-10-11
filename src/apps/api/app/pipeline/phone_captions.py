@@ -29,6 +29,11 @@ No media is downloaded or rendered here; only `PortableTextLayer` geometry is
 compiled, exactly like `portable_text_layout.compile_text_overlay`, which
 this module delegates to for every actual layout/font/shaping decision so
 captions render identically to every other phone text layer.
+
+The phone engine draws the Kria watermark over every export (KRI-548), so a
+cue whose lines would run under it is re-broken around it -- see
+`watermark_keepout_rect` and `_make_room_for_watermark`. This is phone-only:
+the cloud burn carries no mark and never calls this module.
 """
 
 from __future__ import annotations
@@ -85,6 +90,51 @@ _CAPTION_CANVAS_WIDTH_PX = 1080.0
 
 _HEX_COLOR_RE = re.compile(r"#[0-9A-Fa-f]{6}")
 _EDITOR_CAPTION_HIGHLIGHT_COLOR = "#C5F82A"
+
+# --- Kria watermark keep-out (KRI-548) ----------------------------------------
+#
+# Every phone export carries the Kria wordmark (`KriaBranding` in
+# KriaMediaEngine/Branding.swift): bottom-left for the whole timeline, drawn
+# ABOVE text. On the 1080x1920 reference its opaque mark spans x 60-193,
+# y 1416-1475 -- exactly where the first line of a default two- or three-line
+# caption sits (block centre y=1536), so a wide line ran under it and lost its
+# first letters ("İlk durak..." lost the İ). The mark's corner is brand-approved
+# (brand/social/README.md), so captions make room, not the mark.
+#
+# Mirrors `markLeft` / `markWidth` / `markHeight` / `markBottomInset` and the
+# engine's single scale, min(w/1080, h/1920) (`KriaBranding.tileTransform`).
+# The numbers are the mark's opaque extent in the bundled PNG;
+# `test_watermark_keepout_matches_the_bundled_mark` re-measures the asset.
+_WATERMARK_REF_WIDTH_PX = 1080.0
+_WATERMARK_REF_HEIGHT_PX = 1920.0
+_WATERMARK_MARK_LEFT_PX = 60.0
+_WATERMARK_MARK_WIDTH_PX = 133.0
+_WATERMARK_MARK_HEIGHT_PX = 59.0
+_WATERMARK_MARK_BOTTOM_INSET_PX = 445.0
+# Clear air kept between caption ink (glyph outline + outline stroke) and the
+# mark. It also covers the mark's own soft shadow, which fades out ~10px past
+# the opaque edge.
+_WATERMARK_GAP_PX = 12.0
+# brand/social/README.md: below y=1530 (of 1920) is every platform's caption /
+# username block. A caption that grows a line to clear the mark must not reach
+# into it when it was clear of it before.
+_PLATFORM_CAPTION_ZONE_TOP_PX = 1530.0
+# A cue may gain at most this many lines while making room; past that the
+# original layout is kept.
+_MAX_EXTRA_CAPTION_LINES = 2
+# Last resort, in fractions of a line step: lift the block this far when no
+# line split clears the mark where it sits (see `_clear_of_watermark`). 1.5
+# steps is about one line plus the mark's height -- enough to lift the line
+# level with the mark clear above it. Capped there because the phone lane has
+# no face boxes and every extra pixel moves text toward the speaker; past the
+# cap the original layout is kept.
+_LIFT_FALLBACK_STEPS = (0.25, 0.5, 0.75, 1.0, 1.25, 1.5)
+# Left-aligned captions start right of the mark instead (their left edge is
+# the problem, so a narrower line cannot help). This margin past the stroke
+# absorbs a first glyph whose ink starts left of its origin.
+_LEFT_EDGE_SAFETY_EM = 0.1
+
+Box = tuple[float, float, float, float]  # left, top, right, bottom (canvas px)
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,6 +395,11 @@ def compile_caption_layers(
     Layer ids are deterministic: ``f"{id_prefix}-{index}"`` over the
     FINAL (sorted, clamped, filtered) cue list -- never the caller's original
     cue index, so a dropped cue never leaves a gap in the id sequence.
+
+    Watermark (KRI-548): every phone export draws the Kria mark bottom-left,
+    above text (`watermark_keepout_rect`). A cue whose ink would touch it is
+    re-broken so it does not (`_clear_of_watermark`); every other cue compiles
+    exactly as it always has.
     """
     resolved_look = look if look is not None else _DEFAULT_CAPTION_LOOK
     if not resolved_look.captions_enabled:
@@ -361,6 +416,7 @@ def compile_caption_layers(
         )
     canvas = PipelineCanvas(width=canvas_width, height=canvas_height)
     layers: list[PortableTextLayer] = []
+    overlays: list[dict[str, Any]] = []
     for index, cue in enumerate(prepared):
         overlay = _base_overlay(cue, resolved_look)
         use_karaoke = "words" in cue and (
@@ -383,7 +439,400 @@ def compile_caption_layers(
         except Exception as exc:  # noqa: BLE001 - untrusted transcript/edited cue content
             raise UnsupportedPhonePlan(f"unable to compile caption cue: {exc}") from exc
         layers.append(layer)
-    return layers
+        overlays.append(overlay)
+    return _make_room_for_watermark(layers, overlays, canvas=canvas, look=resolved_look)
+
+
+def watermark_keepout_rect(canvas_width: float, canvas_height: float) -> Box:
+    """The device watermark's opaque rect plus the clearance gap, in canvas px.
+
+    Same one-scale rule as `KriaBranding.tileTransform`, so a square or
+    landscape canvas gets the proportionally placed mark the engine draws.
+    """
+    scale = min(canvas_width / _WATERMARK_REF_WIDTH_PX, canvas_height / _WATERMARK_REF_HEIGHT_PX)
+    bottom = canvas_height - _WATERMARK_MARK_BOTTOM_INSET_PX * scale
+    gap = _WATERMARK_GAP_PX * scale
+    return (
+        _WATERMARK_MARK_LEFT_PX * scale - gap,
+        bottom - _WATERMARK_MARK_HEIGHT_PX * scale - gap,
+        (_WATERMARK_MARK_LEFT_PX + _WATERMARK_MARK_WIDTH_PX) * scale + gap,
+        bottom + gap,
+    )
+
+
+def caption_ink_box(run: Any, typeface: Any) -> Box | None:
+    """Canvas-space ink of one compiled run: glyph outlines plus the outline stroke.
+
+    Positioned (legacy) runs are measured glyph by glyph, exactly as the device
+    draws them. A shaped run is laid out by the phone itself, so it is bounded
+    by its advance width and the font's full ascent/descent instead.
+    """
+    from app.pipeline import text_overlay_skia as cloud
+
+    font = _caption_font(typeface, run.font_size)
+    if run.glyphs:
+        rel = _glyph_ink(font, run.glyphs)
+    else:
+        metrics = font.getMetrics()
+        width = cloud._measure_line(font, run.text, run.letter_spacing, shape_text=True)
+        rel = (0.0, metrics.fAscent, width, metrics.fDescent)
+    if rel is None:
+        return None
+    bleed = run.stroke_width / 2
+    return (
+        run.x + rel[0] - bleed,
+        run.baseline_y + rel[1] - bleed,
+        run.x + rel[2] + bleed,
+        run.baseline_y + rel[3] + bleed,
+    )
+
+
+def _caption_font(typeface: Any, size: float) -> Any:
+    import skia
+
+    font = skia.Font(typeface, size)
+    font.setSubpixel(True)
+    return font
+
+
+def _glyph_ink(font: Any, glyphs: list[Any], dx: float = 0.0) -> Box | None:
+    """Union of the glyph outline bounds, relative to the run origin (+``dx``)."""
+    bounds = font.getBounds([glyph.glyph_id for glyph in glyphs])
+    boxes = [
+        (dx + g.x + b.left(), g.y + b.top(), dx + g.x + b.right(), g.y + b.bottom())
+        for g, b in zip(glyphs, bounds, strict=True)
+        if not b.isEmpty()
+    ]
+    return _union(boxes)
+
+
+def _union(boxes: list[Box]) -> Box | None:
+    if not boxes:
+        return None
+    return (
+        min(box[0] for box in boxes),
+        min(box[1] for box in boxes),
+        max(box[2] for box in boxes),
+        max(box[3] for box in boxes),
+    )
+
+
+def _intersects(a: Box, b: Box) -> bool:
+    return a[0] < b[2] and a[2] > b[0] and a[1] < b[3] and a[3] > b[1]
+
+
+def _layer_touches(layer: PortableTextLayer, typeface: Any, keepout: Box) -> bool:
+    return any(
+        (ink := caption_ink_box(run, typeface)) is not None and _intersects(ink, keepout)
+        for run in layer.runs
+    )
+
+
+def _make_room_for_watermark(
+    layers: list[PortableTextLayer],
+    overlays: list[dict[str, Any]],
+    *,
+    canvas: Any,
+    look: PhoneCaptionLook,
+) -> list[PortableTextLayer]:
+    """Re-break the cues whose ink would sit under the device watermark (KRI-548).
+
+    Centred and right-aligned cues keep their anchor and only change where
+    their lines break, so the line crossing the mark's band is short enough to
+    clear it. A left-aligned caption's left edge IS the problem, so once any of
+    its cues touches the mark, every cue in the set starts just right of the
+    mark instead -- one shared edge rather than captions that jump sideways
+    from cue to cue. Cues that never touch the mark are returned unchanged.
+    """
+    if not layers:
+        return layers
+    from app.pipeline import text_overlay_skia as cloud
+
+    keepout = watermark_keepout_rect(canvas.width, canvas.height)
+    try:
+        typeface = cloud._resolve_typeface_for_overlay(overlays[0]).typeface
+        touching = [_layer_touches(layer, typeface, keepout) for layer in layers]
+    except Exception:  # noqa: BLE001 - making room is cosmetic; never fail a render on it
+        return layers
+    if not any(touching):
+        return layers
+    shift_left_edge = look.text_anchor == "left"
+    result = list(layers)
+    for index, (layer, overlay) in enumerate(zip(layers, overlays, strict=True)):
+        if not (touching[index] or shift_left_edge):
+            continue
+        left_edge: tuple[float, float] | None = None
+        if shift_left_edge:
+            x, _y = cloud._resolve_anchor(overlay, canvas)
+            right_bound = x + cloud._overlay_max_width_px(overlay, canvas)
+            new_x = keepout[2] + look.outline_px + _LEFT_EDGE_SAFETY_EM * look.text_size_px
+            left_edge = (new_x, right_bound - new_x)
+        try:
+            cleared = _clear_of_watermark(
+                overlay,
+                layer,
+                canvas=canvas,
+                keepout=keepout,
+                typeface=typeface,
+                left_edge=left_edge,
+            )
+        except Exception:  # noqa: BLE001 - keep today's layer on any surprise
+            cleared = None
+        if cleared is not None:
+            result[index] = cleared
+    return result
+
+
+def _clear_of_watermark(
+    overlay: dict[str, Any],
+    layer: PortableTextLayer,
+    *,
+    canvas: Any,
+    keepout: Box,
+    typeface: Any,
+    left_edge: tuple[float, float] | None = None,
+) -> PortableTextLayer | None:
+    """This cue re-broken so no line's ink meets ``keepout``, or None to keep it.
+
+    Picks the fewest lines (starting from today's count, at most
+    `_MAX_EXTRA_CAPTION_LINES` more) for which some line split keeps every
+    line inside the usual wrap width AND clear of the mark at the position it
+    will actually be drawn; among those splits, the most even line widths
+    win. The words, timing, size and anchor point stay as they were. Extra lines
+    grow the block about its centre like any longer caption -- unless the cue's
+    letters sat above the platform caption zone: then no line may reach into
+    it, and the block grows upward instead of down.
+
+    Only when no split clears the mark at the natural position (a long word
+    stuck on the line level with the mark: large custom sizes, wide fonts) is
+    the block lifted, by at most 1.5 lines (`_LIFT_FALLBACK_STEPS`). It never
+    moves down: below is the platforms' caption zone.
+
+    ``left_edge`` (left-aligned captions only) moves the left edge to
+    ``left_edge[0]`` and narrows the wrap width to ``left_edge[1]`` so the
+    right edge stays where it was.
+
+    The re-broken cue is compiled through the normal path and re-measured;
+    any surprise (a shrunk font, ink still on the mark) keeps today's layer, as
+    does any exception (caught by `_make_room_for_watermark`).
+    """
+    from app.pipeline import text_overlay_skia as cloud
+    from app.pipeline.portable_text_layout import (
+        compile_text_overlay,
+        legacy_glyphs_resolvable,
+        resolve_legacy_glyphs,
+    )
+
+    karaoke = layer.effect == "karaoke-line"
+    if not layer.runs:
+        return None
+    size = layer.runs[0].font_size
+    if any(run.font_size != size for run in layer.runs):
+        return None
+    font = _caption_font(typeface, size)
+    updates: dict[str, Any] = {}
+    if size != cloud._resolve_font_size_px(overlay):
+        # A word wider than the frame already made today's layout shrink this
+        # cue; keep that size rather than letting the re-wrap shrink it again.
+        updates["text_size_px"] = int(size)
+    if left_edge is not None:
+        updates["position_x_frac"] = left_edge[0] / canvas.width
+        updates["max_width_frac"] = left_edge[1] / canvas.width
+    candidate = {**overlay, **updates}
+    max_width = cloud._overlay_max_width_px(candidate, canvas)
+    anchor = cloud._resolve_text_anchor(candidate)
+    cx, cy = cloud._resolve_anchor(candidate, canvas)
+
+    # Words, the breaks the text forces, and each candidate line's width and
+    # ink relative to (its left edge, its baseline) -- measured the way the
+    # compile path below will place it.
+    hard_breaks: set[int] = set()
+    if karaoke:
+        words = [
+            text
+            for entry in overlay.get("word_timings") or []
+            if (text := str(entry.get("text", "")).strip())
+        ]
+        spacing = cloud._overlay_letter_spacing_px(overlay, size)
+        word_widths = [cloud._measure_line(font, word, spacing) for word in words]
+        word_inks = [_glyph_ink(font, resolve_legacy_glyphs(font, w, spacing)) for w in words]
+        gap = font.measureText(" ") + 2 * spacing
+
+        def measure(start: int, end: int) -> tuple[float, Box | None]:
+            boxes, cursor = [], 0.0
+            for i in range(start, end):
+                ink = word_inks[i]
+                if ink is not None:
+                    boxes.append((ink[0] + cursor, ink[1], ink[2] + cursor, ink[3]))
+                cursor += word_widths[i] + gap
+            return cursor - gap, _union(boxes)
+
+    else:
+        text = cloud._overlay_text(overlay)
+        raw_lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        if any(not raw.split() for raw in raw_lines):
+            return None  # an authored blank line; keep the creator's layout
+        words = []
+        for raw in raw_lines:
+            if words:
+                hard_breaks.add(len(words))
+            words.extend(raw.split())
+        spacing = cloud.resolve_letter_spacing_em(overlay.get("letter_spacing")) * size
+        shaped = bool(overlay.get("shape_text")) or not legacy_glyphs_resolvable(
+            _caption_font(typeface, 40), text
+        )
+        metrics = font.getMetrics()
+
+        def measure(start: int, end: int) -> tuple[float, Box | None]:
+            line = " ".join(words[start:end])
+            width = cloud._measure_line(font, line, spacing, shape_text=shaped)
+            if shaped:
+                return width, (0.0, metrics.fAscent, width, metrics.fDescent)
+            return width, _glyph_ink(font, resolve_legacy_glyphs(font, line, spacing))
+
+    if not words:
+        return None
+    measured: dict[tuple[int, int], tuple[float, Box | None]] = {}
+
+    def segment(start: int, end: int) -> tuple[float, Box | None]:
+        if (start, end) not in measured:
+            measured[(start, end)] = measure(start, end)
+        return measured[(start, end)]
+
+    bleed = layer.runs[0].stroke_width / 2
+    line_spacing = cloud.resolve_line_spacing(overlay.get("line_spacing"))
+    vertical = cloud._resolve_vertical_anchor(candidate)
+    scale = min(canvas.width / _WATERMARK_REF_WIDTH_PX, canvas.height / _WATERMARK_REF_HEIGHT_PX)
+    zone_top = canvas.height - (_WATERMARK_REF_HEIGHT_PX - _PLATFORM_CAPTION_ZONE_TOP_PX) * scale
+
+    def block_at(count: int) -> tuple[dict[str, Any], float]:
+        block = cloud._measure_block(font, ["x"] * count, line_spacing=line_spacing)
+        return block, cloud._vertical_block_top(vertical, cy, block["block_h"])
+
+    today_lines = len({run.baseline_y for run in layer.runs})
+    today_block, today_top = block_at(today_lines)
+    today_bottom = today_top + today_block["block_h"]
+    # Judged by ink: a cue whose letters stayed above the platform zone keeps
+    # them there (every line is checked below), and its block may not grow
+    # lower than the zone line or where it already ended, whichever is lower.
+    today_inks = [ink for run in layer.runs if (ink := caption_ink_box(run, typeface))]
+    clear_of_zone = bool(today_inks) and max(ink[3] for ink in today_inks) <= zone_top
+    lowest_bottom = max(today_bottom, zone_top)
+    word_total = sum(segment(i, i + 1)[0] for i in range(len(words)))
+    space = font.measureText(" ")
+
+    counts = [
+        count
+        for count in range(today_lines, today_lines + _MAX_EXTRA_CAPTION_LINES + 1)
+        if count <= len(words)
+    ]
+    # Natural placements first; a lift is only the fallback when no line split
+    # clears the mark where the block would naturally sit.
+    placements = [(count, 0.0) for count in counts] + [
+        (count, step) for step in _LIFT_FALLBACK_STEPS for count in counts
+    ]
+    for count, step in placements:
+        block, top = block_at(count)
+        lift = step * block["line_step"]
+        bottom = top + block["block_h"]
+        if clear_of_zone and bottom - lift > lowest_bottom:
+            lift = bottom - lowest_bottom
+        baselines = [
+            top - lift + block["ascent_offset"] + k * block["line_step"] for k in range(count)
+        ]
+        target = (word_total + space * (len(words) - count)) / count
+
+        def line_cost(
+            start: int,
+            end: int,
+            line: int,
+            baselines: list[float] = baselines,
+            target: float = target,
+        ) -> float | None:
+            width, ink = segment(start, end)
+            if width > max_width and not (karaoke and end - start == 1):
+                return None
+            if ink is not None:
+                left = cloud._anchored_left_x(anchor, cx, width)
+                box = (
+                    left + ink[0] - bleed,
+                    baselines[line] + ink[1] - bleed,
+                    left + ink[2] + bleed,
+                    baselines[line] + ink[3] + bleed,
+                )
+                if _intersects(box, keepout) or (clear_of_zone and box[3] > zone_top):
+                    return None
+            # A lone short word on its own line ("yer.") reads as a mistake; a
+            # lone long one ("Yeldeğirmeni'nde.") is just a line.
+            orphan = 1.0 if end - start == 1 and width < target / 2 else 0.0
+            return orphan + ((width - target) / max_width) ** 2
+
+        rows = _best_rows(len(words), count, hard_breaks, line_cost)
+        if rows is None:
+            continue
+        if karaoke:
+            updates["karaoke_row_sizes"] = [end - start for start, end in rows]
+        else:
+            updates["text"] = "\n".join(" ".join(words[start:end]) for start, end in rows)
+        if lift:
+            updates["position_y_frac"] = (cy - lift) / canvas.height
+        cleared, _font = compile_text_overlay(
+            {**overlay, **updates}, layer_id=layer.id, canvas=canvas
+        )
+        if any(run.font_size != size for run in cleared.runs) or _layer_touches(
+            cleared, typeface, keepout
+        ):
+            return None
+        return cleared
+    if left_edge is not None and not karaoke:
+        # A word too long for the room right of the mark (large custom sizes):
+        # let the usual wrap shrink it to fit there, the way a word wider
+        # than the frame is already handled, rather than keep it on the mark.
+        cleared, _font = compile_text_overlay(candidate, layer_id=layer.id, canvas=canvas)
+        if not _layer_touches(cleared, typeface, keepout):
+            return cleared
+    return None
+
+
+def _best_rows(
+    word_count: int,
+    line_count: int,
+    hard_breaks: set[int],
+    line_cost: Any,
+) -> list[tuple[int, int]] | None:
+    """Cheapest split of ``word_count`` words into exactly ``line_count`` lines.
+
+    ``line_cost(start, end, line)`` prices words ``[start, end)`` on line
+    ``line`` (0-based) or returns None when that line is not allowed. A line
+    never spans one of ``hard_breaks`` (word indices that must start a line).
+    """
+    inf = float("inf")
+    best = [[inf] * (word_count + 1) for _ in range(line_count + 1)]
+    back = [[-1] * (word_count + 1) for _ in range(line_count + 1)]
+    best[0][0] = 0.0
+    for line in range(line_count):
+        for start in range(word_count):
+            if best[line][start] == inf:
+                continue
+            for end in range(start + 1, word_count + 1):
+                if any(start < brk < end for brk in hard_breaks):
+                    break
+                cost = line_cost(start, end, line)
+                if cost is None:
+                    continue
+                total = best[line][start] + cost
+                if total < best[line + 1][end]:
+                    best[line + 1][end] = total
+                    back[line + 1][end] = start
+    if best[line_count][word_count] == inf:
+        return None
+    rows: list[tuple[int, int]] = []
+    end = word_count
+    for line in range(line_count, 0, -1):
+        start = back[line][end]
+        rows.append((start, end))
+        end = start
+    return rows[::-1]
 
 
 def caption_font_assets(layers: list[PortableTextLayer]) -> dict[str, RenderAsset]:

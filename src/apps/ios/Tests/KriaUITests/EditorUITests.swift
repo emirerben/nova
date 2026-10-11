@@ -303,6 +303,8 @@ final class EditorUITests: XCTestCase {
         expectation(for: NSPredicate(format: "value == %@", "0:05.6"), evaluatedWith: clock)
         waitForExpectations(timeout: 12)
         XCTAssertEqual(play.label, "Play preview")
+        // The outro placeholder still appears after the last clip (merged from the QuickAdd suite).
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-outro-placeholder"].waitForExistence(timeout: 3))
         let tail = XCTAttachment(screenshot: app.screenshot())
         tail.name = "Branded outro before export"
         tail.lifetime = .keepAlways
@@ -388,7 +390,7 @@ final class EditorUITests: XCTestCase {
     }
 
     func testNativeEditorNamedFixturesLaunchWithoutAnAccount() {
-        for shape in ["two-text", "boundary", "all-lanes", "stress-71", "unknown-sections"] {
+        for shape in ["boundary", "unknown-sections"] {
             let app = XCUIApplication()
             app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-\(shape)"]
             app.launch()

@@ -2706,6 +2706,91 @@ Troubleshooting:
   `tasks.align_user_song_takes` logs. The render path computes it inline if it is
   still missing.
 
+### Lyric captions (KRI-569)
+
+"Add captions" on a song montage shows the uploaded song's lyrics as the standard
+caption lane. Prod job `430219e4` (2026-10-11) asked for "Lipsync" + "Add captions" with
+**no song attached**: the clips' own audio carries no transcript (the clip analyzer
+leaves sung lyrics out on purpose), the creation text composer had no words and no
+caption lane, reported the ask as unmet and the job died as `phone_plan_unsupported`.
+
+- **Source.** `SongAnalysis.words/lines` (the whisper pass at attach time). The room
+  audio in the clips is never a lyrics source.
+- **Trigger.** The creator's own words (request + the brief written from them) ask for
+  captions and do not switch them off (`song_captions.text_asks_for_captions`: the word
+  captions/subtitles/karaoke/altyazı, or lyrics only with an intent such as "add the
+  lyrics" / "lyrics on screen"; every negation form, "don't add captions", "without any
+  captions", "altyazı istemiyorum", wins, and the LAST line that speaks of captions
+  decides). The model's `caption_style` is a style choice only (`karaoke`/`kinetic` or a
+  word-by-word ask => `word`, else whole lyric `sentence`s); it never turns lyrics on by
+  itself. **Who reads what:** the planner (chat, before a job) judges the raw request, the
+  brief and the latest message together; the worker judges the saved `creator_request`
+  (which already carries the brief). A creator who does not want the song ask says "no
+  captions" and the next turn proceeds without it.
+- **Pinned data.** `EditProposalSnapshot.song_captions` (`SongCaptionTrack`: the whole
+  song's words in song seconds + `line_end`). It is server-authored (PATCH pins it like
+  `text_composition`), excluded from the public proposal response/OpenAPI and omitted
+  when unset, so earlier snapshots hash and compile exactly as before (no
+  `COMPILER_VERSION` bump). It is deliberately NOT on `UserSongPlan` (strict, copied
+  into the execution plan and the app).
+- **Compiler.** `guided_story._caption_lane_elements` appends one `caption_cue` row per
+  word, `song-caption-{index}`, `output = song_time - window_start`, inside
+  `[window_start, window_end)`. They are the rows narration captions use, so
+  `editor_caption_meta`, the iOS caption panel (font, colours, size, stroke, shadow,
+  alignment, sentence/word) and chat caption ops work unchanged. `line_end` closes a
+  lyric line in sentence mode (`guided_caption_presentation`). The recipe draws one
+  text layer per lyric word and allows 500 layers in all, so the lane gets
+  `lyric_word_budget` = 500 - 62 reserved (title, closing text, composer headroom) - one
+  per clip label - one per pin, capped at 400 (`project_snapshot_words`). A longer song
+  is cut after the last whole lyric line; `record["captions"]` then carries
+  `truncated: true` and `in_window` (the words the window held) beside `words`. A word
+  count of zero inside the window (an instrumental intro/tail) is a
+  `user_song_plan_declined` question, never a "placed" receipt. Text the composer adds
+  beyond the reserve is not budgeted; the phone compile would refuse it.
+- **Editor revisions.** `compile_guided_runtime_plan` re-projects the rows after the
+  song window is settled (background start slider, creator end, KRI-561 lip-sync head
+  trim, video length, song removed): the creator's text/style per id survives, timing
+  follows the song clock. A word that left the window stays as a hidden row
+  (`removed=true`, `source_params.window_hidden`), because every approved text id must
+  stay active or tombstoned; a word the window now reaches gets a new
+  `song-caption-N` row (runtime-only ids are accepted, exactly like creator-added
+  text). A word the creator deleted (`removed` without `window_hidden`, or a
+  tombstone) is never resurrected, in or out of the window. The receipt id check is not involved on the phone
+  (no cloud render receipt). Removing the song hides every lyric row.
+- **No song, or no words.** A lip-sync + captions ask with no song attached is answered
+  in chat before any job exists: `song_captions_need_song` ("Add the song you
+  lip-synced to and I'll caption its lyrics."; `kria/strategy_policy.song_captions_refusal`,
+  wired in `kria/planner`). The worker repeats it for a stale plan
+  (`_decline_song_captions_without_song`). A song whose analysis heard no words fails as
+  `user_song_plan_declined` ("I couldn't hear any words in your song to caption. Should
+  I make it without captions?"). The "no song" ask is judged on the creator's wording
+  (lip-sync + captions), never on the model's caption default, so ordinary montages are
+  not rerouted. It is skipped when `USER_SONG_MONTAGE_ENABLED` is off and when a song IS
+  attached but unusable (the manifest then carries the `user_song` capability as
+  unavailable and the existing user-song messaging owns it, so the creator is not asked
+  for a song they already added).
+- **Composer.** `CreationTextComposer` (`v3-creation-text-composition`) sees a
+  `caption_lane` summary (lyric samples sanitised like every prompt datum) instead of the
+  caption rows, and is told captions/lyrics are that lane's job. The model's `bar_index`
+  values address the rows it was shown, so they are translated to the full lane before
+  the program is pinned, and replay rejects any op that changes a caption-lane row
+  (`CreationTextCompositionError`). The digest covers every row.
+- **Receipt.** `UnifiedMontagePlan.caption_receipt` => `record["captions"]
+  {status, style, words, lines}` => `PlanFacts.montage_captions`, so a captions
+  requirement is `met` (or `partial` for a word-by-word ask answered with sentences).
+- **Kill switch.** `SONG_CAPTIONS_ENABLED=false` (`fly secrets set` on api + worker,
+  restart): no lyric track is planned and no ask is made, so output is byte-identical
+  to before (and a lip-sync + captions ask fails as it did). Already-approved plans
+  keep their captions; the compiler never reads the flag.
+- **Limits.** Whisper timing on singing is "close", not frame-exact; lyrics follow
+  whatever language whisper returned. Lip-sync trim does not re-time other text.
+
+Tests: `tests/pipeline/test_song_captions.py` (revisions), `tests/tasks/test_user_song_montage_job.py`
+(real worker: lip-sync, background, no song, no words, kill switch),
+`tests/kria/test_song_captions_policy.py` (the prod job's recorded strategy),
+`tests/pipeline/test_guided_caption_presentation.py`,
+`tests/evals/request_following/test_creation_composition.py` (composer lane).
+
 Known limits: the aligner was validated on synthetic material only, with no
 pre-registered accuracy gate on real creator takes (follow-up ticket); the
 authored-timeline editor (`editor_timeline_mode == "authored"`) does not carry the

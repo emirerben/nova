@@ -96,6 +96,24 @@ final class SongOrderUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["song-timeline-audio-note"].exists, "the song downloaded")
         XCTAssertFalse(app.buttons["song-timeline-reset"].exists)
 
+        // Moving a placed block to the tray, then Reset, brings the server's proposal back.
+        let block = first
+        bringIntoView(block, in: app)
+        block.tap()
+        let toTray = app.buttons["song-timeline-to-tray"]
+        XCTAssertTrue(toTray.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["song-order-preview"].waitForExistence(timeout: 3), "the take preview (or its off-device note) is shown")
+        toTray.tap()
+        XCTAssertTrue(app.buttons["song-timeline-tray-fixture-clip"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["song-timeline-block-fixture-clip"].exists)
+        let reset = app.buttons["song-timeline-reset"]
+        XCTAssertTrue(reset.exists)
+        bringIntoView(reset, in: app)
+        reset.tap()
+        XCTAssertTrue(app.buttons["song-timeline-block-fixture-clip"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["song-timeline-tray-fixture-clip"].exists)
+        XCTAssertFalse(reset.exists)
+
         bringIntoView(gap, in: app)
         gap.tap()
         let pick = app.buttons["song-timeline-pick-fixture-clip-3"]
@@ -117,28 +135,6 @@ final class SongOrderUITests: XCTestCase {
         XCTAssertTrue(answered.waitForExistence(timeout: 5), "the card collapses once answered")
         XCTAssertTrue(answered.label.contains("Arrangement confirmed"), answered.label)
         XCTAssertFalse(app.buttons["song-timeline-use"].exists)
-    }
-
-    func testTimelineMovesABlockToTheTrayAndResetBringsItBack() {
-        let app = launch(songOrder: "1")
-        sendClips(app)
-        let block = app.buttons["song-timeline-block-fixture-clip"]
-        XCTAssertTrue(block.waitForExistence(timeout: 15))
-        bringIntoView(block, in: app)
-        block.tap()
-        let toTray = app.buttons["song-timeline-to-tray"]
-        XCTAssertTrue(toTray.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any)["song-order-preview"].waitForExistence(timeout: 3), "the take preview (or its off-device note) is shown")
-        toTray.tap()
-        XCTAssertTrue(app.buttons["song-timeline-tray-fixture-clip"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["song-timeline-block-fixture-clip"].exists)
-        let reset = app.buttons["song-timeline-reset"]
-        XCTAssertTrue(reset.exists)
-        bringIntoView(reset, in: app)
-        reset.tap()
-        XCTAssertTrue(app.buttons["song-timeline-block-fixture-clip"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["song-timeline-tray-fixture-clip"].exists)
-        XCTAssertFalse(reset.exists)
     }
 
     func testOrderQuestionFallsBackToTextWhenServerDoesNotAdvertiseIt() {

@@ -34,7 +34,12 @@
         "src/apps/api/app/agents/_model_client.py",
         "src/apps/api/app/agents/_runtime.py",
         "src/apps/api/app/kria/planner.py",
-        "src/apps/api/app/routes/_copilot.py"
+        "src/apps/api/app/routes/_copilot.py",
+        "src/apps/api/app/kria/strategy_policy.py",
+        "src/apps/api/app/pipeline/guided_caption_presentation.py",
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/app/schemas/edit_proposal.py",
+        "src/apps/api/tests/evals/request_following/test_creation_composition.py"
       ]
     },
     {
@@ -104,7 +109,7 @@
     },
     {
       "id": "kri-561-song-order",
-      "api_tests": "tests/pipeline/test_song_order_placements.py tests/routes/test_phone_song_editor_commit.py",
+      "api_tests": "tests/pipeline/test_song_order_placements.py tests/routes/test_phone_song_editor_commit.py tests/pipeline/test_song_captions.py tests/kria/test_song_captions_policy.py",
       "xctests": [
         "KriaTests/SongOrderTests/testSubmissionListsPlacedTakesByTimeThenTheTrayInCaptureOrderAndEveryTakeOnce",
         "KriaTests/SongOrderTests/testOldServerPayloadWithNoNewFieldsStillParsesAndGivesATimelineWithDefaults",
@@ -116,7 +121,27 @@
         "src/apps/api/tests/pipeline/test_song_order_placements.py",
         "src/apps/ios/Tests/KriaTests/SongOrderTests.swift",
         "src/apps/api/app/schemas/guided_edit_revision.py",
-        "src/apps/api/tests/routes/test_phone_song_editor_commit.py"
+        "src/apps/api/tests/routes/test_phone_song_editor_commit.py",
+        "src/apps/api/app/pipeline/song_captions.py",
+        "src/apps/api/tests/pipeline/test_song_captions.py",
+        "src/apps/api/tests/kria/test_song_captions_policy.py"
+      ]
+    },
+    {
+      "id": "kri-548-caption-watermark",
+      "api_tests": "tests/pipeline/test_phone_captions.py tests/pipeline/test_phone_caption_watermark_fixture.py tests/kria/test_portable_text_layout.py",
+      "xctests": [
+        "KriaTests/CaptionWatermarkClearanceTests/testServerRebrokenKadikoyCaptionsExportClearOfTheWatermark",
+        "KriaTests/CaptionWatermarkClearanceTests/testProdUnbrokenKadikoyCaptionsInkTheWatermarkCorner"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/phone_captions.py",
+        "src/apps/api/app/pipeline/portable_text_layout.py",
+        "src/apps/api/tests/pipeline/test_phone_captions.py",
+        "src/apps/api/tests/pipeline/test_phone_caption_watermark_fixture.py",
+        "src/apps/api/tests/kria/test_portable_text_layout.py",
+        "src/apps/ios/Tests/KriaTests/CaptionWatermarkClearanceTests.swift",
+        "src/apps/ios/Tests/Fixtures/KRI548CaptionWatermark.json"
       ]
     },
     {

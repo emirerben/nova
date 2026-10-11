@@ -194,6 +194,15 @@ WORKER_FUNCTIONS: dict[str, tuple[str, str]] = {
         "language hint (content) and the pre-contract speech lane request "
         "(`legacy_unstamped`, services/phone_speech_montage_job.py)",
     ),
+    "_creator_request_text": (
+        "content_only",
+        "KRI-569: loader of the saved request for the song-lyric caption ask. It only decides "
+        "whether to ADD the uploaded song's own lyrics as captions (content from the song, "
+        "never creator-required text) or to decline asking for the song; it never picks the "
+        "route, duration, voice or order (the song is already pinned in `user_song`). Stays "
+        "until a typed caption carrier exists on CreativeStrategy (follow-up KRI-578), the "
+        "same gap as `_creator_requests_narrated_treatment`.",
+    ),
     "_grounded_context_labels": ("content_only", "grounds context-label wording"),
     "_guided_execution_plan": ("content_only", "guided plan label wording"),
     "_narrated_clip_alignment_steps": ("content_only", "alignment agent context"),

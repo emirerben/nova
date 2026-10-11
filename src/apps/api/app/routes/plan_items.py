@@ -4142,6 +4142,8 @@ async def update_item_edit_proposal(
                 # absent from older/public full-snapshot clients. Never let a
                 # save erase it or replace its pinned base digest.
                 "text_composition": current.draft.text_composition,
+                # KRI-569: the song's lyric track is server-authored too.
+                "song_captions": current.draft.song_captions,
             }
         )
         if (

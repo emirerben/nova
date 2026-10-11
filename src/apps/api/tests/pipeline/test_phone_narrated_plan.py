@@ -891,3 +891,44 @@ def test_authored_text_elements_drop_caption_mirrors_lyrics_and_tombstones():
 
     assert narrated_authored_text_elements(rows) == [title, plain]
     assert narrated_authored_text_elements(None) == []
+
+
+def test_voiceover_captions_clear_the_device_watermark_on_render_and_on_save():
+    """KRI-548: phone Voiceover captions share the Talking caption compiler, so
+    a wide cue is re-broken around the Kria mark on the first render and on
+    every caption Save that swaps the layers."""
+    from app.pipeline import text_overlay_skia as cloud
+    from app.pipeline.phone_captions import (
+        CAPTION_FONT_FAMILY,
+        caption_ink_box,
+        watermark_keepout_rect,
+    )
+
+    typeface = cloud._resolve_typeface_for_overlay({"font_family": CAPTION_FONT_FAMILY}).typeface
+
+    def touching(recipe) -> list[str]:
+        left, top, right, bottom = watermark_keepout_rect(1080, 1920)
+        return [
+            run.text
+            for layer in recipe.text_layers
+            for run in layer.runs
+            if (ink := caption_ink_box(run, typeface))[0] < right
+            and ink[2] > left
+            and ink[1] < bottom
+            and ink[3] > top
+        ]
+
+    wide = [{"text": "Üçüncü ve en sevdiğim yer Yeldeğirmeni'nde.", "start_s": 0.0, "end_s": 3.0}]
+    pinned = _worker_shaped_recipe(cues=wide)
+    assert touching(pinned) == []
+
+    edited = [
+        {
+            "text": "So today I'm taking you to my three favourite coffee spots.",
+            "start_s": 4.0,
+            "end_s": 7.0,
+        }
+    ]
+    swapped = replace_narrated_captions(pinned, caption_cues=edited)
+    assert touching(swapped) == []
+    assert swapped.tracks == pinned.tracks
