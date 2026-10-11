@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.214.0] - 2026-10-11
+
+### Changed
+- fix(creator): pin described-shot labels from resolved label intents (KRI-568) (#1531) <!-- release-pr: 1531 -->
+
+## [0.78.213.0] - 2026-10-11
+
+### Changed
+- fix(api): let native slide-post saves through the iPhone-only fence (KRI-581) (#1536) <!-- release-pr: 1536 -->
+
 ## [0.78.212.0] - 2026-10-11
 
 ### Changed

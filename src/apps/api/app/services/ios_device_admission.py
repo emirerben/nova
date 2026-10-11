@@ -93,7 +93,11 @@ def is_native_cloud_only_path(path: str) -> bool:
         # source contracts instead.
         return parts[2] not in {"upload-url", "uploads"}
     if len(parts) >= 4 and parts[1] == "plan-items" and parts[3] == "slide-post":
-        return True
+        # Slide posts render on the iPhone and are saved by the server. Draft writes
+        # (PUT), AI proposals and chat edits never render, so the native fence must not
+        # refuse them (KRI-581). Only a server render (generate, compose, or any future
+        # sub-route) has no device contract; unknown sub-routes stay refused.
+        return parts[4:] not in ([], ["propose"], ["chat-edit"])
     if len(parts) >= 6 and parts[1] == "plan-items" and parts[3] == "variants":
         # The native editor has exactly two state-changing contracts beneath a
         # variant. Everything else is a cloud reburn/retry surface.
