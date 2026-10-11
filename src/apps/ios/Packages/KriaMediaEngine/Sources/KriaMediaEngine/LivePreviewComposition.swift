@@ -121,21 +121,22 @@ public struct LivePreviewExportSnapshot: Sendable {
         let selected = instruction.layers[index]
         let textBelowSelected = selected.overlayAboveText == true
         let activeText = try instruction.activeText(at: time)
-        func slice(layers: [RecipeVideoLayer], text: [RecipeTextLayer], transparent: Bool) -> AVVideoComposition {
+        func slice(layers: [RecipeVideoLayer], text: [RecipeTextLayer], transparent: Bool, drawings paintsDrawings: Bool = false) -> AVVideoComposition {
             let copy = composition.mutableCopy() as! AVMutableVideoComposition
             copy.instructions = (composition.instructions as! [RecipeVideoInstruction]).map { original in
                 guard original.timeRange == instruction.timeRange else { return original }
                 return RecipeVideoInstruction(timeRange: original.timeRange, layers: layers, text: text,
                     canvas: composition.renderSize, cameraPulses: original.cameraPulses,
                     motionScenes: transparent ? nil : original.motionScenes,
-                    drawings: transparent ? original.drawings : nil, transparentBackground: transparent)
+                    drawings: paintsDrawings ? original.drawings : nil, transparentBackground: transparent)
             }
             return copy
         }
         let below = slice(layers: Array(instruction.layers.prefix(index)),
                           text: textBelowSelected ? activeText : [], transparent: false)
+        // Drawings sit above everything, so only the foreground slice paints them; the moving media slice must not.
         let above = slice(layers: Array(instruction.layers.suffix(from: index + 1)),
-                          text: textBelowSelected ? [] : activeText, transparent: true)
+                          text: textBelowSelected ? [] : activeText, transparent: true, drawings: true)
         let media = slice(layers: [selected], text: [], transparent: true)
         return (below, above, media, CGRect(x: bounds.centerX - bounds.width / 2,
             y: bounds.centerY - bounds.height / 2, width: bounds.width, height: bounds.height))

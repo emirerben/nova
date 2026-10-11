@@ -64,6 +64,21 @@ final class DrawingRenderTests: XCTestCase {
         }
     }
 
+    func testADotAppearsWhenThePenReachesItNotWhenAnEarlierStrokeStarts() throws {
+        let line = DrawingStroke(color: "#FF3B30", widthFrac: 0.03, points: [[0.1, 0.1], [0.9, 0.1]])
+        let dot = DrawingStroke(color: "#FF3B30", widthFrac: 0.03, points: [[0.5, 0.9], [0.5, 0.9]])
+        let layer = PortableDrawingLayer(id: "dot-order", start: 0, end: 2, canvasAspect: 270.0 / 480.0,
+                                         centerX: 0.5, centerY: 0.5, entrance: .draw, drawDuration: 1, strokes: [line, dot])
+        // The dot sits in the bottom band; the line is drawn along the top.
+        func bottomBand(_ pixels: [UInt8]) -> Double {
+            let row = Int(canvas.width) * 4
+            return stride(from: Int(canvas.height * 0.8) * row + 3, to: pixels.count, by: 4).reduce(0.0) { $0 + Double(pixels[$1]) / 255 }
+        }
+        XCTAssertEqual(bottomBand(try bitmap(layer, at: 0.4)), 0, "the dot showed before the pen reached it")
+        XCTAssertGreaterThan(coverage(try bitmap(layer, at: 0.4)), 5, "the line should be mid-reveal")
+        XCTAssertGreaterThan(bottomBand(try bitmap(layer, at: 1.5)), 1, "the dot never appeared")
+    }
+
     func testRevealNeverReshufflesGrainOrSprayDots() throws {
         // Anything inked early is still inked (same position, same dots) once the stroke is fully drawn.
         for texture in [DrawingTexture.spray, .chalk] {

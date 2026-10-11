@@ -1207,7 +1207,8 @@ def _compile_voiceover_montage_editor_commit(
     media_active = active_sections & _VOICEOVER_MEDIA_SECTIONS
     cut_active = bool(active_sections & _VOICEOVER_CUT_SECTIONS)
     # KRI-589: a drawings-only Save touches no lane the sound-effect / Visuals rollout owns.
-    only_drawings = active_sections <= _DRAWING_SECTIONS
+    # (An empty Save is not drawings-only: `set() <= x` is true, so it keeps its old gates.)
+    only_drawings = bool(active_sections) and active_sections <= _DRAWING_SECTIONS
     if (
         (lanes_active or not cut_active)
         and not only_drawings

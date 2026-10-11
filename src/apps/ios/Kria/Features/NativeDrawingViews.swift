@@ -40,6 +40,8 @@ extension DrawingTexture {
 struct NativeDrawingCanvas: View {
     @ObservedObject var sketch: NativeDrawingSketch
     @State private var dragging = false
+    /// Resets to false when the system cancels a drag (alert, call), which never calls `onEnded`.
+    @GestureState private var touching = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -62,7 +64,12 @@ struct NativeDrawingCanvas: View {
                         if dragging { sketch.append(normalized(value.location, in: proxy.size)); sketch.end() }
                         dragging = false
                     }
+                    .updating($touching) { _, state, _ in state = true }
             )
+            .onChange(of: touching) { _, isTouching in
+                // A cancelled drag: close the stroke so the next touch starts a fresh one.
+                if !isTouching && dragging { sketch.end(); dragging = false }
+            }
         }
         .accessibilityElement()
         .accessibilityLabel("Drawing canvas")
@@ -365,7 +372,11 @@ struct NativeDrawingTransformLayer: View {
         DragGesture(minimumDistance: 3, coordinateSpace: .local)
             .onChanged { value in
                 guard begin("move"), let base else { return }
-                update(base) { $0.centerX = base.centerX + value.translation.width / max(size.width, 1); $0.centerY = base.centerY + value.translation.height / max(size.height, 1) }
+                // Clamped to the frame: a centre outside 0...1 is an invalid drawing the preview compile would drop.
+                update(base) {
+                    $0.centerX = min(1, max(0, base.centerX + value.translation.width / max(size.width, 1)))
+                    $0.centerY = min(1, max(0, base.centerY + value.translation.height / max(size.height, 1)))
+                }
             }
             .onEnded { _ in end("move") }
     }

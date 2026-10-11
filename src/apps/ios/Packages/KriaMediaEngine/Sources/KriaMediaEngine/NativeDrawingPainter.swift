@@ -162,8 +162,8 @@ public enum NativeDrawingPainter {
             let full = fulls[index], span = lengths[index]
             var visible = full, visibleLength = span
             if progress < 1 {
-                // A zero-length stroke is a dot: it appears as soon as the pen starts.
-                let fraction = span <= 1e-9 ? (progress > 0 ? 1 : 0) : (revealed - walked) / span
+                // A zero-length stroke is a dot: it appears when the pen reaches it, in recorded order.
+                let fraction = span <= 1e-9 ? (progress > 0 && revealed >= walked - 1e-9 ? 1 : 0) : (revealed - walked) / span
                 if fraction <= 0 { break }
                 if fraction < 1 { visible = StrokeReveal.prefix(full, fraction: fraction); visibleLength = length(visible) }
             }

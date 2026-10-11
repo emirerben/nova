@@ -8,8 +8,9 @@ Coordinates are normalised to the authoring canvas (``canvas_aspect`` = width /
 height) so a drawing never distorts when the output canvas has another aspect;
 renderers aspect-fit the authoring canvas into the output canvas. Scale and
 rotation pivot on the strokes' bounding-box centre, which ``center_x`` /
-``center_y`` position on the output canvas (a freshly drawn element has them at
-the bbox centre, so the transform is the identity).
+``center_y`` position within the aspect-fitted authoring rectangle (the whole output
+canvas whenever the aspects match, as they do for every drawing the editor makes). A
+freshly drawn element has them at the bbox centre, so the transform is the identity.
 
 The device compiles ``DrawingElement`` into ``PortableDrawingLayer``
 (``app.kria.portable_drawing``) with ``compile_drawing_layers``; the rules are

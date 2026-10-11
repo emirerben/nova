@@ -85,3 +85,22 @@ stays closed (`drawing_unavailable`) and `validate_phone_pilot_recipe` refuses
 `drawing_layers`. Verify with the editor capability payload of a device variant
 (`drawings.add.editable == true`). Not in scope: web authoring, cloud variants,
 AI-authored drawings, Apple Pencil pressure, z-order, animated slides.
+
+## Rollback and known limits
+
+- **Code rollback is not safe once creators have saved drawings.** `GuidedEditorRevision`
+  and the recipe models forbid unknown keys, so an older api/worker image cannot read a
+  guided revision that stores `drawings`, nor a pinned recipe with `drawing_layers`
+  (`device_status` fails). Use the kill switch (it stops new drawings and keeps playback)
+  instead of reverting the deploy.
+- Un-verifying `freehandDrawing` (rolling the `PHONE_RENDER_VERIFIED_FEATURES` secret back)
+  makes every Save of a variant that still has drawings fail in `validate_phone_pilot_recipe`
+  until the drawings are deleted; deletion keeps working.
+- A guided or authored **re-cut keeps drawings on their absolute output times** (text and
+  overlays are re-projected, `project_lane_times` does not know `drawings`); the recipe
+  clamps them, so it is safe but a drawing can drift off its moment.
+- Size: the lane is stored three times (variant, revision, pinned recipe). The caps allow
+  roughly 220 KB for one lane at the extreme, close to the 256 KB `EDITOR_STATE_MAX_BYTES`
+  shared by every lane in a chat turn.
+- Chat/copilot edits cannot change drawings (no op exists), so no receipts or plan cards
+  mention them.

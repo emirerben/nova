@@ -493,6 +493,30 @@ def test_a_cloud_variant_has_the_lane_closed_and_refuses_a_drawing(monkeypatch) 
     assert prep["sections"]["drawings"] is False and prep["has_render_section"] is False
 
 
+def test_save_refuses_a_drawing_on_a_device_shape_the_capability_map_closes(monkeypatch) -> None:
+    """A stale capability map must not let a client persist a lane this variant cannot render:
+    it would show in the editor and be missing from the export."""
+    _arm_every_editor_lane(monkeypatch)
+    _verify_drawings(monkeypatch)
+    set_client_protocol(5)
+    job = _job(resolved_archetype="speech_montage")
+    variant = job.assembly_plan["variants"][0]
+    variant["render_destination"] = "device"
+    assert gj._editor_capabilities(job, variant)["drawings"]["add"]["reason"] == (
+        "drawing_unsupported_for_this_edit"
+    )
+    with pytest.raises(HTTPException) as refused:
+        gj.prepare_editor_commit(
+            job,
+            variant["variant_id"],
+            gj.EditorCommitRequest(
+                base_generation=gj.variant_render_baseline(variant), drawings=[DRAWING]
+            ),
+        )
+    assert refused.value.status_code == 422
+    assert refused.value.detail == {"code": "drawing_unsupported_for_this_edit"}
+
+
 # --- capability map ---------------------------------------------------------------------
 
 

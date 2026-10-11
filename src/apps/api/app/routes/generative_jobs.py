@@ -10244,9 +10244,10 @@ def _validate_drawings_section(
     """Save-time twin of the ``drawings`` capability (KRI-589): the validated lane, or
     ``None`` for an untouched empty echo that carries no information.
 
-    Cloud variants have no drawing renderer, so a non-empty lane is refused with the same
-    reason the capability map reports. The kill switch (and an unverified device) stops
-    ADDING or CHANGING drawings -- ``422 drawings_disabled`` -- but never removal or replay:
+    A variant that cannot render drawings (cloud, slides, or an archetype shape without the
+    lane) refuses a non-empty lane with the same reason the capability map reports. The
+    kill switch (and an unverified device) stops ADDING or CHANGING drawings --
+    ``422 drawings_disabled`` -- but never removal or replay:
     a lane made only of rows already stored byte-for-byte (a deletion, or an untouched
     echo) is accepted, so creators can always take drawings off.
     """
@@ -10255,9 +10256,10 @@ def _validate_drawings_section(
 
     submitted = payload.drawings or []
     stored = [row.model_dump(mode="json") for row in coerce_drawings(variant.get("drawings"))]
-    if variant.get("render_destination") != "device" or variant.get("resolved_archetype") in {
-        "slides",
-    }:
+    # The same variant-shape rule the capability map reports (`delete` follows only the shape),
+    # so a client with a stale capability map cannot persist a lane this variant cannot render.
+    shape = _drawing_capabilities(job, variant)["delete"]
+    if not shape["editable"]:
         if not submitted and "drawing" not in payload._deleted_kinds:
             log.debug(
                 "editor_commit_ignored_empty_section",
@@ -10268,7 +10270,7 @@ def _validate_drawings_section(
             return None
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "drawing_requires_phone_render"},
+            detail={"code": shape["reason"]},
         )
     if not submitted and not stored and "drawing" not in payload._deleted_kinds:
         return None

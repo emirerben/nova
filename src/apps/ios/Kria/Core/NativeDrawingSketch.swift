@@ -111,7 +111,13 @@ import KriaMediaEngine
 
     /// The whole sketch as one always-visible layer, painted by the same code as the compositor.
     var previewLayer: PortableDrawingLayer {
-        PortableDrawingLayer(id: "sketch", start: 0, end: 1, canvasAspect: canvasAspect, entrance: .none, strokes: strokes + [liveStroke].compactMap { $0 })
+        let drawn = strokes + [liveStroke].compactMap { $0 }
+        // The painter moves the strokes' bounding-box centre onto centerX/centerY, so the live ink
+        // stays under the finger only when the layer is centred on its own bbox (identity transform).
+        let points = drawn.flatMap(\.points).filter { $0.count == 2 }
+        let xs = points.map { $0[0] }, ys = points.map { $0[1] }
+        let centerX = ((xs.min() ?? 0.5) + (xs.max() ?? 0.5)) / 2, centerY = ((ys.min() ?? 0.5) + (ys.max() ?? 0.5)) / 2
+        return PortableDrawingLayer(id: "sketch", start: 0, end: 1, canvasAspect: canvasAspect, centerX: centerX, centerY: centerY, entrance: .none, strokes: drawn)
     }
 
     private func refreshLive() { liveStroke = makeStroke(livePoints.count == 1 ? livePoints + livePoints : livePoints) }
