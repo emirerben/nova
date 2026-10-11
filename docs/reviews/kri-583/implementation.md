@@ -47,6 +47,28 @@ unit result is `prepare-ui.JDu7VH/unit.xcresult`; the final UI result is
 is offline replay; the review fixture uses existing bundled footage with test
 audio. No model/provider change or live call was made; live-model cost is $0.
 
+## Physical QA setup and current evidence
+
+A separate opt-in `Kria Hardware QA` scheme builds `KriaHardwareUITests`, keeping
+hardware-dependent cases outside the standard simulator inventory. The test
+requires a physical iPhone and `KRIA_TELEPROMPTER_HARDWARE_TEST=1` in its runner;
+it uses real camera/microphone capture with the offline Talking workspace.
+
+The final app and hardware runner built successfully for arm64/iPhoneOS 26.5.
+The app was installed under a separate `com.kria.teleprompter.qa` identity and
+launched directly on the paired iPhone 13 Pro. Production app identity and
+entitlements were unchanged. Cached automatic development signing was sufficient;
+no Xcode account login or provisioning-profile modification was needed.
+
+The first XCTest attempt stopped at app launch before camera setup. The retry
+uses the separate runner and an explicit arm64 destination; Xcode currently
+reports that the destination is locked. These are setup/launch observations,
+not evidence of recording, permission, audio or recovery behavior. Result/log
+paths: `/private/tmp/kri-583-device-ui.xcresult`,
+`/private/tmp/kri-583-device-ui.log`, and
+`/private/tmp/kri-583-device-ui-arm64.log`. The hardware build log is
+`/private/tmp/kri-583-device-hardware-build.log`.
+
 ## Physical iPhone release check still required
 
 1. Record spoken words with a visible clap; check saved picture/audio sync.

@@ -210,6 +210,30 @@ large text, previous-take selection, and failed native proxy intake. Debug-only
 `KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE=1` and
 `KRIA_TELEPROMPTER_REVIEW_FIXTURE=1` require `-ui-testing-chat`; the review fixture
 uses bundled footage with generated audio and does not prove camera capture.
+The separate **Kria Hardware QA** scheme runs
+`KriaHardwareUITests/TeleprompterHardwareUITests/testPhysicalCameraTakeInterruptionAndRecovery`.
+It is excluded from the standard simulator UI inventory and requires a physical,
+paired, unlocked iPhone plus `KRIA_TELEPROMPTER_HARDWARE_TEST=1` in the **test
+runner** environment. It uses actual camera/microphone permissions and capture;
+the Talking creation workspace remains an offline fixture. It checks countdown
+cancellation, a five-second take, background interruption and review recovery.
+A passed test must be followed by inspecting the saved movies for both audio and
+video tracks. It does not prove a real-server attachment or perceptual audio sync.
+
+Build the scheme for a dedicated QA bundle identifier with
+`KRIA_PRODUCT_BUNDLE_IDENTIFIER` and a matching `KRIA_GOOGLE_REDIRECT_SCHEME`.
+Keep production identity and entitlements unchanged. For camera-only QA, an
+empty separate entitlements plist can use a valid cached wildcard development
+profile; use `CODE_SIGN_STYLE=Automatic`, the certificate's team, and omit
+`-allowProvisioningUpdates` when no Xcode account is logged in. Never pass a
+managed profile globally to every package target. Use a separate DerivedData
+path, then set the opt-in variable in the generated `.xctestrun` test target's
+`EnvironmentVariables` and `TestingEnvironmentVariables`. Run
+`test-without-building` with the exact test above and an explicit
+`platform=iOS,arch=arm64,id=<device UDID>` destination. Record the result bundle
+and any launch failure separately from app behavior; a locked destination or a
+runner that fails before camera setup provides no capture evidence.
+
 Before release, check a real iPhone for preview framing, saved portrait/mirroring,
 audio sync, text absence from saved pixels, and background/audio interruption
 recovery. Simulator success is not evidence for those hardware behaviors.
