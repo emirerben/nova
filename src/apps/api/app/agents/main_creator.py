@@ -78,7 +78,9 @@ log = structlog.get_logger()
 # taught so an over-long ask becomes a question, not a schema failure (v52).
 # KRI-598: no `execution_contract` where `guided_voiceover` is unavailable (runtime v2); on a
 # Voiceover edit a cue for an own clip is `include`, never `order`, and beats persist (v55).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-11-v55"
+# KRI-614: a clip's `filename` (the name the app shows) identifies it when the creator writes it
+# (v56).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-12-v56"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input

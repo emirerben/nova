@@ -2515,7 +2515,7 @@ Flow:
    unchanged. **The answer echo is not a request.** The visible text of a song-order answer
    ("Use this arrangement: clip 4 at 0:00, ...") is transcript copy.
    `services/song_order.model_text` returns a neutral sentence for any user event carrying
-   `song_order`; the planner's model conversation, the full-creator-request builder, the
+   `song_order` (and, since KRI-614, `clip_selection`); the planner's model conversation, the full-creator-request builder, the
    claimed turn message and the deferred brief extractor all read it, so the arrangement can
    no longer become an `order` requirement or an invented `timing` (duration) requirement
    that fails a finished draft.
