@@ -71,6 +71,7 @@ from app.kria.strategy_policy import (
     song_captions_refusal,
 )
 from app.kria.style_asks import MOMENT_SHORT_MAX_S, brief_moment_ask
+from app.kria.voiceover_clips import keep_every_voiceover_clip
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -1792,6 +1793,7 @@ async def _plan_from_creator_output(
     output: MainCreatorOutput,
     brief_request: str | None = None,
     wants_capture_order: bool = False,
+    brief_selects_clips: bool = False,
     requested_media: Mapping[str, str] | None = None,
 ) -> PlannedKriaTurn:
     """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
@@ -1835,6 +1837,7 @@ async def _plan_from_creator_output(
         output=output,
         brief_request=brief_request,
         wants_capture_order=wants_capture_order,
+        brief_selects_clips=brief_selects_clips,
         requested_media=requested_media,
     )
     return replace(planned, creative_copy_resolution=resolution)
@@ -2043,6 +2046,7 @@ async def _plan_creator_action(
     output: MainCreatorOutput,
     brief_request: str | None = None,
     wants_capture_order: bool = False,
+    brief_selects_clips: bool = False,
     requested_media: Mapping[str, str] | None = None,
 ) -> PlannedKriaTurn:
     action = output.action
@@ -2131,6 +2135,27 @@ async def _plan_creator_action(
                 }
             )
     if isinstance(action, ProposeStrategy):
+        # KRI-593: a Voiceover cue ("show X when I say Y") places a clip; it never
+        # chooses which clips exist. Every attached video stays unless the creator
+        # limited them (their words, any turn, or a brief `select` ask).
+        kept_clips = keep_every_voiceover_clip(
+            manifest,
+            action.strategy,
+            creator_texts=[
+                getattr(inputs, "raw_creator_request", None),
+                getattr(inputs, "creator_request", None),
+                *user_sources,
+            ],
+            brief_selects_clips=brief_selects_clips,
+        )
+        if kept_clips is not action.strategy:
+            log.info(
+                "kria_voiceover_clips_kept",
+                thread_id=str(thread_id),
+                model_selected=len(action.strategy.selected_media_ids),
+                selected=len(kept_clips.selected_media_ids),
+            )
+            action = action.model_copy(update={"strategy": kept_clips})
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
         checked = check_strategy_for_runtime_v2(
@@ -2570,6 +2595,15 @@ def _brief_wants_capture_order(brief: CreativeBrief | None) -> bool:
     from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
 
     return brief_view(brief).order_by_capture
+
+
+def _brief_selects_clips(brief: CreativeBrief | None) -> bool:
+    """KRI-593: does the live brief carry a which-clips ask (kind ``select``)?
+
+    It outlives the bounded chat window, so a "skip the bathroom clip" said many turns
+    ago still keeps a Voiceover edit's selection the creator's.
+    """
+    return brief is not None and any(req.kind == "select" for req in brief.live())
 
 
 def _recovery_cause(stage: str, exc: BaseException) -> dict[str, str]:
@@ -3981,6 +4015,7 @@ async def _plan_live_turn(
         output=output,
         brief_request=effective_request,
         wants_capture_order=_brief_wants_capture_order(effective),
+        brief_selects_clips=_brief_selects_clips(effective),
         requested_media=requested_media(effective, (media.media_id for media in manifest.media)),
     )
     return replace(
