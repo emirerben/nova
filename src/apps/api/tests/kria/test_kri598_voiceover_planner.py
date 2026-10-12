@@ -66,6 +66,7 @@ from app.kria.reply_language import reply_language_for
 from app.kria.strategy_policy import (
     GUIDED_VOICEOVER_DOWNGRADE_NOTICE,
     VISUALS_NEED_A_WORD_NOTICE,
+    VOICEOVER_CLIP_CAP_NOTICE,
     CheckedStrategy,
     RefusedStrategy,
     check_strategy_for_runtime_v2,
@@ -205,6 +206,7 @@ async def _plan(
     manifest=None,
     turn=None,
     brief: CreativeBrief | None = None,
+    brief_binding: bool = True,
 ):
     """`brief` is the live Creative Brief the planner read the asked-for media from."""
 
@@ -218,7 +220,7 @@ async def _plan(
     )
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
     monkeypatch.setattr(planner, "_kick_clip_understanding", AsyncMock())
-    monkeypatch.setattr(type(planner.settings), "brief_binding_for", lambda _s, _i: True)
+    monkeypatch.setattr(type(planner.settings), "brief_binding_for", lambda _s, _i: brief_binding)
     clips = [IntentClip(media_id=m.media_id, kind=m.kind, analysis=None) for m in manifest.media]
     return await planner._plan_from_creator_output(
         SimpleNamespace(),
@@ -409,20 +411,91 @@ async def test_all_scope_says_which_visuals_no_word_places(prod_profile, monkeyp
     assert VOICEOVER_VISUALS_LEFT_OUT_NOTICE in drafted["summary"]
 
 
-async def test_all_scope_over_the_native_cap_says_clips_were_left_out(
-    prod_profile, monkeypatch
-) -> None:
+def _with_own_clips(count: int):
+    """The Tigre manifest with `count` own clips (the 7 recorded ones first)."""
+
     extra = [
         {"media_id": f"analysis-proxy-ios-EXTRA-{index}.mp4", "kind": "video", "duration_s": 4.0}
-        for index in range(7)
+        for index in range(count - len(OWN))
     ]
-    manifest = _manifest(media=[*CASE["media"], *extra])
+    return _manifest(media=[*CASE["media"], *extra])
+
+
+USE_ALL_13 = {
+    **TURN3,
+    "user_message": "Use all 13 clips with my voiceover.",
+    "creator_request": "",
+    "conversation": [{"role": "user", "content": "Use all 13 clips with my voiceover."}],
+}
+
+
+@pytest.mark.parametrize(
+    ("turn", "title"),
+    [(TURN3, TITLE), (USE_ALL_13, None)],
+    ids=["7-klibin-hepsini-kullan", "use-all-13-clips"],
+)
+async def test_all_scope_over_the_native_cap_is_asked_about(
+    prod_profile, monkeypatch, turn, title
+) -> None:
+    """PR 1556 review: "all" is an explicit ask for every clip, and one native voiceover
+    edit takes 12. A 13th clip left out is a lost ask, as in the KRI-594 downgrade: the
+    question names the cap instead of a 12-clip draft with a notice."""
+
+    raw = _raw(_strategy(opening_title=title))
+    planned = await _plan(monkeypatch, raw, manifest=_with_own_clips(13), turn=turn)
+
+    assert planned.plan.mode == "respond", planned.plan.intents
+    assert VOICEOVER_CLIP_CAP_NOTICE in planned.plan.response
+    assert planned.plan.response.endswith("Should I make a simpler version?")
+
+    with reply_language_for("tr"):
+        turkish = await _plan(monkeypatch, raw, manifest=_with_own_clips(13), turn=turn)
+    assert turkish.plan.mode == "respond"
+    assert "en fazla 12" in turkish.plan.response
+
+
+async def test_all_scope_within_the_native_cap_is_planned(prod_profile, monkeypatch) -> None:
+    manifest = _with_own_clips(12)
     drafted = _drafted(await _plan(monkeypatch, _raw(_strategy()), manifest=manifest))
 
     selected = drafted["strategy"]["selected_media_ids"]
+    assert sorted(selected) == sorted(
+        media.media_id for media in manifest.media if media.kind == "video"
+    )
+    assert VOICEOVER_CLIP_CAP_NOTICE not in drafted["summary"]
+
+
+async def test_all_scope_over_the_cap_without_brief_binding_is_a_notice(
+    prod_profile, monkeypatch
+) -> None:
+    """With brief binding off nothing is asked before simplifying: the cap is said."""
+
+    planned = await _plan(
+        monkeypatch, _raw(_strategy()), manifest=_with_own_clips(13), brief_binding=False
+    )
+
+    drafted = _drafted(planned)
+    selected = drafted["strategy"]["selected_media_ids"]
     assert len(selected) == 12
     assert PHOTO not in selected
-    assert "12" in drafted["summary"]
+    assert VOICEOVER_CLIP_CAP_NOTICE in drafted["summary"]
+
+
+def test_a_selected_clip_the_check_drops_is_a_lost_ask(prod_profile) -> None:
+    """PR 1556 review: the drop check judges `selected_media_ids` too. A clip the
+    strategy selected that the checked plan no longer has is asked about."""
+
+    from app.kria.strategy_policy import _drops_requested_action
+
+    before = CreativeStrategy.model_validate(
+        _strategy(media_scope="selected", selected_media_ids=OWN)
+    )
+    after = before.model_copy(update={"selected_media_ids": OWN[:-1]})
+
+    assert _drops_requested_action(before, after) is True
+    assert _drops_requested_action(before, before) is False
+    # Adding a clip (KRI-593 keeps every clip) is not a loss.
+    assert _drops_requested_action(after, before) is False
 
 
 # 8 + 9 -----------------------------------------------------------------------

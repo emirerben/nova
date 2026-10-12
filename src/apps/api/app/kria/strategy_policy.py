@@ -663,6 +663,11 @@ def _drops_requested_action(
         for key in fields
     ):
         return True
+    # PR 1556 review: a clip the strategy selected that the checked plan no longer has is
+    # a lost ask (a reorder, or a clip added to the selection, is not).
+    kept = set(next_values.get("selected_media_ids") or ())
+    if any(media_id not in kept for media_id in prior.get("selected_media_ids") or ()):
+        return True
     return prior.get("caption_style") == "none" and next_values.get("caption_style") != "none"
 
 
@@ -773,9 +778,15 @@ def check_strategy_for_runtime_v2(
         _asked_media_left_out_notice(kinds.get(media_id), words)
         for media_id, words in lost_asks.items()
     )
-    # KRI-598: "use all my clips" on a native-only voiceover edit is every own clip.
-    strategy, scope_notices = resolve_native_all_scope(manifest, strategy, asked=lost_asks)
+    # KRI-598: "use all my clips" on a native-only voiceover edit is every own clip. Own
+    # clips beyond what one native edit takes were asked for by "all": a lost ask, like an
+    # all-scope clip past the cap in the KRI-594 downgrade (PR 1556 review).
+    strategy, scope_notices, clips_left_out = resolve_native_all_scope(
+        manifest, strategy, asked=lost_asks
+    )
     notices.extend(scope_notices)
+    if clips_left_out:
+        notices.append(say(en=VOICEOVER_CLIP_CAP_NOTICE, tr=_VOICEOVER_CLIP_CAP_NOTICE_TR))
 
     if strategy.execution_contract is not None:
         downgrade = _downgrade_guided_voiceover(
@@ -807,6 +818,7 @@ def check_strategy_for_runtime_v2(
     all_notices = (*notices, *(localize_known_message(n) for n in edit_plan.notices))
     if ask_before_simplifying and (
         lost_asks
+        or clips_left_out
         or _drops_requested_action(baseline, checked, stated_settings=ask_about_stated_settings)
     ):
         # The creator-stated setting that was dropped comes first: a notice alone (e.g.

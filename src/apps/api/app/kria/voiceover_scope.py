@@ -7,8 +7,9 @@ as a reaction beat (or the closing shot). The server's scope reader still turns 
 klibin hepsini kullan" / "use all my clips" into ``media_scope: "all"``; the model
 boundary keeps that reading and selects every own clip
 (``creator_policy.native_voiceover_all_scope``). Here, in the planner's policy check,
-"all" becomes that explicit selection, and the reply says what the edit cannot show:
-Visuals no spoken word places, and own clips beyond what one native edit takes.
+"all" becomes that explicit selection. What the edit cannot show is said or asked about
+by the policy: a Visual the brief asks for that no spoken word places, and own clips
+beyond what one native edit takes, are lost asks; other Visuals get a notice.
 """
 
 from __future__ import annotations
@@ -46,14 +47,6 @@ VOICEOVER_VISUALS_UNTIMED_NOTICE = (
 _VOICEOVER_VISUALS_UNTIMED_NOTICE_TR = (
     "Bu seslendirmeli düzenleme projendeki tüm klipleri kullanıyor. Visuals'taki fotoğraf "
     "ve videolar henüz seslendirmeye göre zamanlanamıyor, o yüzden onları koymadım."
-)
-VOICEOVER_ALL_CLIPS_CAP_NOTICE = (
-    f"A voiceover edit can use up to {MAX_MAIN_CREATOR_SELECTED_MEDIA} clips, so I used the "
-    f"first {MAX_MAIN_CREATOR_SELECTED_MEDIA} of yours and left out the rest."
-)
-_VOICEOVER_ALL_CLIPS_CAP_NOTICE_TR = (
-    f"Seslendirmeli düzenleme en fazla {MAX_MAIN_CREATOR_SELECTED_MEDIA} klip kullanabiliyor, "
-    f"o yüzden ilk {MAX_MAIN_CREATOR_SELECTED_MEDIA} klibini kullandım, gerisini koymadım."
 )
 
 
@@ -113,16 +106,19 @@ def resolve_native_all_scope(
     strategy: CreativeStrategy,
     *,
     asked: Collection[str] = (),
-) -> tuple[CreativeStrategy, list[str]]:
+) -> tuple[CreativeStrategy, list[str], list[str]]:
     """``media_scope: "all"`` on a native-only voiceover edit -> every own clip.
 
     ``asked`` are the lost Visuals the caller already names in its own words
     (``lost_visual_asks``); the generic "not tied to a word" notice covers only the rest.
-    Returns the strategy unchanged (and no notices) for anything else.
+    Returns ``(strategy, notices, clips_left_out)``: the own clips beyond what one native
+    edit takes. "All" asked for each of them, so the caller treats them as a lost ask (PR
+    1556 review, as the KRI-594 downgrade does). Unchanged, with nothing to say, for
+    anything else.
     """
 
     if not native_voiceover_all_scope(manifest, strategy):
-        return strategy, []
+        return strategy, [], []
     own = own_video_ids(manifest)
     notices: list[str] = []
     placed = _placed_visuals(manifest, strategy)
@@ -137,10 +133,6 @@ def resolve_native_all_scope(
             if beats is not None and beats.available
             else say(en=VOICEOVER_VISUALS_UNTIMED_NOTICE, tr=_VOICEOVER_VISUALS_UNTIMED_NOTICE_TR)
         )
-    if len(own) > MAX_MAIN_CREATOR_SELECTED_MEDIA:
-        notices.append(
-            say(en=VOICEOVER_ALL_CLIPS_CAP_NOTICE, tr=_VOICEOVER_ALL_CLIPS_CAP_NOTICE_TR)
-        )
     resolved = strategy.model_copy(
         update={
             "media_scope": "selected",
@@ -148,11 +140,10 @@ def resolve_native_all_scope(
             "render_program": "native",
         }
     )
-    return resolved, notices
+    return resolved, notices, own[MAX_MAIN_CREATOR_SELECTED_MEDIA:]
 
 
 __all__ = [
-    "VOICEOVER_ALL_CLIPS_CAP_NOTICE",
     "VOICEOVER_VISUALS_LEFT_OUT_NOTICE",
     "VOICEOVER_VISUALS_UNTIMED_NOTICE",
     "lost_visual_asks",
