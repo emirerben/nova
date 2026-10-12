@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.237.0] - 2026-10-12
+
+### Changed
+- fix(kria): plan phone voiceover cues as include and never offer a guided contract on runtime v2 (KRI-598) (#1556) <!-- release-pr: 1556 -->
+
 ## [0.78.236.0] - 2026-10-12
 
 ### Added
