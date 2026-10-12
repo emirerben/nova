@@ -1151,7 +1151,8 @@ final class CreationUITests: XCTestCase {
     /// on the live feed.
     private func launchLivePlanFeed(
         reduceMotion: Bool, reduceTransparency: Bool = false, cancel: String? = nil, capability: Bool = true,
-        device: Bool = false, followup: Bool = false, contractV2: Bool = false, review: Bool = false
+        device: Bool = false, followup: Bool = false, contractV2: Bool = false, review: Bool = false,
+        thoughts: String? = nil
     ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
@@ -1163,6 +1164,7 @@ final class CreationUITests: XCTestCase {
         // The contract-v2 server model behind the Review sheet: GET /plan, scoped turns, per-section undo.
         if review { app.launchEnvironment["KRIA_CHAT_PLAN_REVIEW"] = "1" }
         if followup { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] = "1" }
+        if let thoughts { app.launchEnvironment["KRIA_CHAT_THOUGHTS"] = thoughts }
         if device {
             app.launchEnvironment["KRIA_CHAT_DEVICE_RENDER"] = "ready"
             app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_DEVICE"] = "1"
@@ -1286,6 +1288,57 @@ final class CreationUITests: XCTestCase {
         reveal(app, "review-change-captions").tap()
         XCTAssertTrue(eventually(timeout: 5) { !self.element(app, "review-chip-captions").exists })
         XCTAssertFalse(element(app, "review-update-video").isEnabled)
+    }
+
+    /// KRI-627: while Kria thinks the chat shows ONE line (the latest step); the full thought, code included,
+    /// only appears when the creator taps it. `hold` keeps the turn streaming for the whole test.
+    func testLiveThoughtShowsOneLineSummaryAndExpandsOnTap() {
+        let app = launchLivePlanFeed(reduceMotion: true, followup: true, thoughts: "hold")
+        sendFollowup(app)
+
+        let toggle = element(app, "thought-summary-toggle")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 30), "the live thought must appear as a single tappable line")
+        XCTAssertTrue(toggle.label.contains("Matching the Lisbon title to your clip"), "headline is the latest step, got: \(toggle.label)")
+        XCTAssertFalse(toggle.label.contains("Reading your direction"), "only the latest step is summarised, got: \(toggle.label)")
+        XCTAssertEqual(toggle.value as? String, "Collapsed")
+        XCTAssertFalse(element(app, "thought-summary-detail").exists, "the full thought must stay hidden until tapped")
+        attach(app, "thought-live-collapsed")
+
+        toggle.tap()
+        let detail = element(app, "thought-summary-detail")
+        XCTAssertTrue(detail.waitForExistence(timeout: 5))
+        XCTAssertTrue(detail.label.contains("Checking which moment of the clip"), "expanded text shows the full thought, got: \(detail.label)")
+        XCTAssertEqual(toggle.value as? String, "Expanded")
+        attach(app, "thought-live-expanded")
+
+        toggle.tap()
+        XCTAssertTrue(eventually(timeout: 5) { !self.element(app, "thought-summary-detail").exists }, "tapping again collapses it")
+    }
+
+    /// KRI-627: once the reply lands the thought stays as a collapsed "Thought for Ns" line.
+    func testFinishedThoughtStaysCollapsedUntilTapped() {
+        let app = launchLivePlanFeed(reduceMotion: true, followup: true, thoughts: "1")
+        sendFollowup(app)
+        XCTAssertTrue(app.staticTexts["Kria: Review the Lisbon title edit before saving."].waitForExistence(timeout: 90))
+        let toggle = element(app, "thought-summary-toggle")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        // The live row hands over to the finished one right after the reply lands.
+        XCTAssertTrue(eventually(timeout: 15) { toggle.label == "Thought for 3s" }, "got: \(toggle.label)")
+        XCTAssertEqual(toggle.value as? String, "Collapsed")
+        XCTAssertFalse(element(app, "thought-summary-detail").exists, "a finished thought stays collapsed")
+        attach(app, "thought-completed")
+
+        toggle.tap()
+        XCTAssertTrue(element(app, "thought-summary-detail").waitForExistence(timeout: 5))
+    }
+
+    private func sendFollowup(_ app: XCUIApplication) {
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 100))
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        composer.typeText("Add a new title Lisbon. Animate it")
+        app.buttons["Send message"].tap()
     }
 
     func testReadyVideoFollowupWaitsWithoutReplayingPriorPlan() {
