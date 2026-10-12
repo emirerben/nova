@@ -168,6 +168,7 @@ struct TeleprompterScreen: View {
                     } else if let take = flow.selectedTake {
                         if take.status != .invalid {
                             TeleprompterTakePlayer(url: flow.store.fileURL(for: take))
+                                .id(take.id)
                                 .frame(height: 340).clipShape(RoundedRectangle(cornerRadius: 20))
                         } else {
                             Label("This interrupted take couldn’t be played.", systemImage: "exclamationmark.triangle")

@@ -151,11 +151,17 @@ import XCTest
         app.buttons["teleprompter-background-solid"].tap()
         let font = app.steppers["teleprompter-text-size"]
         let increaseFont = app.buttons["teleprompter-text-size-Increment"]
-        scrollWindowSettings(app, to: increaseFont)
-        XCTAssertTrue(increaseFont.isHittable)
+        // Preferred text size survives app launches, so it may already be at the upper bound.
+        // Native Stepper still exposes Increment as enabled there; choose from its displayed size.
+        let currentFontSize = Int(font.label.split(separator: " ").last ?? "")
+        XCTAssertNotNil(currentFontSize)
+        let changeFont = currentFontSize == 32 ? app.buttons["teleprompter-text-size-Decrement"] : increaseFont
+        scrollWindowSettings(app, to: changeFont)
         XCTAssertTrue(font.isEnabled)
+        XCTAssertTrue(changeFont.isEnabled)
+        XCTAssertTrue(changeFont.isHittable)
         let previousFontLabel = font.label
-        increaseFont.tap()
+        changeFont.tap()
         XCTAssertNotEqual(font.label, previousFontLabel, "The reachable text-size control must change the font size.")
         capture(app, "Kria text window settings at accessibility size")
         app.buttons["teleprompter-window-settings-close"].tap()
