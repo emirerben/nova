@@ -46,7 +46,7 @@ from app.pipeline.phone_recipe_shared import (
     timeline_end_s,
     with_drawings,
 )
-from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, lane_names
+from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, ResolvedSoundEffect, lane_names
 from app.pipeline.phone_subtitled_plan import (
     SFX_DUCK_RECEIPT_FIELD,
     compile_phone_subtitled_plan,
@@ -71,6 +71,7 @@ from app.services.phone_editor_sources import (
 )
 from app.services.phone_rollout import (
     freehand_drawing_client_supported,
+    phone_guided_sfx_supported,
     phone_narrated_caption_edits_supported,
     phone_narrated_title_edits_supported,
     phone_subtitled_editor_lanes_supported,
@@ -571,6 +572,7 @@ def prepare_phone_editor_commit(
                 narration=narration,
                 allow_editor_media=allow_editor_media,
                 song=song,
+                sound_effects=_guided_sound_effects(plan, previous.recipe, visuals),
                 # KRI-306/285: an editor Save keeps (or changes) the bars; without
                 # this every guided Save would silently drop a letterbox.
                 landscape_fit=_resolved_landscape_fit(
@@ -627,6 +629,43 @@ def prepare_phone_editor_commit(
     if "started_at" in vars(staged):
         job.started_at = staged.started_at
     return {**prep, "render_destination": "device", "render_task_id": None}
+
+
+def _guided_sound_effects(
+    plan: dict, previous_recipe: object, visuals: tuple[PhoneVisualBinding, ...]
+) -> tuple[ResolvedSoundEffect, ...]:
+    """The guided plan's catalog sound effects as pinned phone assets (KRI-608).
+
+    An effect the previous recipe already pins reuses that exact asset identity (no GCS
+    probe), so a text-only Save keeps its effects untouched; a newly added catalog id is
+    probed once. Raises (-> 422 ``unsupported_phone_edit``) while the lane is off, for a
+    custom upload, or for an unplayable/invalid effect: Save never silently drops one.
+    """
+    rows = plan.get("editor_sound_effects") or []
+    if not rows:
+        return ()
+    if not phone_guided_sfx_supported():
+        raise UnsupportedPhonePlan(
+            "sound effects can't be rendered on your iPhone yet", capability="soundEffects"
+        )
+    if any(not (isinstance(row, dict) and row.get("sound_effect_id")) for row in rows):
+        raise UnsupportedPhonePlan(
+            "a custom sound effect can't play on the iPhone yet; pick one from the library",
+            capability="soundEffects",
+        )
+    previous_lanes = (
+        lanes_from_recipe(previous_recipe, visuals=visuals)
+        if isinstance(previous_recipe, EditRecipeV2)
+        else None
+    )
+    return tuple(
+        lanes_from_editor_sections(
+            previous=previous_lanes,
+            sound_effects=rows,
+            media_overlays=None,
+            visuals=visuals,
+        ).sound_effects
+    )
 
 
 def _unsupported_phone_edit(job: Any, variant_id: str, exc: Exception) -> HTTPException:

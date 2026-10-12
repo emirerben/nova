@@ -667,6 +667,39 @@ def phone_voiceover_editor_lanes_supported(*, require_client: bool | None = None
     return protocol is not None and protocol >= settings.phone_voiceover_editor_min_client_protocol
 
 
+# Device features a phone guided / montage story needs to carry a sound-effect
+# lane (KRI-608): the compiled `sfx` track is the same one Talking plays.
+PHONE_GUIDED_SFX_FEATURES: tuple[str, ...] = PHONE_SUBTITLED_SFX_FEATURES
+
+
+def phone_guided_sfx_supported() -> bool:
+    """Single source of truth for "can a phone-rendered guided / montage story
+    carry sound effects right now" (KRI-608).
+
+    Consulted by `app.pipeline`'s worker (`_run_phone_guided_job`), by
+    `app.services.phone_editor.prepare_phone_editor_commit` (Save recompiles
+    the lane or 422s), by `routes.generative_jobs._editor_capabilities`
+    (whether `sfx` opens on a guided device variant) and by
+    `services.creator_capabilities` (whether creation may plan a licensed
+    effect), so capabilities never advertise a lane Save would refuse.
+
+    True iff ALL of:
+      - `phone_guided_sfx_enabled` (this feature's own flag).
+      - `sound_effects_enabled` (the generic lane kill switch).
+      - every feature in `PHONE_GUIDED_SFX_FEATURES` is in
+        `phone_render_verified_features` (device-parity gate).
+
+    No client-protocol gate: shipped builds already play any `kind: audio`
+    track and fetch `sound_effect` library assets (KRI-182).
+    """
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_guided_sfx_enabled
+        and settings.sound_effects_enabled
+        and all(feature in verified for feature in PHONE_GUIDED_SFX_FEATURES)
+    )
+
+
 def phone_voiceover_reaction_beats_supported(*, require_client: bool | None = None) -> bool:
     """Single source of truth for "can a phone-rendered Voiceover edit
     (`narrated*` with a recorded voiceover) carry KRI-178 reaction beats --
