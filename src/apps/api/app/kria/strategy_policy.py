@@ -40,7 +40,7 @@ from app.agents._schemas.creator_policy import (
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
     PhoneMediaUnavailableError,
-    stated_media_counts,
+    latest_scope_counts_own_clips,
 )
 from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
 from app.kria.reply_language import current_reply_language, say
@@ -395,7 +395,8 @@ def _downgrade_guided_voiceover(
         media_id: words for media_id, words in (requested_media or {}).items() if media_id in shown
     }
     if every_item:
-        clips_only = stated_media_counts(creator_text) == {len(own_clips)}
+        # The creator's latest scope words decide (PR 1550 review).
+        clips_only = latest_scope_counts_own_clips(creator_text, len(own_clips))
         asked = set(own_clips if clips_only else everything)
     else:
         asked = set(named)
