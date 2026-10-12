@@ -1104,7 +1104,7 @@ private final class DragAutoScrollContext {
 /// NativeTextAnimationPreviewDisplayLinkTarget (NativeTextAnimationPreview.swift) —
 /// reused rather than writing a second one. Frame rate capped at 60 so a
 /// 120Hz ProMotion touch stream doesn't double up with tick-driven updates.
-private final class NativeTimelineEdgeScroller {
+final class NativeTimelineEdgeScroller {
     private final class Target: NSObject {
         weak var owner: NativeTimelineEdgeScroller?
         init(owner: NativeTimelineEdgeScroller) { self.owner = owner }
