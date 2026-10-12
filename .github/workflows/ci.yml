@@ -336,7 +336,7 @@ jobs:
           python3 - <<'PY'
           import os
           selected = os.environ["JOURNEY_IDS"].split(",")
-          allowed = {"kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-586-hook-copy", "kri-590-voiceover-cues"}
+          allowed = {"kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-577-reliability-gates", "kri-586-hook-copy", "kri-590-voiceover-cues"}
           if os.environ["COVERAGE"] != "covered" or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed:
               raise SystemExit("Journey selection has an unmapped or invalid incident")
           PY
@@ -604,6 +604,12 @@ jobs:
             --xctest SongOrderTests/testSubmissionListsPlacedTakesByTimeThenTheTrayInCaptureOrderAndEveryTakeOnce \
             --xctest SongOrderTests/testOldServerPayloadWithNoNewFieldsStillParsesAndGivesATimelineWithDefaults \
             --xctest SongOrderTests/testExtendingThePreviousBlockBy099IsHiddenAndBy1sIsVisible
+      - name: Run the KRI-577 reliability gates for the changed incident paths
+        if: contains(needs.changes.outputs.journey_ids, 'kri-577-reliability-gates')
+        run: |
+          set -o pipefail
+          python3 scripts/reliability-gates.py run --all --python python3 \
+            --log test-results/kri-559/reliability-gates.log
       - name: Verify watermark-aware caption compile and its device fixture
         if: contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
         working-directory: src/apps/api
