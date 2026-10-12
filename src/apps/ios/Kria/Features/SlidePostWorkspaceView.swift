@@ -365,7 +365,8 @@ struct SlidePostWorkspaceView: View {
 
     @ViewBuilder private func richWorkspace(_ draft: SlidePostDraft) -> some View {
         let slide = session.selectedSlide
-        let panelOpen = mode == .text || mode == .look || mode == .draw
+        // Draw mode is not a panel: its toolbar is a fixed height and the stage takes the rest, so the canvas stays as big as it can.
+        let panelOpen = mode == .text || mode == .look
         let height = max(rootSize.height, 640)
         if mode == .crop, let slide {
             VStack(spacing: 0) {
