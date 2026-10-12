@@ -2,7 +2,8 @@
 
 Ticket: https://linear.app/kria/issue/KRI-583/iphone-record-talking-videos-with-a-steady-scroll-teleprompter
 Branch: `codex/kri-583-iphone-teleprompter`
-Base: `b33471508f87cdf622ebcdcf301a158a57b1203b`
+Initial base: `b33471508f87cdf622ebcdcf301a158a57b1203b`
+Integrated base: `a6e0688dcdd7b24cc182b66dcefe43c6e069ca3b`
 QA status: `DONE_WITH_CONCERNS` — native window/capture checks passed; current
 Kria component alignment, visible transport controls and remaining release checks are listed below.
 
@@ -256,6 +257,46 @@ Kria-restyle QA build remains installed; this new controls build is prepared but
 not yet installed. Prior physical recording evidence is reused for the unchanged
 capture core, without claiming these final controls were tested on hardware.
 
+## Integrated shipping verification — 12 October 2026
+
+Merged the current main into this task branch, preserving the independent song-range
+and teleprompter attachment state. The integrated native build passed: 1,569 unit
+tests executed, 1,547 passed, 22 intentionally skipped, and zero failures. All nine
+selected creation/editor and teleprompter UI tests passed without retries. All 93
+offline orchestration tests passed. The separate signed QA build and real-iPhone
+capture test passed, including the pinned recording/prompter controls, background
+interruption and reopening the retained take. This supersedes the disconnected-phone
+blocker above; Xcode's subsequent diagnostic-collection error did not fail the test.
+The latest complete and interrupted movies (18.635 s and 1.732 s) were copied
+from the dedicated QA app and fully decoded without errors. Both contain portrait
+HEVC video and nonzero AAC audio; inspected saved frames contain camera pixels
+without the script window or controls. The broader container copy timed out after
+these files arrived; this is verification of those two complete movies only.
+
+A fresh source review found that switching to Previous take could retain the deleted
+candidate in the mounted AVPlayer. The review player now uses the selected take's
+identity, recreating playback when that selection changes. The independent second
+review confirmed the fix and found no additional actionable defect. The final native
+build and all nine selected UI tests passed after that fix, without UI retries.
+Existing review fixtures
+use identical footage; their passing controls check does not prove visual selection
+between two different movies.
+
+The post-fix UI rerun exposed a test precondition: the saved font preference had
+reached 32, the Stepper's upper bound, while the test always tapped Increment.
+It failed all three attempts with the unchanged size label. Native Stepper also
+reports Increment as enabled at that limit, so the corrected test selects the
+direction from the displayed size, checks the chosen control is enabled and
+reachable, and still requires a real font-size change. The clean nine-test rerun
+passed without retries (`test-results/ios/ui.ru4yWL/ui.xcresult`). Passing unit
+evidence is reused because only the UI test changed after the full unit run
+(`test-results/ios/prepare-ui.TEQnT2/unit.xcresult`).
+
+The updated gstack preflight falsely treats an AVCaptureSession object assignment
+as a credential and lacks a native/docs lane mapping. Continue uses Nova's declared
+native checks with that tool limitation disclosed; no scanner guard was disabled.
+Repository release metadata remains owned by the post-merge automation.
+
 ## Physical iPhone release check still required
 
 1. Record spoken words with a visible clap; check saved picture/audio sync.
@@ -263,7 +304,8 @@ capture core, without claiming these final controls were tested on hardware.
    smaller and larger iPhones while a creator holds the phone naturally.
 3. Exercise lock/audio interruption, route changes and app relaunch; playable
    partial takes must reopen, and camera/microphone must stop. Backgrounding
-   and dismissal/reopen passed the physical test above.
+   and dismissal/reopen passed the physical test above; that test closed and
+   reopened the review screen, not the app process.
 4. Use the recorded take in a real Talking edit; confirm original remains on
    device, analysis proxy attaches once, and editor playback/export uses it.
 
@@ -273,11 +315,9 @@ TestFlight.
 
 ## Local handoff
 
-Implementation and hardware fixes are committed on the branch above in
-`/private/tmp/nova-kri-583-iphone-teleprompter`. No branch push, PR, merge or
-release was performed. The previous dedicated QA app remains installed on the
-paired iPhone; installation of the latest visible-controls build waits for the
-phone to reconnect. The earlier pre-ship check, before the visible-controls refinement, passed its
-mechanical gates against fetched `origin/main` (`900b94070`). It reports newer overlapping changes in intake,
-attachments, QA transport and the UI test manifest. Integrate and revalidate
-those changes before opening/merging a PR. No release metadata was edited.
+Implementation is on the branch above in
+`/private/tmp/nova-kri-583-iphone-teleprompter`. Current main is integrated and the
+latest visible-controls QA app was installed and tested on the paired iPhone.
+The PR records final verification and publication status. Production merge,
+release and TestFlight distribution remain pending approval and the release
+checks above. No release metadata was edited.

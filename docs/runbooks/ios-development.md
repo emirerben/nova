@@ -219,6 +219,8 @@ the Talking creation workspace remains an offline fixture. It checks countdown
 cancellation, a five-second take, background interruption and review recovery.
 A passed test must be followed by inspecting the saved movies for both audio and
 video tracks. It does not prove a real-server attachment or perceptual audio sync.
+Closing and reopening the review screen is recovery evidence; it does not replace
+a process termination and relaunch check.
 The hardware harness seeds the clipboard through native TextEditor Select All,
 Copy and Paste; a pasteboard written by the background runner was empty in the
 signed app on the physical device. It also inspects SpringBoard permission

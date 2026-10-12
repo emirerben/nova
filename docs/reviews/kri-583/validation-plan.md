@@ -12,3 +12,18 @@ Failures to exercise:
 - At large Dynamic Type and Reduce Motion controls remain reachable and manual next/previous is available.
 
 Evidence: focused native playback/persistence tests; native compilation/unit gate; XCUITest script-entry, camera-unavailable and saved-draft recovery with screenshots. Physical camera proof must check synchronized audio/video, portrait/mirror framing, widget absence in saved pixels, interruption recovery and device-only editable intake. Simulator camera failure is expected, not proof of physical capture.
+
+## Current evidence status
+
+The integrated native run recorded 1,547 passing tests, 22 intentional skips and
+zero failures; nine selected native UI tests and 93 offline orchestration checks
+also passed. A separate signed QA run passed the physical camera take,
+background interruption and review recovery, with saved movie tracks inspected.
+Those checks used the offline Talking workspace and did not establish perceptual
+spoken/clap sync, real-server Use take/editor/export, lock or audio-route recovery,
+small/large-device reading comfort, or process termination/relaunch behavior.
+The review fixture uses identical bundled footage, so its passing playback controls
+do not prove selection between two different movies. Final native build and all
+nine selected UI tests passed after the selected-take playback fix. The UI run
+passed without retries after correcting its saved-font boundary precondition;
+unit results are reused for the subsequent UI-test-only correction.
