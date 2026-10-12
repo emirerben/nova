@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.240.0] - 2026-10-12
+
+### Changed
+- ci(journey): give the KRI-598 journey its needs_native flag (fixes main CI) (#1568) <!-- release-pr: 1568 -->
+
 ## [0.78.239.0] - 2026-10-12
 
 ### Changed
