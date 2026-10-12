@@ -72,6 +72,7 @@ class EditorStateLanes(EditorCommitRequest):
     visual_blocks: list[VisualBlock] | None = Field(default=None, max_length=_EDITOR_STATE_LANE_MAX)
     motion_scenes: list[dict] | None = Field(default=None, max_length=_EDITOR_STATE_LANE_MAX)
     camera_effects: list[dict] | None = Field(default=None, max_length=_EDITOR_STATE_LANE_MAX)
+    drawings: list[dict] | None = Field(default=None, max_length=12)
     timeline_slots: list[EditorStateTimelineSlot] | None = None  # type: ignore[assignment]
 
 

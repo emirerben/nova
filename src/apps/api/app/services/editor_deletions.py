@@ -24,6 +24,7 @@ DELETE_KINDS = frozenset(
         "visual_block",
         "motion_scene",
         "camera_effect",
+        "drawing",
         "carousel",
         "lyric_line",
     }
@@ -54,6 +55,7 @@ _LANES = {
     "visual_block": "visual_blocks",
     "motion_scene": "motion_scenes",
     "camera_effect": "camera_effects",
+    "drawing": "drawings",
 }
 
 

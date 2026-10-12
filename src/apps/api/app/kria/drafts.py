@@ -455,6 +455,7 @@ def _editor_snapshot(variant: dict[str, Any], generation_id: str | None) -> dict
         "visual_blocks",
         "motion_scenes",
         "camera_effects",
+        "drawings",
         "carousel_moment",
     )
     sections = {key: variant[key] for key in keys if key in variant}

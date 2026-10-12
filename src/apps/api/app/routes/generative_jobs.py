@@ -1276,6 +1276,10 @@ class EditorCommitRequest(BaseModel):
     motion_scenes: list[dict] | None = None
     motion_runtime_hash: str | None = None
     camera_effects: list[dict] | None = None
+    # KRI-589: freehand finger drawings (own lane, `app.agents._schemas.drawing`). Device
+    # variants only; validated by `validate_drawings` and compiled into the pinned recipe's
+    # `drawing_layers` on every phone Save.
+    drawings: list[dict] | None = Field(default=None, max_length=12)
     # Carousel-moment edit (Blossom carousel), staged as a batched-Save section —
     # reuses `CarouselMomentEditRequest` verbatim (do not fork). Tri-state at
     # THIS level, mirroring `EditVariantRequest.carousel_moment` /
@@ -1340,6 +1344,7 @@ class EditorDeletionRequest(BaseModel):
         "visual_block",
         "motion_scene",
         "camera_effect",
+        "drawing",
         "carousel",
         "lyric_line",
     ]
@@ -1479,6 +1484,7 @@ def normalize_editor_deletion_request(
         "visual_blocks": variant.get("visual_blocks") or [],
         "motion_scenes": variant.get("motion_scenes") or [],
         "camera_effects": variant.get("camera_effects") or [],
+        "drawings": variant.get("drawings") or [],
     }
     sections = {
         "text_elements": body.text_elements,
@@ -1493,6 +1499,7 @@ def normalize_editor_deletion_request(
         else None,
         "motion_scenes": body.motion_scenes,
         "camera_effects": body.camera_effects,
+        "drawings": body.drawings,
     }
     try:
         result = apply_editor_deletions(
@@ -1525,6 +1532,7 @@ def normalize_editor_deletion_request(
             "media_overlays",
             "motion_scenes",
             "camera_effects",
+            "drawings",
         )
         if key in values and values[key] is not None
     }
@@ -1579,6 +1587,7 @@ class EditorCommitSections(BaseModel):
     visual_blocks: bool
     motion_scenes: bool = False
     camera_effects: bool = False
+    drawings: bool = False
     carousel_moment: bool = False
     title: bool
 
@@ -7162,8 +7171,75 @@ def _ensure_source_crop_capability(capabilities: dict, job: Job, variant: dict) 
     }
 
 
+def _drawing_capabilities(job: Job, variant: dict) -> dict[str, dict[str, Any]]:
+    """KRI-589: the ``drawings`` lane, one ``{editable, reason}`` per operation.
+
+    Drawings exist only on device-rendered variants (the phone recipe's ``drawing_layers``),
+    so cloud variants carry the lane CLOSED with reason ``drawing_requires_phone_render``.
+    ``add``/``edit``/``trim`` additionally need the kill switch on, ``freehandDrawing``
+    verified and an app build that declares protocol >= ``freehand_drawing_min_client_
+    protocol`` (`freehand_drawing_supported`); ``delete`` follows only the variant shape, so
+    creators can always take drawings off when the switch is off.
+    """
+    from app.services.phone_editor import (  # noqa: PLC0415
+        is_phone_narrated_editor_variant,
+        is_phone_voiceover_montage_editor_variant,
+    )
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        freehand_drawing_client_supported,
+        freehand_drawing_supported,
+    )
+
+    def closed(reason: str) -> dict[str, dict[str, Any]]:
+        return {
+            name: {"editable": False, "reason": reason}
+            for name in ("add", "edit", "trim", "delete")
+        }
+
+    if variant.get("render_destination") != "device" or variant.get("resolved_archetype") == (
+        "slides"
+    ):
+        return closed("drawing_requires_phone_render")
+    archetype = variant.get("resolved_archetype")
+    if variant.get("editor_timeline_mode") == "authored":
+        shape_ok = True
+    elif archetype == "guided_story":
+        shape_ok = bool(
+            getattr(settings, "guided_story_editor_v2_enabled", False)
+            and _guided_v2_revision(job, variant) is not None
+        )
+    elif archetype == "subtitled":
+        shape_ok = _phone_subtitled_editor_lanes_available(job, variant)
+    else:
+        shape_ok = is_phone_narrated_editor_variant(
+            variant
+        ) or is_phone_voiceover_montage_editor_variant(variant, job.assembly_plan or {})
+    if not shape_ok:
+        return closed("drawing_unsupported_for_this_edit")
+    if not settings.freehand_drawing_enabled:
+        reason: str | None = "drawings_disabled"
+    elif "freehandDrawing" not in set(settings.phone_render_verified_features):
+        reason = "drawing_unavailable"
+    elif not freehand_drawing_client_supported():
+        reason = "client_update_required"
+    else:
+        reason = None
+    authoring = freehand_drawing_supported()
+    return {
+        **{name: {"editable": authoring, "reason": reason} for name in ("add", "edit", "trim")},
+        "delete": {"editable": True, "reason": None},
+    }
+
+
 def _editor_capabilities(job: Job, variant: dict) -> dict:
     """Editor capability map for one variant, clamped to what its renderer can save."""
+    return {
+        **_device_clamped_editor_capabilities(job, variant),
+        "drawings": _drawing_capabilities(job, variant),
+    }
+
+
+def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
     capabilities = _base_editor_capabilities(job, variant)
     if variant.get("render_destination") == "device":
         voiceover_media = _phone_voiceover_editor_media_available(job, variant)
@@ -9741,6 +9817,7 @@ def _guided_v2_revision_from_commit(
     media_overlays: list[dict] | None,
     visual_blocks: list[dict] | None,
     motion_scenes: list[dict] | None,
+    drawings: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Project the batched editor Save onto the story-native revision.
 
@@ -9800,6 +9877,8 @@ def _guided_v2_revision_from_commit(
         raw["visual_blocks"] = visual_blocks
     if motion_scenes is not None:
         raw["motion_scenes"] = motion_scenes
+    if drawings is not None:
+        raw["drawings"] = drawings
     if payload.caption_meta is not None:
         # Guided captions are existing TextElements marked source=caption_cue.
         # Persist the validated presentation state separately so neither their
@@ -10070,6 +10149,7 @@ def require_guided_story_editor_commit(
         and payload.visual_blocks is None
         and payload.motion_scenes is None
         and payload.camera_effects is None
+        and payload.drawings is None
         and payload.title is None
         and not payload.remove_music
         and "carousel_moment" not in payload.model_fields_set
@@ -10180,6 +10260,70 @@ def prepare_editor_commit(
             creator_brief_binding=creator_brief_binding,
         )
     return _prepare_editor_commit(job, variant_id, payload, **arguments)
+
+
+def _validate_drawings_section(
+    job: Job, variant: dict, payload: EditorCommitRequest, *, duration_s: float
+) -> list[dict] | None:
+    """Save-time twin of the ``drawings`` capability (KRI-589): the validated lane, or
+    ``None`` for an untouched empty echo that carries no information.
+
+    A variant that cannot render drawings (cloud, slides, or an archetype shape without the
+    lane) refuses a non-empty lane with the same reason the capability map reports. The
+    kill switch (and an unverified device) stops ADDING or CHANGING drawings --
+    ``422 drawings_disabled`` -- but never removal or replay:
+    a lane made only of rows already stored byte-for-byte (a deletion, or an untouched
+    echo) is accepted, so creators can always take drawings off.
+    """
+    from app.agents._schemas.drawing import coerce_drawings, validate_drawings  # noqa: PLC0415
+    from app.services.phone_rollout import freehand_drawing_supported  # noqa: PLC0415
+
+    submitted = payload.drawings or []
+    stored = [row.model_dump(mode="json") for row in coerce_drawings(variant.get("drawings"))]
+    # The same variant-shape rule the capability map reports (`delete` follows only the shape),
+    # so a client with a stale capability map cannot persist a lane this variant cannot render.
+    shape = _drawing_capabilities(job, variant)["delete"]
+    if not shape["editable"]:
+        if not submitted and "drawing" not in payload._deleted_kinds:
+            log.debug(
+                "editor_commit_ignored_empty_section",
+                section="drawings",
+                job_id=str(job.id),
+                variant_id=variant.get("variant_id"),
+            )
+            return None
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": shape["reason"]},
+        )
+    if not submitted and not stored and "drawing" not in payload._deleted_kinds:
+        return None
+    try:
+        # Caps and ids for the whole lane; the window check is per changed row below, because a
+        # stored drawing a shorter cut left past the end (the recipe clamps it on every Save)
+        # must not block deleting or editing a neighbour.
+        validated = validate_drawings(submitted, duration_s=1800.0)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "drawings_invalid", "reason": str(exc)[:300]},
+        ) from exc
+    stored_by_id = {row["id"]: row for row in stored}
+    changed = [row for row in validated if row != stored_by_id.get(row["id"])]
+    if changed and not freehand_drawing_supported(require_client=False):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "drawings_disabled"},
+        )
+    if any(row["end_s"] > duration_s + 1.0 / 24.0 for row in changed):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "drawings_invalid",
+                "reason": "drawing exceeds the variant duration",
+            },
+        )
+    return validated
 
 
 def _validate_landscape_fit_section(job: Job, variant: dict, value: str) -> str:
@@ -10350,6 +10494,7 @@ def _prepare_editor_commit(
                 "visual_blocks": bool(current.get("visual_blocks")),
                 "motion_scenes": bool(current.get("motion_scenes")),
                 "camera_effects": False,
+                "drawings": bool(current.get("drawings")),
                 "carousel_moment": False,
             },
         }
@@ -10381,6 +10526,7 @@ def _prepare_editor_commit(
         and payload.visual_blocks is None
         and payload.motion_scenes is None
         and payload.camera_effects is None
+        and payload.drawings is None
         and payload.guided_revision is None
         and payload.title is None
         and not payload.remove_music
@@ -11129,6 +11275,29 @@ def _prepare_editor_commit(
                 duration_s=visual_block_variant_duration(variant),
             )
 
+    validated_drawings: list[dict] | None = None
+    if payload.drawings is not None:
+        if guided_v2 and payload.timeline_slots is not None:
+            drawing_duration_s = max(
+                float(row["output_end_s"])
+                for row in _guided_v2_revision_for_write(
+                    job,
+                    variant,
+                    TimelineEditRequest(
+                        slots=payload.timeline_slots,
+                        revision_number=payload.guided_revision_number,
+                        base_generation=payload.base_generation,
+                    ),
+                )["segments"]
+            )
+        elif resolved_slots is not None:
+            drawing_duration_s = _active_timeline_duration_s(resolved_slots)
+        else:
+            drawing_duration_s = visual_block_variant_duration(variant)
+        validated_drawings = _validate_drawings_section(
+            job, variant, payload, duration_s=drawing_duration_s
+        )
+
     # Older clients may commit only the overlay section. Enforce the bundle
     # invariant server-side so linked generated effects cannot be orphaned.
     # Explicit group IDs are the sole linkage; legacy timing is never guessed.
@@ -11238,6 +11407,7 @@ def _prepare_editor_commit(
         or validated_visual_blocks is not None
         or validated_motion_scenes is not None
         or validated_camera_effects is not None
+        or validated_drawings is not None
         or carousel_moment_touched
         or guided_timeline_commit
         or payload._lyric_line_suppressions is not None
@@ -11378,6 +11548,8 @@ def _prepare_editor_commit(
             updated["motion_cache_stale"] = True
         if validated_camera_effects is not None:
             updated["camera_effects"] = validated_camera_effects or None
+        if validated_drawings is not None:
+            updated["drawings"] = validated_drawings or None
         if carousel_moment_touched:
             updated["carousel_moment"] = merged_carousel_moment
             # Same idiom as visual_blocks_cache_stale/motion_cache_stale above:
@@ -11430,6 +11602,7 @@ def _prepare_editor_commit(
                 media_overlays=validated_overlays,
                 visual_blocks=validated_visual_blocks,
                 motion_scenes=validated_motion_scenes,
+                drawings=validated_drawings,
             )
             updated["guided_edit_revision"] = guided_revision
         if new_gen is not None:
@@ -11502,6 +11675,7 @@ def _prepare_editor_commit(
         "visual_blocks_override": validated_visual_blocks,
         "motion_scenes_override": validated_motion_scenes,
         "camera_effects_override": validated_camera_effects,
+        "drawings_override": validated_drawings,
         "pending_overlay_camera_rebuild": pending_overlay_camera_rebuild,
         "orientation_override": validated_orientation,
         "landscape_fit_override": validated_landscape_fit,
@@ -11542,6 +11716,7 @@ def _prepare_editor_commit(
             "visual_blocks": validated_visual_blocks is not None,
             "motion_scenes": validated_motion_scenes is not None,
             "camera_effects": validated_camera_effects is not None,
+            "drawings": validated_drawings is not None,
             "carousel_moment": carousel_moment_touched,
         },
     }

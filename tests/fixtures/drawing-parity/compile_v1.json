@@ -1,0 +1,1417 @@
+{
+ "description": "KRI-589 compile contract: editor `drawings` + timeline duration -> expected portable `drawing_layers`. Asserted by Python compile_drawing_layers and Swift NativeEditorRenderCompiler.",
+ "cases": [
+  {
+   "name": "identity-inside-timeline",
+   "timeline_duration_s": 10.0,
+   "drawings": [
+    {
+     "id": "tex-pen",
+     "start_s": 1.0,
+     "end_s": 4.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "animation": {
+      "entrance": "draw",
+      "draw_duration_s": 1.2,
+      "exit": "none"
+     },
+     "strokes": [
+      {
+       "color": "#FF3B30",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "pen",
+       "seed": 1000,
+       "points": [
+        [
+         0.15,
+         0.5
+        ],
+        [
+         0.2136,
+         0.636
+        ],
+        [
+         0.2773,
+         0.6782
+        ],
+        [
+         0.3409,
+         0.5975
+        ],
+        [
+         0.4045,
+         0.4496
+        ],
+        [
+         0.4682,
+         0.3364
+        ],
+        [
+         0.5318,
+         0.3361
+        ],
+        [
+         0.5955,
+         0.4488
+        ],
+        [
+         0.6591,
+         0.5968
+        ],
+        [
+         0.7227,
+         0.6781
+        ],
+        [
+         0.7864,
+         0.6365
+        ],
+        [
+         0.85,
+         0.5009
+        ]
+       ]
+      }
+     ]
+    }
+   ],
+   "expected_layers": [
+    {
+     "id": "tex-pen",
+     "start": 1.0,
+     "end": 4.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "entrance": "draw",
+     "draw_duration": 1.2,
+     "exit": "none",
+     "strokes": [
+      {
+       "color": "#FF3B30",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "pen",
+       "seed": 1000,
+       "points": [
+        [
+         0.15,
+         0.5
+        ],
+        [
+         0.2136,
+         0.636
+        ],
+        [
+         0.2773,
+         0.6782
+        ],
+        [
+         0.3409,
+         0.5975
+        ],
+        [
+         0.4045,
+         0.4496
+        ],
+        [
+         0.4682,
+         0.3364
+        ],
+        [
+         0.5318,
+         0.3361
+        ],
+        [
+         0.5955,
+         0.4488
+        ],
+        [
+         0.6591,
+         0.5968
+        ],
+        [
+         0.7227,
+         0.6781
+        ],
+        [
+         0.7864,
+         0.6365
+        ],
+        [
+         0.85,
+         0.5009
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "end-clamped-to-timeline",
+   "timeline_duration_s": 3.0,
+   "drawings": [
+    {
+     "id": "a",
+     "start_s": 1.0,
+     "end_s": 4.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "animation": {
+      "entrance": "draw",
+      "draw_duration_s": 1.2,
+      "exit": "none"
+     },
+     "strokes": [
+      {
+       "color": "#FF3B30",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "pen",
+       "seed": 1000,
+       "points": [
+        [
+         0.15,
+         0.5
+        ],
+        [
+         0.2136,
+         0.636
+        ],
+        [
+         0.2773,
+         0.6782
+        ],
+        [
+         0.3409,
+         0.5975
+        ],
+        [
+         0.4045,
+         0.4496
+        ],
+        [
+         0.4682,
+         0.3364
+        ],
+        [
+         0.5318,
+         0.3361
+        ],
+        [
+         0.5955,
+         0.4488
+        ],
+        [
+         0.6591,
+         0.5968
+        ],
+        [
+         0.7227,
+         0.6781
+        ],
+        [
+         0.7864,
+         0.6365
+        ],
+        [
+         0.85,
+         0.5009
+        ]
+       ]
+      }
+     ]
+    }
+   ],
+   "expected_layers": [
+    {
+     "id": "a",
+     "start": 1.0,
+     "end": 3.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "entrance": "draw",
+     "draw_duration": 1.2,
+     "exit": "none",
+     "strokes": [
+      {
+       "color": "#FF3B30",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "pen",
+       "seed": 1000,
+       "points": [
+        [
+         0.15,
+         0.5
+        ],
+        [
+         0.2136,
+         0.636
+        ],
+        [
+         0.2773,
+         0.6782
+        ],
+        [
+         0.3409,
+         0.5975
+        ],
+        [
+         0.4045,
+         0.4496
+        ],
+        [
+         0.4682,
+         0.3364
+        ],
+        [
+         0.5318,
+         0.3361
+        ],
+        [
+         0.5955,
+         0.4488
+        ],
+        [
+         0.6591,
+         0.5968
+        ],
+        [
+         0.7227,
+         0.6781
+        ],
+        [
+         0.7864,
+         0.6365
+        ],
+        [
+         0.85,
+         0.5009
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "draw-duration-clamped-to-window",
+   "timeline_duration_s": 2.0,
+   "drawings": [
+    {
+     "id": "a",
+     "start_s": 1.0,
+     "end_s": 2.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "animation": {
+      "entrance": "draw",
+      "draw_duration_s": 5.0,
+      "exit": "none"
+     },
+     "strokes": [
+      {
+       "color": "#FF3B30",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "pen",
+       "seed": 1000,
+       "points": [
+        [
+         0.15,
+         0.5
+        ],
+        [
+         0.2136,
+         0.636
+        ],
+        [
+         0.2773,
+         0.6782
+        ],
+        [
+         0.3409,
+         0.5975
+        ],
+        [
+         0.4045,
+         0.4496
+        ],
+        [
+         0.4682,
+         0.3364
+        ],
+        [
+         0.5318,
+         0.3361
+        ],
+        [
+         0.5955,
+         0.4488
+        ],
+        [
+         0.6591,
+         0.5968
+        ],
+        [
+         0.7227,
+         0.6781
+        ],
+        [
+         0.7864,
+         0.6365
+        ],
+        [
+         0.85,
+         0.5009
+        ]
+       ]
+      }
+     ]
+    }
+   ],
+   "expected_layers": [
+    {
+     "id": "a",
+     "start": 1.0,
+     "end": 2.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "entrance": "draw",
+     "draw_duration": 1.0,
+     "exit": "none",
+     "strokes": [
+      {
+       "color": "#FF3B30",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "pen",
+       "seed": 1000,
+       "points": [
+        [
+         0.15,
+         0.5
+        ],
+        [
+         0.2136,
+         0.636
+        ],
+        [
+         0.2773,
+         0.6782
+        ],
+        [
+         0.3409,
+         0.5975
+        ],
+        [
+         0.4045,
+         0.4496
+        ],
+        [
+         0.4682,
+         0.3364
+        ],
+        [
+         0.5318,
+         0.3361
+        ],
+        [
+         0.5955,
+         0.4488
+        ],
+        [
+         0.6591,
+         0.5968
+        ],
+        [
+         0.7227,
+         0.6781
+        ],
+        [
+         0.7864,
+         0.6365
+        ],
+        [
+         0.85,
+         0.5009
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "dropped-starts-after-timeline",
+   "timeline_duration_s": 2.0,
+   "drawings": [
+    {
+     "id": "a",
+     "start_s": 2.0,
+     "end_s": 4.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "animation": {
+      "entrance": "draw",
+      "draw_duration_s": 1.2,
+      "exit": "none"
+     },
+     "strokes": [
+      {
+       "color": "#FF3B30",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "pen",
+       "seed": 1000,
+       "points": [
+        [
+         0.15,
+         0.5
+        ],
+        [
+         0.2136,
+         0.636
+        ],
+        [
+         0.2773,
+         0.6782
+        ],
+        [
+         0.3409,
+         0.5975
+        ],
+        [
+         0.4045,
+         0.4496
+        ],
+        [
+         0.4682,
+         0.3364
+        ],
+        [
+         0.5318,
+         0.3361
+        ],
+        [
+         0.5955,
+         0.4488
+        ],
+        [
+         0.6591,
+         0.5968
+        ],
+        [
+         0.7227,
+         0.6781
+        ],
+        [
+         0.7864,
+         0.6365
+        ],
+        [
+         0.85,
+         0.5009
+        ]
+       ]
+      }
+     ]
+    }
+   ],
+   "expected_layers": []
+  },
+  {
+   "name": "dropped-too-short-after-clamp",
+   "timeline_duration_s": 2.05,
+   "drawings": [
+    {
+     "id": "a",
+     "start_s": 2.0,
+     "end_s": 4.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "animation": {
+      "entrance": "draw",
+      "draw_duration_s": 1.2,
+      "exit": "none"
+     },
+     "strokes": [
+      {
+       "color": "#FF3B30",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "pen",
+       "seed": 1000,
+       "points": [
+        [
+         0.15,
+         0.5
+        ],
+        [
+         0.2136,
+         0.636
+        ],
+        [
+         0.2773,
+         0.6782
+        ],
+        [
+         0.3409,
+         0.5975
+        ],
+        [
+         0.4045,
+         0.4496
+        ],
+        [
+         0.4682,
+         0.3364
+        ],
+        [
+         0.5318,
+         0.3361
+        ],
+        [
+         0.5955,
+         0.4488
+        ],
+        [
+         0.6591,
+         0.5968
+        ],
+        [
+         0.7227,
+         0.6781
+        ],
+        [
+         0.7864,
+         0.6365
+        ],
+        [
+         0.85,
+         0.5009
+        ]
+       ]
+      }
+     ]
+    }
+   ],
+   "expected_layers": []
+  },
+  {
+   "name": "order-and-multiple",
+   "timeline_duration_s": 6.0,
+   "drawings": [
+    {
+     "id": "tex-marker",
+     "start_s": 1.0,
+     "end_s": 4.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "animation": {
+      "entrance": "draw",
+      "draw_duration_s": 1.2,
+      "exit": "none"
+     },
+     "strokes": [
+      {
+       "color": "#FFD60A",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "marker",
+       "seed": 1001,
+       "points": [
+        [
+         0.15,
+         0.6515
+        ],
+        [
+         0.2136,
+         0.6727
+        ],
+        [
+         0.2773,
+         0.5749
+        ],
+        [
+         0.3409,
+         0.4254
+        ],
+        [
+         0.4045,
+         0.3274
+        ],
+        [
+         0.4682,
+         0.3484
+        ],
+        [
+         0.5318,
+         0.474
+        ],
+        [
+         0.5955,
+         0.6175
+        ],
+        [
+         0.6591,
+         0.68
+        ],
+        [
+         0.7227,
+         0.6184
+        ],
+        [
+         0.7864,
+         0.4751
+        ],
+        [
+         0.85,
+         0.349
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "id": "tex-pen",
+     "start_s": 1.0,
+     "end_s": 4.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "animation": {
+      "entrance": "draw",
+      "draw_duration_s": 1.2,
+      "exit": "none"
+     },
+     "strokes": [
+      {
+       "color": "#FF3B30",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "pen",
+       "seed": 1000,
+       "points": [
+        [
+         0.15,
+         0.5
+        ],
+        [
+         0.2136,
+         0.636
+        ],
+        [
+         0.2773,
+         0.6782
+        ],
+        [
+         0.3409,
+         0.5975
+        ],
+        [
+         0.4045,
+         0.4496
+        ],
+        [
+         0.4682,
+         0.3364
+        ],
+        [
+         0.5318,
+         0.3361
+        ],
+        [
+         0.5955,
+         0.4488
+        ],
+        [
+         0.6591,
+         0.5968
+        ],
+        [
+         0.7227,
+         0.6781
+        ],
+        [
+         0.7864,
+         0.6365
+        ],
+        [
+         0.85,
+         0.5009
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "id": "edge-landscape-canvas",
+     "start_s": 0.5,
+     "end_s": 2.5,
+     "canvas_aspect": 1.7778,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "animation": {
+      "entrance": "none",
+      "draw_duration_s": 1.0,
+      "exit": "none"
+     },
+     "strokes": [
+      {
+       "color": "#FFFFFF",
+       "opacity": 1.0,
+       "width_frac": 0.02,
+       "texture": "neon",
+       "seed": 7,
+       "points": [
+        [
+         0.15,
+         0.5254
+        ],
+        [
+         0.25,
+         0.332
+        ],
+        [
+         0.35,
+         0.3996
+        ],
+        [
+         0.45,
+         0.6232
+        ],
+        [
+         0.55,
+         0.6554
+        ],
+        [
+         0.65,
+         0.4462
+        ],
+        [
+         0.75,
+         0.3206
+        ],
+        [
+         0.85,
+         0.4737
+        ]
+       ]
+      }
+     ]
+    }
+   ],
+   "expected_layers": [
+    {
+     "id": "tex-marker",
+     "start": 1.0,
+     "end": 4.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "entrance": "draw",
+     "draw_duration": 1.2,
+     "exit": "none",
+     "strokes": [
+      {
+       "color": "#FFD60A",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "marker",
+       "seed": 1001,
+       "points": [
+        [
+         0.15,
+         0.6515
+        ],
+        [
+         0.2136,
+         0.6727
+        ],
+        [
+         0.2773,
+         0.5749
+        ],
+        [
+         0.3409,
+         0.4254
+        ],
+        [
+         0.4045,
+         0.3274
+        ],
+        [
+         0.4682,
+         0.3484
+        ],
+        [
+         0.5318,
+         0.474
+        ],
+        [
+         0.5955,
+         0.6175
+        ],
+        [
+         0.6591,
+         0.68
+        ],
+        [
+         0.7227,
+         0.6184
+        ],
+        [
+         0.7864,
+         0.4751
+        ],
+        [
+         0.85,
+         0.349
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "id": "tex-pen",
+     "start": 1.0,
+     "end": 4.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "entrance": "draw",
+     "draw_duration": 1.2,
+     "exit": "none",
+     "strokes": [
+      {
+       "color": "#FF3B30",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "pen",
+       "seed": 1000,
+       "points": [
+        [
+         0.15,
+         0.5
+        ],
+        [
+         0.2136,
+         0.636
+        ],
+        [
+         0.2773,
+         0.6782
+        ],
+        [
+         0.3409,
+         0.5975
+        ],
+        [
+         0.4045,
+         0.4496
+        ],
+        [
+         0.4682,
+         0.3364
+        ],
+        [
+         0.5318,
+         0.3361
+        ],
+        [
+         0.5955,
+         0.4488
+        ],
+        [
+         0.6591,
+         0.5968
+        ],
+        [
+         0.7227,
+         0.6781
+        ],
+        [
+         0.7864,
+         0.6365
+        ],
+        [
+         0.85,
+         0.5009
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "id": "edge-landscape-canvas",
+     "start": 0.5,
+     "end": 2.5,
+     "canvas_aspect": 1.7778,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "entrance": "none",
+     "draw_duration": 1.0,
+     "exit": "none",
+     "strokes": [
+      {
+       "color": "#FFFFFF",
+       "opacity": 1.0,
+       "width_frac": 0.02,
+       "texture": "neon",
+       "seed": 7,
+       "points": [
+        [
+         0.15,
+         0.5254
+        ],
+        [
+         0.25,
+         0.332
+        ],
+        [
+         0.35,
+         0.3996
+        ],
+        [
+         0.45,
+         0.6232
+        ],
+        [
+         0.55,
+         0.6554
+        ],
+        [
+         0.65,
+         0.4462
+        ],
+        [
+         0.75,
+         0.3206
+        ],
+        [
+         0.85,
+         0.4737
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "transform-and-fades-copied",
+   "timeline_duration_s": 10.0,
+   "drawings": [
+    {
+     "id": "edge-max-width-rotated",
+     "start_s": 2.0,
+     "end_s": 6.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.25,
+     "center_y": 0.75,
+     "scale": 3.0,
+     "rotation_deg": -180.0,
+     "animation": {
+      "entrance": "fade",
+      "draw_duration_s": 0.2,
+      "exit": "fade"
+     },
+     "strokes": [
+      {
+       "color": "#123ABC",
+       "opacity": 0.1,
+       "width_frac": 0.08,
+       "texture": "marker",
+       "seed": 2147483647,
+       "points": [
+        [
+         0.15,
+         0.5742
+        ],
+        [
+         0.325,
+         0.3315
+        ],
+        [
+         0.5,
+         0.6638
+        ],
+        [
+         0.675,
+         0.4371
+        ],
+        [
+         0.85,
+         0.425
+        ]
+       ]
+      }
+     ]
+    }
+   ],
+   "expected_layers": [
+    {
+     "id": "edge-max-width-rotated",
+     "start": 2.0,
+     "end": 6.0,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.25,
+     "center_y": 0.75,
+     "scale": 3.0,
+     "rotation_deg": -180.0,
+     "entrance": "fade",
+     "draw_duration": 0.2,
+     "exit": "fade",
+     "strokes": [
+      {
+       "color": "#123ABC",
+       "opacity": 0.1,
+       "width_frac": 0.08,
+       "texture": "marker",
+       "seed": 2147483647,
+       "points": [
+        [
+         0.15,
+         0.5742
+        ],
+        [
+         0.325,
+         0.3315
+        ],
+        [
+         0.5,
+         0.6638
+        ],
+        [
+         0.675,
+         0.4371
+        ],
+        [
+         0.85,
+         0.425
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "landscape-aspect-copied",
+   "timeline_duration_s": 10.0,
+   "drawings": [
+    {
+     "id": "edge-landscape-canvas",
+     "start_s": 0.5,
+     "end_s": 2.5,
+     "canvas_aspect": 1.7778,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "animation": {
+      "entrance": "none",
+      "draw_duration_s": 1.0,
+      "exit": "none"
+     },
+     "strokes": [
+      {
+       "color": "#FFFFFF",
+       "opacity": 1.0,
+       "width_frac": 0.02,
+       "texture": "neon",
+       "seed": 7,
+       "points": [
+        [
+         0.15,
+         0.5254
+        ],
+        [
+         0.25,
+         0.332
+        ],
+        [
+         0.35,
+         0.3996
+        ],
+        [
+         0.45,
+         0.6232
+        ],
+        [
+         0.55,
+         0.6554
+        ],
+        [
+         0.65,
+         0.4462
+        ],
+        [
+         0.75,
+         0.3206
+        ],
+        [
+         0.85,
+         0.4737
+        ]
+       ]
+      }
+     ]
+    }
+   ],
+   "expected_layers": [
+    {
+     "id": "edge-landscape-canvas",
+     "start": 0.5,
+     "end": 2.5,
+     "canvas_aspect": 1.7778,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "entrance": "none",
+     "draw_duration": 1.0,
+     "exit": "none",
+     "strokes": [
+      {
+       "color": "#FFFFFF",
+       "opacity": 1.0,
+       "width_frac": 0.02,
+       "texture": "neon",
+       "seed": 7,
+       "points": [
+        [
+         0.15,
+         0.5254
+        ],
+        [
+         0.25,
+         0.332
+        ],
+        [
+         0.35,
+         0.3996
+        ],
+        [
+         0.45,
+         0.6232
+        ],
+        [
+         0.55,
+         0.6554
+        ],
+        [
+         0.65,
+         0.4462
+        ],
+        [
+         0.75,
+         0.3206
+        ],
+        [
+         0.85,
+         0.4737
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "short-window-draw-duration-floor",
+   "timeline_duration_s": 10.0,
+   "drawings": [
+    {
+     "id": "short-window",
+     "start_s": 1.0,
+     "end_s": 1.15,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "animation": {
+      "entrance": "draw",
+      "draw_duration_s": 1.2,
+      "exit": "none"
+     },
+     "strokes": [
+      {
+       "color": "#FF3B30",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "pen",
+       "seed": 1000,
+       "points": [
+        [
+         0.15,
+         0.5
+        ],
+        [
+         0.2136,
+         0.636
+        ],
+        [
+         0.2773,
+         0.6782
+        ],
+        [
+         0.3409,
+         0.5975
+        ],
+        [
+         0.4045,
+         0.4496
+        ],
+        [
+         0.4682,
+         0.3364
+        ],
+        [
+         0.5318,
+         0.3361
+        ],
+        [
+         0.5955,
+         0.4488
+        ],
+        [
+         0.6591,
+         0.5968
+        ],
+        [
+         0.7227,
+         0.6781
+        ],
+        [
+         0.7864,
+         0.6365
+        ],
+        [
+         0.85,
+         0.5009
+        ]
+       ]
+      }
+     ]
+    }
+   ],
+   "expected_layers": [
+    {
+     "id": "short-window",
+     "start": 1.0,
+     "end": 1.15,
+     "canvas_aspect": 0.5625,
+     "center_x": 0.5,
+     "center_y": 0.5,
+     "scale": 1.0,
+     "rotation_deg": 0.0,
+     "entrance": "draw",
+     "draw_duration": 0.1499999999999999,
+     "exit": "none",
+     "strokes": [
+      {
+       "color": "#FF3B30",
+       "opacity": 1.0,
+       "width_frac": 0.012,
+       "texture": "pen",
+       "seed": 1000,
+       "points": [
+        [
+         0.15,
+         0.5
+        ],
+        [
+         0.2136,
+         0.636
+        ],
+        [
+         0.2773,
+         0.6782
+        ],
+        [
+         0.3409,
+         0.5975
+        ],
+        [
+         0.4045,
+         0.4496
+        ],
+        [
+         0.4682,
+         0.3364
+        ],
+        [
+         0.5318,
+         0.3361
+        ],
+        [
+         0.5955,
+         0.4488
+        ],
+        [
+         0.6591,
+         0.5968
+        ],
+        [
+         0.7227,
+         0.6781
+        ],
+        [
+         0.7864,
+         0.6365
+        ],
+        [
+         0.85,
+         0.5009
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

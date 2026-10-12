@@ -2933,3 +2933,14 @@ Phone-inexpressible plans used to fail only after approval. Now:
   `phone_render_verified_features`; the worker maps it to the retryable
   `phone_capability_unavailable`. Everything else stays the deterministic
   `phone_plan_unsupported`. Grep Fly logs for both after a deploy.
+
+## Freehand drawing capability (KRI-589)
+
+| Capability | Recipe field | Gate | Detail |
+|---|---|---|---|
+| `freehandDrawing` | `EditRecipeV2.drawing_layers` | `FREEHAND_DRAWING_ENABLED` (default on) + `freehandDrawing` in `PHONE_RENDER_VERIFIED_FEATURES` + client protocol >= `FREEHAND_DRAWING_MIN_CLIENT_PROTOCOL` (6) | [pipelines/drawing.md](../pipelines/drawing.md) |
+
+Prod step before the Draw tool appears: add `freehandDrawing` to
+`PHONE_RENDER_VERIFIED_FEATURES` (fly secret, api + worker, restart). Builds under protocol 6
+get `426 client_update_required` (`feature: "drawing"`) from `device-render` and `editor-commit`
+for a variant that has drawings.

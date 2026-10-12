@@ -65,7 +65,7 @@ struct NativeSelectionInspector: View {
             NativeSelectedCaptionInspector(selection: selection, session: session)
         case .music:
             NativeSelectedMusicInspector(selection: selection, session: session)
-        case .soundEffect, .mediaOverlay, .visualBlock, .motionScene, .cameraEffect, .carousel:
+        case .soundEffect, .mediaOverlay, .visualBlock, .motionScene, .cameraEffect, .carousel, .drawing:
             NativeSelectedEffectInspector(selection: selection, session: session)
         }
     }
@@ -818,6 +818,7 @@ private struct NativeSelectedEffectInspector: View {
         case .motionScene: return "Motion scene"
         case .cameraEffect: return "Camera effect"
         case .carousel: return "Carousel moment"
+        case .drawing: return "Drawing"
         default: return "Selected item"
         }
     }
@@ -840,6 +841,7 @@ private struct NativeSelectedEffectInspector: View {
         case .visualBlock: if let value = session.document.visualBlocks.first(where: { $0.id == selection.id }) { return (value.startS, value.endS) }
         case .motionScene: if let value = session.document.motionScenes.first(where: { $0.id == selection.id }) { return (value.startS, value.endS) }
         case .cameraEffect: if let value = session.document.cameraEffects.first(where: { $0.id == selection.id }) { return (value.startS, value.endS) }
+        case .drawing: if let value = session.document.drawings.first(where: { $0.id == selection.id }) { return (value.startS, value.endS) }
         case .carousel:
             if nativeString(session.document.carouselMoment?["id"]) == selection.id,
                let start = nativeNumber(session.document.carouselMoment?["start_s"]),
@@ -856,6 +858,7 @@ private struct NativeSelectedEffectInspector: View {
         case .visualBlock: return ["visual_blocks", "lanes.visual_blocks"]
         case .motionScene: return ["motion_scenes", "lanes.motion_scenes"]
         case .cameraEffect: return ["camera_effects", "lanes.camera_effects"]
+        case .drawing: return ["drawings.edit", "drawings"]
         case .carousel: return ["carousel", "carousel_moment"]
         default: return []
         }
@@ -868,6 +871,7 @@ private struct NativeSelectedEffectInspector: View {
         case .visualBlock: return nativeEditorEditable(session, keys: ["visual_blocks", "lanes.visual_blocks"], fallback: session.canEdit(.visualBlocks))
         case .motionScene: return nativeEditorEditable(session, keys: ["motion_scenes", "lanes.motion_scenes"], fallback: session.canEdit(.motionScenes)) && !session.isMotionSceneReadOnly(id: selection.id)
         case .cameraEffect: return nativeEditorEditable(session, keys: ["camera_effects", "lanes.camera_effects"], fallback: session.canEdit(.cameraEffects))
+        case .drawing: return session.canEditDrawings
         case .carousel: return nativeEditorEditable(session, keys: ["carousel", "carousel_moment"], fallback: session.canEdit(.carouselMoment))
         default: return false
         }
@@ -884,6 +888,7 @@ private struct NativeSelectedEffectInspector: View {
             keys = ["visual_blocks.timing", "visual_blocks"]; section = .visualBlocks
         case .motionScene: keys = ["motion_scenes.timing", "motion_scenes"]; section = .motionScenes
         case .cameraEffect: keys = ["camera_effects.timing", "camera_effects"]; section = .cameraEffects
+        case .drawing: keys = ["drawings.trim", "drawings.edit"]; section = .drawings
         default: return false
         }
         return nativeEditorEditable(session, keys: keys, fallback: session.canEdit(section)) && editable
@@ -901,6 +906,7 @@ private struct NativeSelectedEffectInspector: View {
         case .visualBlock: session.setVisualBlockTiming(id: selection.id, startS: newStart, endS: newEnd)
         case .motionScene: session.setMotionSceneTiming(id: selection.id, startS: newStart, endS: newEnd)
         case .cameraEffect: session.setCameraEffectTiming(id: selection.id, startS: newStart, endS: newEnd)
+        case .drawing: session.setDrawingTiming(id: selection.id, startS: newStart, endS: newEnd)
         default: break
         }
     }
@@ -1080,6 +1086,9 @@ private struct NativeSelectedEffectInspector: View {
             return ("Effect", value.effect ?? "Default")
         case .carousel:
             return ("Moment", nativeString(session.document.carouselMoment?["id"]) ?? selection.id)
+        case .drawing:
+            guard let value = session.document.drawings.first(where: { $0.id == selection.id }) else { return nil }
+            return ("Strokes", String(value.strokes.count))
         default: return nil
         }
     }

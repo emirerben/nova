@@ -290,6 +290,35 @@
       ]
     },
     {
+      "id": "kri-589-drawing",
+      "needs_native": true,
+      "api_tests": "tests/agents/test_drawing_schema.py tests/kria/test_drawing_compile.py",
+      "xctests": [
+        "KriaTests/DrawingParityTests/testEveryWireElementDecodesAndRoundTripsLosslessly",
+        "KriaTests/DrawingParityTests/testInvalidWireRowsAreRejectedAndKeptVerbatimAsOpaqueRows",
+        "KriaTests/DrawingParityTests/testCompileFixtureThroughThePureCompileAndTheRenderCompiler"
+      ],
+      "paths": [
+        "src/apps/api/app/agents/_schemas/drawing.py",
+        "src/apps/api/app/kria/portable_drawing.py",
+        "src/apps/api/app/kria/recipes.py",
+        "src/apps/api/app/kria/recipes_v2.py",
+        "src/apps/api/app/pipeline/speech_cut_state.py",
+        "src/apps/api/tests/agents/test_drawing_schema.py",
+        "src/apps/api/tests/kria/test_drawing_compile.py",
+        "tests/fixtures/drawing-parity/",
+        "src/apps/ios/Kria/Core/EditorDrawing.swift",
+        "src/apps/ios/Kria/Core/NativeDrawingSketch.swift",
+        "src/apps/ios/Kria/Features/NativeDrawingViews.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/PortableDrawing.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/NativeDrawingPainter.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/NativeDrawingStore.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DrawingRenderTests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DrawingExportTests.swift",
+        "src/apps/ios/Tests/KriaTests/DrawingParityTests.swift"
+      ]
+    },
+    {
       "id": "kri-590-voiceover-cues",
       "needs_native": false,
       "api_tests": "tests/agents/test_narrated_clip_alignment.py tests/evals/test_narrated_clip_alignment_evals.py tests/kria/test_brief_checks_narrated_alignment.py tests/kria/test_kri520_block_recovery.py tests/tasks/test_phone_subtitled_narrated_dispatch.py",

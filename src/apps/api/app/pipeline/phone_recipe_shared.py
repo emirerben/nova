@@ -20,6 +20,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.kria.portable_drawing import compile_drawing_layers
 from app.kria.recipes import Canvas, MediaTransform, TimelineClip
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest, RenderFingerprint
@@ -245,6 +246,37 @@ def apply_landscape_fit(
     fields.update(
         tracks=tracks,
         asset_manifest=RenderAssetManifest(assets=tuple(recipe.asset_manifest.assets)),
+    )
+    return EditRecipeV2(**fields)
+
+
+def with_drawings(recipe: EditRecipeV2, drawings: list[dict] | None) -> EditRecipeV2:
+    """``recipe`` carrying exactly the freehand drawing layers ``drawings`` compile to (KRI-589).
+
+    The server's one entry point to `compile_drawing_layers`: every phone editor
+    Save runs it on the recipe it just built or patched, from the variant's STORED
+    ``drawings`` lane (clamped to this recipe's own duration), whichever sections the
+    Save carried. A cut that shortened the video therefore drops or shrinks the
+    drawings it pushed past the end, and a longer cut brings them back.
+
+    ``None``/``[]`` strips any drawing layers (and the ``freehandDrawing``
+    capability); it is also how a patching compiler clears the previous recipe's
+    layers BEFORE it changes the duration, since the recipe validator rejects a
+    layer past the end. Returns ``recipe`` itself when nothing changes, so a
+    recipe without drawings stays byte-identical.
+    """
+    # The contract compile is tolerant: a window that no longer fits is dropped or clamped.
+    layers = compile_drawing_layers(drawings, timeline_duration_s=recipe.duration)
+    if not layers and not recipe.drawing_layers:
+        return recipe
+    if [layer.model_dump(mode="json") for layer in layers] == [
+        layer.model_dump(mode="json") for layer in recipe.drawing_layers
+    ]:
+        return recipe
+    fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
+    fields.update(
+        drawing_layers=layers,
+        required_capabilities=set(recipe.required_capabilities) - {"freehandDrawing"},
     )
     return EditRecipeV2(**fields)
 
