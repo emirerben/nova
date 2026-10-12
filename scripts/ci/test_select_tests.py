@@ -624,6 +624,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-598-voiceover-planner"),
             ),
             (
+                "src/apps/api/prompts/clip_request_resolver.txt",
+                (True, "covered", "kri-613-resolver-question"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/find_the_clip.json",
+                (True, "covered", "kri-613-resolver-question"),
+            ),
+            (
                 "src/apps/api/app/pipeline/phone_captions.py",
                 (True, "covered", "kri-548-caption-watermark"),
             ),
