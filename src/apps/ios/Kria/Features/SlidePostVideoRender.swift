@@ -49,7 +49,7 @@ import UIKit
             if FileManager.default.fileExists(atPath: outputURL.path) { try FileManager.default.removeItem(at: outputURL) }
             let asset = AVURLAsset(url: source.url)
             let prepared = try await prepare(asset: asset, profile: profile, aspect: aspect, lookPreset: slide.edits?.lookPreset ?? "none")
-            let overlay = try staticOverlay(texts: slide.edits?.effectiveTexts ?? [], pixels: prepared.pixels)
+            let overlay = try staticOverlay(texts: slide.edits?.effectiveTexts ?? [], drawing: slide.edits?.drawing, pixels: prepared.pixels)
             let composition = videoComposition(prepared: prepared, overlay: overlay)
             guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
                 throw RenderError.exportUnavailable
@@ -152,7 +152,8 @@ import UIKit
             .cropped(to: CGRect(origin: .zero, size: canvas))
     }
 
-    private static func staticOverlay(texts: [SlidePostTextElement], pixels: CGSize) throws -> CIImage {
+    /// Text, then the slide's drawing (KRI-589), then the watermark, rasterized once into the CIImage every frame composites.
+    static func staticOverlay(texts: [SlidePostTextElement], drawing: SlidePostDrawing? = nil, pixels: CGSize) throws -> CIImage {
         let text = texts.isEmpty ? nil : SlidePostOnDeviceRender.textLayer(texts, pixels: pixels)
         // A failed SwiftUI raster must fail export rather than silently omit a
         // caption the user sees in the editor.
@@ -162,6 +163,7 @@ import UIKit
         format.scale = 1; format.opaque = false; format.preferredRange = .standard
         let image = UIGraphicsImageRenderer(size: pixels, format: format).image { context in
             text?.draw(in: CGRect(origin: .zero, size: pixels))
+            drawing?.paint(in: context.cgContext, canvas: pixels)
             context.cgContext.interpolationQuality = .high
             mark.draw(in: KriaBranding.watermarkTileRect(canvas: pixels, tileSize: mark.size))
         }

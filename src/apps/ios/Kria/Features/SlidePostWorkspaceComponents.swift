@@ -1,3 +1,4 @@
+import KriaMediaEngine
 import SwiftUI
 import UIKit
 
@@ -43,6 +44,27 @@ enum SlidePostMode: Equatable {
     case browse, text, look
     /// KRI-44: the stage becomes the Crop editor for the selected photo.
     case crop
+    /// KRI-589: a finger canvas over the preview, with the drawing toolbar in place of the strip and dock.
+    case draw
+}
+
+// MARK: Saved drawing
+
+/// The slide's saved ink, painted by the same `NativeDrawingPainter` the export uses, over the media and under
+/// the text (the order the renderers stack them). Static: slides have no drawing animation.
+struct SlidePostDrawingLayerView: View {
+    let drawing: SlidePostDrawing
+
+    var body: some View {
+        Canvas { context, size in
+            context.withCGContext { drawing.paint(in: $0, canvas: size) }
+        }
+        .allowsHitTesting(false)
+        .accessibilityElement()
+        .accessibilityLabel("Drawing")
+        .accessibilityValue("\(drawing.strokes.count) stroke\(drawing.strokes.count == 1 ? "" : "s")")
+        .accessibilityIdentifier("slidepost-drawing-ink")
+    }
 }
 
 // MARK: Header
@@ -541,6 +563,12 @@ struct SlidePostToolBar: View {
     /// KRI-606: the post-wide Size sheet, when the server's `slide_post_sizes` is on.
     var showsSize = false
     var onSize: () -> Void = {}
+    /// KRI-589: the Draw tool, when the server's `slide_post_drawing` is on.
+    var showsDraw = false
+    var onDraw: () -> Void = {}
+    /// "Clear drawing" in the More menu, only for a slide that has ink.
+    var canClearDrawing = false
+    var onClearDrawing: () -> Void = {}
     let onText: () -> Void
     let onCover: () -> Void
     let onLook: () -> Void
@@ -569,10 +597,15 @@ struct SlidePostToolBar: View {
             item("circle.lefthalf.filled", "Look", id: "slidepost-tool-look", active: mode == .look, action: onLook)
             if showsCrop { item("crop", "Crop", id: "slidepost-tool-crop", active: mode == .crop, action: onCrop) }
             if showsSize { item("aspectratio", "Size", id: "slidepost-tool-size", active: false, action: onSize) }
+            if showsDraw { item("pencil.tip", "Draw", id: "slidepost-tool-draw", active: mode == .draw, action: onDraw) }
             Menu {
                 Button(role: .destructive, action: onRemove) { Label("Remove slide", systemImage: "trash") }.disabled(!canRemove)
                 Button(action: onDuplicateText) { Label("Duplicate text", systemImage: "plus.square.on.square") }.disabled(!canDuplicateText)
                 Button(action: onCaption) { Label("Caption", systemImage: "text.alignleft") }
+                if canClearDrawing {
+                    Button(role: .destructive, action: onClearDrawing) { Label("Clear drawing", systemImage: "scribble") }
+                        .accessibilityIdentifier("slidepost-clear-drawing")
+                }
             } label: { label("ellipsis", "More", active: false) }
             .accessibilityIdentifier("slidepost-tool-more")
         }
