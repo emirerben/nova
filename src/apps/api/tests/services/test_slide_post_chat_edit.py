@@ -25,6 +25,7 @@ from app.config import settings
 from app.kria.brief_binding import BriefBinding
 from app.schemas.slide_post import (
     SlideEdits,
+    SlideFraming,
     SlidePostDraft,
     SlideRef,
     SlideTextElement,
@@ -1070,3 +1071,244 @@ class TestSlideFraming:
         )
         assert _framing_of(compiled.draft, 0) is not None
         assert _framing_of(compiled.draft, 1) is None
+
+
+# ------------------------------------------- post size and photo fit (KRI-606)
+
+
+def _sizes_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "slide_post_framing_enabled", True)
+    monkeypatch.setattr(settings, "slide_post_sizes_enabled", True)
+
+
+def _sized_snapshot(draft: SlidePostDraft, assets: list[SimpleNamespace], *, enabled: bool = True):
+    return build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID, sizes_enabled=enabled)
+
+
+def _sized_edit(draft: SlidePostDraft, assets: list[SimpleNamespace], ops: list[dict]):
+    output = _parse(_sized_snapshot(draft, assets), ops)
+    assert output.ops, output.rejection_reasons
+    return compile_slide_post_ops(draft, output.ops), output
+
+
+class TestPostSizeAndFit:
+    def test_snapshot_offers_the_sizes_only_when_enabled(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(2)
+        draft = _draft(assets)
+        on = _sized_snapshot(draft, assets)
+        assert on["post"]["sizes_enabled"] is True
+        assert on["post"]["aspect"] == "9:16"
+        assert on["post"]["allowed_aspects"] == ["9:16", "3:4", "4:5", "1:1"]
+        assert {s["fit"] for s in on["slots"]} == {"fill"}
+        # An old client (protocol < 5) or a flag-off server sees no trace of it.
+        off = _sized_snapshot(draft, assets, enabled=False)
+        assert "sizes_enabled" not in off["post"] and "allowed_aspects" not in off["post"]
+        assert all("fit" not in s for s in off["slots"])
+        monkeypatch.setattr(settings, "slide_post_framing_enabled", False)
+        assert "sizes_enabled" not in _sized_snapshot(draft, assets)["post"]
+
+    def test_set_post_aspect_changes_the_whole_post(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(3)
+        compiled, _ = _sized_edit(
+            _draft(assets), assets, [{"op": "set_post_aspect", "aspect": "1:1"}]
+        )
+        assert compiled.draft.aspect == "1:1"
+        assert "Size is now 1:1" in compiled.changes
+
+    def test_choosing_the_default_size_clears_it(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(2)
+        sized = _draft(assets).model_copy(update={"aspect": "1:1"})
+        compiled, _ = _sized_edit(sized, assets, [{"op": "set_post_aspect", "aspect": "9:16"}])
+        assert compiled.draft.aspect is None
+        assert "Size is now 9:16" in compiled.changes
+
+    def test_asking_for_the_size_the_post_already_has_changes_nothing(self, monkeypatch):
+        # "make it 4:5" on a 4:5 post used to wipe every crop and then claim a generic edit.
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(3)
+        crop = {"x": 0, "y": 0, "width": 0.5, "height": 0.5}
+        draft = _draft(assets, edits={0: SlideEdits(framing=SlideFraming(source_crop=crop))})
+        for profile, same in (("tiktok_photo", "9:16"), ("instagram_carousel", "4:5")):
+            current = draft.model_copy(update={"platform_profile": profile})
+            output = _parse(
+                _sized_snapshot(current, assets), [{"op": "set_post_aspect", "aspect": same}]
+            )
+            assert output.ops
+            compiled = compile_slide_post_ops(current, output.ops)
+            assert _framing_of(compiled.draft, 0).source_crop is not None, profile
+            assert compiled.draft.aspect is None
+            assert compiled.changes == []
+        sized = draft.model_copy(update={"aspect": "1:1"})
+        output = _parse(
+            _sized_snapshot(sized, assets), [{"op": "set_post_aspect", "aspect": "1:1"}]
+        )
+        assert (
+            _framing_of(compile_slide_post_ops(sized, output.ops).draft, 0).source_crop is not None
+        )
+
+    def test_a_new_size_drops_portrait_crops_but_keeps_landscape_ones(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(3)
+        crop = {"x": 0, "y": 0, "width": 0.5, "height": 0.5}
+        draft = _draft(
+            assets,
+            edits={
+                0: SlideEdits(framing=SlideFraming(source_crop=crop)),
+                1: SlideEdits(framing=SlideFraming(orientation="landscape", source_crop=crop)),
+            },
+        )
+        compiled, _ = _sized_edit(draft, assets, [{"op": "set_post_aspect", "aspect": "4:5"}])
+        assert _framing_of(compiled.draft, 0) is None
+        assert _framing_of(compiled.draft, 1).source_crop is not None
+        assert "Size is now 4:5 · crops reset on 1 slide" in compiled.changes
+        assert not any(c.startswith("Framing changed") for c in compiled.changes)
+
+    def test_size_then_crop_in_one_bundle_fails_honestly(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(2)
+        draft = _draft(assets)
+        output = _parse(
+            _sized_snapshot(draft, assets),
+            [
+                {"op": "set_post_aspect", "aspect": "1:1"},
+                {"op": "set_slide_framing", "all": True, "focus": "top", "zoom": 2},
+            ],
+        )
+        with pytest.raises(KriaEditorOpError, match="Change the size first"):
+            compile_slide_post_ops(draft, output.ops)
+
+    def test_crop_after_the_size_is_resolved_against_the_new_shape(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(1, aspect=4 / 3)
+        sized = _draft(assets).model_copy(update={"aspect": "1:1"})
+        compiled, _ = _sized_edit(
+            sized, assets, [{"op": "set_slide_framing", "all": True, "focus": "left", "zoom": 1}]
+        )
+        crop = _framing_of(compiled.draft, 0).source_crop
+        # A 4:3 photo into a SQUARE keeps full height and 3/4 of the width.
+        assert crop.height == 1.0 and crop.width == pytest.approx(0.75, abs=1e-3)
+
+    def test_instagram_refuses_full_screen_and_says_what_it_can_be(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(2)
+        draft = _draft(assets).model_copy(update={"platform_profile": "instagram_carousel"})
+        output = _parse(
+            _sized_snapshot(draft, assets), [{"op": "set_post_aspect", "aspect": "9:16"}]
+        )
+        assert not output.ops
+        detail = " ".join(r["detail"] for r in output.rejection_reasons)
+        assert "Instagram" in detail and "4:5" in detail and "1.91:1" in detail
+
+    def test_unknown_size_is_refused(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(1)
+        output = _parse(
+            _sized_snapshot(_draft(assets), assets), [{"op": "set_post_aspect", "aspect": "7:3"}]
+        )
+        assert not output.ops
+
+    def test_size_ops_are_unavailable_for_an_old_client(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(2)
+        snapshot = _sized_snapshot(_draft(assets), assets, enabled=False)
+        assert not _parse(snapshot, [{"op": "set_post_aspect", "aspect": "1:1"}]).ops
+        assert not _parse(snapshot, [{"op": "set_slide_fit", "all": True, "fit": "fit"}]).ops
+
+    def test_size_ops_are_refused_on_a_video_edit(self):
+        snapshot = {"surface": "edit", "slots": [], "text_bars": []}
+        assert not _parse(snapshot, [{"op": "set_post_aspect", "aspect": "1:1"}]).ops
+
+    def test_fit_all_defaults_to_blur_and_skips_videos(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(3)
+        draft = _draft(assets)
+        draft = draft.model_copy(
+            update={
+                "slides": [
+                    draft.slides[0],
+                    draft.slides[1].model_copy(update={"kind": "video"}),
+                    draft.slides[2],
+                ]
+            }
+        )
+        compiled, _ = _sized_edit(
+            draft, assets, [{"op": "set_slide_fit", "all": True, "fit": "fit"}]
+        )
+        assert [s.edits.fit if s.edits else None for s in compiled.draft.slides] == [
+            "blur",
+            None,
+            "blur",
+        ]
+        assert "Fit changed on 2 slides" in compiled.changes
+
+    def test_a_named_video_cannot_be_fitted(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(2)
+        draft = _draft(assets)
+        draft = draft.model_copy(
+            update={
+                "slides": [draft.slides[0], draft.slides[1].model_copy(update={"kind": "video"})]
+            }
+        )
+        output = _parse(
+            _sized_snapshot(draft, assets),
+            [{"op": "set_slide_fit", "slide_indexes": [1], "fit": "fit"}],
+        )
+        assert not output.ops
+
+    def test_fit_with_white_bars_then_fill_again(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(2)
+        step1, _ = _sized_edit(
+            _draft(assets),
+            assets,
+            [{"op": "set_slide_fit", "slide_indexes": [0], "fit": "fit", "background": "white"}],
+        )
+        assert step1.draft.slides[0].edits.fit == "white" and step1.draft.slides[1].edits is None
+        step2, _ = _sized_edit(
+            step1.draft, assets, [{"op": "set_slide_fit", "all": True, "fit": "fill"}]
+        )
+        assert step2.draft.slides[0].edits.fit is None
+
+    def test_invalid_fit_values_are_refused(self, monkeypatch):
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(1)
+        snap = _sized_snapshot(_draft(assets), assets)
+        assert not _parse(snap, [{"op": "set_slide_fit", "all": True, "fit": "stretch"}]).ops
+        assert not _parse(
+            snap, [{"op": "set_slide_fit", "all": True, "fit": "fit", "background": "red"}]
+        ).ops
+
+    def test_unrelated_ops_keep_fit_and_size(self, monkeypatch):
+        # F3: a text or look op rebuilds the slide's SlideEdits; it must not wipe Fit.
+        _sizes_on(monkeypatch)
+        assets = _framing_assets(2)
+        draft = _draft(assets, edits={0: SlideEdits(fit="blur")}).model_copy(
+            update={"aspect": "1:1"}
+        )
+        step, _ = _sized_edit(
+            draft, assets, [{"op": "add_text", "text": "Summer", "start_s": 0, "end_s": 2}]
+        )
+        assert step.draft.slides[0].edits.fit == "blur"
+        assert step.draft.aspect == "1:1"
+        step, _ = _sized_edit(
+            draft,
+            assets,
+            [{"op": "set_look_preset", "slot_index": 0, "look_preset": "stadium_diffusion"}],
+        )
+        assert step.draft.slides[0].edits.fit == "blur"
+        assert step.draft.aspect == "1:1"
+
+    def test_flag_off_compile_never_invents_a_size(self, monkeypatch):
+        monkeypatch.setattr(settings, "slide_post_sizes_enabled", False)
+        assets = _framing_assets(2)
+        compiled, _ = _edit(
+            _draft(assets),
+            assets,
+            [{"op": "add_text", "text": "Hi", "start_s": 0, "end_s": 2}],
+        )
+        assert compiled.draft.aspect is None
+        assert "aspect" not in compiled.draft.model_dump(mode="json")

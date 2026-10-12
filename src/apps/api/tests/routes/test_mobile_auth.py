@@ -14,7 +14,7 @@ from fastapi import HTTPException, Request
 from app.auth import get_current_user
 from app.config import settings
 from app.routes import auth
-from app.services.mobile_auth import AccessClaims, ProviderClaims
+from app.services.mobile_auth import AccessClaims, MobileAuthError, ProviderClaims
 
 
 def _scalar(value: object) -> MagicMock:
@@ -184,10 +184,76 @@ async def test_exchange_locks_identity_and_normalized_email_before_lookup(monkey
 
 
 @pytest.mark.asyncio
-async def test_exchange_requires_explicit_link_for_apple_email_collision(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("attempted", "existing", "expected_label"),
+    [
+        # KRI-609: a TestFlight creator tried Sign in with Apple on an account
+        # they had made with Google, and only saw an unrelated "edit changed" line.
+        ("apple", "google", "Google"),
+        # A different Apple ID that reports the same email.
+        ("apple", "apple", "Apple"),
+        # A Google token whose email belongs to an Apple-created account.
+        ("google", "apple", "Apple"),
+    ],
+)
+async def test_exchange_email_collision_names_the_existing_provider_and_never_links(
+    monkeypatch, attempted, existing, expected_label
+) -> None:
     monkeypatch.setattr(settings, "mobile_jwt_secret", "test-secret")
-    user = _user()
+    user = _user(provider=existing)
     db = _db(_scalar(None), _scalar(user))
+    monkeypatch.setattr(
+        auth,
+        "verify_provider_id_token",
+        AsyncMock(return_value=_claims(provider=attempted)),
+    )
+    issue = AsyncMock()
+    monkeypatch.setattr(auth, "_issue_mobile_session", issue)
+
+    with pytest.raises(HTTPException) as raised:
+        await auth.mobile_exchange(
+            auth.MobileExchangeRequest(provider=attempted, id_token="token", nonce="nonce"),
+            db,
+        )
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail == {
+        "code": "provider_link_required",
+        "existing_provider": existing,
+        "message": (
+            f"This email already has a Kria account. Sign in with {expected_label} to open it."
+        ),
+    }
+    # Accounts stay separate: no identity is attached, no session is issued.
+    db.add.assert_not_called()
+    issue.assert_not_awaited()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("linked", "expected_provider", "expected_message"),
+    [
+        (
+            [],
+            None,
+            "This email already has a Kria account. Sign in with the method you used before.",
+        ),
+        (
+            ["reviewer", "google"],
+            "google",
+            "This email already has a Kria account. Sign in with Google to open it.",
+        ),
+    ],
+)
+async def test_exchange_email_collision_for_other_account_kinds_never_guesses_a_provider(
+    monkeypatch, linked, expected_provider, expected_message
+) -> None:
+    # Accounts not created through Google/Apple (reviewer, dev) name a provider
+    # only when one is actually linked to them.
+    monkeypatch.setattr(settings, "mobile_jwt_secret", "test-secret")
+    user = _user(provider="reviewer")
+    db = _db(_scalar(None), _scalar(user), _scalars(linked))
     monkeypatch.setattr(
         auth,
         "verify_provider_id_token",
@@ -201,8 +267,36 @@ async def test_exchange_requires_explicit_link_for_apple_email_collision(monkeyp
         )
 
     assert raised.value.status_code == 409
-    assert raised.value.detail["code"] == "provider_link_required"
+    assert raised.value.detail == {
+        "code": "provider_link_required",
+        "existing_provider": expected_provider,
+        "message": expected_message,
+    }
     db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_exchange_unverified_token_reveals_nothing_about_existing_accounts(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "mobile_jwt_secret", "test-secret")
+    db = _db()
+    monkeypatch.setattr(
+        auth,
+        "verify_provider_id_token",
+        AsyncMock(side_effect=MobileAuthError("invalid_token", "Invalid identity token")),
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        await auth.mobile_exchange(
+            auth.MobileExchangeRequest(provider="apple", id_token="forged", nonce="nonce"),
+            db,
+        )
+
+    assert raised.value.status_code == 401
+    assert raised.value.detail == {"code": "invalid_token", "message": "Invalid identity token"}
+    db.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

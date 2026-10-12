@@ -139,9 +139,11 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
     var texts: [SlidePostTextElement]? = nil
     /// KRI-44: the slide's shape and crop. nil = portrait, centred cover (and, on save, "clear any stored framing").
     var framing: SlidePostFraming? = nil
-    enum CodingKeys: String, CodingKey { case text, texts, framing; case lookPreset = "look_preset" }
-    init(text: SlidePostText? = nil, lookPreset: String = "none", texts: [SlidePostTextElement]? = nil, framing: SlidePostFraming? = nil) {
-        self.text = text; self.lookPreset = lookPreset; self.texts = texts; self.framing = framing
+    /// KRI-606: show the whole photo with bars instead of cropping it. nil = fill. A sibling of `framing` (see `SlidePostFit`).
+    var fit: SlidePostFit? = nil
+    enum CodingKeys: String, CodingKey { case text, texts, framing, fit; case lookPreset = "look_preset" }
+    init(text: SlidePostText? = nil, lookPreset: String = "none", texts: [SlidePostTextElement]? = nil, framing: SlidePostFraming? = nil, fit: SlidePostFit? = nil) {
+        self.text = text; self.lookPreset = lookPreset; self.texts = texts; self.framing = framing; self.fit = fit
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -149,6 +151,8 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
         lookPreset = try c.decodeIfPresent(String.self, forKey: .lookPreset) ?? "none"
         texts = try c.decodeIfPresent([SlidePostTextElement].self, forKey: .texts)
         framing = try c.decodeIfPresent(SlidePostFraming.self, forKey: .framing)
+        // Tolerant: a treatment this build does not know shows as fill rather than failing the whole post.
+        fit = (try? c.decodeIfPresent(SlidePostFit.self, forKey: .fit)) ?? nil
     }
     /// Writes both shapes: `texts`, and the legacy `text` mirroring `texts[0]` (the server's own rule).
     func encode(to encoder: Encoder) throws {
@@ -163,6 +167,9 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
         // The server reads the key's presence: missing keeps what it stored (an older client), `null` clears it,
         // a value sets it. This build always says which, so removing a crop can never be mistaken for "unchanged".
         if let framing { try c.encode(framing, forKey: .framing) } else { try c.encodeNil(forKey: .framing) }
+        // Same three-state contract for Fit (KRI-606): a value sets it, `null` clears it, and a missing key (a
+        // build that predates it) keeps what the server stored.
+        if let fit { try c.encode(fit, forKey: .fit) } else { try c.encodeNil(forKey: .fit) }
     }
     /// What the editor shows: `texts`, or the legacy text lifted into one boxed element.
     var effectiveTexts: [SlidePostTextElement] {
@@ -197,23 +204,49 @@ struct SlidePostDraft: Codable, Equatable, Sendable {
     var userEdited: Bool = false
     /// Opaque server binding for the request that produced this draft.
     var briefBinding: JSONValue? = nil
+    /// KRI-606: the post-wide size (`SlidePostSize` raw value). nil = the platform's default size.
+    var aspect: String? = nil
     enum CodingKeys: String, CodingKey {
-        case version, slides, caption
+        case version, slides, caption, aspect
         case schemaVersion = "schema_version", platformProfile = "platform_profile", coverIndex = "cover_index"
         case renderedVersion = "rendered_version", userEdited = "user_edited"
         case briefBinding = "brief_binding"
     }
+    /// Written by hand so `aspect` is ALWAYS present (`null` when default): the server treats a missing key as
+    /// "an older app, keep what is stored", so clearing a size must be said, not omitted.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schemaVersion, forKey: .schemaVersion)
+        try c.encode(version, forKey: .version)
+        try c.encode(platformProfile, forKey: .platformProfile)
+        try c.encode(slides, forKey: .slides)
+        try c.encode(coverIndex, forKey: .coverIndex)
+        try c.encode(caption, forKey: .caption)
+        try c.encodeIfPresent(renderedVersion, forKey: .renderedVersion)
+        try c.encode(userEdited, forKey: .userEdited)
+        try c.encodeIfPresent(briefBinding, forKey: .briefBinding)
+        if let aspect { try c.encode(aspect, forKey: .aspect) } else { try c.encodeNil(forKey: .aspect) }
+    }
+    /// The post's size, resolved against its platform.
+    var size: SlidePostSize { SlidePostSize.resolved(aspect, profile: platformProfile) }
     /// Rendering stamps and server metadata do not turn a clean editor dirty.
     func hasSameContent(as other: Self) -> Bool {
-        platformProfile == other.platformProfile && slides == other.slides && coverIndex == other.coverIndex && caption == other.caption
+        platformProfile == other.platformProfile && aspect == other.aspect && slides == other.slides
+            && coverIndex == other.coverIndex && caption == other.caption
     }
-    /// Instagram keeps one shape for every slide, so a landscape slide (and its landscape-shaped crop) goes back to portrait.
-    func withLandscapeResetIfUnsupported() -> SlidePostDraft {
-        guard !SlidePostFraming.allowsLandscape(profile: platformProfile),
-              slides.contains(where: { $0.edits?.framing?.orientation == .landscape }) else { return self }
+    /// What the platform cannot represent goes back to something it can, as the server's validator does: an
+    /// Instagram carousel has no landscape slide (and loses its landscape-shaped crop), and a size the platform
+    /// does not offer falls back to the platform's default. Fit is a photo treatment, so videos never keep it.
+    func withProfileCoercions() -> SlidePostDraft {
         var copy = self
-        for index in copy.slides.indices where copy.slides[index].edits?.framing?.orientation == .landscape {
-            copy.slides[index].edits?.framing = nil
+        if !SlidePostFraming.allowsLandscape(profile: platformProfile) {
+            for index in copy.slides.indices where copy.slides[index].edits?.framing?.orientation == .landscape {
+                copy.slides[index].edits?.framing = nil
+            }
+        }
+        copy.aspect = SlidePostSize.storedAspect(aspect, profile: platformProfile)
+        for index in copy.slides.indices where copy.slides[index].kind == "video" && copy.slides[index].edits?.fit != nil {
+            copy.slides[index].edits?.fit = nil
         }
         return copy
     }
@@ -341,15 +374,28 @@ struct SlidePostSaveRequest: Encodable, Sendable {
     let coverIndex: Int
     let caption: String
     let briefBinding: JSONValue?
+    let aspect: String?
     init(draft: SlidePostDraft, expectedVersion: Int) {
         self.expectedVersion = expectedVersion; platformProfile = draft.platformProfile; slides = draft.slides
         coverIndex = draft.coverIndex; caption = draft.caption
         briefBinding = draft.briefBinding
+        aspect = draft.aspect
     }
     enum CodingKeys: String, CodingKey {
-        case slides, caption
+        case slides, caption, aspect
         case expectedVersion = "expected_version", platformProfile = "platform_profile", coverIndex = "cover_index"
         case briefBinding = "brief_binding"
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(expectedVersion, forKey: .expectedVersion)
+        try c.encode(platformProfile, forKey: .platformProfile)
+        try c.encode(slides, forKey: .slides)
+        try c.encode(coverIndex, forKey: .coverIndex)
+        try c.encode(caption, forKey: .caption)
+        try c.encodeIfPresent(briefBinding, forKey: .briefBinding)
+        // Always said (`null` = the platform's default), never omitted: a missing key means "keep what is stored".
+        if let aspect { try c.encode(aspect, forKey: .aspect) } else { try c.encodeNil(forKey: .aspect) }
     }
 }
 
@@ -856,8 +902,9 @@ private struct SlidePostItemResponse: Decodable {
     /// undo step. Also the entry point for a staged AI result (Lane E): stage it, show it, and the
     /// user can undo it before saving.
     func stageDraft(_ staged: SlidePostDraft, coalescing key: String? = nil) {
-        // Switching to Instagram (a staged AI edit can) turns landscape slides back to portrait, as the server would.
-        let new = staged.withLandscapeResetIfUnsupported()
+        // Switching to Instagram (a staged AI edit can) turns landscape slides back to portrait and drops a size the
+        // platform lacks, as the server would.
+        let new = staged.withProfileCoercions()
         // Dropped while a save/propose is in flight: the draft is being rebased onto the server's
         // answer, and the controls that call this are disabled/veiled in that window anyway.
         guard !isBusy, let current = draft, !new.hasSameContent(as: current) else { return }
@@ -1058,6 +1105,78 @@ private struct SlidePostItemResponse: Decodable {
         edits.framing = framing
         value.slides[index].edits = edits
         stageDraft(value)
+    }
+    /// KRI-606: sets (nil = the platform default) the post-wide size. A rectangle chosen for the old shape would be
+    /// mis-shaped for the new canvas, so every portrait slide drops its crop (landscape slides keep theirs).
+    /// One undo step. Returns how many crops were reset, for the sheet's notice.
+    @discardableResult
+    func setAspect(_ aspect: String?) -> Int {
+        // `stageDraft` drops edits while a save/propose is in flight; report nothing changed rather than a reset that never happened.
+        guard !isBusy, var value = draft else { return 0 }
+        let stored = SlidePostSize.storedAspect(aspect, profile: value.platformProfile)
+        guard stored != value.aspect else { return 0 }
+        value.aspect = stored
+        var reset = 0
+        for index in value.slides.indices {
+            guard var edits = value.slides[index].edits, let framing = edits.framing,
+                  framing.orientation == .portrait, framing.sourceCrop != nil else { continue }
+            edits.framing = nil
+            value.slides[index].edits = edits
+            reset += 1
+        }
+        stageDraft(value)
+        return reset
+    }
+    /// KRI-606: switches platform. Crops are kept except where the platform can't hold them (see `withProfileCoercions`),
+    /// and a size the new platform lacks falls back to its default, so the shape the creator sees is the shape they get.
+    @discardableResult
+    func setPlatform(_ profile: String) -> Int {
+        guard !isBusy, var value = draft, value.platformProfile != profile else { return 0 }
+        let before = value.size
+        value.platformProfile = profile
+        var reset = 0
+        if value.size != before {
+            for index in value.slides.indices {
+                guard var edits = value.slides[index].edits, let framing = edits.framing,
+                      framing.orientation == .portrait, framing.sourceCrop != nil else { continue }
+                edits.framing = nil
+                value.slides[index].edits = edits
+                reset += 1
+            }
+        }
+        stageDraft(value)
+        return reset
+    }
+    /// KRI-606: shows the photo whole with bars (or fills the frame again with nil). Photos only.
+    func setFit(slideID: String, _ fit: SlidePostFit?) {
+        guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }),
+              value.slides[index].kind == "image" else { return }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        guard edits.fit != fit else { return }
+        edits.fit = fit
+        value.slides[index].edits = edits
+        stageDraft(value)
+    }
+    /// KRI-606: one undo step for "Fit all" / "Fill all". Videos always fill the frame, so they are skipped.
+    func setFitForAllPhotos(_ fit: SlidePostFit?) {
+        guard var value = draft else { return }
+        var changed = false
+        for index in value.slides.indices where value.slides[index].kind == "image" {
+            var edits = value.slides[index].edits ?? SlidePostEdits()
+            guard edits.fit != fit else { continue }
+            edits.fit = fit
+            value.slides[index].edits = edits
+            changed = true
+        }
+        if changed { stageDraft(value) }
+    }
+    /// What the Size sheet's "Photos" control shows: one treatment when every photo agrees, else mixed.
+    enum FitSummary: Equatable { case none, uniform(SlidePostFit?), mixed }
+    var fitSummary: FitSummary {
+        let photos = (draft?.slides ?? []).filter { $0.kind == "image" }
+        guard let first = photos.first else { return .none }
+        let value = first.edits?.fit
+        return photos.allSatisfy { $0.edits?.fit == value } ? .uniform(value) : .mixed
     }
     func setLook(slideID: String, preset: String) {
         guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return }

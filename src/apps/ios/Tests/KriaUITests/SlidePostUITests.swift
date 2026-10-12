@@ -143,6 +143,51 @@ import XCTest
         attach(app, "Workspace 4:5")
     }
 
+    /// KRI-606: the Size tool resizes the whole post at once, "Fit all" shows each photo whole with bars, and
+    /// both survive a save (the fixture server echoes exactly what the app sent, `aspect` and `fit` included).
+    func testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave() {
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1", "KRIA_SLIDE_POST_SIZES": "1"])
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 8))
+        XCTAssertEqual(preview.frame.width / preview.frame.height, 4.0 / 5.0, accuracy: 0.06, "starts at the Instagram default")
+        let size = app.buttons["slidepost-tool-size"]
+        XCTAssertTrue(size.waitForExistence(timeout: 8), "the Size tool is offered when the server advertises slide_post_sizes")
+        size.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-size-sheet"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["slidepost-size-chip-1x1"].exists)
+        XCTAssertFalse(app.buttons["slidepost-size-chip-9x16"].exists, "no full-screen size on Instagram")
+        attach(app, "Size sheet (Instagram)")
+        app.buttons["slidepost-size-chip-1x1"].tap()
+        app.buttons["slidepost-size-fit-fit"].tap()
+        XCTAssertTrue(app.buttons["slidepost-size-bars-blur"].waitForExistence(timeout: 3), "Fit offers bar styles")
+        app.buttons["slidepost-size-bars-white"].tap()
+        XCTAssertTrue(app.buttons["slidepost-size-bars-white"].isSelected)
+        attach(app, "Size sheet (square, white bars)")
+        app.buttons["slidepost-size-done"].tap()
+        XCTAssertTrue(waitForSquare(preview), "the stage reshapes to 1:1 once the sheet closes")
+        attach(app, "Square post, photos fit with white bars")
+        saveDraft(app)
+        // With sizes on, the status line is a button that reopens the sheet, not a plain text.
+        let subtitle = app.descendants(matching: .any)["slidepost-subtitle"].firstMatch
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "1:1"), evaluatedWith: subtitle)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(waitForSquare(preview), "the saved draft keeps the size")
+        subtitle.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-size-sheet"].waitForExistence(timeout: 5), "the status line reopens the Size sheet")
+        XCTAssertTrue(app.buttons["slidepost-size-fit-fit"].isSelected, "Fit survived the save")
+    }
+
+    /// True once the preview element is square (polls; `frame` is not predicate-addressable).
+    private func waitForSquare(_ element: XCUIElement, timeout: TimeInterval = 8) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let frame = element.frame
+            if frame.height > 0, abs(frame.width / frame.height - 1) < 0.06 { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return false
+    }
+
     private func revealInTextPanel(_ element: XCUIElement, app: XCUIApplication) {
         let scroll = app.scrollViews["native-editor-text-inspector-scroll"]
         for _ in 0..<6 where !(element.exists && element.isHittable) { scroll.swipeUp() }

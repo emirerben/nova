@@ -58,7 +58,7 @@ shift, clamp, drop a drawing the cut removed, shorten its draw-on to the new win
 - `editor_capabilities.drawings.{add,edit,trim,delete}` is `{editable, reason}`. Cloud
   variants: closed, reason `drawing_requires_phone_render` (a Save is refused the same
   way). Device variants: `add/edit/trim` open only with the flag on, `freehandDrawing`
-  verified and a build declaring `X-Kria-Client-Protocol >= 5`; `delete` follows only
+  verified and a build declaring `X-Kria-Client-Protocol >= 6`; `delete` follows only
   the variant shape.
 - **Kill switch `FREEHAND_DRAWING_ENABLED=false`**: new or changed drawings get
   `422 drawings_disabled`; stored drawings still compile and play, and removal stays
@@ -67,7 +67,7 @@ shift, clamp, drop a drawing the cut removed, shorten its draw-on to the new win
 - **Old-build protection (426).** `GET /me/jobs/{id}/device-render` and `editor-commit`
   answer `426 {"detail": {"code": "client_update_required", "feature": "drawing"}}`
   when the pinned recipe (or the stored lane) has drawings and the build declares a
-  protocol under `FREEHAND_DRAWING_MIN_CLIENT_PROTOCOL` (default 5): such a build
+  protocol under `FREEHAND_DRAWING_MIN_CLIENT_PROTOCOL` (default 6; protocol 5 is the slides-size build, which cannot decode drawings): such a build
   rejects `drawingLayers` as an unknown key and would fail the job. Workers and chat
   edits have no app build and are not gated.
 

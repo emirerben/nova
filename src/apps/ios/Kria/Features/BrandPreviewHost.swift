@@ -16,6 +16,12 @@ struct BrandPreviewHost: View {
             switch state {
             case "signin": SignInView()
             case "signin-error": SignInView(initialMessage: "Google sign-in was cancelled.")
+            // KRI-609: the copy an Apple sign-in on a Google-made account now gets.
+            case "signin-existing-account":
+                SignInView(initialMessage: SignInFailureCopy.message(for: APIError.conflict(detail: ConflictDetail(
+                    "This email already has a Kria account. Sign in with Google to open it.",
+                    code: "provider_link_required"
+                ))))
             case "consent": AIConsentView(accept: {}, decline: {})
             case "account": NavigationStack { AccountView() }
             case "gallery": NavigationStack { GalleryView() }

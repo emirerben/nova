@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.243.0] - 2026-10-12
+
+### Changed
+- feat(slides): post-wide size and per-photo Fit for Sliders (KRI-606) (#1561) <!-- release-pr: 1561 -->
+
+## [0.78.242.0] - 2026-10-12
+
+### Fixed
+- fix(auth): tell creators which sign-in opens their account when Apple's email already has one (KRI-609) (#1563) <!-- release-pr: 1563 -->
+
 ## [0.78.241.0] - 2026-10-12
 
 ### Fixed

@@ -1601,7 +1601,7 @@ def _drawing_recipe(fixture):
 
 
 @pytest.mark.parametrize(
-    "protocol,status", [("4", 426), (None, 426), ("5", 200), ("6", 200)], ids=str
+    "protocol,status", [("4", 426), ("5", 426), (None, 426), ("6", 200), ("7", 200)], ids=str
 )
 def test_device_render_with_drawings_demands_a_build_that_decodes_them(
     fixture, monkeypatch, protocol, status

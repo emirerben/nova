@@ -40,7 +40,7 @@ from app.agents._runtime import (
 )
 from app.agents._schemas.edit_format import coerce_edit_format, guided_edit_applicable
 from app.agents.music_matcher import _sanitize_text
-from app.auth import SYNTHETIC_USER_ID, CurrentUser, NativeClient
+from app.auth import SYNTHETIC_USER_ID, CurrentUser, KriaClientProtocol, NativeClient
 from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK
@@ -62,6 +62,7 @@ from app.models import (
     PlanItem,
     PlanItemAsset,
 )
+from app.pipeline.slide_post.profiles import SlideAspect
 from app.routes._copilot import CopilotTurnBody, CopilotTurnResponse, run_copilot_turn
 from app.routes._director import (
     DirectorFeedbackBody,
@@ -174,11 +175,13 @@ from app.schemas.montage_preset import (
     is_collage_montage_preset,
 )
 from app.schemas.slide_post import (
+    SlideEdits,
     SlidePostDraft,
     SlideRef,
     bump_slide_post_version,
     canonicalize_slide_post_brief_binding,
     merge_legacy_text_edits,
+    merge_stored_edit_key,
     merge_stored_framing,
     parse_slide_post,
 )
@@ -4274,6 +4277,10 @@ class SlidePostDraftBody(BaseModel):
     # save.  The route validates its item, thread, and media identities before
     # accepting it; clients cannot use a valid digest as cross-item authority.
     brief_binding: BriefBinding | None = None
+    # Post-wide size (KRI-606). Key missing (web, older iOS) keeps the stored
+    # size; null clears it to the profile default; a value sets it. Ignored
+    # while SLIDE_POST_SIZES_ENABLED is off.
+    aspect: SlideAspect | None = None
     # Optional for the web editor's legacy payload. Native always supplies it.
     expected_version: int | None = Field(default=None, ge=0)
 
@@ -4622,12 +4629,23 @@ async def put_slide_post_draft(
         body.slides = merge_stored_framing(
             current, body.slides, accept_incoming=settings.slide_post_framing_enabled
         )
+        # Same three-state contract for per-photo Fit and the post-wide size
+        # (KRI-606); both are ignored while SLIDE_POST_SIZES_ENABLED is off.
+        body.slides = merge_stored_edit_key(
+            current, body.slides, "fit", accept_incoming=settings.slide_post_sizes_enabled
+        )
+        aspect = (
+            body.aspect
+            if settings.slide_post_sizes_enabled and "aspect" in body.model_fields_set
+            else (current.aspect if current is not None else None)
+        )
         if current is None:
             new_draft = SlidePostDraft(
                 platform_profile=platform_profile,
                 slides=body.slides,
                 cover_index=body.cover_index,
                 caption=body.caption,
+                aspect=aspect,
                 user_edited=True,
             )
         else:
@@ -4637,6 +4655,7 @@ async def put_slide_post_draft(
                 slides=body.slides,
                 cover_index=body.cover_index,
                 caption=body.caption,
+                aspect=aspect,
             )
     except ValidationError as exc:
         raise HTTPException(
@@ -4725,6 +4744,7 @@ async def compose_slide_post(
             creator_id=user.id,
             request_id=_paid_agent_request_id("slide-post-compose", str(item.id), body),
         ),
+        aspect=current.aspect if current is not None else None,
     )
     item.slide_post = composed.model_dump(mode="json")
     flag_modified(item, "slide_post")
@@ -4816,6 +4836,34 @@ async def propose_slide_post(
     return result
 
 
+def _backfill_slide_post_sizes(draft: SlidePostDraft, stored: SlidePostDraft) -> SlidePostDraft:
+    """Fill the post-wide size and per-photo Fit a client draft omitted (KRI-606).
+
+    An older app decodes a draft, drops the keys it doesn't know and sends the
+    rest back; omission (checked via ``model_fields_set``) means "unchanged".
+    The result is re-validated: ``model_copy`` skips the validators, and an
+    un-coerced platform/aspect pair would make the next PUT's binding
+    fingerprint mismatch.
+    """
+    stored_by_id = {s.id: s for s in stored.slides}
+    slides: list[SlideRef] = []
+    for ref in draft.slides:
+        old = stored_by_id.get(ref.id)
+        old_fit = old.edits.fit if old is not None and old.edits is not None else None
+        sent = ref.edits is not None and "fit" in ref.edits.model_fields_set
+        if sent or old_fit is None:
+            slides.append(ref)
+        elif ref.edits is None:
+            slides.append(ref.model_copy(update={"edits": SlideEdits(fit=old_fit)}))
+        else:
+            slides.append(
+                ref.model_copy(update={"edits": ref.edits.model_copy(update={"fit": old_fit})})
+            )
+    aspect = draft.aspect if "aspect" in draft.model_fields_set else stored.aspect
+    patched = draft.model_copy(update={"slides": slides, "aspect": aspect})
+    return SlidePostDraft.model_validate(patched.model_dump(mode="python"))
+
+
 @router.post("/{item_id}/slide-post/chat-edit", response_model=SlidePostChatEditResponse)
 @limiter.limit("20/minute", key_func=get_real_ip)
 @limiter.limit("30/hour", key_func=_edit_conversation_rate_key)
@@ -4825,6 +4873,7 @@ async def chat_edit_slide_post(
     body: SlidePostChatEditBody,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    client_protocol: KriaClientProtocol = None,
 ) -> SlidePostChatEditResponse:
     """Chat-edit a slide post through the edit copilot. Read-only staging: returns a
     proposed draft (or a clarification/refusal); the client saves it with the PUT."""
@@ -4862,6 +4911,8 @@ async def chat_edit_slide_post(
         # binding available to the service during a reader/rollback turn.
         if draft.brief_binding is None and stored is not None:
             draft = draft.model_copy(update={"brief_binding": stored.brief_binding})
+        if stored is not None:
+            draft = _backfill_slide_post_sizes(draft, stored)
 
     brief_binding: BriefBinding | None = None
     if settings.brief_binding_for(user.id):
@@ -4946,6 +4997,12 @@ async def chat_edit_slide_post(
             server_version=server_version,
             brief_binding=brief_binding,
             run_context=run_context,
+            # Size/Fit ops need an app that round-trips them (KRI-606).
+            sizes_enabled=bool(
+                settings.slide_post_sizes_enabled
+                and settings.slide_post_framing_enabled
+                and (client_protocol or 0) >= settings.slide_post_sizes_min_client_protocol
+            ),
         )
     except Exception:
         if thoughts is not None:
@@ -5035,6 +5092,7 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         return False
     from app.agents._schemas.edit_format import (  # noqa: PLC0415
         SLIDES_FRAMING_RENDERER_VERSION,
+        SLIDES_SIZES_RENDERER_VERSION,
     )
     from app.pipeline.slide_post.build import (  # noqa: PLC0415
         SLIDE_IMAGE_NORMALIZER_VERSION,
@@ -5050,6 +5108,14 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         # so its output must never read as the current export (KRI-44).
         stamped = slide_post.get("renderer_version")
         if not isinstance(stamped, int) or stamped < SLIDES_FRAMING_RENDERER_VERSION:
+            return False
+    if draft.aspect is not None or any(
+        ref.edits is not None and ref.edits.fit is not None for ref in draft.slides
+    ):
+        # A worker older than the size/Fit renderer would export this at the
+        # profile's default shape with the whole photo cropped (KRI-606).
+        stamped = slide_post.get("renderer_version")
+        if not isinstance(stamped, int) or stamped < SLIDES_SIZES_RENDERER_VERSION:
             return False
     expected_ids = [str(ref.asset_id) for ref in draft.slides]
     rendered_ids = [str(row.get("asset_id")) for row in rendered if isinstance(row, dict)]

@@ -498,7 +498,7 @@ def test_save_refuses_a_drawing_on_a_device_shape_the_capability_map_closes(monk
     it would show in the editor and be missing from the export."""
     _arm_every_editor_lane(monkeypatch)
     _verify_drawings(monkeypatch)
-    set_client_protocol(5)
+    set_client_protocol(6)
     job = _job(resolved_archetype="speech_montage")
     variant = job.assembly_plan["variants"][0]
     variant["render_destination"] = "device"
@@ -528,17 +528,18 @@ def test_capabilities_open_only_with_flag_verification_and_a_build_that_decodes_
     monkeypatch,
 ) -> None:
     env = _narrated(monkeypatch)
-    set_client_protocol(5)
+    set_client_protocol(6)
 
     def caps():
         return gj._editor_capabilities(env.job, env.variant)["drawings"]
 
     assert caps() == {"add": _open(), "edit": _open(), "trim": _open(), "delete": _open()}
 
-    set_client_protocol(4)
-    assert caps()["add"] == {"editable": False, "reason": "client_update_required"}
-    assert caps()["delete"] == _open()
-    set_client_protocol(5)
+    for old in (4, 5):  # 5 = the slides-size build, which cannot decode drawings
+        set_client_protocol(old)
+        assert caps()["add"] == {"editable": False, "reason": "client_update_required"}
+        assert caps()["delete"] == _open()
+    set_client_protocol(6)
 
     monkeypatch.setattr(
         gj.settings,
@@ -560,7 +561,7 @@ def test_a_device_edit_with_no_save_path_keeps_the_lane_closed(monkeypatch) -> N
     """A spoken-excerpt montage can't be recompiled by the server editor: advertise nothing."""
     _arm_every_editor_lane(monkeypatch)
     _verify_drawings(monkeypatch)
-    set_client_protocol(5)
+    set_client_protocol(6)
     job = _job(resolved_archetype="speech_montage")
     variant = {**job.assembly_plan["variants"][0], "render_destination": "device"}
     assert gj._editor_capabilities(job, variant)["drawings"]["add"] == {
@@ -572,7 +573,7 @@ def test_a_device_edit_with_no_save_path_keeps_the_lane_closed(monkeypatch) -> N
 # --- old-app protection -----------------------------------------------------------------
 
 
-@pytest.mark.parametrize("protocol", [4, None])
+@pytest.mark.parametrize("protocol", [4, 5, None])
 def test_an_old_build_saving_a_variant_with_drawings_is_told_to_update(
     monkeypatch, protocol
 ) -> None:

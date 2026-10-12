@@ -28,6 +28,7 @@
       "KriaUITests/SlidePostUITests/testSlidePreviewLeavesToolbarAndStripVisible",
       "KriaUITests/SlidePostUITests/testAddStyleAndApplyTextToAllSlides",
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",
+      "KriaUITests/SlidePostUITests/testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave",
       "KriaUITests/SlidePostUITests/testAIButtonOpensSheetAndChatEditStagesOnThePage",
       "KriaUITests/SlidePostUITests/testLongPressDragReordersAndKeepsTheCover",
       "KriaUITests/SlidePostUITests/testDraggingToTheEdgeAutoScrollsTheStrip",
@@ -97,6 +98,7 @@
       "KriaUITests/SignInUITests/testSignInAtLargestDynamicTypeKeepsEveryActionReachable",
       "KriaUITests/SignInUITests/testSignInWithReduceMotionIsInteractiveImmediately",
       "KriaUITests/SignInUITests/testSignInErrorMessageIsAnnounced",
+      "KriaUITests/SignInUITests/testExistingAccountRefusalIsReadableOnScreen",
       "KriaUITests/NativeUpdateRequiredUITests/testTyped426ReplacesEachRootRoute",
       "KriaUITests/NativeUpdateRequiredUITests/testBlockingScreenScrollsAtAccessibilitySizeAndActionsUseFixtureSeam"
     ],

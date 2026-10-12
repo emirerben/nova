@@ -2938,9 +2938,9 @@ Phone-inexpressible plans used to fail only after approval. Now:
 
 | Capability | Recipe field | Gate | Detail |
 |---|---|---|---|
-| `freehandDrawing` | `EditRecipeV2.drawing_layers` | `FREEHAND_DRAWING_ENABLED` (default on) + `freehandDrawing` in `PHONE_RENDER_VERIFIED_FEATURES` + client protocol >= `FREEHAND_DRAWING_MIN_CLIENT_PROTOCOL` (5) | [pipelines/drawing.md](../pipelines/drawing.md) |
+| `freehandDrawing` | `EditRecipeV2.drawing_layers` | `FREEHAND_DRAWING_ENABLED` (default on) + `freehandDrawing` in `PHONE_RENDER_VERIFIED_FEATURES` + client protocol >= `FREEHAND_DRAWING_MIN_CLIENT_PROTOCOL` (6) | [pipelines/drawing.md](../pipelines/drawing.md) |
 
 Prod step before the Draw tool appears: add `freehandDrawing` to
-`PHONE_RENDER_VERIFIED_FEATURES` (fly secret, api + worker, restart). Builds under protocol 5
+`PHONE_RENDER_VERIFIED_FEATURES` (fly secret, api + worker, restart). Builds under protocol 6
 get `426 client_update_required` (`feature: "drawing"`) from `device-render` and `editor-commit`
 for a variant that has drawings.
