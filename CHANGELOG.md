@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.249.0] - 2026-10-12
+
+### Fixed
+- fix(kria): stop the "simpler version?" loop and the false context-limit reply (KRI-610, KRI-611, KRI-613) (#1562) <!-- release-pr: 1562 -->
+
 ## [0.78.248.0] - 2026-10-12
 
 ### Changed
