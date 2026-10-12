@@ -194,7 +194,8 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
         prompt_id="clip_request_resolver",
         # KRI-516: chapter captions under a filming-time order are consecutive runs.
         # KRI-520: optional Turkish reply-language line.
-        prompt_version="2026-10-08.2",
+        # KRI-613: a clarifying question never names an op/field ("…for a label operation").
+        prompt_version="2026-10-12.1",
         # Text-only match against pre-computed clip records; flash + a small
         # thinking budget mirrors clip_plan_matcher's measured setting.
         model="gemini-2.5-flash",
