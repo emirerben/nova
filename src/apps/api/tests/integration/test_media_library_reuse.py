@@ -48,6 +48,8 @@ if not os.environ.get("DATABASE_URL", "").rsplit("/", 1)[-1].endswith("_test"):
 
 @pytest.fixture(autouse=True)
 async def dispose_pool():
+    # A preceding module may leave connections bound to its finished event loop.
+    await engine.dispose(close=False)
     yield
     await engine.dispose()
 

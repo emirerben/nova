@@ -315,7 +315,13 @@ def ui_shards(event, groups):
 def gate(needs, suite, job):
     """A skipped job passes ONLY when a successful selector explicitly opted out."""
     required_needs = (
-        {"changes", "test-api-suite", "journey", "creator-contract-replay"}
+        {
+            "changes",
+            "test-api-suite",
+            "journey",
+            "journey-library",
+            "creator-contract-replay",
+        }
         if suite in ("api", "journey")
         else {"changes", job}
     )
@@ -341,6 +347,38 @@ def gate(needs, suite, job):
     result = needs[job].get("result")
     if selected not in ("true", "false"):
         raise ValueError("Missing or invalid suite selection")
+    if suite == "journey":
+        ids = (
+            outputs.get("journey_ids", "").split(",")
+            if outputs.get("journey_ids")
+            else []
+        )
+        allowed = {journey["id"] for journey in JOURNEYS}
+        coverage = outputs.get("journey_coverage")
+        if selected == "true":
+            if (
+                coverage != "covered"
+                or not ids
+                or len(ids) != len(set(ids))
+                or not set(ids) <= allowed
+            ):
+                raise ValueError(
+                    "Journey selection has an unmapped or invalid incident"
+                )
+        elif ids or coverage != "not_applicable":
+            raise ValueError("Inconsistent unselected journey coverage")
+        library = "kri-384-library-ingest" in ids
+        native = any(incident != "kri-384-library-ingest" for incident in ids)
+        for lane, enabled in (("journey", native), ("journey-library", library)):
+            expected = "success" if enabled else "skipped"
+            actual = needs[lane].get("result")
+            if actual != expected:
+                raise ValueError(f"{lane}: expected {expected}, got {actual}")
+        return (
+            "journey: passed"
+            if selected == "true"
+            else "journey: not applicable to this PR"
+        )
     expected = "success" if selected == "true" else "skipped"
     if result != expected:
         raise ValueError(f"{suite}: expected {expected}, got {result}")

@@ -136,8 +136,18 @@ class GateTests(unittest.TestCase):
     def test_required_journey_gate_accepts_only_selected_success_or_explicit_skip(self):
         for selected, result in (("true", "success"), ("false", "skipped")):
             needs = {
-                "changes": {"result": "success", "outputs": {"journey": selected}},
+                "changes": {
+                    "result": "success",
+                    "outputs": {
+                        "journey": selected,
+                        "journey_ids": "kri-524-creation" if selected == "true" else "",
+                        "journey_coverage": "covered"
+                        if selected == "true"
+                        else "not_applicable",
+                    },
+                },
                 "journey": {"result": result},
+                "journey-library": {"result": "skipped"},
                 # test-api has other dependencies; they must not weaken this gate.
                 "test-api-suite": {"result": "success"},
                 "creator-contract-replay": {"result": "success"},
@@ -159,6 +169,7 @@ class GateTests(unittest.TestCase):
                 "changes": {"result": "success", "outputs": {"api": "true"}},
                 "test-api-suite": {"result": "success"},
                 "journey": {"result": "skipped"},
+                "journey-library": {"result": "skipped"},
                 "creator-contract-replay": {"result": "success"},
             },
             "api",
@@ -171,6 +182,64 @@ class GateTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 ci.gate(needs, "web", "suite")
+
+    def test_library_journey_requires_its_own_success_without_borrowing_native(self):
+        def needs(ids, native, library, coverage="covered"):
+            return {
+                "changes": {
+                    "result": "success",
+                    "outputs": {
+                        "journey": "true",
+                        "journey_ids": ids,
+                        "journey_coverage": coverage,
+                    },
+                },
+                "test-api-suite": {"result": "success"},
+                "creator-contract-replay": {"result": "success"},
+                "journey": {"result": native},
+                "journey-library": {"result": library},
+            }
+
+        library_id = "kri-384-library-ingest"
+        mixed = "kri-524-creation," + library_id
+        for ids, native, library in (
+            (library_id, "skipped", "success"),
+            (mixed, "success", "success"),
+            ("kri-524-creation", "success", "skipped"),
+        ):
+            with self.subTest(ids=ids):
+                ci.gate(needs(ids, native, library), "journey", "journey")
+
+        for ids, native, library in (
+            (library_id, "success", "skipped"),
+            (library_id, "skipped", "failure"),
+            (library_id, "skipped", "cancelled"),
+            (library_id, "skipped", None),
+            (mixed, "skipped", "success"),
+            (mixed, "success", "skipped"),
+            ("kri-524-creation", "success", "success"),
+        ):
+            with self.subTest(ids=ids, native=native, library=library):
+                with self.assertRaises(ValueError):
+                    ci.gate(needs(ids, native, library), "journey", "journey")
+
+        for ids, coverage in (
+            (library_id, "gap"),
+            ("unknown", "covered"),
+            (library_id + "," + library_id, "covered"),
+            ("", "covered"),
+        ):
+            with (
+                self.subTest(ids=ids, coverage=coverage),
+                self.assertRaises(ValueError),
+            ):
+                ci.gate(
+                    needs(ids, "skipped", "success", coverage), "journey", "journey"
+                )
+        missing = needs(library_id, "skipped", "success")
+        del missing["journey-library"]
+        with self.assertRaises(ValueError):
+            ci.gate(missing, "journey", "journey")
 
     def test_ios_gate_rejects_missing_or_inconsistent_ui_selection(self):
         for ios, ui in (("true", None), ("true", ""), ("false", "true")):
@@ -496,6 +565,18 @@ class GitDiffTests(unittest.TestCase):
     def test_journey_manifest_coverage_is_explicit_and_fail_closed(self):
         cases = (
             (
+                "src/apps/api/app/pipeline/clip_cache.py",
+                (True, "covered", "kri-384-library-ingest"),
+            ),
+            (
+                "src/apps/api/app/pipeline/transcribe.py",
+                (True, "covered", "kri-384-library-ingest"),
+            ),
+            (
+                "src/apps/api/app/schemas/media_assets.py",
+                (True, "covered", "kri-384-library-ingest"),
+            ),
+            (
                 "src/apps/api/app/pipeline/guided_story.py",
                 (True, "covered", "kri-524-creation"),
             ),
@@ -505,7 +586,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/planner.py",
-                (True, "covered", "kri-524-creation,kri-557-thinking,kri-577-reliability-gates"),
+                (
+                    True,
+                    "covered",
+                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates",
+                ),
             ),
             (
                 "src/apps/api/app/tasks/content_plan_build.py",

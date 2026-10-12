@@ -2,6 +2,29 @@
   "schema_version": 1,
   "journeys": [
     {
+      "id": "kri-384-library-ingest",
+      "api_tests": "tests/integration/test_media_library_ingest.py tests/integration/test_media_library_analysis.py tests/integration/test_media_library_reuse.py tests/pipeline/test_library_transcription_cost.py tests/routes/test_media_assets.py tests/routes/test_media_library_attachments.py tests/services/test_media_library_source_verification.py",
+      "paths": [
+        "src/apps/api/app/pipeline/clip_cache.py",
+        "src/apps/api/app/pipeline/transcribe.py",
+        "src/apps/api/app/schemas/media_assets.py",
+        "src/apps/api/app/routes/media_assets.py",
+        "src/apps/api/app/services/media_library_ingest.py",
+        "src/apps/api/app/services/media_library_analysis.py",
+        "src/apps/api/app/services/media_library_projections.py",
+        "src/apps/api/app/services/temporary_uploads.py",
+        "src/apps/api/app/tasks/media_library.py",
+        "src/apps/api/app/migrations/versions/0119_media_library_ingest.py",
+        "src/apps/api/tests/integration/test_media_library_ingest.py",
+        "src/apps/api/tests/integration/test_media_library_analysis.py",
+        "src/apps/api/tests/integration/test_media_library_reuse.py",
+        "src/apps/api/tests/pipeline/test_library_transcription_cost.py",
+        "src/apps/api/tests/routes/test_media_assets.py",
+        "src/apps/api/tests/routes/test_media_library_attachments.py",
+        "src/apps/api/tests/services/test_media_library_source_verification.py"
+      ]
+    },
+    {
       "id": "kri-492-length-ownership",
       "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py",
       "paths": [
