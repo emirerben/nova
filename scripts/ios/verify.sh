@@ -181,6 +181,7 @@ if [[ "${KRIA_SKIP_SIMULATOR_TESTS:-0}" == "1" ]]; then
 fi
 
 SIMULATOR_ID="$(select_simulator)"
+printf '%s\n' "$SIMULATOR_ID" > "$RESULT_ROOT/simulator-id.txt"
 
 DESTINATION="platform=iOS Simulator,id=$SIMULATOR_ID"
 

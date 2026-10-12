@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.246.0] - 2026-10-12
+
+### Changed
+- fix(kria): write a footage line on each clip for "explain the footages" (KRI-612) (#1569) <!-- release-pr: 1569 -->
+
+## [0.78.245.0] - 2026-10-12
+
+### Changed
+- Unblock Mac CI and reuse one iPhone build per PR (#1567) <!-- release-pr: 1567 -->
+
 ## [0.78.244.0] - 2026-10-12
 
 ### Changed
