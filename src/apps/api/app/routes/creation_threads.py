@@ -119,6 +119,7 @@ from app.services.job_storage_paths import (
     normalize_job_storage_path,
     owned_job_output_path,
 )
+from app.services.media_filenames import safe_media_basename
 from app.services.phone_destination import (
     has_device_intent,
     has_native_device_only_intent,
@@ -6325,6 +6326,14 @@ async def attach_media(
                     "duration_s": source["duration_s"],
                     "has_audio": source["has_audio"],
                     "manifest_identity": source["media_id"],
+                    # KRI-614: the name the app shows for this clip ("IMG_7382.MOV"), so
+                    # "first IMG_7382 then ..." can name it. Evidence only: never part of
+                    # the manifest identity or hash.
+                    **(
+                        {"source_filename": filename}
+                        if (filename := safe_media_basename(source["filename"]))
+                        else {}
+                    ),
                     # KRI-189: authoritative filming context (source of truth for
                     # the fact layer); coarse by construction.
                     **({"capture": source["_capture"]} if "_capture" in source else {}),
