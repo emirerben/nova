@@ -214,6 +214,19 @@ class Settings(BaseSettings):
     # source clips bumps its protocol to this value; builds that predate it
     # send a lower one (or none) and keep the lanes closed.
     phone_voiceover_editor_min_client_protocol: int = 3
+    # KRI-608: sound effects on a phone-rendered guided / montage story. The
+    # guided phone compiler used to reject `editor_sound_effects` /
+    # `licensed_sfx_intent`; with this flag on it compiles them to an `sfx`
+    # audio track (the same track Talking and Voiceover already play).
+    # `phone_rollout.phone_guided_sfx_supported()` is the single source of
+    # truth: this flag AND `sound_effects_enabled` AND `soundEffects` +
+    # `audioMix` in `phone_render_verified_features`. Capabilities, chat,
+    # Save, the worker and creation all consult it, so none advertises what
+    # another would refuse. False (default): byte-identical, guided phone
+    # edits stay SFX-free and a Save carrying SFX 422s.
+    # Rollback: `fly secrets set PHONE_GUIDED_SFX_ENABLED=false --app
+    # nova-video` + `fly machine restart <id>` (api + worker).
+    phone_guided_sfx_enabled: bool = False
     # KRI-519 kill switch: KRI-178 reaction beats ("when I say the medal, show
     # my medal photo") on a phone Voiceover (`narrated*` + recorded voiceover)
     # edit. Only takes effect while
@@ -250,6 +263,18 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     phone_subtitled_fullscreen_overlays_enabled: bool = True
+    # KRI-547 kill switch: when the approved brief asks for a vertical / 9:16 /
+    # full-screen / "keep my face in frame" video and the phone Talking speaker
+    # clip is landscape, `_run_phone_subtitled_job` samples the face across the
+    # take and cover-fills a static crop shifted onto it
+    # (`app.pipeline.phone_speaker_framing`) instead of letterboxing, and
+    # persists `variant["speaker_framing"]` for the brief receipt. Edits without
+    # such an ask are byte-identical either way. False: no ask is read, no
+    # receipt is written, landscape speakers keep `landscape_fit` exactly as
+    # before. Read per job (a worker restart picks up a flip). Rollback: `fly
+    # secrets set PHONE_SPEAKER_FACE_FILL_ENABLED=false --app nova-video` +
+    # `fly machine restart <id>` (worker). Docs: docs/pipelines/generative.md.
+    phone_speaker_face_fill_enabled: bool = True
     # KRI-136: a self-narrated (`narrated*`, no recorded voiceover) item with
     # 2+ clips that resolves to the `talking_head` archetype renders on the
     # device: the speech clip stays the main track (its audio runs the whole
@@ -618,6 +643,15 @@ class Settings(BaseSettings):
     # `fly machine restart <id>`. Needs `musicBed` + `audioMix` in
     # PHONE_RENDER_VERIFIED_FEATURES (both already verified in prod).
     user_song_montage_enabled: bool = True
+    # KRI-589: freehand finger drawings over a device-rendered edit (own `drawings` editor
+    # lane -> `EditRecipeV2.drawing_layers`). Default TRUE; needs `freehandDrawing` in
+    # PHONE_RENDER_VERIFIED_FEATURES (fly secret) and an app build declaring
+    # `X-Kria-Client-Protocol` >= `freehand_drawing_min_client_protocol`. False: capabilities
+    # close drawings.add/edit/trim and Save 422s `drawings_disabled` for new/changed
+    # drawings; stored drawings still compile and play, and drawings.delete stays open.
+    # Apply: `fly secrets set FREEHAND_DRAWING_ENABLED=false` (api + worker) + restart.
+    freehand_drawing_enabled: bool = True
+    freehand_drawing_min_client_protocol: int = 6
     # KRI-561: the song-order question is answered on a horizontal song timeline (play the
     # song, drop clips onto song time) instead of the vertical reorder list. Kill switch:
     # `fly secrets set SONG_ORDER_TIMELINE_ENABLED=false` + restart (api): capabilities drop
@@ -1719,6 +1753,17 @@ class Settings(BaseSettings):
     # false. Dual-flag with the iOS capability. Apply: `fly secrets set
     # SLIDE_POST_FRAMING_ENABLED=true --app nova-video` (api + worker) + restart.
     slide_post_framing_enabled: bool = False
+    # KRI-606: post-wide size (9:16/4:5/3:4/1:1/1.91:1) and per-photo Fit with
+    # bars. Needs `slide_post_framing_enabled` too (Fit lives in the Crop workspace).
+    # Off: the slide-post PUT keeps the stored `aspect`/`fit` and ignores incoming
+    # values, the chat ops are unavailable, and capability `slide_post_sizes` is
+    # false. The renderer always honours stored values. Roll back by flipping the
+    # flag only: draft models drop unknown keys, so rolling the CODE back after
+    # sizes exist would erase them on the next save. Apply: `fly secrets set
+    # SLIDE_POST_SIZES_ENABLED=true --app nova-video` (api + worker) + restart.
+    slide_post_sizes_enabled: bool = False
+    # Chat ops that write the size/Fit need an app that round-trips them (protocol 5).
+    slide_post_sizes_min_client_protocol: int = 5
     # KRI-557: provider-marked Gemini thought summaries for native creation and
     # slide-post calls. Deploy dark; enable after production canary with
     # THOUGHT_SUMMARIES_ENABLED=true for API and Celery processes after canary.

@@ -7,7 +7,14 @@ from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
-from app.pipeline.best_parts import BestPart, BestPartsConflict, BestPartsResult, select_best_parts
+from app.kria.media_sources import PROXY_ORIGINAL_DURATION_TOLERANCE_S
+from app.pipeline.best_parts import (
+    BestPart,
+    BestPartsConflict,
+    BestPartsResult,
+    select_best_parts,
+    select_moment_windows,
+)
 from app.schemas.edit_proposal import (
     MixedMediaTimingProfile,
     mixed_media_hold_bounds,
@@ -26,6 +33,8 @@ LENGTH_PLAN_VERSION = 1
 # does not depend on the renderer (which reads this envelope).
 _STILL_CAPACITY_S = 3.0
 _STILL_PREFERRED_WINDOW_S = 1.2
+# "Six moments" with no length: each moment gets this much (KRI-596).
+DEFAULT_MOMENT_S = 2.5
 
 
 def _number(value: object) -> float | None:
@@ -103,11 +112,21 @@ def build_length_plan(
     selected_ids: Sequence[str] = (),
     order_ids: Sequence[str] = (),
     licensed_music: Mapping[str, Any] | None = None,
+    closing_quote: Mapping[str, Any] | None = None,
+    moment_count: int | None = None,
+    moment_max_s: float | None = None,
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
 
     Only ``creator_target_s`` supplied by a trusted boundary becomes a hard
     target. Strategy fields are intentionally never treated as proof here.
+
+    A montage may take several moments from one take (KRI-596): ``moment_count``
+    moments, or as many ``moment_max_s`` moments as the target needs, when that is
+    more than one per take. A found ``closing_quote`` (KRI-597,
+    ``spoken_quotes.ground_closing_quote``) pins its take's last window to the
+    creator's quoted line; the record rides on the plan either way, so the
+    receipt can say whether the line was found and held.
     """
 
     natural_owner = natural_length_owner(strategy)
@@ -274,6 +293,18 @@ def build_length_plan(
                 round(sum(selected.capacity_s for selected in slot_results), 3),
                 selector_conflicts,
             )
+    elif eligible and (
+        moment_windows := _moment_or_quote_windows(
+            strategy,
+            ordered_sources,
+            creator_target_s,
+            natural_owner,
+            closing_quote,
+            moment_count,
+            moment_max_s,
+        )
+    ):
+        result = moment_windows
     elif eligible:
         budget = creator_target_s if creator_target_s is not None else natural_duration_s
         raw_capacity = min(120.0, round(sum(source["duration_s"] for source in ordered_sources), 3))
@@ -400,6 +431,15 @@ def build_length_plan(
         "windows": windows,
         "conflicts": conflicts,
     }
+    if closing_quote is not None:
+        quote = dict(closing_quote)
+        held = any(part.reason == "closing_quote" for part in (result.parts if result else ()))
+        if quote.get("status") == "found" and not held:
+            line_s = (_number(quote.get("end_s")) or 0.0) - (_number(quote.get("start_s")) or 0.0)
+            # Found, but the creator's length cannot also hold the whole line.
+            too_long = creator_target_s is not None and line_s >= creator_target_s
+            quote["status"] = "too_long" if too_long else "not_held"
+        plan["closing_quote"] = quote
     if licensed_music is not None:
         plan["licensed_music"] = dict(licensed_music)
     elif isinstance(strategy.get("selected_music_section"), Mapping):
@@ -407,6 +447,84 @@ def build_length_plan(
     elif isinstance(strategy.get("licensed_music_selection"), Mapping):
         plan["licensed_music"] = dict(strategy["licensed_music_selection"])
     return plan
+
+
+def _moment_or_quote_windows(
+    strategy: Mapping[str, Any],
+    sources: Sequence[Mapping[str, Any]],
+    creator_target_s: float | None,
+    natural_owner: str,
+    closing_quote: Mapping[str, Any] | None,
+    moment_count: int | None,
+    moment_max_s: float | None,
+) -> BestPartsResult | None:
+    """Moments inside long takes, and/or a held closing line; None keeps the selector.
+
+    Only a footage-owned montage of videos qualifies: voiceover and song edits and
+    photos keep one window per source exactly as before. Moments share the creator's
+    length, or ``DEFAULT_MOMENT_S`` each when they gave none.
+    """
+    if (
+        strategy.get("edit_format") != "montage"
+        or natural_owner != "footage"
+        or not sources
+        or any(source["kind"] != "video" for source in sources)
+    ):
+        return None
+    pinned: tuple[str, float, float] | None = None
+    if isinstance(closing_quote, Mapping) and closing_quote.get("status") == "found":
+        media_id = closing_quote.get("media_id")
+        start, end = _number(closing_quote.get("start_s")), _number(closing_quote.get("end_s"))
+        if (
+            any(source["media_id"] == media_id for source in sources)
+            and start is not None
+            and end is not None
+            and (creator_target_s is None or end - start < creator_target_s)
+        ):
+            pinned = (str(media_id), start, end)
+    count = moment_count
+    if count is None and moment_max_s and creator_target_s is not None:
+        count = math.ceil(creator_target_s / moment_max_s - 1e-9)
+    if count is not None and count > len(sources):
+        moments = select_moment_windows(
+            sources,
+            target_duration_s=(
+                creator_target_s if creator_target_s is not None else count * DEFAULT_MOMENT_S
+            ),
+            moment_count=count,
+            pinned_last=pinned,
+        )
+        if moments is not None:
+            return moments
+    if pinned is None:
+        return None
+    # One window per take, the closing take's being the creator's line.
+    media_id, start, end = pinned
+    others = [source for source in sources if source["media_id"] != media_id]
+    if not others:
+        # The line alone is the video: it grows backwards to the length asked (or 3 s).
+        start = max(0.0, min(start, end - (creator_target_s or 3.0)))
+        part = BestPart(media_id, round(start, 3), round(end, 3), 0.0, "closing_quote")
+        return BestPartsResult(
+            (part,), creator_target_s or part.duration_s, part.duration_s, part.duration_s
+        )
+    line = BestPart(media_id, round(start, 3), round(end, 3), 0.0, "closing_quote")
+    rest = select_best_parts(
+        others,
+        target_duration_s=(
+            round(creator_target_s - line.duration_s, 3) if creator_target_s is not None else None
+        ),
+        minimum_duration_s={source["media_id"]: source["minimum_duration_s"] for source in others},
+    )
+    if rest.conflicts or not rest.parts:
+        return None
+    total = round(rest.duration_s + line.duration_s, 3)
+    return BestPartsResult(
+        (*rest.parts, line),
+        creator_target_s if creator_target_s is not None else total,
+        total,
+        round(rest.capacity_s + line.duration_s, 3),
+    )
 
 
 def read_length_plan(
@@ -454,14 +572,26 @@ def read_length_plan(
         # A still's recorded capacity is an allocation rule, not media
         # metadata.  Its upload duration is commonly None or zero and must not
         # invalidate the approved synthetic hold.
+        #
+        # The plan records the analysis proxy's duration, which a frame-rate
+        # encode rounds to whole frames (a 4.968 s original becomes a 5.0 s
+        # proxy), while the worker measures the original.  The identity checks
+        # above (path + storage generation) are what detect a replaced file;
+        # this one only catches a grossly different one, with the same slack the
+        # upload contract allows between a proxy and its original (KRI-595).
         if expected_duration is None or (
             kind != "image"
-            and (actual_duration is None or abs(expected_duration - actual_duration) > 0.001)
+            and (
+                actual_duration is None
+                or abs(expected_duration - actual_duration) > PROXY_ORIGINAL_DURATION_TOLERANCE_S
+            )
         ):
             raise ValueError("length plan source duration changed")
         expected[source["media_id"]] = source
     parts: list[BestPart] = []
     included: set[str] = set()
+    # KRI-596: a take may give several moments, never the same footage twice.
+    spans: dict[str, list[tuple[float, float]]] = {}
     for window in windows:
         if not isinstance(window, Mapping) or window.get("media_id") not in expected:
             raise ValueError("invalid length plan window")
@@ -469,8 +599,6 @@ def read_length_plan(
         end = _number(window.get("source_end_s"))
         score = _number(window.get("score", 0))
         clip = actual[window["media_id"]]
-        if window["media_id"] in included:
-            raise ValueError("duplicate length plan window")
         source_duration = expected[window["media_id"]]["duration_s"]
         if (
             start is None
@@ -480,6 +608,19 @@ def read_length_plan(
             or end > float(source_duration) + 0.001
         ):
             raise ValueError("length plan window exceeds source")
+        if expected[window["media_id"]].get("kind", "video") == "video":
+            # A window the proxy allowed may run a frame past the real clip.
+            actual_end = _number(getattr(clip, "duration_s", None))
+            if actual_end is not None and end > actual_end:
+                end = math.floor(actual_end * 1000) / 1000
+                if end - start < 0.1 - 1e-9:
+                    raise ValueError("length plan window exceeds source")
+        if any(
+            start < other_end - 0.001 and end > other_start + 0.001
+            for other_start, other_end in spans.get(window["media_id"], [])
+        ):
+            raise ValueError("length plan windows overlap")
+        spans.setdefault(window["media_id"], []).append((start, end))
         included.add(window["media_id"])
         parts.append(
             BestPart(

@@ -10,7 +10,11 @@ The model never owns timestamps. It names a ``start_word_id`` from the supplied
 transcript; the worker (``app.pipeline.narrated_alignment``) turns that into
 step boundaries, enforces a minimum step length, and falls back to the legacy
 bucket split whenever the answer is unusable. ``parse`` is strict on purpose: a
-half-right placement list is worse than the fallback.
+half-right placement list is worse than the fallback. The one exception is the
+creator's described sequence (``ordered_groups``): on a voiceover edit the narration
+decides when a clip appears, so placements that keep every pin and strictly increasing
+start words but reach the clips in another order are accepted and flagged
+(``sequence_overridden``, KRI-590) instead of failing the render.
 """
 
 from __future__ import annotations
@@ -49,8 +53,10 @@ class NarratedClipAlignmentInput(BaseModel):
     pinned_first: list[str] = Field(default_factory=list, max_length=50)
     pinned_last: list[str] = Field(default_factory=list, max_length=50)
     # The creator's described sequence ("then the pasta, then the cheese"): clip ids per
-    # group, in the creator's listed order. Every clip of a group must come before every
-    # clip of the next group; clips in no group are free. Ignored when ``order_locked``.
+    # group, in the creator's listed order. The model is asked to show every clip of a
+    # group before every clip of the next group; clips in no group are free. Unlike the
+    # pins it is not enforced: when the voiceover reaches the clips in another order the
+    # narration wins and the output says so (KRI-590). Ignored when ``order_locked``.
     ordered_groups: list[list[str]] = Field(default_factory=list, max_length=50)
     language: str = Field(default="", max_length=20)
 
@@ -90,6 +96,11 @@ class NarratedClipAlignmentOutput(BaseModel):
     # PINNED mode only: the model listed the placements out of screen order and parse
     # re-sorted them by start word (KRI-532). Recorded on the pipeline trace.
     resorted: bool = False
+    # PINNED mode only: the placements keep every pin but not the creator's described
+    # sequence (`ordered_groups`), because the voiceover reaches those clips in another
+    # order ("show X when I say Y" cues said in a different order than they were typed).
+    # Accepted in the narration's order; the worker records it (KRI-590).
+    sequence_overridden: bool = False
 
 
 def _order_mode_text(input: NarratedClipAlignmentInput) -> str:  # noqa: A002
@@ -262,10 +273,22 @@ class NarratedClipAlignmentAgent(Agent[NarratedClipAlignmentInput, NarratedClipA
                     f"narrated_clip_alignment: pinned closing clips {tail} must come last "
                     "in that order"
                 )
-            screen_pos = {clip_id: i for i, clip_id in enumerate(listed)}
-            for before, after in zip(input.ordered_groups, input.ordered_groups[1:]):
-                if max(screen_pos[c] for c in before) > min(screen_pos[c] for c in after):
-                    raise SchemaError(
-                        f"narrated_clip_alignment: clips {before} must all come before {after}"
-                    )
-        return NarratedClipAlignmentOutput(placements=placements, resorted=resorted)
+        return NarratedClipAlignmentOutput(
+            placements=placements,
+            resorted=resorted,
+            sequence_overridden=input.pinned
+            and _breaks_described_sequence([p.clip_id for p in placements], input.ordered_groups),
+        )
+
+
+def _breaks_described_sequence(screen_order: list[str], ordered_groups: list[list[str]]) -> bool:
+    """True when some clip of a described group is on screen after a clip of the next group.
+
+    Members of one group need not be contiguous, and clips in no group are free. Every
+    grouped clip is placed (``parse`` requires one placement per clip).
+    """
+    screen_pos = {clip_id: i for i, clip_id in enumerate(screen_order)}
+    return any(
+        max(screen_pos[c] for c in before) > min(screen_pos[c] for c in after)
+        for before, after in zip(ordered_groups, ordered_groups[1:])
+    )

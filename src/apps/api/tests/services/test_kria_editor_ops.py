@@ -1090,14 +1090,55 @@ def test_guided_story_keeps_the_title_family_for_its_title_bar(monkeypatch) -> N
 
 def test_device_variants_do_not_advertise_lanes_the_phone_cannot_render(monkeypatch) -> None:
     variant = _variant()
-    monkeypatch.setattr(
-        "app.services.kria_editor_ops._editor_capabilities",
-        lambda _job, _variant: {"text_elements": True, "sfx": True, "camera_effects": True},
-    )
+    caps = {"text_elements": True, "sfx": True, "camera_effects": True}
+    monkeypatch.setattr("app.services.kria_editor_ops._editor_capabilities", lambda _j, _v: caps)
     assert {"sfx", "effect"} <= set(
         build_editor_snapshot(_job(variant), variant)["allowed_op_families"]
     )
 
+    # KRI-608: the clamped capability map is the gate. A device variant whose clamped map
+    # keeps `sfx` open (Talking / Voiceover / guided with the rollout on) offers it; the
+    # phone still has no camera-effect lane.
     variant["render_destination"] = "device"
     families = set(build_editor_snapshot(_job(variant), variant)["allowed_op_families"])
+    assert "sfx" in families
+    assert "effect" not in families
+
+    # The clamp closes `sfx` where Save cannot compile it, and chat follows.
+    caps["sfx"] = False
+    families = set(build_editor_snapshot(_job(variant), variant)["allowed_op_families"])
     assert not families & {"sfx", "effect"}
+
+
+def _device_caps(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True, "sfx": True},
+    )
+
+
+@pytest.mark.parametrize("archetype", ["subtitled", "narrated"])
+def test_chat_waits_for_a_save_before_offering_sfx_on_a_lane_projected_variant(
+    monkeypatch, archetype
+) -> None:
+    # KRI-608: a never-saved Talking / Voiceover variant carries its effects only in the
+    # pinned recipe, so a chat `add_sfx` from the empty row would drop the playing ones.
+    _device_caps(monkeypatch)
+    variant = _variant()
+    variant["render_destination"] = "device"
+    variant["resolved_archetype"] = archetype
+    families = build_editor_snapshot(_job(variant), variant)["allowed_op_families"]
+    assert "sfx" not in families
+
+    variant["sound_effects"] = [{"id": "kept", "sound_effect_id": "pop", "at_s": 1.0}]
+    families = build_editor_snapshot(_job(variant), variant)["allowed_op_families"]
+    assert "sfx" in families
+
+
+def test_chat_offers_sfx_on_a_guided_device_variant_without_stored_effects(monkeypatch) -> None:
+    # A guided story's base is its revision, so there is nothing to lose.
+    _device_caps(monkeypatch)
+    variant = _variant()
+    variant["render_destination"] = "device"
+    variant["resolved_archetype"] = "guided_story"
+    assert "sfx" in build_editor_snapshot(_job(variant), variant)["allowed_op_families"]

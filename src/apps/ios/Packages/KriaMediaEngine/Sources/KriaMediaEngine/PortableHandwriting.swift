@@ -40,18 +40,38 @@ public struct TextPenStroke: Codable, Equatable, Sendable {
     public func visiblePoints(at revealProgress: Double) -> [TextStrokePoint] {
         if revealProgress <= startProgress { return [] }
         if revealProgress >= endProgress { return points }
-        let progress = (revealProgress - startProgress) / max(1e-9, endProgress - startProgress)
-        let lengths = zip(points, points.dropFirst()).map { hypot($1.x - $0.x, $1.y - $0.y) }
+        return StrokeReveal.prefix(points, fraction: (revealProgress - startProgress) / max(1e-9, endProgress - startProgress))
+    }
+}
+
+/// A polyline vertex `StrokeReveal` can walk (handwriting pen points, drawing points).
+public protocol StrokeRevealPoint {
+    var x: Double { get }
+    var y: Double { get }
+    init(x: Double, y: Double)
+}
+extension TextStrokePoint: StrokeRevealPoint {}
+
+/// The arc-length reveal shared by authored handwriting and freehand drawing (KRI-589): the pen's
+/// travel is a fraction of the polyline's total LENGTH, never of its point count.
+public enum StrokeReveal {
+    public static func segmentLengths<P: StrokeRevealPoint>(_ points: [P]) -> [Double] {
+        zip(points, points.dropFirst()).map { hypot($1.x - $0.x, $1.y - $0.y) }
+    }
+
+    /// The part of `points` drawn after `fraction` (strictly between 0 and 1) of its length.
+    public static func prefix<P: StrokeRevealPoint>(_ points: [P], fraction: Double) -> [P] {
+        let lengths = segmentLengths(points)
         let total = lengths.reduce(0, +)
         if total <= 1e-9 { return Array(points.prefix(2)) }
-        let target = total * progress
+        let target = total * fraction
         var walked = 0.0, result = [points[0]]
         for (index, length) in lengths.enumerated() {
             let next = walked + length
             if target >= next { result.append(points[index + 1]); walked = next; continue }
             let ratio = (target - walked) / max(length, 1e-9)
-            result.append(TextStrokePoint(x: points[index].x + (points[index + 1].x - points[index].x) * ratio,
-                                          y: points[index].y + (points[index + 1].y - points[index].y) * ratio))
+            result.append(P(x: points[index].x + (points[index + 1].x - points[index].x) * ratio,
+                            y: points[index].y + (points[index + 1].y - points[index].y) * ratio))
             break
         }
         return result

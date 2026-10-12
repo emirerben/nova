@@ -655,7 +655,8 @@ enum NativePreviewDiagnostics {
         let url = root.appendingPathComponent("native-preview-diagnostics.json")
         var events = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([[String: String]].self, from: $0) } ?? []
         events.append(fields.merging(["stage": stage, "time": ISO8601DateFormatter().string(from: Date())]) { _, value in value })
-        if let data = try? JSONEncoder().encode(Array(events.suffix(40))) { try? data.write(to: url, options: .atomic) }
+        // KRI-587: one editor open on a 10-clip edit writes ~45 events, so 40 lost a failure seconds later.
+        if let data = try? JSONEncoder().encode(Array(events.suffix(150))) { try? data.write(to: url, options: .atomic) }
     }
     /// Recorded from every build (unlike `failure`, which is DEBUG-only): a TestFlight phone is exactly where a
     /// player item fails with nobody attached. Numeric AVFoundation identity only, so it is safe to upload.
@@ -809,7 +810,7 @@ enum NativePreviewDiagnostics {
                         if case .array(let cues) = variant["caption_cues"], let first = cues.first {
                             row["captionKeys"] = object(first).keys.sorted().joined(separator: ",")
                         }
-                        for lane in ["media_overlays", "sound_effects", "visual_blocks", "motion_scenes", "camera_effects", "narrated_timings", "story_timeline"] { row[lane] = String(count(variant[lane])) }
+                        for lane in ["media_overlays", "sound_effects", "visual_blocks", "motion_scenes", "camera_effects", "drawings", "narrated_timings", "story_timeline"] { row[lane] = String(count(variant[lane])) }
                         if case .number(let duration) = variant["duration_s"] { row["duration"] = String(duration) }
                         do {
                         let timeline: [String: JSONValue] = try await api.request(path: "generative-jobs/\(job.uuidString)/variants/\(id)/timeline", method: "GET", bodyData: nil, decode: [String: JSONValue].self)

@@ -34,6 +34,21 @@ DEFAULT_PLATFORM_PROFILE: PlatformProfile = "tiktok_photo"
 _TIKTOK_PHOTO_CANVAS = (1080, 1920)
 _INSTAGRAM_CAROUSEL_CANVAS = (1080, 1350)
 
+# Post-wide size (KRI-606). One size for every slide: Instagram crops every
+# later slide to the first slide's shape, so a mixed-shape export could never
+# post cleanly. Keyed by the id the client sends; all dimensions are even.
+SlideAspect = Literal["9:16", "4:5", "3:4", "1:1", "1.91:1"]
+SLIDE_ASPECT_IDS: tuple[str, ...] = get_args(SlideAspect)
+ASPECT_CANVASES: dict[str, tuple[int, int]] = {
+    "9:16": (1080, 1920),
+    "4:5": (1080, 1350),
+    "3:4": (1080, 1440),
+    "1:1": (1080, 1080),
+    "1.91:1": (1080, 566),
+}
+# Sizes both apps display natively (TikTok shows them with bars).
+SHARED_ASPECTS: frozenset[str] = frozenset({"4:5", "3:4", "1:1"})
+
 
 @dataclass(frozen=True)
 class PlatformProfileSpec:
@@ -49,6 +64,9 @@ class PlatformProfileSpec:
     # A slide may export on its own landscape canvas (KRI-44). Instagram forces
     # one shape for every slide, so only the TikTok photo profile allows it.
     allows_landscape: bool = False
+    # Post-wide sizes (KRI-606). `canvas` is always the default size's canvas.
+    default_aspect: SlideAspect = "9:16"
+    allowed_aspects: tuple[SlideAspect, ...] = ("9:16",)
 
 
 PLATFORM_PROFILES: dict[PlatformProfile, PlatformProfileSpec] = {
@@ -61,6 +79,8 @@ PLATFORM_PROFILES: dict[PlatformProfile, PlatformProfileSpec] = {
         max_video_duration_s=None,
         canvas=_TIKTOK_PHOTO_CANVAS,
         allows_landscape=True,
+        default_aspect="9:16",
+        allowed_aspects=("9:16", "3:4", "4:5", "1:1"),
     ),
     "instagram_carousel": PlatformProfileSpec(
         id="instagram_carousel",
@@ -70,8 +90,32 @@ PLATFORM_PROFILES: dict[PlatformProfile, PlatformProfileSpec] = {
         max_slides=20,
         max_video_duration_s=90.0,
         canvas=_INSTAGRAM_CAROUSEL_CANVAS,
+        default_aspect="4:5",
+        allowed_aspects=("4:5", "3:4", "1:1", "1.91:1"),
     ),
 }
+
+
+def coerce_aspect(profile: PlatformProfile, aspect: object) -> SlideAspect | None:
+    """The aspect when it is valid for ``profile`` and not the default, else None.
+
+    None means "the profile's default size". The default is normalized to None
+    so a draft that never chose a size serializes (and hashes) exactly as it did
+    before sizes existed.
+    """
+
+    spec = PLATFORM_PROFILES[profile]
+    if isinstance(aspect, str) and aspect in spec.allowed_aspects and aspect != spec.default_aspect:
+        return aspect  # type: ignore[return-value]
+    return None
+
+
+def post_canvas(profile: PlatformProfile, aspect: object = None) -> tuple[int, int]:
+    """The post-wide canvas (every slide's size, and the preview's)."""
+
+    spec = PLATFORM_PROFILES[profile]
+    resolved = coerce_aspect(profile, aspect) or spec.default_aspect
+    return ASPECT_CANVASES[resolved]
 
 
 def coerce_platform_profile(value: object) -> PlatformProfile:

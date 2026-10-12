@@ -42,6 +42,7 @@ struct SlidePostWorkspaceView: View {
     @State private var mode: SlidePostMode = .browse
     @State private var textTab: SlidePostTextPanel.Tab = .edit
     @State private var showsCaption = false
+    @State private var showsSize = false
     /// Bumped to put the keyboard back on the Edit field when the same text is tapped again.
     @State private var focusToken = 0
     @State private var uploadProgress: [UUID: Double] = [:]
@@ -109,6 +110,11 @@ struct SlidePostWorkspaceView: View {
         .toolbar(.hidden, for: .navigationBar)
         .onDisappear { exportTask?.cancel() }
         .sheet(isPresented: $showsCaption) { captionSheet }
+        .sheet(isPresented: $showsSize) {
+            SlidePostSizeSheet(session: session, onDone: { showsSize = false })
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
         .sheet(isPresented: $showsConversation) {
             SlidePostAISheet(
                 session: session, api: model.api, itemID: itemID,
@@ -166,15 +172,18 @@ struct SlidePostWorkspaceView: View {
         let liveLook = rich && extendedDeviceExportOn
         let preset = liveLook ? session.selectedSlide?.edits?.lookPreset ?? "none" : "none"
         let profile = session.draft?.platformProfile ?? "instagram_carousel"
-        let slideCanvas = session.selectedSlide.map { SlidePostFraming.canvas(for: $0, profile: profile) } ?? SlidePostOnDeviceRender.canvas(for: profile)
+        let aspect = session.draft?.aspect
+        let postCanvas = SlidePostOnDeviceRender.canvas(profile: profile, aspect: aspect)
+        let slideCanvas = session.selectedSlide.map { SlidePostFraming.canvas(for: $0, profile: profile, aspect: aspect) } ?? postCanvas
         let slideCrop = session.selectedSlide.flatMap { SlidePostFraming.effectiveCrop(for: $0) }
-        let playerKey = "\(asset?.id ?? "")|\(profile)|\(preset)"
+        let slideFit = session.selectedSlide.flatMap { SlidePostFraming.effectiveFit(for: $0) }
+        let playerKey = "\(asset?.id ?? "")|\(profile)|\(aspect ?? "")|\(preset)"
         return ZStack {
             if let asset, let url = previewURL {
                 if asset.kind == "video" {
                     // The poster is the cached thumbnail, so the frame is never blank while the player spins up.
                     SlidePostCachedImage(assetID: asset.id, variant: .preview, url: asset.previewMediaURL, onExpired: { await refresh() }, showsSpinner: false,
-                                         lookPreset: preset, lookCanvas: SlidePostOnDeviceRender.canvas(for: profile))
+                                         lookPreset: preset, lookCanvas: postCanvas)
                     if previewPlayer != nil, previewPlayerAssetID == asset.id { VideoPlayer(player: previewPlayer) }
                     if previewLookFailed {
                         Text("Look preview unavailable").font(KriaFont.body(12)).padding(8).background(KriaColor.paper, in: Capsule())
@@ -182,7 +191,7 @@ struct SlidePostWorkspaceView: View {
                 } else {
                     SlidePostCachedImage(assetID: asset.id, variant: .preview, url: url, onExpired: { await refresh() },
                                          loadingIdentifier: "slidepost-preview-loading", showsRetry: true, reportsState: true,
-                                         lookPreset: preset, lookCanvas: slideCanvas, crop: slideCrop)
+                                         lookPreset: preset, lookCanvas: slideCanvas, crop: slideCrop, fit: slideFit)
                 }
             } else { Image(systemName: "photo.on.rectangle").font(.largeTitle).foregroundStyle(KriaColor.zinc) }
         }
@@ -193,7 +202,7 @@ struct SlidePostWorkspaceView: View {
             previewLookFailed = false
             let item = AVPlayerItem(url: previewURL)
             do {
-                if liveLook { item.videoComposition = try await SlidePostVideoRender.previewComposition(asset: item.asset, profile: profile, lookPreset: preset) }
+                if liveLook { item.videoComposition = try await SlidePostVideoRender.previewComposition(asset: item.asset, profile: profile, aspect: aspect, lookPreset: preset) }
             } catch { if !Task.isCancelled { previewLookFailed = preset != "none" } }
             guard !Task.isCancelled else { return }
             previewPlayer = AVPlayer(playerItem: item); previewPlayerAssetID = asset.id
@@ -234,6 +243,7 @@ struct SlidePostWorkspaceView: View {
     /// Chat-edit staging in the AI sheet is the one genuinely optional piece: unknown or off => propose flow.
     private var chatEditOn: Bool { effectiveCapabilities?.slidePostChatEditEnabled == true }
     private var framingOn: Bool { effectiveCapabilities?.slidePostFramingEnabled == true }
+    private var sizesOn: Bool { effectiveCapabilities?.slidePostSizesEnabled == true }
     private var extendedDeviceExportOn: Bool { effectiveCapabilities?.slidePostExtendedDeviceExportEnabled == true }
     private func seedAndAppend() {
         session.seedDraftIfNeeded()
@@ -267,8 +277,8 @@ struct SlidePostWorkspaceView: View {
 
     /// The selected slide's own shape: a landscape slide shows 16:9, fitted inside the same stage.
     private func aspect(_ draft: SlidePostDraft) -> CGFloat {
-        let canvas = session.selectedSlide.map { SlidePostFraming.canvas(for: $0, profile: draft.platformProfile) }
-            ?? SlidePostOnDeviceRender.canvas(for: draft.platformProfile)
+        let canvas = session.selectedSlide.map { SlidePostFraming.canvas(for: $0, profile: draft.platformProfile, aspect: draft.aspect) }
+            ?? SlidePostOnDeviceRender.canvas(profile: draft.platformProfile, aspect: draft.aspect)
         return canvas.width / canvas.height
     }
     private func platformName(_ draft: SlidePostDraft) -> String { draft.platformProfile == "instagram_carousel" ? "Instagram" : "TikTok" }
@@ -302,12 +312,13 @@ struct SlidePostWorkspaceView: View {
         else if mode == .look { subtitle = "Slide \(slideNumber) · Look" }
         else if mode == .crop { subtitle = "Slide \(slideNumber) · Crop" }
         else if session.hasUnsavedChanges { subtitle = "Unsaved changes" }
-        else { subtitle = "\(platformName(draft)) · \(draft.platformProfile == "instagram_carousel" ? "4:5" : "9:16") · \(draft.slides.count) slide\(draft.slides.count == 1 ? "" : "s")" }
+        else { subtitle = "\(platformName(draft)) · \(draft.size.rawValue) · \(draft.slides.count) slide\(draft.slides.count == 1 ? "" : "s")" }
         return SlidePostTransportRow(
             subtitle: subtitle, unsaved: session.hasUnsavedChanges && mode != .text && mode != .look,
             canUndo: session.canUndoEdit || session.canUndo, canRedo: session.canRedoEdit,
             onUndo: { if session.canUndoEdit { session.undoEdit() } else { Task { await undo() } } },
-            onRedo: { session.redoEdit() }
+            onRedo: { session.redoEdit() },
+            onSubtitle: sizesOn && mode == .browse && !session.hasUnsavedChanges ? { showsSize = true } : nil
         )
     }
 
@@ -354,7 +365,7 @@ struct SlidePostWorkspaceView: View {
             VStack(spacing: 0) {
                 richBanner
                 SlidePostCropWorkspace(
-                    session: session, slide: slide, profile: draft.platformProfile,
+                    session: session, slide: slide, profile: draft.platformProfile, aspect: draft.aspect, showsFit: sizesOn,
                     previewURL: previewURL(rich: true), onExpired: { await refresh() }, onDone: { mode = .browse }
                 )
                 .frame(maxHeight: .infinity)
@@ -519,6 +530,7 @@ struct SlidePostWorkspaceView: View {
                 mode: mode, canCover: slide != nil, canRemove: draft.slides.count > 1 && slide != nil,
                 canDuplicateText: hasTexts && (slide?.edits?.effectiveTexts.count ?? 0) < SlidePostEdits.maxTexts,
                 showsCrop: framingOn && slide?.kind == "image", onCrop: { session.selectedTextID = nil; mode = .crop },
+                showsSize: sizesOn, onSize: { session.selectedTextID = nil; showsSize = true },
                 onText: beginTextEditing,
                 onCover: { if let id = slide?.id { session.setCover(id: id); UINotificationFeedbackGenerator().notificationOccurred(.success) } },
                 onLook: { mode = .look },

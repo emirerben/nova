@@ -28,6 +28,29 @@ def test_worker_written_block_recovery_is_reworded_for_a_turkish_chat() -> None:
     assert '"başlık olmasın"' in turkish
 
 
+# What the phone Voiceover worker stored when it could not place the clips on the narration
+# (prod job ef8e35b8, a Turkish chat). KRI-592: the chat showed it in English.
+NARRATED_ALIGNMENT_STORED = (
+    "I couldn't match the narration to the actions reliably. Your draft is saved. "
+    "Should I try again or use a simpler clip sequence?"
+)
+
+
+def test_the_voiceover_alignment_recovery_reads_turkish_in_a_turkish_chat() -> None:
+    unjudged = [{**_receipts()[0], "verification": "unchecked", "status": "partial"}]
+    # An English chat keeps the stored copy.
+    assert _localized_block_recovery(NARRATED_ALIGNMENT_STORED, []) == NARRATED_ALIGNMENT_STORED
+    with reply_language_for("tr"):
+        # With no brief (no receipts) and with a brief whose receipts judged nothing.
+        for receipts in ([], unjudged):
+            turkish = _localized_block_recovery(NARRATED_ALIGNMENT_STORED, receipts)
+            assert turkish == (
+                "Seslendirmeyi kliplerle güvenilir bir şekilde eşleştiremedim. Taslağın "
+                "kaydedildi. Tekrar mı deneyeyim, yoksa daha basit bir klip sırası mı "
+                "kullanayım?"
+            )
+
+
 def test_other_recovery_copy_is_left_as_stored() -> None:
     with reply_language_for("tr"):
         assert _localized_block_recovery("Something else.", _receipts()) == "Something else."

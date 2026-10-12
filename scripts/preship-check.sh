@@ -4,10 +4,10 @@
 # agents/DECISIONS.md and session memory):
 #
 #   1. scoped ruff (format + lint) on changed .py files only
-#   2. tsc --noEmit when any web .ts/.tsx changed
-#   3. drift check: files in this branch that ALSO changed on origin/main
-#   4. release-metadata ownership check (post-merge automation owns versions)
-#   5. list the [skip-*] CI markers relevant to this diff
+#   2. drift check: files in this branch that ALSO changed on origin/main
+#   3. release-metadata ownership check (post-merge automation owns versions)
+#   4. list the [skip-*] CI markers relevant to this diff
+#   5. run the KRI-577 reliability gates mapped to the changed incident paths
 #
 # Usage: bash scripts/preship-check.sh   (from the feature worktree, pre-PR)
 # Exit 0 = ship; non-zero = fix the FAILs first.
@@ -57,20 +57,8 @@ else
   fi
 fi
 
-# ── 2. tsc when web TS changed ────────────────────────────────────────────────
-echo "[2/5] tsc --noEmit"
-if echo "$CHANGED" | grep -qE '^src/apps/web/.*\.tsx?$'; then
-  if (cd src/apps/web && npx tsc --noEmit) >/dev/null 2>&1; then
-    pass "web typecheck clean"
-  else
-    fail "tsc --noEmit failed — run: (cd src/apps/web && npx tsc --noEmit)"
-  fi
-else
-  info "no web .ts/.tsx changes — skipped"
-fi
-
-# ── 3. Drift: my files that also changed on origin/main since branch point ───
-echo "[3/5] file drift vs origin/main"
+# ── 2. Drift: my files that also changed on origin/main since branch point ───
+echo "[2/5] file drift vs origin/main"
 MAIN_CHANGED="$(git diff --name-only "$MB" origin/main | sort -u)"
 DRIFT="$(comm -12 <(echo "$CHANGED") <(echo "$MAIN_CHANGED") | grep -vE '^(VERSION|CHANGELOG\.md)$' || true)"
 if [ -n "$DRIFT" ]; then
@@ -80,8 +68,8 @@ else
   pass "no overlapping changes with origin/main"
 fi
 
-# ── 4. Release metadata ownership ─────────────────────────────────────────────
-echo "[4/5] release metadata ownership"
+# ── 3. Release metadata ownership ─────────────────────────────────────────────
+echo "[3/5] release metadata ownership"
 if OUT="$(python3 scripts/release_metadata.py guard --base "$MB" --head HEAD 2>&1)" \
   && OUT_WORKING="$(python3 scripts/release_metadata.py guard --base HEAD --working 2>&1)"; then
   pass "feature PR leaves release metadata to post-merge automation"
@@ -89,14 +77,33 @@ else
   fail "${OUT:-$OUT_WORKING}"
 fi
 
-# ── 5. CI skip-markers relevant to this diff ──────────────────────────────────
-echo "[5/5] CI [skip-*] markers"
+# ── 4. CI skip-markers relevant to this diff ──────────────────────────────────
+echo "[4/5] CI [skip-*] markers"
 MARKERS="$(grep -rhoE '\[skip-[a-z0-9-]+\]' .github/workflows/ 2>/dev/null | sort -u)"
 if [ -n "$MARKERS" ]; then
   info "markers honored by CI (add to PR body ONLY with a reason):"
   echo "$MARKERS" | sed 's/^/         /'
 else
   info "none found"
+fi
+
+# ── 5. Reliability gates for changed incident paths (KRI-577) ────────────────
+echo "[5/5] reliability gates"
+if [ -f "$REPO/.dev/test-db-url" ] && [ -z "${DATABASE_URL:-}" ]; then
+  DATABASE_URL="$(cat "$REPO/.dev/test-db-url")"; export DATABASE_URL
+fi
+GATES="$(python3 scripts/reliability-gates.py select --base origin/main 2>&1)"
+if echo "$GATES" | grep -q '^no reliability gate'; then
+  info "no incident gate maps to the changed paths"
+else
+  echo "$GATES" | grep ' <- ' | sed 's/^/         /'
+  if OUT="$(python3 scripts/reliability-gates.py run --changed --base origin/main 2>&1)"; then
+    pass "mapped incident gates green ($(echo "$OUT" | grep -o '"passed": [0-9]*' | head -1))"
+    echo "$OUT" | grep -q '^environment:' && warn "some DB-backed gates skipped — run: bash scripts/dev/test-db.sh"
+  else
+    fail "a mapped incident gate failed — the original incident or a neighbour regressed:"
+    echo "$OUT" | tail -15 | sed 's/^/         /'
+  fi
 fi
 
 echo

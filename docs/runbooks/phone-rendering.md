@@ -150,7 +150,7 @@ are single-variant in the cloud too, except a voiceover with a matched track
 under the original-audio policy (KRI-141 chose dropping over telling the
 creator about a version they can't get).
 
-**Deferred, fails closed via `UnsupportedPhonePlan`:** SFX/media-overlay lanes,
+**Deferred, fails closed via `UnsupportedPhonePlan`:** media-overlay lanes (SFX: see KRI-608 below),
 masonry/collage presets, lyric overlays, carousel-moment splices, the editorial sequence/rhythm typographic upgrade, non-
 `golden_hour`/`none` color grades, and ducking footage under a music bed
 (no cloud producer sets it). Letterboxed landscape fit is NO LONGER deferred
@@ -2087,14 +2087,53 @@ authored position. Server-only; rollback `fly secrets set
 PHONE_GUIDED_TEXT_FACE_PLACEMENT_ENABLED=false --app nova-video` + worker restart.
 Pins: `tests/pipeline/test_phone_guided_text_placement.py`.
 
-**SFX outside Talking — decision: stays cloud-only.** `licensed_sfx_intent` and
-`editor_sound_effects` on guided-story / montage plans keep failing closed
-(`soundEffects`), and the planner refuses the request up front
-(`unsupported_on_phone`, "sound_effects cannot render on the iPhone yet") instead
-of failing at render. The Talking lane is timed to a transcript and ducked under
-speech (KRI-174/181); guided stories and montages have no equivalent grounding, so
-a naive port would place effects blindly. Revisit only with a design for
-transcript-free placement.
+**SFX outside Talking — revisited by KRI-608 (guided / montage: behind a flag).**
+KRI-140 kept `licensed_sfx_intent` / `editor_sound_effects` cloud-only because the
+Talking lane is timed to a transcript and a naive port would place effects blindly.
+KRI-608 reopens it without adding blind placement: guided / montage phone plans now
+compile only effects the creator asked for — placed in the editor or by chat
+(explicit `at_s`), or by the same grounded placer the cloud uses for a named licensed
+effect (`materialize_licensed_sfx`, trusted visual moments). See "Sound effects on
+guided / montage stories (KRI-608)" below. Talking and Voiceover are unchanged.
+
+## Sound effects on guided / montage stories (KRI-608)
+
+**What it does.** A phone-rendered guided story or montage (`resolved_archetype ==
+"guided_story"`, including the unified montage writer) can carry catalog sound effects.
+`compile_phone_guided_plan(sound_effects=…)` turns the plan's `editor_sound_effects`
+into the same `TimelineTrack(id="sfx", kind="audio")` Talking plays, via
+`phone_subtitled_plan._compile_sfx_track`, and adds `soundEffects` + `audioMix`. No
+speech duck: the cloud guided mix (`_compose_guided_sfx`) has none either. The device
+needs no change — it already plays any audio-kind track and fetches `sound_effect`
+library assets (KRI-182).
+
+**One gate.** `phone_rollout.phone_guided_sfx_supported()` = `PHONE_GUIDED_SFX_ENABLED`
+∧ `SOUND_EFFECTS_ENABLED` ∧ `soundEffects` and `audioMix` in
+`PHONE_RENDER_VERIFIED_FEATURES`. Everything follows it, so no surface advertises what
+another refuses:
+
+| Surface | Behavior when on |
+| --- | --- |
+| Worker first render (`_run_phone_guided_job`) | resolves each effect with `_resolve_phone_sound_effect`, pins it, writes `variant["sound_effects"]`; fails closed (`UnsupportedPhonePlan`) when off |
+| Editor Save (`phone_editor._guided_sound_effects`) | reuses assets the previous recipe pinned, probes only new catalog ids; a custom upload or an unplayable effect is a named 422, never dropped |
+| Capability map (`_phone_guided_sfx_available`) | `sfx` opens (overlays stay closed); needs the canonical guided v2 revision |
+| Chat copilot (`kria_editor_ops._allowed_families`) | trusts the clamped map for every device variant, so guided offers `add_sfx` (and Talking / Voiceover do, once their lane rollouts are on and a first editor Save has written `sound_effects`, because their effects otherwise live only in the pinned recipe); the catalog it shows is limited to phone-playable formats |
+| Creation (`creator_capabilities`) | `sound_effects` advertised for guided formats without a recorded voiceover; Talking / narrated keep the refusal (KRI-178 beats still repair) |
+
+**Rollout.** Fly api **and** worker. 1) Make sure `soundEffects` and `audioMix` are in
+`PHONE_RENDER_VERIFIED_FEATURES` (Talking SFX already needs both). 2) `fly secrets set
+PHONE_GUIDED_SFX_ENABLED=true --app nova-video`, restart api + worker. 3) Verify on a
+device: add an effect to a montage in chat, wait for the re-render, hear it at the placed
+time. **Rollback:** set it `false` + restart; guided phone edits are SFX-free again and a
+Save carrying effects 422s `unsupported_phone_edit`.
+
+**Not covered.** Recorded-voiceover montage first builds (a separate writer with no SFX
+lane; they get effects through the editor, KRI-281), speech-excerpt and
+voice-behind-footage montages (the dispatch refuses a requested effect there with a clear
+message instead of building an edit that omits it; an optional speech cut a creator asks
+for in passing is the one gap — it can still drop the effect), legacy
+(non-v2) guided editors, custom uploaded effects, and loudness normalization (the cloud
+mix runs `loudnorm`; the phone does not, as with Talking).
 
 ## Editing a phone Voiceover video (KRI-281)
 
@@ -2476,7 +2515,7 @@ Flow:
    unchanged. **The answer echo is not a request.** The visible text of a song-order answer
    ("Use this arrangement: clip 4 at 0:00, ...") is transcript copy.
    `services/song_order.model_text` returns a neutral sentence for any user event carrying
-   `song_order`; the planner's model conversation, the full-creator-request builder, the
+   `song_order` (and, since KRI-614, `clip_selection`); the planner's model conversation, the full-creator-request builder, the
    claimed turn message and the deferred brief extractor all read it, so the arrangement can
    no longer become an `order` requirement or an invented `timing` (duration) requirement
    that fails a finished draft.
@@ -2894,3 +2933,14 @@ Phone-inexpressible plans used to fail only after approval. Now:
   `phone_render_verified_features`; the worker maps it to the retryable
   `phone_capability_unavailable`. Everything else stays the deterministic
   `phone_plan_unsupported`. Grep Fly logs for both after a deploy.
+
+## Freehand drawing capability (KRI-589)
+
+| Capability | Recipe field | Gate | Detail |
+|---|---|---|---|
+| `freehandDrawing` | `EditRecipeV2.drawing_layers` | `FREEHAND_DRAWING_ENABLED` (default on) + `freehandDrawing` in `PHONE_RENDER_VERIFIED_FEATURES` + client protocol >= `FREEHAND_DRAWING_MIN_CLIENT_PROTOCOL` (6) | [pipelines/drawing.md](../pipelines/drawing.md) |
+
+Prod step before the Draw tool appears: add `freehandDrawing` to
+`PHONE_RENDER_VERIFIED_FEATURES` (fly secret, api + worker, restart). Builds under protocol 6
+get `426 client_update_required` (`feature: "drawing"`) from `device-render` and `editor-commit`
+for a variant that has drawings.

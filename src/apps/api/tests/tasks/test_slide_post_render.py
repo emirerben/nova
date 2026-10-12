@@ -386,3 +386,98 @@ def test_run_slide_post_job_edits_bust_the_normalized_cache_key(monkeypatch) -> 
         "a changed edits digest must miss the stale unedited cache key and re-render"
     )
     assert normalize_calls[0] == edits, "the render must receive this slide's actual edits"
+
+
+def _sized_job(monkeypatch, *, profile: str, aspect: str | None, fit: str | None):
+    """Run one sized slide through `_run_slide_post_job` with storage/ffmpeg stubbed.
+    Returns (variant result, normalize canvases, preview canvases, normalized keys)."""
+    job_id = str(uuid.uuid4())
+    item_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    asset_id = uuid.uuid4()
+    job = SimpleNamespace(id=uuid.UUID(job_id), content_plan_item_id=item_id, user_id=user_id)
+    draft = SlidePostDraft(
+        platform_profile=profile,
+        slides=[
+            SlideRef(
+                id="s0",
+                asset_id=asset_id,
+                kind="image",
+                edits=SlideEdits(fit=fit) if fit else None,
+            ),
+            SlideRef(id="s1", asset_id=asset_id, kind="image"),
+        ],
+        aspect=aspect,
+    )
+    item = SimpleNamespace(slide_post=draft.model_dump(mode="json"))
+    assets = [
+        _asset(
+            asset_id=asset_id,
+            gcs_path=f"users/{user_id}/plan/{item_id}/pool/a.jpg",
+            kind="image",
+            plan_item_id=item_id,
+            user_id=user_id,
+        )
+    ]
+    monkeypatch.setattr(gb, "_sync_session", lambda: _FakeSession(job, item, assets))
+    uploaded = _patch_storage_and_ffmpeg(monkeypatch)
+    normalize_canvases: list[tuple[int, int]] = []
+    preview_canvases: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        slide_build_module,
+        "normalize_image_slide",
+        lambda *a, **k: normalize_canvases.append(k["canvas"]),
+    )
+    monkeypatch.setattr(
+        slide_build_module,
+        "render_preview_segment",
+        lambda *a, **k: preview_canvases.append(k["canvas"]),
+    )
+    captured: dict = {}
+    monkeypatch.setattr(
+        gb, "_upsert_variant_entry", lambda _j, result: captured.setdefault("r", result) or True
+    )
+    monkeypatch.setattr(gb, "_finalize_job", lambda _j, _r: True)
+    gb._run_slide_post_job(job_id, render_trace_id="trace-sized")
+    keys = [k for k in uploaded if "/normalized/" in k]
+    return captured["r"], normalize_canvases, preview_canvases, keys
+
+
+def test_sized_post_renders_every_slide_and_the_preview_at_the_chosen_canvas(monkeypatch) -> None:
+    result, normalize, preview, keys = _sized_job(
+        monkeypatch, profile="tiktok_photo", aspect="1:1", fit="blur"
+    )
+    assert normalize == [(1080, 1080), (1080, 1080)]
+    assert set(preview) == {(1080, 1080)}
+    assert all("_1080x1080_" in k for k in keys)
+    assert result["slide_post"]["aspect"] == "1:1"
+
+
+def test_a_post_that_never_chose_a_size_keeps_the_profile_canvas_and_keys(monkeypatch) -> None:
+    result, normalize, preview, keys = _sized_job(
+        monkeypatch, profile="instagram_carousel", aspect=None, fit=None
+    )
+    assert set(normalize) == {(1080, 1350)} and set(preview) == {(1080, 1350)}
+    assert all("_1080x1350_noedits_n2_wm1" in k for k in keys)
+    assert result["slide_post"]["aspect"] is None
+
+
+def test_fit_busts_the_normalized_cache_key(monkeypatch) -> None:
+    _, _, _, fit_keys = _sized_job(monkeypatch, profile="tiktok_photo", aspect=None, fit="blur")
+    _, _, _, fill_keys = _sized_job(monkeypatch, profile="tiktok_photo", aspect=None, fit=None)
+    # Slide 0 is the one with Fit. Same asset and canvas, but it must not share a key with
+    # the unfitted render, or a Fit toggle would re-export the OLD cover-cropped pixels.
+    assert "noedits" not in fit_keys[0] and "noedits" in fit_keys[1]
+    assert "noedits" in fill_keys[0]
+
+
+def test_variant_is_stamped_with_the_sizes_renderer_but_dispatch_stays_at_2(monkeypatch) -> None:
+    from app.agents._schemas.edit_format import (  # noqa: PLC0415
+        SLIDES_RENDERER_VERSION,
+        SLIDES_SIZES_RENDERER_VERSION,
+    )
+
+    result, *_ = _sized_job(monkeypatch, profile="tiktok_photo", aspect="4:5", fit=None)
+    assert result["slide_post"]["renderer_version"] == SLIDES_SIZES_RENDERER_VERSION == 3
+    # The job-dispatch stamp is what a not-yet-updated worker checks at entry.
+    assert result["slides_renderer_version"] == SLIDES_RENDERER_VERSION == 2

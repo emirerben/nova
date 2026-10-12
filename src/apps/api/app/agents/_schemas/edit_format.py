@@ -55,6 +55,12 @@ SINGLE_HERO_RENDERER_VERSION = 1
 # would render a framed draft without it, so such a variant is never "current".
 SLIDES_RENDERER_VERSION = 2
 SLIDES_FRAMING_RENDERER_VERSION = 2
+# Export stamp (not the dispatch stamp above): a worker that renders the
+# post-wide size and per-photo Fit (KRI-606) stamps its variant with this, and
+# `_slide_post_export_is_current` reports a sized/fit draft rendered by an older
+# worker as stale. Kept separate from SLIDES_RENDERER_VERSION so bumping it can
+# never make a not-yet-updated worker reject queued jobs mid-deploy.
+SLIDES_SIZES_RENDERER_VERSION = 3
 
 EDIT_FORMATS: tuple[str, ...] = get_args(EditFormat)
 

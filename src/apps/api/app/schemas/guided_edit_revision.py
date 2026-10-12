@@ -43,6 +43,9 @@ GUIDED_EDITOR_LANES = (
     "visual_blocks",
     "motion_scenes",
     "custom_effects",
+    # KRI-589: freehand drawings. Absent from every revision without one (see
+    # `GuidedEditorRevision.drawings`), so existing hashes are unchanged.
+    "drawings",
 )
 GUIDED_EDITOR_RECORD_ID_MAX_LENGTH = 100
 # A full text-lane deletion must remain restorable, including a long generated
@@ -211,6 +214,12 @@ class GuidedEditorRevision(BaseModel):
     visual_blocks: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
     motion_scenes: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     custom_effects: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    # Omission is intentional (KRI-589): absent while empty, so the dump, `lane_hashes`
+    # and `state_hash` of every revision without a drawing are byte-identical to what was
+    # stored before this lane existed (in-flight render receipts pin those hashes).
+    drawings: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=12, exclude_if=lambda value: not value
+    )
     # Caption controls apply only to caption_cue-backed TextElements. Keeping
     # this separate from the text lane preserves pinned narration timing and
     # avoids manufacturing duplicate caption-cue records.
@@ -508,6 +517,12 @@ def normalize_guided_editor_revision(
             "tombstones",
         )
     }
+    if normalized.get("drawings"):
+        normalized["lane_hashes"]["drawings"] = hashlib.sha256(
+            json.dumps(normalized["drawings"], sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
     if normalized.get("caption_meta") is not None:
         normalized["lane_hashes"]["caption_meta"] = hashlib.sha256(
             json.dumps(normalized["caption_meta"], sort_keys=True, separators=(",", ":")).encode(

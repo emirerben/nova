@@ -328,6 +328,15 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         raise ValueError("Motion scenes await native parity and device qualification")
     if recipe.camera_pulses:
         raise ValueError("Camera effects await native parity and device qualification")
+    # KRI-589: an explicit gate (not only the `required_capabilities` check below) because
+    # a caller may mutate a recipe after compile without recomputing the capabilities.
+    if recipe.drawing_layers and "freehandDrawing" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Freehand drawings await native parity and device qualification",
+            capability="freehandDrawing",
+        )
     if _has_unqualified_font_instance(recipe):
         font_files, font_effects = unqualified_font_causes(recipe)
         raise PhoneFontUnqualified(
@@ -402,6 +411,47 @@ def phone_guided_narration_supported() -> bool:
         settings.phone_guided_narration_rendering_enabled
         and settings.phone_narration_rendering_enabled
         and "narrationAudio" in settings.phone_render_verified_features
+    )
+
+
+def freehand_drawing_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build understand freehand drawings (KRI-589)?
+
+    The build declares ``X-Kria-Client-Protocol``; at least
+    ``freehand_drawing_min_client_protocol`` decodes ``drawingLayers`` and the
+    ``drawings`` editor lane. ``require_client`` ``None`` applies the gate only
+    inside an HTTP request (workers and chat edits have no app build to qualify);
+    pass ``True``/``False`` to force it.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.freehand_drawing_min_client_protocol
+
+
+def freehand_drawing_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a creator ADD or EDIT drawings right now" (KRI-589).
+
+    Consulted by the editor capability map (whether ``drawings.add/edit/trim`` open) and
+    by Save (whether a new or changed drawing is accepted or 422s ``drawings_disabled``),
+    so the map never advertises an edit Save would refuse. Removal and replay of stored
+    drawings never consult it: the kill switch stops authoring, not playback or deletion.
+
+    True iff the kill switch (``freehand_drawing_enabled``) is on, ``freehandDrawing`` is in
+    ``phone_render_verified_features`` (the device-parity gate) and the app-build gate
+    holds (`freehand_drawing_client_supported`).
+    """
+    return bool(
+        settings.freehand_drawing_enabled
+        and "freehandDrawing" in set(settings.phone_render_verified_features)
+        and freehand_drawing_client_supported(require_client=require_client)
     )
 
 
@@ -615,6 +665,39 @@ def phone_voiceover_editor_lanes_supported(*, require_client: bool | None = None
         return True
     protocol = current_client_protocol()
     return protocol is not None and protocol >= settings.phone_voiceover_editor_min_client_protocol
+
+
+# Device features a phone guided / montage story needs to carry a sound-effect
+# lane (KRI-608): the compiled `sfx` track is the same one Talking plays.
+PHONE_GUIDED_SFX_FEATURES: tuple[str, ...] = PHONE_SUBTITLED_SFX_FEATURES
+
+
+def phone_guided_sfx_supported() -> bool:
+    """Single source of truth for "can a phone-rendered guided / montage story
+    carry sound effects right now" (KRI-608).
+
+    Consulted by `app.pipeline`'s worker (`_run_phone_guided_job`), by
+    `app.services.phone_editor.prepare_phone_editor_commit` (Save recompiles
+    the lane or 422s), by `routes.generative_jobs._editor_capabilities`
+    (whether `sfx` opens on a guided device variant) and by
+    `services.creator_capabilities` (whether creation may plan a licensed
+    effect), so capabilities never advertise a lane Save would refuse.
+
+    True iff ALL of:
+      - `phone_guided_sfx_enabled` (this feature's own flag).
+      - `sound_effects_enabled` (the generic lane kill switch).
+      - every feature in `PHONE_GUIDED_SFX_FEATURES` is in
+        `phone_render_verified_features` (device-parity gate).
+
+    No client-protocol gate: shipped builds already play any `kind: audio`
+    track and fetch `sound_effect` library assets (KRI-182).
+    """
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_guided_sfx_enabled
+        and settings.sound_effects_enabled
+        and all(feature in verified for feature in PHONE_GUIDED_SFX_FEATURES)
+    )
 
 
 def phone_voiceover_reaction_beats_supported(*, require_client: bool | None = None) -> bool:

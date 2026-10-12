@@ -225,6 +225,7 @@ MediaCapability = Literal[
     "stillImages",
     "visualVideos",
     "sourceCrop",
+    "freehandDrawing",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the

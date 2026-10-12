@@ -8,9 +8,11 @@ import UIKit
     typealias PhotosAuthorization = () async -> PHAuthorizationStatus
     typealias AtomicPhotoWrite = ([PhotoResource]) async throws -> Void
     typealias Revalidate = () async throws -> Void
-    /// Renders one slide's JPEG on the device (draft slide, its asset, platform profile).
-    typealias OnDeviceRender = (SlidePostSlide, SlidePostAsset, String) async throws -> Data
-    typealias OnDeviceVideoRender = (SlidePostSlide, SlidePostAsset, String, URL) async throws -> Void
+    /// Renders one slide's JPEG on the device (draft slide, its asset, platform profile, post size). The size is
+    /// the draft's `aspect` (nil = the platform's default): it is passed explicitly, never defaulted, so an export
+    /// can't silently come out at the platform's shape.
+    typealias OnDeviceRender = (SlidePostSlide, SlidePostAsset, String, String?) async throws -> Data
+    typealias OnDeviceVideoRender = (SlidePostSlide, SlidePostAsset, String, String?, URL) async throws -> Void
 
     /// One slide handed to Photos. `creationDate` ascends with slide order so Photos' date sort
     /// (the only order it has; we deliberately create no album) shows the slides in post order.
@@ -85,11 +87,11 @@ import UIKit
             }
         },
         now: @escaping () -> Date = Date.init,
-        onDeviceRender: @escaping OnDeviceRender = { slide, asset, profile in
-            try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile)
+        onDeviceRender: @escaping OnDeviceRender = { slide, asset, profile, aspect in
+            try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile, aspect: aspect)
         },
-        onDeviceVideoRender: @escaping OnDeviceVideoRender = { slide, asset, profile, url in
-            try await SlidePostVideoRender.renderSlide(slide: slide, asset: asset, profile: profile, outputURL: url)
+        onDeviceVideoRender: @escaping OnDeviceVideoRender = { slide, asset, profile, aspect, url in
+            try await SlidePostVideoRender.renderSlide(slide: slide, asset: asset, profile: profile, aspect: aspect, outputURL: url)
         }
     ) {
         self.downloadFile = downloadFile; self.authorizePhotos = authorizePhotos
@@ -183,11 +185,11 @@ import UIKit
                 set(.preparing(done: index, total: draft.slides.count))
                 let file = directory.appending(path: String(format: "%02d", index + 1) + (slide.kind == "video" ? ".mp4" : ".jpg"))
                 do {
-                    try await renderOnDevice(slide, session: session, profile: draft.platformProfile, file: file)
+                    try await renderOnDevice(slide, session: session, profile: draft.platformProfile, aspect: draft.aspect, file: file)
                 } catch SlidePostImageCache.LoadError.expired where !refreshed {
                     refreshed = true
                     await session.refresh(api: api, itemID: itemID)
-                    try await renderOnDevice(slide, session: session, profile: draft.platformProfile, file: file)
+                    try await renderOnDevice(slide, session: session, profile: draft.platformProfile, aspect: draft.aspect, file: file)
                 }
                 files.append(PhotoResource(url: file, kind: slide.kind, creationDate: dates[index]))
             }
@@ -208,10 +210,10 @@ import UIKit
         catch { set(.failed(error.localizedDescription)) }
     }
 
-    private func renderOnDevice(_ slide: SlidePostSlide, session: SlidePostSession, profile: String, file: URL) async throws {
+    private func renderOnDevice(_ slide: SlidePostSlide, session: SlidePostSession, profile: String, aspect: String?, file: URL) async throws {
         guard let asset = session.state?.assets.first(where: { $0.id == slide.assetID }) else { throw SlidePostExportError.downloadFailed }
-        if slide.kind == "video" { try await onDeviceVideoRender(slide, asset, profile, file) }
-        else { try await onDeviceRender(slide, asset, profile).write(to: file, options: .atomic) }
+        if slide.kind == "video" { try await onDeviceVideoRender(slide, asset, profile, aspect, file) }
+        else { try await onDeviceRender(slide, asset, profile, aspect).write(to: file, options: .atomic) }
     }
 
     func saveToPhotos(session: SlidePostSession, revalidate: Revalidate) async {
