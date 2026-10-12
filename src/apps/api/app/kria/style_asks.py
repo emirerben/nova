@@ -400,6 +400,43 @@ _MOMENT_FILLERS = frozenset(
         "farkli",
     }
 )
+# "4 of my 10 clips", "4 out of 10", "from 10 clips", "all 5 clips", "bu 10 klip": the
+# number counts the creator's footage, never the moments to cut from it.
+_FOOTAGE_OWNERS = frozenset({"my", "these", "those", "all", "bu", "su", "tum", "butun", "benim"})
+_FOOTAGE_LEAD_INS = _FOOTAGE_OWNERS | {"the", "of"}
+_FOOTAGE_SOURCES = frozenset({"from", "out", "among"})
+
+
+def _counts_footage(tokens: list[str], index: int) -> bool:
+    back = index - 1
+    passed: set[str] = set()
+    while back >= 0 and tokens[back] in _FOOTAGE_LEAD_INS:
+        passed.add(tokens[back])
+        back -= 1
+    before = tokens[back] if back >= 0 else ""
+    return bool(
+        passed & _FOOTAGE_OWNERS
+        or before in _FOOTAGE_SOURCES
+        or ("of" in passed and before.isdigit())
+    )
+
+
+def _footage_counts(tokens: list[str]) -> set[int]:
+    """Indexes of each footage count and its words ("10 short clips"), to skip."""
+    skipped: set[int] = set()
+    for index, token in enumerate(tokens):
+        if not token.isdigit() or not _counts_footage(tokens, index):
+            continue
+        skipped.add(index)
+        for after in range(index + 1, min(index + 4, len(tokens))):
+            if tokens[after] not in _MOMENT_FILLERS and tokens[after] not in _MOMENT_NOUNS:
+                break
+            skipped.add(after)
+            if tokens[after] in _MOMENT_NOUNS:
+                break
+    return skipped
+
+
 _SHORT_MOMENTS = re.compile(
     r"\b(?:each|every one|all)(?: of them)? (?:very |really |super )?(?:short|quick|brief)\b"
     r"|\b(?:short|quick|brief|snappy|fast) (?:moments?|shots?|cuts?|clips?|bits?|parts?"
@@ -428,10 +465,11 @@ def moment_ask(req: BriefRequirement) -> MomentAsk | None:
     fact = req.facts.get("moment_count")
     if isinstance(fact, int) and not isinstance(fact, bool) and 2 <= fact <= 30:
         count = fact
+    footage = _footage_counts(tokens)
     for index, token in enumerate(tokens):
         if count is not None:
             break
-        if not token.isdigit() or not 2 <= int(token) <= 30:
+        if index in footage or not token.isdigit() or not 2 <= int(token) <= 30:
             continue
         for follower in tokens[index + 1 : index + 4]:
             if follower in _MOMENT_NOUNS:
@@ -439,7 +477,8 @@ def moment_ask(req: BriefRequirement) -> MomentAsk | None:
                 break
             if follower not in _MOMENT_FILLERS:
                 break
-    short = bool(_SHORT_MOMENTS.search(" ".join(tokens)))
+    kept = " ".join(token for index, token in enumerate(tokens) if index not in footage)
+    short = bool(_SHORT_MOMENTS.search(kept))
     if count is None and not short:
         return None
     return MomentAsk(count=count, short=short)

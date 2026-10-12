@@ -494,6 +494,17 @@ def test_a_taken_back_moment_ask_stops_slicing_and_counting() -> None:
     assert notice == "I could fit 2 moments, not 3."
 
 
+def test_a_count_of_the_creators_clips_never_becomes_a_moment_count() -> None:
+    # 6: "pick best 4 of my 10 clips" is a choice among clips, not ten moments.
+    strategy = _strategy([_wrong_seat().model_copy(update={"attribute": "the river clip"})])
+    four_of_ten = BriefRequirement(
+        id="r3", kind="select", scope="global", description="pick best 4 of my 10 clips"
+    )
+    planned = _enrich_best_parts_snapshot(strategy, _snapshot(), _brief(four_of_ten))
+    assert planned == _enrich_best_parts_snapshot(strategy, _snapshot(), _brief())
+    assert _moment_count_notice(strategy, _brief(four_of_ten), planned["length_plan"]) is None
+
+
 def test_the_worker_refuses_overlapping_windows_of_one_take() -> None:
     # 10 + 14: repeats are fine, overlaps are not.
     clips = [c for c in _unified_clips() if c.media_id in (INDOOR, OUTDOOR)]
@@ -539,6 +550,18 @@ def test_the_worker_refuses_overlapping_windows_of_one_take() -> None:
         ("give me the best 5 shots", MomentAsk(count=5, short=False)),
         ("uzun videolardan en iyi altı anı seç, her biri çok kısa", MomentAsk(count=6, short=True)),
         ("short moments from my walk", MomentAsk(count=None, short=True)),
+        # the creator's footage is counted, not the moments (review of #1554)
+        ("pick best 4 of my 10 clips", None),
+        ("pick the best four of the ten clips", None),
+        ("pick 4 out of 10 clips", None),
+        ("pick 4 from 10 clips", None),
+        ("use all 5 clips", None),
+        ("best 4 of my 10 short clips", None),
+        ("tüm 5 klibi kullan, bu 10 klip içinden en iyi 4 anı seç", MomentAsk(count=4)),
+        ("from my 3 clips pick 6 moments", MomentAsk(count=6)),
+        ("6 moments from my 2 long takes", MomentAsk(count=6)),
+        ("a video of 6 moments", MomentAsk(count=6)),
+        ("the 6 best moments", MomentAsk(count=6)),
         # the whole video, not each moment
         ("keep it short, 18 seconds", None),
         ("make it 18 seconds", None),
