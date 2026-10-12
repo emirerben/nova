@@ -1,4 +1,9 @@
-# Web CI runtime and coverage (KRI-16)
+# Retired web CI (historical)
+
+The web application test and lint workflows are retired. This page preserves
+historical KRI-16 timing and coverage evidence; it is not an active CI policy.
+See [CI policy](ci-policy.md) for current routing. Web assets bundled into the
+iOS app remain covered by the native selector.
 
 ## Coverage policy
 
