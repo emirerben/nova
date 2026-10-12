@@ -47,6 +47,7 @@ import pytest
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.kria import planner
 from app.kria.brief import BriefRequirement, CreativeBrief
+from app.kria.voiceover_clips import creator_limits_clips
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
 from app.services.clip_intent_planning import PlannedIntentResolution
 from app.services.clip_intent_resolution import IntentClip, IntentResolution
@@ -221,6 +222,10 @@ async def test_text_and_audio_negations_still_keep_every_clip(
             ["Leave out the bathroom.", PROD_FIRST_MESSAGE, PROD_LATEST_MESSAGE],
             [c for c in OWN_VIDEOS if c != BATHROOM],
         ),
+        # PR 1549 external review: common removal forms with no brief select ask.
+        (["take out the bathroom clip"], [c for c in OWN_VIDEOS if c != BATHROOM]),
+        (["hide the bathroom clip"], [c for c in OWN_VIDEOS if c != BATHROOM]),
+        (["banyo klibini dahil etme"], [c for c in OWN_VIDEOS if c != BATHROOM]),
     ],
 )
 async def test_a_creator_who_limited_the_clips_keeps_that_subset(
@@ -230,6 +235,45 @@ async def test_a_creator_who_limited_the_clips_keeps_that_subset(
 
     assert strategy["selected_media_ids"] == selected
     assert sorted(_dispatched_clips(strategy)) == sorted(selected)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # PR 1549 external review.
+        "take out the bathroom clip",
+        "hide the bathroom clip",
+        "banyo klibini dahil etme",
+        # The same family.
+        "take the bathroom clip out",
+        "ditch the bathroom clip",
+        "throw out the bathroom clip",
+        "toss the dark clips",
+        "keep the bathroom clip out of it",
+        "the bathroom clip should be hidden",
+        "banyo klibi dahil olmasın",
+        "banyo klibini gizle",
+        "banyo klibini dışarıda bırak",
+        "banyo klibini çıkart",
+    ],
+)
+def test_common_removal_wordings_limit_the_clips(text: str) -> None:
+    assert creator_limits_clips([text], own_clip_count=len(OWN_VIDEOS))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Removal words about text, audio or the finished video, not the footage.
+        "take out the music",
+        "hide the title",
+        "altyazıyı gizle",
+        "müziği dahil etme",
+        "Start with the river clip and take your time",
+    ],
+)
+def test_removal_words_about_text_or_audio_do_not_limit_the_clips(text: str) -> None:
+    assert not creator_limits_clips([text], own_clip_count=len(OWN_VIDEOS))
 
 
 async def test_a_brief_selection_ask_keeps_the_subset(prod_profile, monkeypatch) -> None:

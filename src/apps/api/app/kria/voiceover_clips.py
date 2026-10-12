@@ -72,8 +72,9 @@ _TIME_UNIT = r"(?:s|sec|secs|second|seconds|min|mins|minute|minutes|sn|saniye\w*
 # diacritics). Turkish forms are Turkish-only spellings, so they never fire on English.
 _EN_NARROWING = re.compile(
     r"\b(?:only|skip\w*|exclud\w*|except\w*|omit\w*|without|ignor\w*|drop\w*|remov\w*"
-    r"|delet\w*|cut\s+out|get\s+rid|lose"
+    r"|delet\w*|cut\s+out|get\s+rid|lose|ditch\w*|toss\w*|hid(?:e|es|ing|den)"
     r"|leav(?:e|ing)\b(?:\s+\S+){0,4}?\s+out|left\b(?:\s+\S+){0,4}?\s+out"
+    r"|(?:take|taking|took|taken|keep|kept|throw\w*)\b(?:\s+\S+){0,4}?\s+(?:out|away)"
     r"|(?:don'?t|do\s+not|never|shouldn'?t|should\s+not|mustn'?t|must\s+not|won'?t)\s+"
     r"(?:use|include|show|put|add|need|want|keep|be|appear)"
     r"|not\s+(?:all|every|the|these|those|that|this|any|my)"
@@ -90,7 +91,8 @@ _TR_NARROWING = re.compile(
     r"|kullanma(?:yin|yiniz|sin|yalim|dan)?|gosterme(?:yin|yiniz|sin)?|koyma(?:yin|yiniz|sin)?"
     r"|ekleme(?:yin|yiniz|sin)?|olmasin|cikmasin|gorunmesin|gozukmesin|yer\s+almasin"
     r"|atla(?:yin|yiniz|sin|yalim)?|gec(?:in|iniz|elim)?|cikar(?:in|iniz|t|tin|sin|alim)?"
-    r"|sil(?:in|iniz|sin|elim)?|kaldir(?:in|iniz|sin|alim)?|istemiyorum|istemem)\b"
+    r"|sil(?:in|iniz|sin|elim)?|kaldir(?:in|iniz|sin|alim)?|istemiyorum|istemem"
+    r"|dahil\s+etme\w*|gizle\w*|disari(?:da)?\s+birak\w*)\b"
 )
 # The words of those asks, one by one: what remains of a clause once they (and glue
 # words) are gone is what the ask is about. Dropping words, not whole matches, keeps
@@ -98,6 +100,8 @@ _TR_NARROWING = re.compile(
 _NARROWING_WORD = re.compile(
     r"only|skip\w*|exclud\w*|except\w*|omit\w*|without|ignor\w*|drop\w*|remov\w*|delet\w*"
     r"|cut|out|get|rid|lose|leave|leaving|left|don't|dont|not|never|shouldn't|should"
+    r"|ditch\w*|toss\w*|hide|hides|hiding|hidden|take|taking|took|taken|kept|throw\w*|away"
+    r"|dahil|etme\w*|gizle\w*|disari\w*|birak\w*"
     r"|mustn't|won't|no|nothing|none|fewer|less|some|few|subset|pick\w*|choos\w*|select\w*"
     r"|best|strongest|favou?rites?|many|just|instead|rather|apart|besides"
     r"|sadece|yalnizca|yalniz|haric\w*|disinda\w*|olmadan|bazi\w*|hepsi|hepsini|degil|en"
@@ -112,7 +116,7 @@ _WHOLE_EDIT = re.compile(
     r"(?:whole\s+|entire\s+|final\s+)?(?:video|edit|reel|tiktok)\b"
 )
 _FOOTAGE_WORD = re.compile(
-    r"clips?|videos?|shots?|footage|scenes?|takes?|photos?|pictures?|pics?|images?|stills?"
+    r"clips?|videos?|shots?|footage|scenes?|takes|photos?|pictures?|pics?|images?|stills?"
     r"|media|files?|b-?roll|moments?|parts?|bits?"
     r"|kli[pb]\w*|video\w+|cekim\w*|goruntu\w*|sahne\w*|fotograf\w*|foto\w*|resim\w*|resm\w*"
     r"|medya\w*|dosya\w*"
@@ -123,7 +127,7 @@ _NOT_FOOTAGE_WORD = re.compile(
     r"|sounds?|audio|voice\w*|narration|effects?|sfx|transitions?|filters?|stickers?|emojis?"
     r"|logos?|watermarks?|overlays?|seconds?|secs?|minutes?|mins?|length|duration|long"
     r"|intro|outro|hooks?|hashtags?|screen|onscreen|on-screen"
-    r"|yazi\w*|baslik\w*|altyazi\w*|etiket\w*|metin\w*|font\w*|renk\w*|muzik\w*|sarki\w*"
+    r"|yazi\w*|baslik\w*|altyazi\w*|etiket\w*|metin\w*|font\w*|renk\w*|muzi[gk]\w*|sarki\w*"
     r"|ses\w*|efekt\w*|gecis\w*|filtre\w*|cikartma\w*|emoji\w*|logo\w*|saniye\w*|sn"
     r"|dakika\w*|sure\w*|uzunlu\w*|ekran\w*"
 )
