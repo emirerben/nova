@@ -3194,6 +3194,20 @@
             "title": "Guided Revision Number",
             "type": "integer"
           },
+          "library_asset_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Library Asset Id",
+            "type": "string"
+          },
+          "library_source_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Library Source Id",
+            "type": "string"
+          },
           "source_id": {
             "maxLength": 160,
             "minLength": 1,
@@ -4030,6 +4044,19 @@
         "title": "GuidedEditorSource",
         "type": "object"
       },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
       "HandwritingContent": {
         "additionalProperties": false,
         "properties": {
@@ -4786,6 +4813,430 @@
         "title": "MediaAsset",
         "type": "object"
       },
+      "MediaAssetAccessOut": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "original",
+              "analysis_proxy",
+              "thumbnail"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at",
+          "role",
+          "generation"
+        ],
+        "title": "MediaAssetAccessOut",
+        "type": "object"
+      },
+      "MediaAssetFinalizeBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_event_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Client Event Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_event_id"
+        ],
+        "title": "MediaAssetFinalizeBody",
+        "type": "object"
+      },
+      "MediaAssetListOut": {
+        "properties": {
+          "active_count": {
+            "title": "Active Count",
+            "type": "integer"
+          },
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/MediaAssetOut"
+            },
+            "title": "Assets",
+            "type": "array"
+          },
+          "limit": {
+            "default": 500,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "nullable": true,
+            "title": "Next Cursor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assets",
+          "next_cursor",
+          "active_count"
+        ],
+        "title": "MediaAssetListOut",
+        "type": "object"
+      },
+      "MediaAssetOut": {
+        "properties": {
+          "analysis": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Analysis",
+            "type": "object"
+          },
+          "archived_at": {
+            "format": "date-time",
+            "nullable": true,
+            "title": "Archived At",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "creator_context": {
+            "additionalProperties": true,
+            "title": "Creator Context",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "video",
+              "image",
+              "audio"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "metadata_json": {
+            "additionalProperties": true,
+            "title": "Metadata Json",
+            "type": "object"
+          },
+          "original_availability": {
+            "enum": [
+              "device_only",
+              "cloud_backed"
+            ],
+            "title": "Original Availability",
+            "type": "string"
+          },
+          "original_byte_count": {
+            "nullable": true,
+            "title": "Original Byte Count",
+            "type": "integer"
+          },
+          "original_declared_sha256": {
+            "nullable": true,
+            "title": "Original Declared Sha256",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/MediaAssetSourceOut"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "processing",
+              "ready",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "storage_warnings": {
+            "items": {
+              "$ref": "#/components/schemas/MediaAssetStorageWarning"
+            },
+            "title": "Storage Warnings",
+            "type": "array"
+          },
+          "usage": {
+            "items": {
+              "$ref": "#/components/schemas/MediaAssetUsageOut"
+            },
+            "title": "Usage",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "archived_at",
+          "created_at",
+          "original_declared_sha256",
+          "original_byte_count",
+          "original_availability",
+          "metadata_json",
+          "creator_context",
+          "sources"
+        ],
+        "title": "MediaAssetOut",
+        "type": "object"
+      },
+      "MediaAssetSourceOut": {
+        "properties": {
+          "byte_count": {
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "original",
+              "analysis_proxy",
+              "thumbnail"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "available",
+              "missing",
+              "deleting",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "uploaded_sha256": {
+            "nullable": true,
+            "title": "Uploaded Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "status",
+          "byte_count",
+          "content_type",
+          "uploaded_sha256",
+          "generation"
+        ],
+        "title": "MediaAssetSourceOut",
+        "type": "object"
+      },
+      "MediaAssetStorageWarning": {
+        "properties": {
+          "eligible_at": {
+            "format": "date-time",
+            "title": "Eligible At",
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "warned_at": {
+            "format": "date-time",
+            "title": "Warned At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "warned_at",
+          "eligible_at"
+        ],
+        "title": "MediaAssetStorageWarning",
+        "type": "object"
+      },
+      "MediaAssetUploadBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_upload_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Client Upload Id",
+            "type": "string"
+          },
+          "content_type": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Content Type",
+            "type": "string"
+          },
+          "file_size_bytes": {
+            "exclusiveMinimum": true,
+            "maximum": 4294967296,
+            "minimum": 0,
+            "title": "File Size Bytes",
+            "type": "integer"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "video",
+              "image",
+              "audio"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "repair_asset_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Repair Asset Id",
+            "type": "string"
+          },
+          "upload_contract": {
+            "$ref": "#/components/schemas/MediaUploadContract"
+          }
+        },
+        "required": [
+          "client_upload_id",
+          "filename",
+          "content_type",
+          "file_size_bytes",
+          "kind"
+        ],
+        "title": "MediaAssetUploadBody",
+        "type": "object"
+      },
+      "MediaAssetUploadOut": {
+        "properties": {
+          "asset_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "object_path": {
+            "title": "Object Path",
+            "type": "string"
+          },
+          "reservation_id": {
+            "format": "uuid",
+            "title": "Reservation Id",
+            "type": "string"
+          },
+          "upload_contract": {
+            "$ref": "#/components/schemas/MediaUploadContract"
+          },
+          "upload_headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Upload Headers",
+            "type": "object"
+          },
+          "upload_url": {
+            "nullable": true,
+            "title": "Upload Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reservation_id",
+          "object_path",
+          "upload_url",
+          "expires_at",
+          "upload_contract"
+        ],
+        "title": "MediaAssetUploadOut",
+        "type": "object"
+      },
+      "MediaAssetUsageOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "creation_thread_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Creation Thread Id",
+            "type": "string"
+          },
+          "job_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Job Id",
+            "type": "string"
+          },
+          "plan_item_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Plan Item Id",
+            "type": "string"
+          },
+          "source_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Source Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at"
+        ],
+        "title": "MediaAssetUsageOut",
+        "type": "object"
+      },
       "MediaBlock": {
         "description": "User-authored image/video layer composed below text and captions.",
         "properties": {
@@ -5041,6 +5492,20 @@
               "audio"
             ],
             "title": "Kind",
+            "type": "string"
+          },
+          "library_asset_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Library Asset Id",
+            "type": "string"
+          },
+          "library_source_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Library Source Id",
             "type": "string"
           },
           "media_id": {
@@ -6154,6 +6619,20 @@
             "title": "Kind",
             "type": "string"
           },
+          "library_asset_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Library Asset Id",
+            "type": "string"
+          },
+          "library_source_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Library Source Id",
+            "type": "string"
+          },
           "media_status": {
             "default": "pending",
             "title": "Media Status",
@@ -6799,11 +7278,29 @@
             "type": "string"
           },
           "content_type": {
+            "default": null,
+            "nullable": true,
             "title": "Content Type",
             "type": "string"
           },
           "gcs_path": {
+            "default": null,
+            "nullable": true,
             "title": "Gcs Path",
+            "type": "string"
+          },
+          "library_asset_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Library Asset Id",
+            "type": "string"
+          },
+          "library_source_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Library Source Id",
             "type": "string"
           },
           "place": {
@@ -6831,10 +7328,6 @@
             "type": "string"
           }
         },
-        "required": [
-          "gcs_path",
-          "content_type"
-        ],
         "title": "RegisterAssetBody",
         "type": "object"
       },
@@ -9725,6 +10218,46 @@
         "title": "UploadTarget",
         "type": "object"
       },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
       "VisualAnimation": {
         "additionalProperties": false,
         "properties": {
@@ -12253,6 +12786,568 @@
           }
         }
       ]
+    },
+    "/me/media-assets": {
+      "get": {
+        "operationId": "list_assets_me_media_assets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "maxLength": 512,
+              "nullable": true,
+              "title": "Cursor",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "maxLength": 200,
+              "nullable": true,
+              "title": "Query",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "enum": [
+                "video",
+                "image",
+                "audio"
+              ],
+              "nullable": true,
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "enum": [
+                "pending",
+                "processing",
+                "ready",
+                "failed"
+              ],
+              "nullable": true,
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "collection_id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "nullable": true,
+              "title": "Collection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-User-Id",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaAssetListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "List Assets",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-assets/uploads": {
+      "post": {
+        "operationId": "reserve_upload_me_media_assets_uploads_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-User-Id",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MediaAssetUploadBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaAssetUploadOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Reserve Upload",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-assets/uploads/{reservation_id}/finalize": {
+      "post": {
+        "operationId": "finalize_upload_me_media_assets_uploads__reservation_id__finalize_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reservation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Reservation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-User-Id",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MediaAssetFinalizeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaAssetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Finalize Upload",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-assets/{asset_id}": {
+      "get": {
+        "operationId": "detail_me_media_assets__asset_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Asset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-User-Id",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaAssetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Detail",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-assets/{asset_id}/archive": {
+      "post": {
+        "operationId": "archive_me_media_assets__asset_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Asset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-User-Id",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaAssetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Archive",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-assets/{asset_id}/retry": {
+      "post": {
+        "operationId": "retry_me_media_assets__asset_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Asset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-User-Id",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaAssetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Retry",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-assets/{asset_id}/sources/{source_id}/access-url": {
+      "get": {
+        "operationId": "access_url_me_media_assets__asset_id__sources__source_id__access_url_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Asset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-User-Id",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaAssetAccessOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Access Url",
+        "tags": [
+          "media-library"
+        ]
+      }
     },
     "/personas": {
       "get": {

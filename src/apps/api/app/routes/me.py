@@ -58,6 +58,7 @@ from app.models import (
     OAuthToken,
     Persona,
     PlanItem,
+    PlanItemAsset,
     StorageRetentionEntry,
     TikTokPublication,
     TrainingConsentEvent,
@@ -3255,6 +3256,11 @@ async def confirm_account_deletion(
     # the existing plan/persona/job lock order, then recheck the row because a
     # prior erasure could have committed while this request waited.
     await acquire_auth_locks(db, account_lifecycle_lock_key(user.id))
+    from app.services.job_storage_paths import project_media_reference_lock_key
+
+    # Library admission and retention take this before consumer row locks.
+    # Keep the same order even when capabilities are disabled after a rollback.
+    await db.execute(select(func.pg_advisory_xact_lock(project_media_reference_lock_key(user.id))))
     if (await db.execute(select(User.id).where(User.id == user.id))).scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Account not found")
     apple_identities = (
@@ -3345,6 +3351,17 @@ async def confirm_account_deletion(
             .order_by(PlanItem.id)
             .with_for_update()
         )
+
+    captured_pool_asset_ids = (
+        (
+            await db.execute(
+                select(PlanItemAsset.id)
+                .where(PlanItemAsset.user_id == user.id)
+                .order_by(PlanItemAsset.id)
+                .with_for_update()
+            )
+        ).scalars()
+    ).all()
 
     jobs = (
         (await db.execute(select(Job).where(Job.user_id == user.id).with_for_update()))
@@ -3523,6 +3540,10 @@ async def confirm_account_deletion(
     await db.execute(delete(OAuthToken).where(OAuthToken.id.in_([row.id for row in oauth_tokens])))
     # 4. Jobs — cascades AgentRun + VideoFeedback automatically.
     await db.execute(delete(Job).where(Job.id.in_(job_uuid_ids)))
+    # The direct pool owner FK is NO ACTION. Explicitly remove the captured
+    # projections before owner/source cascades, which also avoids FK ordering
+    # failures for a source shared by several posts. Prefix outboxes own bytes.
+    await db.execute(delete(PlanItemAsset).where(PlanItemAsset.id.in_(captured_pool_asset_ids)))
     # Invalidate memory extraction leases before erasing the owner. A worker
     # that wakes after this transaction can only observe a missing User and
     # safely no-op; it must never recreate memory state.

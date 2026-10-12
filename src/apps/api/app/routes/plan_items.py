@@ -24,7 +24,7 @@ import structlog
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, status
 from fastapi import UploadFile as MultipartFile
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -8931,11 +8931,22 @@ async def create_pool_upload_urls(
 
 class RegisterAssetBody(BaseModel):
     reservation_id: str | None = None
-    gcs_path: str
-    content_type: str
+    gcs_path: str | None = None
+    content_type: str | None = None
+    library_asset_id: uuid.UUID | None = None
+    library_source_id: uuid.UUID | None = None
     content_hash: str | None = None
     source_filename: str | None = None
     user_context: str | None = Field(default=None, max_length=_MAX_POOL_CONTEXT_CHARS)
+
+    @model_validator(mode="after")
+    def validate_source_contract(self):
+        if self.library_source_id is not None and self.library_asset_id is None:
+            raise ValueError("a library source requires its asset ID")
+        if self.library_asset_id is None and (not self.gcs_path or not self.content_type):
+            raise ValueError("an uploaded asset requires its path and media type")
+        return self
+
     # KRI-300: filming context read from the Photos asset (same shape and lenient
     # rules as `MediaInput`): a part that fails validation is dropped, never a 422.
     capture_time: datetime | None = None
@@ -9006,6 +9017,8 @@ async def _delete_verified_pool_upload(
 
 
 class PoolAssetOut(BaseModel):
+    library_asset_id: uuid.UUID | None = None
+    library_source_id: uuid.UUID | None = None
     # Original source for native composition; display_url may be a JPEG derivative.
     source_url: str | None = None
     id: str
@@ -9073,13 +9086,23 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
     preview_url: str | None = None
     source_url: str | None = None
     try:
-        source_url = storage.signed_get_url(asset.gcs_path, expiration_minutes=60)
+        source_url = (
+            storage.signed_get_url_for_generation(asset.gcs_path, generation=asset.gcs_generation)
+            if getattr(asset, "library_source_id", None) is not None
+            else storage.signed_get_url(asset.gcs_path, expiration_minutes=60)
+        )
     except Exception:  # noqa: BLE001 — unavailable sources remain visibly unavailable
         pass
     try:
-        display_url = storage.signed_get_url(
-            asset.gcs_path if asset.kind == "video" else (preview_path or asset.gcs_path),
-            expiration_minutes=60,
+        display_path = asset.gcs_path if asset.kind == "video" else (preview_path or asset.gcs_path)
+        display_url = (
+            source_url
+            if display_path == asset.gcs_path
+            and getattr(asset, "library_source_id", None) is not None
+            else storage.signed_get_url(
+                display_path,
+                expiration_minutes=60,
+            )
         )
     except Exception:  # noqa: BLE001 — thumbnail signing is best-effort, never 500s the list
         display_url = None
@@ -9145,6 +9168,8 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         else "failed"
     )
     return PoolAssetOut(
+        library_asset_id=getattr(asset, "library_asset_id", None),
+        library_source_id=getattr(asset, "library_source_id", None),
         id=str(asset.id),
         kind=asset.kind,
         status=visible_status,
@@ -9216,6 +9241,7 @@ async def _queue_pool_asset_analysis(
     db: AsyncSession,
     *,
     reset_attempts: bool = False,
+    register_library: bool = False,
 ) -> None:
     """Persist a fenced queued attempt, then publish it best-effort.
 
@@ -9225,6 +9251,11 @@ async def _queue_pool_asset_analysis(
     """
     from app.config import settings as _settings  # noqa: PLC0415
     from app.tasks.autoplace import analyze_pool_asset  # noqa: PLC0415
+
+    if register_library and settings.media_library_enabled:
+        from app.services.media_library_projections import adopt_uploaded_visual
+
+        await adopt_uploaded_visual(db, asset)
 
     attempt_token = uuid.uuid4().hex
     prior_attempts = int(getattr(asset, "analysis_attempt_count", 0) or 0)
@@ -9276,6 +9307,7 @@ async def register_pool_asset(
     request: Request,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClient = False,
 ) -> PoolAssetOut:
     """Register an uploaded pool asset.
 
@@ -9285,7 +9317,39 @@ async def register_pool_asset(
     terminal failures instead of polling forever.
     """
     _require_asset_pool()
+    if settings.media_library_enabled and native_client:
+        from app.services.media_library_ingest import lock_library_owner
+
+        await lock_library_owner(db, user.id)
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    if body.library_asset_id is not None:
+        if not settings.media_library_enabled or not native_client:
+            raise HTTPException(404, "Media library is unavailable")
+        if body.gcs_path is not None or body.reservation_id is not None:
+            raise HTTPException(422, "Choose a library asset without an upload path")
+        from app.services.media_library_projections import project_library_visual
+
+        asset = await project_library_visual(
+            db,
+            owner_id=user.id,
+            item_id=item.id,
+            asset_id=body.library_asset_id,
+            source_id=body.library_source_id,
+            maximum=_MAX_POOL_ASSETS,
+        )
+        if asset.status == "uploaded":
+            await _queue_pool_asset_analysis(
+                asset,
+                db,
+                **(
+                    {"register_library": True}
+                    if settings.media_library_enabled and native_client
+                    else {}
+                ),
+            )
+        else:
+            await db.commit()
+        return _asset_out(asset)
     _pool_prefix = f"users/{user.id}/plan/{item.id}/pool/"
     _staging_prefix = f"dev-user/{user.id}/plan-pool-reservations/{item.id}/"
     if not body.gcs_path.startswith((_pool_prefix, _staging_prefix)):
@@ -9333,7 +9397,15 @@ async def register_pool_asset(
                         status_code=status.HTTP_409_CONFLICT,
                         detail="Upload target does not match its reservation.",
                     )
-                await _queue_pool_asset_analysis(reservation, db)
+                await _queue_pool_asset_analysis(
+                    reservation,
+                    db,
+                    **(
+                        {"register_library": True}
+                        if settings.media_library_enabled and native_client
+                        else {}
+                    ),
+                )
                 if body.gcs_path.startswith(retry_staging_prefix):
                     cleaned = await asyncio.to_thread(
                         storage.delete_object_best_effort,
@@ -9372,7 +9444,15 @@ async def register_pool_asset(
             if path_owner.status in {"preparing", "promoting"}:
                 reservation = path_owner
             elif path_owner.status == "uploaded":
-                await _queue_pool_asset_analysis(path_owner, db)
+                await _queue_pool_asset_analysis(
+                    path_owner,
+                    db,
+                    **(
+                        {"register_library": True}
+                        if settings.media_library_enabled and native_client
+                        else {}
+                    ),
+                )
                 return _asset_out(path_owner)
             elif path_owner.status in _POOL_REUSABLE_STATUSES:
                 return _asset_out(path_owner)
@@ -9406,7 +9486,15 @@ async def register_pool_asset(
             if promoted is None or not promoted.gcs_path.startswith(_pool_prefix):
                 raise HTTPException(status_code=404, detail="Upload reservation not found.")
             if promoted.status == "uploaded":
-                await _queue_pool_asset_analysis(promoted, db)
+                await _queue_pool_asset_analysis(
+                    promoted,
+                    db,
+                    **(
+                        {"register_library": True}
+                        if settings.media_library_enabled and native_client
+                        else {}
+                    ),
+                )
                 await _cleanup_reserved_pool_path(
                     body.gcs_path,
                     reservation_id=str(promoted.id),
@@ -9496,7 +9584,15 @@ async def register_pool_asset(
         ).scalar_one_or_none()
         if existing is not None:
             if existing.status == "uploaded":
-                await _queue_pool_asset_analysis(existing, db)
+                await _queue_pool_asset_analysis(
+                    existing,
+                    db,
+                    **(
+                        {"register_library": True}
+                        if settings.media_library_enabled and native_client
+                        else {}
+                    ),
+                )
             cleaned_context = _clean_pool_asset_context(body.user_context)
             deduped_capture = body.capture()
             if deduped_capture is not None and not existing.capture:
@@ -9711,7 +9807,11 @@ async def register_pool_asset(
                     "stage": "registration",
                 },
             ) from exc
-    await _queue_pool_asset_analysis(asset, db)
+    await _queue_pool_asset_analysis(
+        asset,
+        db,
+        **({"register_library": True} if settings.media_library_enabled and native_client else {}),
+    )
     if staging_cleanup is not None:
         staging_path, staging_generation = staging_cleanup
         try:
@@ -9736,6 +9836,7 @@ async def upload_pool_asset(
     user: CurrentUser,
     file: MultipartFile = File(...),  # noqa: B008
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClient = False,
 ) -> PoolAssetOut:
     """Compatibility multipart upload through the shared staged registrar."""
     import hashlib  # noqa: PLC0415
@@ -9881,6 +9982,7 @@ async def upload_pool_asset(
             request,
             user,
             db,
+            **({"native_client": True} if native_client else {}),
         )
     finally:
         if tmp_path:
@@ -10022,12 +10124,14 @@ async def delete_pool_asset(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Remove an asset and durably reclaim unreferenced persistent bytes."""
+    from app.services.job_storage_paths import lock_project_media_owner
     from app.services.pool_asset_refs import (  # noqa: PLC0415
         item_references_pool_path,
         job_references_pool_asset,
     )
 
     _require_asset_pool()
+    await lock_project_media_owner(db, user.id)
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
     try:
         aid = uuid.UUID(asset_id)
@@ -10079,6 +10183,33 @@ async def delete_pool_asset(
         # Decision 11A: deleting an asset eagerly clears dependent PENDING
         # suggestion rows (staged/accepted cards are real placements — untouched).
         removed = _clear_suggestions_for_asset(locked_job, str(asset.id))
+    if getattr(asset, "library_source_id", None) is not None:
+        from sqlalchemy import delete
+
+        from app.models import MediaAssetReference
+
+        source_id = asset.library_source_id
+        await db.delete(asset)
+        await db.flush()
+        other_projection = await db.scalar(
+            select(PlanItemAsset.id)
+            .where(
+                PlanItemAsset.plan_item_id == item.id,
+                PlanItemAsset.user_id == user.id,
+                PlanItemAsset.library_source_id == source_id,
+            )
+            .limit(1)
+        )
+        if other_projection is None:
+            await db.execute(
+                delete(MediaAssetReference).where(
+                    MediaAssetReference.user_id == user.id,
+                    MediaAssetReference.plan_item_id == item.id,
+                    MediaAssetReference.source_id == source_id,
+                )
+            )
+        await db.commit()
+        return {"ok": True, "removed_suggestions": removed}
     shared_count = int(
         (
             await db.execute(

@@ -168,6 +168,7 @@ async def _attach(
         "app.tasks.kria_clip_understanding.enqueue_clip_understanding", lambda _item_id: None
     )
     db = Mock()
+    db.scalar = AsyncMock(return_value=None)
     db.get = AsyncMock(return_value=item)
     db.execute = AsyncMock()
 

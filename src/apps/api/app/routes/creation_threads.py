@@ -74,6 +74,7 @@ from app.models import (
     Job,
     JobClip,
     JobStorageDeletion,
+    MediaAssetReference,
     Persona,
     PlanItem,
     PlanItemAsset,
@@ -515,6 +516,8 @@ class MediaInput(StrictBody):
     media_id: str = Field(min_length=1, max_length=160)
     # The object key is reconstructed from this opaque reservation ID.
     gcs_path: str | None = Field(default=None, max_length=500)
+    library_asset_id: uuid.UUID | None = None
+    library_source_id: uuid.UUID | None = None
     kind: Literal["video", "image", "audio"]
     filename: str | None = Field(default=None, max_length=240)
     content_type: str | None = Field(default=None, max_length=100)
@@ -531,6 +534,8 @@ class MediaInput(StrictBody):
 
     @model_validator(mode="after")
     def _role_is_audio_only(self) -> MediaInput:
+        if self.library_source_id is not None and self.library_asset_id is None:
+            raise ValueError("a library source requires its asset ID")
         if self.role is not None and self.kind != "audio":
             raise ValueError("role applies to audio only")
         return self
@@ -1643,6 +1648,14 @@ async def _load(
     """
 
     owner_id = creator_id if creator_id is not None else user.id
+    if lock:
+        from app.services.job_storage_paths import lock_project_media_owner
+
+        await lock_project_media_owner(db, owner_id)
+    if lock and settings.media_library_enabled:
+        from app.services.media_library_ingest import lock_library_owner
+
+        await lock_library_owner(db, owner_id)
     try:
         identifier = uuid.UUID(thread_id)
     except ValueError as exc:
@@ -4830,11 +4843,27 @@ async def action_thread(
             legacy_candidates.append(item.song_gcs_path)
         legacy_path = _legacy_media_path(media_id, legacy_candidates)
         media_path = legacy_path or _media_path(user.id, thread.id, media_id)
+        if removed.get("library_asset_id"):
+            from app.services.media_library_ingest import resolve_library_source
+
+            _, library_source = await resolve_library_source(
+                db,
+                owner_id,
+                uuid.UUID(removed["library_asset_id"]),
+                uuid.UUID(removed["library_source_id"]),
+                allow_archived=True,
+                allow_missing=True,
+            )
+            media_path = library_source.object_path
         next_assignments = [
             assignment
             for assignment in (item.clip_assignments or [])
             if not isinstance(assignment, dict)
-            or (assignment.get("gcs_path") != media_path and assignment.get("media_id") != media_id)
+            or (
+                assignment.get("media_id") != media_id
+                if assignment.get("media_id")
+                else assignment.get("gcs_path") != media_path
+            )
         ]
         from app.services.plan_item_media import (  # noqa: PLC0415
             current_detector_policy,
@@ -4850,7 +4879,11 @@ async def action_thread(
             for_update=True,
         )
         mutation_kwargs: dict[str, Any] = {"clip_assignments": next_assignments}
-        if item.voiceover_gcs_path == media_path:
+        if (
+            removed.get("kind") == "audio"
+            and removed.get("role") != "song"
+            and item.voiceover_gcs_path == media_path
+        ):
             mutation_kwargs.update(
                 voiceover_gcs_path=None,
                 voiceover_generation=None,
@@ -4864,7 +4897,7 @@ async def action_thread(
             )
 
             delete_prefix = derivative_item_prefix(owner_id=owner_id, item_id=item.id)
-        if getattr(item, "song_gcs_path", None) == media_path:
+        if removed.get("role") == "song" and getattr(item, "song_gcs_path", None) == media_path:
             # Clears the song columns (and, in the facade, its cached analysis and
             # alignment); a "song" soundtrack falls back to Kria's own choice.
             mutation_kwargs.update(
@@ -4882,6 +4915,17 @@ async def action_thread(
         )
         state["media"] = [entry for entry in media if entry.get("media_id") != media_id]
         state["media_count"] = len(state["media"])
+        if removed.get("library_source_id") and not any(
+            entry.get("library_source_id") == removed["library_source_id"]
+            for entry in state["media"]
+        ):
+            await db.execute(
+                delete(MediaAssetReference).where(
+                    MediaAssetReference.user_id == owner_id,
+                    MediaAssetReference.creation_thread_id == thread.id,
+                    MediaAssetReference.source_id == uuid.UUID(removed["library_source_id"]),
+                )
+            )
         thread.state = state
         preflight_analysis_id = await _ensure_speech_cleanup_preflight(db, item)
         if mutation.source_changed is True:
@@ -4895,7 +4939,7 @@ async def action_thread(
                 state = dict(thread.state or {})
         # Legacy paths may be shared with pre-chat drafts. Only delete objects
         # minted under this thread's exclusive prefix.
-        if legacy_path is None:
+        if legacy_path is None and not removed.get("library_asset_id"):
             delete_path = media_path
     elif body.action == "retry" and body.payload.get("variant_id"):
         session = (
@@ -5843,6 +5887,11 @@ async def upload_urls(
     }
     expires_at = datetime.now(UTC) + _UPLOAD_URL_TTL
     for media_id, _content_type, _size, path in target_specs:
+        from app.services.temporary_uploads import require_upload_available
+
+        cleanup_receipt = await require_upload_available(db, user.id, path, renewing=True)
+        if cleanup_receipt is not None:
+            cleanup_receipt.retention_expires_at = datetime.now(UTC) + timedelta(days=1)
         reservation = reservations.get(media_id)
         if reservation is None:
             db.add(
@@ -5947,7 +5996,17 @@ async def attach_media(
             if isinstance(entry, dict)
         }
         requested_ids = {media.media_id for media in body.media}
-        if previous_ids != requested_ids:
+        previous_library = (duplicate.payload or {}).get("library_selections", [])
+        requested_library = [
+            {
+                "media_id": media.media_id,
+                "asset_id": str(media.library_asset_id),
+                "source_id": str(media.library_source_id) if media.library_source_id else None,
+            }
+            for media in body.media
+            if media.library_asset_id
+        ]
+        if previous_ids != requested_ids or previous_library != requested_library:
             _reject_media(
                 "creation_thread.attach_media.rejected",
                 409,
@@ -5975,11 +6034,27 @@ async def attach_media(
             reason="image_wrong_pool",
             thread_id=str(thread.id),
         )
+    library_sources = {}
+    if any(media.library_asset_id for media in body.media):
+        if not settings.media_library_enabled or not native_client:
+            raise HTTPException(404, "Media library is unavailable")
+        from app.services.media_library_ingest import resolve_library_source
+
+        for media in body.media:
+            if media.library_asset_id:
+                asset, source = await resolve_library_source(
+                    db, user.id, media.library_asset_id, media.library_source_id, kind=media.kind
+                )
+                library_sources[media.media_id] = (asset, source)
     # Validate the reservation capability before touching the database or
     # storage. A caller-supplied path is never authoritative.
     for media in body.media:
         try:
-            expected_path = _media_path(user.id, thread.id, media.media_id)
+            expected_path = (
+                library_sources[media.media_id][1].object_path
+                if media.media_id in library_sources
+                else _media_path(user.id, thread.id, media.media_id)
+            )
         except ValueError as exc:
             _reject_media(
                 "creation_thread.attach_media.rejected",
@@ -6090,7 +6165,11 @@ async def attach_media(
             thread_id=str(thread.id),
         )
     proxy_contracts: dict[str, MediaUploadContract] = {}
-    proxy_ids = [media.media_id for media in body.media if is_analysis_proxy_path(media.media_id)]
+    proxy_ids = [
+        media.media_id
+        for media in body.media
+        if is_analysis_proxy_path(media.media_id) and media.media_id not in library_sources
+    ]
     if proxy_ids:
         reservations = (
             (
@@ -6131,8 +6210,21 @@ async def attach_media(
                 missing_media_ids=sorted(set(proxy_ids) - set(proxy_contracts)),
             )
     verified: list[dict[str, Any]] = []
+    physical_upload_paths: list[str] = []
     for media in body.media:
-        expected_path = _media_path(user.id, thread.id, media.media_id)
+        library = library_sources.get(media.media_id)
+        expected_path = (
+            library[1].object_path if library else _media_path(user.id, thread.id, media.media_id)
+        )
+        if library is None:
+            from app.services.temporary_uploads import require_upload_available
+
+            await require_upload_available(db, user.id, expected_path)
+            physical_upload_paths.append(expected_path)
+        if library and library[1].role == "analysis_proxy":
+            proxy_contracts[media.media_id] = MediaUploadContract.model_validate(
+                library[0].metadata_json.get("upload_contract") or {}
+            )
         try:
             metadata = await asyncio.to_thread(storage.object_metadata, expected_path)
         except FileNotFoundError as exc:
@@ -6178,6 +6270,8 @@ async def attach_media(
                 size_bytes=int(metadata.size),
             )
         generation = str(getattr(metadata, "generation", "") or "").strip()
+        if library and generation != library[1].object_generation:
+            raise HTTPException(409, "Library cloud copy changed; repair from the original")
         if not generation:
             _reject_media(
                 "creation_thread.attach_media.rejected",
@@ -6190,14 +6284,20 @@ async def attach_media(
             )
         contract = proxy_contracts.get(media.media_id)
         try:
-            duration_s, has_audio = await _probe_registered_media(
-                thread_id=str(thread.id),
-                media_id=media.media_id,
-                object_path=expected_path,
-                generation=generation,
-                kind=media.kind,
-                **({"proxy": contract.proxy} if contract else {}),
-            )
+            if library:
+                duration_s = float(library[0].metadata_json.get("duration_s") or 0)
+                has_audio = bool(library[0].metadata_json.get("has_audio"))
+                if duration_s <= 0:
+                    raise HTTPException(409, "Library media has no verified duration")
+            else:
+                duration_s, has_audio = await _probe_registered_media(
+                    thread_id=str(thread.id),
+                    media_id=media.media_id,
+                    object_path=expected_path,
+                    generation=generation,
+                    kind=media.kind,
+                    **({"proxy": contract.proxy} if contract else {}),
+                )
         except FileNotFoundError as exc:
             _reject_media(
                 "creation_thread.attach_media.rejected",
@@ -6283,6 +6383,52 @@ async def attach_media(
                     media_id=media.media_id,
                     media_kind=media.kind,
                 )
+        if settings.media_library_enabled and native_client and library is None:
+            from app.services.media_library_ingest import (
+                register_verified_source,
+                track_library_duplicate,
+                verified_source_metadata,
+            )
+
+            legacy_payload = {
+                "kind": media.kind,
+                "content_type": content_type,
+                "file_size_bytes": int(metadata.size),
+                "upload_contract": contract.model_dump(mode="json")
+                if contract
+                else {"purpose": "cloud_render_source", "proxy": None},
+            }
+            proof = await asyncio.to_thread(
+                verified_source_metadata,
+                expected_path,
+                generation,
+                media.kind,
+                legacy_payload,
+                legacy=True,
+            )
+            original = contract.proxy.original if contract and contract.proxy else None
+            library = await register_verified_source(
+                db,
+                owner_id=user.id,
+                kind=media.kind,
+                object_path=expected_path,
+                generation=generation,
+                uploaded_sha256=proof["uploaded_sha256"],
+                byte_count=int(metadata.size),
+                content_type=content_type,
+                role=proof["role"],
+                original_declared_sha256=original.sha256 if original else None,
+                original_byte_count=original.byte_count if original else None,
+                metadata={
+                    **proof["metadata"],
+                    "filename": media.filename,
+                    "upload_contract": legacy_payload["upload_contract"],
+                },
+            )
+            library_sources[media.media_id] = library
+            if library[1].object_path != expected_path:
+                await track_library_duplicate(db, user.id, expected_path)
+            expected_path, generation = library[1].object_path, library[1].object_generation
         verified.append(
             {
                 "media_id": _client_id(media.media_id),
@@ -6294,6 +6440,14 @@ async def attach_media(
                 "generation": generation,
                 "duration_s": duration_s,
                 "has_audio": has_audio,
+                **(
+                    {
+                        "library_asset_id": str(library[0].id),
+                        "library_source_id": str(library[1].id),
+                    }
+                    if library
+                    else {}
+                ),
                 "_path": expected_path,
                 **(
                     {"_capture": capture.model_dump(mode="json", exclude_none=True)}
@@ -6307,12 +6461,43 @@ async def attach_media(
                 **({"upload_contract": contract.model_dump(mode="json")} if contract else {}),
             }
         )
+    # Reused uploads can resolve to the same canonical path under different
+    # client IDs. Reject those selections before references or media mutation.
+    selected_paths = set(existing_paths)
+    for source in verified:
+        if source["kind"] == "video":
+            if source["_path"] in selected_paths:
+                from app.services.media_library_ingest import preserve_rejected_uploads
+
+                owner_id, rejected_thread_id = user.id, thread.id
+                await preserve_rejected_uploads(
+                    db, owner_id, rejected_thread_id, physical_upload_paths
+                )
+                _reject_media(
+                    "creation_thread.attach_media.rejected",
+                    409,
+                    "That video source is already selected for this post",
+                    reason="source_already_attached",
+                    thread_id=str(rejected_thread_id),
+                    media_id=source["media_id"],
+                )
+            selected_paths.add(source["_path"])
     # Paths live only on the authoritative PlanItem.  The thread projection
     # stores opaque IDs/kinds and a count, never external storage locations.
     assignments = [
         assignment for assignment in (item.clip_assignments or []) if isinstance(assignment, dict)
     ]
     for media, source in zip(body.media, verified, strict=True):
+        if source.get("library_asset_id"):
+            from app.services.media_library_ingest import reference_library_source
+
+            await reference_library_source(
+                db,
+                owner_id=user.id,
+                asset_id=uuid.UUID(source["library_asset_id"]),
+                source_id=uuid.UUID(source["library_source_id"]),
+                creation_thread_id=thread.id,
+            )
         if source["kind"] == "video":
             existing_paths.append(source["_path"])
             assignments.append(
@@ -6325,6 +6510,14 @@ async def attach_media(
                     "duration_s": source["duration_s"],
                     "has_audio": source["has_audio"],
                     "manifest_identity": source["media_id"],
+                    **(
+                        {
+                            "library_asset_id": source["library_asset_id"],
+                            "library_source_id": source["library_source_id"],
+                        }
+                        if source.get("library_asset_id")
+                        else {}
+                    ),
                     # KRI-189: authoritative filming context (source of truth for
                     # the fact layer); coarse by construction.
                     **({"capture": source["_capture"]} if "_capture" in source else {}),
@@ -6415,7 +6608,27 @@ async def attach_media(
         thread,
         event_type="media_added",
         role="user",
-        payload={"media": public_media, "media_count": state["media_count"]},
+        payload={
+            "media": public_media,
+            "media_count": state["media_count"],
+            **(
+                {
+                    "library_selections": [
+                        {
+                            "media_id": media.media_id,
+                            "asset_id": str(media.library_asset_id),
+                            "source_id": str(media.library_source_id)
+                            if media.library_source_id
+                            else None,
+                        }
+                        for media in body.media
+                        if media.library_asset_id
+                    ]
+                }
+                if any(media.library_asset_id for media in body.media)
+                else {}
+            ),
+        },
         client_event_id=body.client_event_id,
     )
     await db.execute(
