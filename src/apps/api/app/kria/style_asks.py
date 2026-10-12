@@ -334,6 +334,7 @@ def clip_length_ask(req: BriefRequirement) -> tuple[float, bool, bool] | None:
 # seç, her biri çok kısa". A number of moments, shots or cuts, and whether each must be
 # short. "Keep it short" is the whole video's length, never a moment ask.
 MOMENT_SHORT_MAX_S = 3.0
+# Pieces of the finished edit: a count of these is a moment count.
 _MOMENT_NOUNS = frozenset(
     {
         "moment",
@@ -342,8 +343,6 @@ _MOMENT_NOUNS = frozenset(
         "shots",
         "cut",
         "cuts",
-        "clip",
-        "clips",
         "part",
         "parts",
         "scene",
@@ -354,6 +353,8 @@ _MOMENT_NOUNS = frozenset(
         "bits",
         "snippet",
         "snippets",
+        "segment",
+        "segments",
         "an",
         "ani",
         "anlar",
@@ -369,12 +370,40 @@ _MOMENT_NOUNS = frozenset(
         "parca",
         "parcalar",
         "parcayi",
-        "kare",
-        "kareler",
-        "cekim",
-        "cekimler",
+    }
+)
+# The creator's footage: "use 5 clips" / "I filmed 10 clips" picks sources and never asks
+# for that many moments.
+_FOOTAGE_NOUNS = frozenset(
+    {
+        "clip",
+        "clips",
+        "video",
+        "videos",
+        "take",
+        "takes",
+        "file",
+        "files",
+        "recording",
+        "recordings",
+        "photo",
+        "photos",
+        "footage",
         "klip",
         "klipler",
+        "klibi",
+        "klipleri",
+        "videolar",
+        "videoyu",
+        "videolari",
+        "cekim",
+        "cekimler",
+        "kare",
+        "kareler",
+        "kayit",
+        "kayitlar",
+        "foto",
+        "fotolar",
     }
 )
 _MOMENT_FILLERS = frozenset(
@@ -400,49 +429,100 @@ _MOMENT_FILLERS = frozenset(
         "farkli",
     }
 )
-# "4 of my 10 clips", "4 out of 10", "from 10 clips", "all 5 clips", "bu 10 klip": the
+# "4 of my 10 clips", "4 out of 10", "from 10 shots", "all 5 moments", "bu 10 sahne": the
 # number counts the creator's footage, never the moments to cut from it.
 _FOOTAGE_OWNERS = frozenset({"my", "these", "those", "all", "bu", "su", "tum", "butun", "benim"})
-_FOOTAGE_LEAD_INS = _FOOTAGE_OWNERS | {"the", "of"}
+_COUNT_LEAD_INS = _FOOTAGE_OWNERS | {
+    "the",
+    "of",
+    "about",
+    "around",
+    "like",
+    "only",
+    "just",
+    "first",
+    "last",
+    "other",
+}
 _FOOTAGE_SOURCES = frozenset({"from", "out", "among"})
+# "I filmed 10 shots" counts footage and "skip 2 moments" counts what to leave out; Turkish
+# puts the verb after the noun ("10 sahne çektim", "2 anı atla").
+_NOT_MOMENT_VERBS = frozenset(
+    {
+        "filmed",
+        "recorded",
+        "shot",
+        "took",
+        "uploaded",
+        "sent",
+        "added",
+        "gave",
+        "skip",
+        "drop",
+        "remove",
+        "delete",
+        "exclude",
+        "without",
+        "except",
+        "ditch",
+    }
+)
+_NOT_MOMENT_VERBS_AFTER = frozenset(
+    {
+        "cektim",
+        "yukledim",
+        "gonderdim",
+        "ekledim",
+        "attim",
+        "var",
+        "atla",
+        "cikar",
+        "cikart",
+        "sil",
+    }
+)
 
 
-def _counts_footage(tokens: list[str], index: int) -> bool:
+def _counted_spans(tokens: list[str]) -> list[tuple[int, int, str | None]]:
+    """Each number with its words: (index, end, noun) for "6 very short moments"."""
+    spans: list[tuple[int, int, str | None]] = []
+    for index, token in enumerate(tokens):
+        if not token.isdigit():
+            continue
+        end, noun = index + 1, None
+        for after in range(index + 1, min(index + 4, len(tokens))):
+            if tokens[after] in _MOMENT_NOUNS or tokens[after] in _FOOTAGE_NOUNS:
+                end, noun = after + 1, tokens[after]
+                break
+            if tokens[after] not in _MOMENT_FILLERS:
+                break
+            end = after + 1
+        spans.append((index, end, noun))
+    return spans
+
+
+def _counts_footage(tokens: list[str], index: int, end: int, noun: str | None) -> bool:
+    if noun in _FOOTAGE_NOUNS or (end < len(tokens) and tokens[end] in _NOT_MOMENT_VERBS_AFTER):
+        return True
     back = index - 1
     passed: set[str] = set()
-    while back >= 0 and tokens[back] in _FOOTAGE_LEAD_INS:
+    while back >= 0 and tokens[back] in _COUNT_LEAD_INS:
         passed.add(tokens[back])
         back -= 1
     before = tokens[back] if back >= 0 else ""
     return bool(
         passed & _FOOTAGE_OWNERS
         or before in _FOOTAGE_SOURCES
+        or before in _NOT_MOMENT_VERBS
         or ("of" in passed and before.isdigit())
     )
 
 
-def _footage_counts(tokens: list[str]) -> set[int]:
-    """Indexes of each footage count and its words ("10 short clips"), to skip."""
-    skipped: set[int] = set()
-    for index, token in enumerate(tokens):
-        if not token.isdigit() or not _counts_footage(tokens, index):
-            continue
-        skipped.add(index)
-        for after in range(index + 1, min(index + 4, len(tokens))):
-            if tokens[after] not in _MOMENT_FILLERS and tokens[after] not in _MOMENT_NOUNS:
-                break
-            skipped.add(after)
-            if tokens[after] in _MOMENT_NOUNS:
-                break
-    return skipped
-
-
 _SHORT_MOMENTS = re.compile(
     r"\b(?:each|every one|all)(?: of them)? (?:very |really |super )?(?:short|quick|brief)\b"
-    r"|\b(?:short|quick|brief|snappy|fast) (?:moments?|shots?|cuts?|clips?|bits?|parts?"
-    r"|scenes?|snippets?)\b"
-    r"|\bher biri (?:cok )?kisa\b|\bkisa (?:an|ani|anlar\w*|sahne\w*|kesit\w*|parca\w*"
-    r"|cekim\w*|klip\w*)\b"
+    r"|\b(?:short|quick|brief|snappy|fast) (?:moments?|shots?|cuts?|bits?|parts?|scenes?"
+    r"|snippets?|highlights?|segments?)\b"
+    r"|\bher biri (?:cok )?kisa\b|\bkisa (?:an|ani|anlar\w*|sahne\w*|kesit\w*|parca\w*)\b"
 )
 
 
@@ -465,18 +545,12 @@ def moment_ask(req: BriefRequirement) -> MomentAsk | None:
     fact = req.facts.get("moment_count")
     if isinstance(fact, int) and not isinstance(fact, bool) and 2 <= fact <= 30:
         count = fact
-    footage = _footage_counts(tokens)
-    for index, token in enumerate(tokens):
-        if count is not None:
-            break
-        if index in footage or not token.isdigit() or not 2 <= int(token) <= 30:
-            continue
-        for follower in tokens[index + 1 : index + 4]:
-            if follower in _MOMENT_NOUNS:
-                count = int(token)
-                break
-            if follower not in _MOMENT_FILLERS:
-                break
+    footage: set[int] = set()
+    for index, end, noun in _counted_spans(tokens):
+        if _counts_footage(tokens, index, end, noun):
+            footage.update(range(index, end))
+        elif count is None and noun is not None and 2 <= int(tokens[index]) <= 30:
+            count = int(tokens[index])
     kept = " ".join(token for index, token in enumerate(tokens) if index not in footage)
     short = bool(_SHORT_MOMENTS.search(kept))
     if count is None and not short:
@@ -485,9 +559,13 @@ def moment_ask(req: BriefRequirement) -> MomentAsk | None:
 
 
 def brief_moment_ask(brief: CreativeBrief | None) -> MomentAsk | None:
-    """The brief's first live moment ask, if any; a retracted ask stays superseded."""
-    for req in brief.live() if brief is not None else []:
-        ask = moment_ask(req)
-        if ask is not None:
-            return ask
-    return None
+    """The live moment ask: the newest count, short if any live ask says so.
+
+    A clip-count requirement ("use the 4 clips") is no moment ask, so it can't shadow a
+    later "best 6 moments, each very short"; a retracted ask stays superseded.
+    """
+    asks = [ask for req in (brief.live() if brief else []) if (ask := moment_ask(req))]
+    if not asks:
+        return None
+    counts = [ask.count for ask in asks if ask.count is not None]
+    return MomentAsk(count=counts[-1] if counts else None, short=any(ask.short for ask in asks))

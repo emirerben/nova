@@ -495,14 +495,38 @@ def test_a_taken_back_moment_ask_stops_slicing_and_counting() -> None:
 
 
 def test_a_count_of_the_creators_clips_never_becomes_a_moment_count() -> None:
-    # 6: "pick best 4 of my 10 clips" is a choice among clips, not ten moments.
+    # 1 + 4 + 6: clip counts pick sources; they never cut moments or shadow a moment ask.
     strategy = _strategy([_wrong_seat().model_copy(update={"attribute": "the river clip"})])
-    four_of_ten = BriefRequirement(
-        id="r3", kind="select", scope="global", description="pick best 4 of my 10 clips"
+
+    def ask(rid: str, text: str) -> BriefRequirement:
+        return BriefRequirement(id=rid, kind="select", scope="global", description=text)
+
+    def plan(brief: CreativeBrief) -> dict:
+        return _enrich_best_parts_snapshot(strategy, _snapshot(), brief)
+
+    never_asked = plan(_brief())
+    for text in (
+        "pick best 4 of my 10 clips",
+        "use 5 clips",
+        "I filmed 10 clips",
+        "skip 2 clips",
+        "use the 4 clips",
+    ):
+        planned = plan(_brief(ask("r3", text)))
+        assert planned == never_asked, text
+        assert (
+            _moment_count_notice(strategy, _brief(ask("r3", text)), planned["length_plan"]) is None
+        )
+
+    six_short = plan(_brief(ask("r4", "best 6 moments, each very short")))
+    assert len(six_short["length_plan"]["windows"]) == 6
+    assert (
+        plan(_brief(ask("r3", "use the 4 clips"), ask("r4", "best 6 moments, each very short")))
+        == six_short
     )
-    planned = _enrich_best_parts_snapshot(strategy, _snapshot(), _brief(four_of_ten))
-    assert planned == _enrich_best_parts_snapshot(strategy, _snapshot(), _brief())
-    assert _moment_count_notice(strategy, _brief(four_of_ten), planned["length_plan"]) is None
+    assert plan(_brief(ask("r3", "best 6 moments"), ask("r4", "each very short"))) == six_short
+    eight_cuts = plan(_brief(ask("r3", "8 quick cuts")))
+    assert len(eight_cuts["length_plan"]["windows"]) == 8
 
 
 def test_the_worker_refuses_overlapping_windows_of_one_take() -> None:
@@ -562,6 +586,20 @@ def test_the_worker_refuses_overlapping_windows_of_one_take() -> None:
         ("6 moments from my 2 long takes", MomentAsk(count=6)),
         ("a video of 6 moments", MomentAsk(count=6)),
         ("the 6 best moments", MomentAsk(count=6)),
+        # a bare count of clips picks sources; filming or removal verbs count footage
+        ("use 5 clips", None),
+        ("I filmed 10 clips", None),
+        ("skip 2 clips", None),
+        ("use the 4 clips", None),
+        ("I filmed 10 short clips", None),
+        ("I shot 10 scenes", None),
+        ("skip 2 moments", None),
+        ("leave out the first 3 cuts", None),
+        ("10 klip çektim", None),
+        ("10 sahne çektim", None),
+        ("2 anı atla", None),
+        ("6 moments", MomentAsk(count=6)),
+        ("8 quick cuts", MomentAsk(count=8, short=True)),
         # the whole video, not each moment
         ("keep it short, 18 seconds", None),
         ("make it 18 seconds", None),
