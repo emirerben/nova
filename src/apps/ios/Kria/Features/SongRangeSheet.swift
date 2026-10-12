@@ -103,28 +103,7 @@ struct SongRangeSheet: View {
     }
 
     private func wheels(_ draft: SongRangeDraft) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            wheel(title: "From", selection: fromBinding, upper: draft.maxFrom, id: "song-range-from")
-            wheel(title: "To", selection: toBinding, upper: draft.limit, id: "song-range-to")
-        }
-    }
-
-    private func wheel(title: String, selection: Binding<Int>, upper: Int, id: String) -> some View {
-        VStack(spacing: 4) {
-            Text(title).font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
-            Picker(title, selection: selection) {
-                ForEach(0...upper, id: \.self) { second in
-                    Text(SongRangeMath.timecode(Double(second))).tag(second)
-                }
-            }
-            .pickerStyle(.wheel)
-            .frame(height: 120)
-            .clipped()
-            .accessibilityLabel(title)
-            .accessibilityIdentifier(id)
-        }
-        .frame(maxWidth: .infinity)
-        .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 12))
+        SongRangeWheelPair(draft: draft, from: fromBinding, to: toBinding, fromID: "song-range-from", toID: "song-range-to")
     }
 
     @ViewBuilder private var messageLine: some View {
@@ -170,7 +149,7 @@ struct SongRangeSheet: View {
 }
 
 /// A quiet filled capsule: secondary actions use a fill, not an outline.
-private struct SongRangeFillButtonStyle: ButtonStyle {
+struct SongRangeFillButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -179,5 +158,42 @@ private struct SongRangeFillButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity, minHeight: 48)
             .background(KriaColor.fill, in: Capsule())
             .opacity(isEnabled ? (configuration.isPressed ? 0.65 : 1) : 0.45)
+    }
+}
+
+/// The From / To time wheels, shared by the sheet (KRI-580) and the chat card (KRI-588). The caller owns the
+/// draft and its bindings, so the From-pushes-To rule lives in one place (`SongRangeDraft`).
+struct SongRangeWheelPair: View {
+    let draft: SongRangeDraft
+    let from: Binding<Int>
+    let to: Binding<Int>
+    let fromID: String
+    let toID: String
+    var isEnabled = true
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            wheel(title: "From", selection: from, upper: draft.maxFrom, id: fromID)
+            wheel(title: "To", selection: to, upper: draft.limit, id: toID)
+        }
+        .disabled(!isEnabled)
+    }
+
+    private func wheel(title: String, selection: Binding<Int>, upper: Int, id: String) -> some View {
+        VStack(spacing: 4) {
+            Text(title).font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
+            Picker(title, selection: selection) {
+                ForEach(0...upper, id: \.self) { second in
+                    Text(SongRangeMath.timecode(Double(second))).tag(second)
+                }
+            }
+            .pickerStyle(.wheel)
+            .frame(height: 120)
+            .clipped()
+            .accessibilityLabel(title)
+            .accessibilityIdentifier(id)
+        }
+        .frame(maxWidth: .infinity)
+        .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 12))
     }
 }

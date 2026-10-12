@@ -178,6 +178,8 @@ struct ChatMessageRow: View {
     var projectID: UUID? = nil
     /// KRI-282: how to present `message.choiceQuestion`. nil (old server, flag off, not a question) = text question only.
     var choiceQuestionMode: ChoiceQuestionCardMode? = nil
+    /// KRI-588: how to present `message.songRangeQuestion`. nil (old server, flag off, not a question) = text only.
+    var songRangeMode: SongRangeCardMode? = nil
 
     private static let userBubbleShape = UnevenRoundedRectangle(
         topLeadingRadius: 18,
@@ -241,6 +243,10 @@ struct ChatMessageRow: View {
                         SongOrderCard(question: question, media: songOrderMedia, projectID: projectID, mode: songOrderMode)
                             .id(question.questionID)
                     }
+                }
+                if let question = message.songRangeQuestion, let songRangeMode {
+                    SongRangeQuestionCard(question: question, fallbackDurationS: songDurationS, mode: songRangeMode)
+                        .id(question.questionID)
                 }
                 if let question = message.choiceQuestion, let choiceQuestionMode {
                     ChoiceQuestionCard(question: question, mode: choiceQuestionMode)

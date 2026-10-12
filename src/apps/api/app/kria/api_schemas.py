@@ -14,7 +14,7 @@ from app.kria.contracts import KriaProblem
 from app.kria.draft_schemas import DraftSnapshotOut as DraftSnapshotOut
 from app.kria.plan_contract import ManualEdit
 from app.routes.generative_jobs import EditorCommitRequest, TimelineSlotEdit
-from app.schemas.user_song import SongOrderAnswerIn
+from app.schemas.user_song import SongOrderAnswerIn, SongRangeAnswerIn
 from app.services.choice_questions import ChoiceSelectionIn
 from app.services.clip_selection import ClipSelectionIn
 
@@ -111,6 +111,8 @@ class SubmitTurnBody(_StrictBody):
     clip_selection: ClipSelectionIn | None = None
     # KRI-374: the creator's confirmed take order for a `song_order_question`.
     song_order: SongOrderAnswerIn | None = None
+    # KRI-588: the creator's answer to a `song_range_question`; old clients omit it.
+    song_range: SongRangeAnswerIn | None = None
     # KRI-282: the answer to a conflict-choice question; old clients omit it.
     choice_selection: ChoiceSelectionIn | None = None
     # KRI-441 (live plan & review, dark behind LIVE_PLAN_REVIEW_ENABLED): the plan

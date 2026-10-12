@@ -146,7 +146,14 @@ from app.services.song_order import (
     takes_needing_order,
     thread_keeps_lipsync,
 )
-from app.services.song_range import restrict_alignment_to_range, song_range_of
+from app.services.song_range import (
+    build_song_range_question,
+    fold_song_range_events,
+    restrict_alignment_to_range,
+    song_range_of,
+    song_range_question_text,
+    takes_ambiguous_between_repeats,
+)
 from app.services.spoken_quotes import closing_quote_notice, ground_closing_quote
 
 log = structlog.get_logger()
@@ -843,6 +850,27 @@ async def _song_order_gate(
         # No lyric lines to anchor on and nothing matched any take: no question
         # could place a take by the song.
         return _SongGateResult(strategy=kept_strategy)
+    if (
+        song_range is None
+        and not answered
+        and settings.song_filming_range_enabled
+        and song_generation not in fold_song_range_events(events).asked_generations
+        and takes_ambiguous_between_repeats(alignment, take_ids)
+    ):
+        # KRI-588: the song repeats its verses and some clip fits more than one repeat. The
+        # creator knows which part of the song they filmed in: ask ONCE per song, before any
+        # order question, and match the clips only inside the answer. Skippable ("the whole
+        # song"), and never asked again whether it was answered, skipped or ignored (a client
+        # that cannot answer must not loop).
+        range_question = build_song_range_question(song_generation, song_duration_s)
+        return _SongGateResult(
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="question",
+                response=song_range_question_text(range_question),
+                song_range_question=range_question,
+            )
+        )
     if answered and folded.arranged:
         # KRI-561: the creator arranged the takes on the song timeline. Their layout stands
         # even when a re-alignment since made every take look confident, so this runs

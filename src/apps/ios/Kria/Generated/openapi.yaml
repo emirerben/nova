@@ -1118,6 +1118,11 @@
             "title": "Song Order Questions",
             "type": "boolean"
           },
+          "song_range_questions": {
+            "default": false,
+            "title": "Song Range Questions",
+            "type": "boolean"
+          },
           "visuals_enabled": {
             "default": false,
             "title": "Visuals Enabled",
@@ -8455,6 +8460,36 @@
         "title": "SongOrderPlacementIn",
         "type": "object"
       },
+      "SongRangeAnswerIn": {
+        "additionalProperties": false,
+        "description": "The creator's answer: a stretch of the song, or both null for \"the whole song\" / skip.",
+        "properties": {
+          "end_s": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "minimum": 0,
+            "nullable": true,
+            "title": "End S",
+            "type": "number"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          },
+          "start_s": {
+            "default": null,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Start S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "question_id"
+        ],
+        "title": "SongRangeAnswerIn",
+        "type": "object"
+      },
       "SongRenderAsset": {
         "additionalProperties": false,
         "description": "A creator-uploaded song for one content-plan item, pinned to one storage\ngeneration (KRI-374).\n\nPrivate creator media addressed by its owning plan item, exactly like\n``VoiceoverRenderAsset`` but a distinct kind: the song grant is authorised\nonly for an item whose ``audio_mode`` is ``song``, and the device mixes it\nas the music bed (``AudioMixRecipe.music_asset_id``) rather than as\nnarration. The grant re-checks that the job's own plan item still carries\nthis exact ``(path, generation)``; the device re-hashes the downloaded\nbytes against ``fingerprint``.",
@@ -8664,6 +8699,11 @@
           },
           "song_order": {
             "$ref": "#/components/schemas/SongOrderAnswerIn",
+            "default": null,
+            "nullable": true
+          },
+          "song_range": {
+            "$ref": "#/components/schemas/SongRangeAnswerIn",
             "default": null,
             "nullable": true
           }
