@@ -61,7 +61,7 @@ from app.agents._schemas.creator_policy import (
 )
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.kria import planner
-from app.kria.brief import CreativeBrief, requested_media
+from app.kria.brief import BriefRequirement, CreativeBrief, requested_media
 from app.kria.reply_language import reply_language_for
 from app.kria.strategy_policy import (
     GUIDED_VOICEOVER_DOWNGRADE_NOTICE,
@@ -621,6 +621,34 @@ def test_the_contract_reaching_the_kri594_downgrade_asks_the_same_question(
     _asks_about_the_bathtub_photo(refused.question)
     assert refused.question == native.question
     assert refused.code == native.code == "simplification_requires_choice"
+
+
+@pytest.mark.parametrize(
+    "words", ["Show the bathtub photo, no zoom", "Show the bathtub photo without zoom"]
+)
+async def test_a_no_zoom_photo_ask_is_still_asked_about_on_the_native_path(
+    prod_profile, monkeypatch, words
+) -> None:
+    """PR 1556 review (with KRI-594's `requested_media` fix): a select that only restricts
+    how the photo looks is still an ask for it. A native answer (no contract to downgrade)
+    with no beat for that photo asks about it, in the creator's words."""
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            *(req for req in TIGRE_BRIEF.requirements if req.id != "r5"),
+            BriefRequirement(id="r5", kind="select", scope=f"clip:{PHOTO}", description=words),
+        ],
+    )
+    raw = _raw(_strategy(reaction_beats=None, media_scope="selected", selected_media_ids=OWN))
+
+    planned = await _plan(monkeypatch, raw, brief=brief)
+
+    assert planned.plan.mode == "respond", planned.plan.intents
+    assert planned.plan.response.startswith(
+        f'This version leaves out the photo you asked for: "{words}".'
+    )
+    assert planned.plan.response.count(words) == 1
 
 
 async def test_the_photo_placed_on_its_word_is_planned_not_asked_about(
