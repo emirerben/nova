@@ -14,8 +14,10 @@ struct AttachmentSheet: View {
     var capabilitiesLoaded = true
     let refresh: () async -> Void
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var auth: AuthStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var role: CreationMediaRole = .clip
     @State private var step: AttachmentStep = .footage
     @State private var pool: CreationVisuals?
@@ -45,6 +47,7 @@ struct AttachmentSheet: View {
     @StateObject private var songPreview = CreationVoiceRecorder()
     @State private var uploadingSong = false
     @State private var songUploadError: String?
+    @State private var showsTeleprompter = false
     /// KRI-580: the "Where in the song did you film?" sheet, and whether the server said the feature is off.
     @State private var showsSongRange = false
     @State private var songRangeUnavailable = false
@@ -204,6 +207,15 @@ struct AttachmentSheet: View {
                 attachmentFooter
             }
             .background(KriaColor.paper)
+            .fullScreenCover(isPresented: $showsTeleprompter, onDismiss: { Task { await refresh() } }) {
+                if let accountID = auth.localStorageIdentity {
+                    TeleprompterScreen(accountID: accountID, projectID: projectID,
+                        admissionMessage: teleprompterAdmission,
+                        intake: useCameraTake,
+                        intakeState: cameraTakeState)
+                        .environment(\.dynamicTypeSize, dynamicTypeSize)
+                }
+            }
             .interactiveDismissDisabled(recorder.isRecording || recorder.hasRecording)
             .confirmationDialog("Discard this voiceover?", isPresented: $confirmsDiscardingTake, titleVisibility: .visible) {
                 Button("Discard recording", role: .destructive) { recorder.discard(); dismiss() }
@@ -308,9 +320,66 @@ struct AttachmentSheet: View {
     private var footageStep: some View {
         VStack(alignment: .leading, spacing: 20) {
             AttachmentHeading(title: "Add footage", subtitle: "Choose the clips you want Kria to work with.")
+            if (format ?? thread.map { CreationFormat(thread: $0) }) == .talkingToCamera {
+                Button { showsTeleprompter = true } label: {
+                    Label("Record with script", systemImage: "video.badge.waveform")
+                        .frame(maxWidth: .infinity)
+                }.buttonStyle(KriaPrimaryButtonStyle()).accessibilityIdentifier("teleprompter-open")
+                    .disabled(auth.localStorageIdentity == nil)
+            }
             FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximumClipCount, attachedClipCount: existing(for: .clip), attachedMediaIDs: attachedMediaIDs(for: .clip), role: .clip, itemID: itemID, limit: capabilities?.media?["clips"], destination: uploadDestination(for: .clip), onPickerFilled: nil, onSelectionCompleted: advanceAfterFootageSelection, showsHeading: false)
                 .id(AttachmentStep.footage)
             attachedList(role: .clip)
+        }
+    }
+
+    private func teleprompterAdmission(_ take: TeleprompterTakeManifest?) -> String? {
+        guard uploadDestination(for: .clip) == .phone else {
+            return uploadDestination(for: .clip).message ?? "This edit can’t accept an on-device recording yet. Your take is saved on this iPhone."
+        }
+        let ownID = take?.intakeID
+        if let ownID, model.uploads.containsIntake(recordID: ownID) { return nil }
+        let occupied = existing(for: .clip) + model.uploads.reservedCount(projectID: projectID, role: .clip)
+        guard occupied < maximumClipCount else {
+            return "This Talking edit already has footage. Close this screen and remove the current clip in Add media, then reopen your saved take to use it."
+        }
+        return nil
+    }
+
+    private func useCameraTake(_ take: TeleprompterTakeManifest, _ url: URL) async -> TeleprompterIntakeResult {
+        // Reconcile first, including a receipt-write failure after attachment.
+        if take.intakeAttempted == true, let existing = await cameraTakeState(take) {
+            switch existing {
+            case .attached, .queued: return existing
+            case .failed: break // A confirmed failure may retry its stable ID.
+            }
+        }
+        if model.uploads.containsIntake(recordID: take.intakeID) {
+            await model.uploads.retryUpload(recordID: take.intakeID)
+            if let failure = model.uploads.failures.first(where: { $0.id == take.intakeID }) { return .failed(failure.message) }
+            return .queued
+        }
+        if let message = teleprompterAdmission(take) { return .failed(message) }
+        model.uploads.dismissFailure(id: take.intakeID)
+        let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files,
+            consentGiven: true, purpose: .analysisProxy, role: .clip, itemID: itemID,
+            limit: capabilities?.media?["clips"], recordID: take.intakeID)
+        return accepted ? .queued : .failed(model.uploads.failures.first(where: { $0.id == take.intakeID })?.message ?? "Couldn’t add this take. Your recording is saved; try again.")
+    }
+
+    private func cameraTakeState(_ take: TeleprompterTakeManifest) async -> TeleprompterIntakeResult? {
+        if let failure = model.uploads.failures.first(where: { $0.id == take.intakeID }) { return .failed(failure.message) }
+        if model.uploads.containsIntake(recordID: take.intakeID) { return .queued }
+        guard take.status == .attaching || take.intakeAttempted == true else { return nil }
+        do {
+            let latest = try await model.api.project(threadID: projectID)
+            let attached = CreationAttachedMedia.parse(latest.state ?? [:]).contains { $0.filename == take.fileName }
+            if attached { await refresh(); return .attached }
+            return .failed("This take hasn’t been added yet. Use take to retry; your recording is saved.")
+        } catch {
+            // Unknown server status is never permission to reserve another
+            // logical take. Keep checking the stable identity on reconnect.
+            return .queued
         }
     }
 

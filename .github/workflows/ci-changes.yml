@@ -3,10 +3,10 @@ name: Select CI suites
 on:
   workflow_call:
     outputs:
-      web:
-        value: ${{ jobs.select.outputs.web }}
       api:
         value: ${{ jobs.select.outputs.api }}
+      shared_motion:
+        value: ${{ jobs.select.outputs.shared_motion }}
       ios:
         value: ${{ jobs.select.outputs.ios }}
       ios_ui_groups:
@@ -21,6 +21,8 @@ on:
         value: ${{ jobs.select.outputs.journey_coverage }}
       journey_ids:
         value: ${{ jobs.select.outputs.journey_ids }}
+      journey_needs_native:
+        value: ${{ jobs.select.outputs.journey_needs_native }}
 
 jobs:
   select:
@@ -28,8 +30,8 @@ jobs:
     # Full-history checkout dominates; slowest green run 3.8 min (typical ~0.3).
     timeout-minutes: 10
     outputs:
-      web: ${{ steps.select.outputs.web }}
       api: ${{ steps.select.outputs.api }}
+      shared_motion: ${{ steps.select.outputs.shared_motion }}
       ios: ${{ steps.select.outputs.ios }}
       ios_ui: ${{ steps.select.outputs.ios_ui }}
       ios_ui_groups: ${{ steps.select.outputs.ios_ui_groups }}
@@ -37,6 +39,7 @@ jobs:
       journey: ${{ steps.select.outputs.journey }}
       journey_coverage: ${{ steps.select.outputs.journey_coverage }}
       journey_ids: ${{ steps.select.outputs.journey_ids }}
+      journey_needs_native: ${{ steps.select.outputs.journey_needs_native }}
     steps:
       - uses: actions/checkout@v4
         with:
