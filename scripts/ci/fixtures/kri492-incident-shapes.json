@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "base_sha": "ab315dbbc22c28e04e68e8f37b38980a3ad572c9",
+  "capture_count": 3,
+  "captures": [
+    {
+      "source_provenance": {
+        "captured_at": "2026-10-11T08:11:02.951100+00:00",
+        "source_sha256": "2d20222acc20c685421b662c23da676cd9501446bf4cdd4e7b721b2d9f7efd45",
+        "base_sha": "ab315dbbc22c28e04e68e8f37b38980a3ad572c9",
+        "projection": "kri492_incident_shape_v1",
+        "text_qualification": "no_creator_payload"
+      },
+      "shape": {
+        "incident_id": "887b683a", "job_status": "processing_failed", "created_at": "2026-10-07T08:47:58.924319+00:00",
+        "edit_format": "montage", "audio_strategy": "user_song", "song_sync": "lipsync", "has_song_sync": true,
+        "target_duration_s": 62.0, "creator_duration_s": null, "target_duration_requested": true,
+        "render_destination": null, "receipt_validation_duration_s": null, "selected_media_count": 7, "candidate_count": 7,
+        "pin_counts": {"strategy": 0}, "variant_count": 0, "variants": []
+      }
+    },
+    {
+      "source_provenance": {
+        "captured_at": "2026-10-11T08:11:02.953760+00:00",
+        "source_sha256": "7e5345109386ae5ebcea9f6cc855277e8786a663bd985cae1d607e8bf3f19647",
+        "base_sha": "ab315dbbc22c28e04e68e8f37b38980a3ad572c9",
+        "projection": "kri492_incident_shape_v1",
+        "text_qualification": "no_creator_payload"
+      },
+      "shape": {
+        "incident_id": "30f1c7d2", "job_status": "processing_failed", "created_at": "2026-10-07T08:53:29.990826+00:00",
+        "edit_format": "montage", "audio_strategy": "user_song", "song_sync": "lipsync", "has_song_sync": true,
+        "target_duration_s": 71.0, "creator_duration_s": null, "target_duration_requested": true,
+        "render_destination": null, "receipt_validation_duration_s": null, "selected_media_count": 0, "candidate_count": 8,
+        "pin_counts": {"strategy": 0}, "variant_count": 0, "variants": []
+      }
+    },
+    {
+      "source_provenance": {
+        "captured_at": "2026-10-11T08:11:02.954323+00:00",
+        "source_sha256": "02bcc96ef2ec70358f65ac5e6289ff98b10d41771332adc34393bae4f7d4839a",
+        "base_sha": "ab315dbbc22c28e04e68e8f37b38980a3ad572c9",
+        "projection": "kri492_incident_shape_v1",
+        "text_qualification": "no_creator_payload"
+      },
+      "shape": {
+        "incident_id": "e1c5f89e", "job_status": "processing_failed", "created_at": "2026-10-06T21:58:42.332313+00:00",
+        "edit_format": "subtitled", "audio_strategy": "original_audio", "song_sync": null, "has_song_sync": false,
+        "target_duration_s": 40.0, "creator_duration_s": null, "target_duration_requested": true,
+        "render_destination": null, "receipt_validation_duration_s": null, "selected_media_count": 1, "candidate_count": 1,
+        "pin_counts": {"strategy": 0}, "variant_count": 0, "variants": []
+      }
+    }
+  ]
+}

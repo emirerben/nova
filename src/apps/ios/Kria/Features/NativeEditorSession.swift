@@ -384,10 +384,7 @@ struct NativeEditorTemporaryVideo {
     private var savedUserSong: NativeUserSong? { baseUserSong?.applying(acknowledgedUserSong) }
     /// The latest start: it must leave `NativeUserSong.minPlayableS` of song. The video no longer bounds it;
     /// a song that runs out before the video does simply stops.
-    private func maxUserSongStart(for song: NativeUserSong) -> Double? {
-        guard let songDuration = song.durationS else { return nil }
-        return max(0, songDuration - NativeUserSong.minPlayableS)
-    }
+    private func maxUserSongStart(for song: NativeUserSong) -> Double? { NativeUserSong.maxStart(for: song) }
     /// The video length the song follows right now.
     private func currentVideoLength(for song: NativeUserSong) -> Double { duration > 0 ? duration : song.windowLengthS }
     /// Acknowledged plus unsaved edits, with a pending start re-clamped to the CURRENT video length
@@ -399,21 +396,37 @@ struct NativeEditorTemporaryVideo {
     /// A pending start re-clamped to the song as it is NOW: it must leave a second of song, and (KRI-561) a
     /// second before the creator's end, so the server never refuses it.
     private func reclamped(_ state: EditorUserSongState) -> EditorUserSongState {
-        var state = state
-        guard !state.removed, let song = baseUserSong, var start = state.windowStartS else { return state }
-        if let limit = maxUserSongStart(for: song) { start = min(start, limit) }
-        let context = EditorUserSongState.merged(acknowledgedUserSong, state) ?? state
-        if let end = song.creatorEnd(applying: context) { start = min(start, max(0, end - NativeUserSong.minPlayableS)) }
-        state.windowStartS = start
-        return state
+        guard let song = baseUserSong else { return state }
+        return NativeUserSong.reclamped(state, base: song, acknowledged: acknowledgedUserSong)
     }
     /// The song as the editor currently shows it: saved values plus unsaved volume / start / end edits.
     /// A lip-sync window follows the singer: where the cuts now put the song start (`lipsyncSongStartShift`).
     var effectiveUserSong: NativeUserSong? {
         guard let base = baseUserSong else { return nil }
-        let anchored = base.mode == .lipsync ? base.shifted(by: lipsyncSongStartShift) : base
-        return anchored.applying(effectiveUserSongState, videoLength: currentVideoLength(for: base))
+        return NativeUserSong.effective(base: base, acknowledged: acknowledgedUserSong, draft: document.userSong,
+                                        lipsyncShift: lipsyncSongStartShift, videoLength: currentVideoLength(for: base))
     }
+
+    // MARK: KRI-576 lyric captions follow the song window in the live preview
+
+    /// The song start (in true song seconds) the document's `song-caption-N` rows were last timed against: the
+    /// loaded variant's `user_song` window, or after a Save the window the server re-projected them for.
+    /// Preview-only bookkeeping, never part of the document.
+    private var songCaptionWindowStartS: Double?
+    /// Lip-sync only: `base` stays the loaded variant's window until the next variant load, but a Save has
+    /// already folded the cuts' shift into the clean clips (`lipsyncSongStartShift` reads 0 again). This is the
+    /// shift Saved since that variant loaded, so `effective start + carry` stays the TRUE start.
+    private var songCaptionLipsyncCarryS = 0.0
+    /// How the preview re-times the lyric rows right now; nil when they already sit where the song window is.
+    var songCaptionShift: NativeSongCaptionShift? {
+        if userSongRemoved { return NativeSongCaptionShift(shiftS: 0, windowLengthS: 0, songRemoved: true) }
+        guard let anchor = songCaptionWindowStartS, let song = effectiveUserSong else { return nil }
+        let shift = song.windowStartS + songCaptionLipsyncCarryS - anchor
+        guard abs(shift) > NativeSongCaptionShift.tolerance else { return nil }
+        return NativeSongCaptionShift(shiftS: shift, windowLengthS: song.windowLengthS, songRemoved: false)
+    }
+    /// The song start as the editor shows it right now, in true song seconds.
+    private var trueSongWindowStartS: Double? { effectiveUserSong.map { $0.windowStartS + songCaptionLipsyncCarryS } }
     /// KRI-561: the server offers (and the edit allows) trimming the song.
     private var songTrimOffered: Bool { document.capabilities["user_song.trim"] != nil }
     private var songTrimEditable: Bool { document.capabilities["user_song.trim"]?.editable == true }
@@ -488,7 +501,8 @@ struct NativeEditorTemporaryVideo {
     /// `delta + source_start - output_start` (what the server derives on Save), so a head trim, a dropped
     /// cut or a song trim all keep the singer on the song. Without the takes' offsets (an older server, or
     /// the source pool not loaded yet) the first cut's head is the fallback (`NativeLipsyncSongAnchor`).
-    private var lipsyncSongStartShift: Double {
+    private var lipsyncSongStartShift: Double { lipsyncStartShift(of: document, against: cleanDocument) }
+    private func lipsyncStartShift(of document: EditorDocument, against cleanDocument: EditorDocument) -> Double {
         guard baseUserSong?.mode == .lipsync else { return 0 }
         let deltas = lipsyncDeltaByClipIndex
         if !deltas.isEmpty,
@@ -705,7 +719,10 @@ struct NativeEditorTemporaryVideo {
     /// instead show only the server-rendered video, with canvas interaction
     /// deliberately disabled until a retry produces a source preview.
     var isShowingRenderedFallback: Bool {
-        guard sourcePreviewState.isFailure else { return false }
+        // KRI-587: a finished render that could not be loaded is a black box,
+        // not a fallback. Claiming "Showing your last finished video" over it
+        // was the confusing screen; the plain failure view shows instead.
+        guard sourcePreviewState.isFailure, !finishedRenderFailed else { return false }
         return player != nil && player === finishedRenderPlayer
     }
 
@@ -780,8 +797,19 @@ struct NativeEditorTemporaryVideo {
 
     func showDeviceOutput(_ url: URL) {
         guard rendersOnDevice else { return }
+        // KRI-587: a render made on this phone starts a fresh recovery, and its own copy is what a failed
+        // finished render retries first.
+        deviceOutputURL = url
+        startPlaybackRecoveryEpisode()
         // KRI-535: a device render made before a staged chat edit lacks that edit.
-        installPlayer(url: url, preferredDuration: authoritativeDuration, isCurrent: chatStagedDocument == nil)
+        let isCurrent = chatStagedDocument == nil
+        if finishedRenderIsDead {
+            // Replaced even while the editable preview builds: nothing else will swap out a dead player.
+            finishedRenderIsCurrent = isCurrent
+            reinstallFinishedRender(url: url, preferredDuration: authoritativeDuration)
+            return
+        }
+        installPlayer(url: url, preferredDuration: authoritativeDuration, isCurrent: isCurrent)
     }
 
     private let projectID: UUID
@@ -1002,8 +1030,26 @@ struct NativeEditorTemporaryVideo {
     /// A play tap that arrived while the editable preview was still building. Played as soon as a
     /// displayable player exists (the ready preview, or the finished-render fallback).
     private var pendingPlayRequest = false
-    private var finishedRenderRefreshAttempted = false
+    /// KRI-587: spaced automatic retries for a finished render that would not load. Right after the
+    /// phone's own export, AVFoundation can refuse a perfectly good MP4 for a moment (busy decoders,
+    /// media services settling). One immediate refresh was not enough and left "The video couldn't be
+    /// loaded" up for good. Internal so tests can shorten it.
+    var finishedRenderRetryDelays: [Duration] = [.milliseconds(500), .milliseconds(1500), .seconds(3)]
+    private var finishedRenderRetryCount = 0
     private var finishedRenderRecoveryTask: Task<Void, Never>?
+    private var finishedRenderRecoveryInFlight = false
+    /// This phone's own copy of a phone render: retried before any network link.
+    private var deviceOutputURL: URL?
+    /// Every retry of the finished render failed. The canvas then shows the plain failure view, never
+    /// the "Showing your last finished video" card over a dead player.
+    @Published private(set) var finishedRenderFailed = false
+    /// The editable preview's state before the finished-render failure replaced its message.
+    private var stateBeforeFinishedRenderFailure: NativeSourcePreviewState?
+    /// KRI-587: one quiet rebuild of the editable preview after a playback-level failure, before the
+    /// fallback card shows. Internal so tests can shorten it.
+    var sourcePreviewQuietRetryDelay: Duration = .seconds(1)
+    private var sourcePreviewQuietRetryUsed = false
+    private var sourcePreviewQuietRetryTask: Task<Void, Never>?
     private var durationLoadTask: Task<Void, Never>?
     private var promptRefreshSequence: UInt64 = 0
     private let playbackEndTolerance: TimeInterval = 0.05
@@ -1304,6 +1350,7 @@ struct NativeEditorTemporaryVideo {
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
         finishedRenderRecoveryTask?.cancel()
+        sourcePreviewQuietRetryTask?.cancel()
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
@@ -1928,6 +1975,12 @@ struct NativeEditorTemporaryVideo {
         sourcePreviewState = .idle; sourcePreviewGeneration = nil
         previewVariant = [:]
         pendingDeviceRenderIdentity = nil
+        // The old job's recovery must not touch the new job's player.
+        finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
+        sourcePreviewQuietRetryTask?.cancel()
+        deviceOutputURL = nil
+        finishedRenderFailed = false; stateBeforeFinishedRenderFailure = nil
+        startPlaybackRecoveryEpisode()
     }
 
     /// Gallery rows are render jobs, not creation-thread IDs. Promote the job
@@ -2691,12 +2744,15 @@ struct NativeEditorTemporaryVideo {
             // `liveSongVolumeActive`); only when something else is audible does the level stay baked in.
             let hasSong = audio[NativeEditorRenderCompiler.songSourceKey] != nil
             let realBed = hasSong ? effectiveSongBed : nil
+            // KRI-576: the lyric rows follow the song window as it is now; `snapshot` itself is never rewritten.
+            let lyricShift = songCaptionShift
             func compileProgram(songBed: NativeEditorSongBed?) throws -> NativeEditorRenderProgram {
                 try compiler.compile(document: snapshot, clips: clips, items: items,
                                      sources: sources, audioSources: audio, mediaSources: media,
                                      referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
                                      sourceAudioPreserved: sourceAudioPreserved || songRemoved,
-                                     songBed: songBed, deviceCaptions: rendersOnDevice)
+                                     songBed: songBed, deviceCaptions: rendersOnDevice,
+                                     songCaptionShift: lyricShift)
             }
             var program = try compileProgram(songBed: realBed.map {
                 NativeEditorSongBed(assetID: $0.assetID, sourceStart: $0.sourceStart, sourceDuration: $0.sourceDuration,
@@ -4909,6 +4965,8 @@ struct NativeEditorTemporaryVideo {
         isSaving = true; saveState = .saving
         defer { isSaving = false }
         let submittedDocument = document
+        // KRI-576: the song window this save asks the server to project the lyric rows against.
+        let submittedSongStartS = trueSongWindowStartS
         let submittedSections = changedSections
         let submittedUndoCount = undoStack.count
         let saveItemID = itemID
@@ -5019,7 +5077,8 @@ struct NativeEditorTemporaryVideo {
                         expectedJobID: saveJobID,
                         expectedVariantKey: saveVariantKey,
                         expectedThreadID: saveThreadID,
-                        expectedDocumentGeneration: response.generation
+                        expectedDocumentGeneration: response.generation,
+                        songWindowStartS: submittedSongStartS
                     )
                 } catch {
                     // A durable save must remain successful even when the
@@ -5170,6 +5229,48 @@ struct NativeEditorTemporaryVideo {
             if let capability = document.capabilities[key] { return capability.editable }
         }
         return canEditSection(section)
+    }
+
+    // MARK: Crop (KRI-44)
+
+    /// The Crop button is offered only when the server EXPLICITLY lists `clips.source_crop`. A variant with no
+    /// `clips` capability group (legacy cloud template and montage renders) cannot crop, and `canEditOperation`'s
+    /// fall-back to the timeline section would wrongly say yes.
+    var serverOffersClipCrop: Bool { document.capabilities["clips.source_crop"] != nil }
+    var canCropClips: Bool { document.capabilities["clips.source_crop"]?.editable == true }
+
+    /// Why Crop is greyed out for the selected clip, or nil when it is available.
+    func cropBlockedReason(for selection: EditorSelection?) -> String? {
+        guard let selection, selection.kind == .clip else { return "Select a clip to crop it." }
+        if !canCropClips { return document.capabilities["clips.source_crop"]?.reason.map(nativeEditorWireLabel) ?? "Crop isn’t available for this edit." }
+        if let slotID = timelineClips.first(where: { $0.id.uuidString == selection.id })?.slotID,
+           document.clips.first(where: { $0.id == slotID })?.raw["layout"]?.stringValue == "supporting_card" {
+            return "Supporting cards keep their own layout."
+        }
+        return nil
+    }
+
+    /// What the crop is shown in: the video canvas.
+    var cropOutputAspect: CGFloat {
+        EditorDocument.canonicalOrientation(document.orientation) == "landscape" ? 16.0 / 9.0 : 9.0 / 16.0
+    }
+
+    /// The real upright frame a crop is drawn on: the clip's source at its source-in time (a photo's own pixels).
+    /// Reads the same prepared media the preview plays, so nothing new is downloaded when the preview is ready.
+    func cropSourceFrame(for selection: EditorSelection) async -> UIImage? {
+        let source: ResolvedEditorSource?
+        var time: TimeInterval = 0
+        switch selection.kind {
+        case .clip:
+            guard let clip = timelineClips.first(where: { $0.id.uuidString == selection.id }) else { return nil }
+            source = clip.sourceClipIndex.flatMap { resolvedSources?[$0] }
+            time = clip.trimIn
+        case .mediaOverlay: source = resolvedMedia["overlay:" + selection.id]
+        case .visualBlock: source = resolvedMedia["visual:" + selection.id] ?? authoredVisualSources["visual:" + selection.id]
+        default: source = nil
+        }
+        guard let url = source?.url else { return nil }
+        return await KriaCropFrameLoader.image(at: url, time: time)
     }
 
     func operationCapability(_ key: String) -> EditorCapability? { document.capabilities[key] }
@@ -5649,6 +5750,11 @@ struct NativeEditorTemporaryVideo {
         guard !sections.isEmpty else { return }
         document.revision.baseGeneration = generation
         let acknowledgedRevision = document.revision
+        // KRI-576: the cuts this save carried now ARE the clean clips, so a lip-sync song start they moved stops
+        // reading as an unsaved shift; remember it, because the loaded variant's window stays stale until reload.
+        if sections.contains(.timeline) {
+            songCaptionLipsyncCarryS += lipsyncStartShift(of: submittedDocument, against: cleanDocument)
+        }
         for section in sections where section != .userSong {
             copy(section, from: submittedDocument, into: &cleanDocument)
         }
@@ -5777,7 +5883,14 @@ struct NativeEditorTemporaryVideo {
 
     private func failSourcePreview(_ error: Error) {
         sourcePreviewFailureIsPermanent = Self.isPermanentSourcePreviewFailure(error)
+        let finishedWasCurrent = finishedRenderIsCurrent
         restoreFinishedRenderFallback()
+        if retrySourcePreviewQuietly(after: error) {
+            // KRI-535: while the quiet rebuild runs, a render older than a staged edit stays hidden.
+            finishedRenderIsCurrent = finishedWasCurrent
+            if canDisplayCurrentPlayer { startPendingPlaybackIfPossible() }
+            return
+        }
         sourcePreviewState = Self.isMissingOriginals(error)
             ? .originalsUnavailable
             : .failed(Self.sourcePreviewMessage(for: error))
@@ -5800,9 +5913,73 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// KRI-587: right after the phone's own export, AVFoundation can briefly refuse to build or play the
+    /// editable composition. Rebuild it once, quietly, before showing the fallback card. Meanwhile the
+    /// finished render plays when it is current, and "Preparing preview" shows when it is not.
+    private func retrySourcePreviewQuietly(after error: Error) -> Bool {
+        guard !sourcePreviewQuietRetryUsed, Self.isTransientSourcePreviewFailure(error),
+              api != nil, let jobID, variantKey != nil else { return false }
+        sourcePreviewQuietRetryUsed = true
+        sourcePreviewState = .preparing
+        NativePreviewDiagnostics.record("source-preview-quiet-retry", fields: ["error": String((error as NSError).code)])
+        let sequence = sourcePreviewSequence
+        let delay = sourcePreviewQuietRetryDelay
+        sourcePreviewQuietRetryTask?.cancel()
+        sourcePreviewQuietRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            // A newer rebuild (an edit, another job) already owns the preview state.
+            guard let self, !Task.isCancelled, self.jobID == jobID, self.sourcePreviewSequence == sequence else { return }
+            await self.prepareSourcePreview()
+        }
+        return true
+    }
+
+    /// AVFoundation refusing the composition for the moment, not a problem with the edit itself:
+    /// building the same document again can work.
+    static func isTransientSourcePreviewFailure(_ error: Error) -> Bool {
+        if case NativeEditorPlaybackFailure.liveItem = error { return true }
+        return (error as NSError).domain == AVFoundationErrorDomain
+    }
+
+    /// A new render, or the creator's Retry, is a fresh start for every automatic recovery.
+    private func startPlaybackRecoveryEpisode() {
+        finishedRenderRetryCount = 0
+        sourcePreviewQuietRetryUsed = false
+    }
+
+    /// The canvas holds the finished render and it can no longer play.
+    private var finishedRenderIsDead: Bool {
+        guard let player, player === finishedRenderPlayer else { return false }
+        return finishedRenderFailed || player.currentItem?.status == .failed
+    }
+
+    /// This phone's copy of its own render, when the file is still there.
+    private var playableDeviceOutputURL: URL? {
+        guard let deviceOutputURL, FileManager.default.fileExists(atPath: deviceOutputURL.path) else { return nil }
+        return deviceOutputURL
+    }
+
+    /// Swaps in a new finished-render player without changing whether that render is current.
+    private func reinstallFinishedRender(url: URL, preferredDuration: TimeInterval?) {
+        let isCurrent = finishedRenderIsCurrent
+        installFinishedRenderPlayer(url: url, preferredDuration: preferredDuration)
+        finishedRenderIsCurrent = isCurrent
+    }
+
+    /// The Retry and Try again buttons: every automatic recovery starts over, a dead finished render is
+    /// reloaded, then the editable preview is rebuilt.
+    func retryPreview() async {
+        startPlaybackRecoveryEpisode()
+        if finishedRenderIsDead, let url = playableDeviceOutputURL ?? finishedRenderURL {
+            finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
+            reinstallFinishedRender(url: url, preferredDuration: finishedRenderDuration)
+        }
+        await prepareSourcePreview()
+    }
+
     /// One place for "the item AVPlayer is holding cannot play". Reports the error identity from every
     /// build, then recovers: a failed editable preview hands over to the finished render, and a failed
-    /// finished render gets one fresh link before the failure is surfaced.
+    /// finished render is retried (KRI-587) before the failure is surfaced.
     func handlePlayerItemFailure(_ item: AVPlayerItem, error: Error?) {
         guard let failedPlayer = player, failedPlayer.currentItem === item, failureHandledItem !== item else { return }
         failureHandledItem = item
@@ -5824,32 +6001,86 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// KRI-587: a finished render that fails is retried a few times, spaced out, before anything is
+    /// said. Each retry prefers this phone's own copy of a phone render, then a fresh server link, and
+    /// only then the same link again.
     private func recoverFinishedRender(failedPlayer: AVPlayer) {
-        guard !finishedRenderRefreshAttempted, let api, let jobID else {
+        guard finishedRenderRetryCount < finishedRenderRetryDelays.count else {
             surfaceUnplayableFinishedRender()
             return
         }
-        finishedRenderRefreshAttempted = true
+        let delay = finishedRenderRetryDelays[finishedRenderRetryCount]
+        finishedRenderRetryCount += 1
+        let attempt = finishedRenderRetryCount
+        let failedURL = (failedPlayer.currentItem?.asset as? AVURLAsset)?.url
         finishedRenderRecoveryTask?.cancel()
+        finishedRenderRecoveryInFlight = true
         finishedRenderRecoveryTask = Task { @MainActor [weak self, weak failedPlayer] in
-            let fresh = try? await api.playbackURL(jobID: jobID)
-            guard let self, !Task.isCancelled, let failedPlayer, self.player === failedPlayer else { return }
-            guard let fresh else { self.surfaceUnplayableFinishedRender(); return }
-            self.installFinishedRenderPlayer(url: fresh, preferredDuration: self.finishedRenderDuration)
+            try? await Task.sleep(for: delay)
+            // Whoever cancelled this (a newer failure, Retry, another job) owns the in-flight flag.
+            guard let self, !Task.isCancelled else { return }
+            let next = failedPlayer != nil && self.player === failedPlayer
+                ? await self.finishedRenderRetryTarget(after: failedURL) : nil
+            guard !Task.isCancelled else { return }
+            self.finishedRenderRecoveryInFlight = false
+            // The canvas moved on (the editable preview took over, another job loaded) while this waited.
+            guard let failedPlayer, self.player === failedPlayer else { return }
+            guard let next else { self.surfaceUnplayableFinishedRender(); return }
+            NativePreviewDiagnostics.record("finished-render-retry", fields: ["attempt": String(attempt), "source": next.source])
+            self.reinstallFinishedRender(url: next.url, preferredDuration: self.finishedRenderDuration)
             self.startPendingPlaybackIfPossible()
         }
+    }
+
+    private func finishedRenderRetryTarget(after failed: URL?) async -> (url: URL, source: String)? {
+        func untried(_ url: URL?) -> URL? {
+            guard let url, url != failed else { return nil }
+            return !url.isFileURL || FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+        if let device = untried(playableDeviceOutputURL) { return (device, "device") }
+        if let finished = untried(finishedRenderURL) { return (finished, "finished") }
+        if let api, let jobID, let fresh = try? await api.playbackURL(jobID: jobID) { return (fresh, "fresh") }
+        // Nothing new to try: the same link again still beats giving up after a moment's failure,
+        // unless it is a file that simply isn't there.
+        if let failed, !failed.isFileURL || FileManager.default.fileExists(atPath: failed.path) { return (failed, "same") }
+        return nil
     }
 
     private func surfaceUnplayableFinishedRender() {
         // An editable preview still building will take over by itself; only a settled state needs a message.
         guard sourcePreviewState != .preparing else { return }
-        sourcePreviewState = .failed(Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem))
+        let message = Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem)
+        if sourcePreviewState != .failed(message) { stateBeforeFinishedRenderFailure = sourcePreviewState }
+        finishedRenderFailed = true
+        sourcePreviewState = .failed(message)
         pendingPlayRequest = false
+        NativePreviewDiagnostics.record("finished-render-unplayable", fields: ["attempts": String(finishedRenderRetryCount)])
+    }
+
+    /// A player item that loads ends the finished render's failure streak. When it is the finished
+    /// render after its failure was surfaced, the "couldn't be loaded" message goes with it (KRI-587).
+    private func playerItemBecameReady() {
+        finishedRenderRetryCount = 0
+        guard finishedRenderFailed else { return }
+        finishedRenderFailed = false
+        if sourcePreviewState == .failed(Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem)) {
+            sourcePreviewState = stateBeforeFinishedRenderFailure ?? .idle
+        }
+        stateBeforeFinishedRenderFailure = nil
+        NativePreviewDiagnostics.record("finished-render-recovered")
     }
 
     private func restoreFinishedRenderFallback() {
-        guard let finishedRenderURL, player !== finishedRenderPlayer else { return }
-        installFinishedRenderPlayer(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
+        guard let finishedRenderURL else { return }
+        guard player === finishedRenderPlayer else {
+            installFinishedRenderPlayer(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
+            return
+        }
+        // KRI-587: a finished render that died while the editable preview was building (its message was
+        // held back) would otherwise stay a black box under the fallback card. A retry on its way wins.
+        guard finishedRenderIsDead, !finishedRenderRecoveryInFlight else { return }
+        finishedRenderRetryCount = 0
+        reinstallFinishedRender(url: playableDeviceOutputURL ?? finishedRenderURL, preferredDuration: finishedRenderDuration)
     }
 
     private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil) {
@@ -5890,9 +6121,7 @@ struct NativeEditorTemporaryVideo {
             Task { @MainActor [weak self, weak item] in
                 guard let self, let item else { return }
                 if status == .failed { self.handlePlayerItemFailure(item, error: error) }
-                else if status == .readyToPlay, self.player?.currentItem === item, self.player === self.finishedRenderPlayer {
-                    self.finishedRenderRefreshAttempted = false
-                }
+                else if status == .readyToPlay, self.player?.currentItem === item { self.playerItemBecameReady() }
             }
         }
         itemFailureObserver = NotificationCenter.default.addObserver(
@@ -6043,6 +6272,9 @@ struct NativeEditorTemporaryVideo {
         previewVariant = variant ?? [:]
         // The variant is the server's word on the song: what it lists already includes saved edits.
         acknowledgedUserSong = nil
+        // KRI-576: its lyric rows were projected for that same window.
+        songCaptionWindowStartS = NativeUserSong(variant: previewVariant)?.windowStartS
+        songCaptionLipsyncCarryS = 0
         rendersOnDevice = variant?["render_destination"]?.stringValue == "device"
         guidedRevisionNumber = Self.number(variant?["editor_revision_number"]).flatMap { $0 >= 1 && $0 <= Double(Int32.max) ? Int($0) : nil }
         guard let variant else {
@@ -6179,7 +6411,8 @@ struct NativeEditorTemporaryVideo {
             expectedItemID: itemID,
             expectedJobID: jobID,
             expectedVariantKey: variantKey,
-            expectedThreadID: threadID
+            expectedThreadID: threadID,
+            songWindowStartS: NativeUserSong(variant: variant)?.windowStartS
         )
         if let key = deviceRenderKey,
            let presentation = deviceRenders?.presentations[key],
@@ -6194,6 +6427,9 @@ struct NativeEditorTemporaryVideo {
             if !rebaseCleanDraft(from: variant) {
                 rebaseGenerationPreservingLocalEdits(currentGeneration)
             }
+            // A new render: the phone's copy of the previous one is no longer the video to retry.
+            deviceOutputURL = nil
+            startPlaybackRecoveryEpisode()
             installFinishedRenderPlayer(url: url, preferredDuration: authoritativeDuration)
             pendingRenderRetrySections.removeAll()
             pendingPreviewGeneration = nil
@@ -6219,7 +6455,8 @@ struct NativeEditorTemporaryVideo {
         expectedJobID: UUID?,
         expectedVariantKey: String?,
         expectedThreadID: UUID?,
-        expectedDocumentGeneration: String? = nil
+        expectedDocumentGeneration: String? = nil,
+        songWindowStartS: Double? = nil
     ) -> Bool {
         guard let returnedGeneration = variant["render_generation_id"]?.stringValue
                 ?? variant["render_finished_at"]?.stringValue,
@@ -6240,7 +6477,13 @@ struct NativeEditorTemporaryVideo {
 
         cleanDocument.textElements = authoritativeText
         cleanDocument.revision.baseGeneration = generation
-        if currentWasClean { document.textElements = authoritativeText }
+        if currentWasClean {
+            document.textElements = authoritativeText
+            // KRI-576: the adopted lyric rows sit at the window the server projected them for, so the preview
+            // shift restarts from there (no double shift). Text edited meanwhile keeps the old rows, so the old
+            // anchor stays.
+            if let songWindowStartS { songCaptionWindowStartS = songWindowStartS }
+        }
 
         func rebase(_ value: EditorDocument) -> EditorDocument {
             guard value.textElements == oldCleanText else { return value }

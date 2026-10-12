@@ -26,13 +26,13 @@ from app.agents.main_creator import (
 from app.config import settings
 from tests.agents.test_main_creator_agent import _input, _manifest
 
-# (clip_intents_enabled, brief_enabled) -> sha256 of the deliberate v53 no-song baseline.
-# v53 changes the brief-enabled renders; the other two combinations remain byte-identical.
+# (clip_intents_enabled, brief_enabled) -> sha256 of the deliberate v54 no-song baseline.
+# v54 (KRI-586) documents the `creative_decision` envelope, so all four renders changed.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "07f44b572bc7bb2cfd8162bf5002c48252a11749358e6c883806cdca2255c27d",
-    (True, True): "6f37087ec3f6ffb859cb730d3b0139c937df28c1350c992f573c20d28f2333ac",
-    (False, False): "e7ca0a5ae3abcd2675f6066aa1109b979f235b134d441fb56e88c26a150c0868",
-    (False, True): "9fd0d7cc121dd80883ac7fb3aa386dffdf31edcbc5e4990c628a06bfff9b8dbd",
+    (True, False): "ec7887a3cd9116aad8830f6130d5f43cff081a3a1be6a26fde24e965e0d98e06",
+    (True, True): "753b39d328142a949b4cc5d3b217009a79f165405d8babcdee81f610c6b62558",
+    (False, False): "2618954f7edf47acfcbf34277ddea7dc0ca2d593f0cc864bc407b3ae4978a9df",
+    (False, True): "72af6cf0ef1fe63efa76a004f3257c10859882d250e297130859fabf80132be8",
 }
 
 
@@ -102,7 +102,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-08-v53"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-11-v54"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

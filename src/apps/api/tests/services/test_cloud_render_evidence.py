@@ -357,7 +357,13 @@ def test_slides_decline_voiceover_before_any_work():
 
 # ── duration_s ───────────────────────────────────────────────────────────────────
 
-_DURATION = {"target_duration_s": 12, "target_duration_requested": True}
+# This fixture represents a confirmed creator request, rather than the
+# planner's default/model target.
+_DURATION = {
+    "target_duration_s": 12,
+    "target_duration_requested": True,
+    "creator_duration_s": 12,
+}
 
 
 @pytest.mark.parametrize("adapter", [GUIDED, CLASSIC])

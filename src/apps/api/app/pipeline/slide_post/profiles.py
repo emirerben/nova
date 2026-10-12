@@ -46,6 +46,9 @@ class PlatformProfileSpec:
     max_video_duration_s: float | None
     canvas: tuple[int, int]
     image_format: Literal["jpeg"] = "jpeg"
+    # A slide may export on its own landscape canvas (KRI-44). Instagram forces
+    # one shape for every slide, so only the TikTok photo profile allows it.
+    allows_landscape: bool = False
 
 
 PLATFORM_PROFILES: dict[PlatformProfile, PlatformProfileSpec] = {
@@ -57,6 +60,7 @@ PLATFORM_PROFILES: dict[PlatformProfile, PlatformProfileSpec] = {
         max_slides=35,
         max_video_duration_s=None,
         canvas=_TIKTOK_PHOTO_CANVAS,
+        allows_landscape=True,
     ),
     "instagram_carousel": PlatformProfileSpec(
         id="instagram_carousel",

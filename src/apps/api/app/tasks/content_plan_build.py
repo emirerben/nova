@@ -2522,6 +2522,21 @@ def _dispatch_item_render(
             # immutable brief and media snapshot that authorization covered.
             # The generation remains the same token the factory assigned.
             strategy_payload = (job.all_candidates or {}).get("creator_strategy")
+            if isinstance(strategy_payload, dict):
+                strategy_payload = {
+                    key: value
+                    for key, value in strategy_payload.items()
+                    if key != "selected_music_section"
+                }
+                approved_length_plan = binding.media_snapshot.get("length_plan")
+                if isinstance(approved_length_plan, dict):
+                    strategy_payload["selected_music_section"] = approved_length_plan.get(
+                        "licensed_music"
+                    )
+                job.all_candidates = {
+                    **(job.all_candidates or {}),
+                    "creator_strategy": strategy_payload,
+                }
             if isinstance(strategy_payload, dict) or brief is not None:
                 from app.config import settings  # noqa: PLC0415
                 from app.services.creator_render_contract import (  # noqa: PLC0415
@@ -2567,6 +2582,20 @@ def _dispatch_item_render(
                         **job.assembly_plan,
                         CONTRACT_FIELD: contract.model_dump(mode="json"),
                     }
+                    from app.services.length_policy_state import (  # noqa: PLC0415
+                        LENGTH_POLICY_FIELD,
+                        stamp_length_policy,
+                    )
+
+                    existing_length = job.assembly_plan.get(LENGTH_POLICY_FIELD) or {}
+                    job.assembly_plan = stamp_length_policy(
+                        job.assembly_plan,
+                        strategy_payload or {},
+                        contract,
+                        mode=existing_length.get(
+                            "check_mode", settings.creator_duration_check_mode
+                        ),
+                    )
         from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
 
         ensure_job_snapshot(

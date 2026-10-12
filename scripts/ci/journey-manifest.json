@@ -2,6 +2,37 @@
   "schema_version": 1,
   "journeys": [
     {
+      "id": "kri-492-length-ownership",
+      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py",
+      "paths": [
+        "src/apps/api/app/services/length_policy.py",
+        "src/apps/api/app/services/length_policy_state.py",
+        "src/apps/api/app/services/contract_check_rollout.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/cloud_render_contract.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/app/services/phone_editor.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/app/services/device_render.py",
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/routes/creator_agent.py",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/_schemas/creator_agent.py",
+        "src/apps/api/app/kria/brief_binding.py",
+        "src/apps/api/app/kria/drafts.py",
+        "src/apps/api/app/pipeline/best_parts.py",
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/tests/services/test_length_policy_state.py",
+        "src/apps/api/tests/fixtures/incidents/clarify-thirty-clips-in-fifteen-seconds.json",
+        "scripts/ci/replay-creator-contracts.py",
+        "scripts/ci/check-length-promotion.py",
+        "scripts/ci/creator-contract-replay.schema.json",
+        "scripts/ci/fixtures/kri492-creator-contracts.json",
+        "scripts/ios/kri-492-length-e2e.py",
+        "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift"
+      ]
+    },
+    {
       "id": "kri-524-creation",
       "fixture_generator": "scripts/ios/kri-524-creation-e2e.py",
       "xctest": "KriaTests/DeviceMontageRenderE2ETests/testCapturedCreationWordsRetimedThenExportOnTheIPhone",
@@ -39,7 +70,10 @@
         "src/apps/api/app/pipeline/guided_caption_presentation.py",
         "src/apps/api/app/pipeline/unified_montage.py",
         "src/apps/api/app/schemas/edit_proposal.py",
-        "src/apps/api/tests/evals/request_following/test_creation_composition.py"
+        "src/apps/api/tests/evals/request_following/test_creation_composition.py",
+        "src/apps/api/app/pipeline/image_crop.py",
+        "src/apps/api/app/pipeline/phone_voiceover_cut.py",
+        "src/apps/api/prompts/edit_copilot_ops/timeline.txt"
       ]
     },
     {
@@ -93,9 +127,11 @@
     },
     {
       "id": "slide-post-binding-recovery",
-      "api_tests": "tests/routes/test_slide_post_native_routes.py",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/pipeline/test_slide_post_framing.py",
       "xctests": [
-        "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave"
+        "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave",
+        "KriaTests/SlidePostFramingTests/testEncodingAlwaysWritesTheFramingKeySoAClearIsNeverMistakenForAnOlderApp",
+        "KriaTests/SlidePostFramingTests/testPlacementMatchesTheSharedParityFixtureWithinAHundredthOfAPixel"
       ],
       "paths": [
         "src/apps/api/app/pipeline/slide_post/build.py",
@@ -104,7 +140,14 @@
         "src/apps/api/tests/routes/test_slide_post_native_routes.py",
         "src/apps/ios/Kria/Core/SlidePost.swift",
         "src/apps/ios/Tests/KriaTests/SlidePostTests.swift",
-        "src/apps/ios/Tests/Fixtures/SlidePostBindingRoundTrip.json"
+        "src/apps/ios/Tests/Fixtures/SlidePostBindingRoundTrip.json",
+        "src/apps/api/app/kria/framing.py",
+        "src/apps/api/tests/pipeline/test_slide_post_framing.py",
+        "src/apps/ios/Kria/Core/SlidePostFraming.swift",
+        "src/apps/ios/Tests/KriaTests/SlidePostFramingTests.swift",
+        "tests/fixtures/slide-framing-parity/v1.json",
+        "src/apps/api/app/pipeline/slide_post/profiles.py",
+        "src/apps/api/prompts/edit_copilot_ops/slides.txt"
       ]
     },
     {
@@ -142,6 +185,50 @@
         "src/apps/api/tests/kria/test_portable_text_layout.py",
         "src/apps/ios/Tests/KriaTests/CaptionWatermarkClearanceTests.swift",
         "src/apps/ios/Tests/Fixtures/KRI548CaptionWatermark.json"
+      ]
+    },
+    {
+      "id": "kri-547-speaker-framing",
+      "api_tests": "tests/pipeline/test_kri547_face_fill_device_fixture.py tests/pipeline/test_phone_speaker_framing.py tests/pipeline/test_phone_subtitled_plan.py tests/pipeline/test_phone_subtitled_title.py tests/pipeline/test_render_geometry.py tests/kria/test_speaker_framing_ask.py tests/kria/test_brief_speaker_framing.py tests/tasks/test_phone_subtitled_speaker_framing_worker.py",
+      "xctests": [
+        "KriaTests/DeviceSpeakerFaceFillE2ETests/testFaceInTheLeftThirdShowsTheServerWindowOnTheIPhone",
+        "KriaTests/DeviceSpeakerFaceFillE2ETests/testFaceAtTheRightEdgeClampsWithNoBlackEdgeOnTheIPhone",
+        "KriaTests/DeviceSpeakerFaceFillE2ETests/testCentredFaceIsTheUnshiftedCentreCropOnTheIPhone"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/speaker_framing_ask.py",
+        "src/apps/api/app/pipeline/phone_recipe_shared.py",
+        "src/apps/api/app/pipeline/phone_speaker_framing.py",
+        "src/apps/api/app/pipeline/phone_subtitled_plan.py",
+        "src/apps/api/app/pipeline/phone_subtitled_title.py",
+        "src/apps/api/app/pipeline/render_geometry.py",
+        "src/apps/api/tests/pipeline/test_kri547_face_fill_device_fixture.py",
+        "src/apps/api/tests/pipeline/test_phone_speaker_framing.py",
+        "src/apps/api/tests/pipeline/test_phone_subtitled_plan.py",
+        "src/apps/api/tests/pipeline/test_phone_subtitled_title.py",
+        "src/apps/api/tests/pipeline/test_render_geometry.py",
+        "src/apps/api/tests/kria/test_speaker_framing_ask.py",
+        "src/apps/api/tests/kria/test_brief_speaker_framing.py",
+        "src/apps/api/tests/tasks/test_phone_subtitled_speaker_framing_worker.py",
+        "src/apps/ios/Tests/KriaTests/DeviceSpeakerFaceFillE2ETests.swift",
+        "src/apps/ios/Tests/Fixtures/KRI547SpeakerFaceFill.json"
+      ]
+    },
+    {
+      "id": "kri-586-hook-copy",
+      "api_tests": "tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py tests/agents/test_runtime.py tests/kria/test_creative_copy_planner.py tests/evals/test_main_creator_evals.py",
+      "paths": [
+        "src/apps/api/prompts/main_creator.txt",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/"
+      ]
+    },
+    {
+      "id": "kri-590-voiceover-cues",
+      "api_tests": "tests/agents/test_narrated_clip_alignment.py tests/evals/test_narrated_clip_alignment_evals.py tests/kria/test_brief_checks_narrated_alignment.py tests/kria/test_kri520_block_recovery.py tests/tasks/test_phone_subtitled_narrated_dispatch.py",
+      "paths": [
+        "src/apps/api/app/agents/narrated_clip_alignment.py",
+        "src/apps/api/prompts/narrated_clip_alignment.txt",
+        "src/apps/api/tests/fixtures/agent_evals/narrated_clip_alignment/"
       ]
     }
   ]

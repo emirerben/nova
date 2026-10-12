@@ -40,7 +40,7 @@ from __future__ import annotations
 import math
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -55,6 +55,7 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
+from app.pipeline.best_parts import BestPartsResult, select_best_parts
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
@@ -64,9 +65,11 @@ from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
+    MixedMediaTimingProfile,
     PinnedText,
     StoryBeat,
     canonical_media_digest,
+    mixed_media_hold_bounds,
 )
 from app.schemas.text_style_intent import (
     normalize_label_position,
@@ -81,6 +84,7 @@ from app.services.clip_facts import (
     order_by_capture_time,
 )
 from app.services.clip_order_sequence import apply_sequence, sequence_rows
+from app.services.length_policy import natural_length_owner
 
 FPS = 30
 # The reading-time rule: 0.8s to notice the text plus 60ms per character,
@@ -422,6 +426,11 @@ class UnifiedMontagePlan:
     # that clip last with its own audio kept ({media_id, source_start_s, source_end_s}).
     # Empty when no line was held, so every earlier record is unchanged.
     closing_speech: dict[str, Any] = field(default_factory=dict)
+    # KRI-496: exact footage windows chosen by the deterministic selector. This
+    # lives in the receipt rather than the strict snapshot schema so existing
+    # stored proposal payloads stay wire-compatible.
+    best_parts_receipt: list[dict[str, Any]] = field(default_factory=list)
+    best_parts_conflicts: list[dict[str, Any]] = field(default_factory=list)
     # KRI-569: the song's lyrics placed as captions ({status, style, words, lines}). Empty
     # when no lyric captions were planned, so every earlier record is unchanged.
     caption_receipt: dict[str, Any] = field(default_factory=dict)
@@ -450,6 +459,14 @@ class UnifiedMontagePlan:
         )
         song = {"user_song": dict(self.song_receipt)} if self.song_receipt else {}
         speech = {"closing_speech": dict(self.closing_speech)} if self.closing_speech else {}
+        best_parts = (
+            {"best_parts": list(self.best_parts_receipt)} if self.best_parts_receipt else {}
+        )
+        best_parts_conflicts = (
+            {"best_parts_conflicts": list(self.best_parts_conflicts)}
+            if self.best_parts_conflicts
+            else {}
+        )
         captions = {"captions": dict(self.caption_receipt)} if self.caption_receipt else {}
         pins = (
             {"pinned_texts": [pin.model_dump(mode="json") for pin in self.snapshot.pinned_texts]}
@@ -490,6 +507,8 @@ class UnifiedMontagePlan:
             **zone,
             **song,
             **speech,
+            **best_parts,
+            **best_parts_conflicts,
             **captions,
         }
 
@@ -628,6 +647,26 @@ def _window_start_s(clip: UnifiedClip, duration_s: float) -> float:
             start = moment_start
     latest = max(0.0, float(clip.duration_s) - duration_s)
     return round(min(max(0.0, start), latest), 3)
+
+
+def _frame_bound_best_parts(parts: BestPartsResult) -> BestPartsResult:
+    """Keep selected windows source-bounded and whole-frame for phone/cloud parity."""
+    bounded = []
+    for part in parts.parts:
+        if part.reason == "analysis_fallback" and part.duration_s < MIN_VIDEO_CUT_S:
+            bounded.append(part)
+            continue
+        start = math.ceil(part.source_start_s * FPS - 1e-9) / FPS
+        end = math.floor(part.source_end_s * FPS + 1e-9) / FPS
+        # A 100ms included-source floor is exactly three 30fps frames. Preserve
+        # the original validated window when rounding cannot keep that floor.
+        if end - start < 0.1 - 1e-9:
+            bounded.append(part)
+        else:
+            bounded.append(replace(part, source_start_s=start, source_end_s=end))
+    return replace(
+        parts, parts=tuple(bounded), duration_s=round(sum(p.duration_s for p in bounded), 3)
+    )
 
 
 # KRI-517: "end on Elif's sentence, in her own voice". Analysed speech bounds are
@@ -986,6 +1025,8 @@ def plan_unified_montage(
     song_plan_item_id: str | None = None,
     song_generation: int | None = None,
     output_orientation: str | None = None,
+    creator_duration_proven: bool = False,
+    approved_length_plan: Mapping[str, Any] | None = None,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
@@ -1043,6 +1084,50 @@ def plan_unified_montage(
         # Visuals carry no capture time: they keep their spread slot, and the
         # receipt says their place is not the filmed order.
         fallback_ids = [*fallback_ids, *(v.media_id for v in visuals if v.capture_time is None)]
+
+    # KRI-496: only footage-owned, unnamed timing gets its length and source
+    # windows from analysis. Song, voiceover, original-audio takes and a proven
+    # creator duration keep their dedicated policies below. Images retain the
+    # established Visuals hold behavior because they have no source window.
+    best_parts: BestPartsResult | None = None
+    best_parts_conflicts: list[dict[str, Any]] = []
+    has_approved_windows = False
+    mixed_media_timing: MixedMediaTimingProfile | None = None
+    raw_mixed_media_timing = strategy.get("mixed_media_timing")
+    if isinstance(raw_mixed_media_timing, MixedMediaTimingProfile):
+        mixed_media_timing = raw_mixed_media_timing
+    elif isinstance(raw_mixed_media_timing, Mapping):
+        try:
+            mixed_media_timing = MixedMediaTimingProfile.model_validate(raw_mixed_media_timing)
+        except ValidationError:
+            # Strategy is model/client supplied.  Invalid timing cannot become
+            # an implicit renderer policy.
+            mixed_media_timing = None
+
+    # An approved proposal envelope is the one authoritative selection of
+    # source windows.  It is deliberately validated before any local selector
+    # can run: stale or conflicted envelopes must block rather than quietly
+    # falling back to legacy whole-clip windows.
+    if approved_length_plan is not None:
+        from app.services.length_planning import read_length_plan  # noqa: PLC0415
+
+        conflicts = approved_length_plan.get("conflicts")
+        if not isinstance(conflicts, list):
+            raise ValueError("invalid approved length plan conflicts")
+        if conflicts:
+            raise ValueError("approved length plan has unresolved conflicts")
+        approved_parts = read_length_plan(approved_length_plan, ordered)
+        if approved_parts is None:
+            raise ValueError("invalid approved length plan")
+        if approved_parts:
+            has_approved_windows = True
+            best_parts = BestPartsResult(
+                approved_parts,
+                round(sum(part.duration_s for part in approved_parts), 3),
+                round(sum(part.duration_s for part in approved_parts), 3),
+                round(sum(part.duration_s for part in approved_parts), 3),
+                (),
+            )
 
     # ── labels ───────────────────────────────────────────────────────────────
     labels_requested = bool(
@@ -1165,22 +1250,94 @@ def plan_unified_montage(
     if not title:
         title_source = "none"
 
+    if (
+        approved_length_plan is None
+        and song_duration_s is None
+        and not visuals
+        and not creator_duration_proven
+        and view.target_duration_s is None
+        and natural_length_owner(strategy) == "footage"
+        and _closing_speech_span(ordered, sequence, strategy) is None
+    ):
+        # Reading-time holds remain protected while the source window is chosen
+        # from the best analysed moment. Pins affect overlay placement, not the
+        # footage duration, and are retained untouched in ``snapshot_kwargs``.
+        candidate = select_best_parts(
+            ordered,
+            minimum_total_duration_s=MIN_TOTAL_S,
+            minimum_duration_s={
+                media_id: label.min_display_s for media_id, label in labels.items()
+            },
+        )
+        candidate = _frame_bound_best_parts(candidate)
+        if candidate.ok and candidate.duration_s >= MIN_TOTAL_S:
+            best_parts = candidate
+        else:
+            best_parts_conflicts = [
+                {
+                    "code": conflict.code,
+                    "requested_duration_s": conflict.requested_duration_s,
+                    "available_duration_s": conflict.available_duration_s,
+                    "message": conflict.message,
+                }
+                for conflict in candidate.conflicts
+            ]
+            if candidate.ok:
+                best_parts_conflicts.append(
+                    {
+                        "code": "snapshot_min_duration",
+                        "requested_duration_s": candidate.duration_s,
+                        "available_duration_s": candidate.capacity_s,
+                        "message": (
+                            "The selected footage is shorter than the 3 second proposal minimum."
+                        ),
+                    }
+                )
+            raise ValueError(
+                "The selected footage is too short or needs a constraint answer: "
+                + str(best_parts_conflicts[0]["code"])
+            )
+
     # ── cut lengths ──────────────────────────────────────────────────────────
+    approved_windows = has_approved_windows
+    approved_by_id = {part.media_id: part for part in best_parts.parts} if best_parts else {}
     wanted: list[int] = []
     capacity: list[int] = []
     short: list[str] = []
     for clip in ordered:
         label = labels.get(clip.media_id)
-        want_s = label.min_display_s if label is not None else DEFAULT_CUT_S
+        approved_part = approved_by_id.get(clip.media_id) if approved_windows else None
+        if approved_part is not None:
+            # The proposal already selected this exact source window.  These
+            # frame counts are only bookkeeping for the legacy code below;
+            # cut construction continues to use the unrounded approved part.
+            want_s = approved_part.duration_s
+        elif clip.kind == "image" and mixed_media_timing is not None:
+            want_s = mixed_media_hold_bounds("image", mixed_media_timing).preferred_s
+        else:
+            want_s = label.min_display_s if label is not None else DEFAULT_CUT_S
         want = int(math.ceil(want_s * FPS - 1e-9))
-        cap = _capacity_frames(clip)
+        if approved_part is not None:
+            cap = want
+        elif clip.kind == "image" and mixed_media_timing is not None:
+            # The snapshot validator owns these photo bounds too.  Keep the
+            # legacy minimum-duration grower from stretching a profiled still
+            # past its approved maximum.
+            image_bounds = mixed_media_hold_bounds("image", mixed_media_timing)
+            cap = min(_capacity_frames(clip), int(math.floor(image_bounds.maximum_s * FPS)))
+        else:
+            cap = _capacity_frames(clip)
         if label is not None and cap < want:
             short.append(clip.media_id)
         wanted.append(min(want, cap))
         capacity.append(cap)
     labelled = [clip.media_id in labels for clip in ordered]
     floor_frames = int(math.ceil(MIN_TOTAL_S * FPS))
-    target_s = view.target_duration_s or _positive_number(strategy.get("target_duration_s"))
+    # A strategy target is model/client data until the caller supplies
+    # authoritative creator-duration proof. Brief timing is already trusted.
+    target_s = view.target_duration_s or (
+        _positive_number(strategy.get("target_duration_s")) if creator_duration_proven else None
+    )
     target_frames = max(floor_frames, int(round(target_s * FPS))) if target_s else floor_frames
     # A creator-stated length is honoured even when it needs cuts longer than a
     # beat of attention (one long clip, a day vlog); a default fast montage is not.
@@ -1203,18 +1360,18 @@ def plan_unified_montage(
             labelled[-1] = True  # ``_shrink`` only takes frames from unlabelled cuts
         else:
             speech_span = None
-    total = _grow(wanted, growth_ceiling, target_frames)
-    if total < floor_frames:
+    total = sum(wanted) if approved_windows else _grow(wanted, growth_ceiling, target_frames)
+    if not approved_windows and total < floor_frames:
         # Too short to be a video at all: use every frame the clips have.
         total = _grow(wanted, capacity, floor_frames)
         if total < floor_frames:
             raise ValueError("these clips are too short to make a montage")
-    if total > target_frames and target_s:
+    if not approved_windows and total > target_frames and target_s:
         # Longer than the creator asked for: only unlabelled cuts may shrink,
         # and never below the shortest cut a montage should have.
         total = _shrink(wanted, labelled, total, max(target_frames, floor_frames))
     song_dropped: list[str] = []
-    if song_duration_s is not None:
+    if song_duration_s is not None and not approved_windows:
         song_cap = int(math.floor(float(song_duration_s) * FPS + 1e-6))
         if song_cap < floor_frames:
             raise ValueError("the song is too short to make a montage")
@@ -1239,14 +1396,19 @@ def plan_unified_montage(
         if total < floor_frames:
             total = _grow(wanted, capacity, floor_frames)
         short = [media_id for media_id in short if media_id not in song_dropped]
-    if total / FPS > MAX_PROPOSAL_DURATION_S:
+    approved_total_s = (
+        sum(part.duration_s for part in best_parts.parts)
+        if approved_windows and best_parts
+        else total / FPS
+    )
+    if approved_total_s > MAX_PROPOSAL_DURATION_S:
         raise ValueError("these clips make a montage that is too long")
 
     # ── background song: window + beat-snapped cut lengths (ms) ──────────────
     cut_ms: list[int] | None = None
     song_plan: UserSongPlan | None = None
     song_receipt: dict[str, Any] = {}
-    if song_duration_s is not None:
+    if song_duration_s is not None and not approved_windows:
         from app.pipeline.music_recipe import auto_best_section  # noqa: PLC0415
 
         nominal_ms: list[int] = []
@@ -1320,10 +1482,20 @@ def plan_unified_montage(
 
     cuts: list[FastMontageCut] = []
     refs: list[MediaRef] = []
+    selected_windows = {part.media_id: part for part in best_parts.parts} if best_parts else {}
     for index, (clip, frames) in enumerate(zip(ordered, wanted, strict=True)):
-        duration = cut_ms[index] / 1000 if cut_ms is not None else frames / FPS
+        selected_window = selected_windows.get(clip.media_id)
+        duration = (
+            selected_window.duration_s
+            if selected_window is not None
+            else cut_ms[index] / 1000
+            if cut_ms is not None
+            else frames / FPS
+        )
         if clip.kind == "image":
             start, end = 0.0, round(duration, 3)
+        elif selected_window is not None:
+            start, end = selected_window.source_start_s, selected_window.source_end_s
         elif clip.duration_s < MIN_VIDEO_CUT_S:
             # Whole frames stop a fraction of a frame short of a 0.298s clip,
             # which the snapshot refuses: a clip this short is shown whole.
@@ -1341,7 +1513,9 @@ def plan_unified_montage(
                 media_id=clip.media_id,
                 source_start_s=start,
                 source_end_s=end,
-                output_duration_s=round(end - start, 3),
+                output_duration_s=(end - start)
+                if selected_window is not None
+                else round(end - start, 3),
                 role="hook" if index == 0 else "payoff" if index == len(ordered) - 1 else "build",
                 transition="none",
                 beat_align=False,
@@ -1366,7 +1540,9 @@ def plan_unified_montage(
                 content_hash=clip.content_hash,
             )
         )
-    total_s = round(sum(cut.output_duration_s for cut in cuts), 3)
+    # Keep the exact frame sum: rounding it to milliseconds can disagree with
+    # the frame-aligned cuts by a third of a frame.
+    total_s = sum(cut.output_duration_s for cut in cuts)
     pins = drawable_pins(pins, total_s, [cut.output_duration_s for cut in cuts])
 
     snapshot_kwargs: dict[str, Any] = {}
@@ -1386,6 +1562,8 @@ def plan_unified_montage(
         snapshot_kwargs["opening_title_duration_s"] = hold
     if song_plan is not None:
         snapshot_kwargs["user_song"] = song_plan
+    if mixed_media_timing is not None:
+        snapshot_kwargs["mixed_media_timing"] = mixed_media_timing
     # KRI-522: the brief is cumulative, so the creator's ask survives a later turn whose
     # strategy omits it; the strategy's own typed value is the fallback.
     title_animation = view.title_animation or normalize_title_animation(
@@ -1466,6 +1644,8 @@ def plan_unified_montage(
             if speech_span is not None
             else {}
         ),
+        best_parts_receipt=best_parts.receipt() if best_parts is not None else [],
+        best_parts_conflicts=best_parts_conflicts,
     )
 
 

@@ -480,6 +480,13 @@ class CreativeStrategy(_CreatorModel):
     resolved_song_takes: SkipJsonSchema[list[dict[str, Any]] | None] = Field(
         default=None, max_length=MAX_CREATOR_MEDIA_REFS
     )
+    # KRI-578: the lyric-caption decision, made ONCE at plan time. "word" / "sentence" is
+    # the resolved caption style when the creator's own words asked for the uploaded song's
+    # lyrics as captions; None = no lyric captions. SERVER-owned like `resolved_song_takes`:
+    # SkipJsonSchema keeps it out of every model schema (no Main Creator prompt bump), the
+    # planner overwrites whatever a model wrote, and a plan-authority worker reads only this
+    # instead of re-reading the saved request. Omitted from the dump when unset.
+    song_captions: SkipJsonSchema[Literal["word", "sentence"] | None] = Field(default=None)
 
     # KRI-479 (voice behind footage). MODEL-authored like `song_sync`: SkipJsonSchema
     # keeps it OUT of every derived JSON schema (the Kria `apply_strategy` tool schema
@@ -563,6 +570,7 @@ class CreativeStrategy(_CreatorModel):
             "closing_media",
             "song_sync",
             "resolved_song_takes",
+            "song_captions",
             "voice_mode",
             "pinned_texts",
         ):
@@ -589,6 +597,19 @@ class CreativeStrategy(_CreatorModel):
     # policy normalization.  It is optional so pre-KRI-470 strategies remain
     # byte-identical when serialized.
     target_duration_requested: SkipJsonSchema[bool | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # Server-owned numeric proof of the creator's requested output duration.
+    # Unlike the model's planning target, this is copied only from creator text,
+    # a pinned brief, or an authoritative choice effect.  It lets later job
+    # assembly reject a forged/stale boolean marker without changing the strict
+    # CreatorRenderContract wire schema.
+    creator_duration_s: SkipJsonSchema[ProposalDuration | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # Server-frozen catalog selection; never model-authored and intentionally
+    # absent from the public strategy schema.
+    selected_music_section: SkipJsonSchema[dict[str, Any] | None] = Field(
         default=None, exclude_if=lambda value: value is None
     )
     render_program: RenderProgram = "guided"

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KRI-499 sanitized creator contract replay snapshot",
+  "type": "object",
+  "required": ["schema_version", "base_sha", "available_count", "missing_required_inputs_count", "captures"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "base_sha": {"type": "string", "minLength": 1},
+    "available_count": {"type": "integer", "minimum": 1},
+    "missing_required_inputs_count": {"const": 0},
+    "captures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "source_provenance", "contract", "variant", "candidates"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "source_provenance": {"type": "object", "minProperties": 1},
+          "contract": {"type": "object", "minProperties": 1},
+          "variant": {"type": "object", "minProperties": 1},
+          "candidates": {"type": "object", "minProperties": 1},
+          "phone_recipe": {"type": "object", "minProperties": 1},
+          "source_audio": {"type": "object", "minProperties": 1},
+          "composition": {"type": "object", "minProperties": 1},
+          "cloud_validation": {"type": "object", "minProperties": 1}
+        },
+        "anyOf": [
+          {"required": ["phone_recipe", "source_audio", "composition"]},
+          {"required": ["cloud_validation"]}
+        ]
+      }
+    }
+  }
+}

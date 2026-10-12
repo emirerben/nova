@@ -20,6 +20,7 @@ from app.agents._runtime import (
     ModelInvocation,
     ProviderOutcomeUnknownError,
     RunContext,
+    SchemaError,
     TerminalError,
     TerminalSchemaError,
     TransientError,
@@ -1461,3 +1462,38 @@ def test_json_repair_library_handles_prod_fixture_shape() -> None:
     assert isinstance(moments, list) and len(moments) == 2
     assert moments[0]["description"] == "crowd watching light show"
     assert moments[1]["description"] == "stage lights"
+
+
+def test_sensitive_failure_keeps_a_value_free_error_class(
+    mock_client: MockModelClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KRI-586: a classed schema failure stays diagnosable without exposing model text."""
+
+    class ClassedSchemaAgent(SampleAgent):
+        spec = replace(
+            SampleAgent.spec,
+            name="test.sensitive.classed",
+            max_attempts=1,
+            fallback_models=(),
+            enable_clarification_retries=False,
+            sensitive_io=True,
+        )
+
+        def parse(self, raw_text: str, input):  # noqa: A002, ANN001
+            error = SchemaError(f"bad field holding {raw_text}")
+            error.error_class = "creative_decision:status:missing"  # type: ignore[attr-defined]
+            raise error
+
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "app.agents._runtime.log.info", lambda _event, **kwargs: captured.append(kwargs)
+    )
+    monkeypatch.setattr("app.agents._runtime.log.warning", lambda *_args, **_kwargs: None)
+    mock_client.queue("gemini-2.5-flash", {"answer": "PRIVATE-MODEL-OUTPUT", "score": 1})
+
+    with pytest.raises(TerminalError) as exc_info:
+        ClassedSchemaAgent(mock_client).run(SampleInput(topic="private creator direction"))
+
+    assert "PRIVATE-MODEL-OUTPUT" not in str(exc_info.value)
+    assert captured[0]["error"] == "sensitive_agent_error:creative_decision:status:missing"
+    assert "PRIVATE-MODEL-OUTPUT" not in str(captured[0])

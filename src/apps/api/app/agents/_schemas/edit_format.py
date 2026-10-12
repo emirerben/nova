@@ -51,7 +51,10 @@ SINGLE_HERO_RENDERER_VERSION = 1
 # hazard applies: a mixed API/worker deploy must never let an old worker
 # silently coerce a "slides" job to montage. Bump on any change to the
 # stamped variant contract (variant_id, slide_post shape, bundle layout).
-SLIDES_RENDERER_VERSION = 1
+# 2 (KRI-44): per-slide `framing` (crop + landscape canvas). A worker below 2
+# would render a framed draft without it, so such a variant is never "current".
+SLIDES_RENDERER_VERSION = 2
+SLIDES_FRAMING_RENDERER_VERSION = 2
 
 EDIT_FORMATS: tuple[str, ...] = get_args(EditFormat)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -291,6 +292,12 @@ def _rebind_editor_render_contract(
     generation = str(prep.get("generation") or "")
     if not generation:
         raise CreatorRenderContractError("I couldn't verify this edit's approved revision.")
+    from app.services.length_policy_state import (  # noqa: PLC0415
+        read_length_policy,
+        stamp_length_policy,
+    )
+
+    length_policy = read_length_policy(assembly, contract)
     variant = next(v for v in assembly.get("variants", []) if v.get("variant_id") == variant_id)
     sections = prep.get("sections") or {}
     changes: dict[str, Any] = {"generation_id": generation}
@@ -326,7 +333,15 @@ def _rebind_editor_render_contract(
         # number from the submitted slots (or guided revision); the prior
         # variant duration is deliberately not authority for a trim.
         duration = prep.get("expected_duration_s")
-        if isinstance(duration, (int, float)) and duration > 0:
+        # A validated timeline Save is creator-authored timing for this new
+        # generation. It supersedes the previous target without changing a
+        # sibling variant's original contract or policy stamp.
+        if (
+            not isinstance(duration, bool)
+            and isinstance(duration, (int, float))
+            and math.isfinite(duration)
+            and duration > 0
+        ):
             changes["duration_s"] = float(duration)
         slots = (prep.get("guided_revision") or {}).get("segments") or []
         order = tuple(
@@ -342,8 +357,16 @@ def _rebind_editor_render_contract(
                 "This timeline edit needs a source-identified editor revision before it can render."
             )
     revisions = dict(revisions or {})
-    revisions[variant_id] = contract.rebind(**changes).model_dump(mode="json")
+    rebound = contract.rebind(**changes)
+    revisions[variant_id] = rebound.model_dump(mode="json")
     assembly[CONTRACT_REVISIONS_FIELD] = revisions
+    if length_policy is not None:
+        staged.assembly_plan = stamp_length_policy(
+            assembly,
+            (staged.all_candidates or {}).get("creator_strategy") or {},
+            rebound,
+            mode=length_policy.check_mode,
+        )
 
 
 def prepare_phone_editor_commit(
@@ -802,6 +825,19 @@ def _compile_subtitled_editor_commit(
     landscape_fit = _resolved_landscape_fit(
         variant, previous.recipe, prep.get("landscape_fit_override")
     )
+    # KRI-547: a face-filled speaker keeps its crop on Save, drops it when the
+    # creator picks black bars, and gets it back when they pick crop again.
+    # A variant without a framing receipt compiles exactly as before. Imported here:
+    # `phone_speaker_framing` pulls in skia via `render_geometry`, and this module is on
+    # the routes' import path (the kria contracts CLI imports it without libEGL).
+    from app.pipeline.phone_speaker_framing import (  # noqa: PLC0415
+        SPEAKER_FRAMING_FIELD,
+        editor_speaker_framing,
+    )
+
+    speaker_position_x, framing_receipt = editor_speaker_framing(
+        variant.get(SPEAKER_FRAMING_FIELD), landscape_fit=landscape_fit
+    )
 
     recipe = compile_phone_subtitled_plan(
         (speaker,),
@@ -818,6 +854,7 @@ def _compile_subtitled_editor_commit(
         # a text section), in the cut-timeline seconds the cues use.
         text_elements=variant.get("text_elements") or [],
         text_elements_user_edited=bool(variant.get("text_elements_user_edited")),
+        **({"speaker_position_x": speaker_position_x} if speaker_position_x is not None else {}),
     )
     duck_receipt = sfx_duck_receipt(lanes, recipe)
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays or cutaways))
@@ -840,6 +877,8 @@ def _compile_subtitled_editor_commit(
         row["duration_s"] = recipe.duration
         if caption_cues_overridden:
             row["caption_cues"] = caption_cues
+        if framing_receipt is not None:
+            row[SPEAKER_FRAMING_FIELD] = framing_receipt
         _persist_lane_state(
             row, lanes, labels, paths, caption_style=caption_style, duck_receipt=duck_receipt
         )

@@ -780,6 +780,28 @@ def test_recovery_cause_names_classes_never_the_creators_words() -> None:
     assert "secret" not in repr(cause)
 
 
+def test_recovery_cause_carries_the_agents_value_free_error_class() -> None:
+    """KRI-586: a redacted Main Creator failure still names which field was wrong."""
+    from app.agents._runtime import SchemaError, TerminalSchemaError
+
+    schema = SchemaError("main_creator: invalid output: PRIVATE-WORDS")
+    schema.error_class = "creative_decision:status:missing"  # type: ignore[attr-defined]
+    terminal = TerminalSchemaError("nova.creator.main: schema")
+    terminal.__cause__ = schema
+    exc = RuntimeError("Kria could not produce a reliable editorial plan")
+    exc.__cause__ = terminal
+
+    cause = planner._recovery_cause("main_creator", exc)
+
+    assert cause == {
+        "stage": "main_creator",
+        "error_type": "RuntimeError",
+        "cause_type": "TerminalSchemaError",
+        "error_class": "creative_decision:status:missing",
+    }
+    assert "PRIVATE-WORDS" not in repr(cause)
+
+
 # KRI-282: a clip-picker answer ("Dodgeball: clip 21" + structured clip_selection) used to
 # be read by the editor copilot as a text edit ("put 'dodgeball' on bar 18"), so the label
 # landed on the wrong clip and the selection was never folded into the clip intents.

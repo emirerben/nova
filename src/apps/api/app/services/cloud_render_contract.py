@@ -609,6 +609,9 @@ def verify_cloud_variant(
     contract = _pinned_contract(assembly, candidates)
     if contract is None:
         return None
+    from app.services.length_policy_state import read_length_policy  # noqa: PLC0415
+
+    length_policy = read_length_policy(assembly, contract)
     if contract.unresolved:
         raise _decline("unresolved", contract.unresolved[0])
     if not any(
@@ -680,7 +683,19 @@ def verify_cloud_variant(
                 "This edit couldn't keep the confirmed length.",
                 declaration=declaration,
             )
-        if not _numbers_match(actual_duration, contract.duration_s):
+        if length_policy is not None and isinstance(actual_duration, (int, float)):
+            from app.services.length_policy_state import check_creator_duration  # noqa: PLC0415
+
+            try:
+                check_creator_duration(
+                    contract,
+                    float(actual_duration),
+                    state=length_policy,
+                    decline_type=CloudRenderContractError,
+                )
+            except CloudRenderContractError as exc:
+                raise _decline("duration_s", str(exc)) from exc
+        elif not _numbers_match(actual_duration, contract.duration_s):
             raise _decline("duration_s", "This edit couldn't keep the confirmed length.")
     if not any(
         (

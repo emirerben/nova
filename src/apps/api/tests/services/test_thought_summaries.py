@@ -6,12 +6,14 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+import pytest_asyncio
 from fastapi import HTTPException
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import settings
-from app.database import AsyncSessionLocal, sync_session
+from app.database import sync_session
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -26,6 +28,17 @@ from app.routes.thought_summaries import (
     list_slide_post_thought_summaries,
 )
 from app.services.thought_summaries import ThoughtSummaryPublisher
+
+
+@pytest_asyncio.fixture
+async def thought_async_sessions():
+    """Keep pooled asyncpg connections on this test's event loop."""
+    engine = create_async_engine(settings.asyncpg_database_url, pool_pre_ping=True)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        yield factory
+    finally:
+        await engine.dispose()
 
 
 @pytest.fixture
@@ -74,7 +87,7 @@ def thought_subjects():
 
 @pytest.mark.asyncio
 async def test_attempt_fencing_history_ownership_and_chat_revision(
-    thought_subjects, monkeypatch
+    thought_subjects, thought_async_sessions, monkeypatch
 ) -> None:
     monkeypatch.setattr(settings, "thought_summaries_enabled", True)
     owner_id, stranger_id, thread_id, item_id = thought_subjects
@@ -149,7 +162,7 @@ async def test_attempt_fencing_history_ownership_and_chat_revision(
             == 0
         )
 
-    async with AsyncSessionLocal() as db:
+    async with thought_async_sessions() as db:
         owner = SimpleNamespace(id=owner_id)
         stranger = SimpleNamespace(id=stranger_id)
         creation = await list_creation_thought_summaries(thread_id, owner, None, db)

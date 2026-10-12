@@ -226,6 +226,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     @Published private(set) var progress: [UUID: Double] = [:]
     @Published private(set) var lastError: String?
     @Published private(set) var attachedThreads: [UUID: CreationThread] = [:]
+    /// Hands a thread the server just returned for a project-level change (the song's filming range, KRI-580) to
+    /// the chat, exactly as an attach does: the workspace applies it through its stale-revision guard.
+    func publishUpdatedThread(_ thread: CreationThread, projectID: UUID) {
+        attachedThreads[projectID] = thread
+    }
     /// Photos assets the user chose, per project (keyed by `projectID.uuidString`). See `PhotoSelectionEntry`.
     @Published private(set) var photoSelections: [String: ProjectPhotoSelection] = [:]
     /// Uploads between "enqueue started" and "record published". `records` is blind to this window

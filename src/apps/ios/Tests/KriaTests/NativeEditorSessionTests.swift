@@ -594,6 +594,133 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(try songStart(), 1.5, accuracy: 0.001, "the singer starts 0.5s later in the take, so does the song")
     }
 
+    // MARK: KRI-576 lyric captions follow the song window in the live preview
+
+    /// Four lyric words as the server projects them for a window starting at song second 1 (starts 0.0 ... 1.2).
+    private static func lyricRows(hiddenIndexes: Set<Int> = [], offset: Double = 0) -> JSONValue {
+        .array((0..<4).map { index in
+            let start = Double(index) * 0.4 - offset
+            var params: [String: JSONValue] = ["source": .string("caption_cue"), "origin": .string("song"), "key": .string("\(index)")]
+            if hiddenIndexes.contains(index) { params["window_hidden"] = .bool(true) }
+            return .object(["id": .string("song-caption-\(index)"), "text": .string("w\(index)"),
+                            "start_s": .number(start), "end_s": .number(start + 0.3), "role": .string("generative_sequence"),
+                            "position": .string("custom"), "x_frac": .number(0.5), "y_frac": .number(0.82),
+                            "removed": .bool(hiddenIndexes.contains(index)), "source_params": .object(params)])
+        })
+    }
+
+    private func lyricStarts(_ session: NativeEditorSession) throws -> [String: Double] {
+        let layers = try XCTUnwrap(session.displayedSourcePreviewRecipe).textLayers.filter { $0.id.hasPrefix("song-caption-") }
+        return Dictionary(uniqueKeysWithValues: layers.map { ($0.id, $0.start) })
+    }
+
+    private func lyricSession(mode: String, caps: [String: Bool]) async throws -> (NativeEditorSession, EditorCommitSpy, URL) {
+        try await userSongSession(mode: mode, caps: caps) { variant in
+            variant["text_elements"] = Self.lyricRows()
+        }
+    }
+
+    func testMovingTheSongStartShiftsLyricCaptionsInThePreviewWithoutTouchingTheDocument() async throws {
+        let (session, fake, sourceURL) = try await lyricSession(mode: "background", caps: Self.allSongCaps)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let starts = try lyricStarts(session)
+        XCTAssertEqual(starts["song-caption-2"] ?? -1, 0.8, accuracy: 0.001, "untouched: rows sit where the server put them")
+        let documentBefore = session.document.textElements
+        XCTAssertEqual(documentBefore.count, 4)
+
+        session.setUserSongStart(1.5)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let moved = try lyricStarts(session)
+        XCTAssertNil(moved["song-caption-0"], "starts 0.5 s before the new window")
+        XCTAssertNil(moved["song-caption-1"], "starts 0.1 s before the new window")
+        XCTAssertEqual(moved["song-caption-2"] ?? -1, 0.3, accuracy: 0.001)
+        XCTAssertEqual(moved["song-caption-3"] ?? -1, 0.7, accuracy: 0.001)
+
+        XCTAssertEqual(session.document.textElements, documentBefore, "preview only: the document keeps the server's rows")
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(windowStartS: 1.5))
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false),
+            revisionNumber: 2, revisionHash: "h2", expectedDuration: nil)
+        await session.save()
+        XCTAssertNil(fake.lastRequest?.textElements, "no text commit payload: only the song start was edited")
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(volume: nil, windowStartS: 1.5, removed: false))
+    }
+
+    func testTheLyricShiftIsOneUndoStepWithTheSongEdit() async throws {
+        let (session, _, sourceURL) = try await lyricSession(mode: "background", caps: Self.allSongCaps)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        session.setUserSongStart(1.5)
+        XCTAssertNotNil(session.songCaptionShift)
+        session.undo()
+        XCTAssertNil(session.document.userSong)
+        XCTAssertFalse(session.canUndo, "the song step was the only history entry")
+        XCTAssertNil(session.songCaptionShift, "undo puts the lyrics back where the server has them")
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try lyricStarts(session)["song-caption-2"] ?? -1, 0.8, accuracy: 0.001)
+    }
+
+    func testRemovingTheSongHidesTheLyricCaptionsAndUndoBringsThemBack() async throws {
+        let (session, _, sourceURL) = try await lyricSession(mode: "background", caps: Self.allSongCaps)
+        session.removeUserSong()
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertTrue(try lyricStarts(session).isEmpty)
+        session.undo()
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try lyricStarts(session).count, 4)
+    }
+
+    func testTrimmingALipsyncTakeShiftsTheLyricCaptions() async throws {
+        let (session, _, sourceURL) = try await lyricSession(mode: "lipsync", caps: ["volume": true, "window": false, "remove": true])
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try lyricStarts(session)["song-caption-2"] ?? -1, 0.8, accuracy: 0.001)
+        let clipID = try XCTUnwrap(session.document.clips.first?.id)
+        session.setClipTiming(clipID: clipID, inS: 0.5)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let moved = try lyricStarts(session)
+        XCTAssertEqual(moved["song-caption-2"] ?? -1, 0.3, accuracy: 0.001, "the song starts 0.5 s later, so the lyrics come 0.5 s earlier")
+        XCTAssertNil(moved["song-caption-0"])
+        for (row, expected) in zip(session.document.textElements, [0, 0.4, 0.8, 1.2]) {
+            XCTAssertEqual(row.startS, expected, accuracy: 1e-9, "the document keeps the server's times")
+        }
+    }
+
+    private static let lyricSaveResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+        sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false),
+        revisionNumber: 2, revisionHash: "h2", expectedDuration: nil)
+
+    /// A Save whose read-back fails (the variant still shows the old generation and rows) keeps the shift: the rows
+    /// in the document are still the old ones, so the preview must keep moving them.
+    func testLyricShiftSurvivesAFailedReadBack() async throws {
+        let (session, fake, sourceURL) = try await lyricSession(mode: "background", caps: Self.allSongCaps)
+        session.setUserSongStart(1.5)
+        fake.commitResponse = Self.lyricSaveResponse
+        await session.save()
+        XCTAssertEqual(try XCTUnwrap(session.songCaptionShift).shiftS, 0.5, accuracy: 0.001, "rows are still the old ones")
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try lyricStarts(session)["song-caption-2"] ?? -1, 0.3, accuracy: 0.001)
+    }
+
+    /// Once the server's re-timed rows are adopted the shift is 0: shifting them again would double it.
+    func testLyricShiftEndsWhenTheServersRowsAreAdopted() async throws {
+        let (session, fake, sourceURL) = try await lyricSession(mode: "background", caps: Self.allSongCaps)
+        session.setUserSongStart(1.5)
+        var next = try XCTUnwrap(fake.authoritativeVariant)
+        next["render_generation_id"] = .string("generation-2")
+        next["variant_id"] = .string("variant")
+        next["user_song"] = .object(["title": .string("Midnight Drive"), "mode": .string("background"),
+            "duration_s": .number(200), "window_start_s": .number(1.5), "window_end_s": .number(3.5)])
+        next["text_elements"] = Self.lyricRows(hiddenIndexes: [0, 1], offset: 0.5)
+        fake.authoritativeVariant = next
+        fake.commitResponse = Self.lyricSaveResponse
+        await session.save()
+        XCTAssertNil(session.songCaptionShift, "the adopted rows already sit at the new window")
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let adopted = try lyricStarts(session)
+        XCTAssertEqual(adopted["song-caption-2"] ?? -1, 0.3, accuracy: 0.001, "0.8 - 0.5, shifted once")
+        XCTAssertEqual(adopted["song-caption-3"] ?? -1, 0.7, accuracy: 0.001)
+        XCTAssertNil(adopted["song-caption-0"], "the server hid it; its stale time never shows")
+    }
+
     func testTrimmingAHeadNeverMovesABackgroundSong() async throws {
         let (session, _, sourceURL) = try await userSongSession(mode: "background", caps: ["volume": true, "window": true, "remove": true])
         let clipID = try XCTUnwrap(session.document.clips.first?.id)
@@ -1660,6 +1787,35 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(slot.raw["playback_rate"])
     }
 
+    /// KRI-44: Crop is offered only where the server explicitly lists `clips.source_crop`. A variant with no
+    /// `clips` group (legacy cloud montage and template renders) must not fall back to "the timeline is editable".
+    func testCropIsOfferedOnlyWhenTheServerExplicitlyListsClipCrop() async throws {
+        let legacy = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        XCTAssertFalse(legacy.serverOffersClipCrop)
+        XCTAssertFalse(legacy.canCropClips)
+
+        let (open, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
+        let openSelection = EditorSelection(kind: .clip, id: try XCTUnwrap(open.timelineClips.first).id.uuidString)
+        XCTAssertTrue(open.serverOffersClipCrop)
+        XCTAssertNil(open.cropBlockedReason(for: openSelection))
+
+        let (closed, _) = await Self.footageSession(destination: "cloud", operationsEditable: false)
+        let closedSelection = EditorSelection(kind: .clip, id: try XCTUnwrap(closed.timelineClips.first).id.uuidString)
+        XCTAssertTrue(closed.serverOffersClipCrop)
+        XCTAssertNotNil(closed.cropBlockedReason(for: closedSelection), "Listed but closed: shown disabled with a reason")
+    }
+
+    /// Once the server opens `clips.source_crop` for a phone-rendered variant, the crop saves; speed stays closed.
+    func testDeviceVariantTakesACropOnceTheServerOpensIt() async throws {
+        let (session, _) = await Self.footageSession(destination: "device", operationsEditable: true)
+        XCTAssertTrue(session.rendersOnDevice)
+        let selection = EditorSelection(kind: .clip, id: try XCTUnwrap(session.timelineClips.first).id.uuidString)
+        session.setFootageCrop(selection, crop: .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
+        XCTAssertEqual(session.footageCrop(for: selection), .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
+        session.setFootagePlaybackRate(selection, rate: 0.5)
+        XCTAssertEqual(session.footagePlaybackRate(for: selection), 1, "Speed is still refused on a phone render")
+    }
+
     func testClosedClipCropCapabilityIsHonoredOnCloudVariants() async throws {
         let (session, _) = await Self.footageSession(destination: "cloud", operationsEditable: false)
         let clip = try XCTUnwrap(session.timelineClips.first)
@@ -2145,9 +2301,12 @@ final class NativeEditorSessionTests: XCTestCase {
         let settled = await waitUntil { Self.failedStateMessage(session) != nil }
         XCTAssertTrue(settled, "a failed item must surface, not sit silently paused")
         XCTAssertEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem))
+        // KRI-587: the card used to read "Showing your last finished video" over a black, dead player.
+        XCTAssertFalse(session.isShowingRenderedFallback, "nothing is showing, so the editor must not claim the finished video is")
+        XCTAssertFalse(session.canDisplayCurrentPlayer, "a dead player is not a video to show")
     }
 
-    /// The failed finished render gets exactly one fresh link, the failure is reported with its AVFoundation
+    /// The failed finished render gets a fresh link, the failure is reported with its AVFoundation
     /// identity, and the recovered player plays.
     func testFailedFinishedRenderRefreshesItsLinkOnceReportsAndRecovers() async throws {
         let jobID = UUID()
@@ -2165,7 +2324,7 @@ final class NativeEditorSessionTests: XCTestCase {
 
         let recovered = await waitUntil { (session.player?.currentItem?.asset as? AVURLAsset)?.url == good }
         XCTAssertTrue(recovered, "the refreshed link replaces the failed item")
-        XCTAssertEqual(fake.playbackURLCallCount, 1, "one refresh, not a retry loop")
+        XCTAssertEqual(fake.playbackURLCallCount, 1, "a link that plays ends the retries")
         let reported = await waitUntil { !fake.playbackFailureReports.isEmpty }
         XCTAssertTrue(reported)
         let report = try XCTUnwrap(fake.playbackFailureReports.first)
@@ -2197,6 +2356,121 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.canDisplayCurrentPlayer)
         XCTAssertTrue(session.isPlaying, "the play tap carries over to the finished render")
         session.pausePlayback()
+    }
+
+    // MARK: KRI-587 — after a render, just show the video
+    //
+    // Ways this goes wrong (written before the fix):
+    // 1. One brief failure (a busy decoder, media services settling after the phone's own export) gets a
+    //    single immediate refresh, and "The video couldn't be loaded" then stays for good.
+    // 2. Retries never end for a video that truly cannot play.
+    // 3. A late retry replaces a newer player (the live preview took over, or another job loaded).
+    // 4. The phone's own copy of a phone render is ignored in favour of the network.
+    // 5. The card says "Showing your last finished video" over a black, dead player.
+    // 6. A render that arrives after the failure plays, but the failure message stays on top of it.
+    // 7. The quiet rebuild of the editable preview loops, or hides a real failure.
+
+    /// 1: a second bad link is not the end. The next fresh link plays and no failure is shown.
+    func testFinishedRenderThatFailsTwiceStillRecoversWithoutAMessage() async throws {
+        let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let (session, fake) = try await Self.failingFinishedRenderSession(
+            freshLinks: [URL(fileURLWithPath: "/tmp/kria-missing-\(UUID().uuidString).mp4")], thenPlays: good)
+
+        let recovered = await waitUntil { (session.player?.currentItem?.asset as? AVURLAsset)?.url == good }
+        XCTAssertTrue(recovered, "the second fresh link plays instead of the editor giving up after the first")
+        XCTAssertEqual(fake.playbackURLCallCount, 2)
+        XCTAssertNotEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem))
+    }
+
+    /// 2 + 5: a video that never plays stops after the bounded retries, says so, and never claims to show it.
+    func testFinishedRenderRetriesAreBoundedAndNeverClaimADeadPlayer() async throws {
+        let missing = (0..<10).map { _ in URL(fileURLWithPath: "/tmp/kria-missing-\(UUID().uuidString).mp4") }
+        let (session, fake) = try await Self.failingFinishedRenderSession(freshLinks: missing, thenPlays: nil)
+
+        let settled = await waitUntil {
+            Self.failedStateMessage(session) == NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem)
+        }
+        XCTAssertTrue(settled)
+        XCTAssertEqual(fake.playbackURLCallCount, session.finishedRenderRetryDelays.count, "one fresh link per retry, then stop")
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        XCTAssertFalse(session.canDisplayCurrentPlayer)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(fake.playbackURLCallCount, session.finishedRenderRetryDelays.count, "no retries after giving up")
+    }
+
+    /// 7: a busy-decoder failure of the editable preview rebuilds it quietly once, with no card in between.
+    /// A second failure in the same episode shows the finished render and the honest card instead of looping.
+    func testTransientLivePreviewFailureRebuildsQuietlyOnceThenFallsBack() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        session.sourcePreviewQuietRetryDelay = .milliseconds(20)
+        session.finishedRenderRetryDelays = [.milliseconds(20)]
+        let busy = NSError(domain: AVFoundationErrorDomain, code: AVError.Code.decoderTemporarilyUnavailable.rawValue)
+
+        let firstLive = try XCTUnwrap(session.player)
+        session.handlePlayerItemFailure(try XCTUnwrap(firstLive.currentItem), error: busy)
+        XCTAssertEqual(session.sourcePreviewState, .preparing, "no failure card while the quiet rebuild is pending")
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        let rebuilt = await waitUntil { session.sourcePreviewState == .ready && session.player !== firstLive }
+        XCTAssertTrue(rebuilt, "the editable preview comes back by itself")
+
+        let secondLive = try XCTUnwrap(session.player)
+        session.handlePlayerItemFailure(try XCTUnwrap(secondLive.currentItem), error: busy)
+        XCTAssertEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.liveItem),
+                       "one quiet rebuild per episode, never a loop")
+    }
+
+    /// 4 + 6: once the finished render is known to be dead, the phone's own copy of the render replaces it
+    /// without the network, and the "couldn't be loaded" message goes with it.
+    func testPhonesOwnCopyHealsADeadFinishedRenderAndClearsTheMessage() async throws {
+        let (session, fake) = try await Self.phoneTalkingSession(lanesEditable: true)
+        session.sourcePreviewQuietRetryDelay = .milliseconds(20)
+        session.finishedRenderRetryDelays = [.milliseconds(20)]
+        let liveFailure = NSError(domain: AVFoundationErrorDomain, code: AVError.Code.unknown.rawValue)
+        // Spend the quiet rebuild, then fail again: the fallback finished render is a missing file.
+        let firstLive = try XCTUnwrap(session.player)
+        session.handlePlayerItemFailure(try XCTUnwrap(firstLive.currentItem), error: liveFailure)
+        _ = await waitUntil { session.sourcePreviewState == .ready && session.player !== firstLive }
+        session.handlePlayerItemFailure(try XCTUnwrap(session.player?.currentItem), error: liveFailure)
+        let dead = await waitUntil {
+            Self.failedStateMessage(session) == NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem)
+        }
+        XCTAssertTrue(dead, "precondition: the finished render could not be loaded")
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        let linksBefore = fake.playbackURLCallCount
+
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")), to: copy)
+        defer { try? FileManager.default.removeItem(at: copy) }
+        session.showDeviceOutput(copy)
+
+        let healed = await waitUntil {
+            (session.player?.currentItem?.asset as? AVURLAsset)?.url == copy && session.isShowingRenderedFallback
+        }
+        XCTAssertTrue(healed, "the phone's copy plays in place of the dead render")
+        XCTAssertEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.liveItem),
+                       "the stale \"couldn't be loaded\" message is gone; the card explains only the editable preview")
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        XCTAssertEqual(fake.playbackURLCallCount, linksBefore, "the phone's own copy needs no network")
+    }
+
+    /// A loaded job whose finished render never plays (`output_url` is a missing file), whose fresh links
+    /// are `freshLinks` in order and then `thenPlays`. Retries are fast so the tests settle quickly.
+    private static func failingFinishedRenderSession(freshLinks: [URL], thenPlays: URL?) async throws -> (NativeEditorSession, EditorCommitSpy) {
+        let jobID = UUID()
+        var variant = variant(duration: 2, generation: "g1")
+        variant["output_url"] = .string("file:///tmp/kria-missing-\(UUID().uuidString).mp4")
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: variant)
+        fake.playbackURLQueue = freshLinks
+        fake.playbackURLResult = thenPlays
+        let session = NativeEditorSession()
+        session.finishedRenderRetryDelays = [.milliseconds(20), .milliseconds(20), .milliseconds(20)]
+        await session.load(api: fake, threadID: UUID())
+        return (session, fake)
     }
 
     /// While the editable preview builds against a render that predates the document, there is nothing
@@ -5305,10 +5579,13 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws { throw APIError.unsupported }
     var playbackURLResult: URL?
+    /// Served in order before `playbackURLResult` (a link that fails, then one that plays).
+    var playbackURLQueue: [URL] = []
     var playbackURLCallCount = 0
     var playbackFailureReports: [PlaybackFailureReport] = []
     func playbackURL(jobID: UUID) async throws -> URL {
         playbackURLCallCount += 1
+        if !playbackURLQueue.isEmpty { return playbackURLQueue.removeFirst() }
         guard let playbackURLResult else { throw APIError.unsupported }
         return playbackURLResult
     }

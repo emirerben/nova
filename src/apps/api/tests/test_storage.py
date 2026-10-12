@@ -282,6 +282,34 @@ def test_delete_prefix_verified_caps_timed_page_and_retains_remaining_work():
     assert proof_list["page_size"] == 1
 
 
+def test_delete_prefix_verified_skips_protected_first_page_keys_without_starving_siblings():
+    cap = storage.VERIFIED_PREFIX_DELETE_OBJECT_CAP
+    protected = [MagicMock(name=f"protected-{index}") for index in range(cap + 1)]
+    siblings = [MagicMock(name=f"sibling-{index}") for index in range(cap + 1)]
+    for index, blob in enumerate(protected):
+        blob.name = f"users/u/project/adopted-{index}.mp4"
+    for index, blob in enumerate(siblings):
+        blob.name = f"users/u/project/unadopted-{index}.mp4"
+    bucket = MagicMock()
+    bucket.list_blobs.side_effect = [protected + siblings, protected + [siblings[-1]]]
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        result = storage.delete_prefix_verified(
+            "users/u/project/",
+            timeout_s=3.0,
+            exclude_paths={blob.name for blob in protected},
+        )
+
+    assert result.status == "partial"
+    assert result.deleted == cap
+    for blob in protected:
+        blob.delete.assert_not_called()
+    for blob in siblings[:cap]:
+        blob.delete.assert_called_once()
+
+
 def test_delete_prefix_verified_total_deadline_fails_closed(monkeypatch):
     blob = MagicMock()
     bucket = MagicMock()

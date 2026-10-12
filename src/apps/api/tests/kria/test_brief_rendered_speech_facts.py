@@ -204,11 +204,17 @@ def test_a_named_retake_is_left_for_the_editor(description):
     assert "trim that in the editor" in receipt.reason
 
 
-def test_a_length_in_the_cleanup_ask_follows_the_cut_take():
-    req = _req("timing", "cut the long pauses and keep it under 45 s", duration_s=45)
-    receipt = check_requirement(req, plan_facts_from_phone_variant(_variant()))
+def test_a_length_in_the_cleanup_ask_is_met_when_the_rendered_take_matches():
+    req = _req("timing", "cut the long pauses and keep it under 24 s", duration_s=24)
+    receipt = check_requirement(req, plan_facts_from_phone_variant(_variant(duration_s=24)))
+    assert receipt.status == "met"
+
+
+def test_a_length_in_the_cleanup_ask_reports_a_rendered_mismatch():
+    req = _req("timing", "cut the long pauses and keep it under 24 s", duration_s=24)
+    receipt = check_requirement(req, plan_facts_from_phone_variant(_variant(duration_s=30)))
     assert receipt.status == "partial"
-    assert "45s" in receipt.reason
+    assert "This draft is about 30s; you asked for 24s." in receipt.reason
 
 
 def test_unknown_cleanup_outcome_stays_unchecked():

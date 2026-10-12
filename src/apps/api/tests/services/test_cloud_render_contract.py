@@ -17,6 +17,15 @@ from tests.tasks.conftest import FakeJob, patch_job_session
 
 
 def _assembly(strategy: dict) -> dict:
+    # These fixtures model an already-confirmed creator request.  The old
+    # marker represented that fact before KRI-498 made the exact server-owned
+    # target explicit.
+    if (
+        strategy.get("target_duration_requested") is True
+        and isinstance(strategy.get("target_duration_s"), (int, float))
+        and "creator_duration_s" not in strategy
+    ):
+        strategy = {**strategy, "creator_duration_s": strategy["target_duration_s"]}
     contract = build_render_contract(strategy, generation_id="generation-1")
     assert contract is not None
     return {CONTRACT_FIELD: contract.model_dump(mode="json")}
@@ -696,7 +705,14 @@ def test_declared_cloud_declines_match_preflight_and_publication(adapter):
         "audio_source_ids": (_UNEVIDENCED_STRATEGIES["audio_source_ids"][0], None),
         "original_audio": (_UNEVIDENCED_STRATEGIES["original_audio"][0], None),
         "order_required": ({"ordering_choice": "chronological"}, snapshot),
-        "duration_s": ({"target_duration_s": 24, "target_duration_requested": True}, None),
+        "duration_s": (
+            {
+                "target_duration_s": 24,
+                "target_duration_requested": True,
+                "creator_duration_s": 24,
+            },
+            None,
+        ),
         "require_voiceover": ({"audio_strategy": "voiceover"}, None),
     }
     for requirement, decline in declaration.declines.items():

@@ -31,6 +31,9 @@ Slide posts render on the iPhone and are saved by the server, so the fence lets
 (KRI-581). `.../generate`, `.../compose` and unknown slide-post sub-routes mint a
 server render and stay refused with `device_render_unsupported`. A save also skips
 the automatic server re-render of an older cloud-rendered post; the draft still saves.
+The native format picker offers Slider under `IOS_NATIVE_DEVICE_ONLY_ENABLED` (KRI-599);
+the global `IOS_DEVICE_ONLY_MODE` cutover still hides it. Posts with video or look
+slides need the server render the fence refuses until the phone exports them (KRI-482).
 
 This fence does not replace the broader `IOS_DEVICE_ONLY_MODE` / cloud executor
 cutover below. That rollout also retires web creation and has its own signed

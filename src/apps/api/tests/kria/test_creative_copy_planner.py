@@ -137,7 +137,7 @@ def _planned_strategy() -> PlannedKriaTurn:
 
 @pytest.mark.asyncio
 async def test_gate_retains_approved_text_without_generic_choice_answers(monkeypatch) -> None:
-    snapshot = {"clip_assignments": [{"media_id": "clip-1", "kind": "video"}]}
+    snapshot = {"clip_assignments": [{"media_id": "clip-1", "kind": "video", "duration_s": 3}]}
     digest = media_digest(snapshot)
     planned = replace(
         _planned_strategy(),
@@ -164,7 +164,7 @@ async def test_gate_retains_approved_text_without_generic_choice_answers(monkeyp
 
 @pytest.mark.asyncio
 async def test_gate_retains_cancelled_copy_target_as_omitted(monkeypatch) -> None:
-    snapshot = {"clip_assignments": [{"media_id": "clip-1", "kind": "video"}]}
+    snapshot = {"clip_assignments": [{"media_id": "clip-1", "kind": "video", "duration_s": 3}]}
     digest = media_digest(snapshot)
     planned = replace(
         _planned_strategy(),
@@ -211,3 +211,45 @@ async def test_incidental_user_phrase_is_not_authorization_to_print_it():
     assert result.plan.mode == "respond"
     assert result.plan.choice_question["kind"] == "creative_copy_wording"
     assert result.plan.choice_question["candidate"] == "make it epic"
+
+
+def test_incident_kri586_shape_with_empty_state_becomes_a_server_wording_question() -> None:
+    """Prod 2026-10-11: delegated hook, empty copy state, misnamed `creative_decision` keys.
+
+    After parse repair the first-turn candidate must reach the server's own wording
+    question (consent still pending), not a generic ``ask_user:*`` card.
+    """
+    import json
+
+    from app.agents.main_creator import MainCreatorAgent
+    from tests.agents.test_main_creator_agent import _input
+
+    raw = json.dumps(
+        {
+            "action": {
+                "kind": "ask_user",
+                "question": "How about Sunrise miles for the hook?",
+                "reason_code": "hook_candidate",
+                "options": [],
+            },
+            "creative_decision": {
+                "target": "r1",
+                "state": "candidate",
+                "candidate": "Sunrise miles",
+            },
+        }
+    )
+    output = MainCreatorAgent(None).parse(raw, _input())  # type: ignore[arg-type]
+
+    result = planner._creative_copy_turn(
+        output.creative_decision,
+        inputs=_inputs(),
+        creator_request="Add a hook that matches the video",
+        manifest=_manifest(),
+        response=output.action.question,
+    )
+
+    assert result is not None
+    assert result.plan.choice_question["conflict"] == "creative_copy"
+    assert result.plan.choice_question["kind"] == "creative_copy_wording"
+    assert result.plan.choice_question["candidate"] == "Sunrise miles"

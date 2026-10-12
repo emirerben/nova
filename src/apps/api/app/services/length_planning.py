@@ -1,0 +1,513 @@
+"""Server-authored duration-plan envelopes shared by proposal and montage paths."""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Mapping, Sequence
+from types import SimpleNamespace
+from typing import Any
+
+from app.kria.media_sources import PROXY_ORIGINAL_DURATION_TOLERANCE_S
+from app.pipeline.best_parts import BestPart, BestPartsConflict, BestPartsResult, select_best_parts
+from app.schemas.edit_proposal import (
+    MixedMediaTimingProfile,
+    mixed_media_hold_bounds,
+    uses_quick_photo_long_video_timing,
+)
+from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
+from app.services.single_hero_policy import (
+    SingleHeroPolicyError,
+    _build_single_hero_recipe,
+    _single_hero_order,
+)
+
+LENGTH_PLAN_VERSION = 1
+# A still has no measured source duration.  This is deliberately kept here,
+# rather than imported from ``unified_montage``, so the shared proposal plan
+# does not depend on the renderer (which reads this envelope).
+_STILL_CAPACITY_S = 3.0
+_STILL_PREFERRED_WINDOW_S = 1.2
+
+
+def _number(value: object) -> float | None:
+    return (
+        float(value)
+        if not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and value >= 0
+        else None
+    )
+
+
+def _sources(
+    snapshot: Mapping[str, Any], selected_ids: Sequence[str], strategy: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    selected = set(selected_ids)
+    rows = snapshot.get("clip_assignments")
+    if not isinstance(rows, list):
+        return []
+    sources = []
+    raw_profile = strategy.get("mixed_media_timing")
+    profile = (
+        MixedMediaTimingProfile.model_validate(raw_profile) if raw_profile is not None else None
+    )
+    timing_bounds_apply = uses_quick_photo_long_video_timing(profile)
+    for row in rows:
+        if not isinstance(row, Mapping) or not isinstance(row.get("media_id"), str):
+            continue
+        if selected and row["media_id"] not in selected:
+            continue
+        kind = row.get("kind")
+        kind = kind if kind in {"image", "video"} else "video"
+        duration_s = _number(row.get("duration_s"))
+        analysis = row.get("analysis")
+        analysis = dict(analysis) if isinstance(analysis, Mapping) else {}
+        bounds = mixed_media_hold_bounds(kind, profile) if timing_bounds_apply else None
+        if kind == "image":
+            # Photos are rendered as synthetic holds.  Seed the selector with
+            # the normal 1.2s montage hold, while retaining 3s of capacity for
+            # a requested or minimum-duration allocation.
+            duration_s = bounds.maximum_s if bounds else _STILL_CAPACITY_S
+            preferred_s = bounds.preferred_s if bounds else _STILL_PREFERRED_WINDOW_S
+            analysis["best_moments"] = [{"start_s": 0.0, "end_s": preferred_s, "energy": 0.0}]
+        sources.append(
+            {
+                "media_id": row["media_id"],
+                # ``generation`` is the proposal identity; storage_generation
+                # maps it to the immutable object selected at runtime.
+                "generation": row.get("generation"),
+                "storage_generation": row.get("storage_generation", row.get("generation")),
+                "gcs_path": row.get("gcs_path", row.get("proxy_path")),
+                "kind": kind,
+                "duration_s": duration_s or 0.0,
+                "minimum_duration_s": bounds.minimum_s if bounds is not None else 0.1,
+                # Allocation policy is distinct from video source duration:
+                # the latter remains in the approved identity envelope so a
+                # late analysed moment (for example 7s–10s of a 10s clip)
+                # stays valid when the allowed rendered hold is only 3s.
+                "maximum_duration_s": bounds.maximum_s if bounds is not None else None,
+                "hook_score": _number(analysis.get("hook_score"))
+                or _number(row.get("hook_score"))
+                or 0.0,
+                "analysis": analysis,
+            }
+        )
+    return sources
+
+
+def build_length_plan(
+    strategy: Mapping[str, Any],
+    media_snapshot: Mapping[str, Any],
+    *,
+    creator_target_s: float | None = None,
+    selected_ids: Sequence[str] = (),
+    order_ids: Sequence[str] = (),
+    licensed_music: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the approved, serializable source-window plan.
+
+    Only ``creator_target_s`` supplied by a trusted boundary becomes a hard
+    target. Strategy fields are intentionally never treated as proof here.
+    """
+
+    natural_owner = natural_length_owner(strategy)
+    owner = length_owner(strategy, creator_duration_proven=creator_target_s is not None)
+    sources = _sources(media_snapshot, selected_ids, strategy)
+    by_id = {source["media_id"]: source for source in sources}
+    if len(by_id) != len(sources):
+        raise ValueError("duplicate length plan source")
+    ordered_sources = [
+        by_id[media_id] for media_id in dict.fromkeys(order_ids) if media_id in by_id
+    ]
+    ordered_sources.extend(source for source in sources if source not in ordered_sources)
+    result: BestPartsResult | None = None
+    audio = strategy.get("audio_strategy")
+    section = strategy.get("selected_music_section")
+    section_duration = None
+    if isinstance(section, Mapping):
+        start, end = _number(section.get("start_s")), _number(section.get("end_s"))
+        if start is not None and end is not None and end > start:
+            section_duration = end - start
+    voice_duration = _number(strategy.get("voiceover_duration_s"))
+    eligible = natural_owner in {"footage", "voiceover"} or (
+        natural_owner == "song" and audio == "licensed_music" and section_duration is not None
+    )
+    natural_duration_s = (
+        voice_duration
+        if natural_owner == "voiceover"
+        else section_duration
+        if natural_owner == "song"
+        else None
+    )
+    pre_conflicts: list[BestPartsConflict] = []
+    is_single_hero = strategy.get("edit_format") == "single_hero"
+    # A proven creator target changes the owner label, not the source-window
+    # allocator: footage still supplies the exact realizable windows.
+    single_hero_eligible = is_single_hero and eligible
+    if single_hero_eligible:
+        physical_durations = {source["media_id"]: source["duration_s"] for source in sources}
+        hero_order = _single_hero_order(
+            [
+                SimpleNamespace(clip_id=source["media_id"], hook_score=source["hook_score"])
+                for source in sources
+            ],
+            {source["media_id"]: source["media_id"] for source in sources},
+            physical_durations,
+        )
+        pinned_order = [media_id for media_id in dict.fromkeys(order_ids) if media_id in by_id]
+        if pinned_order and pinned_order != hero_order:
+            pre_conflicts.append(
+                BestPartsConflict(
+                    "single_hero_order_conflict",
+                    float(len(pinned_order)),
+                    float(len(hero_order)),
+                    "The approved source order conflicts with the required "
+                    "single-hero composition.",
+                )
+            )
+        hero_sources = [by_id[media_id] for media_id in hero_order]
+        maximums = {
+            source["media_id"]: source["maximum_duration_s"]
+            for source in hero_sources
+            if source["maximum_duration_s"] is not None
+        }
+        minimums = {source["media_id"]: source["minimum_duration_s"] for source in hero_sources}
+        natural_parts = select_best_parts(
+            hero_sources,
+            minimum_duration_s=minimums,
+            maximum_duration_s=maximums,
+        )
+        requested = (
+            creator_target_s
+            if creator_target_s is not None
+            else natural_duration_s
+            if natural_duration_s is not None
+            else natural_parts.duration_s
+        )
+        physical_allowable_s = sum(
+            min(
+                source["duration_s"],
+                source["maximum_duration_s"]
+                if source["maximum_duration_s"] is not None
+                else source["duration_s"],
+            )
+            for source in hero_sources
+        )
+        # One 3-second hero and a 100 ms inclusion for every cutaway is the
+        # smallest realizable composition. As with the portable source floor,
+        # accept that tiny adjustment only when it remains inside the creator's
+        # approved duration tolerance; retain their original target on the
+        # envelope for the answer/audit boundary.
+        composition_floor = 3.0 + 0.1 * max(0, len(hero_order) - 1)
+        if (
+            creator_target_s is not None
+            and requested < composition_floor
+            and creator_duration_matches(composition_floor, creator_target_s)
+        ):
+            requested = composition_floor
+        natural_floor_expansion = (
+            creator_target_s is None
+            and natural_duration_s is None
+            and requested < composition_floor
+            and physical_allowable_s >= composition_floor
+        )
+        if natural_floor_expansion:
+            requested = composition_floor
+        available_footage_s = (
+            physical_allowable_s
+            if (
+                creator_target_s is not None
+                or natural_duration_s is not None
+                or natural_floor_expansion
+            )
+            else natural_parts.duration_s
+        )
+        try:
+            recipe = _build_single_hero_recipe(
+                hero_order,
+                available_footage_s=available_footage_s,
+                clip_durations_s={
+                    source["media_id"]: source["duration_s"] for source in hero_sources
+                },
+                max_duration_s=requested,
+            )
+        except SingleHeroPolicyError as exc:
+            pre_conflicts.append(BestPartsConflict(exc.reason, requested, 0.0, str(exc)))
+            result = BestPartsResult((), round(requested, 3), 0.0, 0.0)
+        else:
+            slot_results = [
+                select_best_parts(
+                    [by_id[media_id]],
+                    target_duration_s=slot["target_duration_s"],
+                    minimum_duration_s={media_id: by_id[media_id]["minimum_duration_s"]},
+                    maximum_duration_s={media_id: by_id[media_id]["maximum_duration_s"]}
+                    if by_id[media_id]["maximum_duration_s"] is not None
+                    else {},
+                )
+                for media_id, slot in zip(hero_order, recipe["slots"], strict=True)
+            ]
+            parts = tuple(part for selected in slot_results for part in selected.parts)
+            selector_conflicts = tuple(
+                conflict for selected in slot_results for conflict in selected.conflicts
+            )
+            actual_duration = round(sum(part.duration_s for part in parts), 3)
+            required_duration = (
+                creator_target_s if creator_target_s is not None else natural_duration_s
+            )
+            if required_duration is not None and (
+                not creator_duration_matches(actual_duration, required_duration)
+                if creator_target_s is not None
+                else abs(actual_duration - required_duration) > 0.001
+            ):
+                pre_conflicts.append(
+                    BestPartsConflict(
+                        "insufficient_capacity",
+                        required_duration,
+                        actual_duration,
+                        "The single-hero source windows cannot reach the required duration.",
+                    )
+                )
+            result = BestPartsResult(
+                parts,
+                round(requested, 3),
+                actual_duration,
+                round(sum(selected.capacity_s for selected in slot_results), 3),
+                selector_conflicts,
+            )
+    elif eligible:
+        budget = creator_target_s if creator_target_s is not None else natural_duration_s
+        raw_capacity = min(120.0, round(sum(source["duration_s"] for source in ordered_sources), 3))
+        if creator_target_s is not None and creator_target_s <= 120:
+            # Source bounds and the portable minimum can satisfy a target
+            # within its approved tolerance without inventing more footage.
+            # Keep the creator's original target in the contract/envelope.
+            if budget > raw_capacity and creator_duration_matches(raw_capacity, creator_target_s):
+                budget = raw_capacity
+            if budget < 3 <= raw_capacity and creator_duration_matches(3, creator_target_s):
+                budget = 3.0
+        coverage_floor = round(sum(source["minimum_duration_s"] for source in ordered_sources), 3)
+        if budget is not None and budget < coverage_floor <= budget * 1.1:
+            budget = coverage_floor
+        result = select_best_parts(
+            ordered_sources,
+            target_duration_s=budget,
+            minimum_total_duration_s=3 if budget is None else None,
+            minimum_duration_s={
+                source["media_id"]: source["minimum_duration_s"] for source in ordered_sources
+            },
+            maximum_duration_s={
+                source["media_id"]: source["maximum_duration_s"]
+                for source in ordered_sources
+                if source["maximum_duration_s"] is not None
+            },
+        )
+    windows = result.receipt() if result is not None else []
+    conflicts = [
+        {
+            "code": conflict.code,
+            "requested_duration_s": conflict.requested_duration_s,
+            "available_duration_s": conflict.available_duration_s,
+            "message": conflict.message,
+        }
+        for conflict in pre_conflicts
+    ] + (
+        [
+            {
+                "code": conflict.code,
+                "requested_duration_s": conflict.requested_duration_s,
+                "available_duration_s": conflict.available_duration_s,
+                "message": conflict.message,
+            }
+            for conflict in result.conflicts
+        ]
+        if result is not None
+        else []
+    )
+    # The selector deliberately omits unusable rows from its allocation.  The
+    # plan cannot do that: every selected source is an approved input and a
+    # missing/too-short metadata row must remain a visible constraint even when
+    # another clip can supply the requested duration.
+    if any(source["duration_s"] < 0.1 for source in ordered_sources) and not any(
+        conflict["code"] == "source_below_minimum" for conflict in conflicts
+    ):
+        conflicts.append(
+            {
+                "code": "source_below_minimum",
+                "requested_duration_s": 0.1,
+                "available_duration_s": result.capacity_s if result is not None else 0.0,
+                "message": "Every selected source needs at least a 0.1 second usable window.",
+            }
+        )
+    missing_ids = set(selected_ids) - set(by_id)
+    max_source_count = 4 if is_single_hero else 80
+    if (eligible or single_hero_eligible) and len(sources) > max_source_count:
+        conflicts.append(
+            {
+                "code": "source_count_limit",
+                "requested_duration_s": creator_target_s,
+                "available_duration_s": float(max_source_count),
+                "message": f"The portable recipe can include at most {max_source_count} sources.",
+            }
+        )
+    if missing_ids:
+        conflicts.append(
+            {
+                "code": "no_usable_sources",
+                "requested_duration_s": creator_target_s,
+                "available_duration_s": 0.0,
+                "message": "Some selected clips no longer have usable source metadata.",
+            }
+        )
+    physical_capacity_s = min(
+        120.0, round(sum(source["duration_s"] for source in ordered_sources), 3)
+    )
+    # Durable clarification reads ``capacity_raw_s`` rather than the transient
+    # selector receipt. For bounded mixed-media edits it must therefore expose
+    # the largest policy-compliant allocation, not the measured video runtime.
+    # Single-hero is stricter: its recipe can reduce otherwise usable footage
+    # to preserve the hero share, so the actual allocated total is the only
+    # safe alternate duration for an impossible creator target.
+    if is_single_hero and result is not None:
+        capacity_raw_s = result.duration_s
+    elif any(source["maximum_duration_s"] is not None for source in ordered_sources):
+        capacity_raw_s = result.capacity_s if result is not None else 0.0
+    else:
+        capacity_raw_s = physical_capacity_s
+    plan: dict[str, Any] = {
+        "version": LENGTH_PLAN_VERSION,
+        "owner": owner,
+        "natural_owner": natural_owner,
+        "target_duration_s": creator_target_s,
+        "natural_duration_s": natural_duration_s,
+        "capacity_raw_s": capacity_raw_s,
+        "window_eligible": eligible or single_hero_eligible,
+        "capacity_s": result.capacity_s if result is not None else None,
+        "max_source_count": max_source_count,
+        "sources": [
+            {
+                field_name: source[field_name]
+                for field_name in (
+                    "media_id",
+                    "generation",
+                    "storage_generation",
+                    "gcs_path",
+                    "kind",
+                    "duration_s",
+                )
+            }
+            for source in ordered_sources
+        ],
+        "windows": windows,
+        "conflicts": conflicts,
+    }
+    if licensed_music is not None:
+        plan["licensed_music"] = dict(licensed_music)
+    elif isinstance(strategy.get("selected_music_section"), Mapping):
+        plan["licensed_music"] = dict(strategy["selected_music_section"])
+    elif isinstance(strategy.get("licensed_music_selection"), Mapping):
+        plan["licensed_music"] = dict(strategy["licensed_music_selection"])
+    return plan
+
+
+def read_length_plan(
+    envelope: Mapping[str, Any] | None, clips: Sequence[Any]
+) -> tuple[BestPart, ...] | None:
+    """Validate an approved envelope against current media identities.
+
+    ``None`` signals that legacy callers may select their historic windows;
+    malformed approved plans are rejected rather than silently reselected.
+    """
+
+    if envelope is None:
+        return None
+    if type(envelope.get("version")) is not int or envelope.get("version") != LENGTH_PLAN_VERSION:
+        raise ValueError("unsupported length plan version")
+    sources = envelope.get("sources")
+    windows = envelope.get("windows")
+    if not isinstance(sources, list) or not isinstance(windows, list):
+        raise ValueError("invalid length plan envelope")
+    if envelope.get("conflicts"):
+        raise ValueError("approved length plan still needs a constraint answer")
+    actual = {str(getattr(clip, "media_id", "")): clip for clip in clips}
+    expected: dict[str, Mapping[str, Any]] = {}
+    for source in sources:
+        if not isinstance(source, Mapping) or not isinstance(source.get("media_id"), str):
+            raise ValueError("invalid length plan source")
+        if source["media_id"] in expected:
+            raise ValueError("duplicate length plan source")
+        clip = actual.get(source["media_id"])
+        source_generation = source.get("storage_generation", source.get("generation"))
+        clip_generation = getattr(clip, "storage_generation", getattr(clip, "generation", None))
+        source_path = source.get("gcs_path")
+        clip_path = getattr(clip, "proxy_path", None)
+        if (
+            clip is None
+            or str(source_generation) != str(clip_generation)
+            or (source_path is not None and source_path != clip_path)
+        ):
+            raise ValueError("length plan source identity changed")
+        kind = source.get("kind", "video")
+        if kind not in {"image", "video"} or kind != getattr(clip, "kind", "video"):
+            raise ValueError("length plan source kind changed")
+        expected_duration = _number(source.get("duration_s"))
+        actual_duration = _number(getattr(clip, "duration_s", None))
+        # A still's recorded capacity is an allocation rule, not media
+        # metadata.  Its upload duration is commonly None or zero and must not
+        # invalidate the approved synthetic hold.
+        #
+        # The plan records the analysis proxy's duration, which a frame-rate
+        # encode rounds to whole frames (a 4.968 s original becomes a 5.0 s
+        # proxy), while the worker measures the original.  The identity checks
+        # above (path + storage generation) are what detect a replaced file;
+        # this one only catches a grossly different one, with the same slack the
+        # upload contract allows between a proxy and its original (KRI-595).
+        if expected_duration is None or (
+            kind != "image"
+            and (
+                actual_duration is None
+                or abs(expected_duration - actual_duration) > PROXY_ORIGINAL_DURATION_TOLERANCE_S
+            )
+        ):
+            raise ValueError("length plan source duration changed")
+        expected[source["media_id"]] = source
+    parts: list[BestPart] = []
+    included: set[str] = set()
+    for window in windows:
+        if not isinstance(window, Mapping) or window.get("media_id") not in expected:
+            raise ValueError("invalid length plan window")
+        start = _number(window.get("source_start_s"))
+        end = _number(window.get("source_end_s"))
+        score = _number(window.get("score", 0))
+        clip = actual[window["media_id"]]
+        if window["media_id"] in included:
+            raise ValueError("duplicate length plan window")
+        source_duration = expected[window["media_id"]]["duration_s"]
+        if (
+            start is None
+            or end is None
+            or score is None
+            or end - start < 0.1 - 1e-9
+            or end > float(source_duration) + 0.001
+        ):
+            raise ValueError("length plan window exceeds source")
+        if expected[window["media_id"]].get("kind", "video") == "video":
+            # A window the proxy allowed may run a frame past the real clip.
+            actual_end = _number(getattr(clip, "duration_s", None))
+            if actual_end is not None and end > actual_end:
+                end = math.floor(actual_end * 1000) / 1000
+                if end - start < 0.1 - 1e-9:
+                    raise ValueError("length plan window exceeds source")
+        included.add(window["media_id"])
+        parts.append(
+            BestPart(
+                window["media_id"],
+                start,
+                end,
+                score,
+                str(window.get("reason") or "approved_length_plan"),
+            )
+        )
+    if envelope.get("window_eligible") is True and included != set(expected):
+        raise ValueError("length plan window coverage changed")
+    return tuple(parts)

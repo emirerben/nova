@@ -299,8 +299,13 @@ def run_phone_speech_montage_job(
     recipe, pin_rows, pins_drawn, pin_notes = _with_creator_pins(recipe, strategy)
     validate_phone_pilot_recipe(recipe)
     if contract:
+        from app.services.length_policy_state import read_length_policy  # noqa: PLC0415
+
         verify_phone_recipe(
-            contract, recipe, source_audio={b.media_id: b.original.has_audio for b in bindings}
+            contract,
+            recipe,
+            source_audio={b.media_id: b.original.has_audio for b in bindings},
+            length_policy=read_length_policy(snapshot, contract),
         )
     if not gb._phone_rendering_globally_available():
         raise ValueError(
@@ -649,11 +654,14 @@ def run_phone_voice_behind_footage_job(
         verified = composition.model_copy(
             update={"voice_span_s": min(composition.voice_span_s, window.length_s)}
         )
+    from app.services.length_policy_state import read_length_policy  # noqa: PLC0415
+
     verify_phone_recipe(
         contract,
         recipe,
         source_audio={b.media_id: b.original.has_audio for b in bindings},
         composition=verified,
+        length_policy=read_length_policy(snapshot, contract),
     )
     if not gb._phone_rendering_globally_available():
         raise ValueError(

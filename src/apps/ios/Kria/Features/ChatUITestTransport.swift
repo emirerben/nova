@@ -118,6 +118,12 @@ final class CreationChatFixture: @unchecked Sendable {
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" { capabilities["song_order_placements"] = true }
                 capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]]
             }
+            // KRIA_CHAT_SONG_RANGE (KRI-580): a 90 s song is attached to the project. "1" = the server also
+            // advertises song_filming_range; "off" = it advertises media.song only (an older server).
+            if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE"] {
+                capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]]
+                if mode == "1" { capabilities["song_filming_range"] = true }
+            }
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
             // choice_question payload but does not advertise the capability (old-server text fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "1" { capabilities["choice_questions"] = true }
@@ -210,6 +216,30 @@ final class CreationChatFixture: @unchecked Sendable {
             if let clientEventID { event["client_event_id"] = clientEventID }
             events.append(event)
         }
+        // KRI-580: the song's filming range. Mirrors the server: both ends null clears it, otherwise both are set,
+        // at least 5 s apart, and an end past the song is clamped to the song (90 s here).
+        if parts.count == 3, parts[2] == "song-range", request.httpMethod == "PUT" {
+            func problem(_ status: Int, _ code: String, _ message: String) -> (Int, Data) {
+                response(["problem": ["code": code, "message": message, "phase": "accept", "retryable": false, "recovery": "none"]], status: status)
+            }
+            guard ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE"] == "1" else { return problem(404, "song_range_unavailable", "Song range unavailable") }
+            guard (body["expected_revision"] as? Int) == revision else { return response(["detail": "Creation thread changed"], status: 409) }
+            var media = state["media"] as? [[String: Any]] ?? []
+            guard let songIndex = media.firstIndex(where: { $0["role"] as? String == "song" }) else { return problem(409, "song_missing", "Attach a song first.") }
+            let songSeconds = 90.0
+            let start = body["start_s"] as? Double, end = body["end_s"] as? Double
+            if let start, let end {
+                if start >= songSeconds { return problem(422, "song_range_invalid", "That starts after your song ends.") }
+                if end - start < 5 { return problem(422, "song_range_invalid", "Pick at least five seconds of your song.") }
+                media[songIndex]["song_range"] = ["start_s": start, "end_s": min(end, songSeconds)]
+            } else {
+                media[songIndex].removeValue(forKey: "song_range")
+            }
+            state["media"] = media
+            append("song_range_set", role: "user", payload: ["start_s": start.map { $0 as Any } ?? NSNull(), "end_s": end.map { $0 as Any } ?? NSNull()], clientEventID: body["client_event_id"] as? String)
+            thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+            return response(thread)
+        }
         if reviewEnabled {
             // An update render advances one step per read of the plan or the delta (like the staged feed).
             if parts.last == "delta" || parts.last == "plan", let done = review.tick(id: id) {
@@ -280,6 +310,9 @@ final class CreationChatFixture: @unchecked Sendable {
                     var media = [clip]
                     if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] != nil || ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] != nil {
                         media += (2...4).map { ["media_id": "fixture-clip-\($0)", "kind": "video", "filename": "sample-\($0).mov"] }
+                    }
+                    if ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE"] != nil {
+                        media.append(["media_id": "fixture-song", "kind": "audio", "role": "song", "filename": "fixture-song.mp3", "duration_s": 90])
                     }
                     if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_VOICEOVER"] == "1" {
                         media.append(["media_id": "fixture-voiceover", "kind": "audio", "filename": "existing-voiceover.m4a", "duration_s": 6])

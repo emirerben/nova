@@ -395,3 +395,79 @@ def test_added_media_follows_the_cut_and_comes_back_when_it_grows(monkeypatch):
     slots[-1]["duration_s"] = 4.0
     _save(job, vid, timeline_slots=slots)
     assert photo().source_duration == pytest.approx(2.5)
+
+
+# --- Creator crop (KRI-44) ------------------------------------------------------------
+
+_CROP = {"x": 0.1, "y": 0.2, "width": 0.5, "height": 0.6}
+
+
+def _verify_source_crop(monkeypatch) -> None:
+    monkeypatch.setattr(
+        gj.settings,
+        "phone_render_verified_features",
+        [*gj.settings.phone_render_verified_features, "sourceCrop"],
+    )
+
+
+@pytest.mark.parametrize("archetype", ["narrated", "voiceover"])
+def test_crop_capability_needs_the_device_to_have_verified_source_crop(monkeypatch, archetype):
+    _enable(monkeypatch)
+    job, _ = voiceover_job(archetype=archetype)
+
+    assert "clips" not in gj._editor_capabilities(job, _variant(job))
+
+    _verify_source_crop(monkeypatch)
+    caps = gj._editor_capabilities(job, _variant(job))
+    assert caps["clips"]["source_crop"] == {"editable": True, "reason": None}
+
+    monkeypatch.setattr(gj.settings, "phone_voiceover_timeline_edits_enabled", False)
+    assert "clips" not in gj._editor_capabilities(job, _variant(job))
+
+
+@pytest.mark.parametrize(
+    ("archetype", "track_id"), [("narrated", "narrated"), ("voiceover", "montage")]
+)
+def test_saved_crop_reaches_the_device_recipe_and_reads_back(monkeypatch, archetype, track_id):
+    _enable(monkeypatch)
+    _verify_source_crop(monkeypatch)
+    job, vid = voiceover_job(archetype=archetype)
+    slots = _slots(job, vid)
+    slots[1]["source_crop"] = dict(_CROP)
+
+    _save(job, vid, timeline_slots=slots)
+
+    clips = _track(_recipe(job, vid), track_id).clips
+    assert clips[0].source_crop is None
+    assert clips[1].source_crop.model_dump() == _CROP
+    timeline = gj.dispatch_get_timeline(job, vid, sign_url=lambda path, ttl: f"https://s/{path}")
+    assert [slot.get("source_crop") for slot in timeline["slots"]] == [None, _CROP, None]
+
+    # Posting the slots back untouched (no key) keeps the crop; an explicit null clears it.
+    _save(
+        job,
+        vid,
+        timeline_slots=[
+            {k: v for k, v in s.items() if k != "source_crop"} for s in _slots(job, vid)
+        ],
+    )
+    assert _track(_recipe(job, vid), track_id).clips[1].source_crop.model_dump() == _CROP
+    cleared = _slots(job, vid)
+    cleared[1]["source_crop"] = None
+    _save(job, vid, timeline_slots=cleared)
+    assert _track(_recipe(job, vid), track_id).clips[1].source_crop is None
+
+
+def test_crop_is_refused_before_the_device_verifies_it(monkeypatch):
+    _enable(monkeypatch)
+    job, vid = voiceover_job()
+    slots = _slots(job, vid)
+    slots[0]["source_crop"] = dict(_CROP)
+    before = device_status(job, vid).request
+
+    with pytest.raises(HTTPException) as error:
+        _save(job, vid, timeline_slots=slots)
+
+    assert error.value.status_code == 422
+    assert error.value.detail["code"] == "phone_edit_unsupported"
+    assert device_status(job, vid).request == before

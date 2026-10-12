@@ -42,6 +42,7 @@ from app.schemas.edit_proposal import (
     turkish_media_scope,
 )
 from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
+from app.services.length_policy import creator_duration_s
 
 # Named sound effects are model-read with verbatim licensed_sfx evidence (v35).
 # KRI-178: reaction beats (name/word-triggered photo/sticker + sound pop-ins,
@@ -71,7 +72,7 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # KRI-519: reaction beats on an iPhone Voiceover edit, worded for the voiceover (v51).
 # KRI-525/526: pins may carry `start_s`/`end_s` or `clip`; the 4-line / 120-character limits are
 # taught so an over-long ask becomes a question, not a schema failure (v52).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-08-v53"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-11-v54"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -572,6 +573,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             if not isinstance(data, dict):
                 raise ValueError("response is not an object")
             data = _hoist_misplaced_brief_updates(data)
+            data = _repair_creative_decision(data)
             raw_action = _repair_action_envelope(data.get("action"))
             if isinstance(raw_action, dict) and raw_action.get("kind") == "propose_strategy":
                 raw_strategy = raw_action.get("strategy")
@@ -579,7 +581,16 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     raise ValueError("propose_strategy must explicitly choose target_duration_s")
                 rationale = raw_strategy.get("rationale")
                 if not isinstance(rationale, str) or not rationale.strip():
-                    raise ValueError("propose_strategy must explain its duration in rationale")
+                    # KRI-586: the model sometimes writes it beside `strategy`.
+                    sibling = raw_action.get("rationale")
+                    if isinstance(sibling, str) and sibling.strip():
+                        raw_strategy = {**raw_strategy, "rationale": sibling}
+                        raw_action = {
+                            **{k: v for k, v in raw_action.items() if k != "rationale"},
+                            "strategy": raw_strategy,
+                        }
+                    else:
+                        raise ValueError("propose_strategy must explain its duration in rationale")
             action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(raw_action)
             if isinstance(action, ProposeStrategy):
                 # Share the compiler's exact policy: guided planning never
@@ -603,6 +614,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     input.user_message
                     if input.brief_enabled
                     else input.creator_request or input.user_message
+                )
+                requested_duration_s = creator_duration_s(
+                    creator_texts=[*user_messages, request_contract]
                 )
                 timing = recognize_mixed_media_timing("\n".join([*user_messages, request_contract]))
                 combined_request = "\n".join([*user_messages, request_contract])
@@ -661,15 +675,25 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 strategy = action.strategy.model_copy(
                     update={
                         # Server-owned approval provenance.  Read this from
-                        # the raw payload before the normalizer copies the
-                        # default 24s onto every strategy; a model-provided
-                        # marker is never trusted.
+                        # creator text, never from the model's always-present
+                        # planning field or its marker.
                         "target_duration_requested": (
-                            True if "target_duration_s" in raw_strategy else None
+                            True if requested_duration_s is not None else None
+                        ),
+                        "creator_duration_s": requested_duration_s,
+                        "selected_music_section": None,
+                        # Preserve the actual requested target rather than a
+                        # conflicting model-selected duration.
+                        "target_duration_s": (
+                            requested_duration_s
+                            if requested_duration_s is not None
+                            else action.strategy.target_duration_s
                         ),
                         # KRI-374: server-owned, like `resolved_clip_intents`: a
                         # model-authored per-take song placement is never trusted.
                         "resolved_song_takes": None,
+                        # KRI-578: the caption pin is the planner's call, never the model's.
+                        "song_captions": None,
                         # KRI-476: server-owned conflict answers, never model-authored.
                         "choice_answers": None,
                         "mixed_media_timing": timing,
@@ -705,6 +729,17 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 f"{'.'.join(str(part) for part in error['loc'])}: {error['type']}"
                 for error in exc.errors(include_input=False, include_context=False)[:8]
             )[:1000]
+            if exc.title == "CreativeCopyDecision":
+                # KRI-586: its errors carry no parent path, so the retry could not tell which
+                # object was wrong. Name it and the exact shape.
+                self._schema_feedback = (
+                    "creative_decision (a top-level key beside action, never inside it): "
+                    + self._schema_feedback
+                    + "; allowed keys only: target (opening_title|closing_title), status "
+                    "(unresolved|delegated|candidate|creator_supplied|cancelled), "
+                    "proposed_text, source_evidence, language"
+                )
+            error_class = _schema_error_class(exc)
             if any(
                 "opening_title_duration_s" in map(str, error["loc"])
                 for error in exc.errors(include_input=False, include_context=False)
@@ -726,7 +761,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     "; pinned_texts: at most 4 lines of at most 120 characters, each with "
                     "either start_s/end_s (start before end) or clip, never both"
                 )
-            raise SchemaError(f"main_creator: invalid output: {exc}") from exc
+            raise _classed_schema_error(
+                f"main_creator: invalid output: {exc}", error_class
+            ) from exc
         except Exception as exc:  # noqa: BLE001
             if isinstance(exc, UserSongUnavailableError):
                 # KRI-374: the creator-facing copy is a question for the creator;
@@ -741,7 +778,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 # the rule so the retry can change course instead of repeating
                 # the same strategy blind (KRI-238).
                 self._schema_feedback = str(exc)[:300]
-            raise SchemaError(f"main_creator: invalid output: {exc}") from exc
+            raise _classed_schema_error(
+                f"main_creator: invalid output: {exc}", _non_pydantic_error_class(exc)
+            ) from exc
 
     def schema_clarification(self) -> str:
         feedback = getattr(self, "_schema_feedback", "")
@@ -831,6 +870,117 @@ def _repair_action_envelope(action: object) -> object:
         return action
     repaired_strategy = {key: value for key, value in strategy.items() if key not in moved}
     return {**action, "strategy": repaired_strategy, **moved}
+
+
+_DECISION_KEYS = ("target", "status", "proposed_text", "source_evidence", "language")
+_DECISION_KEY_ALIASES = {
+    "status": ("resolution", "state"),
+    "proposed_text": ("text", "candidate", "suggestion", "wording"),
+}
+# The server's own `creative_copy_state` vocabulary, echoed back by the model (KRI-586).
+_DECISION_STATUS_ALIASES = {
+    "generate": "candidate",
+    "revise": "candidate",
+    "authorship": "unresolved",
+    "write_my_own": "unresolved",
+}
+# Server-owned states: an echo is dropped, never converted (it must not read as consent).
+_DECISION_SERVER_STATES = frozenset({"approved", "stale"})
+_INERT_DECISION_STATUSES = frozenset({"unresolved", "delegated", "candidate"})
+
+
+def _repair_creative_decision(data: dict) -> dict:
+    """Repair the known harmless shape mistakes in a model-authored `creative_decision`.
+
+    KRI-586 (prod 2026-10-11): asked to write a hook, the model had no documented
+    shape for `creative_decision` and returned ``{"state": ...}``, ``{"resolution":
+    ..., "text": ...}`` or ``{"target": "r1", "candidate": ...}``, which the strict
+    model rejected on all three attempts. Hoist it out of `action`, rename the known
+    aliases, and map the server's state vocabulary back to decision statuses.
+
+    Never produces ``creator_supplied`` or ``cancelled`` and never guesses the target
+    of a decision that could grant consent: only the inert suggestion statuses
+    (``unresolved``/``delegated``/``candidate``) get a defaulted target, and those
+    always go through the server's own wording approval before reaching pixels.
+    """
+
+    action = data.get("action")
+    decision = data.get("creative_decision")
+    if decision is None and isinstance(action, dict) and "creative_decision" in action:
+        decision = action["creative_decision"]
+        data = {**data, "action": {k: v for k, v in action.items() if k != "creative_decision"}}
+    elif decision is not None and isinstance(action, dict) and "creative_decision" in action:
+        data = {**data, "action": {k: v for k, v in action.items() if k != "creative_decision"}}
+    if not isinstance(decision, dict):
+        return data if decision is None else {**data, "creative_decision": decision}
+    repaired = dict(decision)
+    for canonical, aliases in _DECISION_KEY_ALIASES.items():
+        if canonical not in repaired:
+            for alias in aliases:
+                if alias in repaired:
+                    repaired[canonical] = repaired[alias]
+                    break
+    repaired = {key: repaired[key] for key in _DECISION_KEYS if key in repaired}
+    status = repaired.get("status")
+    status = status.strip().lower() if isinstance(status, str) else status
+    if status in _DECISION_SERVER_STATES:
+        return {k: v for k, v in data.items() if k != "creative_decision"}
+    if status in _DECISION_STATUS_ALIASES:
+        status = _DECISION_STATUS_ALIASES[status]
+        if status == "candidate" and not repaired.get("proposed_text"):
+            status = "delegated"
+    if status is not None:
+        repaired["status"] = status
+    target = repaired.get("target")
+    if isinstance(target, str) and target not in {"opening_title", "closing_title"}:
+        lowered = target.strip().lower()
+        if lowered.startswith(("closing", "outro", "ending")):
+            repaired["target"] = "closing_title"
+        elif lowered.startswith(("opening", "intro", "hook", "title")):
+            repaired["target"] = "opening_title"
+        elif status in _INERT_DECISION_STATUSES:
+            repaired["target"] = "opening_title"
+    return {**data, "creative_decision": repaired}
+
+
+def _schema_error_class(exc: ValidationError) -> str:
+    """A closed-vocabulary, value-free tag for ``sensitive_agent_error:<class>`` (<= 80 chars).
+
+    Built only from Pydantic locations and error types, never from input values.
+    """
+
+    prefix = "creative_decision:" if exc.title == "CreativeCopyDecision" else ""
+    parts: list[str] = []
+    for error in exc.errors(include_input=False, include_context=False)[:6]:
+        loc = ":".join(str(p) for p in error["loc"] if not isinstance(p, int))
+        parts.append(f"{prefix}{loc}:{error['type']}" if loc else f"{prefix}{error['type']}")
+    return _clean_error_class(",".join(parts) or "validation_error")
+
+
+def _non_pydantic_error_class(exc: Exception) -> str:
+    if isinstance(exc, UserSongUnavailableError):
+        return "user_song_unavailable"
+    if isinstance(exc, json.JSONDecodeError):
+        return "json_decode"
+    message = str(exc)
+    if "rationale" in message:
+        return "strategy_rationale_missing"
+    if "target_duration_s" in message:
+        return "strategy_duration_missing"
+    if "brief_updates" in message:
+        return "brief_updates_invalid"
+    return "policy_refusal" if isinstance(exc, ValueError) else type(exc).__name__.lower()
+
+
+def _clean_error_class(value: str) -> str:
+    cleaned = re.sub(r"[^a-z_:,]", "_", value.lower())
+    return cleaned[:80]
+
+
+def _classed_schema_error(message: str, error_class: str) -> SchemaError:
+    error = SchemaError(message)
+    error.error_class = _clean_error_class(error_class)  # type: ignore[attr-defined]
+    return error
 
 
 def _hoist_misplaced_brief_updates(data: dict) -> dict:

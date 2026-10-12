@@ -21,7 +21,7 @@ final class NativeSourceCropTests: XCTestCase {
                 c: -sin(turn * .pi / 2).rounded(), d: cos(turn * .pi / 2).rounded(), tx: 0, ty: 0)
                 .concatenating(CGAffineTransform(translationX: 17, y: -9))
             let layer = makeLayer(preferred: preferred)
-            let result = RecipeVideoCompositor.positionedSource(source, layer: layer, canvas: canvas, time: 0)
+            let result = RecipeVideoCompositor.positionedSource(layer.image!, layer: layer, canvas: canvas, time: 0)
             for point in [CGPoint(x: 2, y: 2), CGPoint(x: 77, y: 2), CGPoint(x: 2, y: 117), CGPoint(x: 77, y: 117)] {
                 let pixel = rgba(result, at: point)
                 XCTAssertLessThan(pixel[0], 5, "Crop must exclude red source pixels at turn \(turn)")
@@ -33,24 +33,25 @@ final class NativeSourceCropTests: XCTestCase {
 
     @MainActor func testCropRetainsUserTranslationZoomAndRotation() {
         let preferred = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 0, ty: 0)
-        let plain = RecipeVideoCompositor.positionedSource(source, layer: makeLayer(preferred: preferred), canvas: canvas, time: 0)
-        let edited = RecipeVideoCompositor.positionedSource(source,
-            layer: makeLayer(preferred: preferred, transform: MediaTransform(scale: 1.5, rotationDegrees: 90, positionX: 12, positionY: 8)),
-            canvas: canvas, time: 0)
+        let plain = RecipeVideoCompositor.positionedSource(makeLayer(preferred: preferred).image!, layer: makeLayer(preferred: preferred), canvas: canvas, time: 0)
+        let editedLayer = makeLayer(preferred: preferred, transform: MediaTransform(scale: 1.5, rotationDegrees: 90, positionX: 12, positionY: 8))
+        let edited = RecipeVideoCompositor.positionedSource(editedLayer.image!, layer: editedLayer, canvas: canvas, time: 0)
         XCTAssertEqual(edited.extent.midX, canvas.midX + 12, accuracy: 0.001)
         XCTAssertEqual(edited.extent.midY, canvas.midY - 8, accuracy: 0.001)
-        XCTAssertEqual(edited.extent.width, plain.extent.height * 1.5, accuracy: 0.001)
-        XCTAssertEqual(edited.extent.height, plain.extent.width * 1.5, accuracy: 0.001)
+        // Core Image rounds each extent outward to whole pixels.
+        XCTAssertEqual(edited.extent.width, plain.extent.height * 1.5, accuracy: 1.5)
+        XCTAssertEqual(edited.extent.height, plain.extent.width * 1.5, accuracy: 1.5)
     }
 
     @MainActor func testVisualPlacementFitsCroppedPixelsWithoutApplyingCorrectionTwice() {
         var layer = makeLayer(preferred: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 0, ty: 0))
         layer.visualPlacement = VisualMediaPlacement(order: 0, contain: true, widthFraction: 0.5,
             xFraction: 0.75, yFraction: 0.25, windowStart: 0, windowEnd: 1)
-        let result = RecipeVideoCompositor.positionedSource(source, layer: layer, canvas: canvas, time: 0)
+        let result = RecipeVideoCompositor.positionedSource(layer.image!, layer: layer, canvas: canvas, time: 0)
         XCTAssertEqual(result.extent.width, 40, accuracy: 0.001)
-        // Core Image rounds the 82.5...97.5 vertical coverage outward to pixels.
-        XCTAssertEqual(result.extent.height, 16, accuracy: 0.001)
+        // The crop is 30x80 in upright space, so the 40pt-wide card is 106.7pt tall;
+        // Core Image rounds that vertical coverage outward to whole pixels.
+        XCTAssertEqual(result.extent.height, 108, accuracy: 0.001)
         XCTAssertEqual(result.extent.midX, 60, accuracy: 0.001)
         XCTAssertEqual(result.extent.midY, 90, accuracy: 0.001)
         let pixel = rgba(result, at: CGPoint(x: 60, y: 90))
@@ -103,11 +104,85 @@ final class NativeSourceCropTests: XCTestCase {
         }
     }
 
-    @MainActor private func makeLayer(preferred: CGAffineTransform, transform: MediaTransform = .identity) -> RecipeVideoLayer {
+    // Upright 80x120 scene: TL red, TR green, BL blue, BR yellow.
+    private var quadrants: CIImage {
+        func block(_ color: CIColor, _ x: CGFloat, _ y: CGFloat) -> CIImage {
+            CIImage(color: color).cropped(to: CGRect(x: x, y: y, width: 40, height: 60))
+        }
+        return block(.red, 0, 60).composited(over: block(.green, 40, 60))
+            .composited(over: block(.blue, 0, 0)).composited(over: block(CIColor(red: 1, green: 1, blue: 0), 40, 0))
+    }
+
+    /// Track preferred transforms in Core Image form: identity, +90, 180, -90 and a mirror.
+    private var orientations: [(String, CGAffineTransform)] {
+        func turn(_ t: Double) -> CGAffineTransform {
+            CGAffineTransform(a: cos(t * .pi / 2).rounded(), b: sin(t * .pi / 2).rounded(),
+                c: -sin(t * .pi / 2).rounded(), d: cos(t * .pi / 2).rounded(), tx: 0, ty: 0)
+        }
+        return [("0", .identity), ("90", turn(1)), ("180", turn(2)), ("270", turn(-1)),
+            ("mirrored90", turn(1).concatenating(CGAffineTransform(scaleX: -1, y: 1)).concatenating(CGAffineTransform(translationX: 5, y: 7)))]
+    }
+
+    // The crop is defined in upright space, so the same rectangle must show the
+    // same region whichever way the file happens to be stored.
+    @MainActor func testUprightCropSelectsSameRegionForEveryStoredOrientation() {
+        let quadrantCrops: [(String, NormalizedSourceRect, [UInt8])] = [
+            ("TL", .init(x: 0, y: 0, width: 0.5, height: 0.5), [255, 0, 0]),
+            ("TR", .init(x: 0.5, y: 0, width: 0.5, height: 0.5), [0, 255, 0]),
+            ("BL", .init(x: 0, y: 0.5, width: 0.5, height: 0.5), [0, 0, 255]),
+            ("BR", .init(x: 0.5, y: 0.5, width: 0.5, height: 0.5), [255, 255, 0])]
+        let corners = [CGPoint(x: 2, y: 2), CGPoint(x: 77, y: 2), CGPoint(x: 2, y: 117), CGPoint(x: 77, y: 117)]
+        for (name, preferred) in orientations {
+            for (quadrant, rect, expected) in quadrantCrops {
+                let layer = makeLayer(preferred: preferred, upright: quadrants, crop: rect)
+                let result = RecipeVideoCompositor.positionedSource(layer.image!, layer: layer, canvas: canvas, time: 0)
+                for point in corners {
+                    let pixel = rgba(result, at: point)
+                    assertChannels(Array(pixel[0..<3]), expected, accuracy: 6, "\(quadrant) crop of \(name) source at \(point)")
+                    XCTAssertGreaterThan(pixel[3], 250)
+                }
+            }
+            // Upright top half, middle two quarters: red on the left of the screen, green on the right.
+            let band = makeLayer(preferred: preferred, upright: quadrants, crop: .init(x: 0.25, y: 0, width: 0.5, height: 0.5))
+            let result = RecipeVideoCompositor.positionedSource(band.image!, layer: band, canvas: canvas, time: 0)
+            assertChannels(Array(rgba(result, at: CGPoint(x: 10, y: 60))[0..<3]), [255, 0, 0], accuracy: 6, "band left, \(name)")
+            assertChannels(Array(rgba(result, at: CGPoint(x: 70, y: 60))[0..<3]), [0, 255, 0], accuracy: 6, "band right, \(name)")
+        }
+    }
+
+    func testUprightCropToEncodedRectMapsThroughPreferredTransform() {
+        let extent = CGRect(x: 0, y: 0, width: 200, height: 100) // stored landscape
+        let crop = NormalizedSourceRect(x: 0, y: 0, width: 0.5, height: 0.25)
+        // Identity: unchanged top-left -> bottom-left conversion.
+        XCTAssertEqual(RecipeVideoCompositor.uprightCropToEncodedRect(crop: crop, extent: extent, preferredTransform: .identity),
+            CGRect(x: 0, y: 75, width: 100, height: 25))
+        // Quarter turn: the upright frame is 100x200; its top-left quarter-height strip is a
+        // 50x50 square of the stored frame, which a rotated file keeps in a corner.
+        let quarter = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 0, ty: 0)
+        let rect = RecipeVideoCompositor.uprightCropToEncodedRect(crop: crop, extent: extent, preferredTransform: quarter)
+        XCTAssertEqual(rect.width, 50, accuracy: 0.001)
+        XCTAssertEqual(rect.height, 50, accuracy: 0.001)
+        XCTAssertTrue(extent.contains(rect))
+    }
+
+    /// The stored (encoded) frame whose upright appearance under `preferred` is `upright`.
+    private func encoded(_ upright: CIImage, preferred: CGAffineTransform) -> CIImage {
+        let stored = upright.transformed(by: preferred.inverted())
+        return stored.transformed(by: CGAffineTransform(translationX: -stored.extent.minX, y: -stored.extent.minY))
+    }
+
+    @MainActor private func makeLayer(preferred: CGAffineTransform, transform: MediaTransform = .identity,
+                                      upright: CIImage? = nil, crop: NormalizedSourceRect? = nil) -> RecipeVideoLayer {
         let clip = TimelineClip(id: "crop", sourceAssetID: "source", sourceDuration: 1, transform: transform)
-        return RecipeVideoLayer(trackID: nil, image: source,
-            transform: AVPlayerPreviewComposer.transform(naturalSize: source.extent.size, preferred: preferred, canvas: canvas.size, clip: clip),
-            start: 0, end: 1, fadeIn: 0, naturalSize: source.extent.size, preferredTransform: preferred, sourceCrop: crop)
+        let stored = encoded(upright ?? source, preferred: preferred)
+        return RecipeVideoLayer(trackID: nil, image: stored,
+            transform: AVPlayerPreviewComposer.transform(naturalSize: stored.extent.size, preferred: preferred, canvas: canvas.size, clip: clip),
+            start: 0, end: 1, fadeIn: 0, naturalSize: stored.extent.size, preferredTransform: preferred, sourceCrop: crop ?? self.crop)
+    }
+
+    private func assertChannels(_ a: [UInt8], _ b: [UInt8], accuracy: Int, _ message: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(a.count, b.count, message, file: file, line: line)
+        for (x, y) in zip(a, b) { XCTAssertLessThanOrEqual(abs(Int(x) - Int(y)), accuracy, "\(a) vs \(b): \(message)", file: file, line: line) }
     }
 
     private func rgba(_ image: CIImage, at point: CGPoint) -> [UInt8] {

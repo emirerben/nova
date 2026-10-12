@@ -40,6 +40,7 @@ STRUCTURED_STRATEGY_FIELDS = (
     "mixed_media_timing",
     "montage_audio",
     "montage_cadence",
+    "selected_music_section",
 )
 
 
