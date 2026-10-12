@@ -215,7 +215,12 @@ def test_snapshot_carries_catalog_bed_and_device_original(monkeypatch) -> None:
     device = {**variant, "render_destination": "device", "original_audio_level": 0.4}
     snap = ops_mod.build_editor_snapshot(_job(device), device)
     assert snap["render_destination"] == "device" and snap["mix"]["original_level"] == 0.4
-    assert "sfx" not in snap["allowed_op_families"]  # device keeps sfx withheld
+    # KRI-608: the clamped capability map is the gate, so a device variant whose map keeps
+    # `sfx` open offers it; one whose map closes it does not.
+    assert "sfx" in snap["allowed_op_families"]
+    monkeypatch.setattr(ops_mod, "_editor_capabilities", _caps(sfx=False))
+    snap = ops_mod.build_editor_snapshot(_job(device), device)
+    assert "sfx" not in snap["allowed_op_families"]
 
 
 def test_snapshot_without_context_has_empty_catalog(monkeypatch) -> None:
@@ -274,7 +279,7 @@ async def test_sfx_catalog_rows_shape_and_single_bounded_query() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [True, False])
 async def test_clip_context_carries_catalog_only_when_sfx_enabled(monkeypatch, enabled) -> None:
-    async def fake_rows(_db):
+    async def fake_rows(_db, **_kwargs):
         return CATALOG
 
     monkeypatch.setattr(planner, "_sfx_catalog_rows", fake_rows)

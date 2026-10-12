@@ -62,6 +62,43 @@ def _stated_media_count(normalized: str) -> int | None:
     return None
 
 
+def stated_media_counts(request: str) -> set[int]:
+    """Every media quantity the creator states: "7 clips", "all 30", "7 klibin" (KRI-594)."""
+
+    normalized = " ".join(str(request or "").casefold().split())
+    counts = {
+        int(count)
+        for count in re.findall(
+            rf"\b(\d{{1,4}})\s+(?:of\s+(?:the|my|your)\s+)?{_MEDIA_COUNT_NOUN}\b", normalized
+        )
+    }
+    english = _stated_media_count(normalized)
+    if english is not None:
+        counts.add(english)
+    counts.update(turkish_stated_media_counts(request))
+    return counts
+
+
+def latest_scope_counts_own_clips(creator_text: str, own_clip_count: int) -> bool:
+    """Whether "all" meant just the project's own clips, by the creator's LATEST scope words.
+
+    ``creator_text`` is the creator's words oldest first, one message per line. The last line
+    that states a media count or an all-media scope decides (PR 1550 review): an older "use 7
+    clips" never overrides a later "use all my photos and videos", nor the other way round.
+    """
+
+    # Lazy: main_creator imports this module.
+    from app.agents.main_creator import _explicit_media_scope_from_request  # noqa: PLC0415
+
+    for line in reversed(str(creator_text or "").splitlines()):
+        counts = stated_media_counts(line)
+        if counts:
+            return counts == {own_clip_count}
+        if _explicit_media_scope_from_request(line) == "all":
+            return False
+    return False
+
+
 def _attached_media_count(manifest: Any) -> int:
     """Count of non-asset media (video/image) attached to this manifest."""
 
