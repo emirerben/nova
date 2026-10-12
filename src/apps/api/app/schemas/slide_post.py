@@ -27,6 +27,7 @@ from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     ValidationError,
     field_validator,
@@ -34,6 +35,12 @@ from pydantic import (
     model_validator,
 )
 
+from app.agents._schemas.drawing import (
+    MAX_POINTS_PER_DRAWING,
+    MAX_POINTS_PER_VARIANT,
+    MAX_STROKES_PER_DRAWING,
+    DrawingStroke,
+)
 from app.kria.brief_binding import BriefBinding
 from app.kria.recipes import NormalizedSourceCrop
 from app.pipeline.look_presets import LookPreset
@@ -229,6 +236,34 @@ class SlideFraming(BaseModel):
     source_crop: NormalizedSourceCrop | None = None
 
 
+class SlideDrawing(BaseModel):
+    """A static freehand drawing over one slide (KRI-589 PR2).
+
+    Strokes only (the shared ``DrawingStroke``), never a raster: every renderer
+    paints them (iOS ``NativeDrawingPainter``, the server's ``drawing_png``).
+    Coordinates are normalised to the authoring canvas (``canvas_aspect`` =
+    width / height); a renderer aspect-fits that canvas into the slide's output
+    canvas, so a slide whose shape later changes letterboxes the ink instead of
+    stretching it. No scale/rotation/centre/timing: a slide drawing is the
+    identity transform of a still. Frozen by
+    ``tests/fixtures/slide-drawing-parity/v1.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    canvas_aspect: float = Field(gt=0.2, lt=5.0)
+    strokes: list[DrawingStroke] = Field(min_length=1, max_length=MAX_STROKES_PER_DRAWING)
+
+    @model_validator(mode="after")
+    def _point_budget(self) -> SlideDrawing:
+        if self.point_count() > MAX_POINTS_PER_DRAWING:
+            raise ValueError(f"a slide drawing holds at most {MAX_POINTS_PER_DRAWING} points")
+        return self
+
+    def point_count(self) -> int:
+        return sum(len(stroke.points) for stroke in self.strokes)
+
+
 class SlideEdits(BaseModel):
     """Per-slide edit state, applied at render time in `pipeline/slide_post/build.py`.
 
@@ -251,12 +286,16 @@ class SlideEdits(BaseModel):
     # "missing means keep" merge protects it). Omitted while None for the same
     # cache-digest reason as `framing`.
     fit: SlideFit | None = None
+    # Static freehand ink (KRI-589 PR2). Omitted while None for the same
+    # digest/binding-stability reason as `framing`/`fit`; a sibling key so an
+    # older build that drops it on re-encode is protected by the PUT merge.
+    drawing: SlideDrawing | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_framing(self, handler: Any) -> dict[str, Any]:
         data = handler(self)
         if isinstance(data, dict):
-            for key in ("framing", "fit"):
+            for key in ("framing", "fit", "drawing"):
                 if data.get(key) is None:
                     data.pop(key, None)
         return data
@@ -329,6 +368,12 @@ def _without_video_fit(slide: SlideRef) -> SlideRef:
     return slide.model_copy(update={"edits": slide.edits.model_copy(update={"fit": None})})
 
 
+def drawing_point_total(slides: list[SlideRef]) -> int:
+    return sum(
+        s.edits.drawing.point_count() for s in slides if s.edits is not None and s.edits.drawing
+    )
+
+
 class SlidePostDraft(BaseModel):
     """The persisted draft document (`PlanItem.slide_post`)."""
 
@@ -392,6 +437,8 @@ class SlidePostDraft(BaseModel):
             self.slides = [_without_video_fit(s) for s in self.slides]
         elif self.cover_index != 0:
             raise ValueError("cover_index must be 0 when there are no slides")
+        if drawing_point_total(self.slides) > MAX_POINTS_PER_VARIANT:
+            raise ValueError(f"drawings exceed {MAX_POINTS_PER_VARIANT} points in total")
         return self
 
 
@@ -530,6 +577,16 @@ def merge_legacy_text_edits(
                 # explicit and the later merge would clear a stored Fit (the web
                 # editor has no `texts`, so every web save takes this path).
                 **({"fit": incoming.fit} if "fit" in incoming.model_fields_set else {}),
+                # Same rule for drawings (KRI-589): only when sent.
+                **(
+                    {
+                        "drawing": incoming.drawing.model_dump(mode="python")
+                        if incoming.drawing is not None
+                        else None
+                    }
+                    if "drawing" in incoming.model_fields_set
+                    else {}
+                ),
             }
         )
         merged.append(ref.model_copy(update={"edits": new_edits}))
@@ -539,7 +596,7 @@ def merge_legacy_text_edits(
 def merge_stored_edit_key(
     stored: SlidePostDraft | None,
     slides: list[SlideRef],
-    key: Literal["framing", "fit"],
+    key: Literal["framing", "fit", "drawing"],
     *,
     accept_incoming: bool,
 ) -> list[SlideRef]:
