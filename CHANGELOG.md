@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.238.0] - 2026-10-12
+
+### Changed
+- fix(montage): several short moments per long take, end on the line the creator quotes (KRI-596, KRI-597) (#1554) <!-- release-pr: 1554 -->
+
 ## [0.78.237.0] - 2026-10-12
 
 ### Changed
