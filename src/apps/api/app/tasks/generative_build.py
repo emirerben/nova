@@ -46,7 +46,7 @@ from datetime import UTC, datetime, timedelta
 from functools import wraps
 from itertools import cycle
 from types import SimpleNamespace
-from typing import Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
@@ -237,6 +237,9 @@ def _classic_cloud_evidence(
         evidence={**slot, **audio},
     )
 
+
+if TYPE_CHECKING:
+    from app.pipeline.silence_cut import CutPlan
 
 log = structlog.get_logger()
 
@@ -6512,7 +6515,6 @@ def _run_phone_subtitled_job(
     from app.pipeline.phone_subtitled_title import talking_closing_window  # noqa: PLC0415
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.silence_cut import (  # noqa: PLC0415
-        CutPlan,
         is_filler_token,
         plan_summary,
         remap_words,
@@ -6860,6 +6862,14 @@ def _run_phone_subtitled_job(
                 speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
                     analysis_view="full_clip"
                 )
+            # KRI-628: "start the video at '...'" cuts the speech before that line out of
+            # the cleanup plan (the plan's keep segments are the only trim this render has).
+            cut_plan, opening_cut_receipt = _phone_opening_cut(
+                snapshot,
+                cut_plan,
+                speech_cleanup_snapshot.source_words() if speech_cleanup_snapshot else (),
+                duration_s=float(probe.duration_s),
+            )
 
             # KRI-547: the creator asked for a vertical / full-screen / face-in-frame
             # video. A sideways speaker clip is then face-filled -- the engine's
@@ -7764,6 +7774,10 @@ def _run_phone_subtitled_job(
             new_entry["phone_lane_receipt"] = lane_receipt
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
+        if opening_cut_receipt is not None:
+            # KRI-628: whether the video starts at the line the creator quoted; the
+            # brief receipt's evidence at render-ready.
+            new_entry["opening_cut"] = opening_cut_receipt
         if speaker_framing is not None:
             # KRI-547: how the speaker was framed and why -- the brief receipt's
             # evidence at render-ready, and what an editor Save keeps or resets.
@@ -7849,6 +7863,70 @@ def _run_phone_subtitled_job(
             ),
         },
     )
+
+
+def _phone_opening_cut(
+    snapshot: dict,
+    cut_plan: CutPlan | None,
+    words: Any,
+    *,
+    duration_s: float,
+) -> tuple[CutPlan | None, dict[str, Any] | None]:
+    """KRI-628: cut the phone Talking take down to start at a line the creator quoted.
+
+    The ask is read deterministically off the approved brief pinned on the job
+    (``creator_brief_binding``), never a prompt field. ``(cut_plan, None)`` without such
+    an ask (or a readable binding), so the render runs exactly as before. Otherwise the
+    plan with everything before the line cut (when the take says it, and the speech
+    cleanup plan exists to carry the cut) and a receipt that never raises."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.opening_cut_ask import brief_opening_cut  # noqa: PLC0415
+    from app.pipeline.phone_opening_cut import apply_opening_cut  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return cut_plan, None
+    try:
+        ask = brief_opening_cut(BriefBinding.model_validate(raw_binding).resolve())
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_opening_cut.binding_unreadable", error=str(exc)[:200])
+        return cut_plan, None
+    if ask is None:
+        return cut_plan, None
+    receipt: dict[str, Any]
+    if cut_plan is None:
+        # Cleanup was declined: no word timings to ground the line in.
+        receipt = {
+            "version": 1,
+            "quote": ask.quote,
+            "requirement_ids": list(ask.requirement_ids),
+            "status": "not_applied",
+            "reason": "cleanup_off",
+        }
+    else:
+        try:
+            cut_plan, receipt = apply_opening_cut(
+                cut_plan,
+                list(words),
+                ask.quote,
+                duration_s=duration_s,
+                requirement_ids=ask.requirement_ids,
+            )
+        except Exception as exc:  # noqa: BLE001 - a missed cut is reported, never fatal
+            log.warning("phone_opening_cut.failed", error=str(exc)[:200])
+            receipt = {
+                "version": 1,
+                "quote": ask.quote,
+                "requirement_ids": list(ask.requirement_ids),
+                "status": "not_applied",
+                "reason": "not_found",
+            }
+    try:
+        record_pipeline_event("phone", "opening_cut", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return cut_plan, receipt
 
 
 def _phone_speaker_framing(

@@ -329,6 +329,12 @@ class PlanFacts:
     # draft, or a render that does not record one): nothing about framing is claimed.
     speaker_framing: str | None = None
     speaker_framing_reason: str | None = None
+    # KRI-628: whether a phone Talking render started at the line the creator quoted
+    # (`variant["opening_cut"]`): "applied" or "not_applied", and why not. None = no
+    # receipt (no such ask, a draft, or an older render): nothing is claimed.
+    opening_cut: str | None = None
+    opening_cut_reason: str | None = None
+    opening_cut_quote: str | None = None
     # KRI-547: pop-ins the render dropped for lack of room, as (trigger, "no_room") when
     # no spot cleared the face and captions, or (trigger, "overlap") when another pop-in
     # held the spot at that moment (`phone_beat_receipt.unplaced[]`).
@@ -1200,6 +1206,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         changes["audio_strategy"] = "voiceover"
     changes.update(_rendered_speech_facts(variant))
     changes.update(_speaker_framing_facts(variant))
+    changes.update(_opening_cut_facts(variant))
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
     changes.update(_rendered_caption_facts(variant))
     rendered = _rendered_clip_durations(variant)
@@ -3608,6 +3615,80 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
     )
 
 
+# KRI-628: "start the video at '...'" is cut by the phone Talking worker
+# (`app.pipeline.phone_opening_cut`), which records where the video starts on the variant.
+def _wants_opening_cut(req: BriefRequirement) -> bool:
+    from app.kria.opening_cut_ask import requirement_opening_quote  # noqa: PLC0415
+
+    return requirement_opening_quote(req) is not None
+
+
+def _opening_cut_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    receipt = variant.get("opening_cut")
+    if not isinstance(receipt, Mapping) or receipt.get("status") not in {"applied", "not_applied"}:
+        return {}
+    reason = receipt.get("reason")
+    quote = receipt.get("quote")
+    return {
+        "opening_cut": str(receipt["status"]),
+        "opening_cut_reason": str(reason) if isinstance(reason, str) and reason else None,
+        "opening_cut_quote": str(quote) if isinstance(quote, str) and quote else None,
+    }
+
+
+def _opening_cut_miss(reason: str | None, quote: str | None) -> str:
+    line = f"“{quote}”" if quote else "that line"
+    if reason == "cleanup_off":
+        return say(
+            en="Speech cleanup was off, so I couldn't cut the start and the video opens at the "
+            "beginning of your take",
+            tr="Konuşma temizliği kapalıydı, o yüzden başı kesemedim ve video çekimin "
+            "başından açılıyor",
+        )
+    if reason in {"implausible", "too_short"}:
+        return say(
+            en=f"I found {line} but cutting to it would leave too little video, so the video "
+            "still opens at the beginning of your take",
+            tr=f"{line} cümlesini buldum ama oraya kesmek çok az video bırakırdı, bu yüzden "
+            "video hâlâ çekimin başından açılıyor",
+        )
+    return say(
+        en=f"I couldn't find {line} in your take, so the video still opens at the beginning",
+        tr=f"{line} cümlesini çekiminde bulamadım, bu yüzden video hâlâ başından açılıyor",
+    )
+
+
+def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if not facts.rendered_variant:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="I'll check where the video starts on the finished video.",
+                tr="Videonun nereden başladığını video hazır olunca kontrol edeceğim.",
+            ),
+            verification="unchecked",
+        )
+    if facts.opening_cut is None:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="This video didn't record where it starts, so I can't check it.",
+                tr="Bu video nereden başladığını kaydetmedi, o yüzden kontrol edemiyorum.",
+            ),
+            verification="unchecked",
+        )
+    if facts.opening_cut != "applied":
+        return _receipt(
+            req, "partial", _opening_cut_miss(facts.opening_cut_reason, facts.opening_cut_quote)
+        )
+    if _cleanup_wording(req) and facts.speech_cleanup_outcome not in {"applied", "no_change"}:
+        # "...and cut the long pauses" in the same sentence is judged by the cleanup too.
+        return _receipt(req, "partial", _CLEANUP_NOT_RUN)
+    return _receipt(req, "met", None)
+
+
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if clip_length_ask(req) is not None:
         # KRI-558: a per-clip length is judged on the clips, never against the total length.
@@ -4894,6 +4975,10 @@ def _has_checker(req: BriefRequirement) -> bool:
 
 
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if _wants_opening_cut(req) and facts.edit_format in {"subtitled", "talking_head"}:
+        # "Cut the intro, start the video at '...'": a quoted start line owns the sentence
+        # (and any pauses it names); every other speech edit keeps its usual path.
+        return _check_opening_cut(req, facts)
     if (
         _wants_cleanup(req)
         and facts.edit_format in _SPEECH_FORMATS
