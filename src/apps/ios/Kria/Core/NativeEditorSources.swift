@@ -655,7 +655,8 @@ enum NativePreviewDiagnostics {
         let url = root.appendingPathComponent("native-preview-diagnostics.json")
         var events = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([[String: String]].self, from: $0) } ?? []
         events.append(fields.merging(["stage": stage, "time": ISO8601DateFormatter().string(from: Date())]) { _, value in value })
-        if let data = try? JSONEncoder().encode(Array(events.suffix(40))) { try? data.write(to: url, options: .atomic) }
+        // KRI-587: one editor open on a 10-clip edit writes ~45 events, so 40 lost a failure seconds later.
+        if let data = try? JSONEncoder().encode(Array(events.suffix(150))) { try? data.write(to: url, options: .atomic) }
     }
     /// Recorded from every build (unlike `failure`, which is DEBUG-only): a TestFlight phone is exactly where a
     /// player item fails with nobody attached. Numeric AVFoundation identity only, so it is safe to upload.

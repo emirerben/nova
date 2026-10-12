@@ -610,7 +610,7 @@ struct NativeVideoPreview: View {
                     Text("Preview unavailable").font(KriaFont.body(14).weight(.semibold))
                     Text(message).font(KriaFont.body(12)).multilineTextAlignment(.center)
                         .padding(.horizontal, 16)
-                    Button("Retry") { Task { await session.prepareSourcePreview() } }
+                    Button("Retry") { Task { await session.retryPreview() } }
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if session.sourcePreviewState == .originalsUnavailable {
@@ -745,7 +745,7 @@ struct NativeVideoPreview: View {
                             .font(KriaFont.body(11))
                             .lineLimit(2)
                         if !session.sourcePreviewFailureIsPermanent {
-                            Button("Try again") { Task { await session.prepareSourcePreview() } }
+                            Button("Try again") { Task { await session.retryPreview() } }
                                 .accessibilityIdentifier("native-editor-retry-source-preview")
                                 .font(KriaFont.body(11).weight(.semibold))
                         }

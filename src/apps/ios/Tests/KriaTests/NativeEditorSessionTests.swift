@@ -2301,9 +2301,12 @@ final class NativeEditorSessionTests: XCTestCase {
         let settled = await waitUntil { Self.failedStateMessage(session) != nil }
         XCTAssertTrue(settled, "a failed item must surface, not sit silently paused")
         XCTAssertEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem))
+        // KRI-587: the card used to read "Showing your last finished video" over a black, dead player.
+        XCTAssertFalse(session.isShowingRenderedFallback, "nothing is showing, so the editor must not claim the finished video is")
+        XCTAssertFalse(session.canDisplayCurrentPlayer, "a dead player is not a video to show")
     }
 
-    /// The failed finished render gets exactly one fresh link, the failure is reported with its AVFoundation
+    /// The failed finished render gets a fresh link, the failure is reported with its AVFoundation
     /// identity, and the recovered player plays.
     func testFailedFinishedRenderRefreshesItsLinkOnceReportsAndRecovers() async throws {
         let jobID = UUID()
@@ -2321,7 +2324,7 @@ final class NativeEditorSessionTests: XCTestCase {
 
         let recovered = await waitUntil { (session.player?.currentItem?.asset as? AVURLAsset)?.url == good }
         XCTAssertTrue(recovered, "the refreshed link replaces the failed item")
-        XCTAssertEqual(fake.playbackURLCallCount, 1, "one refresh, not a retry loop")
+        XCTAssertEqual(fake.playbackURLCallCount, 1, "a link that plays ends the retries")
         let reported = await waitUntil { !fake.playbackFailureReports.isEmpty }
         XCTAssertTrue(reported)
         let report = try XCTUnwrap(fake.playbackFailureReports.first)
@@ -2353,6 +2356,121 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.canDisplayCurrentPlayer)
         XCTAssertTrue(session.isPlaying, "the play tap carries over to the finished render")
         session.pausePlayback()
+    }
+
+    // MARK: KRI-587 — after a render, just show the video
+    //
+    // Ways this goes wrong (written before the fix):
+    // 1. One brief failure (a busy decoder, media services settling after the phone's own export) gets a
+    //    single immediate refresh, and "The video couldn't be loaded" then stays for good.
+    // 2. Retries never end for a video that truly cannot play.
+    // 3. A late retry replaces a newer player (the live preview took over, or another job loaded).
+    // 4. The phone's own copy of a phone render is ignored in favour of the network.
+    // 5. The card says "Showing your last finished video" over a black, dead player.
+    // 6. A render that arrives after the failure plays, but the failure message stays on top of it.
+    // 7. The quiet rebuild of the editable preview loops, or hides a real failure.
+
+    /// 1: a second bad link is not the end. The next fresh link plays and no failure is shown.
+    func testFinishedRenderThatFailsTwiceStillRecoversWithoutAMessage() async throws {
+        let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let (session, fake) = try await Self.failingFinishedRenderSession(
+            freshLinks: [URL(fileURLWithPath: "/tmp/kria-missing-\(UUID().uuidString).mp4")], thenPlays: good)
+
+        let recovered = await waitUntil { (session.player?.currentItem?.asset as? AVURLAsset)?.url == good }
+        XCTAssertTrue(recovered, "the second fresh link plays instead of the editor giving up after the first")
+        XCTAssertEqual(fake.playbackURLCallCount, 2)
+        XCTAssertNotEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem))
+    }
+
+    /// 2 + 5: a video that never plays stops after the bounded retries, says so, and never claims to show it.
+    func testFinishedRenderRetriesAreBoundedAndNeverClaimADeadPlayer() async throws {
+        let missing = (0..<10).map { _ in URL(fileURLWithPath: "/tmp/kria-missing-\(UUID().uuidString).mp4") }
+        let (session, fake) = try await Self.failingFinishedRenderSession(freshLinks: missing, thenPlays: nil)
+
+        let settled = await waitUntil {
+            Self.failedStateMessage(session) == NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem)
+        }
+        XCTAssertTrue(settled)
+        XCTAssertEqual(fake.playbackURLCallCount, session.finishedRenderRetryDelays.count, "one fresh link per retry, then stop")
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        XCTAssertFalse(session.canDisplayCurrentPlayer)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(fake.playbackURLCallCount, session.finishedRenderRetryDelays.count, "no retries after giving up")
+    }
+
+    /// 7: a busy-decoder failure of the editable preview rebuilds it quietly once, with no card in between.
+    /// A second failure in the same episode shows the finished render and the honest card instead of looping.
+    func testTransientLivePreviewFailureRebuildsQuietlyOnceThenFallsBack() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        session.sourcePreviewQuietRetryDelay = .milliseconds(20)
+        session.finishedRenderRetryDelays = [.milliseconds(20)]
+        let busy = NSError(domain: AVFoundationErrorDomain, code: AVError.Code.decoderTemporarilyUnavailable.rawValue)
+
+        let firstLive = try XCTUnwrap(session.player)
+        session.handlePlayerItemFailure(try XCTUnwrap(firstLive.currentItem), error: busy)
+        XCTAssertEqual(session.sourcePreviewState, .preparing, "no failure card while the quiet rebuild is pending")
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        let rebuilt = await waitUntil { session.sourcePreviewState == .ready && session.player !== firstLive }
+        XCTAssertTrue(rebuilt, "the editable preview comes back by itself")
+
+        let secondLive = try XCTUnwrap(session.player)
+        session.handlePlayerItemFailure(try XCTUnwrap(secondLive.currentItem), error: busy)
+        XCTAssertEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.liveItem),
+                       "one quiet rebuild per episode, never a loop")
+    }
+
+    /// 4 + 6: once the finished render is known to be dead, the phone's own copy of the render replaces it
+    /// without the network, and the "couldn't be loaded" message goes with it.
+    func testPhonesOwnCopyHealsADeadFinishedRenderAndClearsTheMessage() async throws {
+        let (session, fake) = try await Self.phoneTalkingSession(lanesEditable: true)
+        session.sourcePreviewQuietRetryDelay = .milliseconds(20)
+        session.finishedRenderRetryDelays = [.milliseconds(20)]
+        let liveFailure = NSError(domain: AVFoundationErrorDomain, code: AVError.Code.unknown.rawValue)
+        // Spend the quiet rebuild, then fail again: the fallback finished render is a missing file.
+        let firstLive = try XCTUnwrap(session.player)
+        session.handlePlayerItemFailure(try XCTUnwrap(firstLive.currentItem), error: liveFailure)
+        _ = await waitUntil { session.sourcePreviewState == .ready && session.player !== firstLive }
+        session.handlePlayerItemFailure(try XCTUnwrap(session.player?.currentItem), error: liveFailure)
+        let dead = await waitUntil {
+            Self.failedStateMessage(session) == NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem)
+        }
+        XCTAssertTrue(dead, "precondition: the finished render could not be loaded")
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        let linksBefore = fake.playbackURLCallCount
+
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")), to: copy)
+        defer { try? FileManager.default.removeItem(at: copy) }
+        session.showDeviceOutput(copy)
+
+        let healed = await waitUntil {
+            (session.player?.currentItem?.asset as? AVURLAsset)?.url == copy && session.isShowingRenderedFallback
+        }
+        XCTAssertTrue(healed, "the phone's copy plays in place of the dead render")
+        XCTAssertEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.liveItem),
+                       "the stale \"couldn't be loaded\" message is gone; the card explains only the editable preview")
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        XCTAssertEqual(fake.playbackURLCallCount, linksBefore, "the phone's own copy needs no network")
+    }
+
+    /// A loaded job whose finished render never plays (`output_url` is a missing file), whose fresh links
+    /// are `freshLinks` in order and then `thenPlays`. Retries are fast so the tests settle quickly.
+    private static func failingFinishedRenderSession(freshLinks: [URL], thenPlays: URL?) async throws -> (NativeEditorSession, EditorCommitSpy) {
+        let jobID = UUID()
+        var variant = variant(duration: 2, generation: "g1")
+        variant["output_url"] = .string("file:///tmp/kria-missing-\(UUID().uuidString).mp4")
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: variant)
+        fake.playbackURLQueue = freshLinks
+        fake.playbackURLResult = thenPlays
+        let session = NativeEditorSession()
+        session.finishedRenderRetryDelays = [.milliseconds(20), .milliseconds(20), .milliseconds(20)]
+        await session.load(api: fake, threadID: UUID())
+        return (session, fake)
     }
 
     /// While the editable preview builds against a render that predates the document, there is nothing
@@ -5461,10 +5579,13 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws { throw APIError.unsupported }
     var playbackURLResult: URL?
+    /// Served in order before `playbackURLResult` (a link that fails, then one that plays).
+    var playbackURLQueue: [URL] = []
     var playbackURLCallCount = 0
     var playbackFailureReports: [PlaybackFailureReport] = []
     func playbackURL(jobID: UUID) async throws -> URL {
         playbackURLCallCount += 1
+        if !playbackURLQueue.isEmpty { return playbackURLQueue.removeFirst() }
         guard let playbackURLResult else { throw APIError.unsupported }
         return playbackURLResult
     }
