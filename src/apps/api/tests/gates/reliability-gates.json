@@ -1058,7 +1058,7 @@
       "fix_prs": [
         1569
       ],
-      "fix_commit": "fb4e11d0e",
+      "fix_commit": "385d5b7ba",
       "paths": [
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/app/schemas/clip_intents.py",
