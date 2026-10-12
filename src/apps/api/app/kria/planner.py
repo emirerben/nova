@@ -1927,7 +1927,16 @@ async def _plan_creator_action(
             # only for the clips (PR 1556 review). Omitted when none applies.
             **(
                 {
-                    "creator_text": "\n".join(source for source in user_sources if source),
+                    # Oldest first, the latest message last: the latest scope words decide
+                    # what "all" asked for (PR 1550 review).
+                    "creator_text": "\n".join(
+                        source
+                        for source in (
+                            *user_sources[1:],
+                            *([] if user_sources[1:][-1:] == [user_message] else [user_message]),
+                        )
+                        if source
+                    ),
                     "requested_media": dict(requested_media or {}),
                 }
                 if action.strategy.execution_contract is not None

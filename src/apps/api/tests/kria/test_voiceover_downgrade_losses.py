@@ -554,3 +554,75 @@ def test_a_no_zoom_photo_the_downgrade_would_drop_is_asked_about(prod_profile) -
     assert refused.question.startswith(
         f'This version leaves out the photo you asked for: "{words}".'
     )
+
+
+# PR 1550 review: the creator's latest media-scope statement decides, not an older count.
+
+
+@pytest.mark.parametrize(
+    ("creator_text", "asks"),
+    [
+        ("Earlier: use 7 clips\nUse all my photos and videos", True),
+        ("7 klibin hepsini kullan\nFotoğrafların ve videoların hepsini kullan", True),
+        ("Use all my photos and videos\nUse 7 clips", False),
+        ("Use all my photos and videos\n7 klibin hepsini kullan", False),
+        ("Use all my photos and videos", True),
+        ("7 klibin hepsini kullan", False),
+    ],
+)
+def test_the_latest_scope_statement_decides_what_all_asked_for(
+    prod_profile, creator_text, asks
+) -> None:
+    checked = check_strategy_for_runtime_v2(
+        _tigre_manifest(), _guided(), ask_before_simplifying=True, creator_text=creator_text
+    )
+
+    assert isinstance(checked, RefusedStrategy) is asks, getattr(checked, "question", checked)
+
+
+@pytest.mark.asyncio
+async def test_a_later_all_media_ask_overrides_an_older_clip_count_in_the_planner(
+    prod_profile, monkeypatch
+) -> None:
+    _result, checked = await _plan_until_strategy_check(
+        monkeypatch,
+        strategy=_guided(),
+        user_message="Use all my photos and videos",
+        history=(TIGRE_REQUEST, "Use 7 clips"),
+        requested={},
+    )
+
+    assert isinstance(checked, RefusedStrategy)
+    assert checked.code == "simplification_requires_choice"
+
+
+@pytest.mark.asyncio
+async def test_a_later_clip_count_overrides_an_older_all_media_ask_in_the_planner(
+    prod_profile, monkeypatch
+) -> None:
+    _result, checked = await _plan_until_strategy_check(
+        monkeypatch,
+        strategy=_guided(),
+        user_message=ORDER_REQUEST,
+        history=(TIGRE_REQUEST, "Use all my photos and videos"),
+        requested={},
+    )
+
+    assert isinstance(checked, CheckedStrategy), getattr(checked, "question", checked)
+
+
+@pytest.mark.asyncio
+async def test_a_first_message_all_media_ask_still_reaches_the_check(
+    prod_profile, monkeypatch
+) -> None:
+    """With no earlier messages the latest message alone is the creator's words."""
+
+    _result, checked = await _plan_until_strategy_check(
+        monkeypatch,
+        strategy=_guided(),
+        user_message=f"{TIGRE_REQUEST} Use all my photos and videos",
+        history=(),
+        requested={},
+    )
+
+    assert isinstance(checked, RefusedStrategy)
