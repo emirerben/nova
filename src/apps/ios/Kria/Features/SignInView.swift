@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import AuthenticationServices
 
 /// The signup screen (KRI-161). Paper source of truth:
@@ -39,64 +40,87 @@ struct SignInView: View {
 
     var body: some View {
         GeometryReader { viewport in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    KriaWordmark()
-                        .signInEntrance(.wordmark, appeared: appeared, reduceMotion: effectiveReduceMotion)
+            ScrollViewReader { scroller in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        KriaWordmark()
+                            .signInEntrance(.wordmark, appeared: appeared, reduceMotion: effectiveReduceMotion)
 
-                    // Decorative only: at accessibility text sizes the 244pt
-                    // hero would push every action a full screen down, so it
-                    // yields its space to the copy and the providers.
-                    if !dynamicTypeSize.isAccessibilitySize {
-                        SignInHero(isAnimating: heroAnimating)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 18)
-                            .signInEntrance(.hero, appeared: appeared, reduceMotion: effectiveReduceMotion)
-                    }
+                        // Decorative only: at accessibility text sizes the 244pt
+                        // hero would push every action a full screen down, so it
+                        // yields its space to the copy and the providers.
+                        if !dynamicTypeSize.isAccessibilitySize {
+                            SignInHero(isAnimating: heroAnimating)
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 18)
+                                .signInEntrance(.hero, appeared: appeared, reduceMotion: effectiveReduceMotion)
+                        }
 
-                    Text("Prompt to final edit\nin minutes")
-                        .font(KriaFont.headline(38))
-                        .tracking(-0.76)
-                        .lineSpacing(2)
-                        .foregroundStyle(KriaColor.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityAddTraits(.isHeader)
-                        .padding(.top, 22)
-                        .signInEntrance(.headline, appeared: appeared, reduceMotion: effectiveReduceMotion)
+                        Text("Prompt to final edit\nin minutes")
+                            .font(KriaFont.headline(38))
+                            .tracking(-0.76)
+                            .lineSpacing(2)
+                            .foregroundStyle(KriaColor.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                            .padding(.top, 22)
+                            .signInEntrance(.headline, appeared: appeared, reduceMotion: effectiveReduceMotion)
 
-                    Text("Tell Kria what you want. It builds the edit for you, no manual cutting.")
-                        .font(KriaFont.body(16))
-                        .lineSpacing(6)
-                        .foregroundStyle(KriaColor.zinc)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 12)
-                        .signInEntrance(.promise, appeared: appeared, reduceMotion: effectiveReduceMotion)
-
-                    Spacer(minLength: 24)
-
-                    providerStack
-                        .signInEntrance(.providers, appeared: appeared, reduceMotion: effectiveReduceMotion)
-
-                    if let message {
-                        Text(message)
-                            .font(KriaFont.body(13))
+                        Text("Tell Kria what you want. It builds the edit for you, no manual cutting.")
+                            .font(KriaFont.body(16))
+                            .lineSpacing(6)
                             .foregroundStyle(KriaColor.zinc)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity, alignment: .center)
+                            .fixedSize(horizontal: false, vertical: true)
                             .padding(.top, 12)
-                            .accessibilityIdentifier("signin.message")
-                            .transition(.opacity)
-                    }
+                            .signInEntrance(.promise, appeared: appeared, reduceMotion: effectiveReduceMotion)
 
-                    footer
-                        .padding(.top, 4)
-                        .signInEntrance(.footer, appeared: appeared, reduceMotion: effectiveReduceMotion)
+                        Spacer(minLength: 24)
+
+                        providerStack
+                            .signInEntrance(.providers, appeared: appeared, reduceMotion: effectiveReduceMotion)
+
+                        if let message {
+                            // KRI-609: a 13pt grey line under the buttons went unseen
+                            // ("nothing shows up"). Ink body text on a notice card; per
+                            // DESIGN.md, transient refusals stay neutral, never red.
+                            Text(message)
+                                .font(KriaFont.body(15))
+                                .lineSpacing(3)
+                                .foregroundStyle(KriaColor.ink)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                                .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(KriaColor.line, lineWidth: 1))
+                                .padding(.top, 12)
+                                .id(Self.messageAnchor)
+                                .accessibilityIdentifier("signin.message")
+                                .transition(.opacity)
+                        }
+
+                        footer
+                            .padding(.top, 4)
+                            .signInEntrance(.footer, appeared: appeared, reduceMotion: effectiveReduceMotion)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
+                    .frame(minHeight: max(0, viewport.size.height - 20), alignment: .leading)
+                    .frame(maxWidth: 520)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 20)
-                .frame(minHeight: max(0, viewport.size.height - 20), alignment: .leading)
-                .frame(maxWidth: 520)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .onChange(of: message, initial: true) { previous, current in
+                    guard let current else { return }
+                    // On a short screen the message sits below the fold; bring it up
+                    // and read it out, so a failed sign-in never looks like nothing happened.
+                    // Next run loop: the message row is inserted by this same update.
+                    let animation: Animation? = effectiveReduceMotion ? nil : .easeOut(duration: 0.25)
+                    DispatchQueue.main.async {
+                        withAnimation(animation) { scroller.scrollTo(Self.messageAnchor, anchor: .bottom) }
+                    }
+                    if previous != current { UIAccessibility.post(notification: .announcement, argument: current) }
+                }
             }
         }
         .sheet(isPresented: $showsReviewerSignIn) { ReviewerSignInView() }
@@ -179,7 +203,11 @@ struct SignInView: View {
         .frame(maxWidth: .infinity, alignment: .center)
     }
 
+    private static let messageAnchor = "signin.message.anchor"
+
     private func handleAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
+        // Clear the last failure, so a repeat of it reappears and is announced again.
+        message = nil
         appleNonce = UUID().uuidString
         request.requestedScopes = [.fullName, .email]
         request.nonce = appleNonce.sha256Hex
@@ -189,12 +217,13 @@ struct SignInView: View {
     private func signInWithGoogle() async {
         guard busyProvider == nil else { return }
         busyProvider = .google
+        message = nil
         defer { busyProvider = nil }
         do {
             let credential = try await GoogleAuthProvider().signIn()
             let session = try await model.api.exchangeMobileToken(credential, provider: "google")
             try auth.signIn(with: session, displayName: credential.displayName)
-        } catch { message = error.localizedDescription }
+        } catch { message = SignInFailureCopy.message(for: error) }
     }
 
     private func handleApple(_ result: Result<ASAuthorization, any Error>) {
@@ -206,7 +235,7 @@ struct SignInView: View {
                     let credential = try AppleAuthProvider().credential(from: authorization, nonce: appleNonce)
                     let session = try await model.api.exchangeMobileToken(credential, provider: "apple")
                     try auth.signIn(with: session, displayName: credential.displayName)
-                } catch { message = error.localizedDescription }
+                } catch { message = SignInFailureCopy.message(for: error) }
             }
         case .failure:
             message = AuthError.cancelled.localizedDescription
@@ -220,6 +249,28 @@ struct SignInView: View {
         defer { busyProvider = nil }
         do { try auth.signIn(with: MobileSession(accessToken: "local-access", refreshToken: "local-refresh", expiresIn: 3600), displayName: "Local creator") }
         catch { message = error.localizedDescription }
+    }
+}
+
+/// What the sign-in screen says when an attempt fails (KRI-609).
+enum SignInFailureCopy {
+    /// Shown when the server refuses an email that already opens another Kria
+    /// account but sends no usable wording. Accounts are never merged, so the
+    /// creator just needs to use the sign-in they used before.
+    static let existingAccount = "This email already has a Kria account. Sign in with the method you used before."
+    /// The server's wording before KRI-609, too technical to show a creator.
+    private static let legacyProviderLinkMessage = "Sign in with the existing provider or explicitly link this provider first"
+
+    static func message(for error: Error) -> String {
+        guard let api = error as? APIError, api == .conflict else { return error.localizedDescription }
+        if api.conflictCode == "provider_link_required" {
+            // The server names the provider that opens the account ("Sign in with Google to open it.").
+            guard let server = api.conflictDetail, server != legacyProviderLinkMessage else { return existingAccount }
+            return server
+        }
+        // `APIError.conflict`'s own copy is about editor saves ("This edit changed
+        // elsewhere…") and means nothing on this screen.
+        return AuthError.tokenExchangeFailed.localizedDescription
     }
 }
 

@@ -97,6 +97,7 @@
       "KriaUITests/SignInUITests/testSignInAtLargestDynamicTypeKeepsEveryActionReachable",
       "KriaUITests/SignInUITests/testSignInWithReduceMotionIsInteractiveImmediately",
       "KriaUITests/SignInUITests/testSignInErrorMessageIsAnnounced",
+      "KriaUITests/SignInUITests/testExistingAccountRefusalIsReadableOnScreen",
       "KriaUITests/NativeUpdateRequiredUITests/testTyped426ReplacesEachRootRoute",
       "KriaUITests/NativeUpdateRequiredUITests/testBlockingScreenScrollsAtAccessibilitySizeAndActionsUseFixtureSeam"
     ],
