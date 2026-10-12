@@ -1744,6 +1744,17 @@ class Settings(BaseSettings):
     # false. Dual-flag with the iOS capability. Apply: `fly secrets set
     # SLIDE_POST_FRAMING_ENABLED=true --app nova-video` (api + worker) + restart.
     slide_post_framing_enabled: bool = False
+    # KRI-606: post-wide size (9:16/4:5/3:4/1:1/1.91:1) and per-photo Fit with
+    # bars. Needs `slide_post_framing_enabled` too (Fit lives in the Crop workspace).
+    # Off: the slide-post PUT keeps the stored `aspect`/`fit` and ignores incoming
+    # values, the chat ops are unavailable, and capability `slide_post_sizes` is
+    # false. The renderer always honours stored values. Roll back by flipping the
+    # flag only: draft models drop unknown keys, so rolling the CODE back after
+    # sizes exist would erase them on the next save. Apply: `fly secrets set
+    # SLIDE_POST_SIZES_ENABLED=true --app nova-video` (api + worker) + restart.
+    slide_post_sizes_enabled: bool = False
+    # Chat ops that write the size/Fit need an app that round-trips them (protocol 5).
+    slide_post_sizes_min_client_protocol: int = 5
     # KRI-557: provider-marked Gemini thought summaries for native creation and
     # slide-post calls. Deploy dark; enable after production canary with
     # THOUGHT_SUMMARIES_ENABLED=true for API and Celery processes after canary.

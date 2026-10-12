@@ -12,6 +12,11 @@ Three ops that exist ONLY on the slide-post surface (``snapshot["surface"] ==
   rectangles; ``focus``/``zoom`` are resolved here against the slide's upright
   source shape (``app.kria.framing.crop_for_focus``). Only offered while
   ``snapshot["post"]["framing_enabled"]`` is true.
+* ``set_post_aspect{aspect}`` (KRI-606): the post-wide size. Only offered while
+  ``snapshot["post"]["sizes_enabled"]`` is true; must be one of
+  ``snapshot["post"]["allowed_aspects"]``.
+* ``set_slide_fit{slide_indexes|all, fit, background?}`` (KRI-606): show a photo whole
+  with bars (``fit: "fit"``) or fill the frame (``fit: "fill"``). Same gate.
 
 Do not import app.agents.edit_copilot / app.services.kria_editor_ops at module top
 level (circular); import lazily inside functions.
@@ -64,8 +69,8 @@ def _coerce_set_post_caption(name: str, payload: dict, snapshot: dict, state: An
 _ORIENTATIONS = ("portrait", "landscape")
 
 
-def _canvas_aspect(profile: str, orientation: str) -> float | None:
-    from app.pipeline.slide_post.profiles import PLATFORM_PROFILES  # noqa: PLC0415
+def _canvas_aspect(profile: str, orientation: str, aspect: str | None = None) -> float | None:
+    from app.pipeline.slide_post.profiles import PLATFORM_PROFILES, post_canvas  # noqa: PLC0415
 
     spec = PLATFORM_PROFILES.get(profile)  # type: ignore[call-overload]
     if spec is None:
@@ -76,7 +81,8 @@ def _canvas_aspect(profile: str, orientation: str) -> float | None:
         from app.kria.framing import LANDSCAPE_CANVAS  # noqa: PLC0415
 
         return LANDSCAPE_CANVAS[0] / LANDSCAPE_CANVAS[1]
-    return spec.canvas[0] / spec.canvas[1]
+    canvas = post_canvas(profile, aspect)  # type: ignore[arg-type]
+    return canvas[0] / canvas[1]
 
 
 def _coerce_set_slide_framing(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
@@ -121,6 +127,7 @@ def _coerce_set_slide_framing(name: str, payload: dict, snapshot: dict, state: A
         state.invalid_value()
         return None
     profile = str(post.get("platform_profile") or "")
+    post_aspect = post.get("aspect") if isinstance(post.get("aspect"), str) else None
     changes: list[dict[str, Any]] = []
     for index in indexes:
         slot = slots[index]
@@ -143,7 +150,7 @@ def _coerce_set_slide_framing(name: str, payload: dict, snapshot: dict, state: A
             slot.get("orientation") if slot.get("orientation") in _ORIENTATIONS else "portrait"
         )
         target = orientation or ("portrait" if reset else current)
-        canvas_aspect = _canvas_aspect(profile, target)
+        canvas_aspect = _canvas_aspect(profile, target, post_aspect)
         if canvas_aspect is None:
             state.reject(
                 op=name,
@@ -183,6 +190,95 @@ def _coerce_set_slide_framing(name: str, payload: dict, snapshot: dict, state: A
     return {"changes": changes}
 
 
+_FIT_BACKGROUNDS = ("blur", "black", "white")
+
+
+def _sizes_enabled(post: Any) -> bool:
+    return isinstance(post, dict) and post.get("sizes_enabled") is True
+
+
+def _coerce_set_post_aspect(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
+    post = snapshot.get("post") if isinstance(snapshot.get("post"), dict) else {}
+    if not _sizes_enabled(post):
+        state.reject(
+            op=name, reason="capability_unavailable", detail="resizing posts isn't available yet"
+        )
+        return None
+    aspect = payload.get("aspect")
+    allowed = post.get("allowed_aspects")
+    if not isinstance(aspect, str) or not isinstance(allowed, list) or not allowed:
+        state.invalid_value()
+        return None
+    if aspect not in allowed:
+        profile = str(post.get("platform_profile") or "")
+        who = "Instagram carousels" if profile == "instagram_carousel" else "TikTok photo posts"
+        state.reject(
+            op=name,
+            reason="capability_unavailable",
+            detail=f"{who} can be {', '.join(str(a) for a in allowed)}.",
+        )
+        return None
+    # `post.aspect` is the resolved current size. Asking for the size the post already has must
+    # change nothing (in particular it must not drop crops): the handler reads `changed`.
+    return {"aspect": aspect, "changed": aspect != post.get("aspect")}
+
+
+def _coerce_set_slide_fit(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
+    post = snapshot.get("post") if isinstance(snapshot.get("post"), dict) else {}
+    if not _sizes_enabled(post):
+        state.reject(
+            op=name, reason="capability_unavailable", detail="fitting photos isn't available yet"
+        )
+        return None
+    mode = payload.get("fit")
+    background = payload.get("background")
+    if mode not in ("fill", "fit"):
+        state.invalid_value()
+        return None
+    if background is not None and background not in _FIT_BACKGROUNDS:
+        state.invalid_value()
+        return None
+    slots = _active_slots(snapshot)
+    if payload.get("all") is True:
+        indexes = list(range(len(slots)))
+    else:
+        raw = payload.get("slide_indexes")
+        if (
+            not isinstance(raw, list)
+            or not raw
+            or any(
+                isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(slots)
+                for i in raw
+            )
+        ):
+            state.invalid_value()
+            return None
+        indexes = list(dict.fromkeys(raw))
+    target = (background or "blur") if mode == "fit" else None
+    changes: list[dict[str, Any]] = []
+    for index in indexes:
+        slot = slots[index]
+        if slot.get("media_kind") == "video":
+            # Fit is a photo treatment; "all" quietly skips videos, a named one is refused.
+            if payload.get("all") is True:
+                continue
+            state.reject(
+                op=name,
+                reason="capability_unavailable",
+                detail="Videos in a slide post always fill the frame.",
+            )
+            return None
+        slide_id = slot.get("media_id")
+        if slot.get("removed") or not isinstance(slide_id, str) or not slide_id:
+            state.reject(op=name, reason="stale_target", detail="that slide is no longer available")
+            return None
+        changes.append({"slide_id": slide_id, "fit": target})
+    if not changes:
+        state.invalid_value()
+        return None
+    return {"changes": changes}
+
+
 SPECS: list[OpSpec] = [
     OpSpec(
         name="set_slide_cover",
@@ -204,6 +300,20 @@ SPECS: list[OpSpec] = [
         fields=frozenset({"slide_indexes", "all", "orientation", "focus", "zoom", "reset"}),
         family=_FAMILY,
         coerce=_coerce_set_slide_framing,
+    ),
+    OpSpec(
+        name="set_post_aspect",
+        required=frozenset({"aspect"}),
+        fields=frozenset({"aspect"}),
+        family=_FAMILY,
+        coerce=_coerce_set_post_aspect,
+    ),
+    OpSpec(
+        name="set_slide_fit",
+        required=frozenset({"fit"}),
+        fields=frozenset({"slide_indexes", "all", "fit", "background"}),
+        family=_FAMILY,
+        coerce=_coerce_set_slide_fit,
     ),
 ]
 
@@ -239,6 +349,10 @@ def _op_set_slide_framing(state: Any, op: dict[str, Any]) -> None:
     if not isinstance(changes, list) or not changes:
         raise KriaEditorOpError("That framing change is not valid")
     rows = {str(row.get("media_id")): row for row in state.slots if not row.get("removed")}
+    if state.post.get("aspect_changed") and any(c.get("source_crop") for c in changes):
+        # The crop was resolved against the OLD size; applying it to the new one would
+        # cut the wrong region. Failing honestly beats a silently mis-shaped crop.
+        raise KriaEditorOpError("Change the size first, then crop")
     for change in changes:
         row = rows.get(str(change.get("slide_id")))
         if row is None:
@@ -248,9 +362,50 @@ def _op_set_slide_framing(state: Any, op: dict[str, Any]) -> None:
     state.summary = f"Reframe {len(changes)} slide{'s' if len(changes) != 1 else ''}"
 
 
+def _op_set_post_aspect(state: Any, op: dict[str, Any]) -> None:
+    from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
+
+    aspect = op.get("aspect")
+    if not isinstance(aspect, str) or not aspect:
+        raise KriaEditorOpError("That size is not valid")
+    if op.get("changed") is False:
+        state.summary = f"The post is already {aspect}"
+        return
+    state.post["aspect"] = aspect
+    state.post["aspect_changed"] = True
+    # A rectangle chosen for the old shape would be mis-shaped for the new canvas,
+    # so portrait slides drop their crop (landscape slides keep theirs).
+    reset = 0
+    for row in state.slots:
+        if row.get("removed") or row.get("orientation") == "landscape":
+            continue
+        if row.get("source_crop") is not None:
+            row["source_crop"] = None
+            reset += 1
+    state.post["aspect_crops_reset"] = int(state.post.get("aspect_crops_reset", 0)) + reset
+    state.summary = f"Set the post size to {aspect}"
+
+
+def _op_set_slide_fit(state: Any, op: dict[str, Any]) -> None:
+    from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
+
+    changes = op.get("changes")
+    if not isinstance(changes, list) or not changes:
+        raise KriaEditorOpError("That fit change is not valid")
+    rows = {str(row.get("media_id")): row for row in state.slots if not row.get("removed")}
+    for change in changes:
+        row = rows.get(str(change.get("slide_id")))
+        if row is None:
+            raise KriaEditorOpError("That slide is no longer in the post")
+        row["fit"] = change.get("fit")
+    state.summary = f"Change the fit on {len(changes)} slide{'s' if len(changes) != 1 else ''}"
+
+
 def register_handlers() -> None:
     from app.services import kria_editor_ops  # noqa: PLC0415
 
     kria_editor_ops.register_handler("set_slide_cover", _op_set_slide_cover)
     kria_editor_ops.register_handler("set_post_caption", _op_set_post_caption)
     kria_editor_ops.register_handler("set_slide_framing", _op_set_slide_framing)
+    kria_editor_ops.register_handler("set_post_aspect", _op_set_post_aspect)
+    kria_editor_ops.register_handler("set_slide_fit", _op_set_slide_fit)
