@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.245.0] - 2026-10-12
+
+### Changed
+- Unblock Mac CI and reuse one iPhone build per PR (#1567) <!-- release-pr: 1567 -->
+
 ## [0.78.244.0] - 2026-10-12
 
 ### Changed
