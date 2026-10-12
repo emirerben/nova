@@ -1,0 +1,113 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-11.1",
+  "input": {
+    "creator_request": "Seslendirmem Türkçe ama altyazılar İngilizce olsun. Başlık: “Tigre’de bir gün”. Nehir klibiyle başla. “Deniz” dediğimde Deniz’i laptop başında göster. “kırkayak” dediğimde küvet fotoğrafını göster. “mutfak” dediğimde mutfağı göster. Başlık dışında başka yazı olmasın.",
+    "latest_user_message": "Seslendirmem Türkçe ama altyazılar İngilizce olsun. Başlık: “Tigre’de bir gün”. Nehir klibiyle başla. “Deniz” dediğimde Deniz’i laptop başında göster. “kırkayak” dediğimde küvet fotoğrafını göster. “mutfak” dediğimde mutfağı göster. Başlık dışında başka yazı olmasın.",
+    "generated_brief": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] İngilizce altyazı eklenecek (seslendirme Türkçe kalacak)\n- [r2] [text/title] \"Tigre’de bir gün\"\n- [r3] [order/global] Kurgu nehir klibiyle başlayacak facts={\"first_clip\":\"Nehir klibi\"}\n- [r4] [timing/clip:CFBEC1AE-2523-49F2-B675-04576EAED824.mp4] Seslendirmede 'Deniz' kelimesi duyulduğunda bu klip gösterilecek\n- [r5] [timing/clip:asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff] Seslendirmede 'kırkayak' kelimesi duyulduğunda bu küvet fotoğrafı belirecek\n- [r6] [timing/clip:80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4] Seslendirmede 'mutfak' kelimesi duyulduğunda mutfak klibi gösterilecek\n- [r7] [style/global] Başlık dışında ekranda başka yazı kullanılmayacak\nLatest message: Seslendirmem Türkçe ama altyazılar İngilizce olsun. Başlık: “Tigre’de bir gün”. Nehir klibiyle başla. “Deniz” dediğimde Deniz’i laptop başında göster. “kırkayak” dediğimde küvet fotoğrafını göster. “mutfak” dediğimde mutfağı göster. Başlık dışında başka yazı olmasın.",
+    "candidate_intents": [
+      {
+        "intent_id": "start-river",
+        "op": "order",
+        "attribute": "nehir klibi",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": "first"
+      },
+      {
+        "intent_id": "cue-deniz",
+        "op": "include",
+        "attribute": "Deniz laptop başında",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "cue-mutfak",
+        "op": "include",
+        "attribute": "mutfak",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      }
+    ],
+    "clip_facts": true,
+    "reply_language": "tr"
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"start_river\",\n      \"op\": \"order\",\n      \"attribute\": \"nehir klibi\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": \"first\",\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"Nehir klibiyle başla\"\n    },\n    {\n      \"intent_id\": \"cue_deniz\",\n      \"op\": \"include\",\n      \"attribute\": \"Deniz laptop başında\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"“Deniz” dediğimde Deniz’i laptop başında göster\"\n    },\n    {\n      \"intent_id\": \"cue_kuvet\",\n      \"op\": \"include\",\n      \"attribute\": \"küvet fotoğrafı\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"“kırkayak” dediğimde küvet fotoğrafını göster\"\n    },\n    {\n      \"intent_id\": \"cue_mutfak\",\n      \"op\": \"include\",\n      \"attribute\": \"mutfak\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"“mutfak” dediğimde mutfağı göster\"\n    }\n  ],\n  \"question\": null\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "start_river",
+        "op": "order",
+        "attribute": "nehir klibi",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": "first",
+        "source_quote": "Nehir klibiyle başla"
+      },
+      {
+        "intent_id": "cue_deniz",
+        "op": "include",
+        "attribute": "Deniz laptop başında",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "“Deniz” dediğimde Deniz’i laptop başında göster"
+      },
+      {
+        "intent_id": "cue_kuvet",
+        "op": "include",
+        "attribute": "küvet fotoğrafı",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "“kırkayak” dediğimde küvet fotoğrafını göster"
+      },
+      {
+        "intent_id": "cue_mutfak",
+        "op": "include",
+        "attribute": "mutfak",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "“mutfak” dediğimde mutfağı göster"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden (KRI-598, prod thread f77a5c16 turn 1 request). The prod planner turned every 'X dediğimde Y göster' cue into an unpositioned `order` in typed order (Deniz, bathtub, kitchen), which the narration alignment then enforced against a voiceover that says kitchen, Deniz, bathroom: the render failed.",
+    "case": "Voiceover cues are `include` per named clip; 'Nehir klibiyle başla' is the one `order` (first); no described sequence.",
+    "expect_intents": [
+      {
+        "op": "order",
+        "position": "first",
+        "source_quote_keywords": [
+          "Nehir klibiyle"
+        ]
+      },
+      {
+        "op": "include",
+        "source_quote_keywords": [
+          "Deniz"
+        ]
+      },
+      {
+        "op": "include",
+        "source_quote_keywords": [
+          "kırkayak"
+        ]
+      },
+      {
+        "op": "include",
+        "source_quote_keywords": [
+          "mutfak"
+        ]
+      }
+    ],
+    "expect_no_unpositioned_order": true,
+    "expect_any": true,
+    "expect_question": false
+  }
+}

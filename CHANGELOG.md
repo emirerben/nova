@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.238.0] - 2026-10-12
+
+### Changed
+- fix(montage): several short moments per long take, end on the line the creator quotes (KRI-596, KRI-597) (#1554) <!-- release-pr: 1554 -->
+
+## [0.78.237.0] - 2026-10-12
+
+### Changed
+- fix(kria): plan phone voiceover cues as include and never offer a guided contract on runtime v2 (KRI-598) (#1556) <!-- release-pr: 1556 -->
+
+## [0.78.236.0] - 2026-10-12
+
+### Added
+- feat(ios): record talking videos with a movable teleprompter (KRI-583) (#1565) <!-- release-pr: 1565 -->
+
+## [0.78.235.0] - 2026-10-12
+
+### Changed
+- ci: retire web tests and keep Python journeys off Mac runners (#1566) <!-- release-pr: 1566 -->
+
 ## [0.78.234.0] - 2026-10-12
 
 ### Changed

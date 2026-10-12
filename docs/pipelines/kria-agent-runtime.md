@@ -244,6 +244,30 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   stress kit M3, prod thread 0b1f9556. "End on Elif's sentence in her own voice" was
   cut from 2.70-4.97s of a 0.00-5.44s line. Guard:
   `tests/pipeline/test_unified_montage_closing_speech.py`.
+- *Quoted closing line (KRI-597)*: "end on the moment I say '...'" names a spoken
+  line, so `app/services/spoken_quotes.py` decides it from transcripts, not the
+  resolver's 200-character view: `regound_quoted_intents` (after resolution in
+  `clip_intent_planning`) moves a single-clip intent whose quote its clip never says
+  to the one clip whose full transcript does (word order and fillers may differ;
+  ambiguous or unspoken quotes are left alone). Before the length plan freezes,
+  `ground_closing_quote` finds when the line is said: the timed segments first, then
+  a word-timed whisper pass on that proxy (language hint + the quote as prompt).
+  `build_length_plan` pins the closing take's last window to the line and records
+  `length_plan.closing_quote` (`found` / `not_found` / `too_long` / `not_held`); any
+  status but `found` adds a plain notice to the pre-approval reply, and the order
+  receipt is `met` only when the finished closing cut holds the quoted line.
+  whisper's "thanks for watching" outro segments no longer stretch a held line.
+- *Several moments per take (KRI-596)*: "the best six moments, each very short"
+  (`style_asks.moment_ask`: a count of moments/shots/cuts, EN + TR, and "each short"
+  = at most 3s) lets `best_parts.select_moment_windows` take several non-overlapping
+  windows from one long take: the count shares the length equally, takes share it by
+  footage length (one each at least), a take's strongest analysed moments win, and
+  its moments play together in source order (a quoted closing line last). Only a
+  footage-owned montage of videos uses it; the plan then carries
+  `video_reuse_policy="distinct_windows"`, and `read_length_plan` accepts repeated
+  takes but refuses overlapping windows. Moments that don't fit fall back to one
+  window per take, with a notice. Incident: cabin kit M2, prod thread 6605cf61.
+  Guard: `tests/tasks/test_long_take_moments_montage.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
   none of those sources, the visible opening title is omitted; `Montage` remains

@@ -37,6 +37,7 @@ from app.services.clip_intent_resolution import (
 )
 from app.services.clip_selection import ClipSelections
 from app.services.clip_understanding import clip_record, understanding_incomplete
+from app.services.spoken_quotes import regound_quoted_intents
 
 log = structlog.get_logger()
 
@@ -451,6 +452,11 @@ async def plan_and_resolve_clip_intents(
         if dropped:
             log.info("clip_intent_chapter_order_repaired", dropped_assignments=dropped)
             resolution = replace(resolution, intents=kept)
+    # KRI-597: the resolver reads only a transcript's opening, so "end on the moment I
+    # say '...'" can land on a clip that never says it. The full transcripts decide.
+    reseated, moved = regound_quoted_intents(resolution.intents, clips)
+    if moved:
+        resolution = replace(resolution, intents=reseated)
     if resolved_orders:
         resolution = replace(resolution, intents=[*resolution.intents, *resolved_orders])
     return PlannedIntentResolution(intents, resolution)

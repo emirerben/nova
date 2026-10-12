@@ -106,6 +106,27 @@ def test_main_creator_eval(
                 for beat in beats
             ), f"no beat shows {visual_id} on {trigger!r}: {beats}"
 
+    cues = fixture.meta.get("voiceover_cues")
+    if cues:
+        # KRI-598: on a runtime-v2 Voiceover edit a cue for an own clip ("X dediğimde Y'yi
+        # göster") is `include`, never a described sequence (`order` without position, which
+        # the narration alignment enforced against the voiceover); every own clip stays in
+        # the edit ("use all 7 clips" included) and there is no guided contract.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert not strategy.get("execution_contract")
+        intents = strategy.get("clip_intents") or []
+        assert not [i for i in intents if i["op"] == "order" and not i.get("position")], intents
+        assert sum(i["op"] == "include" for i in intents) >= cues["min_includes"], intents
+        own = [
+            media["media_id"]
+            for media in fixture.input["capability_manifest"]["media"]
+            if media["kind"] == "video" and not media["media_id"].startswith("asset-")
+        ]
+        assert sorted(strategy["selected_media_ids"]) == sorted(own)
+
     expected = fixture.meta.get("text_intent")
     if expected:
         from app.agents._schemas.creator_agent import (

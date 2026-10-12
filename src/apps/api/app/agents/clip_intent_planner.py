@@ -677,7 +677,8 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_intent_planner",
         prompt_id="clip_intent_planner",
-        prompt_version="2026-10-08.1",  # KRI-520: optional Turkish reply-language line.
+        # KRI-598: a voiceover cue for a clip is `include`, never a described sequence.
+        prompt_version="2026-10-11.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
