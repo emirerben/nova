@@ -191,6 +191,12 @@ async def test_tigre_voiceover_cues_keep_all_seven_clips(prod_profile, monkeypat
         ["Title: 'A day in Tigre'. No other text except the title. Start with the river clip."],
         ["Make it without music. When I say Deniz, show Deniz at the laptop."],
         ["Altyazı olmasın. Nehir klibiyle başla."],
+        # PR 1549 review: a negated removal keeps the clip, so every clip stays.
+        ["don't take out the loft clip"],
+        ["do not hide the loft clip"],
+        ["Never remove the loft clip. Start with the river."],
+        ["Çatı katı klibini çıkarma."],
+        ["Çatı katı klibini gizleme."],
     ],
 )
 async def test_text_and_audio_negations_still_keep_every_clip(
@@ -270,6 +276,17 @@ def test_common_removal_wordings_limit_the_clips(text: str) -> None:
         "altyazıyı gizle",
         "müziği dahil etme",
         "Start with the river clip and take your time",
+        # A negated removal keeps the clip (PR 1549 review).
+        "don't take out the loft clip",
+        "do not hide the loft clip",
+        "Don't skip the bathroom clip",
+        "never remove the loft clip",
+        "please don't leave the loft clip out",
+        "you shouldn't drop the dark clips",
+        "çatı katı klibini çıkarma",
+        "çatı katı klibini gizleme",
+        "banyo klibini atlama",
+        "çatı katı klibini dahil etmeyi unutma",
     ],
 )
 def test_removal_words_about_text_or_audio_do_not_limit_the_clips(text: str) -> None:

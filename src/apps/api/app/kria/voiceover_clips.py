@@ -92,7 +92,8 @@ _TR_NARROWING = re.compile(
     r"|ekleme(?:yin|yiniz|sin)?|olmasin|cikmasin|gorunmesin|gozukmesin|yer\s+almasin"
     r"|atla(?:yin|yiniz|sin|yalim)?|gec(?:in|iniz|elim)?|cikar(?:in|iniz|t|tin|sin|alim)?"
     r"|sil(?:in|iniz|sin|elim)?|kaldir(?:in|iniz|sin|alim)?|istemiyorum|istemem"
-    r"|dahil\s+etme\w*|gizle\w*|disari(?:da)?\s+birak\w*)\b"
+    r"|dahil\s+etme(?:yin|yiniz|sin|yelim)?|gizle(?:yin|yiniz|sin|yelim)?"
+    r"|disari(?:da)?\s+birak\w*)\b"
 )
 # The words of those asks, one by one: what remains of a clause once they (and glue
 # words) are gone is what the ask is about. Dropping words, not whole matches, keeps
@@ -174,9 +175,21 @@ def _stated_counts(clause: str) -> list[int]:
     return counts
 
 
+# A removal the creator negates keeps the clip ("don't take out the loft clip", "never
+# remove it"): it is cut from the clause before the narrowing check, with its "… out" tail.
+_NEGATED_REMOVAL = re.compile(
+    r"\b(?:don'?t|do\s+not|doesn'?t|does\s+not|never|shouldn'?t|should\s+not|mustn'?t"
+    r"|must\s+not|won'?t|will\s+not|not)(?:\s+(?:ever|even|please))?\s+"
+    r"(?:skip\w*|exclud\w*|omit\w*|ignor\w*|drop\w*|remov\w*|delet\w*|cut|lose|ditch\w*"
+    r"|toss\w*|hid(?:e|ing)|leav(?:e|ing)|take|throw\w*|get\s+rid\s+of)\b"
+    r"(?:(?:\s+\S+){0,4}?\s+(?:out|away)\b)?"
+)
+
+
 def _narrows(clause: str) -> bool:
     """A narrowing word whose clause names footage, or anything that isn't text/audio."""
 
+    clause = _NEGATED_REMOVAL.sub(" ", clause)
     if not (_EN_NARROWING.search(clause) or _TR_NARROWING.search(clause)):
         return False
     for raw in _WORD.findall(_WHOLE_EDIT.sub(" ", clause)):
