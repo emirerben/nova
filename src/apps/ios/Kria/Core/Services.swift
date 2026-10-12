@@ -925,7 +925,9 @@ private enum KriaClientProtocolContract {
     /// 6 (KRI-589): understands the `drawings` editor lane and the recipe's `drawingLayers`. The server
     /// answers 426 `client_update_required` to older builds for a variant that has drawings. It is its own
     /// number because a build with only the protocol-5 slide work cannot decode drawings.
-    static let version = 6
+    ///
+    /// 7 (KRI-589): round-trips a slide's `drawing`; a build below it omits the key and the server keeps the stored one.
+    static let version = 7
     static let header = "X-Kria-Client-Protocol"
 }
 
