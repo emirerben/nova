@@ -940,29 +940,47 @@
       ],
       "symptom": "'make my landscape video vertical, keep my face in frame' rendered letterboxed while Kria said it did it.",
       "boundary": "device",
-      "status": "open_pr",
       "fix_prs": [
         1507
       ],
-      "owner": "KRI-547",
+      "fix_commit": "7a659bf9d",
+      "journey": "kri-547-speaker-framing",
       "paths": [],
-      "regression_tests": [],
-      "harness": "pending",
-      "kill_switch": null,
+      "regression_tests": [
+        "tests/pipeline/test_kri547_face_fill_device_fixture.py",
+        "tests/pipeline/test_phone_speaker_framing.py",
+        "tests/pipeline/test_phone_subtitled_plan.py",
+        "tests/pipeline/test_phone_subtitled_title.py",
+        "tests/pipeline/test_render_geometry.py",
+        "tests/kria/test_speaker_framing_ask.py",
+        "tests/kria/test_brief_speaker_framing.py",
+        "tests/tasks/test_phone_subtitled_speaker_framing_worker.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": "phone_speaker_face_fill_enabled",
       "evidence": {
-        "offline_replay": "pending merge",
+        "offline_replay": "framing decision, compile, brief receipt and worker tests with injected face boxes; device fixture KRI547SpeakerFaceFill.json built through the production chain",
         "live_model": "n/a",
-        "native_output": "local real sampler on T3 footage (PR body); no device export yet",
-        "production": "not merged"
+        "native_output": "CI journey kri-547-speaker-framing exports the server crop on the iPhone simulator and measures the window (local: 785.00 vs 785.07 px); no phone re-send yet",
+        "production": "merged 2026-10-11"
       },
-      "neighbours_covered": [],
+      "neighbours_covered": [
+        "face in the left third / clamped at the right edge / centred (no shift)",
+        "wandering or too-wide face, face reaching the caption block -> letterbox with the reason",
+        "no ask or kill switch off -> byte-identical recipe and variant",
+        "portrait and square clips",
+        "editor Save keeps the crop, bars drop it, crop restores it",
+        "corner cards beside the face core; honest no-room receipt",
+        "EN/TR asks and receipts"
+      ],
       "neighbours_gap": [
-        "device export evidence required before merge (KRI-577 item 3)"
+        "iOS editor preview does not apply position_x to the main clip (KRI-553)",
+        "no phone re-send of the Kadikoy face-fill ask since the merge"
       ],
       "follow_ups": [
         "KRI-553"
       ],
-      "red_control": "not_applicable"
+      "red_control": "weak"
     },
     {
       "id": "kri-568-shot-labels",
@@ -971,27 +989,37 @@
       ],
       "symptom": "Resolved label intents existed but the contract required an equivalent shot_labels entry and refused after ~3 minutes of planning.",
       "boundary": "contract",
-      "status": "open_pr",
       "fix_prs": [
         1531
       ],
-      "owner": "KRI-568",
-      "paths": [],
-      "regression_tests": [],
-      "harness": "pending",
+      "fix_commit": "0b6728652",
+      "paths": [
+        "src/apps/api/app/services/creator_render_contract.py"
+      ],
+      "regression_tests": [
+        "tests/services/test_creator_render_contract.py"
+      ],
+      "harness": "real_contract",
       "kill_switch": null,
       "evidence": {
-        "offline_replay": "pending merge",
+        "offline_replay": "build_render_contract on a per-clip text brief with resolved label intents and no shot_labels; positional shot_labels still win; an unplaced label is refused naming the words",
         "live_model": "n/a",
-        "native_output": "phone M1 re-send after deploy",
-        "production": "not merged"
+        "native_output": "phone-verified 2026-10-11 11:51Z (Tigre M1 re-send, thread 7CCBDE0A, job 136712e8: labels on the right rooms)",
+        "production": "merged 2026-10-11"
       },
-      "neighbours_covered": [],
-      "neighbours_gap": [
-        "same representation-mismatch class as KRI-454; a parser -> resolution -> contract record would catch both"
+      "neighbours_covered": [
+        "label intent pins its clip",
+        "shot_labels win over a label intent for the same words",
+        "label nobody placed is refused, bilingual, naming the words"
       ],
-      "follow_ups": [],
-      "red_control": "not_applicable"
+      "neighbours_gap": [
+        "same representation-mismatch class as KRI-454; a parser -> resolution -> contract record would catch both",
+        "each label is burned twice, centre and corner tag (KRI-584)"
+      ],
+      "follow_ups": [
+        "KRI-584"
+      ],
+      "red_control": "verified"
     },
     {
       "id": "kri-551-retake-cleanup",
@@ -1058,7 +1086,7 @@
       "fix_prs": [
         1569
       ],
-      "fix_commit": "fb4e11d0e",
+      "fix_commit": "385d5b7ba",
       "paths": [
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/app/schemas/clip_intents.py",
