@@ -532,12 +532,44 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-561-song-order"),
             ),
             (
+                "src/apps/api/app/kria/speaker_framing_ask.py",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_recipe_shared.py",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_speaker_framing.py",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_subtitled_plan.py",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_subtitled_title.py",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
+                "src/apps/api/app/pipeline/render_geometry.py",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
+                "src/apps/ios/Tests/Fixtures/KRI547SpeakerFaceFill.json",
+                (True, "covered", "kri-547-speaker-framing"),
+            ),
+            (
                 "src/apps/api/prompts/main_creator.txt",
                 (True, "covered", "kri-586-hook-copy"),
             ),
             (
                 "src/apps/api/tests/fixtures/agent_evals/main_creator/kri586_generate_after_choice.json",
                 (True, "covered", "kri-586-hook-copy"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/agent_evals/narrated_clip_alignment/golden/tigre_spoken_cues.json",
+                (True, "covered", "kri-590-voiceover-cues"),
             ),
             (
                 "src/apps/api/app/pipeline/phone_captions.py",

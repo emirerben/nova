@@ -163,6 +163,13 @@ def record_native(
         "input_hashes": proof["input_hashes"],
         "commands": {
             "fixture": "python3 scripts/ios/kri-524-creation-e2e.py test-results/kri-559/fixture",
+            "build": (
+                "xcodebuild -project Kria.xcodeproj -scheme Kria "
+                "-skipPackagePluginValidation -derivedDataPath .derived-data "
+                "CODE_SIGNING_ALLOWED=NO -destination "
+                '"platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" '
+                "build-for-testing"
+            ),
             "native": (
                 "xcodebuild -project Kria.xcodeproj -scheme Kria "
                 "-skipPackagePluginValidation -derivedDataPath .derived-data "
@@ -170,7 +177,7 @@ def record_native(
                 '"platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" '
                 "-only-testing:KriaTests/DeviceMontageRenderE2ETests/"
                 "testCapturedCreationWordsRetimedThenExportOnTheIPhone "
-                "-resultBundlePath ../../../test-results/kri-559/native.xcresult test"
+                "-resultBundlePath ../../../test-results/kri-559/native.xcresult test-without-building"
             ),
             "result_inspection": (
                 "xcrun xcresulttool get test-results tests --path "

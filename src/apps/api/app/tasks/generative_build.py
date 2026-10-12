@@ -39,7 +39,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -6815,6 +6815,43 @@ def _run_phone_subtitled_job(
                     analysis_view="full_clip"
                 )
 
+            # KRI-547: the creator asked for a vertical / full-screen / face-in-frame
+            # video. A sideways speaker clip is then face-filled -- the engine's
+            # cover fill slid onto the face, sampled across the kept take -- when
+            # one static window holds it, else it keeps today's framing and the
+            # receipt says why. No ask, or the kill switch off: `speaker_framing`
+            # stays None and every statement below runs exactly as before.
+            speaker_framing = (
+                _phone_speaker_framing(
+                    snapshot,
+                    binding=binding,
+                    clip_path=clip_path,
+                    keep_segments=(
+                        list(cut_plan.keep_segments)
+                        if cut_plan is not None and cut_plan.removed
+                        else [(0.0, float(binding.original.duration_s))]
+                    ),
+                    landscape_fit=landscape_fit,
+                )
+                if settings.phone_speaker_face_fill_enabled
+                else None
+            )
+            speaker_position_x = speaker_framing.position_x if speaker_framing else None
+            # Everything placed against the face (title, closing text, cards) maps
+            # it through the same crop the recipe draws.
+            framed_fit = "fill" if speaker_position_x is not None else landscape_fit
+            face_box_to_canvas = (
+                _phone_face_box_mapper(binding, speaker_position_x)
+                if speaker_position_x is not None
+                else None
+            )
+            framed_compile: dict[str, Any] = (
+                {"speaker_position_x": speaker_position_x} if speaker_position_x is not None else {}
+            )
+            framed_grounding: dict[str, Any] = (
+                {"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}
+            )
+
             # KRI-177: auto-detect the SPOKEN language unless the creator
             # explicitly asked for a specific caption language (already parsed +
             # validated into `caption_language_req` above) — never the plan/job
@@ -7057,7 +7094,8 @@ def _run_phone_subtitled_job(
                     binding=binding,
                     clip_path=clip_path,
                     keep_segments=speaker_keep_segments,
-                    landscape_fit=landscape_fit,
+                    landscape_fit=framed_fit,
+                    position_x=speaker_position_x or 0.0,
                 )
 
             def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
@@ -7070,7 +7108,8 @@ def _run_phone_subtitled_job(
                     binding=binding,
                     clip_path=clip_path,
                     keep_segments=speaker_keep_segments,
-                    landscape_fit=landscape_fit,
+                    landscape_fit=framed_fit,
+                    position_x=speaker_position_x or 0.0,
                 )
 
             sfx_duck: dict | None = None
@@ -7085,6 +7124,7 @@ def _run_phone_subtitled_job(
                     landscape_fit=landscape_fit,  # type: ignore[arg-type]
                     text_elements=title_rows + closing_text_rows,
                     text_elements_user_edited=bool(title_rows or closing_text_rows),
+                    **framed_compile,
                 )
             else:
                 raw_lane_request = snapshot.get(PHONE_SUBTITLED_LANES_FIELD)
@@ -7137,6 +7177,7 @@ def _run_phone_subtitled_job(
                                     # KRI-521: "when I say X, show my video" -- the
                                     # same gate the KRI-183 PiP pass uses.
                                     video_supported=video_overlays_enabled,
+                                    **framed_grounding,
                                 )
                             )
                         except OperationalError:
@@ -7233,6 +7274,7 @@ def _run_phone_subtitled_job(
                                     if overlay_layout == "fullscreen"
                                     else {}
                                 ),
+                                **framed_grounding,
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -7443,6 +7485,7 @@ def _run_phone_subtitled_job(
                         landscape_fit=landscape_fit,  # type: ignore[arg-type]
                         text_elements=text_rows,
                         text_elements_user_edited=bool(text_rows),
+                        **framed_compile,
                     )
 
                 recipe = None
@@ -7610,6 +7653,7 @@ def _run_phone_subtitled_job(
                 "variant_id": "subtitled",
                 "fit": "letterbox" if _letterboxed else "crop",
                 "landscape_fit": landscape_fit,
+                **({"framing": speaker_framing.mode} if speaker_framing is not None else {}),
             },
         )
     except Exception:  # noqa: BLE001 - observability only
@@ -7674,6 +7718,14 @@ def _run_phone_subtitled_job(
             new_entry["phone_lane_receipt"] = lane_receipt
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
+        if speaker_framing is not None:
+            # KRI-547: how the speaker was framed and why -- the brief receipt's
+            # evidence at render-ready, and what an editor Save keeps or resets.
+            new_entry["speaker_framing"] = speaker_framing.receipt()
+            if speaker_position_x is not None:
+                # A face crop IS a crop: the editor's bars/crop control shows it,
+                # and a Save without a bars/crop change keeps it.
+                new_entry["landscape_fit"] = "fill"
         if title_rows or closing_text_rows:
             # KRI-467: the title is an ordinary saved text row. `user_edited`
             # makes the read path serve it beside the projected caption
@@ -7753,6 +7805,74 @@ def _run_phone_subtitled_job(
     )
 
 
+def _phone_speaker_framing(
+    snapshot: dict,
+    *,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+) -> Any:
+    """KRI-547: how to frame the phone Talking speaker for a creator who asked
+    for a vertical / full-screen / face-in-frame video.
+
+    The ask is read deterministically off the approved brief pinned on the job
+    (``creator_brief_binding``), never a prompt field. ``None`` without such an
+    ask (or without a readable binding): the caller then compiles exactly as
+    before. Otherwise a `phone_speaker_framing.SpeakerFraming` -- face-filled,
+    or today's framing with the reason -- that never raises."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.speaker_framing_ask import brief_framing_requirement_ids  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import display_dims  # noqa: PLC0415
+    from app.pipeline.phone_speaker_framing import decide_speaker_framing  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return None
+    try:
+        brief = BriefBinding.model_validate(raw_binding).resolve()
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_speaker_framing.binding_unreadable", error=str(exc)[:200])
+        return None
+    asked_by = brief_framing_requirement_ids(brief)
+    if not asked_by:
+        return None
+    display_width, display_height = display_dims(binding.original)
+    framing = decide_speaker_framing(
+        clip_path,
+        keep_segments=keep_segments,
+        display_width=display_width,
+        display_height=display_height,
+        canvas=_STORY_CANVAS,
+        landscape_fit=landscape_fit,
+        asked_by=asked_by,
+    )
+    try:
+        record_pipeline_event("phone", "speaker_framing", framing.receipt())
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return framing
+
+
+def _phone_face_box_mapper(binding: Any, position_x: float) -> Any:
+    """Raw source face box -> the face core (eyes, nose, mouth) on the KRI-547
+    face-filled canvas (`phone_speaker_framing.face_core_mapper`), for beat and
+    PiP card grounding only; titles and captions keep the full protection."""
+    from app.pipeline.phone_recipe_shared import display_dims  # noqa: PLC0415
+    from app.pipeline.phone_speaker_framing import face_core_mapper  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+
+    display_width, display_height = display_dims(binding.original)
+    return face_core_mapper(
+        display_width=display_width,
+        display_height=display_height,
+        canvas=_STORY_CANVAS,
+        position_x=position_x,
+    )
+
+
 def _phone_talking_title_rows(
     opening_title: str,
     *,
@@ -7762,11 +7882,13 @@ def _phone_talking_title_rows(
     clip_path: str | None,
     keep_segments: list[tuple[float, float]],
     landscape_fit: str,
+    position_x: float = 0.0,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's opening title row (KRI-467), placed off the
     speaker's face, plus its placement receipt; ``([], None)`` when the title
     is empty or the clip has no time for it. ``binding`` is the speaker's
-    `PhoneSourceBinding`."""
+    `PhoneSourceBinding`; ``position_x`` is its KRI-547 face-filled crop shift
+    (with ``landscape_fit="fill"``), so the face is checked where it is drawn."""
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
     from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
@@ -7794,6 +7916,7 @@ def _phone_talking_title_rows(
         display_height=display_height,
         canvas=_STORY_CANVAS,
         scale=fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale,
+        position_x=position_x,
     )
     try:
         record_pipeline_event("phone", "subtitled_title_placement", receipt)
@@ -7811,6 +7934,7 @@ def _phone_talking_closing_rows(
     clip_path: str | None,
     keep_segments: list[tuple[float, float]],
     landscape_fit: str,
+    position_x: float = 0.0,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's closing text row (KRI-514) plus its placement
     receipt; ``([], None)`` when the text is empty or the clip has no time for
@@ -7851,6 +7975,7 @@ def _phone_talking_closing_rows(
             display_height=display_height,
             canvas=_STORY_CANVAS,
             scale=fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale,
+            position_x=position_x,
         )
     try:
         record_pipeline_event("phone", "subtitled_closing_title_placement", receipt)
@@ -8085,6 +8210,7 @@ def _narrated_alignment_record(
     caption_language: str | None,
     spoken_language: str | None,
     caption_language_request: str | None,
+    out_of_sequence_media_ids: Collection[str] = (),
 ) -> dict[str, Any]:
     """The receipt record of a phone Voiceover edit (KRI-533): what the worker pinned.
 
@@ -8092,7 +8218,9 @@ def _narrated_alignment_record(
     creator's labels for the shot (resolved clip intents, matched on either the basename
     or the phone source id), the first/last seats a resolved order intent gave it, the
     window, and the transcript words spoken over it. ``plan_facts_from_narrated_alignment``
-    reads this back; nothing here is model-claimed.
+    reads this back; nothing here is model-claimed. A step whose clip belongs to a
+    described sequence the voiceover overrode (``out_of_sequence_media_ids``, KRI-590)
+    also carries ``"out_of_sequence": True``; every other row is unchanged.
     """
     labels_by_key: dict[str, list[str]] = {}
     placed_by_key: dict[str, list[dict[str, str]]] = {}
@@ -8139,6 +8267,7 @@ def _narrated_alignment_record(
                 "start_s": round(float(step.start_s), 3),
                 "end_s": round(float(step.end_s), 3),
                 "text": spoken[:_NARRATED_STEP_TEXT_CHARS],
+                **({"out_of_sequence": True} if media_id in out_of_sequence_media_ids else {}),
             }
         )
     return {
@@ -8436,6 +8565,8 @@ def _run_phone_narrated_job(
             script_steps = _narrated_script_steps(filming_guide)
             steps: list[NarratedPhoneStep] = []
             aligned = None  # KRI-533: set by the alignment agent in the branch below
+            # KRI-590: described-sequence clips the voiceover placed in another order.
+            moved_clip_ids: list[str] = []
             if len(script_steps) >= 2:
                 clip_assignments = _narrated_clip_assignments(
                     filming_guide, narrative_order, clip_id_to_local
@@ -8497,7 +8628,7 @@ def _run_phone_narrated_job(
                         job_id=job_id,
                     )
                 if aligned is not None:
-                    ordered_ids, step_timings = aligned
+                    ordered_ids, step_timings, moved_clip_ids = aligned
                     step_clip_ids = list(ordered_ids)
                 else:
                     if snapshot.get("creator_brief_binding") and len(ordered_ids) > 1:
@@ -8511,11 +8642,13 @@ def _run_phone_narrated_job(
                                 "generation_id": generation,
                             },
                         )
-                        recovery_message = (
-                            "I couldn't match the narration to the actions reliably. "
-                            "Your draft is saved. Should I try again "
-                            "or use a simpler clip sequence?"
+                        from app.kria.brief_checks import (  # noqa: PLC0415
+                            narrated_alignment_recovery,
                         )
+
+                        # KRI-592: no chat language is bound here, so this stores the
+                        # English copy; the chat observer re-words it for a Turkish chat.
+                        recovery_message = narrated_alignment_recovery()
                         if not _save_request_recovery(
                             job_id,
                             snapshot,
@@ -8665,6 +8798,9 @@ def _run_phone_narrated_job(
                 caption_language=detected_lang if cues else None,
                 spoken_language=spoken_lang if cues else None,
                 caption_language_request=caption_language_req,
+                out_of_sequence_media_ids=frozenset(
+                    _media_id_for_clip(clip_id) for clip_id in moved_clip_ids
+                ),
             )
             narrated_failures = _narrated_alignment_receipts(
                 narrated_record, narrated_brief, bound=bool(snapshot.get("creator_brief_binding"))
@@ -23864,16 +24000,23 @@ def _narrated_clip_alignment_steps(
     pinned_first: list[str] | None = None,
     pinned_last: list[str] | None = None,
     ordered_groups: list[list[str]] | None = None,
-) -> tuple[list[str], list[Any]] | None:
+) -> tuple[list[str], list[Any], list[str]] | None:
     """Ask the alignment agent where each clip should start, failing open.
 
-    Returns ``(clip_ids_in_screen_order, step_timings)`` or ``None`` when the
-    caller must use the legacy equal-bucket split (any precondition miss, agent
-    failure, invalid placement or timeline too short). Every outcome is recorded
+    Returns ``(clip_ids_in_screen_order, step_timings, moved_clip_ids)`` or ``None``
+    when the caller must use the legacy equal-bucket split (any precondition miss,
+    agent failure, invalid placement or timeline too short). Every outcome is recorded
     on the job's pipeline trace; this function never raises. ``order_locked`` fixes
     the whole order (filming guide); ``pinned_first`` / ``pinned_last`` fix only
     how the video opens / closes (a creator's "end on X"); ``ordered_groups`` is the
     creator's described sequence. Clips not in ``clip_ids`` are dropped from both.
+
+    The described sequence is the one ask the narration may override (KRI-590): "show X
+    when I say Y" cues reach this as a sequence in the order they were typed, and the
+    voiceover may say them in another order. Then the placements are kept in the
+    narration's order, ``sequence_overridden`` is recorded on the trace, and
+    ``moved_clip_ids`` lists the described-sequence clips (empty when it was kept) so the
+    render receipts never call that order met.
     """
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -23957,6 +24100,16 @@ def _narrated_clip_alignment_steps(
                     {"clip_id": cid, "start_s": start} for cid, start in zip(order, starts)
                 ],
             )
+        moved = (
+            [clip_id for group in groups for clip_id in group] if output.sequence_overridden else []
+        )
+        if moved:
+            log.info(
+                "narrated_clip_alignment_sequence_overridden",
+                job_id=job_id,
+                described_sequence=groups,
+                screen_order=order,
+            )
         record_pipeline_event(
             "narrated",
             "narrated_clip_alignment",
@@ -23965,6 +24118,9 @@ def _narrated_clip_alignment_steps(
                 "order_locked": order_locked,
                 **pins,
                 "resorted": output.resorted,
+                # KRI-590: the voiceover reached the described-sequence clips in another
+                # order and the narration's order was kept (see `clips` for that order).
+                "sequence_overridden": output.sequence_overridden,
                 "prompt_version": NarratedClipAlignmentAgent.spec.prompt_version,
                 "clips": [
                     {
@@ -23981,7 +24137,11 @@ def _narrated_clip_alignment_steps(
                 ],
             },
         )
-        return [clip_id for clip_id, _timing in resolved], [timing for _id, timing in resolved]
+        return (
+            [clip_id for clip_id, _timing in resolved],
+            [timing for _id, timing in resolved],
+            moved,
+        )
     except Exception as exc:  # noqa: BLE001 -- alignment is best effort
         return _fallback("agent_error", error=f"{type(exc).__name__}: {str(exc)[:200]}")
 

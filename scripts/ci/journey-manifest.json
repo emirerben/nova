@@ -188,11 +188,47 @@
       ]
     },
     {
+      "id": "kri-547-speaker-framing",
+      "api_tests": "tests/pipeline/test_kri547_face_fill_device_fixture.py tests/pipeline/test_phone_speaker_framing.py tests/pipeline/test_phone_subtitled_plan.py tests/pipeline/test_phone_subtitled_title.py tests/pipeline/test_render_geometry.py tests/kria/test_speaker_framing_ask.py tests/kria/test_brief_speaker_framing.py tests/tasks/test_phone_subtitled_speaker_framing_worker.py",
+      "xctests": [
+        "KriaTests/DeviceSpeakerFaceFillE2ETests/testFaceInTheLeftThirdShowsTheServerWindowOnTheIPhone",
+        "KriaTests/DeviceSpeakerFaceFillE2ETests/testFaceAtTheRightEdgeClampsWithNoBlackEdgeOnTheIPhone",
+        "KriaTests/DeviceSpeakerFaceFillE2ETests/testCentredFaceIsTheUnshiftedCentreCropOnTheIPhone"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/speaker_framing_ask.py",
+        "src/apps/api/app/pipeline/phone_recipe_shared.py",
+        "src/apps/api/app/pipeline/phone_speaker_framing.py",
+        "src/apps/api/app/pipeline/phone_subtitled_plan.py",
+        "src/apps/api/app/pipeline/phone_subtitled_title.py",
+        "src/apps/api/app/pipeline/render_geometry.py",
+        "src/apps/api/tests/pipeline/test_kri547_face_fill_device_fixture.py",
+        "src/apps/api/tests/pipeline/test_phone_speaker_framing.py",
+        "src/apps/api/tests/pipeline/test_phone_subtitled_plan.py",
+        "src/apps/api/tests/pipeline/test_phone_subtitled_title.py",
+        "src/apps/api/tests/pipeline/test_render_geometry.py",
+        "src/apps/api/tests/kria/test_speaker_framing_ask.py",
+        "src/apps/api/tests/kria/test_brief_speaker_framing.py",
+        "src/apps/api/tests/tasks/test_phone_subtitled_speaker_framing_worker.py",
+        "src/apps/ios/Tests/KriaTests/DeviceSpeakerFaceFillE2ETests.swift",
+        "src/apps/ios/Tests/Fixtures/KRI547SpeakerFaceFill.json"
+      ]
+    },
+    {
       "id": "kri-586-hook-copy",
       "api_tests": "tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py tests/agents/test_runtime.py tests/kria/test_creative_copy_planner.py tests/evals/test_main_creator_evals.py",
       "paths": [
         "src/apps/api/prompts/main_creator.txt",
         "src/apps/api/tests/fixtures/agent_evals/main_creator/"
+      ]
+    },
+    {
+      "id": "kri-590-voiceover-cues",
+      "api_tests": "tests/agents/test_narrated_clip_alignment.py tests/evals/test_narrated_clip_alignment_evals.py tests/kria/test_brief_checks_narrated_alignment.py tests/kria/test_kri520_block_recovery.py tests/tasks/test_phone_subtitled_narrated_dispatch.py",
+      "paths": [
+        "src/apps/api/app/agents/narrated_clip_alignment.py",
+        "src/apps/api/prompts/narrated_clip_alignment.txt",
+        "src/apps/api/tests/fixtures/agent_evals/narrated_clip_alignment/"
       ]
     }
   ]
