@@ -1335,7 +1335,11 @@ struct KriaAPI: KriaAPIClient {
             // Surface that machine code too, so a caller can distinguish e.g.
             // `speech_cleanup_pending` from an ordinary revision conflict.
             let problem = Self.decodeProblem(from: data)
-            throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message, code: problem?.code))
+            // KRI-609: routes such as `auth/mobile/exchange` refuse with an object
+            // `{"detail": {"code", "message"}}`. Read it last, so the string detail
+            // and the problem envelope above keep precedence.
+            let coded = Self.decodeCodedDetail(from: data)
+            throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message ?? coded?.message, code: problem?.code ?? coded?.code))
         }
         guard (200..<300).contains(http.statusCode) else {
             if await signalNativeUpdateRequiredIfNeeded(data: data, response: http) {
@@ -1418,6 +1422,14 @@ struct KriaAPI: KriaAPIClient {
         guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let problem = body["problem"] as? [String: Any] else { return nil }
         return (problem["code"] as? String, problem["message"] as? String)
+    }
+    /// Decodes FastAPI's object detail (`{"detail": {"code", "message"}}`), e.g. the
+    /// `provider_link_required` refusal from `auth/mobile/exchange`. Nil for the
+    /// string `detail` and validation-list shapes `decodeDetail` reads.
+    private static func decodeCodedDetail(from data: Data) -> (code: String?, message: String?)? {
+        guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let detail = body["detail"] as? [String: Any] else { return nil }
+        return (detail["code"] as? String, detail["message"] as? String)
     }
 }
 enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
@@ -1752,9 +1764,10 @@ enum APIError: Error, LocalizedError, Equatable {
     static let conflict = APIError.conflict(detail: ConflictDetail(nil))
     /// The server's human-readable reason for a conflict, if it sent one.
     var conflictDetail: String? { if case let .conflict(detail) = self { detail.message } else { nil } }
-    /// The runtime-v2 `KriaProblem.code` for this conflict, if the server sent
-    /// that envelope (e.g. `speech_cleanup_pending` from the approval decision
-    /// endpoint). Nil for the legacy `{"detail": "..."}` string shape.
+    /// The machine code for this conflict: the runtime-v2 `KriaProblem.code`
+    /// (e.g. `speech_cleanup_pending` from the approval decision endpoint) or an
+    /// object detail's `code` (e.g. `provider_link_required` from sign-in).
+    /// Nil for the legacy `{"detail": "..."}` string shape.
     var conflictCode: String? { if case let .conflict(detail) = self { detail.code } else { nil } }
     /// The server's human-readable reason for a non-2xx failure, if it sent
     /// one. Additive: most call sites still only care about `status`.
@@ -1802,8 +1815,9 @@ struct RequestFailureDetail: Equatable, Sendable, CustomStringConvertible {
 /// the detail is context for the UI and never changes which conflict checks match.
 struct ConflictDetail: Equatable, Sendable, CustomStringConvertible {
     let message: String?
-    /// The runtime-v2 `KriaProblem.code`, when the server sent that envelope
-    /// instead of the legacy `detail` string. See `decodeProblem`.
+    /// The runtime-v2 `KriaProblem.code` or an object detail's `code`, when the
+    /// server sent one instead of the legacy `detail` string. See `decodeProblem`
+    /// and `decodeCodedDetail`.
     let code: String?
     init(_ message: String?, code: String? = nil) {
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)

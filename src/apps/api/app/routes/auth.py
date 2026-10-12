@@ -183,6 +183,52 @@ def _mobile_error(
     return HTTPException(status_code=code, detail={"code": error.code, "message": error.message})
 
 
+_SIGN_IN_PROVIDER_LABELS = {"google": "Google", "apple": "Apple"}
+
+
+async def _existing_sign_in_provider(user: User, db: AsyncSession) -> str | None:
+    """The provider that opens ``user``'s account, or None when unknown.
+
+    ``auth_provider`` records how the account was created and is never
+    rewritten, so a Google- or Apple-created account always opens with that
+    provider.  Accounts created another way (reviewer, dev) name a provider only
+    when a native identity for it is actually linked.
+    """
+    if user.auth_provider in _SIGN_IN_PROVIDER_LABELS:
+        return user.auth_provider
+    linked = (
+        (
+            await db.execute(
+                select(MobileIdentity.provider)
+                .where(MobileIdentity.user_id == user.id)
+                .order_by(MobileIdentity.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return next((provider for provider in linked if provider in _SIGN_IN_PROVIDER_LABELS), None)
+
+
+def _provider_link_required_detail(existing_provider: str | None) -> dict[str, str | None]:
+    """409 body for an email that already belongs to another sign-in method.
+
+    ``code`` is unchanged for older clients; ``message`` is shown to the
+    creator as-is by the iPhone app.
+    """
+    label = _SIGN_IN_PROVIDER_LABELS.get(existing_provider or "")
+    message = (
+        f"This email already has a Kria account. Sign in with {label} to open it."
+        if label
+        else "This email already has a Kria account. Sign in with the method you used before."
+    )
+    return {
+        "code": "provider_link_required",
+        "message": message,
+        "existing_provider": existing_provider,
+    }
+
+
 @router.post("/mobile/exchange", response_model=MobileSessionOut)
 async def mobile_exchange(
     body: MobileExchangeRequest, db: AsyncSession = Depends(get_db)
@@ -193,7 +239,9 @@ async def mobile_exchange(
     migrate a pre-mobile legacy Google account with the same normalized email;
     Apple is never linked by email because private-relay addresses are not a
     safe proof of control of an existing account.  A future authenticated link
-    flow can add an identity explicitly.
+    flow can add an identity explicitly.  Any other email collision answers 409
+    ``provider_link_required`` naming the provider that opens the existing
+    account (KRI-609).
     """
     if not settings.mobile_jwt_secret:
         raise HTTPException(status_code=503, detail="Mobile authentication is not configured")
@@ -228,15 +276,21 @@ async def mobile_exchange(
         ).scalar_one_or_none()
         if user is not None:
             if claims.provider != "google" or user.auth_provider != "google":
+                # Accounts stay separate (KRI-609): never link here.  Naming the
+                # provider that opens the account is safe because this branch
+                # runs only after verify_provider_id_token accepted the token,
+                # nonce and a verified email claim, so the caller has proven
+                # control of this email address.
+                existing_provider = await _existing_sign_in_provider(user, db)
+                log.info(
+                    "auth.mobile_exchange.provider_link_required",
+                    user_id=str(user.id),
+                    attempted_provider=claims.provider,
+                    existing_provider=existing_provider,
+                )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "provider_link_required",
-                        "message": (
-                            "Sign in with the existing provider or explicitly link "
-                            "this provider first"
-                        ),
-                    },
+                    detail=_provider_link_required_detail(existing_provider),
                 )
             # Safe, one-way migration of the existing NextAuth Google account.
         else:
