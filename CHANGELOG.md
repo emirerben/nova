@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.243.0] - 2026-10-12
+
+### Changed
+- feat(slides): post-wide size and per-photo Fit for Sliders (KRI-606) (#1561) <!-- release-pr: 1561 -->
+
 ## [0.78.242.0] - 2026-10-12
 
 ### Fixed
