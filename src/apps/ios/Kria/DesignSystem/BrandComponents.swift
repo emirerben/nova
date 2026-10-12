@@ -14,7 +14,7 @@ struct KriaWordmark: View {
 
 /// Shared 24-unit outline geometry from Mobile Flow.
 struct KriaIcon: View {
-    enum Kind { case menu, pencil, more, close, plus, gallery, settings }
+    enum Kind { case menu, pencil, more, close, plus, gallery, settings, move, resize }
     let kind: Kind
     init(_ kind: Kind) { self.kind = kind }
     var body: some View {
@@ -40,12 +40,37 @@ struct KriaIcon: View {
                         path.addRoundedRect(in: CGRect(x: 3, y: 3, width: 18, height: 18), cornerSize: CGSize(width: 2, height: 2))
                         path.addEllipse(in: CGRect(x: 7, y: 7, width: 3, height: 3))
                         path.move(to: CGPoint(x: 3, y: 17)); [CGPoint(x: 10, y: 11), CGPoint(x: 14, y: 15), CGPoint(x: 18, y: 11), CGPoint(x: 21, y: 14)].forEach { path.addLine(to: $0) }
+                    case .move:
+                        line(4, 12, 20, 12); line(12, 4, 12, 20)
+                        line(4, 12, 7, 9); line(4, 12, 7, 15); line(20, 12, 17, 9); line(20, 12, 17, 15)
+                        line(12, 4, 9, 7); line(12, 4, 15, 7); line(12, 20, 9, 17); line(12, 20, 15, 17)
+                    case .resize:
+                        line(5, 5, 19, 19); line(12, 19, 19, 19); line(19, 19, 19, 12)
                     case .settings: break
                     }
                     context.stroke(path, with: .color(KriaColor.ink), style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
                 }
             }
         }.frame(width: 22, height: 22).accessibilityHidden(true)
+    }
+}
+
+/// Floating chrome for controls above live media. The material stays on a background leaf so
+/// the button's accessibility frame remains accurate.
+struct KriaFloatingIconButton: View {
+    let kind: KriaIcon.Kind
+    let label: String
+    let identifier: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            KriaIcon(kind).frame(width: 44, height: 44)
+        }
+        .buttonStyle(.plain)
+        .kriaFloatingSurface(Circle())
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier)
     }
 }
 

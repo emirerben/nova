@@ -11,7 +11,16 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ios"))
 import ui_tests
 
-SUITES = ("web", "api", "ios", "ios_ui")
+SUITES = ("api", "ios", "ios_ui", "shared_motion")
+SHARED_MOTION_PATHS = (
+    "src/apps/api/app/pipeline/motion_scene.py",
+    "src/apps/web/src/__tests__/lib/motion-runtime.test.ts",
+    "src/apps/web/package.json",
+    "src/apps/web/package-lock.json",
+    "src/apps/web/jest.config.js",
+    "src/apps/web/jest.setup.ts",
+    "src/apps/web/tsconfig.json",
+)
 
 # This is deliberately independent from the broad suite selector.  KRI-559 is
 # a cross-runtime proof: the saved creation transport must survive the API
@@ -51,6 +60,22 @@ JOURNEY_POLICY_PATHS = (
     "scripts/ci/test_journey_gate.py",
     "scripts/ci/test_select_tests.py",
 )
+
+
+def journey_native_for_ids(ids):
+    """Whether selected journeys require Xcode/iPhone validation."""
+    selected = set(ids)
+    known = {journey["id"] for journey in JOURNEYS}
+    if selected - known:
+        raise ValueError(f"Unknown journey ids: {sorted(selected - known)}")
+    for journey in JOURNEYS:
+        if not isinstance(journey.get("needs_native"), bool):
+            raise ValueError(
+                f"Journey {journey.get('id', '<unknown>')} has invalid needs_native"
+            )
+    return any(
+        journey["needs_native"] for journey in JOURNEYS if journey["id"] in selected
+    )
 
 
 def matches_journey_path(path, prefix):
@@ -180,6 +205,14 @@ SWIFT_SERVER_MIRRORS = (
 
 
 def affected(path):
+    if path.startswith("src/packages/motion-runtime/"):
+        return set(SUITES)
+    if path in SHARED_MOTION_PATHS:
+        return (
+            {"api", "shared_motion"}
+            if path.endswith("motion_scene.py")
+            else {"shared_motion"}
+        )
     if path in SWIFT_SERVER_MIRRORS:
         return {"api", "ios", "ios_ui"}
     # These web resources are also bundled by the native Xcode project.
@@ -190,7 +223,7 @@ def affected(path):
             "src/apps/web/public/landing/raw-story/",
         )
     ):
-        return {"web", "ios", "ios_ui"}
+        return {"ios", "ios_ui"}
     # Unit-test edits and generated clients need compilation/unit contracts, but
     # do not change the native screens exercised by the fixture-driven UI suite.
     if path.startswith(
@@ -202,7 +235,19 @@ def affected(path):
         return {"ios"}
     # Check runtime trees before documentation: prompts and fixtures can be .md.
     if path.startswith(("src/apps/web/", "scripts/ci/web-tests")):
-        return {"web"}
+        return set()
+    if path.startswith("src/apps/api/app/kria/"):
+        matched = {
+            journey["id"]
+            for journey in JOURNEYS
+            for prefix in journey["paths"]
+            if matches_journey_path(path, prefix)
+        }
+        # Known Python-only journey paths stay on Linux; unmapped Kria code
+        # keeps the conservative shared-contract fallback until mapped.
+        if matched and not journey_native_for_ids(matched):
+            return {"api"}
+        return {"api", "ios"}
     if (
         path.startswith(("src/apps/ios/", "scripts/ios/"))
         or path == ".github/workflows/ios.yml"
@@ -229,7 +274,7 @@ def affected(path):
             "requirements",
         )
         return (
-            {"web", "api", "ios"}
+            {"api", "ios"}
             if path.removeprefix("src/apps/api/").startswith(contracts)
             else {"api"}
         )
@@ -290,6 +335,14 @@ def journey_selection(event, base, head):
     return journey_details(event, base, head)[0]
 
 
+def journey_needs_native(event, base, head):
+    """Select macOS only when the manifest says a selected journey needs it."""
+    selected, _coverage, ids = journey_details(event, base, head)
+    if not selected:
+        return False
+    return journey_native_for_ids(ids.split(",") if ids else ())
+
+
 def selection(event, base, head):
     return selection_details(event, base, head)[:2]
 
@@ -321,6 +374,7 @@ def gate(needs, suite, job):
             "journey",
             "journey-library",
             "creator-contract-replay",
+            "shared-motion-runtime",
         }
         if suite in ("api", "journey")
         else {"changes", job}
@@ -341,9 +395,9 @@ def gate(needs, suite, job):
         if shards not in counts or (ui == "false" and shards != "1"):
             raise ValueError("Missing or inconsistent iOS UI shard count")
     if suite == "lint":
-        if any(outputs.get(key) not in ("true", "false") for key in ("web", "api")):
+        if outputs.get("api") not in ("true", "false"):
             raise ValueError("Missing or invalid lint selection")
-        selected = str(any(outputs[key] == "true" for key in ("web", "api"))).lower()
+        selected = outputs["api"]
     result = needs[job].get("result")
     if selected not in ("true", "false"):
         raise ValueError("Missing or invalid suite selection")
@@ -382,6 +436,16 @@ def gate(needs, suite, job):
     expected = "success" if selected == "true" else "skipped"
     if result != expected:
         raise ValueError(f"{suite}: expected {expected}, got {result}")
+    if suite == "api":
+        shared_selected = outputs.get("shared_motion")
+        shared_result = needs["shared-motion-runtime"].get("result")
+        if shared_selected not in ("true", "false"):
+            raise ValueError("Missing or invalid shared motion selection")
+        shared_expected = "success" if shared_selected == "true" else "skipped"
+        if shared_result != shared_expected:
+            raise ValueError(
+                f"shared_motion: expected {shared_expected}, got {shared_result}"
+            )
     return (
         f"{suite}: passed"
         if selected == "true"
@@ -404,7 +468,8 @@ def main():
     journey, coverage, journey_ids = journey_details(
         event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
     )
-    output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\njourney={str(journey).lower()}\njourney_coverage={coverage}\njourney_ids={journey_ids}\n"
+    native = journey_native_for_ids(journey_ids.split(",") if journey_ids else ())
+    output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\njourney={str(journey).lower()}\njourney_coverage={coverage}\njourney_ids={journey_ids}\njourney_needs_native={str(native).lower()}\n"
     print(reason + "\n" + output)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:

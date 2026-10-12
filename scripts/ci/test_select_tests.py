@@ -15,26 +15,48 @@ SCRIPT = Path(__file__).resolve().with_name("select-tests.py")
 spec = importlib.util.spec_from_file_location("select_tests", SCRIPT)
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
-ALL = {"web", "api", "ios", "ios_ui"}
+ALL = {"api", "ios", "ios_ui", "shared_motion"}
 
 
 class ClassificationTests(unittest.TestCase):
+    def test_manifest_native_routing_is_conservative_and_mixed_safe(self):
+        self.assertFalse(ci.journey_native_for_ids(["kri-577-reliability-gates"]))
+        self.assertFalse(ci.journey_native_for_ids(["kri-384-library-ingest"]))
+        self.assertFalse(ci.journey_native_for_ids(["kri-384-library-ingest", "kri-577-reliability-gates"]))
+        self.assertTrue(
+            ci.journey_native_for_ids(["kri-577-reliability-gates", "kri-524-creation"])
+        )
+        with self.assertRaises(ValueError):
+            with patch.object(ci, "JOURNEYS", [{"id": "unknown"}]):
+                ci.journey_native_for_ids(["unknown"])
+        with self.assertRaises(ValueError):
+            with patch.object(
+                ci, "JOURNEYS", [{"id": "python-only", "needs_native": "false"}]
+            ):
+                ci.journey_native_for_ids(["python-only"])
+
     def test_boundaries(self):
         examples = {
-            "src/apps/web/src/app/page.tsx": {"web"},
-            "src/apps/web/package.json": {"web"},
-            "scripts/ci/web-tests.mjs": {"web"},
+            "src/apps/web/src/app/page.tsx": set(),
+            "src/apps/web/package.json": {"shared_motion"},
+            "scripts/ci/web-tests.mjs": set(),
             "src/apps/ios/project.yml": {"ios", "ios_ui"},
             "scripts/ios/verify.sh": {"ios", "ios_ui"},
             ".github/workflows/ios.yml": {"ios", "ios_ui"},
             "src/apps/api/app/pipeline/reframe.py": {"api"},
+            "src/apps/api/app/pipeline/motion_scene.py": {"api", "shared_motion"},
+            "src/packages/motion-runtime/creator-blocks.catalog.json": ALL,
+            "src/apps/web/src/__tests__/lib/motion-runtime.test.ts": {"shared_motion"},
+            "src/apps/web/package-lock.json": {"shared_motion"},
             "src/apps/api/tests/test_routes.py": {"api"},
             "src/apps/api/prompts/writer.md": {"api"},
-            "src/apps/api/app/routes/me.py": {"web", "api", "ios"},
-            "src/apps/api/app/schemas/jobs.py": {"web", "api", "ios"},
-            "src/apps/api/app/kria/contracts.py": {"web", "api", "ios"},
-            "src/apps/api/app/config.py": {"web", "api", "ios"},
-            "src/apps/api/pyproject.toml": {"web", "api", "ios"},
+            "src/apps/api/app/routes/me.py": {"api", "ios"},
+            "src/apps/api/app/schemas/jobs.py": {"api", "ios"},
+            "src/apps/api/app/kria/contracts.py": {"api", "ios"},
+            "src/apps/api/app/kria/duplicate_uploads.py": {"api"},
+            "src/apps/api/app/kria/planner.py": {"api", "ios"},
+            "src/apps/api/app/config.py": {"api", "ios"},
+            "src/apps/api/pyproject.toml": {"api", "ios"},
             "src/packages/motion-runtime/motion-limits.json": ALL,
             ".github/workflows/ci.yml": ALL,
             ".github/workflows/ci-changes.yml": ALL,
@@ -71,7 +93,7 @@ class ClassificationTests(unittest.TestCase):
             "src/apps/web/public/fonts/Inter-Regular.ttf",
             "src/apps/web/public/plan/type-posters/montage.mp4",
         ):
-            self.assertEqual(ci.affected(path), {"web", "ios", "ios_ui"})
+            self.assertEqual(ci.affected(path), {"ios", "ios_ui"})
 
     def test_swift_server_mirrors_also_run_api_parity_tests(self):
         for path in (
@@ -140,6 +162,7 @@ class GateTests(unittest.TestCase):
                     "result": "success",
                     "outputs": {
                         "journey": selected,
+                        "shared_motion": "false",
                         "journey_ids": "kri-524-creation" if selected == "true" else "",
                         "journey_coverage": "covered"
                         if selected == "true"
@@ -151,6 +174,7 @@ class GateTests(unittest.TestCase):
                 # test-api has other dependencies; they must not weaken this gate.
                 "test-api-suite": {"result": "success"},
                 "creator-contract-replay": {"result": "success"},
+                "shared-motion-runtime": {"result": "skipped"},
             }
             ci.gate(needs, "journey", "journey")
         for selected, result in (
@@ -166,11 +190,15 @@ class GateTests(unittest.TestCase):
                 ci.gate(needs, "journey", "journey")
         ci.gate(
             {
-                "changes": {"result": "success", "outputs": {"api": "true"}},
+                "changes": {
+                    "result": "success",
+                    "outputs": {"api": "true", "shared_motion": "false"},
+                },
                 "test-api-suite": {"result": "success"},
                 "journey": {"result": "skipped"},
                 "journey-library": {"result": "skipped"},
                 "creator-contract-replay": {"result": "success"},
+                "shared-motion-runtime": {"result": "skipped"},
             },
             "api",
             "test-api-suite",
@@ -191,6 +219,7 @@ class GateTests(unittest.TestCase):
                     "outputs": {
                         "journey": "true",
                         "journey_ids": ids,
+                        "shared_motion": "false",
                         "journey_coverage": coverage,
                     },
                 },
@@ -198,13 +227,17 @@ class GateTests(unittest.TestCase):
                 "creator-contract-replay": {"result": "success"},
                 "journey": {"result": native},
                 "journey-library": {"result": library},
+                "shared-motion-runtime": {"result": "skipped"},
             }
 
         library_id = "kri-384-library-ingest"
         mixed = "kri-524-creation," + library_id
+        python_mixed = "kri-577-reliability-gates," + library_id
         for ids, native, library in (
             (library_id, "skipped", "success"),
             (mixed, "success", "success"),
+            (python_mixed, "success", "success"),
+            ("kri-577-reliability-gates", "success", "skipped"),
             ("kri-524-creation", "success", "skipped"),
         ):
             with self.subTest(ids=ids):
@@ -216,6 +249,8 @@ class GateTests(unittest.TestCase):
             (library_id, "skipped", "cancelled"),
             (library_id, "skipped", None),
             (mixed, "skipped", "success"),
+            (python_mixed, "skipped", "success"),
+            ("kri-577-reliability-gates", "skipped", "skipped"),
             (mixed, "success", "skipped"),
             ("kri-524-creation", "success", "success"),
         ):
@@ -369,7 +404,7 @@ class GateTests(unittest.TestCase):
             ("true", "true"),
             ("false", "false"),
         ):
-            result = "skipped" if web == api == "false" else "success"
+            result = "skipped" if api == "false" else "success"
             needs = {
                 "changes": {"result": "success", "outputs": {"web": web, "api": api}},
                 "lint-suites": {"result": result},
@@ -539,16 +574,16 @@ class GitDiffTests(unittest.TestCase):
     def test_rename_checks_both_sides(self):
         Path("docs").mkdir()
         self.git("mv", "src/apps/web/old.ts", "docs/old.ts")
-        self.assertEqual(self.selected(), {"web"})
+        self.assertEqual(self.selected(), set())
 
     def test_deletion_and_mixed_changes(self):
         Path("src/apps/web/old.ts").unlink()
         self.write("scripts/ios/new.sh", "true")
-        self.assertEqual(self.selected(), {"web", "ios", "ios_ui"})
+        self.assertEqual(self.selected(), {"ios", "ios_ui"})
 
     def test_names_with_newlines_are_not_split(self):
         self.write("src/apps/web/new\nfile.ts", "test")
-        self.assertEqual(self.selected(), {"web"})
+        self.assertEqual(self.selected(), set())
 
     def test_merge_base_excludes_unrelated_base_changes(self):
         self.git("checkout", "-qb", "pr")
@@ -557,7 +592,7 @@ class GitDiffTests(unittest.TestCase):
         self.git("checkout", "-q", self.base)
         self.write("src/apps/api/app/pipeline/new.py", "test")
         moved_base = self.commit()
-        self.assertEqual(ci.selection("pull_request", moved_base, head)[0], {"web"})
+        self.assertEqual(ci.selection("pull_request", moved_base, head)[0], set())
 
     def test_empty_diff_runs_all(self):
         self.assertEqual(ci.selection("pull_request", self.base, self.base)[0], ALL)
@@ -704,6 +739,23 @@ class GitDiffTests(unittest.TestCase):
             (True, "covered", "kri-524-creation,kri-557-thinking"),
         )
 
+    def test_journey_native_runner_is_linux_for_python_only_and_mac_for_mixed(self):
+        self.write("src/apps/api/app/kria/duplicate_uploads.py", "changed")
+        self.write("src/apps/api/app/agents/narrated_clip_alignment.py", "changed")
+        head = self.commit()
+        self.assertEqual(
+            ci.journey_details("pull_request", self.base, head)[2],
+            "kri-577-reliability-gates,kri-590-voiceover-cues",
+        )
+        self.assertFalse(ci.journey_needs_native("pull_request", self.base, head))
+        self.base = head
+        self.write("src/apps/api/app/pipeline/guided_story.py", "changed")
+        self.write(
+            "src/apps/api/app/agents/narrated_clip_alignment.py", "changed again"
+        )
+        head = self.commit()
+        self.assertTrue(ci.journey_needs_native("pull_request", self.base, head))
+
     def test_journey_diff_errors_and_empty_diff_are_coverage_gaps(self):
         self.assertEqual(
             ci.journey_details("pull_request", self.base, self.base), (True, "gap", "")
@@ -737,8 +789,9 @@ class GitDiffTests(unittest.TestCase):
         )
         self.assertEqual(
             output.read_text(),
-            "web=false\napi=false\nios=true\nios_ui=true\nios_ui_groups=full\n"
-            "ios_ui_shards=1\njourney=false\njourney_coverage=not_applicable\njourney_ids=\n",
+            "api=false\nios=true\nios_ui=true\nshared_motion=false\nios_ui_groups=full\n"
+            "ios_ui_shards=1\njourney=false\njourney_coverage=not_applicable\n"
+            "journey_ids=\njourney_needs_native=false\n",
         )
         self.assertIn("ios: run", summary.read_text())
         self.assertIn("iOS UI groups: full (1 native leg)", summary.read_text())
