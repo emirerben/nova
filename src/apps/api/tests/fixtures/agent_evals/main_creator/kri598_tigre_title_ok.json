@@ -1,0 +1,779 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-11-v55",
+  "input": {
+    "user_message": "Evet baslik suresi onemli degil",
+    "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] İngilizce altyazı eklenecek (seslendirme Türkçe kalacak)\n- [r2] [text/title] \"Tigre’de bir gün\"\n- [r3] [order/global] Kurgu nehir klibiyle başlayacak facts={\"first_clip\":\"Nehir klibi\"}\n- [r4] [timing/clip:CFBEC1AE-2523-49F2-B675-04576EAED824.mp4] Seslendirmede 'Deniz' kelimesi duyulduğunda bu klip gösterilecek\n- [r5] [timing/clip:asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff] Seslendirmede 'kırkayak' kelimesi duyulduğunda bu küvet fotoğrafı belirecek\n- [r6] [timing/clip:80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4] Seslendirmede 'mutfak' kelimesi duyulduğunda mutfak klibi gösterilecek\n- [r7] [style/global] Başlık dışında ekranda başka yazı kullanılmayacak\nLatest message: Evet baslik suresi onemli degil",
+    "creator_context": "{'summary': \"You are a vibrant storyteller capturing the dynamic energy of travel, from electric stadium crowds to the quiet charm of local exploration. Your content thrives on sharing spontaneous, authentic moments and making your audience feel like they're experiencing every adventure alongside you.\", 'tone': 'Energetic, curious, and immersive', 'audience': 'Travel enthusiasts and friends looking for authentic, unscripted experiences, eager to discover new places and feel the energy of global events through your lens.', 'content_pillars': ['Global Event Vibes', 'Spontaneous Local Encounters', 'Deep Dive City Exploration', 'Authentic Travel Moments'], 'style': {'knobs': {'position': None, 'text_color': None, 'cycle_fonts': None, 'font_family': None, 'text_anchor': None, 'stroke_width': None, 'text_size_px': 55, 'highlight_color': None, 'position_x_frac': None, 'position_y_frac': None}, 'status': 'ready', 'rationale': \"The 'travel_editorial' style perfectly captures the creator's energetic, immersive storytelling and global event focus, leaning into a cinematic vlog aesthetic. A slightly larger text size (55px) will enhance visibility across diverse travel footage, from stadium crowds to quiet local scenes, without being too obtrusive.\", 'derived_from': {'derived_at': '2026-06-23T11:34:14.306188+00:00', 'persona_id': 'b42dddc6-621c-461d-b847-168c17f4b053', 'style_version': '1'}, 'style_set_id': 'travel_editorial', 'style_version': '1', 'footage_type_bias': ['broll', 'action', 'ambience'], 'instruction_level': 'light', 'preferred_edit_format_mix': {'montage': 0.6, 'day_vlog': 0.4}}}",
+    "creator_direction": "",
+    "item_context": "{'idea': 'Untitled video', 'theme': '', 'creator_notes': '', 'filming_guide': [], 'current_edit_format': 'narrated_planned', 'current_audio_mode': 'voiceover', 'has_recorded_voiceover': True}",
+    "media_context": [
+      {
+        "kind": "video",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-10-10T17:49:14Z",
+            "provenance": "exif"
+          }
+        ],
+        "media_id": "analysis-proxy-ios-8F1D55F0-5B98-49E7-962A-4D87727D0686.mp4",
+        "duration_s": 5.5,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "speech": {
+            "segments": [
+              {
+                "e": 5.5,
+                "s": 2.6,
+                "text": "Dün akşam ben burada kaldım."
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Dün akşam ben burada kaldım."
+          },
+          "setting": "wooden attic room",
+          "subject": "wooden attic room",
+          "summary": "The camera descends a wooden staircase into a cozy attic room furnished with a bed and a fan, showcasing the rustic wooden interior.",
+          "activity": "descending stairs, revealing room",
+          "audio_type": "dialogue",
+          "content_type": "ambience",
+          "notable_moments": [
+            {
+              "end_s": 1.5,
+              "start_s": 0.0,
+              "description": "descending wooden stairs"
+            },
+            {
+              "end_s": 5.0,
+              "start_s": 2.0,
+              "description": "revealing attic bedroom"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "video",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-10-10T17:49:53Z",
+            "provenance": "exif"
+          }
+        ],
+        "media_id": "analysis-proxy-ios-F4DBD4B3-0C0E-42DF-A249-70F332C3F22A.mp4",
+        "duration_s": 10.0,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "people": {
+            "note": "one person, only legs and feet visible",
+            "count": 1,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "segments": [
+              {
+                "e": 1.7,
+                "s": 0.0,
+                "text": "Şimdi iskelemize doğru gidiyoruz"
+              },
+              {
+                "e": 5.4,
+                "s": 3.6,
+                "text": "Bora ayaklarında sadece çorap var"
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "İskeleye doğru gidiyoruz. O ayaklarımda sadece çorap var."
+          },
+          "setting": "outdoor by a river or lake, on a wooden pier",
+          "subject": "person walking on a wooden pier",
+          "summary": "The video shows a person walking on a wooden pier towards a body of water, surrounded by trees and lush greenery on a sunny day. The person points out they are only wearing socks.",
+          "activity": "walking on a wooden pier",
+          "audio_type": "dialogue",
+          "content_type": "broll"
+        }
+      },
+      {
+        "kind": "video",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-10-10T17:49:06Z",
+            "provenance": "exif"
+          }
+        ],
+        "media_id": "analysis-proxy-ios-80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4",
+        "duration_s": 4.5,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "speech": {
+            "segments": [
+              {
+                "e": 1.1,
+                "s": 0.0,
+                "text": "Evet arkadaşlar,"
+              },
+              {
+                "e": 3.4,
+                "s": 1.9,
+                "text": "Tigre'de ev turumuza hoş geldiniz."
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Evet arkadaşlar, Tigre'de ev turumuza hoş geldiniz."
+          },
+          "setting": "rustic kitchen with wooden interior",
+          "subject": "kitchen interior",
+          "summary": "The video shows a quick tour of a kitchen in a rustic-style house, featuring wooden walls and exposed pipes, with a view of lush greenery outside a window.",
+          "activity": "showing kitchen interior",
+          "audio_type": "dialogue",
+          "content_type": "broll",
+          "notable_moments": [
+            {
+              "end_s": 1.5,
+              "start_s": 0.0,
+              "description": "panning across kitchen counter"
+            },
+            {
+              "end_s": 5.0,
+              "start_s": 4.0,
+              "description": "view of green foliage outside window"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "video",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-10-10T17:49:34Z",
+            "provenance": "exif"
+          }
+        ],
+        "media_id": "analysis-proxy-ios-CFBEC1AE-2523-49F2-B675-04576EAED824.mp4",
+        "duration_s": 6.0,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "people": {
+            "note": "a man with a mustache",
+            "count": 1,
+            "speaks_to_camera": true
+          },
+          "speech": {
+            "segments": [
+              {
+                "e": 1.2,
+                "s": 0.0,
+                "text": "Bu da Deniz,"
+              },
+              {
+                "e": 5.7,
+                "s": 3.3,
+                "text": "kanalımızın kurucu ekibinden."
+              }
+            ],
+            "to_camera": true,
+            "has_speech": true,
+            "transcript": "Bu da Deniz. Merhaba. Kanalımızın kurucu ekibinden."
+          },
+          "setting": "rustic wooden room interior",
+          "subject": "man with laptop",
+          "summary": "A man named Deniz is introduced to the camera while sitting at a wooden table with a laptop, smiling and greeting the viewers.",
+          "activity": "man sitting at table, being introduced, smiling",
+          "audio_type": "dialogue",
+          "content_type": "talking_head",
+          "notable_moments": [
+            {
+              "end_s": 2.5,
+              "start_s": 1.05,
+              "description": "man smiling and greeting"
+            },
+            {
+              "end_s": 5.0,
+              "start_s": 3.44,
+              "description": "man picking up object"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "video",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-10-10T20:11:17Z",
+            "provenance": "exif"
+          }
+        ],
+        "media_id": "analysis-proxy-ios-A9859821-B374-42D6-9F07-F9C4734506C7.mp4",
+        "duration_s": 10.0,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "speech": {
+            "segments": [
+              {
+                "e": 3.7,
+                "s": 0.0,
+                "text": "Niye böyle korkalım bilmiyorum Kırk ayak gitmiş galiba"
+              },
+              {
+                "e": 6.2,
+                "s": 4.7,
+                "text": "Burada bir kırk ayak vardı"
+              },
+              {
+                "e": 9.0,
+                "s": 7.5,
+                "text": "Kırk ayak bir yerlere gitmiş"
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "böyle korkarım bilmiyorum. 40 ayak gitmiş galiba. Burada bir 40 ayak vardı. 40 ayak bir yerlere gitmiş."
+          },
+          "setting": "rustic wooden bathroom interior",
+          "subject": "bathroom interior",
+          "summary": "The speaker is in a rustic bathroom with wooden walls, looking for a centipede that was previously there but has now disappeared. The camera pans across the room, showing a window, a bathtub, and a si",
+          "activity": "searching for a centipede",
+          "audio_type": "dialogue",
+          "content_type": "ambience",
+          "notable_moments": [
+            {
+              "end_s": 2.4,
+              "start_s": 0.0,
+              "description": "camera pans to window revealing outdoor greenery"
+            },
+            {
+              "end_s": 4.5,
+              "start_s": 2.4,
+              "description": "camera pans down to shower area"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "video",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-10-10T20:06:42Z",
+            "provenance": "exif"
+          }
+        ],
+        "media_id": "analysis-proxy-ios-3F6FEFE1-E931-4D3F-8DEC-1EC7300D9E0F.mp4",
+        "duration_s": 6.0,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "speech": {
+            "segments": [
+              {
+                "e": 2.1,
+                "s": 0.0,
+                "text": "gördüğünüz üzere"
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Gördüğünüz üzere"
+          },
+          "setting": "wooden cabin bedroom",
+          "subject": "wooden cabin room interior",
+          "summary": "The video shows a pan of a cozy, rustic room with wooden walls and ceiling, featuring a bed, a window, a bedside table with a lamp, and an air conditioning unit.",
+          "activity": "panning across a bedroom interior",
+          "audio_type": "dialogue",
+          "content_type": "ambience",
+          "notable_moments": [
+            {
+              "end_s": 2.0,
+              "start_s": 0.0,
+              "description": "panning across bed and window"
+            },
+            {
+              "end_s": 5.0,
+              "start_s": 3.0,
+              "description": "panning to reveal air conditioner"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "video",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-10-10T17:50:03Z",
+            "provenance": "exif"
+          }
+        ],
+        "media_id": "analysis-proxy-ios-ECCB47EC-0C2C-4F64-917F-85FB8039C9D7.mp4",
+        "duration_s": 12.0,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "setting": "riverbank on a sunny day",
+          "subject": "river with distant houses",
+          "summary": "The clip shows a wide, calm muddy river with some waves, viewed from a wooden dock. On the opposite bank, there are green trees and a few houses on stilts.",
+          "activity": "observing a river",
+          "audio_type": "ambient",
+          "content_type": "ambience",
+          "notable_moments": [
+            {
+              "end_s": 4.0,
+              "start_s": 0.0,
+              "description": "observing river flow from dock"
+            },
+            {
+              "end_s": 9.0,
+              "start_s": 5.0,
+              "description": "watching waves on river"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "image",
+        "filename": "496AA77E-8BDB-4650-8693-1FA26F8BA9C6-N1_08_visual.jpeg",
+        "media_id": "asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff",
+        "duration_s": null,
+        "creator_context": null,
+        "analysis_only_not_copy": {
+          "subject": "bathtub with murky water",
+          "summary": "A top-down photo shows a bathtub filled with brownish, murky water containing small dark particles, with a wooden slat ceiling reflected or visible above it."
+        }
+      }
+    ],
+    "conversation": [
+      {
+        "role": "assistant",
+        "content": "What are we making? Pick a format and we’ll shape it together."
+      },
+      {
+        "role": "user",
+        "content": "Seslendirmem Türkçe ama altyazılar İngilizce olsun. Başlık: “Tigre’de bir gün”. Nehir klibiyle başla. “Deniz” dediğimde Deniz’i laptop başında göster. “kırkayak” dediğimde küvet fotoğrafını göster. “mutfak” dediğimde mutfağı göster. Başlık dışında başka yazı olmasın."
+      },
+      {
+        "role": "assistant",
+        "content": "Bu düzenleme başlığını tam 3 saniye tutamıyor. Daha sade bir sürüm yapayım mı?"
+      },
+      {
+        "role": "user",
+        "content": "Evet baslik suresi onemli degil"
+      }
+    ],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "07691b68-07c4-4f1c-91b4-1cde15949547",
+      "edit_format": "narrated_planned",
+      "render_program": "native",
+      "has_voiceover": true,
+      "narration": {
+        "gcs_path": "users/creator/creation-threads/thread/voiceover.m4a",
+        "generation": "1791740737051693",
+        "duration_s": 22.151837
+      },
+      "current_edit": null,
+      "media": [
+        {
+          "media_id": "analysis-proxy-ios-8F1D55F0-5B98-49E7-962A-4D87727D0686.mp4",
+          "kind": "video",
+          "duration_s": 5.5,
+          "label": null
+        },
+        {
+          "media_id": "analysis-proxy-ios-F4DBD4B3-0C0E-42DF-A249-70F332C3F22A.mp4",
+          "kind": "video",
+          "duration_s": 10.0,
+          "label": null
+        },
+        {
+          "media_id": "analysis-proxy-ios-80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4",
+          "kind": "video",
+          "duration_s": 4.5,
+          "label": null
+        },
+        {
+          "media_id": "analysis-proxy-ios-CFBEC1AE-2523-49F2-B675-04576EAED824.mp4",
+          "kind": "video",
+          "duration_s": 6.0,
+          "label": null
+        },
+        {
+          "media_id": "analysis-proxy-ios-A9859821-B374-42D6-9F07-F9C4734506C7.mp4",
+          "kind": "video",
+          "duration_s": 10.0,
+          "label": null
+        },
+        {
+          "media_id": "analysis-proxy-ios-3F6FEFE1-E931-4D3F-8DEC-1EC7300D9E0F.mp4",
+          "kind": "video",
+          "duration_s": 6.0,
+          "label": null
+        },
+        {
+          "media_id": "analysis-proxy-ios-ECCB47EC-0C2C-4F64-917F-85FB8039C9D7.mp4",
+          "kind": "video",
+          "duration_s": 12.0,
+          "label": null
+        },
+        {
+          "media_id": "asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff",
+          "kind": "image",
+          "duration_s": null,
+          "label": null
+        }
+      ],
+      "catalog": [],
+      "capabilities": {
+        "set_item_intent": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_story": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "native_render": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "draft_guided_proposal": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "dispatch_render": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "select_ready_variant": {
+          "available": false,
+          "reason_code": "no_ready_variant",
+          "reason": "a ready variant is required before selection"
+        },
+        "caption_style": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "automatic_cut": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_voiceover": {
+          "available": false,
+          "reason_code": "native_voiceover_only",
+          "reason": "This chat cannot run guided_voiceover_v1: leave execution_contract unset. The voiceover edit uses the project's own clips (\"all\" = every clip); a Visuals photo or video shows only on a spoken word, via reaction_beats."
+        },
+        "main_creator_agent": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "execution": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "review": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "auto_iteration": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_conversation": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_direction_confirmation": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_auto_design": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "transitions": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "wide_looks cannot render on the iPhone yet"
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "media_overlays cannot render on the iPhone yet"
+        },
+        "visual_blocks": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "motion_scenes": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "motion_scenes cannot render on the iPhone yet"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "sound_effects cannot render on the iPhone yet"
+        },
+        "phone_source_audio": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_still_images": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_visual_videos": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated_ready": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated_planned": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:montage": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:talking_head": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "talking_head does not render on this iPhone yet"
+        },
+        "phone_format:day_vlog": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:single_hero": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:subtitled": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "talking-to-camera rendering on this iPhone requires exactly one clip and no recorded voiceover"
+        },
+        "phone_format:narrated": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:narrated_planned": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:narrated_ready": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:slides": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "slides does not render on this iPhone yet"
+        },
+        "reaction_beats": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:montage": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:talking_head": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:day_vlog": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "day_vlog uses the guided renderer and cannot carry a voiceover"
+        },
+        "edit_format:single_hero": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "single_hero uses the guided renderer and cannot carry a voiceover"
+        },
+        "edit_format:subtitled": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:narrated": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:narrated_planned": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:narrated_ready": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:slides": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "slides is disabled or has no production renderer for this media snapshot"
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "4c6ef264a19b244dee08bd24a12ddbd52b632339ea0688b529fb40502a7d4d1c",
+      "manifest_hash": "3ce57d98726829a30ae5cbffe0467e65023861c14b701b55014aad0b0123888c"
+    },
+    "creative_copy_state": [],
+    "brief_enabled": true,
+    "reply_language": "tr"
+  },
+  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"native\",\n      \"edit_format\": \"narrated_planned\",\n      \"audio_strategy\": \"voiceover\",\n      \"render_program\": \"native\",\n      \"selected_media_ids\": [\n        \"analysis-proxy-ios-ECCB47EC-0C2C-4F64-917F-85FB8039C9D7.mp4\",\n        \"analysis-proxy-ios-8F1D55F0-5B98-49E7-962A-4D87727D0686.mp4\",\n        \"analysis-proxy-ios-F4DBD4B3-0C0E-42DF-A249-70F332C3F22A.mp4\",\n        \"analysis-proxy-ios-80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4\",\n        \"analysis-proxy-ios-CFBEC1AE-2523-49F2-B675-04576EAED824.mp4\",\n        \"analysis-proxy-ios-A9859821-B374-42D6-9F07-F9C4734506C7.mp4\",\n        \"analysis-proxy-ios-3F6FEFE1-E931-4D3F-8DEC-1EC7300D9E0F.mp4\"\n      ],\n      \"caption_style\": \"editorial\",\n      \"opening_title\": \"Tigre’de bir gün\",\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 23,\n      \"clip_intents\": [\n        {\n          \"intent_id\": \"start-river\",\n          \"op\": \"order\",\n          \"position\": \"first\",\n          \"attribute\": \"nehir klibi\"\n        },\n        {\n          \"intent_id\": \"cue-deniz\",\n          \"op\": \"include\",\n          \"attribute\": \"Deniz laptop başında\"\n        },\n        {\n          \"intent_id\": \"cue-mutfak\",\n          \"op\": \"include\",\n          \"attribute\": \"mutfak\"\n        }\n      ],\n      \"reaction_beats\": [\n        {\n          \"beat_id\": \"kirkayak-bathtub\",\n          \"trigger\": \"kırkayak\",\n          \"occurrence\": \"first\",\n          \"visual_id\": \"asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff\",\n          \"visual_role\": \"photo\"\n        }\n      ],\n      \"story_structure\": [\n        \"Nehirle açılış\",\n        \"Mutfak ve çatı katı\",\n        \"Deniz laptop başında\",\n        \"Banyo ve kırkayak\"\n      ],\n      \"rationale\": \"Seslendirme yaklaşık 23 saniye; video onun uzunluğunda, her klip anlatıldığı yerde.\"\n    },\n    \"summary\": \"Başlığın süresini sabitlemeden “Tigre’de bir gün” olarak ekliyorum. Nehirle açılıp yedi klibin hepsi seslendirmeni takip edecek; “mutfak” ve “Deniz” dediğinde o klipler, “kırkayak” dediğinde küvet fotoğrafı gelecek.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": \"Başlık: “Tigre’de bir gün”.\"\n    }\n  },\n  \"brief_updates\": []\n}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "native",
+        "edit_format": "narrated_planned",
+        "archetype": null,
+        "hero_media_id": null,
+        "audio_strategy": "voiceover",
+        "execution_contract": null,
+        "media_scope": null,
+        "story_structure": [
+          "Nehirle açılış",
+          "Mutfak ve çatı katı",
+          "Deniz laptop başında",
+          "Banyo ve kırkayak"
+        ],
+        "caption_style": "editorial",
+        "intro_hook": null,
+        "opening_title": "Tigre’de bir gün",
+        "font_family": null,
+        "text_color": null,
+        "clip_intents": [
+          {
+            "intent_id": "start-river",
+            "op": "order",
+            "attribute": "nehir klibi",
+            "creator_text": null,
+            "caption_attribute": null,
+            "position": "first"
+          },
+          {
+            "intent_id": "cue-deniz",
+            "op": "include",
+            "attribute": "Deniz laptop başında",
+            "creator_text": null,
+            "caption_attribute": null,
+            "position": null
+          },
+          {
+            "intent_id": "cue-mutfak",
+            "op": "include",
+            "attribute": "mutfak",
+            "creator_text": null,
+            "caption_attribute": null,
+            "position": null
+          }
+        ],
+        "reaction_beats": [
+          {
+            "beat_id": "kirkayak-bathtub",
+            "trigger": "kırkayak",
+            "after": null,
+            "occurrence": "first",
+            "visual_id": "asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff",
+            "visual_role": "photo",
+            "sound": null,
+            "hold_s": null
+          }
+        ],
+        "image_layout": null,
+        "pacing": "balanced",
+        "target_duration_s": 23,
+        "render_program": "native",
+        "selected_media_ids": [
+          "analysis-proxy-ios-ECCB47EC-0C2C-4F64-917F-85FB8039C9D7.mp4",
+          "analysis-proxy-ios-8F1D55F0-5B98-49E7-962A-4D87727D0686.mp4",
+          "analysis-proxy-ios-F4DBD4B3-0C0E-42DF-A249-70F332C3F22A.mp4",
+          "analysis-proxy-ios-80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4",
+          "analysis-proxy-ios-CFBEC1AE-2523-49F2-B675-04576EAED824.mp4",
+          "analysis-proxy-ios-A9859821-B374-42D6-9F07-F9C4734506C7.mp4",
+          "analysis-proxy-ios-3F6FEFE1-E931-4D3F-8DEC-1EC7300D9E0F.mp4"
+        ],
+        "optional_treatments": [],
+        "licensed_sfx": null,
+        "mixed_media_timing": null,
+        "montage_audio": null,
+        "video_reuse_policy": "once",
+        "rationale": "Seslendirme yaklaşık 23 saniye; video onun uzunluğunda, her klip anlatıldığı yerde."
+      },
+      "summary": "Başlığın süresini sabitlemeden “Tigre’de bir gün” olarak ekliyorum. Nehirle açılıp yedi klibin hepsi seslendirmeni takip edecek; “mutfak” ve “Deniz” dediğinde o klipler, “kırkayak” dediğinde küvet fotoğrafı gelecek.",
+      "render_intent_evidence": {
+        "opening_title": "Başlık: “Tigre’de bir gün”.",
+        "font_family": null,
+        "text_color": null
+      }
+    }
+  },
+  "meta": {
+    "source": "Prod thread f77a5c16 (KRI-598, 2026-10-11): the recorded Main Creator input of this turn, with the manifest the runtime-v2 planner now resolves (`guided_voiceover` unavailable, reason native_voiceover_only) and the music/sfx catalog left out. raw_text is hand-authored to the v55 prompt; the prod output was redacted.",
+    "case": "KRI-598 turn 2 ('Evet baslik suresi onemli degil' after the title-hold question; prod answered with every cue as an unpositioned `order` in typed order and only the four cue clips, and the render failed). The brief's cue asks still hold: own-clip cues are `include`, the river is the one `order` (first), the photo beat stays, every own clip stays selected, no guided contract.",
+    "voiceover_reaction_beats": {
+      "kırkayak": "asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff"
+    },
+    "voiceover_cues": {
+      "min_includes": 2
+    }
+  }
+}

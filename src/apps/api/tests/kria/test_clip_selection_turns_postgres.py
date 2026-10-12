@@ -196,3 +196,62 @@ async def test_capability_flag_tracks_the_setting(monkeypatch) -> None:
     assert (await capabilities(user))["clip_selection_questions"] is True
     monkeypatch.setattr(settings, "kria_clip_selection_questions_enabled", False)
     assert (await capabilities(user))["clip_selection_questions"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("selection", "echo"),
+    [
+        (_answer(["m2"]), "Img_7833: clip 1"),
+        ({"question_id": QUESTION_ID, "skipped": True}, "Skip, decide for me"),
+    ],
+    ids=["answered", "skipped"],
+)
+async def test_a_clip_answer_is_never_read_as_a_new_request(selection, echo) -> None:
+    """KRI-614: prod thread 0ef4fdde re-read "Img_7833: clip 1" as a NEW include intent and
+    asked about it. The tapped clips are the answer; models read a neutral sentence instead
+    of the echo, on this turn and in every later turn's full creator request."""
+    from app.kria.planner import _load_raw_creator_request  # noqa: PLC0415
+    from app.services.song_order import (  # noqa: PLC0415
+        CLIP_ANSWER_MESSAGE,
+        CLIP_SKIP_MESSAGE,
+    )
+    from app.tasks.kria_runtime import _claim  # noqa: PLC0415
+
+    user_id, thread_id, _ = _seed_runtime_project()
+    typed = "first ımg_7382 then ımg_7820 and at the end Img_7833"
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id, with_for_update=True)
+        _append_sync_event(
+            db, thread, role="user", event_type="user_message", content=typed, payload={}
+        )
+        db.commit()
+    _ask(thread_id)
+    try:
+        accepted = await _submit(user_id, thread_id, selection, message=echo)
+        claimed = _claim(accepted.turn_id, "test-owner")
+        assert isinstance(claimed, tuple)
+        neutral = CLIP_SKIP_MESSAGE if selection.get("skipped") else CLIP_ANSWER_MESSAGE
+        assert claimed[1] == neutral
+        async with AsyncSessionLocal() as db:
+            request = await _load_raw_creator_request(
+                db, thread_id=thread_id, user_message=claimed[1]
+            )
+        assert request is not None
+        assert echo not in request
+        assert request.splitlines() == [typed, neutral]
+        # The transcript still shows what the creator tapped.
+        with sync_session() as db:
+            shown = (
+                db.execute(
+                    select(CreationThreadEvent.content).where(
+                        CreationThreadEvent.thread_id == thread_id,
+                        CreationThreadEvent.role == "user",
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert echo in shown
+    finally:
+        await async_engine.dispose()

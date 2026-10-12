@@ -55,7 +55,7 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
-from app.pipeline.best_parts import BestPartsResult, select_best_parts
+from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
@@ -85,6 +85,7 @@ from app.services.clip_facts import (
 )
 from app.services.clip_order_sequence import apply_sequence, sequence_rows
 from app.services.length_policy import natural_length_owner
+from app.services.spoken_quotes import is_outro_hallucination
 
 FPS = 30
 # The reading-time rule: 0.8s to notice the text plus 60ms per character,
@@ -426,6 +427,10 @@ class UnifiedMontagePlan:
     # that clip last with its own audio kept ({media_id, source_start_s, source_end_s}).
     # Empty when no line was held, so every earlier record is unchanged.
     closing_speech: dict[str, Any] = field(default_factory=dict)
+    # KRI-597: the line the creator quoted to end on, as the approved length plan found
+    # it ({quote, status, media_id}); "found" lines also fill ``closing_speech`` (with
+    # ``quote``) when the closing cut holds them. Empty without such an ask.
+    closing_quote: dict[str, Any] = field(default_factory=dict)
     # KRI-496: exact footage windows chosen by the deterministic selector. This
     # lives in the receipt rather than the strict snapshot schema so existing
     # stored proposal payloads stay wire-compatible.
@@ -459,6 +464,7 @@ class UnifiedMontagePlan:
         )
         song = {"user_song": dict(self.song_receipt)} if self.song_receipt else {}
         speech = {"closing_speech": dict(self.closing_speech)} if self.closing_speech else {}
+        quote = {"closing_quote": dict(self.closing_quote)} if self.closing_quote else {}
         best_parts = (
             {"best_parts": list(self.best_parts_receipt)} if self.best_parts_receipt else {}
         )
@@ -507,6 +513,7 @@ class UnifiedMontagePlan:
             **zone,
             **song,
             **speech,
+            **quote,
             **best_parts,
             **best_parts_conflicts,
             **captions,
@@ -674,6 +681,8 @@ def _frame_bound_best_parts(parts: BestPartsResult) -> BestPartsResult:
 # Measured on the M3 kit's closing clip: speech 0.1-5.45 s by loudness, analysed 0.00-5.44 s.
 SPEECH_LEAD_S = 0.15
 SPEECH_TAIL_S = 0.3
+# A held line counts as held when the cut covers it to within a frame or two.
+_HELD_LINE_TOLERANCE_S = 0.05
 
 
 def _speech_span(clip: UnifiedClip) -> tuple[float, float] | None:
@@ -686,6 +695,9 @@ def _speech_span(clip: UnifiedClip) -> tuple[float, float] | None:
     bounds: list[tuple[float, float]] = []
     for segment in speech.get("segments") or []:
         if not isinstance(segment, Mapping):
+            continue
+        if is_outro_hallucination(str(segment.get("text") or ""), analysis):
+            # whisper's "thanks for watching" on trailing wind would hold the cut open.
             continue
         try:
             start, end = float(segment.get("start_s")), float(segment.get("end_s"))
@@ -730,6 +742,61 @@ def _closing_speech_span(
         for position, _name, members, status in rows
     )
     return _speech_span(closing) if placed_last else None
+
+
+def _source_second(value: object) -> float | None:
+    """A source time in seconds (0 included), else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) and value >= 0 else None
+
+
+def _closing_records(
+    cuts: Sequence[FastMontageCut],
+    speech_span: tuple[float, float] | None,
+    quote: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(closing_speech, closing_quote) records, claimed only when the last cut holds them.
+
+    KRI-517's whole spoken line is recorded when the closing cut covers it; KRI-597's
+    quoted line (found by the approved length plan) when the closing cut is that clip
+    and covers the line. An approved window that does not hold the line records
+    nothing, so no receipt can call a missing line "held".
+    """
+    if not cuts:
+        return {}, {}
+    last = cuts[-1]
+
+    def holds(media_id: object, start: float, end: float) -> bool:
+        return (
+            last.media_id == media_id
+            and last.source_start_s <= start + _HELD_LINE_TOLERANCE_S
+            and last.source_end_s >= end - _HELD_LINE_TOLERANCE_S
+        )
+
+    if isinstance(quote, Mapping) and quote.get("quote"):
+        record = {
+            key: quote[key] for key in ("quote", "status", "media_id", "intent_id") if key in quote
+        }
+        start, end = _source_second(quote.get("start_s")), _source_second(quote.get("end_s"))
+        if quote.get("status") != "found" or start is None or end is None:
+            return {}, record
+        if not holds(quote.get("media_id"), start, end):
+            return {}, {**record, "status": "not_held"}
+        speech = {
+            "media_id": last.media_id,
+            "source_start_s": start,
+            "source_end_s": end,
+            "quote": str(quote["quote"]),
+        }
+        return speech, record
+    if speech_span is not None and holds(last.media_id, *speech_span):
+        return {
+            "media_id": last.media_id,
+            "source_start_s": last.source_start_s,
+            "source_end_s": last.source_end_s,
+        }, {}
+    return {}, {}
 
 
 def _story_beats(cuts: Sequence[FastMontageCut]) -> list[StoryBeat]:
@@ -1300,24 +1367,27 @@ def plan_unified_montage(
 
     # ── cut lengths ──────────────────────────────────────────────────────────
     approved_windows = has_approved_windows
-    approved_by_id = {part.media_id: part for part in best_parts.parts} if best_parts else {}
+    # KRI-596: a long take may give several moments; each is its own cut, in plan order.
+    windows_by_id: dict[str, list[BestPart]] = {}
+    for part in best_parts.parts if best_parts else ():
+        windows_by_id.setdefault(part.media_id, []).append(part)
     wanted: list[int] = []
     capacity: list[int] = []
     short: list[str] = []
     for clip in ordered:
         label = labels.get(clip.media_id)
-        approved_part = approved_by_id.get(clip.media_id) if approved_windows else None
-        if approved_part is not None:
-            # The proposal already selected this exact source window.  These
+        approved_parts = windows_by_id.get(clip.media_id) if approved_windows else None
+        if approved_parts:
+            # The proposal already selected these exact source windows.  These
             # frame counts are only bookkeeping for the legacy code below;
-            # cut construction continues to use the unrounded approved part.
-            want_s = approved_part.duration_s
+            # cut construction continues to use the unrounded approved parts.
+            want_s = sum(part.duration_s for part in approved_parts)
         elif clip.kind == "image" and mixed_media_timing is not None:
             want_s = mixed_media_hold_bounds("image", mixed_media_timing).preferred_s
         else:
             want_s = label.min_display_s if label is not None else DEFAULT_CUT_S
         want = int(math.ceil(want_s * FPS - 1e-9))
-        if approved_part is not None:
+        if approved_parts:
             cap = want
         elif clip.kind == "image" and mixed_media_timing is not None:
             # The snapshot validator owns these photo bounds too.  Keep the
@@ -1351,7 +1421,7 @@ def plan_unified_montage(
     speech_span = (
         _closing_speech_span(ordered, sequence, strategy) if song_duration_s is None else None
     )
-    if speech_span is not None:
+    if speech_span is not None and not approved_windows:
         line = int(math.ceil((speech_span[1] - speech_span[0]) * FPS - 1e-9))
         held = max(wanted[-1], min(capacity[-1], line))
         if not target_s or sum(wanted) - wanted[-1] + held <= target_frames:
@@ -1480,47 +1550,33 @@ def plan_unified_montage(
             "dropped_clip_ids": list(song_dropped),
         }
 
-    cuts: list[FastMontageCut] = []
+    spans: list[tuple[str, float, float, bool]] = []  # media id, start, end, approved
     refs: list[MediaRef] = []
-    selected_windows = {part.media_id: part for part in best_parts.parts} if best_parts else {}
     for index, (clip, frames) in enumerate(zip(ordered, wanted, strict=True)):
-        selected_window = selected_windows.get(clip.media_id)
-        duration = (
-            selected_window.duration_s
-            if selected_window is not None
-            else cut_ms[index] / 1000
-            if cut_ms is not None
-            else frames / FPS
-        )
-        if clip.kind == "image":
-            start, end = 0.0, round(duration, 3)
-        elif selected_window is not None:
-            start, end = selected_window.source_start_s, selected_window.source_end_s
-        elif clip.duration_s < MIN_VIDEO_CUT_S:
-            # Whole frames stop a fraction of a frame short of a 0.298s clip,
-            # which the snapshot refuses: a clip this short is shown whole.
-            start, end = 0.0, math.floor(clip.duration_s * 1000) / 1000
-        else:
-            closing_line = speech_span is not None and index == len(ordered) - 1
-            start = speech_span[0] if closing_line else _window_start_s(clip, duration)
-            end = round(start + duration, 3)
-            if end > clip.duration_s + 0.001:
-                start = round(max(0.0, clip.duration_s - duration), 3)
-                end = round(start + duration, 3)
-        cuts.append(
-            FastMontageCut(
-                cut_id=f"unified-cut-{index + 1}",
-                media_id=clip.media_id,
-                source_start_s=start,
-                source_end_s=end,
-                output_duration_s=(end - start)
+        for selected_window in windows_by_id.get(clip.media_id) or [None]:
+            duration = (
+                selected_window.duration_s
                 if selected_window is not None
-                else round(end - start, 3),
-                role="hook" if index == 0 else "payoff" if index == len(ordered) - 1 else "build",
-                transition="none",
-                beat_align=False,
+                else cut_ms[index] / 1000
+                if cut_ms is not None
+                else frames / FPS
             )
-        )
+            if clip.kind == "image":
+                start, end = 0.0, round(duration, 3)
+            elif selected_window is not None:
+                start, end = selected_window.source_start_s, selected_window.source_end_s
+            elif clip.duration_s < MIN_VIDEO_CUT_S:
+                # Whole frames stop a fraction of a frame short of a 0.298s clip,
+                # which the snapshot refuses: a clip this short is shown whole.
+                start, end = 0.0, math.floor(clip.duration_s * 1000) / 1000
+            else:
+                closing_line = speech_span is not None and index == len(ordered) - 1
+                start = speech_span[0] if closing_line else _window_start_s(clip, duration)
+                end = round(start + duration, 3)
+                if end > clip.duration_s + 0.001:
+                    start = round(max(0.0, clip.duration_s - duration), 3)
+                    end = round(start + duration, 3)
+            spans.append((clip.media_id, start, end, selected_window is not None))
         aspect = clip.aspect
         if clip.width and clip.height:
             swapped = clip.orientation_degrees in (90, 270)
@@ -1540,6 +1596,25 @@ def plan_unified_montage(
                 content_hash=clip.content_hash,
             )
         )
+    cuts = [
+        FastMontageCut(
+            cut_id=f"unified-cut-{index + 1}",
+            media_id=media_id,
+            source_start_s=start,
+            source_end_s=end,
+            output_duration_s=(end - start) if approved else round(end - start, 3),
+            role="hook" if index == 0 else "payoff" if index == len(spans) - 1 else "build",
+            transition="none",
+            beat_align=False,
+        )
+        for index, (media_id, start, end, approved) in enumerate(spans)
+    ]
+    repeats = any(len(windows) > 1 for windows in windows_by_id.values())
+    closing_speech, closing_quote = _closing_records(
+        cuts,
+        speech_span,
+        approved_length_plan.get("closing_quote") if approved_length_plan is not None else None,
+    )
     # Keep the exact frame sum: rounding it to milliseconds can disagree with
     # the frame-aligned cuts by a third of a frame.
     total_s = sum(cut.output_duration_s for cut in cuts)
@@ -1596,7 +1671,8 @@ def plan_unified_montage(
             fast_cuts=cuts,
             media_scope="all",
             selected_media_ids=[clip.media_id for clip in ordered],
-            video_reuse_policy="once",
+            # Several moments of one take are distinct windows, never repeated footage.
+            video_reuse_policy="distinct_windows" if repeats else "once",
             clip_labels=[labels[clip.media_id] for clip in ordered if clip.media_id in labels],
             **snapshot_kwargs,
             **extra,
@@ -1635,15 +1711,8 @@ def plan_unified_montage(
         label_timezone_basis=hour_basis if view.per_clip_text_is_time and labels else "",
         user_song=song_plan,
         song_receipt=song_receipt,
-        closing_speech=(
-            {
-                "media_id": cuts[-1].media_id,
-                "source_start_s": cuts[-1].source_start_s,
-                "source_end_s": cuts[-1].source_end_s,
-            }
-            if speech_span is not None
-            else {}
-        ),
+        closing_speech=closing_speech,
+        closing_quote=closing_quote,
         best_parts_receipt=best_parts.receipt() if best_parts is not None else [],
         best_parts_conflicts=best_parts_conflicts,
     )

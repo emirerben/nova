@@ -11,6 +11,7 @@ import json
 import re
 from typing import ClassVar, Literal
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
@@ -24,6 +25,7 @@ from app.agents._schemas.creator_agent import (
 from app.agents._schemas.creator_policy import (
     CAPABILITY_DRAFT_GUIDED_PROPOSAL,
     UserSongUnavailableError,
+    native_voiceover_only,
 )
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.config import settings
@@ -43,6 +45,8 @@ from app.schemas.edit_proposal import (
 )
 from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 from app.services.length_policy import creator_duration_s
+
+log = structlog.get_logger()
 
 # Named sound effects are model-read with verbatim licensed_sfx evidence (v35).
 # KRI-178: reaction beats (name/word-triggered photo/sticker + sound pop-ins,
@@ -72,7 +76,11 @@ from app.services.length_policy import creator_duration_s
 # KRI-519: reaction beats on an iPhone Voiceover edit, worded for the voiceover (v51).
 # KRI-525/526: pins may carry `start_s`/`end_s` or `clip`; the 4-line / 120-character limits are
 # taught so an over-long ask becomes a question, not a schema failure (v52).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-11-v54"
+# KRI-598: no `execution_contract` where `guided_voiceover` is unavailable (runtime v2); on a
+# Voiceover edit a cue for an own clip is `include`, never `order`, and beats persist (v55).
+# KRI-614: a clip's `filename` (the name the app shows) identifies it when the creator writes it
+# (v56).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-12-v56"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -235,8 +243,19 @@ hours and twelve minutes"),
     + """
 Triggers are matched against the words of the recorded voiceover, so copy the phrase exactly as
 the creator quoted it. On this edit a photo or sticker timed to the voiceover is ALWAYS a
-reaction beat: never set `execution_contract` for it, and never leave such a request out. A
-photo beat shows as a picture-in-picture card over the footage. Never set `licensed_sfx` on this
+reaction beat: never set `execution_contract` for it, and never leave such a request out. It is
+never a clip intent or a selected media id. Every proposal keeps each beat the FULL CREATOR
+REQUEST CONTRACT still asks for, also when the latest message is about something else ("use all
+7 clips"). A cue that names one of the project's own CLIPS instead ("when I say Deniz, show Deniz
+at the laptop", "'mutfak' dediğimde mutfağı göster") is never a beat and never an
+`order`: the voiceover already decides when each clip plays, and cues listed together are not
+a sequence. Give each such clip one `clip_intents` entry with `op` "include" and `attribute`
+naming the clip as the creator described it, and keep every own clip selected unless the
+creator limited them. Asking the clips to follow the voiceover ("follow my voiceover: river,
+kitchen, attic") is that same `include` per named clip. Only "start/end with X" is an `order`
+(with `position`), and only another sequence the creator explicitly asks for ("in this order:
+A, B, C") is an `order` without one.
+A photo beat shows as a picture-in-picture card over the footage. Never set `licensed_sfx` on this
 edit once this capability is available -- beats place sound at the exact moments the creator
 named instead. A bare "add fun sound effects" with no named spoken moment adds NO beats. Keep the
 edit's own voiceover `edit_format`.
@@ -702,6 +721,20 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         "media_scope": resolved_scope,
                     }
                 )
+                if strategy.execution_contract is not None and native_voiceover_only(
+                    input.capability_manifest
+                ):
+                    # KRI-598: this manifest (runtime v2) never offers the guided contract.
+                    # Repair, like KRI-586's envelope repairs, instead of refusing: every
+                    # refusal spends a retry and three end the turn. The planner's policy
+                    # check then resolves "all" to every own clip and says what the native
+                    # voiceover edit leaves out.
+                    log.info(
+                        "main_creator_contract_dropped_native_only",
+                        media_scope=strategy.media_scope,
+                        reaction_beats=len(strategy.reaction_beats or ()),
+                    )
+                    strategy = strategy.model_copy(update={"execution_contract": None})
                 action = action.model_copy(
                     update={
                         "strategy": normalize_creator_strategy_media(

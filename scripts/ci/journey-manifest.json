@@ -283,6 +283,28 @@
         "src/apps/api/prompts/narrated_clip_alignment.txt",
         "src/apps/api/tests/fixtures/agent_evals/narrated_clip_alignment/"
       ]
+    },
+    {
+      "id": "kri-598-voiceover-planner",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri598_voiceover_planner.py tests/kria/test_voiceover_downgrade_losses.py tests/evals/test_clip_intent_planner_evals.py tests/evals/test_main_creator_evals.py",
+      "paths": [
+        "src/apps/api/app/kria/voiceover_scope.py",
+        "src/apps/api/prompts/clip_intent_planner.txt",
+        "src/apps/api/tests/fixtures/agent_evals/clip_intent_planner/",
+        "src/apps/api/tests/fixtures/kri598_tigre_voiceover_turns.json",
+        "src/apps/api/tests/kria/test_kri598_voiceover_planner.py",
+        "src/apps/api/tests/kria/test_voiceover_downgrade_losses.py"
+      ]
+    },
+    {
+      "id": "kri-593-voiceover-clips",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri593_voiceover_keeps_every_clip.py",
+      "paths": [
+        "src/apps/api/app/kria/voiceover_clips.py",
+        "src/apps/api/tests/fixtures/kri593_tigre_voiceover_turn.json"
+      ]
     }
   ]
 }
