@@ -391,16 +391,18 @@ final class SlidePostPendingMediaTests: XCTestCase {
         XCTAssertEqual(session.appendNewlyReadyAssets(), 1)
     }
 
-    func testTikTokPostTakesNoVideoAndRespectsTheLimit() async {
+    func testTikTokPostThatReceivesAVideoSwitchesToInstagram() async {
         remote = state(assets: ["asset-1", "asset-2"], profile: "tiktok_photo")
         let session = await openSession()
         var next = state(assets: ["asset-1", "asset-2", "clip", "p1"], profile: "tiktok_photo")
         next.assets = next.assets.map { $0.id == "clip" ? SlidePostAsset(id: "clip", kind: "video", status: "ready", mediaStatus: "available") : $0 }
         remote = next
         await poll(session)
-        XCTAssertEqual(session.appendNewlyReadyAssets(), 1)
-        XCTAssertEqual(session.draft?.slides.map(\.assetID), ["asset-1", "asset-2", "p1"])
-        XCTAssertNotNil(session.autoAppendNotice)
+        XCTAssertEqual(session.appendNewlyReadyAssets(), 2)
+        XCTAssertEqual(session.draft?.slides.map(\.assetID), ["asset-1", "asset-2", "clip", "p1"])
+        XCTAssertEqual(session.draft?.platformProfile, "instagram_carousel")
+        XCTAssertEqual(session.autoAppendNotice, "Switched to Instagram carousel so the video fits.")
+        XCTAssertNil(session.draft?.validationMessage, "the switched draft is saveable")
     }
 
     func testSeenSetSurvivesRelaunchSoNothingIsAddedTwice() async {
