@@ -39,8 +39,10 @@ from app.kria.brief_route import (
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.kria.reply_language import current_reply_language, say
 from app.kria.style_asks import (
+    MOMENT_SHORT_MAX_S,
     clip_length_ask,
     derive_style_ask,
+    moment_ask,
     text_look_facts,
     value_matches,
 )
@@ -176,6 +178,8 @@ class ClosingSpeechFact:
     media_id: str
     start_s: float
     end_s: float
+    # KRI-597: the creator's quoted words, when the held line is a line they quoted.
+    quote: str = ""
 
 
 @dataclass(frozen=True)
@@ -341,6 +345,12 @@ class PlanFacts:
     closing_speech: ClosingSpeechFact | None = None
     # False when the render records that the clips' own sound was dropped; None = unknown.
     source_audio_kept: bool | None = None
+    # KRI-597: what became of the line the creator quoted to end on ("found" / "not_found"
+    # / "too_long" / "not_held"), with their words. None = no quoted ending was asked.
+    closing_quote_status: str | None = None
+    closing_quote_text: str = ""
+    # KRI-596: every main-picture cut's length, in screen order. None = unknown.
+    cut_lengths_s: tuple[float, ...] | None = None
     # Every clip the creator added to this edit (footage and Visuals), whether or not the
     # edit used it, so "that clip isn't in the edit" is told apart from an unknown clip id.
     source_clip_ids: tuple[str, ...] = ()
@@ -675,8 +685,30 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         },
         label_timezone=str(record.get("label_timezone") or ""),
         label_timezone_basis=str(record.get("label_timezone_basis") or ""),
+        **_closing_quote_facts(record.get("closing_quote")),
+        cut_lengths_s=_window_lengths(record.get("best_parts")),
         **_montage_caption_facts(record.get("captions")),
     )
+
+
+def _closing_quote_facts(raw: object) -> dict[str, Any]:
+    if not isinstance(raw, Mapping) or not raw.get("status"):
+        return {}
+    return {
+        "closing_quote_status": str(raw["status"]),
+        "closing_quote_text": str(raw.get("quote") or ""),
+    }
+
+
+def _window_lengths(rows: object) -> tuple[float, ...] | None:
+    lengths = []
+    for row in rows if isinstance(rows, list) else []:
+        start = _finite_number(row.get("source_start_s")) if isinstance(row, Mapping) else None
+        end = _finite_number(row.get("source_end_s")) if isinstance(row, Mapping) else None
+        if start is None or end is None or end <= start:
+            return None
+        lengths.append(round(end - start, 3))
+    return tuple(lengths) or None
 
 
 def _montage_caption_facts(raw: object) -> dict[str, str]:
@@ -1313,6 +1345,7 @@ def _held_closing_line(
     end = _finite_number(speech.get("source_end_s"))
     if not media_id or start is None or end is None or end <= start or clip_ids[-1] != media_id:
         return None
+    quote = str(speech.get("quote") or "")
     if last_cut is not None:
         # A finished timeline must show the closing cut covering the whole line.
         cut_start, cut_end = last_cut[1], last_cut[2]
@@ -1323,7 +1356,7 @@ def _held_closing_line(
             or cut_end < end - _HELD_LINE_TOLERANCE_S
         ):
             return None
-    return ClosingSpeechFact(media_id=media_id, start_s=start, end_s=end)
+    return ClosingSpeechFact(media_id=media_id, start_s=start, end_s=end, quote=quote)
 
 
 def plan_facts_from_rendered_montage(
@@ -1360,6 +1393,14 @@ def plan_facts_from_rendered_montage(
         rendered_output=True,
         rendered_montage=True,
         closing_speech=_held_closing_line(record, clip_ids, cuts[-1] if cuts else None),
+        closing_quote_status=plan.closing_quote_status,
+        closing_quote_text=plan.closing_quote_text,
+        cut_lengths_s=tuple(
+            round(end - start, 3)
+            for _media_id, start, end in cuts
+            if start is not None and end is not None and end > start
+        )
+        or plan.cut_lengths_s,
         source_audio_kept=kept if isinstance(kept, bool) else None,
         source_clip_ids=tuple(prints),
         duplicate_clip_positions=_same_file_positions(clip_ids, prints) if prints else None,
@@ -4550,8 +4591,9 @@ _ENDING_RE = re.compile(
 )
 _OWN_SPEECH_RE = re.compile(
     r"\bown (?:voice|sound|audio|words)\b|\b(?:her|his|their|my|your) voice\b"
-    r"|\b(?:sentence|says|said|saying|speaks|speaking|talks|talking)\b|\bto (?:the )?camera\b"
+    r"|\b(?:sentence|say|says|said|saying|speaks|speaking|talks|talking)\b|\bto (?:the )?camera\b"
     r"|\bkendi ses\w*|\bcumle\w*|\bsoyledi\w*|\bsoyler\w*|\bkonus\w*|\bdedi\w*|\bkameraya\b"
+    r"|\bdiyor\w*|\bderken\b"
 )
 # A closing photo, sticker or song, a muted ending or a voiceover is a different ask.
 _NOT_OWN_SPEECH_RE = re.compile(
@@ -4711,6 +4753,10 @@ def _check_closing_speech(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 tr="Video o klipte bitiyor ama kliplerin kendi sesi kapalı",
             ),
         )
+    quote = _quoted_ending(req)
+    if quote:
+        # KRI-597: "end on the moment I say '...'" is met only by that line, held whole.
+        return _check_quoted_ending(req, facts, quote)
     if facts.closing_speech is None or facts.closing_speech.media_id != ids[-1]:
         return _receipt(
             req,
@@ -4732,6 +4778,78 @@ def _check_closing_speech(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         say(
             en="The video ends on that clip's whole spoken line, in its own sound",
             tr="Video, o klipteki cümlenin tamamıyla ve klibin kendi sesiyle bitiyor",
+        ),
+    )
+
+
+def _quoted_ending(req: BriefRequirement) -> str:
+    """The words the creator quoted for their ending, "" when they quoted none."""
+    from app.services.spoken_quotes import quoted_phrases  # noqa: PLC0415
+
+    for text in (req.description, req.facts.get("last_clip"), req.literal):
+        quotes = quoted_phrases(text if isinstance(text, str) else None)
+        if quotes:
+            return quotes[0]
+    return ""
+
+
+def _check_quoted_ending(req: BriefRequirement, facts: PlanFacts, quote: str) -> RequirementReceipt:
+    from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
+
+    held = facts.closing_speech
+    if held is not None and held.quote and fold_tokens(held.quote) == fold_tokens(quote):
+        return _receipt(
+            req,
+            "met",
+            say(
+                en=f"The video ends on “{quote}”, in its own sound",
+                tr=f"Video “{quote}” cümlesiyle, klibin kendi sesiyle bitiyor",
+            ),
+        )
+    if facts.closing_quote_status == "not_found":
+        reason = say(
+            en=f"I couldn't find where you say “{quote}”, so the video doesn't end on it",
+            tr=f"“{quote}” dediğin yeri bulamadım, bu yüzden video o anda bitmiyor",
+        )
+    else:
+        reason = say(
+            en=f"The video doesn't end on “{quote}”: the closing cut doesn't hold that line",
+            tr=f"Video “{quote}” cümlesiyle bitmiyor: son kesit o cümleyi içermiyor",
+        )
+    return _receipt(req, "partial", reason)
+
+
+def _check_moments(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """KRI-596: "the best six moments, each very short", against the finished cuts."""
+    ask = moment_ask(req)
+    lengths = facts.cut_lengths_s
+    if ask is None or not lengths:
+        return _receipt(req, "partial", _NO_CHECKER)
+    longest = max(lengths)
+    if ask.count is not None and len(lengths) != ask.count:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"The video has {len(lengths)} moments, not {ask.count}",
+                tr=f"Videoda {ask.count} değil {len(lengths)} an var",
+            ),
+        )
+    if ask.short and longest > MOMENT_SHORT_MAX_S + 0.05:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"The longest moment runs {longest:.1f} s",
+                tr=f"En uzun an {longest:.1f} sn sürüyor",
+            ),
+        )
+    return _receipt(
+        req,
+        "met",
+        say(
+            en=f"{len(lengths)} moments, the longest {longest:.1f} s",
+            tr=f"{len(lengths)} an, en uzunu {longest:.1f} sn",
         ),
     )
 
@@ -4761,6 +4879,8 @@ def _has_checker(req: BriefRequirement) -> bool:
             or _wants_clip_timing(req)
         )
     if derive_style_ask(req) is not None:
+        return True
+    if req.kind == "select" and moment_ask(req) is not None:
         return True
     if req.kind in _BEAT_KINDS:
         return (
@@ -4828,6 +4948,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_reaction_beats(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_bed_under_voice(req) or _wants_bed_muted(req)):
         return _check_voice_bed(req, facts)
+    elif req.kind == "select" and moment_ask(req) is not None:
+        return _check_moments(req, facts)
     if _judges_caption_words(req, facts):  # KRI-549: language / names on a finished render
         return _check_caption_words(req, facts)
     if _wants_captions(req):

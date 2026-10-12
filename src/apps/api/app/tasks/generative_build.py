@@ -58,6 +58,7 @@ from app.agents._schemas.edit_format import (
     NARRATED_EDIT_FORMATS,
     SINGLE_HERO_RENDERER_VERSION,
     SLIDES_RENDERER_VERSION,
+    SLIDES_SIZES_RENDERER_VERSION,
     coerce_edit_format,
     guided_edit_applicable,
 )
@@ -9953,6 +9954,7 @@ def _build_slide_post_result(
     cover_index: int,
     caption: str,
     render_trace_id: str,
+    aspect: str | None = None,
 ) -> dict[str, Any]:
     """Normalize every slide, stitch the preview, build the export bundle,
     and return the full variant payload. No DB access — pure render + upload.
@@ -9969,7 +9971,8 @@ def _build_slide_post_result(
 
     # `canvas` is the post's PREVIEW canvas; each slide exports on `slide_canvas`
     # (a landscape slide is 1920x1080 on the TikTok photo profile -- KRI-44).
-    canvas = slide_profiles.PLATFORM_PROFILES[platform_profile].canvas
+    # The post-wide size (KRI-606) sets both the preview and every portrait slide.
+    canvas = slide_profiles.post_canvas(platform_profile, aspect)  # type: ignore[arg-type]
     validation = slide_profiles.validate(
         platform_profile,
         [
@@ -10020,7 +10023,7 @@ def _build_slide_post_result(
                 f"_n{slide_build.SLIDE_IMAGE_NORMALIZER_VERSION}" if kind == "image" else ""
             )
             wm_suffix = f"_wm{slide_build.SLIDE_WATERMARK_VERSION}"
-            export_canvas = slide_build.slide_canvas(platform_profile, edits)
+            export_canvas = slide_build.slide_canvas(platform_profile, edits, aspect)
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
                 f"{fingerprint}_{export_canvas[0]}x{export_canvas[1]}_"
@@ -10111,6 +10114,7 @@ def _build_slide_post_result(
             caption=caption,
             cover_index=cover_index,
             slides=bundle_slides,
+            aspect=slide_profiles.coerce_aspect(platform_profile, aspect),  # type: ignore[arg-type]
         )
         bundle_local = os.path.join(tmpdir, "bundle.zip")
         slide_build.build_bundle_zip(
@@ -10142,7 +10146,11 @@ def _build_slide_post_result(
             # The renderer contract this export was built by (KRI-44 framing):
             # lives beside the other freshness stamps because the variant-level
             # key is not carried through every write path.
-            "renderer_version": SLIDES_RENDERER_VERSION,
+            # v3 = honours the post-wide size and per-photo Fit (KRI-606). The
+            # dispatch stamp above stays at 2 so a mixed API/worker deploy never
+            # rejects queued jobs; only the export-currency check reads this one.
+            "renderer_version": SLIDES_SIZES_RENDERER_VERSION,
+            "aspect": slide_profiles.coerce_aspect(platform_profile, aspect),  # type: ignore[arg-type]
             "validation": {
                 "ok": validation.ok,
                 "errors": [
@@ -10236,6 +10244,7 @@ def _run_slide_post_job(job_id: str, *, render_trace_id: str) -> None:
         cover_index = min(draft.cover_index, len(ordered_assets) - 1)
         caption = draft.caption
         draft_version = draft.version
+        aspect = draft.aspect
 
     result = _build_slide_post_result(
         job_id,
@@ -10244,6 +10253,7 @@ def _run_slide_post_job(job_id: str, *, render_trace_id: str) -> None:
         cover_index=cover_index,
         caption=caption,
         render_trace_id=render_trace_id,
+        aspect=aspect,
     )
     if _upsert_variant_entry(job_id, result) is False:
         return
@@ -10300,6 +10310,7 @@ def rebuild_slide_post_variant(self, job_id: str, render_gen_id: str | None = No
         cover_index = min(draft.cover_index, len(ordered_assets) - 1)
         caption = draft.caption
         draft_version = draft.version
+        aspect = draft.aspect
 
     heartbeat = (
         _creator_craft_generation_heartbeat(job_id, "slides", str(render_gen_id), task_id=task_id)
@@ -10314,6 +10325,7 @@ def rebuild_slide_post_variant(self, job_id: str, render_gen_id: str | None = No
             cover_index=cover_index,
             caption=caption,
             render_trace_id=uuid.uuid4().hex,
+            aspect=aspect,
         )
     if (
         _update_variant_entry(
@@ -31189,6 +31201,8 @@ def _merge_speech_cut_prior_state(
         "boundary_effects",
         "motion_scenes",
         "visual_blocks",
+        # KRI-589: freehand drawings are a creator-authored timed lane like the rest.
+        "drawings",
     ):
         if isinstance(prior.get(field), list):
             merged[field] = projected.get(field) or []
@@ -32368,6 +32382,10 @@ def _finalize_job_decision(
                     "smart_audio_receipt": r.get("smart_audio_receipt"),
                     "smart_shadow_comparison": r.get("smart_shadow_comparison"),
                     "boundary_effects": r.get("boundary_effects"),
+                    # KRI-589: freehand drawings survive finalization (only when present, so
+                    # a variant without any keeps a byte-identical row and a live drawing
+                    # lane is never overwritten by an absent one).
+                    **({"drawings": r["drawings"]} if r.get("drawings") else {}),
                     # TextElement lane state — MUST survive finalization for any variant
                     # whose authored text is edited through PUT /text-elements.
                     "text_elements": r.get("text_elements"),

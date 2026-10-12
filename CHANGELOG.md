@@ -2,6 +2,81 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.250.0] - 2026-10-12
+
+### Changed
+- chore(gates): mark KRI-547 and KRI-568 gates fixed; KRI-612 squash SHA (#1572) <!-- release-pr: 1572 -->
+
+## [0.78.249.0] - 2026-10-12
+
+### Fixed
+- fix(kria): stop the "simpler version?" loop and the false context-limit reply (KRI-610, KRI-611, KRI-613) (#1562) <!-- release-pr: 1562 -->
+
+## [0.78.248.0] - 2026-10-12
+
+### Changed
+- fix(ios): song-timeline order card works like the editor timeline (KRI-575) (#1533) <!-- release-pr: 1533 -->
+
+## [0.78.247.0] - 2026-10-12
+
+### Changed
+- fix(ios): adding a video to a one-photo slide post switches it to Instagram carousel (KRI-615) (#1560) <!-- release-pr: 1560 -->
+
+## [0.78.246.0] - 2026-10-12
+
+### Changed
+- fix(kria): write a footage line on each clip for "explain the footages" (KRI-612) (#1569) <!-- release-pr: 1569 -->
+
+## [0.78.245.0] - 2026-10-12
+
+### Changed
+- Unblock Mac CI and reuse one iPhone build per PR (#1567) <!-- release-pr: 1567 -->
+
+## [0.78.244.0] - 2026-10-12
+
+### Changed
+- feat: draw on videos in the iOS editor (KRI-589) (#1555) <!-- release-pr: 1555 -->
+
+## [0.78.243.0] - 2026-10-12
+
+### Changed
+- feat(slides): post-wide size and per-photo Fit for Sliders (KRI-606) (#1561) <!-- release-pr: 1561 -->
+
+## [0.78.242.0] - 2026-10-12
+
+### Fixed
+- fix(auth): tell creators which sign-in opens their account when Apple's email already has one (KRI-609) (#1563) <!-- release-pr: 1563 -->
+
+## [0.78.241.0] - 2026-10-12
+
+### Fixed
+- fix(kria): name clips by the file name the app shows, and never re-read a clip-card answer as a request (KRI-614) (#1570) <!-- release-pr: 1570 -->
+
+## [0.78.240.0] - 2026-10-12
+
+### Changed
+- ci(journey): give the KRI-598 journey its needs_native flag (fixes main CI) (#1568) <!-- release-pr: 1568 -->
+
+## [0.78.239.0] - 2026-10-12
+
+### Changed
+- fix(narrated): keep every clip on a voiceover edit unless the creator dropped some (KRI-593) (#1549) <!-- release-pr: 1549 -->
+
+## [0.78.238.0] - 2026-10-12
+
+### Changed
+- fix(montage): several short moments per long take, end on the line the creator quotes (KRI-596, KRI-597) (#1554) <!-- release-pr: 1554 -->
+
+## [0.78.237.0] - 2026-10-12
+
+### Changed
+- fix(kria): plan phone voiceover cues as include and never offer a guided contract on runtime v2 (KRI-598) (#1556) <!-- release-pr: 1556 -->
+
+## [0.78.236.0] - 2026-10-12
+
+### Added
+- feat(ios): record talking videos with a movable teleprompter (KRI-583) (#1565) <!-- release-pr: 1565 -->
+
 ## [0.78.235.0] - 2026-10-12
 
 ### Changed

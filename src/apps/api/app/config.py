@@ -643,6 +643,15 @@ class Settings(BaseSettings):
     # `fly machine restart <id>`. Needs `musicBed` + `audioMix` in
     # PHONE_RENDER_VERIFIED_FEATURES (both already verified in prod).
     user_song_montage_enabled: bool = True
+    # KRI-589: freehand finger drawings over a device-rendered edit (own `drawings` editor
+    # lane -> `EditRecipeV2.drawing_layers`). Default TRUE; needs `freehandDrawing` in
+    # PHONE_RENDER_VERIFIED_FEATURES (fly secret) and an app build declaring
+    # `X-Kria-Client-Protocol` >= `freehand_drawing_min_client_protocol`. False: capabilities
+    # close drawings.add/edit/trim and Save 422s `drawings_disabled` for new/changed
+    # drawings; stored drawings still compile and play, and drawings.delete stays open.
+    # Apply: `fly secrets set FREEHAND_DRAWING_ENABLED=false` (api + worker) + restart.
+    freehand_drawing_enabled: bool = True
+    freehand_drawing_min_client_protocol: int = 6
     # KRI-561: the song-order question is answered on a horizontal song timeline (play the
     # song, drop clips onto song time) instead of the vertical reorder list. Kill switch:
     # `fly secrets set SONG_ORDER_TIMELINE_ENABLED=false` + restart (api): capabilities drop
@@ -1744,6 +1753,17 @@ class Settings(BaseSettings):
     # false. Dual-flag with the iOS capability. Apply: `fly secrets set
     # SLIDE_POST_FRAMING_ENABLED=true --app nova-video` (api + worker) + restart.
     slide_post_framing_enabled: bool = False
+    # KRI-606: post-wide size (9:16/4:5/3:4/1:1/1.91:1) and per-photo Fit with
+    # bars. Needs `slide_post_framing_enabled` too (Fit lives in the Crop workspace).
+    # Off: the slide-post PUT keeps the stored `aspect`/`fit` and ignores incoming
+    # values, the chat ops are unavailable, and capability `slide_post_sizes` is
+    # false. The renderer always honours stored values. Roll back by flipping the
+    # flag only: draft models drop unknown keys, so rolling the CODE back after
+    # sizes exist would erase them on the next save. Apply: `fly secrets set
+    # SLIDE_POST_SIZES_ENABLED=true --app nova-video` (api + worker) + restart.
+    slide_post_sizes_enabled: bool = False
+    # Chat ops that write the size/Fit need an app that round-trips them (protocol 5).
+    slide_post_sizes_min_client_protocol: int = 5
     # KRI-557: provider-marked Gemini thought summaries for native creation and
     # slide-post calls. Deploy dark; enable after production canary with
     # THOUGHT_SUMMARIES_ENABLED=true for API and Celery processes after canary.

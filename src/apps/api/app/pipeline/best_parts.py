@@ -370,6 +370,182 @@ def select_best_parts(
     )
 
 
+# KRI-596: "the best six moments from the long takes, each very short". A moment is
+# never shorter than a readable shot, and two moments of one take keep a gap so they
+# read as two moments rather than one stuttering cut; a wider gap is tried first so a
+# take's moments spread over it.
+MIN_MOMENT_S = 0.8
+MOMENT_GAP_S = 0.25
+# A window "shows" an analysed moment when it covers half of the shorter of the two.
+_MOMENT_COVER_SHARE = 0.5
+
+
+def _free_spans(
+    duration: float, taken: Sequence[tuple[float, float]], gap: float
+) -> list[tuple[float, float]]:
+    spans: list[tuple[float, float]] = []
+    cursor = 0.0
+    for start, end in sorted(taken):
+        if start - gap > cursor:
+            spans.append((cursor, start - gap))
+        cursor = max(cursor, end + gap)
+    if duration > cursor:
+        spans.append((cursor, duration))
+    return spans
+
+
+def _next_moment(
+    duration: float,
+    moments: Sequence[tuple[float, float, float]],
+    taken: Sequence[tuple[float, float]],
+    width: float,
+    gap: float,
+) -> tuple[float, float, float, str] | None:
+    """The strongest analysed moment a ``width`` window still shows beside ``taken``
+    (start, end, score, reason), else None."""
+    spans = [(s, e) for s, e in _free_spans(duration, taken, gap) if e - s + 1e-9 >= width]
+    for score, start, end in moments:
+        middle = (start + end) / 2
+        need = _MOMENT_COVER_SHARE * min(width, end - start)
+        for free_start, free_end in spans:
+            # Slide the window inside this free stretch, as close to the moment as it gets.
+            at = min(max(middle - width / 2, free_start), free_end - width)
+            if min(at + width, end) - max(at, start) + 1e-9 >= need:
+                return at, at + width, score, "best_moment"
+    return None
+
+
+def _fill(
+    duration: float, taken: Sequence[tuple[float, float]], width: float, gap: float
+) -> tuple[float, float, float, str] | None:
+    """No analysed moment left: the middle of the widest free stretch."""
+    free = [(e - s, s, e) for s, e in _free_spans(duration, taken, gap) if e - s + 1e-9 >= width]
+    if not free:
+        return None
+    _room, start, end = max(free)
+    at = start + (end - start - width) / 2
+    return at, at + width, 0.0, "moment_fill"
+
+
+def _moment_quotas(durations: Mapping[str, float], count: int) -> dict[str, int]:
+    """``count`` moments shared by footage length (largest remainder), one at least each."""
+    total = sum(durations.values())
+    raw = {media_id: count * duration / total for media_id, duration in durations.items()}
+    quotas = {media_id: max(1, int(share)) for media_id, share in raw.items()}
+    while sum(quotas.values()) > count:
+        # The one-each floor overshot: take back from the take with the most.
+        quotas[max(quotas, key=lambda media_id: quotas[media_id])] -= 1
+    order = sorted(durations, key=lambda media_id: -(raw[media_id] - int(raw[media_id])))
+    index = 0
+    while sum(quotas.values()) < count:
+        quotas[order[index % len(order)]] += 1
+        index += 1
+    return quotas
+
+
+def select_moment_windows(
+    sources: Sequence[Any],
+    *,
+    target_duration_s: float,
+    moment_count: int,
+    pinned_last: tuple[str, float, float] | None = None,
+) -> BestPartsResult | None:
+    """Several short, non-overlapping windows per source (KRI-596).
+
+    ``moment_count`` windows share ``target_duration_s`` equally and are shared among the
+    sources by footage length, at least one each; inside a take its strongest analysed
+    moments win, and they play in source order. ``pinned_last`` is a source window that
+    must be its take's last moment (the creator's quoted closing line, KRI-597): it is
+    held whole (grown backwards to an equal share when shorter), and that take's other
+    moments come from before it when they fit. ``None`` when the sources cannot hold
+    that many separate moments, so the caller keeps one window per source.
+    """
+    rows = [_source_fields(source) for source in sources]
+    if not rows or any(not media_id or duration <= 0 for media_id, duration, _a in rows):
+        return None
+    durations = {media_id: duration for media_id, duration, _a in rows}
+    target = _number(target_duration_s)
+    if len(durations) != len(rows) or target is None or target <= 0:
+        return None
+    if moment_count <= len(rows):
+        return None
+    share = target / moment_count
+    taken: dict[str, list[tuple[float, float]]] = {media_id: [] for media_id in durations}
+    pinned: BestPart | None = None
+    budget, count = target, moment_count
+    if pinned_last is not None:
+        media_id, start, end = pinned_last
+        if media_id not in durations or not 0 <= start < end <= durations[media_id] + 1e-6:
+            return None
+        start = max(0.0, min(start, end - share))
+        pinned = BestPart(media_id, round(start, 3), round(end, 3), 0.0, "closing_quote")
+        taken[media_id].append((pinned.source_start_s, pinned.source_end_s))
+        budget, count = target - pinned.duration_s, moment_count - 1
+    width = budget / count if count > 0 else 0.0
+    if width < MIN_MOMENT_S:
+        return None
+    ranked: dict[str, list[tuple[float, float, float]]] = {}
+    for media_id, duration, analysis in rows:
+        moments = []
+        for moment in analysis.get("best_moments") or []:
+            if not isinstance(moment, Mapping):
+                continue
+            start, end = _number(moment.get("start_s")), _number(moment.get("end_s"))
+            if start is None or end is None or min(duration, end) - max(0.0, start) <= 0:
+                continue
+            energy = _number(moment.get("energy")) or 0.0
+            moments.append((energy, max(0.0, start), min(duration, end)))
+        ranked[media_id] = sorted(moments, key=lambda row: (-row[0], row[1]))
+    chosen: dict[str, list[BestPart]] = {media_id: [] for media_id in durations}
+
+    def take(media_id: str) -> bool:
+        duration, blocks = durations[media_id], taken[media_id]
+        tries = [blocks]
+        if pinned is not None and pinned.media_id == media_id:
+            # Before the closing line first: the take then walks forward into it.
+            tries.insert(0, [*blocks, (pinned.source_end_s, duration)])
+        found = None
+        for blocked in tries:
+            for gap in (width, MOMENT_GAP_S):
+                found = _next_moment(duration, ranked[media_id], blocked, width, gap)
+                if found is None and gap == MOMENT_GAP_S:
+                    found = _fill(duration, blocked, width, gap)
+                if found is not None:
+                    break
+            if found is not None:
+                break
+        if found is None:
+            return False
+        start, end, score, reason = found
+        part = BestPart(media_id, round(start, 3), round(start + width, 3), round(score, 3), reason)
+        chosen[media_id].append(part)
+        blocks.append((part.source_start_s, part.source_end_s))
+        ranked[media_id] = [m for m in ranked[media_id] if not (m[1] < end and m[2] > start)]
+        return True
+
+    quotas = _moment_quotas(durations, moment_count)
+    leftover = 0
+    for media_id in durations:
+        wanted = quotas[media_id] - (1 if pinned is not None and pinned.media_id == media_id else 0)
+        for _ in range(max(0, wanted)):
+            if not take(media_id):
+                leftover += 1
+    while leftover:
+        if not any(take(media_id) for media_id in sorted(durations, key=lambda m: -durations[m])):
+            return None
+        leftover -= 1
+    if any(not chosen[m] and (pinned is None or pinned.media_id != m) for m in durations):
+        return None
+    parts: list[BestPart] = []
+    for media_id in durations:
+        own = sorted(chosen[media_id], key=lambda part: part.source_start_s)
+        if pinned is not None and pinned.media_id == media_id:
+            own.append(pinned)
+        parts.extend(own)
+    total = round(sum(part.duration_s for part in parts), 3)
+    return BestPartsResult(tuple(parts), round(target, 3), total, round(sum(durations.values()), 3))
+
+
 def allocate_best_parts_for_voiceover(
     sources: Sequence[Any], voiceover_duration_s: float
 ) -> BestPartsResult:

@@ -9,18 +9,11 @@ struct SongTimelineConfiguration {
     var loadSong: @MainActor (Int?) async -> SongAudioFile?
 }
 
-/// The song-order question as a horizontal timeline: the song's waveform with each take sitting where it
-/// matches, empty spots between takes, and a tray for takes left off the song. Drag a take to move it, tap an
-/// empty spot to fill it. Used instead of `SongOrderCard` when the server advertises `song_order_placements`.
+/// The song-order question as an editor-style timeline (KRI-561, reworked in KRI-575): a fixed playhead over the
+/// ruler, the clips and the song's waveform. Slide the lanes to move the playhead, press play to hear the song from
+/// there, tap a clip or an empty spot to edit it, press and hold a clip to lift and move it. Used instead of
+/// `SongOrderCard` when the server advertises `song_order_placements`.
 struct SongTimelineCard: View {
-    static let pointsPerSecond: CGFloat = 14
-    private static let rulerHeight: CGFloat = 20
-    private static let waveHeight: CGFloat = 44
-    private static let blockHeight: CGFloat = 64
-    private static let laneTop: CGFloat = rulerHeight + 4 + waveHeight + 8
-    private static let totalHeight: CGFloat = laneTop + blockHeight + 4
-    private static let space = "song-timeline-space"
-
     let question: SongOrderQuestion
     let media: [CreationAttachedMedia]
     let projectID: UUID
@@ -31,20 +24,29 @@ struct SongTimelineCard: View {
 
     @State private var state: SongTimelineState
     @State private var sheet: Sheet?
-    @State private var notice: String?
+    @State private var notice: Notice?
     @State private var audio: AudioStatus = .loading
     @State private var bars: [Float] = []
-    @State private var drag: DragInfo?
-    @State private var scrollPosition = ScrollPosition(edge: .leading)
-    @StateObject private var audition = NativeSongAuditionController(
-        engine: AVAudioSongAuditionEngine(),
-        host: .init(pauseVideo: { false }, resumeVideo: {}, activateAudioSession: {
-            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-            try? AVAudioSession.sharedInstance().setActive(true)
-        }))
+    @State private var selection: SongTimelineSelection?
+    @State private var trayDrag: TrayDrag?
+    @State private var surfaceFrame: CGRect = .zero
+    @State private var cardFrame: CGRect = .zero
+    @State private var freezer = SongTimelineScrollFreezer()
+    @StateObject private var playback: SongTimelinePlayback
+
+    /// An inline line under the timeline: a refusal (error) or a plain "moved over to make room" (information).
+    struct Notice: Equatable {
+        let text: String
+        let isError: Bool
+    }
+
+    /// A tray clip being dragged: its floating copy follows `point` (global coordinates).
+    struct TrayDrag: Equatable {
+        let mediaID: String
+        var point: CGPoint
+    }
 
     enum AudioStatus: Equatable { case loading, ready(SongAudioFile), unavailable }
-    struct DragInfo: Equatable { let mediaID: String; let startDelta: Double; var raw: Double; var lastSnap: Double? }
     enum Sheet: Identifiable, Equatable {
         case block(String), tray(String), gap(Int)
         var id: String {
@@ -63,10 +65,22 @@ struct SongTimelineCard: View {
         self.projectID = projectID
         self.mode = mode
         self.configuration = configuration
-        self.previewURL = previewURL ?? { SongOrderPreviewSource.localURL(projectID: projectID, mediaID: $0) }
-        _state = State(initialValue: SongTimelineState(question: question, media: media, songDurationS: songDurationS))
+        self.previewURL = previewURL ?? { mediaID in
+            #if DEBUG
+            if let fixture = SongTimelineFixture.clipURL(mediaID: mediaID) { return fixture }
+            #endif
+            return SongOrderPreviewSource.localURL(projectID: projectID, mediaID: mediaID)
+        }
+        let initial = SongTimelineState(question: question, media: media, songDurationS: songDurationS)
+        _state = State(initialValue: initial)
+        // First paint shows content, not blank song: the playhead starts on the first clip.
+        let segments = initial.segments()
+        let clock = SongTimelineClock(duration: Self.axisDuration(state: initial, audioSeconds: nil),
+                                      time: SongTimelineMath.initialTime(segments: segments))
+        _playback = StateObject(wrappedValue: SongTimelinePlayback(clock: clock))
     }
 
+    private var clock: SongTimelineClock { playback.clock }
     private var positions: [String: Int] { SongOrderPositions.map(media: media, question: question) }
     private func number(_ mediaID: String) -> Int { positions[mediaID] ?? 0 }
     private func attached(_ mediaID: String) -> CreationAttachedMedia {
@@ -91,18 +105,20 @@ struct SongTimelineCard: View {
         case .active(let isSending, let submit):
             VStack(alignment: .leading, spacing: 12) {
                 header
-                timeline(isSending: isSending)
-                if !state.tray.isEmpty { trayRow(isSending: isSending) }
+                timelineBlock(isSending: isSending)
                 notes
                 footer(isSending: isSending, submit: submit)
             }
             .padding(14)
             .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(alignment: .topLeading) { trayGhost }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { cardFrame = $0 }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("song-timeline-card")
             .task { await prepareAudio() }
-            .onDisappear { audition.cancel() }
-            .onReceive(NotificationCenter.default.publisher(for: .kriaAudioCaptureWillStart)) { _ in audition.cancel() }
+            .onDisappear { playback.pause(); endTrayDrag() }
+            .onReceive(NotificationCenter.default.publisher(for: .kriaAudioCaptureWillStart)) { _ in playback.pause(); endTrayDrag() }
+            .onChange(of: sheet) { _, opened in if opened != nil { playback.pause() } }
             .sheet(item: $sheet) { sheetContent($0, isSending: isSending) }
         }
     }
@@ -116,10 +132,38 @@ struct SongTimelineCard: View {
             Text("Place your clips on the song")
                 .font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink)
                 .accessibilityAddTraits(.isHeader)
-            Text("Drag a clip to move it along the song, or tap an empty spot to fill it. Tap a clip to hear that part of the song.")
+            Text("Slide the timeline and press play to hear the song. Tap a clip to edit it, or press and hold a clip to move it.")
                 .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// Everything that scrolls or drags sideways: no drag in here may open the projects drawer.
+    private func timelineBlock(isSending: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SongTimelinePreview(
+                clock: clock, state: state, clipNumber: { number($0) }, media: { attached($0) },
+                localURL: { previewURL($0) }, onToggle: { playback.togglePlayback() })
+            SongTimelineSurface(
+                state: state, question: question, clock: clock, selection: selection, bars: bars,
+                songSeconds: songSeconds, isSending: isSending, externalDrag: externalDrag(),
+                clipNumber: { number($0) }, media: { attached($0) }, actions: surfaceActions(isSending: isSending))
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { surfaceFrame = $0 }
+            SongTimelineTransport(
+                clock: clock, stops: stops, canPlay: playback.canPlay && !isSending,
+                onPlayPause: { playback.togglePlayback() }, onPrevious: { jump(forward: false) }, onNext: { jump(forward: true) })
+            SongTimelineActionBar(
+                selection: selection, clipNumber: selectedNumber, isSending: isSending, actions: barActions)
+            if !state.tray.isEmpty { trayRow(isSending: isSending) }
+        }
+        .excludesDrawerGesture()
+    }
+
+    private var stops: [SongTimelineMath.Stop] { SongTimelineMath.stops(segments: state.segments(), gaps: state.gaps()) }
+
+    private var selectedNumber: Int {
+        if case .block(let id)? = selection { return number(id) }
+        return 0
     }
 
     // MARK: audio
@@ -128,274 +172,141 @@ struct SongTimelineCard: View {
         guard case .loading = audio else { return }
         guard let file = await configuration.loadSong(question.songGeneration) else { audio = .unavailable; return }
         audio = .ready(file)
+        playback.load(file)
+        clock.setDuration(max(clock.duration, Self.axisDuration(state: state, audioSeconds: file.durationS)))
         let seconds = file.durationS ?? question.songDurationS ?? 60
-        let peaks = await NativeSfxWaveformPeaks.load(url: file.url, buckets: max(16, Int(seconds * 3)))
+        let peaks = await NativeSfxWaveformPeaks.load(url: file.url, buckets: min(4000, max(16, Int(seconds * 10))))
         bars = peaks ?? []
     }
 
-    private func playSong(start: Double, length: Double) {
-        guard case .ready(let file) = audio, length > 0 else { return }
-        audition.begin()
-        audition.update(SongAuditionRequest(url: file.url, start: start, length: length, volume: 1))
-        audition.end()
-    }
-
     /// Length of the song axis in seconds: the song itself, else whatever the clips and the audio need.
-    private func axisDuration(_ segments: [SongTimelineState.Segment]) -> Double {
+    static func axisDuration(state: SongTimelineState, audioSeconds: Double?) -> Double {
         var seconds = state.songDurationS ?? 0
-        if case .ready(let file) = audio, let duration = file.durationS { seconds = max(seconds, duration) }
-        seconds = max(seconds, segments.map(\.end).max() ?? 0)
+        if let audioSeconds { seconds = max(seconds, audioSeconds) }
+        seconds = max(seconds, state.segments().map(\.end).max() ?? 0)
         return max(seconds, 20)
     }
 
-    // MARK: timeline
-
-    private func timeline(isSending: Bool) -> some View {
-        let pps = Self.pointsPerSecond
-        let segments = state.segments()
-        let gaps = state.gaps()
-        let axis = axisDuration(segments)
-        let width = CGFloat(axis) * pps
-        let visible = segments.filter { !$0.hidden }
-        let firstStart = visible.first?.start
-        let lastEnd = visible.map(\.end).max()
-        return ScrollView(.horizontal, showsIndicators: false) {
-            ZStack(alignment: .topLeading) {
-                ruler(axis: axis)
-                waveform(axis: axis)
-                if let firstStart, let lastEnd { outsideRegions(firstStart: firstStart, lastEnd: lastEnd, width: width) }
-                ForEach(gaps) { gap in gapView(gap, isSending: isSending) }
-                ForEach(segments) { segment in blockView(segment, isSending: isSending) }
-            }
-            .frame(width: width, height: Self.totalHeight, alignment: .topLeading)
-            .coordinateSpace(name: Self.space)
-            .padding(.horizontal, 4)
-        }
-        .scrollPosition($scrollPosition)
-        .scrollDisabled(drag != nil)
-        .frame(height: Self.totalHeight)
-        .onAppear {
-            if let firstStart { scrollPosition.scrollTo(x: max(0, CGFloat(firstStart) * pps - 24)) }
-        }
-        .accessibilityIdentifier("song-timeline-scroll")
+    /// How much song the waveform lane covers: the audio file, else the whole axis.
+    private var songSeconds: Double {
+        if case .ready(let file) = audio, let seconds = file.durationS { return max(seconds, 1) }
+        return max(clock.duration, 1)
     }
 
-    private func ruler(axis: Double) -> some View {
-        let pps = Self.pointsPerSecond
-        return ZStack(alignment: .topLeading) {
-            ForEach(0...Int(axis / 10), id: \.self) { index in
-                Text(DurationFormatter.clock(Double(index * 10)))
-                    .font(KriaFont.body(10).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
-                    .fixedSize()
-                    .offset(x: CGFloat(index * 10) * pps + 3, y: 0)
-            }
-        }
-        .frame(height: Self.rulerHeight, alignment: .topLeading)
-        .accessibilityHidden(true)
+    // MARK: lane actions
+
+    private func surfaceActions(isSending: Bool) -> SongTimelineSurfaceActions {
+        SongTimelineSurfaceActions(
+            selectBlock: { selectBlock($0) },
+            selectGap: { selectGap($0) },
+            clearSelection: { selection = nil },
+            scrubBegan: { playback.scrubBegan() },
+            scrubEnded: { playback.scrubEnded(resume: $0) },
+            liftBegan: { id in notice = nil; playback.pause(); selection = .block(id) },
+            commitMove: { id, raw in commitMove(id, toDelta: raw) },
+            nudge: { id, seconds in nudge(id, by: seconds) },
+            moveHere: { moveHere($0) },
+            seek: { playback.seek(to: $0) })
     }
 
-    private func waveform(axis: Double) -> some View {
-        let pps = Self.pointsPerSecond
-        let audioSeconds: Double = {
-            if case .ready(let file) = audio, let seconds = file.durationS { return seconds }
-            return axis
-        }()
-        return ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(KriaColor.fill)
-                .frame(width: CGFloat(axis) * pps, height: Self.waveHeight)
-            if bars.isEmpty {
-                // No audio (yet, or at all): a flat track keeps the same shape.
-                RoundedRectangle(cornerRadius: 1.5).fill(KriaColor.line)
-                    .frame(width: CGFloat(axis) * pps - 8, height: 3)
-                    .offset(x: 4, y: Self.waveHeight / 2 - 1.5)
-            } else {
-                let drawn = bars
-                Canvas { context, size in
-                    let barWidth = size.width / CGFloat(drawn.count)
-                    for (index, value) in drawn.enumerated() {
-                        let height = max(2, CGFloat(value) * size.height)
-                        let rect = CGRect(x: CGFloat(index) * barWidth + 0.5, y: (size.height - height) / 2,
-                                          width: max(1, barWidth - 1.5), height: height)
-                        context.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(KriaColor.zinc.opacity(0.55)))
-                    }
-                }
-                .frame(width: CGFloat(audioSeconds) * pps, height: Self.waveHeight - 6)
-                .offset(y: 3)
-            }
-        }
-        .offset(y: Self.rulerHeight + 4)
-        .accessibilityHidden(true)
+    private var barActions: SongTimelineActionBar.Actions {
+        SongTimelineActionBar.Actions(
+            moveToTray: { moveSelectionToTray() },
+            nudgeEarlier: { if case .block(let id)? = selection { nudge(id, by: -0.5) } },
+            nudgeLater: { if case .block(let id)? = selection { nudge(id, by: 0.5) } },
+            here: { moveHereSelected() },
+            preview: { previewSelected() },
+            fill: { if case .gap(let index)? = selection { sheet = .gap(index) } })
     }
 
-    /// The song before the first clip and after the last one is not in the video: dim it.
-    private func outsideRegions(firstStart: Double, lastEnd: Double, width: CGFloat) -> some View {
-        let pps = Self.pointsPerSecond
-        let top = Self.rulerHeight + 4
-        let height = Self.totalHeight - top
-        let leading = CGFloat(firstStart) * pps
-        let trailingX = CGFloat(lastEnd) * pps
-        return ZStack(alignment: .topLeading) {
-            if leading > 1 {
-                Rectangle().fill(KriaColor.ink.opacity(0.10)).frame(width: leading, height: height).offset(y: top)
-                if leading > 100 { outsideLabel.offset(x: 8, y: top + 4) }
-            }
-            if width - trailingX > 1 {
-                Rectangle().fill(KriaColor.ink.opacity(0.10)).frame(width: width - trailingX, height: height).offset(x: trailingX, y: top)
-                if width - trailingX > 100 { outsideLabel.offset(x: trailingX + 8, y: top + 4) }
-            }
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-
-    private var outsideLabel: some View {
-        Text("outside the video").font(KriaFont.body(10).weight(.medium)).foregroundStyle(KriaColor.mutedInk).fixedSize()
-    }
-
-    // MARK: blocks and gaps
-
-    private func liveRange(_ segment: SongTimelineState.Segment) -> (start: Double, end: Double) {
-        guard let drag, drag.mediaID == segment.mediaID else { return (segment.start, segment.end) }
-        return state.range(of: segment.mediaID, delta: state.snapped(segment.mediaID, drag.raw))
-    }
-
-    @ViewBuilder
-    private func blockView(_ segment: SongTimelineState.Segment, isSending: Bool) -> some View {
-        let id = segment.mediaID
-        let range = liveRange(segment)
-        let pps = Self.pointsPerSecond
-        let width = max(44, CGFloat(range.end - range.start) * pps)
-        let item = question.item(for: id)
-        let uncertain = item?.status.isUncertain ?? true
-        let label = blockLabel(segment)
-        // Not a `Button`: its tap is starved by the high-priority drag below. A tap gesture + the button trait
-        // is the same for VoiceOver and XCUITest.
-        blockFace(id: id, width: width, uncertain: uncertain, hidden: segment.hidden, dragging: drag?.mediaID == id)
-        .onTapGesture { tapBlock(id, segment: segment) }
-        .accessibilityElement(children: .ignore)
-        .accessibilityAddTraits(.isButton)
-        .frame(width: width, height: Self.blockHeight)
-        .offset(x: CGFloat(range.start) * pps, y: Self.laneTop)
-        .zIndex(drag?.mediaID == id ? 2 : 1)
-        .highPriorityGesture(dragGesture(id, isSending: isSending))
-        .accessibilityLabel(label)
-        .accessibilityHint("Double tap to hear the song here. Swipe up or down to move by half a second.")
-        .accessibilityAdjustableAction { direction in
-            guard !isSending else { return }
-            switch direction {
-            case .increment: nudge(id, by: 0.5)
-            case .decrement: nudge(id, by: -0.5)
-            @unknown default: break
-            }
-        }
-        .accessibilityIdentifier("song-timeline-block-\(id)")
-    }
-
-    private func blockLabel(_ segment: SongTimelineState.Segment) -> String {
-        let delta = state.delta(of: segment.mediaID) ?? segment.start
-        var text = "Clip \(number(segment.mediaID)), starts at \(DurationFormatter.clock(max(0, delta))), drag to move"
-        if segment.hidden { text += ", hidden behind another clip" }
-        return text
-    }
-
-    private func blockFace(id: String, width: CGFloat, uncertain: Bool, hidden: Bool, dragging: Bool) -> some View {
-        ZStack(alignment: .bottomLeading) {
-            TimelineThumbnail(media: attached(id))
-                .frame(width: width, height: Self.blockHeight)
-                .background(dragging ? KriaColor.butter : KriaColor.sky)
-            Text(hidden ? "Clip \(number(id)) · hidden" : "Clip \(number(id))")
-                .font(KriaFont.body(11).weight(.bold)).foregroundStyle(Color.white)
-                .lineLimit(1)
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(KriaColor.ink.opacity(0.7), in: Capsule())
-                .padding(4)
-        }
-        .frame(width: width, height: Self.blockHeight)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(alignment: .topTrailing) { if uncertain { UncertainBadge().offset(x: -3, y: 3) } }
-        .opacity(hidden ? 0.5 : 1)
-        .shadow(color: dragging ? KriaColor.ink.opacity(0.25) : .clear, radius: 6, y: 3)
-        .contentShape(Rectangle())
-    }
-
-    private func gapView(_ gap: SongTimelineState.Gap, isSending: Bool) -> some View {
-        let pps = Self.pointsPerSecond
-        let width = max(8, CGFloat(gap.length) * pps)
-        let hit = max(44, width)
-        let label = "Empty spot \(DurationFormatter.clock(gap.start)) to \(DurationFormatter.clock(gap.end)), double tap to fill"
-        return Button {
-            guard !isSending else { return }
-            sheet = .gap(gap.index)
-            playSong(start: gap.start, length: gap.length)
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(KriaColor.zinc, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                    .frame(width: width, height: Self.blockHeight)
-                if width >= 44 {
-                    VStack(spacing: 2) {
-                        Image(systemName: "plus").font(.system(size: 14, weight: .semibold))
-                        Text("Empty").font(KriaFont.body(10).weight(.medium))
-                    }
-                    .foregroundStyle(KriaColor.mutedInk)
-                }
-            }
-            .frame(width: hit, height: Self.blockHeight)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .frame(width: hit, height: Self.blockHeight)
-        .offset(x: CGFloat(gap.start) * pps - (hit - width) / 2, y: Self.laneTop)
-        .accessibilityLabel(label)
-        .accessibilityIdentifier("song-timeline-gap-\(gap.index)")
-    }
-
-    // MARK: interaction
-
-    private func tapBlock(_ id: String, segment: SongTimelineState.Segment) {
+    private func selectBlock(_ id: String) {
         notice = nil
-        sheet = .block(id)
-        playSong(start: segment.start, length: max(1, segment.end - segment.start))
+        selection = .block(id)
+        if let segment = state.segments().first(where: { $0.mediaID == id }) { playback.seek(to: segment.start) }
     }
 
-    private func dragGesture(_ id: String, isSending: Bool) -> some Gesture {
-        DragGesture(minimumDistance: 8, coordinateSpace: .named(Self.space))
-            .onChanged { value in
-                guard !isSending, let startDelta = state.delta(of: id) else { return }
-                if drag == nil {
-                    drag = DragInfo(mediaID: id, startDelta: startDelta, raw: startDelta, lastSnap: nil)
-                    notice = nil
-                    audition.cancel()
-                }
-                guard var current = drag, current.mediaID == id else { return }
-                current.raw = current.startDelta + Double(value.translation.width / Self.pointsPerSecond)
-                // A light tick each time the block settles onto one of its candidate positions.
-                let candidates = question.item(for: id)?.candidates.map(\.deltaS) ?? []
-                let snapped = state.snapped(id, current.raw)
-                if candidates.contains(snapped), current.lastSnap != snapped {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                }
-                current.lastSnap = candidates.contains(snapped) ? snapped : nil
-                drag = current
-            }
-            .onEnded { _ in
-                guard let info = drag, info.mediaID == id else { return }
-                drag = nil
-                let refusal = state.move(id, toDelta: info.raw)
-                notice = refusal?.message
-                if refusal == nil { announceMoved(id) }
-            }
+    private func selectGap(_ index: Int) {
+        notice = nil
+        selection = .gap(index)
+        if let gap = state.gaps().first(where: { $0.index == index }) { playback.seek(to: gap.start) }
+    }
+
+    /// Previous / next clip or empty spot: the playhead jumps there and it is selected.
+    private func jump(forward: Bool) {
+        let all = stops
+        let now = clock.currentTime
+        guard let stop = forward ? SongTimelineMath.nextStop(after: now, in: all) : SongTimelineMath.previousStop(before: now, in: all) else { return }
+        switch stop.kind {
+        case .block(let id): selectBlock(id)
+        case .gap(let index): selectGap(index)
+        }
+    }
+
+    // MARK: moving clips
+
+    /// Says what a move did: a refusal in red, "moved over to make room" in grey, nothing when it was a plain move.
+    private func report(_ outcome: SongTimelineState.MoveOutcome, for id: String) {
+        if let refusal = outcome.refusal {
+            notice = Notice(text: refusal.message, isError: true)
+            UIAccessibility.post(notification: .announcement, argument: refusal.message)
+        } else if let text = outcome.message(clipNumber: { number($0) }) {
+            notice = Notice(text: text, isError: false)
+            UIAccessibility.post(notification: .announcement, argument: text)
+        } else {
+            notice = nil
+            announceMoved(id)
+        }
+    }
+
+    /// A clip was dropped (or sent to the playhead) at `raw`. Clips it lands on are pushed aside, never refused.
+    private func commitMove(_ id: String, toDelta raw: Double, followWithPlayhead: Bool = false) {
+        report(state.move(id, toDelta: raw), for: id)
+        reconcileSelection()
+        finishPlacing(id, followWithPlayhead: followWithPlayhead)
     }
 
     private func nudge(_ id: String, by seconds: Double) {
         guard let current = state.delta(of: id) else { return }
-        let refusal = state.move(id, toDelta: current + seconds)
-        notice = refusal?.message
-        if let refusal {
-            UIAccessibility.post(notification: .announcement, argument: refusal.message)
-        } else {
-            announceMoved(id)
+        report(state.move(id, toDelta: current + seconds), for: id)
+        reconcileSelection()
+    }
+
+    /// "Move here" / "Add here": the clip starts at the playhead, whether it was on the song or in the tray.
+    private func moveHere(_ id: String) {
+        notice = nil
+        commitMove(id, toDelta: clock.currentTime, followWithPlayhead: true)
+    }
+
+    private func moveHereSelected() {
+        switch selection {
+        case .block(let id)?, .tray(let id)?: moveHere(id)
+        default: break
+        }
+    }
+
+    private func previewSelected() {
+        switch selection {
+        case .block(let id)?: sheet = .block(id)
+        case .tray(let id)?: sheet = .tray(id)
+        default: break
+        }
+    }
+
+    private func moveSelectionToTray() {
+        guard case .block(let id)? = selection else { return }
+        state.moveToTray(id)
+        notice = nil
+        selection = .tray(id)
+    }
+
+    /// Empty spots renumber whenever the arrangement changes, so a selected spot never survives an edit; a clip
+    /// that left the song cannot stay selected as a placed one, and a tray clip that was placed is no longer in the tray.
+    private func reconcileSelection() {
+        switch selection {
+        case .block(let id)?: if !state.isPlaced(id) { selection = .tray(id) }
+        case .tray(let id)?: if state.isPlaced(id) { selection = .block(id) }
+        case .gap?: selection = nil
+        case nil: break
         }
     }
 
@@ -404,29 +315,81 @@ struct SongTimelineCard: View {
         UIAccessibility.post(notification: .announcement, argument: "Clip \(number(id)) now starts at \(DurationFormatter.clock(start))")
     }
 
-    // MARK: tray, notes, footer
+    // MARK: tray
 
     private func trayRow(isSending: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Tray").font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(state.tray, id: \.self) { id in
-                        Button { if !isSending { notice = nil; sheet = .tray(id) } } label: {
-                            VStack(spacing: 4) {
-                                CreationAttachmentThumbnail(media: attached(id))
-                                    .background(RoundedRectangle(cornerRadius: 8).fill(KriaColor.zinc.opacity(0.12)))
-                                Text("Clip \(number(id))").font(KriaFont.body(11).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                            }
-                            .frame(minWidth: 52, minHeight: 44)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Clip \(number(id)), in the tray, double tap for options")
-                        .accessibilityIdentifier("song-timeline-tray-\(id)")
-                    }
-                }
-            }
+        SongTimelineTray(
+            clips: state.tray.map { ($0, attached($0), number($0)) }, isSending: isSending, selectedID: selectedTrayID,
+            drag: trayDragCallbacks, onTap: { id in notice = nil; selection = .tray(id) }, onMoveHere: { moveHere($0) })
+            .background(SongTimelineScrollFreezeProbe(freezer: freezer))
+    }
+
+    private var selectedTrayID: String? {
+        if case .tray(let id)? = selection { return id }
+        return nil
+    }
+
+    private var trayDragCallbacks: SongTimelineTray.Drag {
+        SongTimelineTray.Drag(
+            began: { id in
+                notice = nil; playback.pause(); freezer.freeze(); selection = .tray(id)
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            },
+            moved: { id, point in trayDrag = TrayDrag(mediaID: id, point: point) },
+            ended: { id, point in dropTrayClip(id, at: point) },
+            cancelled: { endTrayDrag() })
+    }
+
+    private func endTrayDrag() {
+        freezer.thaw()
+        trayDrag = nil
+    }
+
+    /// Released over the lanes: the clip starts at the song time under the finger. Anywhere else cancels.
+    private func dropTrayClip(_ id: String, at point: CGPoint) {
+        endTrayDrag()
+        guard SongTimelineMath.isDropOverLanes(point, lanes: laneDropRect) else { return }
+        commitMove(id, toDelta: songTime(atGlobalX: point.x), followWithPlayhead: true)
+    }
+
+    /// The lanes plus the ruler above them: the generous target for a drop.
+    private var laneDropRect: CGRect {
+        CGRect(x: surfaceFrame.minX, y: surfaceFrame.minY + SongTimelineSurface.Layout.rulerTop,
+               width: surfaceFrame.width, height: SongTimelineSurface.Layout.total - SongTimelineSurface.Layout.rulerTop)
+    }
+
+    private func songTime(atGlobalX x: CGFloat) -> Double {
+        SongTimelineMath.time(atX: x - surfaceFrame.minX, now: clock.currentTime, playheadX: surfaceFrame.width / 2,
+                              pixelsPerSecond: clock.pixelsPerSecond)
+    }
+
+    /// While a tray clip is over the lanes the timeline previews where it would land.
+    private func externalDrag() -> SongTimelineExternalDrag? {
+        guard let trayDrag, SongTimelineMath.isDropOverLanes(trayDrag.point, lanes: laneDropRect) else { return nil }
+        return SongTimelineExternalDrag(mediaID: trayDrag.mediaID, rawDelta: songTime(atGlobalX: trayDrag.point.x))
+    }
+
+    /// The floating copy of the tray clip under the finger.
+    @ViewBuilder private var trayGhost: some View {
+        if let trayDrag {
+            CreationAttachmentThumbnail(media: attached(trayDrag.mediaID))
+                .background(KriaColor.butter, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .shadow(color: KriaColor.ink.opacity(0.25), radius: 6, y: 3)
+                .position(x: trayDrag.point.x - cardFrame.minX, y: trayDrag.point.y - cardFrame.minY - 44)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .accessibilityIdentifier("song-timeline-tray-ghost")
+        }
+    }
+
+    /// After a clip lands on the song: select it and put the playhead on it.
+    private func finishPlacing(_ id: String, followWithPlayhead: Bool = true) {
+        if state.isPlaced(id) {
+            selection = .block(id)
+            if followWithPlayhead, let segment = state.segments().first(where: { $0.mediaID == id }) { playback.seek(to: segment.start) }
+        } else if case .block? = selection {
+            selection = .tray(id)
         }
     }
 
@@ -445,8 +408,8 @@ struct SongTimelineCard: View {
                 .accessibilityIdentifier("song-timeline-footer-note")
         }
         if let notice {
-            Text(notice)
-                .font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.failureText)
+            Text(notice.text)
+                .font(KriaFont.body(12).weight(.semibold)).foregroundStyle(notice.isError ? KriaColor.failureText : KriaColor.mutedInk)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("song-timeline-notice")
         }
@@ -455,7 +418,7 @@ struct SongTimelineCard: View {
     private func footer(isSending: Bool, submit: @escaping (SongOrderSubmission, String) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Button("Use this arrangement") {
-                audition.cancel()
+                playback.pause()
                 let submission = state.submission(includePlacements: true)
                 submit(submission, submission.message(positions: positions))
             }
@@ -463,7 +426,7 @@ struct SongTimelineCard: View {
             .disabled(isSending)
             .accessibilityIdentifier("song-timeline-use")
             if state.isChanged {
-                Button("Reset") { notice = nil; state.reset() }
+                Button("Reset") { notice = nil; selection = nil; state.reset() }
                     .buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
                     .disabled(isSending)
                     .accessibilityIdentifier("song-timeline-reset")
@@ -483,22 +446,22 @@ struct SongTimelineCard: View {
                 title: gap.map { "Fill \(DurationFormatter.clock($0.start)) to \(DurationFormatter.clock($0.end))" } ?? "Fill this spot",
                 clips: clips.map { ($0, attached($0), number($0)) },
                 onPick: { id in
-                    if let gap { notice = state.place(id, inGap: gap)?.message }
-                    audition.cancel()
+                    if let gap { report(state.place(id, inGap: gap), for: id) }
+                    finishPlacing(id)
                     self.sheet = nil
                 },
-                onClose: { audition.cancel(); self.sheet = nil })
+                onClose: { self.sheet = nil })
         case .block(let id):
             SongTimelineTakeSheet(
                 mediaID: id, title: "Clip \(number(id))", detail: Self.detail(for: question.item(for: id), start: state.delta(of: id)),
                 previewURL: previewURL(id), primaryTitle: "Move to tray", primaryID: "song-timeline-to-tray",
-                primary: { state.moveToTray(id); notice = nil; audition.cancel(); self.sheet = nil },
-                onClose: { audition.cancel(); self.sheet = nil })
+                primary: { state.moveToTray(id); notice = nil; selection = .tray(id); self.sheet = nil },
+                onClose: { self.sheet = nil })
         case .tray(let id):
             SongTimelineTakeSheet(
                 mediaID: id, title: "Clip \(number(id))", detail: Self.detail(for: question.item(for: id), start: nil),
                 previewURL: previewURL(id), primaryTitle: "Add to the song", primaryID: "song-timeline-add-\(id)",
-                primary: { notice = state.placeAnywhere(id)?.message; self.sheet = nil },
+                primary: { report(state.placeAnywhere(id), for: id); finishPlacing(id); self.sheet = nil },
                 onClose: { self.sheet = nil })
         }
     }
@@ -607,23 +570,5 @@ private struct SongTimelineTakeSheet: View {
         .presentationDetents([.medium, .large])
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("song-timeline-take-sheet")
-    }
-}
-
-/// A take's still, filling whatever frame it is given (the shared thumbnail is a fixed 52x64).
-private struct TimelineThumbnail: View {
-    let media: CreationAttachedMedia
-    var body: some View {
-        Group {
-            if let image = UIImage(contentsOfFile: CreationMediaPreview.url(mediaID: media.id).path) {
-                Image(uiImage: image).resizable().scaledToFill()
-            } else if let url = media.previewURL {
-                AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: { Image(systemName: "video").foregroundStyle(KriaColor.mutedInk) }
-            } else {
-                Image(systemName: "video").foregroundStyle(KriaColor.mutedInk)
-            }
-        }
-        .clipped()
-        .accessibilityHidden(true)
     }
 }

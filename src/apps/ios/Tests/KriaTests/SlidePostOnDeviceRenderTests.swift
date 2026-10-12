@@ -67,8 +67,8 @@ import XCTest
         }, snapshot, width, height)
     }
 
-    private func render(_ slide: SlidePostSlide, _ asset: SlidePostAsset, profile: String = "instagram_carousel") async throws -> Data {
-        try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile)
+    private func render(_ slide: SlidePostSlide, _ asset: SlidePostAsset, profile: String = "instagram_carousel", aspect: String? = nil) async throws -> Data {
+        try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile, aspect: aspect)
     }
 
     // MARK: Rendering
@@ -159,7 +159,7 @@ import XCTest
     func testExpiredSignedURLSurfacesForTheCallerToRefresh() async throws {
         let target = asset("asset-a", source: URL(string: "https://example.test/x.jpg"))
         do {
-            _ = try await SlidePostOnDeviceRender.renderSlide(slide: slide("a"), asset: target, profile: "tiktok_photo", fetch: { _ in throw SlidePostImageCache.LoadError.expired })
+            _ = try await SlidePostOnDeviceRender.renderSlide(slide: slide("a"), asset: target, profile: "tiktok_photo", aspect: nil, fetch: { _ in throw SlidePostImageCache.LoadError.expired })
             XCTFail("expected expired")
         } catch { XCTAssertEqual(error as? SlidePostImageCache.LoadError, .expired) }
     }
@@ -233,10 +233,10 @@ import XCTest
         let a = try photo(name: "1.jpg")
         let session = await session(slides: [slide("a")], assets: [asset("asset-a", source: a)])
         var calls = 0, saved = 0
-        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in saved += 1 }, onDeviceRender: { slide, asset, profile in
+        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in saved += 1 }, onDeviceRender: { slide, asset, profile, aspect in
             calls += 1
             if calls == 1 { throw SlidePostImageCache.LoadError.expired }
-            return try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile)
+            return try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile, aspect: aspect)
         })
         await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID)
         XCTAssertEqual(calls, 2); XCTAssertEqual(saved, 1)
@@ -246,9 +246,122 @@ import XCTest
         let a = try photo(name: "1.jpg")
         let session = await session(slides: [slide("a")], assets: [asset("asset-a", source: a)])
         var saved = 0
-        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in saved += 1 }, onDeviceRender: { _, _, _ in throw SlidePostOnDeviceRender.RenderError.undecodable })
+        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in saved += 1 }, onDeviceRender: { _, _, _, _ in throw SlidePostOnDeviceRender.RenderError.undecodable })
         await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID)
         XCTAssertEqual(saved, 0)
         if case .failed = exporter.status {} else { XCTFail("expected failed, got \(exporter.status)") }
+    }
+
+    // MARK: Post size and photo fit (KRI-606)
+
+    func testOutputSizeFollowsThePostSizeAtTwoX() async throws {
+        let url = try photo(name: "sized.jpg")
+        let cases: [(String, String?, CGSize)] = [
+            ("tiktok_photo", "1:1", CGSize(width: 2160, height: 2160)),
+            ("tiktok_photo", "3:4", CGSize(width: 2160, height: 2880)),
+            ("tiktok_photo", "4:5", CGSize(width: 2160, height: 2700)),
+            ("instagram_carousel", "1:1", CGSize(width: 2160, height: 2160)),
+            ("instagram_carousel", "1.91:1", CGSize(width: 2160, height: 1132)),
+            ("instagram_carousel", "3:4", CGSize(width: 2160, height: 2880)),
+            // A size the platform lacks falls back to its default, as the server does.
+            ("instagram_carousel", "9:16", CGSize(width: 2160, height: 2700)),
+        ]
+        for (profile, aspect, expected) in cases {
+            let out = try decoded(try await render(slide("a"), asset("asset-a", source: url), profile: profile, aspect: aspect))
+            XCTAssertEqual(out.size, expected, "\(profile) \(aspect ?? "default")")
+        }
+    }
+
+    private func fitSlide(_ fit: SlidePostFit?, crop: NormalizedSourceRect? = nil) -> SlidePostSlide {
+        SlidePostSlide(id: "a", assetID: "asset-a", kind: "image",
+                       edits: SlidePostEdits(framing: crop.map { SlidePostFraming(sourceCrop: $0) }, fit: fit))
+    }
+
+    func testFitShowsTheWholePhotoWithSolidBars() async throws {
+        let url = try photo(name: "wide.jpg")   // 2:1, left red / right blue
+        for (fit, bar) in [(SlidePostFit.white, (255, 255, 255)), (.black, (0, 0, 0))] {
+            let out = try decoded(try await render(fitSlide(fit), asset("asset-a", source: url), profile: "tiktok_photo", aspect: "1:1"))
+            XCTAssertEqual(out.size, CGSize(width: 2160, height: 2160))
+            let top = out.pixel(0.5, 0.1), bottom = out.pixel(0.5, 0.9)
+            for p in [top, bottom] {
+                XCTAssertEqual(p.r, bar.0, accuracy: 12, "\(fit) bar"); XCTAssertEqual(p.b, bar.2, accuracy: 12, "\(fit) bar")
+            }
+            // Nothing is trimmed: both halves are visible, side by side, in the middle band.
+            XCTAssertGreaterThan(out.pixel(0.2, 0.5).r, 200); XCTAssertLessThan(out.pixel(0.2, 0.5).b, 60)
+            XCTAssertGreaterThan(out.pixel(0.8, 0.5).b, 200); XCTAssertLessThan(out.pixel(0.8, 0.5).r, 60)
+        }
+    }
+
+    func testFillStillTrimsWhereFitDoesNot() async throws {
+        let url = try photo(name: "wide2.jpg")
+        let fill = try decoded(try await render(fitSlide(nil), asset("asset-a", source: url), profile: "tiktok_photo", aspect: "1:1"))
+        XCTAssertGreaterThan(fill.pixel(0.5, 0.1).r + fill.pixel(0.5, 0.1).b, 150, "fill covers the top edge with photo")
+        // The centre seam of a trimmed 2:1 -> 1:1 sits at the same place, but the outer thirds are gone: x=0.05 is red.
+        XCTAssertGreaterThan(fill.pixel(0.05, 0.5).r, 200)
+    }
+
+    func testBlurBarsContinueThePhotoColours() async throws {
+        let url = try photo(name: "blur.jpg")
+        let out = try decoded(try await render(fitSlide(.blur), asset("asset-a", source: url), profile: "tiktok_photo", aspect: "1:1"))
+        let left = out.pixel(0.1, 0.08), right = out.pixel(0.9, 0.08)
+        XCTAssertGreaterThan(left.r, left.b + 40, "the bar over the red half is reddish")
+        XCTAssertGreaterThan(right.b, right.r + 40, "the bar over the blue half is bluish")
+        XCTAssertGreaterThan(left.r, 70, "not black")
+    }
+
+    func testFitAppliesTheCropFirst() async throws {
+        let url = try photo(name: "cropfit.jpg")
+        // Keep only the red half (a square region of the 2:1 photo), then fit it into 4:5 with black bars.
+        let crop = NormalizedSourceRect(x: 0, y: 0, width: 0.5, height: 1)
+        let out = try decoded(try await render(fitSlide(.black, crop: crop), asset("asset-a", source: url), profile: "instagram_carousel", aspect: nil))
+        XCTAssertGreaterThan(out.pixel(0.5, 0.5).r, 200)
+        XCTAssertGreaterThan(out.pixel(0.9, 0.5).r, 200, "a square region fills the width of a 4:5 canvas")
+        XCTAssertLessThan(out.pixel(0.5, 0.05).r + out.pixel(0.5, 0.05).b, 40, "bar above the region, not the blue half")
+    }
+
+    func testFitNeverShowsPixelsOutsideTheCropInTheBars() async throws {
+        // 400x200: top 50 rows yellow, middle 100 red, bottom 50 yellow. Crop the red band (y 0.25...0.75) and fit it
+        // into 4:5 (2160x2700): that 4:1 region is 2160 wide x 540 tall, centred, so everything else must be a bar.
+        // The yellow outside the crop must never leak into them (the server crops first).
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 400, height: 200), format: format).image { _ in
+            UIColor.yellow.setFill(); UIRectFill(CGRect(x: 0, y: 0, width: 400, height: 200))
+            UIColor.red.setFill(); UIRectFill(CGRect(x: 0, y: 50, width: 400, height: 100))
+        }
+        let url = directory.appending(path: "band.jpg")
+        try XCTUnwrap(image.jpegData(compressionQuality: 1)).write(to: url)
+        let crop = NormalizedSourceRect(x: 0, y: 0.25, width: 1, height: 0.5)
+        let out = try decoded(try await render(fitSlide(.black, crop: crop), asset("asset-a", source: url), profile: "instagram_carousel", aspect: nil))
+        XCTAssertEqual(out.size, CGSize(width: 2160, height: 2700))
+        let inside = out.pixel(0.5, 0.5)
+        XCTAssertGreaterThan(inside.r, 200); XCTAssertLessThan(inside.g, 60); XCTAssertLessThan(inside.b, 60)
+        // 5% of the canvas above and below the 20%-tall band: a bar, not the yellow rows the crop removed.
+        for y in [0.5 - 0.1 - 0.05, 0.5 + 0.1 + 0.05] {
+            let bar = out.pixel(0.5, y)
+            XCTAssertLessThan(bar.r + bar.g + bar.b, 40, "bar at y=\(y) must be black, got \(bar)")
+        }
+    }
+
+    func testVideoSlideNeverCarriesFitAndAlwaysFillsTheFrame() {
+        let video = SlidePostSlide(id: "v", assetID: "asset-v", kind: "video", edits: SlidePostEdits(fit: .blur))
+        XCTAssertNil(SlidePostFraming.effectiveFit(for: video))
+        let draft = SlidePostDraft(version: 1, platformProfile: "instagram_carousel", slides: [video])
+        XCTAssertNil(draft.withProfileCoercions().slides[0].edits?.fit)
+    }
+
+    func testPhoneExportOfASizedDraftUsesTheDraftsSize() async throws {
+        // The new build must export what the editor shows: a 1:1 draft yields 2160x2160 JPEGs through the exporter,
+        // not the platform's default shape (F: the export driver forgetting the size compiled and silently shipped 4:5/9:16).
+        let a = try photo(name: "1.jpg"), b = try photo(name: "2.jpg")
+        let session = await session(slides: [slide("a"), slide("b")], assets: [asset("asset-a", source: a), asset("asset-b", source: b)])
+        session.draft?.aspect = "1:1"
+        session.draft?.slides[0].edits?.fit = .white
+        var sizes: [CGSize] = []
+        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { resources in
+            for resource in resources { sizes.append(UIImage(contentsOfFile: resource.url.path)?.size ?? .zero) }
+        })
+        await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID)
+        XCTAssertEqual(sizes, Array(repeating: CGSize(width: 2160, height: 2160), count: 2))
+        XCTAssertEqual(exporter.status, .savedToPhotos(2))
     }
 }

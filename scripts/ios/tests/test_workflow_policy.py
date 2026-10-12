@@ -5,6 +5,7 @@ import unittest
 
 
 WORKFLOW = Path(__file__).resolve().parents[3] / ".github/workflows/ios.yml"
+CI_WORKFLOW = WORKFLOW.with_name("ci.yml")
 
 
 class IOSWorkflowPolicyTests(unittest.TestCase):
@@ -12,12 +13,26 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         self.workflow = WORKFLOW.read_text()
 
     def test_pr_builds_the_ui_bundle_only_when_native_ui_inputs_changed(self):
+        ci = CI_WORKFLOW.read_text()
+        self.assertIn("- name: Build iPhone app and run selected unit tests", ci)
+        self.assertIn("needs.changes.outputs.ios_ui == 'false'", ci)
+        self.assertIn("needs.changes.outputs.journey_needs_native == 'false'", ci)
+        self.assertIn("&& 'unit' || 'prepare-ui'", ci)
+
+    def test_pr_native_checks_use_one_ci_job_and_one_compilation(self):
+        ci = CI_WORKFLOW.read_text()
+        self.assertNotIn("  pull_request:", self.workflow)
+        self.assertIn("  pull_request:", ci)
+        self.assertIn("- name: Build iPhone app and run selected unit tests", ci)
+        self.assertIn("- name: Run selected iPhone UI scenarios", ci)
         self.assertIn(
-            "(github.event_name != 'pull_request' || needs.changes.outputs.ios_ui == 'true')"
-            " && 'prepare-ui' || 'unit'",
-            self.workflow,
+            "- name: Reuse the same simulator for selected native journeys", ci
         )
-        self.assertIn("- name: Build and unit tests", self.workflow)
+        self.assertNotIn("- name: Build the app and test bundles once", ci)
+        self.assertIn("run: python3 scripts/ci/select-tests.py gate ios journey", ci)
+        self.assertIn("  ios-contracts:", ci)
+        self.assertIn("- name: Verify mobile OpenAPI and shared contracts", ci)
+        self.assertIn("needs: [changes, journey, ios-contracts]", ci)
 
     def matrices(self):
         """{leg count: legs} from the matrix fromJSON expression, keyed on the
@@ -26,15 +41,20 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         import re
 
         line = next(
-            line for line in self.workflow.splitlines() if "matrix: ${{ fromJSON(" in line
+            line
+            for line in self.workflow.splitlines()
+            if "matrix: ${{ fromJSON(" in line
         )
-        counts = re.findall(r"needs\.changes\.outputs\.ios_ui_shards == '(\d)' &&", line)
+        counts = re.findall(
+            r"needs\.changes\.outputs\.ios_ui_shards == '(\d)' &&", line
+        )
         literals = re.findall(r"'(\{.*?\})'", line)
         self.assertEqual(len(literals), len(counts) + 1)
         keys = [int(count) for count in counts] + [1]
         self.assertEqual(len(set(keys)), len(keys))
         return {
-            count: json.loads(literal)["include"] for count, literal in zip(keys, literals)
+            count: json.loads(literal)["include"]
+            for count, literal in zip(keys, literals)
         }
 
     def test_required_job_aggregates_native_and_portable_contract_legs(self):
@@ -75,13 +95,21 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         # The selector's count reaches this workflow through the reusable job.
         changes = (WORKFLOW.parent / "ci-changes.yml").read_text()
         self.assertIn("value: ${{ jobs.select.outputs.ios_ui_shards }}", changes)
-        self.assertIn("ios_ui_shards: ${{ steps.select.outputs.ios_ui_shards }}", changes)
-        ui_step = self.workflow.split("- name: Native UI tests (reuse compiled build)", 1)[1]
-        self.assertIn("KRIA_IOS_UI_SHARD: ${{ matrix.shard }}", ui_step.split("run:", 1)[0])
+        self.assertIn(
+            "ios_ui_shards: ${{ steps.select.outputs.ios_ui_shards }}", changes
+        )
+        ui_step = self.workflow.split(
+            "- name: Native UI tests (reuse compiled build)", 1
+        )[1]
+        self.assertIn(
+            "KRIA_IOS_UI_SHARD: ${{ matrix.shard }}", ui_step.split("run:", 1)[0]
+        )
         # Exactly one leg per run executes unit tests, saves the shared cache,
         # and writes the PR summary.
         first = "(!matrix.shard || startsWith(matrix.shard, '1/'))"
-        self.assertIn(f"KRIA_IOS_UNIT_TESTS: ${{{{ {first} && '1' || '0' }}}}", self.workflow)
+        self.assertIn(
+            f"KRIA_IOS_UNIT_TESTS: ${{{{ {first} && '1' || '0' }}}}", self.workflow
+        )
         for step in ("Save Xcode build data", "Report deferred PR UI regression"):
             with self.subTest(step=step):
                 condition = self.workflow.split(f"- name: {step}", 1)[1]
@@ -100,24 +128,22 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("|| 'ios-native-test-diagnostics' }}", native_xcode)
 
     def test_prs_run_a_bounded_ui_subset_and_main_runs_the_full_regression(self):
-        ui_step = self.workflow.split("- name: Native UI tests (reuse compiled build)", 1)[1]
-        ui_step = ui_step.split("- name: Compare focused UI coverage", 1)[0]
+        ci = CI_WORKFLOW.read_text()
+        ui_step = ci.split("- name: Run selected iPhone UI scenarios", 1)[1]
+        ui_step = ui_step.split("- name: Reuse the same simulator", 1)[0]
         self.assertIn(
-            "if: matrix.lane == 'native' && (github.event_name != 'pull_request'"
-            " || needs.changes.outputs.ios_ui == 'true')",
+            "if: github.event_name == 'pull_request' && needs.changes.outputs.ios_ui == 'true'",
             ui_step,
         )
-        # Non-PR events always run full. A PR runs the selector's focused group,
-        # and only smoke when the selector wants full: never the full suite.
         self.assertIn(
-            "KRIA_IOS_UI_GROUPS: ${{ github.event_name != 'pull_request' && 'full'"
-            " || (needs.changes.outputs.ios_ui_groups == 'full' && 'smoke'"
-            " || needs.changes.outputs.ios_ui_groups) }}",
+            "KRIA_IOS_UI_GROUPS: ${{ needs.changes.outputs.ios_ui_groups == 'full'"
+            " && 'smoke' || needs.changes.outputs.ios_ui_groups }}",
             ui_step,
         )
-        self.assertIn("- name: Report deferred PR UI regression", self.workflow)
-        self.assertIn("runs fail-closed on the", self.workflow)
-        self.assertIn("subsequent `main` push", self.workflow)
+        main_ui = self.workflow.split(
+            "- name: Native UI tests (reuse compiled build)", 1
+        )[1]
+        self.assertIn("github.event_name != 'pull_request' && 'full'", main_ui)
 
     def test_smoke_tripwire_covers_creation_to_ready_and_the_editor(self):
         import json

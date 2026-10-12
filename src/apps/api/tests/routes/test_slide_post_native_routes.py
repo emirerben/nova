@@ -593,3 +593,232 @@ async def test_native_save_rebuilds_when_the_fence_is_off(
     dispatch = await _rebuild_after_save(monkeypatch, _cloud_rendered_job(), native_client=True)
 
     dispatch.assert_called_once()
+
+
+# ---- Post size and photo fit (KRI-606) -----------------------------------------------
+
+
+def _sized_item(asset_id: uuid.UUID, *, aspect: str | None = None, fit: str | None = None):
+    from app.schemas.slide_post import SlideEdits
+
+    draft = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[
+            SlideRef(
+                id="slide",
+                asset_id=asset_id,
+                kind="image",
+                edits=SlideEdits(fit=fit) if fit else None,
+            )
+        ],
+        version=2,
+        aspect=aspect,
+    )
+    return SimpleNamespace(
+        id=uuid.uuid4(), edit_format="slides", slide_post=draft.model_dump(mode="json")
+    )
+
+
+def _put_body(asset_id: uuid.UUID, *, edits: dict | None = None, **extra) -> object:
+    slide: dict = {"id": "slide", "asset_id": str(asset_id), "kind": "image"}
+    if edits is not None:
+        slide["edits"] = edits
+    return plan_items.SlidePostDraftBody.model_validate(
+        {"platform_profile": "tiktok_photo", "slides": [slide], "expected_version": 2, **extra}
+    )
+
+
+@pytest.fixture()
+def _sizes_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "slide_post_sizes_enabled", True)
+
+
+@pytest.mark.asyncio
+async def test_put_without_aspect_or_fit_keeps_the_stored_values(
+    monkeypatch: pytest.MonkeyPatch, _sizes_flag
+) -> None:
+    # F2: the web editor and a KRI-44 iOS build send neither key.
+    asset_id = uuid.uuid4()
+    item = _sized_item(asset_id, aspect="1:1", fit="blur")
+    _wire_put(monkeypatch, item)
+    await plan_items.put_slide_post_draft(
+        str(item.id), _put_body(asset_id, edits={"look_preset": "none"}), _user(), AsyncMock()
+    )
+    assert item.slide_post["aspect"] == "1:1"
+    assert item.slide_post["slides"][0]["edits"]["fit"] == "blur"
+    assert item.slide_post["version"] == 3
+
+
+@pytest.mark.asyncio
+async def test_put_with_null_edits_keeps_the_stored_fit(
+    monkeypatch: pytest.MonkeyPatch, _sizes_flag
+) -> None:
+    asset_id = uuid.uuid4()
+    item = _sized_item(asset_id, fit="white")
+    _wire_put(monkeypatch, item)
+    await plan_items.put_slide_post_draft(str(item.id), _put_body(asset_id), _user(), AsyncMock())
+    assert item.slide_post["slides"][0]["edits"]["fit"] == "white"
+
+
+@pytest.mark.asyncio
+async def test_put_sets_and_clears_the_size_and_fit_when_sent(
+    monkeypatch: pytest.MonkeyPatch, _sizes_flag
+) -> None:
+    asset_id = uuid.uuid4()
+    item = _sized_item(asset_id)
+    _wire_put(monkeypatch, item)
+    await plan_items.put_slide_post_draft(
+        str(item.id),
+        _put_body(asset_id, edits={"fit": "black"}, aspect="3:4"),
+        _user(),
+        AsyncMock(),
+    )
+    assert item.slide_post["aspect"] == "3:4"
+    assert item.slide_post["slides"][0]["edits"]["fit"] == "black"
+    item.slide_post["version"] = 3
+    await plan_items.put_slide_post_draft(
+        str(item.id),
+        plan_items.SlidePostDraftBody.model_validate(
+            {
+                "platform_profile": "tiktok_photo",
+                "slides": [
+                    {
+                        "id": "slide",
+                        "asset_id": str(asset_id),
+                        "kind": "image",
+                        "edits": {"fit": None},
+                    }
+                ],
+                "aspect": None,
+                "expected_version": 3,
+            }
+        ),
+        _user(),
+        AsyncMock(),
+    )
+    assert "aspect" not in item.slide_post
+    assert "fit" not in item.slide_post["slides"][0].get("edits", {})
+
+
+@pytest.mark.asyncio
+async def test_put_ignores_incoming_size_and_fit_while_the_flag_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "slide_post_sizes_enabled", False)
+    asset_id = uuid.uuid4()
+    item = _sized_item(asset_id, aspect="1:1", fit="blur")
+    _wire_put(monkeypatch, item)
+    await plan_items.put_slide_post_draft(
+        str(item.id),
+        _put_body(asset_id, edits={"fit": "white"}, aspect="4:5"),
+        _user(),
+        AsyncMock(),
+    )
+    assert item.slide_post["aspect"] == "1:1"
+    assert item.slide_post["slides"][0]["edits"]["fit"] == "blur"
+    # ...and a flag-off server that never saw a size keeps writing none.
+    clean = _sized_item(asset_id)
+    _wire_put(monkeypatch, clean)
+    await plan_items.put_slide_post_draft(
+        str(clean.id), _put_body(asset_id, aspect="1:1"), _user(), AsyncMock()
+    )
+    assert "aspect" not in clean.slide_post
+
+
+@pytest.mark.asyncio
+async def test_web_style_put_with_legacy_text_keeps_the_stored_fit(
+    monkeypatch: pytest.MonkeyPatch, _sizes_flag
+) -> None:
+    # F2b: web has no `texts`, so a post with rich text always takes the legacy-merge path.
+    from app.schemas.slide_post import SlideEdits, SlideTextElement
+
+    asset_id = uuid.uuid4()
+    draft = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[
+            SlideRef(
+                id="slide",
+                asset_id=asset_id,
+                kind="image",
+                edits=SlideEdits(
+                    fit="blur", texts=[SlideTextElement(id="t1", text="Lisbon", position="bottom")]
+                ),
+            )
+        ],
+        version=2,
+    )
+    item = SimpleNamespace(
+        id=uuid.uuid4(), edit_format="slides", slide_post=draft.model_dump(mode="json")
+    )
+    _wire_put(monkeypatch, item)
+    await plan_items.put_slide_post_draft(
+        str(item.id),
+        _put_body(asset_id, edits={"text": {"content": "Porto", "position": "bottom"}}),
+        _user(),
+        AsyncMock(),
+    )
+    saved = item.slide_post["slides"][0]["edits"]
+    assert saved["texts"][0]["text"] == "Porto"
+    assert saved["fit"] == "blur"
+
+
+@pytest.mark.asyncio
+async def test_put_switching_platform_falls_back_to_the_new_default_size(
+    monkeypatch: pytest.MonkeyPatch, _sizes_flag
+) -> None:
+    asset_id = uuid.uuid4()
+    item = _sized_item(asset_id, aspect="3:4")
+    _wire_put(monkeypatch, item)
+    other = uuid.uuid4()
+    body = plan_items.SlidePostDraftBody.model_validate(
+        {
+            "platform_profile": "instagram_carousel",
+            "slides": [
+                {"id": "slide", "asset_id": str(asset_id), "kind": "image"},
+                {"id": "s2", "asset_id": str(other), "kind": "image"},
+            ],
+            "aspect": "9:16",
+            "expected_version": 2,
+        }
+    )
+    await plan_items.put_slide_post_draft(str(item.id), body, _user(), AsyncMock())
+    assert item.slide_post["platform_profile"] == "instagram_carousel"
+    assert "aspect" not in item.slide_post  # 9:16 is not an Instagram size
+
+
+def test_capability_needs_both_the_sizes_and_framing_flags_and_defaults_off() -> None:
+    from app.routes.creation_threads import CreationCapabilitiesOut
+
+    assert settings.slide_post_sizes_enabled is False
+    assert CreationCapabilitiesOut.model_fields["slide_post_sizes"].default is False
+    assert settings.slide_post_sizes_min_client_protocol == 5
+
+
+@pytest.mark.asyncio
+async def test_capability_requires_framing_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.routes.creation_threads import capabilities
+
+    user = _user()
+    for sizes, framing, expected in [
+        (True, True, True),
+        (True, False, False),
+        (False, True, False),
+    ]:
+        monkeypatch.setattr(settings, "slide_post_sizes_enabled", sizes)
+        monkeypatch.setattr(settings, "slide_post_framing_enabled", framing)
+        caps = await capabilities(user, False)
+        assert caps["slide_post_sizes"] is expected
+
+
+def test_old_ios_save_body_without_the_new_keys_still_validates() -> None:
+    body = plan_items.SlidePostDraftBody.model_validate(
+        {
+            "platform_profile": "tiktok_photo",
+            "slides": [{"id": "s", "asset_id": str(uuid.uuid4()), "kind": "image"}],
+        }
+    )
+    assert "aspect" not in body.model_fields_set
+    with pytest.raises(ValidationError):
+        plan_items.SlidePostDraftBody.model_validate(
+            {"platform_profile": "tiktok_photo", "slides": [], "aspect": "7:3"}
+        )

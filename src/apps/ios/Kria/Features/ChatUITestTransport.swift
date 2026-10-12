@@ -1,4 +1,5 @@
 #if DEBUG
+import AVFoundation
 import Foundation
 import KriaMediaEngine
 import UIKit
@@ -106,6 +107,11 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_RICH_TEXT"] == "1" { capabilities["slide_post_rich_text"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_EXTENDED_DEVICE_EXPORT"] == "1" { capabilities["slide_post_extended_device_export"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CHAT_EDIT"] == "1" { capabilities["slide_post_chat_edit"] = true }
+            // KRIA_SLIDE_POST_SIZES (KRI-606): the Size sheet and per-photo Fit. The server needs framing on too.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_SIZES"] == "1" {
+                capabilities["slide_post_framing"] = true
+                capabilities["slide_post_sizes"] = true
+            }
             // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
             // sends the clip_question payload but does not advertise the capability (old-server fallback).
             if ["1", "history"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
@@ -972,6 +978,45 @@ enum SongTimelineFixture {
             question["song_generation"] = generation
         }
         return question
+    }
+
+    /// KRI-575: a tiny generated clip (8 s, 10 fps, a new colour every second, no audio) standing in for the local
+    /// original of `fixture-clip`, so the preview's playing state can be asserted. The other clips have no original
+    /// on the device, which is the "isn't on this iPhone" state.
+    static func clipURL(mediaID: String) -> URL? {
+        guard ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1", mediaID == "fixture-clip" else { return nil }
+        let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("song-timeline-fixture-clip.mp4")
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+        let width = 180, height = 320, fps = 10, seconds = 8
+        guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { return nil }
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height])
+        writer.add(input)
+        guard writer.startWriting() else { return nil }
+        writer.startSession(atSourceTime: .zero)
+        let colors: [UInt32] = [0xFF3B30, 0xFF9500, 0xFFCC00, 0x34C759, 0x00C7BE, 0x007AFF, 0x5856D6, 0xAF52DE]
+        for frame in 0..<(fps * seconds) {
+            while !input.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.002) }
+            var buffer: CVPixelBuffer?
+            guard let pool = adaptor.pixelBufferPool, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer) == kCVReturnSuccess, let buffer else { return nil }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            if let base = CVPixelBufferGetBaseAddress(buffer) {
+                let pixel = colors[(frame / fps) % colors.count] | 0xFF00_0000
+                let pixels = base.assumingMemoryBound(to: UInt32.self)
+                let stride = CVPixelBufferGetBytesPerRow(buffer) / 4
+                for row in 0..<height { for column in 0..<width { pixels[row * stride + column] = pixel } }
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(fps)))
+        }
+        input.markAsFinished()
+        let finished = DispatchSemaphore(value: 0)
+        writer.finishWriting { finished.signal() }
+        finished.wait()
+        return writer.status == .completed ? url : nil
     }
 
     /// A 12 s mono 16-bit tone with a slow swell, written once to Caches.

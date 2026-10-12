@@ -72,7 +72,7 @@ cp .env.example .env            # fill in values
 ./scripts/dev-auto.sh            # single-command dev env with hot reload
 ```
 
-`dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only), runs migrations, then launches API (`uvicorn --reload`), Celery worker (`watchfiles`), and Next.js (HMR) natively. Logs go to `.dev/<service>.log`. Do NOT restart servers manually — hot reload handles all code edits. Stop with `./scripts/dev-stop.sh`. If a worker crash leaves a plan spinning in `generating`, run `python3 scripts/dev/reset-stuck-plans.py` (local-only reaper).
+`dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only), runs migrations, then launches API (`uvicorn --reload`), Celery worker (`watchfiles`), and Next.js (HMR) natively. Logs go to `.dev/<service>.log`. Do NOT restart servers manually (hot reload). Stop with `./scripts/dev-stop.sh`. A plan stuck in `generating` after a worker crash: `python3 scripts/dev/reset-stuck-plans.py` (local-only).
 
 Alternatives:
 - `./scripts/dev-no-docker.sh` — same flow but assumes postgres@16 + redis already running
@@ -113,8 +113,7 @@ make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 Use `scripts/admin.py` instead of curling `/admin/*` with a raw token — the token stays in `.env`, never in commands or transcripts.
 
 ```bash
-python scripts/admin.py GET  /admin/templates                                 # local
-python scripts/admin.py GET  templates/abc123/debug                           # /admin/ auto-prefixed
+python scripts/admin.py GET  templates/abc123/debug                           # local, /admin/ auto-prefixed
 python scripts/admin.py POST templates/abc/reanalyze-agentic --json '{"use_layer2": true}'
 python scripts/admin.py --prod GET /admin/templates                           # Fly prod
 python scripts/admin.py --prod POST templates/abc/publish                     # prompts y/N
@@ -123,8 +122,7 @@ python scripts/admin.py --prod POST templates/abc/publish                     # 
 - Local uses `ADMIN_API_KEY`, `--prod` uses `ADMIN_PROD_API_KEY` (both in repo-root `.env`; example slots in `.env.example`).
 - Any `POST/PUT/PATCH/DELETE` against `--prod` prompts `Proceed? [y/N]` — pass `--yes` to skip in scripts you've reviewed.
 - `--dry-run` prints the resolved request without sending. `-v` shows headers (token always redacted).
-- Exits 0 on 2xx, 1 otherwise — safe in shell pipelines.
-- Stdlib-only (no `requests`/`dotenv`) so it runs with any Python 3 outside the API venv.
+- Exits 0 on 2xx, 1 otherwise. Stdlib-only: runs with any Python 3 outside the API venv.
 
 ## Domain context
 - Target output: 9:16 aspect ratio, sub-60s, H.264/AAC, 1080x1920
@@ -167,10 +165,10 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - See `docs/pipelines/generative.md` (music reuse, variant mechanics).
 
 ## Template pipeline
-- **Single-pass CFR-before-xfade invariant:** every per-clip chain in `app/pipeline/single_pass.py` (`_per_clip_filter_chain`) must end with `fps={output_fps}, setpts=PTS-STARTPTS, settb=AVTB` before its labelled output. The trailing `fps=` filter is PTS-independent and handles `avg_frame_rate=1/0` inputs (some phone HEVC, HEIF-derived video, screen recordings) where `framerate=fps=N` aborts. Locked by `test_per_clip_chain_forces_cfr_before_xfade` in `tests/pipeline/test_single_pass.py`. See agents/DECISIONS.md (2026-05-18).
+- **Single-pass CFR-before-xfade invariant:** every per-clip chain in `app/pipeline/single_pass.py` (`_per_clip_filter_chain`) must end with `fps={output_fps}, setpts=PTS-STARTPTS, settb=AVTB` before its labelled output. It covers `avg_frame_rate=1/0` inputs (phone HEVC, screen recordings) where `framerate=fps=N` aborts. Locked by `test_per_clip_chain_forces_cfr_before_xfade` in `tests/pipeline/test_single_pass.py`. See agents/DECISIONS.md (2026-05-18).
 - **Renderer split:** agentic templates + music-job lyrics → `text_overlay_skia.py` (skia-python, HarfBuzz shaping, per-frame PNG sequences); classic non-music + non-agentic → Pillow + libass. Dispatch: `_burn_text_overlays(use_skia=...)` + `_pre_burn_curtain_slot_text(is_agentic=...)` in `template_orchestrate.py`. Kill switch: `TEXT_RENDERER_SKIA_ENABLED=false`.
 - **Renderer-parity invariant:** any overlay field plumbed through the burn dict MUST be honored by BOTH renderers. Guard: `test_both_renderers_honor_text_anchor_left` in `tests/pipeline/test_text_overlay_skia.py` — extend for any new anchor/position field. An agentic/music overlay change is NOT verified by the admin preview. See agents/DECISIONS.md (2026-05 #296/#297) for the incident.
-- **Pre-PR text-overlay verify (`make verify-overlays`):** before any PR touching the Skia renderer, overlay layout, or the burn dict. Renders through the REAL Skia path in the prod Docker image, asserts each overlay is un-clipped (opaque-pixel bbox vs frame edges), writes `montage.png` + `report.json` to `.overlay-verify/`. Library: `app/pipeline/overlay_verify.py`; CLI: `app.cli.verify_overlays`; guard: `tests/pipeline/test_overlay_verify.py`. **Agent pre-PR gate:** run it, read `report.json` + `montage.png`, fix any FAIL, then `/ship`.
+- **Pre-PR text-overlay verify (`make verify-overlays`):** before any PR touching the Skia renderer, overlay layout, or the burn dict. Renders through the REAL Skia path in the prod Docker image, asserts overlays are un-clipped, writes `montage.png` + `report.json` to `.overlay-verify/`. Library: `app/pipeline/overlay_verify.py`; CLI: `app.cli.verify_overlays`; guard: `tests/pipeline/test_overlay_verify.py`. **Agent pre-PR gate:** run it, read `report.json` + `montage.png`, fix any FAIL, then `/ship`.
 - **Gemini metadata never becomes on-screen overlay text** (architectural invariant). Overlay substitution input is exclusively user-provided (`inputs.location`). `TestNoGeminiTextLeaks` in `tests/tasks/test_template_orchestrate.py` is the sentinel. See agents/DECISIONS.md (2026-05-13). Does NOT cover `copy_writer` captions.
 - Placeholder substitution: `_resolve_overlay_text()` + `_is_subject_placeholder()` in `template_orchestrate.py`. Literal overlays SHOULD set `"subject_substitute": False`; `tests/scripts/test_seed_overlays_literal.py` enforces this.
 - Font bundle: Playfair Display (Bold + Regular) in `assets/fonts/`, referenced via `fontsdir` in ASS subtitle filters.
@@ -178,7 +176,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 
 ## Encoder policy (libx264 preset)
 - **Intermediate encodes** → `preset="ultrafast"` is fine. Call sites: `reframe_and_export`, `_build_overlay_cmd` in `reframe.py`; `render_color_hold` in `interstitials.py`; `image_clip` rendering; `drive_import` thumbnailing.
-- **Final-output encodes** → `preset="fast"` or stricter REQUIRED. `ultrafast` causes visible 16×16 macroblocking on smooth gradients (sky, dark canopy); CRF does NOT compensate. Call sites: `_concat_demuxer` fallback, `_pre_burn_curtain_slot_text`, `_burn_text_overlays` in `template_orchestrate.py`; `apply_curtain_close_tail` in `interstitials.py`; `join_with_transitions` in `transitions.py`.
+- **Final-output encodes** → `preset="fast"` or stricter REQUIRED. `ultrafast` causes visible 16×16 macroblocking on smooth gradients; CRF does NOT compensate. Call sites: `_concat_demuxer` fallback, `_pre_burn_curtain_slot_text`, `_burn_text_overlays` in `template_orchestrate.py`; `apply_curtain_close_tail` in `interstitials.py`; `join_with_transitions` in `transitions.py`.
 - Locked by `tests/test_encoder_policy.py` — adding a new `_encoding_args(...)` call site forces a conscious quality-budget decision. See agents/DECISIONS.md for the history (PR #102/#105 + Brazil pixelation fix).
 
 ## Env vars needed (see .env.example for full list with descriptions)
@@ -220,6 +218,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `PHONE_TALKING_HEAD_RENDERING_ENABLED` — default `false`. 2+-clip self-narration renders on the phone: speaker clip + muted full-frame cutaways (`compile_phone_subtitled_plan(cutaways=)`), no speech cleanup. `docs/reviews/kri-132/phone-format-matrix.md`.
 - `USER_SONG_MONTAGE_ENABLED` — default `true` (KRI-374). Creator-uploaded song on phone montages (background bed / lip-sync by song time); off hides `media.song` + refuses `user_song`. Needs `musicBed`+`audioMix` verified. Apply: fly secret `…=false` (api+worker) + restart. `docs/runbooks/phone-rendering.md`. `SONG_CAPTIONS_ENABLED` (KRI-569): lyric captions, same apply.
 - `SLIDE_POSTS_ENABLED` — defaults `true`. Mixed-media posts; docs/pipelines/slide-post.md. Rollback: fly secret `…=false` + restart (api+worker).
+- `FREEHAND_DRAWING_ENABLED` / `FREEHAND_DRAWING_MIN_CLIENT_PROTOCOL` — default `true` / `6` (KRI-589). Needs `freehandDrawing` in `PHONE_RENDER_VERIFIED_FEATURES` (fly secret, api+worker); older builds get 426. `false` ⇒ no new drawings, stored ones still play/delete. `docs/pipelines/drawing.md`.
 - `SLIDE_POST_RICH_TEXT_ENABLED` / `SLIDE_POST_CHAT_EDIT_ENABLED` — default `false`. Styled slide text (off = drawtext) / slide chat-edit route (404 off; needs rich text); caps `slide_post_*`.
 - `REVIEWER_LOGIN_ENABLED` — default `false`; gates `POST /auth/mobile/reviewer-login` (404 off), Apple Beta App Review demo login. `REVIEWER_LOGIN_EMAIL`/`_PASSWORD_HASH` (scrypt via `app.cli.reviewer_login hash`) are Fly-secrets only: `docs/runbooks/testflight.md`.
 

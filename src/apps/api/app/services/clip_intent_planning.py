@@ -21,13 +21,19 @@ from app.agents.clip_intent_planner import (
 from app.config import settings
 from app.kria.reply_language import current_reply_language, say
 from app.schemas.clip_intents import (
+    CLIP_DESCRIPTION_ATTRIBUTE,
+    MAX_CLIP_INTENTS,
     ClipAssignment,
     ClipIntent,
     ResolvedClipIntent,
+    asks_clip_description,
+    fit_intent_id,
     ground_caption,
     ground_label,
     ground_placeholder_label,
+    is_clip_description_label,
 )
+from app.services.clip_file_names import ClipNameIndex, NameReference, names_only
 from app.services.clip_intent_resolution import (
     IntentClip,
     IntentResolution,
@@ -37,6 +43,7 @@ from app.services.clip_intent_resolution import (
 )
 from app.services.clip_selection import ClipSelections
 from app.services.clip_understanding import clip_record, understanding_incomplete
+from app.services.spoken_quotes import regound_quoted_intents
 
 log = structlog.get_logger()
 
@@ -123,6 +130,46 @@ def resolve_order_by_intent(intent: ClipIntent, clips: list[IntentClip]) -> Reso
     )
 
 
+# KRI-612: the label the server adds when the brief asks for a line on each clip.
+CLIP_DESCRIPTIONS_INTENT_ID = "clip-descriptions"
+
+
+def _caption_asking_description(intent: ClipIntent) -> bool:
+    return (
+        intent.op == "caption"
+        and intent.creator_text is None
+        and (
+            asks_clip_description(intent.caption_attribute)
+            or asks_clip_description(intent.attribute)
+        )
+    )
+
+
+def with_clip_descriptions(intents: list[ClipIntent]) -> list[ClipIntent]:
+    """Make ONE description label carry "explain / summarise each clip" (KRI-612).
+
+    Only called when the Creative Brief asks for described text on each clip. The
+    inventory planner may read "a summary" as one chapter caption (a phone montage never
+    prints a caption Kria wrote, and one caption is not text on each clip) or drop the ask
+    as context. Such a caption is replaced by the label and a missing label is added; a
+    description label the planner already wrote is kept as it is.
+    """
+    has_label = any(is_clip_description_label(intent) for intent in intents)
+    kept = [intent for intent in intents if not _caption_asking_description(intent)]
+    if has_label:
+        return kept
+    if len(kept) >= MAX_CLIP_INTENTS:
+        return intents
+    taken = {intent.intent_id for intent in kept}
+    intent_id, n = CLIP_DESCRIPTIONS_INTENT_ID, 2
+    while intent_id in taken:
+        intent_id, n = f"{CLIP_DESCRIPTIONS_INTENT_ID}-{n}", n + 1
+    return [
+        *kept,
+        ClipIntent(intent_id=intent_id, op="label", attribute=CLIP_DESCRIPTION_ATTRIBUTE),
+    ]
+
+
 def apply_creator_selections(
     intents: list[ClipIntent],
     *,
@@ -157,33 +204,134 @@ def apply_creator_selections(
             dropped.add(intent.intent_id)
             continue
         media_ids = sorted((m for m in entry.media_ids if m in by_id), key=order.__getitem__)
-        assignments = _selected_assignments(intent, media_ids, by_id, creator_request)
-        if not media_ids or not picker_eligible(intent) or assignments is None:
+        resolved = _settle(intent, media_ids, by_id, creator_request, evidence="creator selected")
+        if resolved is None:
             remaining.append(intent)
             continue
-        caption_text = caption_grounding = None
-        if intent.op == "caption":
-            grounded = ground_caption(
-                value=intent.creator_text,
-                confidence=1.0,
-                creator_request=creator_request,
-                records=[clip_record(by_id[m].analysis, kind=by_id[m].kind) for m in media_ids],
-                intent_id=intent.intent_id,
-            )
-            if grounded is None:
+        settled.append(resolved)
+    return settled, remaining, dropped
+
+
+def apply_file_name_references(
+    intents: list[ClipIntent],
+    *,
+    clips: list[IntentClip],
+    creator_request: str,
+) -> tuple[list[ResolvedClipIntent], list[ClipIntent], dict[str, list[ClipIntent]]]:
+    """Settle intents that name clips by the file name the app shows (KRI-614).
+
+    "first ımg_7382 then ımg_7820" names clips the resolver cannot see: its records carry
+    what a clip shows, never its file name, so it used to ask "which of your clips match
+    ımg_7382?". An intent whose attribute is nothing but file names, each naming exactly
+    one clip (``services.clip_file_names``), is settled here like a tapped answer.
+
+    Returns ``(settled, remaining, split)``. An ``order`` intent naming several clips is a
+    sequence: ``split`` maps its id to one order intent per clip, in the order named, each
+    keeping the intent's ``position``. A clip in it that a single-clip first/last intent
+    already pins stays with that intent, so "... and at the end Img_7833" still closes the
+    edit after the clips nobody named.
+    """
+    index = ClipNameIndex({clip.media_id: clip.file_name for clip in clips})
+    if not index:
+        return [], list(intents), {}
+    by_id = {clip.media_id: clip for clip in clips}
+    named: dict[str, list[NameReference]] = {}
+    for intent in intents:
+        if intent.label_source != "clip" or intent.order_by or not picker_eligible(intent):
+            continue
+        refs, others = index.references(intent.attribute)
+        if refs and names_only(others) and all(ref.media_id for ref in refs):
+            named[intent.intent_id] = refs
+    pinned: set[str] = set()
+    for intent in intents:
+        refs = named.get(intent.intent_id, [])
+        if intent.op == "order" and intent.position is not None and len(refs) == 1:
+            pinned.add(str(refs[0].media_id))
+    settled: list[ResolvedClipIntent] = []
+    remaining: list[ClipIntent] = []
+    split: dict[str, list[ClipIntent]] = {}
+    for intent in intents:
+        refs = named.get(intent.intent_id)
+        if refs is None:
+            remaining.append(intent)
+            continue
+        surface = {str(ref.media_id): ref.surface for ref in reversed(refs)}
+        media_ids = list(dict.fromkeys(str(ref.media_id) for ref in refs))
+        if intent.op == "order" and len(media_ids) > 1:
+            kept = [media_id for media_id in media_ids if media_id not in pinned]
+            pieces = [
+                intent.model_copy(
+                    update={
+                        "intent_id": fit_intent_id(f"{intent.intent_id}-{number}"),
+                        "attribute": surface[media_id],
+                    }
+                )
+                for number, media_id in enumerate(kept, start=1)
+            ]
+            seated = [
+                _settle(piece, [media_id], by_id, creator_request, evidence="file name")
+                for piece, media_id in zip(pieces, kept, strict=True)
+            ]
+            if any(piece is None for piece in seated):
                 remaining.append(intent)
                 continue
-            caption_text, caption_grounding = grounded.text, grounded.grounding
-        settled.append(
-            ResolvedClipIntent(
-                **intent.model_dump(),
-                status="resolved",
-                assignments=assignments,
-                caption_text=caption_text,
-                caption_grounding=caption_grounding,
-            )
+            settled.extend(piece for piece in seated if piece is not None)
+            split[intent.intent_id] = pieces
+            continue
+        resolved = _settle(intent, media_ids, by_id, creator_request, evidence="file name")
+        if resolved is None:
+            remaining.append(intent)
+            continue
+        settled.append(resolved)
+    return settled, remaining, split
+
+
+def _settle(
+    intent: ClipIntent,
+    media_ids: list[str],
+    by_id: dict[str, IntentClip],
+    creator_request: str,
+    *,
+    evidence: str,
+) -> ResolvedClipIntent | None:
+    """``intent`` resolved on exactly these clips, or None when its text cannot be grounded."""
+    assignments = _selected_assignments(
+        intent, media_ids, by_id, creator_request, evidence=evidence
+    )
+    if not media_ids or not picker_eligible(intent) or assignments is None:
+        return None
+    caption_text = caption_grounding = None
+    if intent.op == "caption":
+        grounded = ground_caption(
+            value=intent.creator_text,
+            confidence=1.0,
+            creator_request=creator_request,
+            records=[clip_record(by_id[m].analysis, kind=by_id[m].kind) for m in media_ids],
+            intent_id=intent.intent_id,
         )
-    return settled, remaining, dropped
+        if grounded is None:
+            return None
+        caption_text, caption_grounding = grounded.text, grounded.grounding
+    return ResolvedClipIntent(
+        **intent.model_dump(),
+        status="resolved",
+        assignments=assignments,
+        caption_text=caption_text,
+        caption_grounding=caption_grounding,
+    )
+
+
+def _as_listed(
+    resolved: list[ResolvedClipIntent], requested: list[ClipIntent]
+) -> list[ResolvedClipIntent]:
+    """Resolved intents in the order the creator listed them.
+
+    The sequence rule (``clip_order_sequence``) seats ``order`` rows in list order, so an
+    intent settled before the resolver (a tapped answer, a file name) must not move to the
+    end of the list just because it skipped the resolver.
+    """
+    rank = {intent.intent_id: position for position, intent in enumerate(requested)}
+    return sorted(resolved, key=lambda intent: rank.get(intent.intent_id, len(rank)))
 
 
 def _selected_assignments(
@@ -191,6 +339,8 @@ def _selected_assignments(
     media_ids: list[str],
     by_id: dict[str, IntentClip],
     creator_request: str,
+    *,
+    evidence: str,
 ) -> list[ClipAssignment] | None:
     """Assignments for tapped clips, or None when the intent's text cannot be grounded."""
     assignments: list[ClipAssignment] = []
@@ -216,7 +366,7 @@ def _selected_assignments(
             ClipAssignment(
                 media_id=media_id,
                 value=value,
-                evidence="creator selected",
+                evidence=evidence,
                 confidence=1.0,
                 grounding=grounding,
             )
@@ -240,7 +390,10 @@ async def plan_and_resolve_clip_intents(
     refresh_clips: ClipRefresh | None = None,
     understanding_wait_until: float | None = None,
     clip_selections: ClipSelections | None = None,
+    describe_clips: bool = False,
 ) -> PlannedIntentResolution:
+    """``describe_clips`` (KRI-612): the Creative Brief asks for a line on each clip saying
+    what it shows, so the inventory always carries one description label for it."""
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
             [],
@@ -375,6 +528,8 @@ async def plan_and_resolve_clip_intents(
             intent.model_copy(update={"order_by": None}) if intent.order_by else intent
             for intent in intents
         ]
+    if describe_clips:
+        intents = with_clip_descriptions(intents)
     visual_intents = [intent for intent in intents if intent.label_source == "clip"]
     order_by_intents = [intent for intent in visual_intents if intent.order_by]
     visual_intents = [intent for intent in visual_intents if not intent.order_by]
@@ -384,15 +539,26 @@ async def plan_and_resolve_clip_intents(
     selected, visual_intents, dropped_ids = apply_creator_selections(
         visual_intents, clips=clips, selections=clip_selections, creator_request=creator_request
     )
-    if dropped_ids:
-        intents = [intent for intent in intents if intent.intent_id not in dropped_ids]
-    resolved_orders = [*selected, *resolved_orders]
+    # KRI-614: clips the creator names by the file name the app shows ("IMG_7382").
+    named, visual_intents, split = apply_file_name_references(
+        visual_intents, clips=clips, creator_request=creator_request
+    )
+    if dropped_ids or split:
+        intents = [
+            piece
+            for intent in intents
+            if intent.intent_id not in dropped_ids
+            for piece in split.get(intent.intent_id, [intent])
+        ]
+    resolved_orders = [*selected, *named, *resolved_orders]
     # Transcript labels are fulfilled later from the pinned narration and
     # final timeline. They remain in the complete requested inventory, but
     # must never enter the vision resolver.
     if not visual_intents:
         if resolved_orders:
-            return PlannedIntentResolution(intents, IntentResolution(intents=resolved_orders))
+            return PlannedIntentResolution(
+                intents, IntentResolution(intents=_as_listed(resolved_orders, intents))
+            )
         return PlannedIntentResolution(intents, IntentResolution())
     if require_clip_understanding:
         # KRI-282 L2: a clip whose background analysis has not landed has an empty
@@ -451,6 +617,13 @@ async def plan_and_resolve_clip_intents(
         if dropped:
             log.info("clip_intent_chapter_order_repaired", dropped_assignments=dropped)
             resolution = replace(resolution, intents=kept)
+    # KRI-597: the resolver reads only a transcript's opening, so "end on the moment I
+    # say '...'" can land on a clip that never says it. The full transcripts decide.
+    reseated, moved = regound_quoted_intents(resolution.intents, clips)
+    if moved:
+        resolution = replace(resolution, intents=reseated)
     if resolved_orders:
-        resolution = replace(resolution, intents=[*resolution.intents, *resolved_orders])
+        resolution = replace(
+            resolution, intents=_as_listed([*resolution.intents, *resolved_orders], intents)
+        )
     return PlannedIntentResolution(intents, resolution)

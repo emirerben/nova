@@ -77,6 +77,12 @@ def test_clip_intent_planner_eval(
     absent_ops = fixture.meta.get("expect_absent_ops") or []
     for op in absent_ops:
         assert not any(row["op"] == op for row in intents)
+    # e.g. no `include` for "Skip the quad bike clip", while a voiceover cue is one.
+    for requirement in fixture.meta.get("expect_absent_intents") or []:
+        assert not any(_matches_requirement(row, requirement) for row in intents), requirement
+    if fixture.meta.get("expect_no_unpositioned_order"):
+        # KRI-598: voiceover cues are never a described sequence (`order` without position).
+        assert not [row for row in intents if row["op"] == "order" and not row.get("position")]
     assert bool((result.output or {}).get("intents")) is bool(
         fixture.meta.get("expect_any", expected)
     )

@@ -810,7 +810,7 @@ enum NativePreviewDiagnostics {
                         if case .array(let cues) = variant["caption_cues"], let first = cues.first {
                             row["captionKeys"] = object(first).keys.sorted().joined(separator: ",")
                         }
-                        for lane in ["media_overlays", "sound_effects", "visual_blocks", "motion_scenes", "camera_effects", "narrated_timings", "story_timeline"] { row[lane] = String(count(variant[lane])) }
+                        for lane in ["media_overlays", "sound_effects", "visual_blocks", "motion_scenes", "camera_effects", "drawings", "narrated_timings", "story_timeline"] { row[lane] = String(count(variant[lane])) }
                         if case .number(let duration) = variant["duration_s"] { row["duration"] = String(duration) }
                         do {
                         let timeline: [String: JSONValue] = try await api.request(path: "generative-jobs/\(job.uuidString)/variants/\(id)/timeline", method: "GET", bodyData: nil, decode: [String: JSONValue].self)

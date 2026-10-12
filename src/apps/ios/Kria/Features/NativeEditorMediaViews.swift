@@ -1104,7 +1104,7 @@ private final class DragAutoScrollContext {
 /// NativeTextAnimationPreviewDisplayLinkTarget (NativeTextAnimationPreview.swift) —
 /// reused rather than writing a second one. Frame rate capped at 60 so a
 /// 120Hz ProMotion touch stream doesn't double up with tick-driven updates.
-private final class NativeTimelineEdgeScroller {
+final class NativeTimelineEdgeScroller {
     private final class Target: NSObject {
         weak var owner: NativeTimelineEdgeScroller?
         init(owner: NativeTimelineEdgeScroller) { self.owner = owner }
@@ -1194,6 +1194,8 @@ struct NativeMiniStrip: View {
     /// Selecting Video/Visual/Text (`NativeMiniStrip`'s owner routes these).
     var onSelectVisual: () -> Void = {}
     var onSelectText: () -> Void = {}
+    /// KRI-589: the "+" menu's Drawing row; nil hides it (the variant does not open `drawings.add`).
+    var onSelectDrawing: (() -> Void)?
 
     private let minimumZoom: CGFloat = 0.5
     private let maximumZoom: CGFloat = 24
@@ -1208,13 +1210,15 @@ struct NativeMiniStrip: View {
         bottomClearance: CGFloat = 0,
         isCovered: Bool = false,
         onSelectVisual: @escaping () -> Void = {},
-        onSelectText: @escaping () -> Void = {}
+        onSelectText: @escaping () -> Void = {},
+        onSelectDrawing: (() -> Void)? = nil
     ) {
         self.session = session
         self.bottomClearance = bottomClearance
         self.isCovered = isCovered
         self.onSelectVisual = onSelectVisual
         self.onSelectText = onSelectText
+        self.onSelectDrawing = onSelectDrawing
         _clock = ObservedObject(wrappedValue: session.playbackClock)
     }
 
@@ -1235,6 +1239,7 @@ struct NativeMiniStrip: View {
     private var motionSceneItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .motionScene } }
     private var cameraEffectItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .cameraEffect } }
     private var carouselItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .carousel } }
+    private var drawingItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .drawing } }
     private var musicItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .music } }
     private var hasText: Bool { !textItems.isEmpty }
     private var hasCaptions: Bool { documentCaptionsEnabled || !captionItems.isEmpty }
@@ -1258,7 +1263,7 @@ struct NativeMiniStrip: View {
             ("TEXT", textItems), ("CAPTIONS", captionItems), ("MUSIC", musicItems),
             ("SFX", soundEffectItems), ("OVERLAY", mediaOverlayItems),
             ("VISUAL", visualBlockItems), ("MOTION", motionSceneItems),
-            ("CAMERA", cameraEffectItems), ("CAROUSEL", carouselItems)
+            ("CAMERA", cameraEffectItems), ("DRAW", drawingItems), ("CAROUSEL", carouselItems)
         ]
         return groups.flatMap { title, items in
             if title == "TEXT" {
@@ -1515,6 +1520,12 @@ struct NativeMiniStrip: View {
             quickAddRow("Text", icon: "textformat", enabled: true) {
                 closeAddMenu()
                 onSelectText()
+            }
+            if let onSelectDrawing, session.canAddDrawing {
+                quickAddRow("Drawing", icon: "pencil.tip", enabled: true) {
+                    closeAddMenu()
+                    onSelectDrawing()
+                }
             }
         }
         // Accessibility grouping sits on the content INSIDE the glass, never
@@ -2003,6 +2014,9 @@ struct NativeMiniStrip: View {
         case .cameraEffect:
             let effect = session.document.cameraEffects.first { $0.id == item.id }
             return effect.map { "Camera: \(CameraEmphasis.label($0.raw["easing"]?.stringValue))" } ?? laneTitle
+        case .drawing:
+            let count = session.document.drawings.first { $0.id == item.id }?.strokes.count ?? 0
+            return count > 0 ? "Drawing · \(count) \(count == 1 ? "stroke" : "strokes")" : laneTitle
         case .carousel:
             return "Carousel: \(item.id)"
         default:
@@ -2034,6 +2048,8 @@ struct NativeMiniStrip: View {
             return operation == "trim"
                 ? ["camera_effects.trim", "camera_effects", "lanes.camera_effects.trim", "lanes.camera_effects"]
                 : ["camera_effects.timing", "camera_effects", "lanes.camera_effects.timing", "lanes.camera_effects"]
+        case .drawing:
+            return ["drawings.trim", "drawings.edit"]
         default:
             return nil
         }
@@ -2055,6 +2071,7 @@ struct NativeMiniStrip: View {
         case .visualBlock: return session.canEdit(.visualBlocks)
         case .motionScene: return session.canEdit(.motionScenes)
         case .cameraEffect: return session.canEdit(.cameraEffects)
+        case .drawing: return session.canEditDrawings
         default: return false
         }
     }

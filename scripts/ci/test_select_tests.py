@@ -22,7 +22,11 @@ class ClassificationTests(unittest.TestCase):
     def test_manifest_native_routing_is_conservative_and_mixed_safe(self):
         self.assertFalse(ci.journey_native_for_ids(["kri-577-reliability-gates"]))
         self.assertFalse(ci.journey_native_for_ids(["kri-384-library-ingest"]))
-        self.assertFalse(ci.journey_native_for_ids(["kri-384-library-ingest", "kri-577-reliability-gates"]))
+        self.assertFalse(
+            ci.journey_native_for_ids(
+                ["kri-384-library-ingest", "kri-577-reliability-gates"]
+            )
+        )
         self.assertTrue(
             ci.journey_native_for_ids(["kri-577-reliability-gates", "kri-524-creation"])
         )
@@ -156,17 +160,18 @@ class GateTests(unittest.TestCase):
                 ci.gate(needs, "web", "suite")
 
     def test_required_journey_gate_accepts_only_selected_success_or_explicit_skip(self):
-        for selected, result in (("true", "success"), ("false", "skipped")):
+        for selected, ios, result in (
+            ("true", "false", "success"),
+            ("false", "true", "success"),
+            ("false", "false", "skipped"),
+        ):
             needs = {
                 "changes": {
                     "result": "success",
                     "outputs": {
                         "journey": selected,
+                        "ios": ios,
                         "shared_motion": "false",
-                        "journey_ids": "kri-524-creation" if selected == "true" else "",
-                        "journey_coverage": "covered"
-                        if selected == "true"
-                        else "not_applicable",
                     },
                 },
                 "journey": {"result": result},
@@ -177,17 +182,48 @@ class GateTests(unittest.TestCase):
                 "shared-motion-runtime": {"result": "skipped"},
             }
             ci.gate(needs, "journey", "journey")
-        for selected, result in (
-            ("true", "skipped"),
-            ("false", "success"),
-            (None, "skipped"),
+        for selected, ios, result in (
+            ("true", "false", "skipped"),
+            ("false", "true", "skipped"),
+            ("false", "false", "success"),
+            (None, "false", "skipped"),
+            ("false", None, "skipped"),
         ):
             needs = {
-                "changes": {"result": "success", "outputs": {"journey": selected}},
+                "changes": {
+                    "result": "success",
+                    "outputs": {"journey": selected, "ios": ios},
+                },
                 "journey": {"result": result},
             }
             with self.assertRaises(ValueError):
                 ci.gate(needs, "journey", "journey")
+        for ids in (
+            "kri-384-library-ingest",
+            "kri-384-library-ingest,kri-577-reliability-gates",
+            "kri-384-library-ingest,kri-524-creation",
+        ):
+            with self.subTest(ids=ids):
+                library_needs = {
+                    "changes": {
+                        "result": "success",
+                        "outputs": {
+                            "journey": "true",
+                            "ios": "false",
+                            "journey_ids": ids,
+                            "shared_motion": "false",
+                        },
+                    },
+                    "journey": {"result": "success"},
+                    "journey-library": {"result": "success"},
+                    "test-api-suite": {"result": "success"},
+                    "creator-contract-replay": {"result": "success"},
+                    "shared-motion-runtime": {"result": "skipped"},
+                }
+                ci.gate(library_needs, "journey", "journey")
+                library_needs["journey-library"]["result"] = "skipped"
+                with self.assertRaises(ValueError):
+                    ci.gate(library_needs, "journey", "journey")
         ci.gate(
             {
                 "changes": {
@@ -211,70 +247,34 @@ class GateTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ci.gate(needs, "web", "suite")
 
-    def test_library_journey_requires_its_own_success_without_borrowing_native(self):
-        def needs(ids, native, library, coverage="covered"):
-            return {
+    def test_pr_ios_gate_shares_the_journey_job(self):
+        for ios, journey, result in (
+            ("true", "false", "success"),
+            ("false", "true", "success"),
+            ("false", "false", "skipped"),
+        ):
+            needs = {
                 "changes": {
                     "result": "success",
                     "outputs": {
-                        "journey": "true",
-                        "journey_ids": ids,
-                        "shared_motion": "false",
-                        "journey_coverage": coverage,
+                        "ios": ios,
+                        "journey": journey,
+                        "ios_ui": "false",
+                        "ios_ui_groups": "none",
+                        "ios_ui_shards": "1",
                     },
                 },
-                "test-api-suite": {"result": "success"},
-                "creator-contract-replay": {"result": "success"},
-                "journey": {"result": native},
-                "journey-library": {"result": library},
-                "shared-motion-runtime": {"result": "skipped"},
+                "journey": {"result": result},
+                "ios-contracts": {"result": "success" if ios == "true" else "skipped"},
             }
-
-        library_id = "kri-384-library-ingest"
-        mixed = "kri-524-creation," + library_id
-        python_mixed = "kri-577-reliability-gates," + library_id
-        for ids, native, library in (
-            (library_id, "skipped", "success"),
-            (mixed, "success", "success"),
-            (python_mixed, "success", "success"),
-            ("kri-577-reliability-gates", "success", "skipped"),
-            ("kri-524-creation", "success", "skipped"),
-        ):
-            with self.subTest(ids=ids):
-                ci.gate(needs(ids, native, library), "journey", "journey")
-
-        for ids, native, library in (
-            (library_id, "success", "skipped"),
-            (library_id, "skipped", "failure"),
-            (library_id, "skipped", "cancelled"),
-            (library_id, "skipped", None),
-            (mixed, "skipped", "success"),
-            (python_mixed, "skipped", "success"),
-            ("kri-577-reliability-gates", "skipped", "skipped"),
-            (mixed, "success", "skipped"),
-            ("kri-524-creation", "success", "success"),
-        ):
-            with self.subTest(ids=ids, native=native, library=library):
-                with self.assertRaises(ValueError):
-                    ci.gate(needs(ids, native, library), "journey", "journey")
-
-        for ids, coverage in (
-            (library_id, "gap"),
-            ("unknown", "covered"),
-            (library_id + "," + library_id, "covered"),
-            ("", "covered"),
-        ):
-            with (
-                self.subTest(ids=ids, coverage=coverage),
-                self.assertRaises(ValueError),
-            ):
-                ci.gate(
-                    needs(ids, "skipped", "success", coverage), "journey", "journey"
-                )
-        missing = needs(library_id, "skipped", "success")
-        del missing["journey-library"]
-        with self.assertRaises(ValueError):
-            ci.gate(missing, "journey", "journey")
+            ci.gate(needs, "ios", "journey")
+            needs["journey"]["result"] = "failure"
+            with self.assertRaises(ValueError):
+                ci.gate(needs, "ios", "journey")
+            needs["journey"]["result"] = result
+            needs["ios-contracts"]["result"] = "failure"
+            with self.assertRaises(ValueError):
+                ci.gate(needs, "ios", "journey")
 
     def test_ios_gate_rejects_missing_or_inconsistent_ui_selection(self):
         for ios, ui in (("true", None), ("true", ""), ("false", "true")):
@@ -379,20 +379,16 @@ class GateTests(unittest.TestCase):
                 ci.gate(needs(ui, shards), "ios", "ios-tests")
 
     def test_ui_shards_follow_the_executed_selection(self):
-        # Non-PR events run the full suite on every leg the workflow defines.
-        self.assertEqual(ci.ui_shards("push", "full"), ci.ui_tests.MAX_SHARDS)
+        # Main keeps one Mac busy; explicit manual runs retain parallel shards.
+        self.assertEqual(ci.ui_shards("push", "full"), 1)
         self.assertEqual(
             ci.ui_shards("workflow_dispatch", "full"), ci.ui_tests.MAX_SHARDS
         )
-        # A PR that wants full coverage executes only the smoke tripwire.
+        # One PR Mac job owns the selected UI and journey scenarios.
         self.assertEqual(ci.ui_shards("pull_request", "full"), 1)
         self.assertEqual(ci.ui_shards("pull_request", "none"), 1)
         self.assertEqual(ci.ui_shards("pull_request", "smoke,projects"), 1)
-        self.assertEqual(
-            ci.ui_shards("pull_request", "smoke,editor"),
-            ci.ui_tests.shard_count("smoke,editor"),
-        )
-        self.assertGreater(ci.ui_shards("pull_request", "smoke,editor"), 1)
+        self.assertEqual(ci.ui_shards("pull_request", "smoke,editor"), 1)
         # An unusable selection keeps one leg; its UI step fails closed.
         with patch.object(ci.ui_tests, "shard_count", side_effect=ValueError):
             self.assertEqual(ci.ui_shards("pull_request", "smoke,editor"), 1)
@@ -600,18 +596,6 @@ class GitDiffTests(unittest.TestCase):
     def test_journey_manifest_coverage_is_explicit_and_fail_closed(self):
         cases = (
             (
-                "src/apps/api/app/pipeline/clip_cache.py",
-                (True, "covered", "kri-384-library-ingest"),
-            ),
-            (
-                "src/apps/api/app/pipeline/transcribe.py",
-                (True, "covered", "kri-384-library-ingest"),
-            ),
-            (
-                "src/apps/api/app/schemas/media_assets.py",
-                (True, "covered", "kri-384-library-ingest"),
-            ),
-            (
                 "src/apps/api/app/pipeline/guided_story.py",
                 (True, "covered", "kri-524-creation"),
             ),
@@ -698,6 +682,22 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/tests/fixtures/agent_evals/narrated_clip_alignment/golden/tigre_spoken_cues.json",
                 (True, "covered", "kri-590-voiceover-cues"),
+            ),
+            (
+                "src/apps/api/app/kria/voiceover_scope.py",
+                (True, "covered", "kri-598-voiceover-planner"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/agent_evals/clip_intent_planner/golden/kri598_tigre_spoken_cues.json",
+                (True, "covered", "kri-598-voiceover-planner"),
+            ),
+            (
+                "src/apps/api/tests/kria/test_voiceover_downgrade_losses.py",
+                (True, "covered", "kri-598-voiceover-planner"),
+            ),
+            (
+                "src/apps/api/app/kria/voiceover_clips.py",
+                (True, "covered", "kri-593-voiceover-clips"),
             ),
             (
                 "src/apps/api/app/pipeline/phone_captions.py",

@@ -21,6 +21,9 @@ enum NativeEditorUITestFixtures {
         case retimedClips = "retimed-clips"
         /// Four 2.5 s cuts on four takes (KRI-561): a lip-sync song trim visibly drops cuts.
         case songTrim = "song-trim"
+        /// KRI-589: a 6 s cut whose variant opens the drawings lane; Save commits through a stub transport
+        /// that keeps the saved drawings across relaunches (`-ui-testing-editor-drawing-reset` starts clean).
+        case drawing = "drawing"
     }
 
     /// Three catalog sounds in two categories; nil preview URLs keep UI tests off the network.
@@ -65,8 +68,27 @@ enum NativeEditorUITestFixtures {
         case .talkingCaptions: talkingCaptions
         case .retimedClips: retimedClips
         case .songTrim: songTrim
+        case .drawing: drawing
         }
     }
+
+    /// The drawings the stub commit transport last saved (UserDefaults, so a relaunch "reopens" them).
+    static let savedDrawingsKey = "kria.ui-test.saved-drawings.v1"
+
+    static let drawing: EditorDraft = {
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-drawing-reset") {
+            UserDefaults.standard.removeObject(forKey: savedDrawingsKey)
+        }
+        let clips = [clip(0, start: 0, duration: 6)]
+        var sections: [String: JSONValue] = ["timeline_slots": slots(for: clips)]
+        if let data = UserDefaults.standard.data(forKey: savedDrawingsKey), let saved = try? JSONDecoder().decode(JSONValue.self, from: data) {
+            sections["drawings"] = saved
+        }
+        return draft(clips: clips, text: [], captions: false, music: false, sections: sections, rootExtras: ["editor_capabilities": .object([
+            "timeline": .bool(true), "text_elements": .bool(true),
+            "drawings": .object(["add": .bool(true), "edit": .bool(true), "trim": .bool(true), "delete": .bool(true)]),
+        ])])
+    }()
 
     /// Reference-only music, so the editor shows the posting-song bar above
     /// the preview (`-ui-testing-editor-song-reference`).
@@ -556,6 +578,59 @@ enum NativeEditorUITestFixtures {
 
     private static func id(_ index: Int) -> UUID {
         UUID(uuidString: String(format: "00000000-0000-4000-8000-%012d", index))!
+    }
+}
+
+/// KRI-589: answers `editor-commit` for the drawing fixture. The request is the one production sends; the
+/// drawings it carries are kept so the next launch reopens them, and every section it names is acknowledged.
+enum NativeEditorUITestCommitTransport {
+    static func api() -> KriaAPI {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CommitURLProtocol.self]
+        return KriaAPI(baseURL: URL(string: "https://editor-ui-testing.invalid")!, tokenStore: UITestTokenStore(), session: URLSession(configuration: configuration))
+    }
+
+    private struct UITestTokenStore: TokenStore {
+        func read() throws -> MobileSession? { nil }
+        func write(_ session: MobileSession) throws {}
+        func delete() throws {}
+    }
+
+    private final class CommitURLProtocol: URLProtocol, @unchecked Sendable {
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            guard let url = request.url else { client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return }
+            var status = 404
+            var body = Data(#"{"detail":"not stubbed"}"#.utf8)
+            if url.path.hasSuffix("/editor-commit") {
+                var data = request.httpBody ?? Data()
+                if data.isEmpty, let stream = request.httpBodyStream {
+                    stream.open(); defer { stream.close() }
+                    var buffer = [UInt8](repeating: 0, count: 4096)
+                    while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
+                }
+                let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                if let drawings = fields["drawings"], let saved = try? JSONEncoder().encode(drawings) {
+                    UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedDrawingsKey)
+                }
+                let sections = fields.keys.filter { $0 != "base_generation" && $0 != "editor_state_version" && $0 != "deletions" && $0 != "remove_music" }
+                var flags = Dictionary(uniqueKeysWithValues: sections.map { ($0, JSONValue.bool(true)) })
+                // A deleted drawing is saved by the lane being sent (possibly empty).
+                if fields["deletions"] != nil, fields["drawings"] == nil { flags["drawings"] = .bool(true) }
+                let response: [String: JSONValue] = ["ok": .bool(true), "generation": .string("fixture-generation-2"), "sections": .object(flags),
+                                                      "revision_number": .number(4), "revision_hash": .string("fixture-hash"), "expected_duration_s": .number(6)]
+                status = 200
+                body = (try? JSONEncoder().encode(JSONValue.object(response))) ?? body
+            }
+            guard let http = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"]) else { return }
+            client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        override func stopLoading() {}
     }
 }
 #endif

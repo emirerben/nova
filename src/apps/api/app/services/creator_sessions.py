@@ -41,6 +41,7 @@ from app.models import (
 )
 from app.schemas.edit_proposal import parse_edit_proposal
 from app.services.clip_facts import assignment_facts, facts_for_prompt
+from app.services.clip_file_names import clip_display_name
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_understanding import clip_record
 from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS, resolve_creator_manifest
@@ -341,8 +342,13 @@ async def resolve_item_creator_context(
     *,
     persona: Persona,
     guided_capability_enabled: bool | None = None,
+    runs_guided_voiceover: bool = True,
 ) -> tuple[Any, list[dict[str, Any]]]:
-    """Build an opaque manifest plus bounded footage evidence for the model."""
+    """Build an opaque manifest plus bounded footage evidence for the model.
+
+    ``runs_guided_voiceover=False`` is the runtime-v2 planner (KRI-598, see
+    ``resolve_creator_manifest``); the v1 Creator routes keep the default.
+    """
 
     media_refs: list[CreatorMediaRef] = []
     media_context: list[dict[str, Any]] = []
@@ -418,6 +424,14 @@ async def resolve_item_creator_context(
             "media_id": media_id,
             "kind": clip_kind,
             "duration_s": duration_s,
+            # KRI-614: the name the app shows ("IMG_7382"), which creators use to name
+            # clips. Like the Visuals `filename` below, never on `CreatorMediaRef.label`
+            # (manifest hash). Omitted when unknown so older clips render unchanged.
+            **(
+                {"filename": name}
+                if (name := clip_display_name(assignment.get("source_filename")))
+                else {}
+            ),
             "creator_note": user_note or None,
             # AI evidence is clearly segregated and must never be copied to
             # on-screen text (also enforced in the main prompt). Populated
@@ -613,6 +627,7 @@ async def resolve_item_creator_context(
             if guided_capability_enabled is None
             else guided_capability_enabled
         ),
+        runs_guided_voiceover=runs_guided_voiceover,
     )
     return manifest, media_context
 
@@ -708,6 +723,7 @@ async def load_intent_clips_for_item(
                 )
                 or None,
                 capture_time=_assignment_capture_time(assignment),
+                file_name=clip_display_name(assignment.get("source_filename")),
             )
         )
 
@@ -748,6 +764,7 @@ async def load_intent_clips_for_item(
                     capture_time=_assignment_capture_time(
                         {"capture": getattr(asset, "capture", None)}
                     ),
+                    file_name=clip_display_name(getattr(asset, "source_filename", None)),
                 )
             )
 

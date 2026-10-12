@@ -112,7 +112,9 @@ def test_build_question_placeholder_and_model_question_in_turkish() -> None:
     assert question.startswith('Şunların "shots of people" olup olmadığını anlayamadım: klip 2;')
     assert 'İsim yer tutucusunu koyacak "shots of people" klibi bulamadım' in question
     assert "Hangi klipler iyi?" in question  # the resolver's own (already Turkish) question
-    assert question.endswith(". Biraz açıklar mısın?")
+    # KRI-613: it already asks, so no "?. Biraz açıklar mısın?" after it.
+    assert question.endswith("Hangi klipler iyi?")
+    assert "?." not in question
 
 
 def test_build_question_too_long_falls_back_in_the_chat_language() -> None:
@@ -346,8 +348,8 @@ def test_resolver_prompt_gets_the_language_line_only_for_turkish() -> None:
 
 
 def test_prompt_versions_moved_with_the_new_prompt_tail() -> None:
-    assert ClipIntentPlannerAgent.spec.prompt_version == "2026-10-08.1"
-    assert ClipRequestResolverAgent.spec.prompt_version == "2026-10-08.2"
+    assert ClipIntentPlannerAgent.spec.prompt_version == "2026-10-12.1"  # KRI-612
+    assert ClipRequestResolverAgent.spec.prompt_version == "2026-10-12.3"  # KRI-612 + KRI-613
 
 
 # ── grounding folds Turkish case ────────────────────────────────────────────────────

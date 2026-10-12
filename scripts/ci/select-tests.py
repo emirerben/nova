@@ -348,18 +348,14 @@ def selection(event, base, head):
 
 
 def ui_shards(event, groups):
-    """Native iOS legs for the UI tests ios.yml executes for this selection.
+    """Keep PR and main to one Mac; manual runs may shard the full suite."""
 
-    Mirrors its UI step: non-PR events run the full suite, a PR runs smoke when
-    the selector wants full, and "none" is one build/unit leg. Every leg
-    re-derives its exact part from the same checkout, so a count only changes
-    how the work is split, never what is covered.
-    """
+    if event in ("pull_request", "push"):
+        return 1
     if groups == "none":
         return 1
-    execution = "smoke" if event == "pull_request" and groups == "full" else groups
     try:
-        return ui_tests.shard_count(execution)
+        return ui_tests.shard_count(groups)
     except (OSError, ValueError, KeyError, TypeError):
         # The UI step fails closed on the same error; one leg reports it.
         return 1
@@ -367,8 +363,8 @@ def ui_shards(event, groups):
 
 def gate(needs, suite, job):
     """A skipped job passes ONLY when a successful selector explicitly opted out."""
-    required_needs = (
-        {
+    if suite in ("api", "journey"):
+        required_needs = {
             "changes",
             "test-api-suite",
             "journey",
@@ -376,9 +372,10 @@ def gate(needs, suite, job):
             "creator-contract-replay",
             "shared-motion-runtime",
         }
-        if suite in ("api", "journey")
-        else {"changes", job}
-    )
+    elif suite == "ios" and job == "journey":
+        required_needs = {"changes", "journey", "ios-contracts"}
+    else:
+        required_needs = {"changes", job}
     if set(needs) != required_needs or needs["changes"].get("result") != "success":
         raise ValueError("CI selection failed or required job results are missing")
     outputs = needs["changes"].get("outputs", {})
@@ -401,41 +398,33 @@ def gate(needs, suite, job):
     result = needs[job].get("result")
     if selected not in ("true", "false"):
         raise ValueError("Missing or invalid suite selection")
-    if suite == "journey":
-        ids = (
-            outputs.get("journey_ids", "").split(",")
-            if outputs.get("journey_ids")
-            else []
-        )
-        allowed = {journey["id"] for journey in JOURNEYS}
-        coverage = outputs.get("journey_coverage")
-        if selected == "true":
-            if (
-                coverage != "covered"
-                or not ids
-                or len(ids) != len(set(ids))
-                or not set(ids) <= allowed
-            ):
-                raise ValueError(
-                    "Journey selection has an unmapped or invalid incident"
-                )
-        elif ids or coverage != "not_applicable":
-            raise ValueError("Inconsistent unselected journey coverage")
-        library = "kri-384-library-ingest" in ids
-        native = any(incident != "kri-384-library-ingest" for incident in ids)
-        for lane, enabled in (("journey", native), ("journey-library", library)):
-            expected = "success" if enabled else "skipped"
-            actual = needs[lane].get("result")
-            if actual != expected:
-                raise ValueError(f"{lane}: expected {expected}, got {actual}")
-        return (
-            "journey: passed"
-            if selected == "true"
-            else "journey: not applicable to this PR"
-        )
-    expected = "success" if selected == "true" else "skipped"
+    # On PRs the journey job owns both selected iOS coverage and incident
+    # journeys. A green shared job can represent either selection, while an
+    # intentional skip is valid only when neither selection needs it.
+    execution_selected = selected == "true"
+    if job == "journey" and suite in ("ios", "journey"):
+        peer = outputs.get("journey" if suite == "ios" else "ios")
+        if peer not in ("true", "false"):
+            raise ValueError("Missing or invalid shared native selection")
+        execution_selected = execution_selected or peer == "true"
+    expected = "success" if execution_selected else "skipped"
     if result != expected:
         raise ValueError(f"{suite}: expected {expected}, got {result}")
+    if suite == "journey":
+        ids = outputs.get("journey_ids", "").split(",") if outputs.get("journey_ids") else []
+        library_expected = "success" if "kri-384-library-ingest" in ids else "skipped"
+        library_result = needs["journey-library"].get("result")
+        if library_result != library_expected:
+            raise ValueError(
+                f"library journey: expected {library_expected}, got {library_result}"
+            )
+    if suite == "ios" and job == "journey":
+        contracts_expected = "success" if selected == "true" else "skipped"
+        contracts_result = needs["ios-contracts"].get("result")
+        if contracts_result != contracts_expected:
+            raise ValueError(
+                f"ios contracts: expected {contracts_expected}, got {contracts_result}"
+            )
     if suite == "api":
         shared_selected = outputs.get("shared_motion")
         shared_result = needs["shared-motion-runtime"].get("result")

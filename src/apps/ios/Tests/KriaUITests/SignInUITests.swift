@@ -68,6 +68,16 @@ import XCTest
         XCTAssertTrue(google.isHittable)
     }
 
+    func testExistingAccountRefusalIsReadableOnScreen() {
+        // KRI-609: Apple sign-in on a Google-made account showed the editor's
+        // "edit changed elsewhere" line in small grey text, and the creator saw nothing.
+        let app = launch(state: "signin-existing-account")
+        let message = app.staticTexts["signin.message"]
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertEqual(message.label, "This email already has a Kria account. Sign in with Google to open it.")
+        XCTAssertTrue(message.isHittable, "The refusal must be on screen without the creator scrolling")
+    }
+
     func testSignInErrorMessageIsAnnounced() {
         let app = launch(state: "signin-error")
         let message = app.staticTexts["signin.message"]

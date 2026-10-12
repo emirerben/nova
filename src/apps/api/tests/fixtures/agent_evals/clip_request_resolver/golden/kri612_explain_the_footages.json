@@ -1,0 +1,108 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-10-12.2",
+  "input": {
+    "creator_request": "these are the footages of mohammed salahs and trabzonspor football team first match for the 2026/27 football season there is welcome day of mohammed salah,streching of the team before the firts match against ferncvaros and there is also some gassed up funs from Trabzon this match was mohammed salah first game ı want you to collab all those videos and explain the footages",
+    "intents": [
+      {
+        "intent_id": "describe_clips",
+        "op": "label",
+        "attribute": "what is happening in the clip",
+        "creator_text": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "kind": "video",
+        "record": {
+          "subject": "football players on pitch",
+          "summary": "Football players walk and jog on the pitch near the corner flag, stretching and warming up, while spectators fill the stadium stands in the background.",
+          "setting": "outdoor football stadium during an event",
+          "activity": "football players jogging and stretching on the pitch"
+        }
+      },
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "children on football pitch",
+          "summary": "Two children and an adult are on a football pitch, possibly participating in a pre-game ceremony, while a large crowd watches from the stands and cheers.",
+          "setting": "football stadium",
+          "activity": "children waving and acknowledging crowd at a football match"
+        }
+      },
+      {
+        "alias": "m003",
+        "kind": "video",
+        "record": {
+          "subject": "stadium crowd",
+          "summary": "A large crowd in a football stadium cheers enthusiastically. A safety net is pulled up in front of one section of the stands, then lowered again.",
+          "setting": "indoor football stadium",
+          "activity": "cheering for a football match"
+        }
+      },
+      {
+        "alias": "m004",
+        "kind": "video",
+        "record": {
+          "subject": "football player on pitch",
+          "summary": "A football player in a jersey is on a pitch, holding up a phone and interacting with crew members, while a crowd in the background holds up lights.",
+          "setting": "football stadium pitch at night",
+          "activity": "football player acknowledging crowd and crew while holding up a phone"
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"describe_clips\", \"assignments\": [{\"media\": \"m001\", \"value\": \"Players stretching\", \"evidence\": \"activity: football players jogging and stretching\", \"confidence\": 0.9}, {\"media\": \"m002\", \"value\": \"Children waving\", \"evidence\": \"activity: children waving and acknowledging crowd\", \"confidence\": 0.9}, {\"media\": \"m003\", \"value\": \"Crowd cheering\", \"evidence\": \"summary: a large crowd ... cheers\", \"confidence\": 0.85}, {\"media\": \"m004\", \"value\": \"Player holding phone\", \"evidence\": \"activity: football player ... holding up a phone\", \"confidence\": 0.9}], \"needs_vision\": [], \"question\": null, \"caption\": null}]}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "describe_clips",
+        "assignments": [
+          {
+            "media": "m001",
+            "value": "Players stretching",
+            "evidence": "activity: football players jogging and stretching",
+            "confidence": 0.9
+          },
+          {
+            "media": "m002",
+            "value": "Children waving",
+            "evidence": "activity: children waving and acknowledging crowd",
+            "confidence": 0.9
+          },
+          {
+            "media": "m003",
+            "value": "Crowd cheering",
+            "evidence": "summary: a large crowd ... cheers",
+            "confidence": 0.85
+          },
+          {
+            "media": "m004",
+            "value": "Player holding phone",
+            "evidence": "activity: football player ... holding up a phone",
+            "confidence": 0.9
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-612 (prod thread 0ef4fdde): a label asking what happens in each clip is answered from every clip's own record -- a 1-3 word line per clip, all different, no needs_vision and no question ('Please describe what explain the footages means for a label operation' was the prod answer).",
+    "expect_assignment_set": {
+      "describe_clips": [
+        "m001",
+        "m002",
+        "m003",
+        "m004"
+      ]
+    },
+    "expect_no_question": true
+  }
+}

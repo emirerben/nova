@@ -41,7 +41,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-11-v77"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-12-v78"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -161,7 +161,15 @@ _BULK_OPS = {"add_unused_sources", "set_media_duration", "stack_images"}
 _HISTORY_OPS = frozenset({"undo_last_edit", "repeat_last_edit"})
 # KRI-301: the ONLY ops a slide post accepts (`snapshot["surface"] == "slide_post"`).
 # Slide-only ops are refused on every other surface.
-_SLIDE_POST_ONLY_OPS = frozenset({"set_slide_cover", "set_post_caption", "set_slide_framing"})
+_SLIDE_POST_ONLY_OPS = frozenset(
+    {
+        "set_slide_cover",
+        "set_post_caption",
+        "set_slide_framing",
+        "set_post_aspect",
+        "set_slide_fit",
+    }
+)
 SLIDE_POST_OPS = frozenset(
     {
         "edit_text",
@@ -1490,6 +1498,14 @@ def _format_snapshot(snapshot: dict) -> str:
                 f"{i}. {effect_range} intensity={_fmt_num(_first_number(effect, ('intensity',)))}"
                 f"{_context_row_suffix(effect, component_context_enabled)}"
             )
+
+    drawings = snapshot.get("drawings")
+    if isinstance(drawings, dict) and drawings.get("count"):
+        lines.append(
+            "\nFREEHAND DRAWINGS (read-only: the creator drew these by hand; never remove, "
+            "move or edit them, and keep clip edits from leaving them without footage): "
+            f"count={_field(drawings.get('count'), max_chars=10)}"
+        )
 
     visual_blocks = snapshot.get("visual_blocks")
     if isinstance(visual_blocks, list):

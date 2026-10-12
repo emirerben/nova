@@ -205,6 +205,10 @@ class VerifyShellTests(unittest.TestCase):
     def test_prepare_then_ui_reuses_same_build_and_destination(self):
         prepared = self.run_verify(suite="prepare-ui", restore_times=True)
         self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        self.assertEqual(
+            (self.root / "test-results/ios/simulator-id.txt").read_text().strip(),
+            "selected",
+        )
         build = next(call for call in self.calls if call[-1] == "build-for-testing")
         unit = next(call for call in self.calls if call[-1] == "test-without-building")
         self.assertFalse(
@@ -275,7 +279,9 @@ class VerifyShellTests(unittest.TestCase):
                 with self.subTest(groups=groups, shard=shard):
                     self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
                     result = self.run_verify(
-                        suite="ui", groups=groups, extra_env={"KRIA_IOS_UI_SHARD": shard}
+                        suite="ui",
+                        groups=groups,
+                        extra_env={"KRIA_IOS_UI_SHARD": shard},
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
                     call = next(
@@ -460,7 +466,9 @@ class VerifyShellTests(unittest.TestCase):
         result = self.run_verify("boot_race", suite="unit")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.actions, ["build-for-testing", "test-without-building"])
-        boot_calls = [call for call in self.calls if call[:3] == ["xcrun", "simctl", "bootstatus"]]
+        boot_calls = [
+            call for call in self.calls if call[:3] == ["xcrun", "simctl", "bootstatus"]
+        ]
         self.assertEqual(
             boot_calls,
             [

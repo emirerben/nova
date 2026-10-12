@@ -22,14 +22,17 @@ copy changed: code, routes, schemas and `edit_format = "slides"` keep the
 every per-platform limit — slide count, allowed kinds, video duration cap,
 output canvas:
 
-- **`tiktok_photo`** — images only, 1–35 slides, 9:16 (1080×1920). This is
-  TikTok's actual Content Posting API photo-mode behavior, not an arbitrary
-  restriction: a TikTok photo post cannot contain a video item at all.
+- **`tiktok_photo`** — images only, 1–35 slides, 9:16 (1080×1920) by default.
+  This is TikTok's actual Content Posting API photo-mode behavior, not an
+  arbitrary restriction: a TikTok photo post cannot contain a video item at all.
 - **`instagram_carousel`** — images + videos, 2–20 slides, videos capped at
-  90s, 4:5 (1080×1350).
+  90s, 4:5 (1080×1350) by default.
 
 "Mixed media" as the issue named it is really the Instagram shape; TikTok
 photo mode is the images-only degenerate case.
+
+Every post also carries ONE post-wide size (`SlidePostDraft.aspect`, KRI-606; see
+"Post size and photo fit" below). The numbers above are each profile's default.
 
 ## Data model
 
@@ -361,6 +364,68 @@ pool order / first slide as cover / no caption rather than blocking assembly.
 - **AI.** `set_slide_framing{slide_indexes|all, orientation?, focus?, zoom?, reset?}` (slides lane). The model never writes rectangles: `focus` (center/top/bottom/left/right) and `zoom` (1-3) resolve against the photo's upright shape (`PlanItemAsset.aspect`, else `analysis.width/height`; both are measured after EXIF rotation by `_analyze_image`). Unknown shape refuses a focus/zoom crop honestly; orientation and reset still work. Changing the shape drops the old crop. `compile_slide_post_ops` carries `framing` across text and look ops.
 - **Rollout.** Merge dark. Turn on `SLIDE_POST_FRAMING_ENABLED` (Fly secret on api and worker, then restart both) once a TestFlight build with the slide Crop UI exists. Capability `slide_post_framing` gates the iOS Crop item and the AI op.
 
+## Post size and photo fit (KRI-606, flag `slide_post_sizes_enabled`, default off)
+
+**What the platforms do** (researched 2026-10-12; third-party guides plus Meta's IG User Media and TikTok's media
+transfer docs; the "first slide decides" rule is widely reported but not in Meta's publishing docs):
+
+| | Instagram carousel | TikTok photo post |
+|---|---|---|
+| Shape | One shape for the whole carousel: the FIRST slide sets it and later slides are cropped to it | Each photo is shown on its own; anything that is not 9:16 is letterboxed, not cropped |
+| Sizes | 4:5 (1080×1350), 3:4 (1080×1440, supported in-app since May 2025), 1:1 (1080×1080), 1.91:1 (1080×566); taller than 3:4 is cropped | 9:16 recommended; 1:1, 4:5, 3:4 display with bars |
+| API limits (for a later direct publish) | JPEG, aspect 4:5–1.91:1, width ≤ 1440 | JPEG/WebP, ≤ 1080p, ≤ 20 MB each, ≤ 35 |
+| Profile grid | Shows a 3:4 centre crop | n/a |
+
+So every slide is rendered at one size. 3:4, 4:5 and 1:1 post cleanly to both apps.
+
+- **`SlidePostDraft.aspect`** (`"9:16"|"4:5"|"3:4"|"1:1"|"1.91:1"`, None = the profile default) resolves through
+  `profiles.post_canvas`. TikTok allows 9:16, 3:4, 4:5, 1:1; Instagram 4:5, 3:4, 1:1, 1.91:1. The draft validator
+  collapses the default and any size the profile lacks to None, so switching platform falls back to the new
+  platform's default. Omitted from the serialized draft while None (existing drafts, binding digests and cache keys are
+  byte-identical, pinned in `test_slide_post_sizes.py`). A landscape TikTok slide still exports at 1920×1080.
+- **`SlideEdits.fit`** (`"blur"|"black"|"white"`, None = fill): show the WHOLE (cropped) photo with bars instead of
+  trimming its edges. A **sibling of `framing`**, not nested in it: the KRI-44 iOS build re-encodes `framing` from its own
+  struct and would silently drop an unknown nested key, whereas an unknown sibling key is simply omitted and the
+  "missing means keep" merge protects it. Photos only: the validator strips it from video slides. Crop is applied first,
+  then Fit (`fit_placement` = `cover_placement` with `min`), so Free crop + Fit exports exactly what was cropped.
+- **Render** (`build._frame_filter`): Fill is the historical cover string byte-for-byte. Black/white: `scale=decrease,pad`.
+  Blur: one graph with unlabelled first and last chains (so `_overlay_filter_complex`'s `[0:v]{vf}[b0]` wrap and the
+  `,`-joined look still work) that overlays the fitted photo on a quarter-size, `gblur=sigma=20`, upscaled cover copy
+  (`FIT_BLUR_SIGMA_PX = 80` at full resolution). `overlay` uses `format=auto` like every other overlay here; the default
+  would convert Fit slides to limited-range 4:2:0 and shift their colour against Fill ones. Looks grade the whole frame,
+  bars included. Text bands (`min(1920, round(1080·ch/cw))`) and the watermark scale (`min(cw/1080, ch/1920)`) already
+  handle every size: no formula change, so `SLIDE_WATERMARK_VERSION` / `SLIDE_IMAGE_NORMALIZER_VERSION` are untouched.
+- **Save contract (three states, same as framing).** `aspect` / `fit` key missing (web editor, a KRI-44 iOS build,
+  `edits: null`) keeps the stored value; explicit `null` clears; a value sets. `merge_stored_edit_key` is the shared
+  merge; `merge_legacy_text_edits` carries `fit` only when it was sent (otherwise every web save of a post with rich text
+  would clear it). While `SLIDE_POST_SIZES_ENABLED` is off the PUT ignores incoming values. The chat-edit route backfills
+  an omitted `aspect`/`fit` from the stored draft and re-validates it (`model_copy` skips validators).
+- **Renderer fence.** The job-dispatch stamp `SLIDES_RENDERER_VERSION` stays 2, so a not-yet-updated worker never rejects
+  queued jobs during a deploy. The new worker stamps `slide_post.renderer_version = SLIDES_SIZES_RENDERER_VERSION (3)`;
+  `_slide_post_export_is_current` treats a sized or Fit draft as stale unless stamped ≥ 3. A default draft is current at
+  any version.
+- **Chat.** `set_post_aspect{aspect}` and `set_slide_fit{slide_indexes|all, fit: fill|fit, background?}`
+  (`editor_ops_v2/slides.py`), offered only when `snapshot.post.sizes_enabled` (flags AND `X-Kria-Client-Protocol >= 5`,
+  so an older app is never told "it's square now" and then drops the field). A new size drops portrait crops
+  ("Size is now 1:1 · crops reset on N slides"); a focus/zoom crop in the same bundle as a size change fails honestly
+  ("Change the size first, then crop") because it was resolved against the old shape.
+- **iOS.** `SlidePostSize` (Core) mirrors `ASPECT_CANVASES`; `SlidePostSizeSheet` (toolbar "Size" or the status line)
+  sets platform, shape and Fit for all photos; the Crop workspace has a per-photo Fill | Fit row. Every render path takes the
+  draft's `aspect` explicitly (no default), including `SlidePostExporter`'s callbacks. Pinned by the `sizes`,
+  `fit_placements` and `fit_blur_sigma_px` blocks of `tests/fixtures/slide-framing-parity/v1.json`.
+- **Known gaps.** An older iOS build that exports a sized post on the PHONE produces the profile's default shape (it
+  cannot see `aspect`); bounded, because sizes are only created by protocol-5 builds while the flag is on, the server
+  export is always right, and stored values survive an old app's saves. The legacy drawtext size (`ch·0.045`) shrinks on
+  short canvases (25 px at 1.91:1); iOS uses rich text. The web editor has no size picker or Fit (its saves keep them).
+  An app treats a size or Fit style it does not know as the default, and its next save writes that default
+  (clearing the server's value); a later server that adds a size must also raise the client-protocol floor for the
+  capability, as this one does. On the phone, Fit clips the photo to its crop region before the bars are drawn
+  (`framedBase`, `SlidePostRegionClip`): drawing the whole source would show the cropped-away pixels in the bars.
+- **Rollout.** Merge dark and deploy api + worker. Ship a protocol-5 TestFlight build. With
+  `SLIDE_POST_FRAMING_ENABLED` already on: `fly secrets set SLIDE_POST_SIZES_ENABLED=true` (api + worker) and restart.
+  Capability `slide_post_sizes` = sizes AND framing. **Rollback is the flag only**: once any post has a size or Fit,
+  never roll the CODE back, because the draft models drop unknown keys and the next save or render stamp would erase them.
+
 ## Known v1 gaps (tracked, not silently shipped)
 
 - **No direct publish.** v1 is export-only (`bundle.zip`). TikTok photo
@@ -418,6 +483,7 @@ client stages the returned draft and saves with the normal versioned PUT.
   KRI-300 swaps in `clip_facts.slide_asset_facts(asset)` here. Facts only reach the
   copilot for accounts where `settings.clip_facts_for(user_id)` is true.
 - **Evals:** goldens `tests/fixtures/agent_evals/edit_copilot/golden/slide_*.json`.
+- **Size and Fit ops (KRI-606):** `set_post_aspect` and `set_slide_fit`; see "Post size and photo fit".
 
 ## Verification
 
@@ -425,4 +491,6 @@ client stages the returned draft and saves with the normal versioned PUT.
 cd src/apps/api && pytest tests/pipeline/test_slide_post_profiles.py tests/pipeline/test_slide_post_build.py tests/tasks/test_slide_post_render.py tests/tasks/test_slide_post_dispatch.py tests/agents/test_slide_post_composer.py -q
 cd src/apps/web && npx jest src/__tests__/plan/items/SlidePostPanel.test.tsx src/__tests__/plan/edit-format.test.ts -q
 cd src/apps/api && pytest tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py -q
+# Post size + Fit (KRI-606): real ffmpeg, needs one with drawtext + gblur (e.g. ffmpeg-full)
+cd src/apps/api && pytest tests/pipeline/test_slide_post_sizes.py tests/pipeline/test_slide_post_framing.py tests/routes/test_slide_post_native_routes.py -q
 ```
