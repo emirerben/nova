@@ -75,6 +75,47 @@ jobs:
           REPLAY_RESULT: ${{ needs.creator-contract-replay.result }}
         run: test "$REPLAY_RESULT" = success
 
+  ios-contracts:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: src/apps/api/pyproject.toml
+      - name: Test iOS verification orchestration
+        run: python3 -m unittest discover -s scripts/ios/tests -v
+      - name: Install contract generator dependencies
+        working-directory: src/apps/api
+        run: pip install -e .
+      - name: Verify mobile OpenAPI and shared contracts
+        working-directory: src/apps/api
+        env:
+          STORAGE_BUCKET: nova-test
+          DATABASE_URL: postgresql://localhost/test
+          REDIS_URL: redis://localhost:6379/0
+          INTERNAL_API_KEY: test
+        run: python -m app.cli.kria_contracts --check
+
+  # PRs use the same compiled iPhone app for unit, selected UI, and selected
+  # native journey scenarios. The iOS workflow keeps main/manual regression.
+  build-and-test:
+    name: ${{ github.event_name == 'pull_request' && 'build-and-test' || 'PR iPhone gate' }}
+    if: always() && github.event_name == 'pull_request'
+    needs: [changes, journey, ios-contracts]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require selected iPhone checks to pass
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select-tests.py gate ios journey
+
   # KRI-499: compare every available sanitized successful creator job (up to
   # 100) against an actual base-revision verifier, then run the candidate with
   # its new duration check enforced. Both runs are offline and use no paid API.
@@ -295,28 +336,36 @@ jobs:
           PY
 
   journey:
+    name: ${{ (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true') && 'iPhone validation' || 'Offline journey' }}
     needs: [changes, journey-mapping]
-    if: needs.changes.outputs.journey == 'true'
-    runs-on: ${{ needs.changes.outputs.journey_needs_native == 'true' && 'macos-15' || 'ubuntu-latest' }}
-    timeout-minutes: 60
+    # A skipped mapping job must not skip an iOS-only PR. An affected journey
+    # still requires its mapping to pass before it can occupy a Mac runner.
+    if: >-
+      always() && needs.changes.result == 'success' &&
+      ((needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success') ||
+       (github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true' && needs.changes.outputs.journey == 'false'))
+    runs-on: ${{ (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true') && 'macos-15' || 'ubuntu-latest' }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Prepare journey result directory
         run: mkdir -p test-results/kri-559
       - name: Set up Xcode
-        if: needs.changes.outputs.journey_needs_native == 'true'
+        if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
       - name: Install XcodeGen
-        if: needs.changes.outputs.journey_needs_native == 'true'
+        if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         run: brew install xcodegen
       - uses: actions/setup-python@v5
+        if: needs.changes.outputs.journey == 'true'
         with:
           python-version: '3.11'
           cache: pip
           cache-dependency-path: src/apps/api/pyproject.toml
       - name: Install offline journey dependencies
+        if: needs.changes.outputs.journey == 'true'
         working-directory: src/apps/api
         run: pip install -e '.[dev]'
       - name: Verify KRI-492 offline policy and compiled-recipe replay prerequisites
@@ -352,17 +401,16 @@ jobs:
       - name: Generate KRI-492 approved-length fixture through server approval and compiler
         if: contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
         run: python3 scripts/ios/kri-492-length-e2e.py test-results/kri-559/kri-492
-      # KRI-604: every native step below used to compile the whole app cold
-      # (~10 min). Restore the Xcode build data ios.yml saves on main (same key
-      # family; restore-only, so the two workflows never race to save), then
-      # build once and run each journey with test-without-building.
+      # One PR Mac job now builds the iPhone app once for its selected unit,
+      # UI and native journey scenarios. Main's separate iOS workflow still
+      # owns the full UI regression and the shared warm cache.
       - name: Identify Xcode cache
-        if: needs.changes.outputs.journey_needs_native == 'true'
+        if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         id: xcode-cache
         run: |
           echo "toolchain=$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - name: Restore Xcode build data
-        if: needs.changes.outputs.journey_needs_native == 'true'
+        if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         id: build-cache
         uses: actions/cache/restore@v4
         with:
@@ -376,33 +424,44 @@ jobs:
           key: ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-${{ github.sha }}
           restore-keys: |
             ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
-      - name: Generate iOS project and select simulator
+      - name: Build iPhone app and run selected unit tests
+        if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
+        env:
+          KRIA_IOS_TEST_MODE: ${{ github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true' && needs.changes.outputs.ios_ui == 'false' && needs.changes.outputs.journey_needs_native == 'false' && 'unit' || 'prepare-ui' }}
+          KRIA_IOS_UNIT_TESTS: ${{ github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true' && '1' || '0' }}
+          KRIA_RESTORE_INPUT_TIMES: '1'
+        run: bash scripts/ios/verify.sh
+      - name: Record compiled iPhone input timestamps
+        if: github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true')
+        run: python3 scripts/ios/cache-inputs.py save
+      - name: Save Xcode build data for the next run
+        if: github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true') && steps.build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            src/apps/ios/.derived-data/Build
+            src/apps/ios/.derived-data/SourcePackages
+            src/apps/ios/.derived-data/ModuleCache.noindex
+            src/apps/ios/.derived-data/SDKStatCaches.noindex
+            src/apps/ios/.derived-data/CompilationCache.noindex
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+      - name: Run selected iPhone UI scenarios
+        if: github.event_name == 'pull_request' && needs.changes.outputs.ios_ui == 'true'
+        env:
+          KRIA_IOS_TEST_MODE: ui
+          KRIA_IOS_UI_GROUPS: ${{ needs.changes.outputs.ios_ui_groups == 'full' && 'smoke' || needs.changes.outputs.ios_ui_groups }}
+        run: bash scripts/ios/verify.sh
+      - name: Reuse the same simulator for selected native journeys
         if: needs.changes.outputs.journey_needs_native == 'true'
-        run: |
-          mkdir -p test-results/kri-559
-          bash scripts/ios/generate-project.sh
-          xcrun simctl list devices available -j > test-results/kri-559/simulators.json
-          python3 - <<'PY' > test-results/kri-559/simulator-id.txt
-          import json
-          for devices in reversed(list(json.load(open("test-results/kri-559/simulators.json"))["devices"].values())):
-              for device in devices:
-                  if device.get("isAvailable") and device["name"].startswith("iPhone"):
-                      print(device["udid"]); raise SystemExit
-          raise SystemExit("No available iPhone simulator")
-          PY
-          xcrun simctl boot "$(cat test-results/kri-559/simulator-id.txt)" || true
-          xcrun simctl bootstatus "$(cat test-results/kri-559/simulator-id.txt)" -b
-      - name: Build the app and test bundles once
-        if: needs.changes.outputs.journey_needs_native == 'true'
-        working-directory: src/apps/ios
-        run: |
-          # Same timestamp restore as scripts/ios/verify.sh: a fresh checkout
-          # would otherwise look newer than the cached objects and recompile.
-          python3 ../../../scripts/ios/cache-inputs.py restore
-          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
-            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
-            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
-            build-for-testing
+        run: cp test-results/ios/simulator-id.txt test-results/kri-559/simulator-id.txt
+      - uses: actions/upload-artifact@v4
+        if: always() && github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true'
+        with:
+          name: ios-native-test-diagnostics
+          path: test-results/ios/
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Render captured creation journey on iPhone simulator
         if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
@@ -662,7 +721,7 @@ jobs:
             tests/tasks/test_phone_subtitled_narrated_dispatch.py -q \
             | tee ../../../test-results/kri-559/voiceover-cues-api-tests.log
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && needs.changes.outputs.journey == 'true'
         with:
           name: kri-559-journey-${{ github.sha }}
           path: test-results/kri-559/

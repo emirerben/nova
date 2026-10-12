@@ -1,6 +1,7 @@
 name: iOS
 
-# Always report the stable build-and-test check; select work at job level.
+# Full native regression on main and manual runs. PR coverage shares one build
+# with selected journey checks in CI's journey job.
 on:
   workflow_dispatch:
     inputs:
@@ -9,8 +10,6 @@ on:
         type: choice
         default: none
         options: [none, creation, projects, editor]
-  pull_request:
-    branches: [main, dev]
   push:
     branches: [main]
 

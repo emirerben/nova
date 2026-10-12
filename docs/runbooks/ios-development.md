@@ -538,22 +538,21 @@ reliably, so check it by hand on the simulator.
 
 ### Change-based CI
 
-The iOS workflow always reports `build-and-test`. The shared
-[CI selector](change-based-ci.md) schedules the macOS build only for affected PRs;
-every push to main runs the full iOS gate. Unrelated PRs report an explicit
-not-applicable result through a small Ubuntu gate without allocating a Mac.
+The shared [CI selector](change-based-ci.md) schedules one CI macOS job for PRs
+with selected iOS or native journey coverage. Its stable `build-and-test` gate
+requires selected native checks and Linux mobile contracts to pass. Unrelated
+PRs report an explicit not-applicable result without allocating a Mac. The
+separate iOS workflow runs the full gate on every push to main and manual
+dispatch.
 
-Mobile contract generation checks and verification-script tests run on a parallel
-Linux matrix leg. Both legs must pass the stable `build-and-test` gate, so Python
-dependency installation does not delay Xcode.
+Mobile contract generation checks and verification-script tests run in a
+parallel Linux job, so their Python dependencies do not delay Xcode.
 
-The selected Mac job has separate **Build and unit tests** and **Native UI tests**
-steps, sharing one compiled build and simulator. Every selected PR runs the build and
-unit-test phase; the exhaustive native UI suite runs on main pushes and manual
-dispatch. The selector still classifies native app, design-system, media-engine,
-resource, UI-test, and unknown/shared changes as UI-affecting for reporting and
-future policy changes. Fonts and type-poster assets under the web public
-directory are also native build inputs.
+The PR Mac job compiles the app once, then reuses that build and simulator for
+unit tests, the selected UI subset, and any selected native journey scenarios.
+Native journey only PRs skip unrelated unit/UI execution. The exhaustive native
+UI suite runs on main pushes and manual dispatch. Fonts and type-poster assets
+under the web public directory remain native build inputs.
 
 `make ios-verify` still runs the full local gate. When local sessions share a
 Mac, set `KRIA_SIMULATOR_ID` to a dedicated available iPhone simulator to avoid
@@ -562,7 +561,7 @@ fail before building; CI retains its automatic device selection. For targeted ve
 
 ```sh
 KRIA_IOS_TEST_MODE=unit bash scripts/ios/verify.sh
-# Main and manual CI split full coverage without compiling twice:
+# Run separate build and UI phases locally:
 KRIA_IOS_TEST_MODE=prepare-ui bash scripts/ios/verify.sh
 KRIA_IOS_TEST_MODE=ui KRIA_IOS_UI_GROUPS=full bash scripts/ios/verify.sh
 ```
@@ -611,11 +610,9 @@ zero compile or asset tasks, the same as a no-op build.
 
 Run cache/phase regression tests with `python3 -m unittest discover -s
 scripts/ios/tests -v`. To disable timestamp restoration, remove
-`KRIA_RESTORE_INPUT_TIMES` from the CI build step. To return PRs to build and
-unit tests only, make the `ios.yml` build step select `unit` for every
-`pull_request` and restrict the UI step to non-PR events; to run the full suite
-on PRs instead, pass `full` through. Neither change should skip compilation or
-relax `build-and-test`.
+`KRIA_RESTORE_INPUT_TIMES` from the CI build step. PR UI selection now lives in
+`ci.yml`; the iOS workflow owns main/manual sharding. A policy change must keep
+the `build-and-test` gate fail closed.
 
 Local verification of the timestamp restore on 2026-09-10 reset all 126 native
 and shared input mtimes to simulate a fresh checkout, then ran the `unit` mode
@@ -876,50 +873,39 @@ line.
 
 #### Sharded UI runs (KRI-168)
 
-The `changes` job emits `ios_ui_shards`, and `ios-tests` builds its native legs
-from it. `ui_tests.shard_count` sizes the UI tests this run executes: one leg per
-15 minutes (`SHARD_TARGET_SECONDS`) of recorded time, capped at 3
-(`MAX_SHARDS`). With the September 24, 2026 durations:
+On main and manual runs, `ios-tests` uses `ios_ui_shards` to split the full UI
+suite across three native legs. PRs use one CI Mac job so their selected UI and
+journey scenarios can share a single compiled build. The PR selector emits one
+leg regardless of the affected UI group. The September 24, 2026 durations
+show the UI work before build and journey time:
 
 | Execution | Estimated UI time | Native legs |
 |---|---|---|
 | `full` (main, manual) | 39.7 min | 3 (`shard: 1/3` … `3/3`) |
-| `smoke,editor` (PR) | 26.3 min | 2 (`1/2`, `2/2`) |
+| `smoke,editor` (PR) | 26.3 min | 1 |
 | `smoke,creation` (PR) | 9.6 min | 1 |
 | `smoke,projects` (PR) | 7.1 min | 1 |
 | `smoke` (PR tripwire) | 1.7 min | 1 |
 
-A one-leg run keeps the unsharded job name `ios-tests (native, macos-15)`.
+The PR Mac job appears in CI as `journey`; main's native legs appear in iOS.
 
 - `ui_tests.shard_tests` places tests longest-first into the least-loaded shard,
   using median CI durations from `scripts/ios/ui-test-durations.json`. Unknown
   tests weigh the median.
-- Every leg computes the same partition from the same checkout, so the shards
-  are disjoint and cover the selection. Each leg's `verify` requires exactly its
-  part, and an empty part is an error, not a vacuous pass. The `ios-tests`
-  aggregate fails unless every leg passes. The `build-and-test` gate rejects a
-  missing or out-of-range `ios_ui_shards`, and a UI-less run with more than one
-  leg. Whatever the count, the legs `1/n` … `n/n` cover the whole selection.
-- Only shard 1 runs unit tests (`KRIA_IOS_UNIT_TESTS=0` elsewhere), saves the
-  build cache, and writes the PR summary. Diagnostics upload as
-  `ios-native-test-diagnostics-shard-<job index>`.
+- On main, every leg computes the same partition from the checkout, so shards
+  are disjoint and cover the full suite. Each leg's `verify` requires exactly
+  its part; an empty part fails. The `ios-tests` aggregate fails unless every
+  leg passes.
+- Only main shard 1 runs unit tests (`KRIA_IOS_UNIT_TESTS=0` elsewhere) and
+  saves the build cache. PRs save their build after compilation and unit tests,
+  before selected UI or journey scenarios finish.
 - Refresh the durations with `python3 scripts/ios/refresh-ui-durations.py`. It
   takes the median passing attempt from the native legs of the last 120 `iOS`
   runs (about 8 minutes through `gh`). Refresh after adding or reshaping UI
-  tests. Stale values only unbalance or resize the legs; they never drop
-  coverage. `test_shard_count_splits_long_selections_only` fails if a refresh
-  stops main from using every leg, stops editor PRs from splitting, or splits
-  the smoke or projects runs.
-- Cost. A native leg spends about 7 minutes on setup and compilation before
-  UI tests (about 11 minutes on shard 1, which also runs unit tests), plus about
-  1.7 minutes of UI runner startup. For an editor PR, two legs cut the modeled
-  job from about 39 to about 26 minutes, for about 9 more runner-minutes
-  (+22%). A third leg would reach about 21 minutes for another 9 (+45% in
-  total). The repo is public, so these minutes are not billed. The binding
-  limit is the account's 5 concurrent macOS runners: main holds 3 for about 25
-  minutes per merge, and in September 2026 PR native legs already waited 12
-  minutes at p90 to start. Two PR legs plus main exactly fill the limit, which
-  is why the target is 15 minutes, not 10.
+  tests. Stale values only unbalance main's legs; they never drop coverage.
+- PRs now trade parallel UI execution for one Mac allocation and one compiled
+  build across native checks. Compare hosted CI runs before claiming a wall
+  clock improvement, especially for long editor UI selections.
 - Parallel testing on one runner stays off: cloned simulators missed drawer
   controls in #1004.
 
