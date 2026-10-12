@@ -345,13 +345,12 @@ class GateTests(unittest.TestCase):
                 ci.gate(needs(ui, shards), "ios", "ios-tests")
 
     def test_ui_shards_follow_the_executed_selection(self):
-        # Non-PR events run the full suite on every leg the workflow defines.
-        self.assertEqual(ci.ui_shards("push", "full"), ci.ui_tests.MAX_SHARDS)
+        # Main keeps one Mac busy; explicit manual runs retain parallel shards.
+        self.assertEqual(ci.ui_shards("push", "full"), 1)
         self.assertEqual(
             ci.ui_shards("workflow_dispatch", "full"), ci.ui_tests.MAX_SHARDS
         )
-        # One PR Mac job owns the selected UI and journey scenarios; the full
-        # main regression keeps its parallel shards.
+        # One PR Mac job owns the selected UI and journey scenarios.
         self.assertEqual(ci.ui_shards("pull_request", "full"), 1)
         self.assertEqual(ci.ui_shards("pull_request", "none"), 1)
         self.assertEqual(ci.ui_shards("pull_request", "smoke,projects"), 1)

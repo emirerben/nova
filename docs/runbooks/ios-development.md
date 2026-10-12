@@ -611,8 +611,8 @@ zero compile or asset tasks, the same as a no-op build.
 Run cache/phase regression tests with `python3 -m unittest discover -s
 scripts/ios/tests -v`. To disable timestamp restoration, remove
 `KRIA_RESTORE_INPUT_TIMES` from the CI build step. PR UI selection now lives in
-`ci.yml`; the iOS workflow owns main/manual sharding. A policy change must keep
-the `build-and-test` gate fail closed.
+`ci.yml`; the iOS workflow owns full-suite coverage on main and manual runs. A
+policy change must keep the `build-and-test` gate fail closed.
 
 Local verification of the timestamp restore on 2026-09-10 reset all 126 native
 and shared input mtimes to simulate a fresh checkout, then ran the `unit` mode
@@ -753,10 +753,9 @@ xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
   -test-iterations 20 -run-tests-until-failure test-without-building
 ```
 
-`cancelled` iOS runs on `main` are concurrency coalescing, not failures: the
-workflow's `ios-${{ github.ref }}` concurrency group keeps one run going plus
-one pending per ref, so a burst of pushes to `main` cancels the queued (not
-yet started) runs in between and only the newest tip actually executes.
+`cancelled` iOS runs on `main` are concurrency coalescing, not failures: a new
+push cancels the older running or pending iOS run so scarce Mac runners test the
+newest tip. Manual regressions use a separate concurrency group.
 
 #### Baseline and interpretation
 
@@ -873,15 +872,16 @@ line.
 
 #### Sharded UI runs (KRI-168)
 
-On main and manual runs, `ios-tests` uses `ios_ui_shards` to split the full UI
-suite across three native legs. PRs use one CI Mac job so their selected UI and
-journey scenarios can share a single compiled build. The PR selector emits one
-leg regardless of the affected UI group. The September 24, 2026 durations
-show the UI work before build and journey time:
+On main, `ios-tests` runs the full UI suite on one Mac to leave capacity for
+PRs. Manual regressions use `ios_ui_shards` to split it across three native
+legs. PRs use one CI Mac job so their selected UI and journey scenarios can
+share a single compiled build. The September 24, 2026 durations show the UI
+work before build and journey time:
 
 | Execution | Estimated UI time | Native legs |
 |---|---|---|
-| `full` (main, manual) | 39.7 min | 3 (`shard: 1/3` … `3/3`) |
+| `full` (main) | 39.7 min | 1 |
+| `full` (manual) | 39.7 min | 3 (`shard: 1/3` … `3/3`) |
 | `smoke,editor` (PR) | 26.3 min | 1 |
 | `smoke,creation` (PR) | 9.6 min | 1 |
 | `smoke,projects` (PR) | 7.1 min | 1 |
@@ -892,17 +892,17 @@ The PR Mac job appears in CI as `journey`; main's native legs appear in iOS.
 - `ui_tests.shard_tests` places tests longest-first into the least-loaded shard,
   using median CI durations from `scripts/ios/ui-test-durations.json`. Unknown
   tests weigh the median.
-- On main, every leg computes the same partition from the checkout, so shards
-  are disjoint and cover the full suite. Each leg's `verify` requires exactly
-  its part; an empty part fails. The `ios-tests` aggregate fails unless every
-  leg passes.
-- Only main shard 1 runs unit tests (`KRIA_IOS_UNIT_TESTS=0` elsewhere) and
-  saves the build cache. PRs save their build after compilation and unit tests,
-  before selected UI or journey scenarios finish.
+- On manual runs, every leg computes the same partition from the checkout, so
+  shards are disjoint and cover the full suite. Each leg's `verify` requires
+  exactly its part; an empty part fails. The `ios-tests` aggregate fails unless
+  every leg passes.
+- Main's sole leg and manual shard 1 run unit tests and save the build cache
+  (`KRIA_IOS_UNIT_TESTS=0` on the other manual legs). PRs save their build after
+  compilation and unit tests, before selected UI or journey scenarios finish.
 - Refresh the durations with `python3 scripts/ios/refresh-ui-durations.py`. It
   takes the median passing attempt from the native legs of the last 120 `iOS`
   runs (about 8 minutes through `gh`). Refresh after adding or reshaping UI
-  tests. Stale values only unbalance main's legs; they never drop coverage.
+  tests. Stale values only unbalance manual legs; they never drop coverage.
 - PRs now trade parallel UI execution for one Mac allocation and one compiled
   build across native checks. Compare hosted CI runs before claiming a wall
   clock improvement, especially for long editor UI selections.

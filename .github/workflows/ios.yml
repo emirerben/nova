@@ -14,8 +14,10 @@ on:
     branches: [main]
 
 concurrency:
-  group: ios-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer main build tests all prior commits. Keep manual regressions separate
+  # so a push cannot cancel an explicitly requested run.
+  group: ios-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   changes:
@@ -28,13 +30,10 @@ jobs:
     # stable, fail-closed required check. Contracts are portable, so running
     # them on Ubuntu leaves the macOS runner for the native build sooner.
     #
-    # The selector sizes the native legs from the recorded duration of the UI
-    # tests this run executes (ui_tests.shard_count): main's full suite (~40
-    # minutes) splits across three legs (KRI-168), an editor-touching PR's
-    # subset (~26 minutes) across two, and anything shorter keeps one unsharded
-    # leg with the plain check name. Each leg builds from the warm cache in
-    # parallel, which beats building once and then handing products to the
-    # shards. Shard 1 also runs the unit tests and saves the cache.
+    # Main uses one Mac for its full suite so post-merge checks do not consume
+    # three scarce runners while PRs wait. Explicit manual regressions may use
+    # the duration-balanced shards; each leg builds from the warm cache, and
+    # shard 1 also runs unit tests and saves the cache.
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.ios_ui_shards == '3' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/3"},{"lane":"native","runner":"macos-15","shard":"2/3"},{"lane":"native","runner":"macos-15","shard":"3/3"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '2' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/2"},{"lane":"native","runner":"macos-15","shard":"2/2"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || '{"include":[{"lane":"native","runner":"macos-15"},{"lane":"contracts","runner":"ubuntu-latest"}]}') }}

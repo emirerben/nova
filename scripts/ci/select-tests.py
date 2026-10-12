@@ -348,9 +348,9 @@ def selection(event, base, head):
 
 
 def ui_shards(event, groups):
-    """Main/manual UI legs; a PR uses one build for UI and native journeys."""
+    """Keep PR and main to one Mac; manual runs may shard the full suite."""
 
-    if event == "pull_request":
+    if event in ("pull_request", "push"):
         return 1
     if groups == "none":
         return 1

@@ -8,10 +8,11 @@ on:
   push:
     branches: [main]
 
-# Superseded PR commits should not keep consuming runners. Main runs finish.
+# The newest main commit covers earlier ones, so stale runs must not occupy
+# runners while PR checks wait. PR commits also supersede earlier attempts.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
   changes:
@@ -542,7 +543,7 @@ jobs:
           set -o pipefail
           python3 -m pytest tests/agents/test_thinking_budget.py -q | tee ../../../test-results/kri-559/thought-api-tests.log
       # KRI-604: the native steps from here to the speaker face-fill journey run plain
-      # KriaTests unit tests. On a push to main the iOS workflow (ios.yml, shard 1)
+      # KriaTests unit tests. On a push to main the iOS workflow (ios.yml)
       # already executes every KriaTests case (scripts/ios/verify.sh skips only
       # KriaUITests), so they run on pull requests only, where they are the named
       # incident evidence. The DeviceMontageRenderE2ETests journeys above need the
