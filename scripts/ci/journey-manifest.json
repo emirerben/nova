@@ -131,7 +131,7 @@
     {
       "id": "slide-post-binding-recovery",
       "needs_native": true,
-      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/evals/test_edit_copilot_evals.py",
       "xctests": [
         "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave",
         "KriaTests/SlidePostFramingTests/testEncodingAlwaysWritesTheFramingKeySoAClearIsNeverMistakenForAnOlderApp",
@@ -162,7 +162,11 @@
         "src/apps/ios/Kria/Features/SlidePostSizeSheet.swift",
         "src/apps/ios/Kria/Features/SlidePostOnDeviceRender.swift",
         "src/apps/ios/Kria/Features/SlidePostExport.swift",
-        "src/apps/ios/Tests/KriaTests/SlidePostSizeTests.swift"
+        "src/apps/ios/Tests/KriaTests/SlidePostSizeTests.swift",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_aspect_square.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_aspect_ig_9x16_refused.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_fit_all_blur.json",
+        "src/apps/api/tests/evals/test_edit_copilot_evals.py"
       ]
     },
     {
