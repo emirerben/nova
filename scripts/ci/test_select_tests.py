@@ -568,16 +568,8 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-586-hook-copy"),
             ),
             (
-                "src/apps/api/app/pipeline/phone_captions.py",
-                (True, "covered", "kri-548-caption-watermark"),
-            ),
-            (
-                "src/apps/api/app/pipeline/portable_text_layout.py",
-                (True, "covered", "kri-548-caption-watermark"),
-            ),
-            (
-                "src/apps/ios/Tests/Fixtures/KRI548CaptionWatermark.json",
-                (True, "covered", "kri-548-caption-watermark"),
+                "src/apps/api/tests/fixtures/agent_evals/narrated_clip_alignment/golden/tigre_spoken_cues.json",
+                (True, "covered", "kri-590-voiceover-cues"),
             ),
             (
                 "src/apps/api/app/kria/voiceover_scope.py",
@@ -590,6 +582,18 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/tests/kria/test_voiceover_downgrade_losses.py",
                 (True, "covered", "kri-598-voiceover-planner"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_captions.py",
+                (True, "covered", "kri-548-caption-watermark"),
+            ),
+            (
+                "src/apps/api/app/pipeline/portable_text_layout.py",
+                (True, "covered", "kri-548-caption-watermark"),
+            ),
+            (
+                "src/apps/ios/Tests/Fixtures/KRI548CaptionWatermark.json",
+                (True, "covered", "kri-548-caption-watermark"),
             ),
             (
                 "src/apps/api/app/kria/planner.py.backup",

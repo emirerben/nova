@@ -12,6 +12,7 @@ import copy
 import functools
 import hashlib
 import json
+import math
 import re
 import time
 import unicodedata
@@ -199,6 +200,52 @@ def _enrich_best_parts_snapshot(
     return enriched
 
 
+def _fit_music_section_to_footage(
+    section: dict[str, Any], rows: Sequence[Any], *, selected_ids: set[str]
+) -> dict[str, Any]:
+    """Trim an auto-selected song section so the footage can always fill it (KRI-600).
+
+    A frozen licensed-music section becomes the edit's length owner, so a 12-18 s
+    "best section" over one 5 s clip is unfillable and the creator is told to "add
+    longer footage" for music they never asked for. The song is a background bed: keep
+    the section's start (the matcher's best moment) and end it where the footage ends.
+
+    Only trims when the capacity is known exactly: every selected row must be a video
+    with a finite duration. Stills (synthetic holds) or unmeasured clips leave the
+    section untouched, as does a section that already fits.
+    """
+    if section.get("status") != "selected":
+        return section
+    start, end = section.get("start_s"), section.get("end_s")
+    if isinstance(start, bool) or isinstance(end, bool):
+        return section
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or end <= start:
+        return section
+    capacity = 0.0
+    counted = 0
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if selected_ids and str(row.get("media_id")) not in selected_ids:
+            continue
+        duration = row.get("duration_s")
+        if (
+            row.get("kind", "video") != "video"
+            or isinstance(duration, bool)
+            or not isinstance(duration, (int, float))
+            or not 0 < duration < float("inf")
+        ):
+            return section
+        capacity += float(duration)
+        counted += 1
+    if not counted:
+        return section
+    fitted_end = math.floor((start + capacity) * 1000) / 1000
+    if fitted_end >= end - 1e-9 or fitted_end <= start:
+        return section
+    return {**section, "end_s": fitted_end}
+
+
 async def _freeze_licensed_music_section(
     db: Any, strategy: Mapping[str, Any], snapshot: dict | None, *, job_id: str
 ) -> dict[str, Any] | None:
@@ -256,16 +303,20 @@ async def _freeze_licensed_music_section(
         or not 0 <= start < end <= catalog_duration < float("inf")
     ):
         return {"status": "fallback_footage"}
-    return {
-        "status": "selected",
-        "track_id": str(track.id),
-        "title": str(getattr(track, "title", "")),
-        "artist": str(getattr(track, "artist", "")),
-        "start_s": float(start),
-        "end_s": float(end),
-        "catalog_duration_s": catalog_duration,
-        "beat_timestamps_s": list(getattr(track, "beat_timestamps_s", None) or []),
-    }
+    return _fit_music_section_to_footage(
+        {
+            "status": "selected",
+            "track_id": str(track.id),
+            "title": str(getattr(track, "title", "")),
+            "artist": str(getattr(track, "artist", "")),
+            "start_s": float(start),
+            "end_s": float(end),
+            "catalog_duration_s": catalog_duration,
+            "beat_timestamps_s": list(getattr(track, "beat_timestamps_s", None) or []),
+        },
+        rows,
+        selected_ids=selected,
+    )
 
 
 @dataclass(frozen=True)
@@ -2809,6 +2860,13 @@ async def _gate_unresolved_choices(
     if frozen_music is None:
         frozen_music = await _freeze_licensed_music_section(
             db, strategy, planned.media_snapshot, job_id=str(thread_id)
+        )
+    elif isinstance(frozen_music, dict):
+        # A section frozen before KRI-600 may be longer than the footage can fill.
+        frozen_music = _fit_music_section_to_footage(
+            frozen_music,
+            (planned.media_snapshot or {}).get("clip_assignments") or [],
+            selected_ids={str(v) for v in strategy.get("selected_media_ids") or []},
         )
     if frozen_music is not None:
         strategy = {**strategy, "selected_music_section": frozen_music}
