@@ -59,6 +59,7 @@ from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyE
 from app.services.phone_destination import phone_drawable_visual_kinds
 from app.services.phone_rollout import (
     phone_guided_narration_supported,
+    phone_guided_sfx_supported,
     phone_narrated_title_supported,
     phone_render_supported_formats,
     phone_subtitled_closing_title_supported,
@@ -118,8 +119,9 @@ _FEATURE_SETTINGS = {
     "sound_effects": "sound_effects_enabled",
 }
 
-# Treatments compile_phone_guided_plan rejects: the SFX, overlay, visual-block and
-# motion-scene lanes outright, and an edit-wide look on any source that is not
+# Treatments compile_phone_guided_plan rejects: the overlay, visual-block and
+# motion-scene lanes outright (SFX only while `phone_guided_sfx_supported()` is off, the
+# one override applied below, KRI-608), and an edit-wide look on any source that is not
 # exact-canvas golden_hour. A phone manifest must not advertise them, so the
 # request is refused while planning instead of failing the device render later.
 # `media_overlays` is the one exception: a `subtitled` (Talking) phone manifest
@@ -477,6 +479,22 @@ def resolve_creator_manifest(
             capabilities[capability_name] = _unavailable(
                 "unsupported_on_phone", f"{capability_name} cannot render on the iPhone yet"
             )
+        # `sound_effects` (KRI-608): the guided / montage phone compiler turns the plan's
+        # SFX into an `sfx` audio track once `phone_guided_sfx_supported()` (the single
+        # source of truth the worker and Save also consult) holds, so the manifest may
+        # advertise it for the guided formats. A recorded voiceover is excluded: that
+        # edit is built by a different phone writer whose first build has no SFX lane
+        # (it gets effects through the editor instead). Every other phone recipe
+        # (Talking, narrated) keeps the blanket refusal, so KRI-178 reaction beats still
+        # repair a Talking SFX request exactly as before. The generic
+        # `sound_effects_enabled` gate is folded into the helper.
+        if (
+            phone.available
+            and not has_voiceover
+            and coerce_edit_format(edit_format) in GUIDED_EDIT_FORMATS
+            and phone_guided_sfx_supported()
+        ):
+            capabilities["sound_effects"] = _available()
         # `visual_blocks` (KRI-118 L1 item 5): unlike the capabilities above,
         # this has real native parity once BOTH the editor-media rollout flag
         # and the device's verified feature set agree -- mirrors
