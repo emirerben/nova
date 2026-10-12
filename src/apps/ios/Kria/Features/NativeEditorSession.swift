@@ -719,7 +719,10 @@ struct NativeEditorTemporaryVideo {
     /// instead show only the server-rendered video, with canvas interaction
     /// deliberately disabled until a retry produces a source preview.
     var isShowingRenderedFallback: Bool {
-        guard sourcePreviewState.isFailure else { return false }
+        // KRI-587: a finished render that could not be loaded is a black box,
+        // not a fallback. Claiming "Showing your last finished video" over it
+        // was the confusing screen; the plain failure view shows instead.
+        guard sourcePreviewState.isFailure, !finishedRenderFailed else { return false }
         return player != nil && player === finishedRenderPlayer
     }
 
@@ -794,8 +797,19 @@ struct NativeEditorTemporaryVideo {
 
     func showDeviceOutput(_ url: URL) {
         guard rendersOnDevice else { return }
+        // KRI-587: a render made on this phone starts a fresh recovery, and its own copy is what a failed
+        // finished render retries first.
+        deviceOutputURL = url
+        startPlaybackRecoveryEpisode()
         // KRI-535: a device render made before a staged chat edit lacks that edit.
-        installPlayer(url: url, preferredDuration: authoritativeDuration, isCurrent: chatStagedDocument == nil)
+        let isCurrent = chatStagedDocument == nil
+        if finishedRenderIsDead {
+            // Replaced even while the editable preview builds: nothing else will swap out a dead player.
+            finishedRenderIsCurrent = isCurrent
+            reinstallFinishedRender(url: url, preferredDuration: authoritativeDuration)
+            return
+        }
+        installPlayer(url: url, preferredDuration: authoritativeDuration, isCurrent: isCurrent)
     }
 
     private let projectID: UUID
@@ -1016,8 +1030,26 @@ struct NativeEditorTemporaryVideo {
     /// A play tap that arrived while the editable preview was still building. Played as soon as a
     /// displayable player exists (the ready preview, or the finished-render fallback).
     private var pendingPlayRequest = false
-    private var finishedRenderRefreshAttempted = false
+    /// KRI-587: spaced automatic retries for a finished render that would not load. Right after the
+    /// phone's own export, AVFoundation can refuse a perfectly good MP4 for a moment (busy decoders,
+    /// media services settling). One immediate refresh was not enough and left "The video couldn't be
+    /// loaded" up for good. Internal so tests can shorten it.
+    var finishedRenderRetryDelays: [Duration] = [.milliseconds(500), .milliseconds(1500), .seconds(3)]
+    private var finishedRenderRetryCount = 0
     private var finishedRenderRecoveryTask: Task<Void, Never>?
+    private var finishedRenderRecoveryInFlight = false
+    /// This phone's own copy of a phone render: retried before any network link.
+    private var deviceOutputURL: URL?
+    /// Every retry of the finished render failed. The canvas then shows the plain failure view, never
+    /// the "Showing your last finished video" card over a dead player.
+    @Published private(set) var finishedRenderFailed = false
+    /// The editable preview's state before the finished-render failure replaced its message.
+    private var stateBeforeFinishedRenderFailure: NativeSourcePreviewState?
+    /// KRI-587: one quiet rebuild of the editable preview after a playback-level failure, before the
+    /// fallback card shows. Internal so tests can shorten it.
+    var sourcePreviewQuietRetryDelay: Duration = .seconds(1)
+    private var sourcePreviewQuietRetryUsed = false
+    private var sourcePreviewQuietRetryTask: Task<Void, Never>?
     private var durationLoadTask: Task<Void, Never>?
     private var promptRefreshSequence: UInt64 = 0
     private let playbackEndTolerance: TimeInterval = 0.05
@@ -1318,6 +1350,7 @@ struct NativeEditorTemporaryVideo {
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
         finishedRenderRecoveryTask?.cancel()
+        sourcePreviewQuietRetryTask?.cancel()
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
@@ -1942,6 +1975,12 @@ struct NativeEditorTemporaryVideo {
         sourcePreviewState = .idle; sourcePreviewGeneration = nil
         previewVariant = [:]
         pendingDeviceRenderIdentity = nil
+        // The old job's recovery must not touch the new job's player.
+        finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
+        sourcePreviewQuietRetryTask?.cancel()
+        deviceOutputURL = nil
+        finishedRenderFailed = false; stateBeforeFinishedRenderFailure = nil
+        startPlaybackRecoveryEpisode()
     }
 
     /// Gallery rows are render jobs, not creation-thread IDs. Promote the job
@@ -5844,7 +5883,14 @@ struct NativeEditorTemporaryVideo {
 
     private func failSourcePreview(_ error: Error) {
         sourcePreviewFailureIsPermanent = Self.isPermanentSourcePreviewFailure(error)
+        let finishedWasCurrent = finishedRenderIsCurrent
         restoreFinishedRenderFallback()
+        if retrySourcePreviewQuietly(after: error) {
+            // KRI-535: while the quiet rebuild runs, a render older than a staged edit stays hidden.
+            finishedRenderIsCurrent = finishedWasCurrent
+            if canDisplayCurrentPlayer { startPendingPlaybackIfPossible() }
+            return
+        }
         sourcePreviewState = Self.isMissingOriginals(error)
             ? .originalsUnavailable
             : .failed(Self.sourcePreviewMessage(for: error))
@@ -5867,9 +5913,73 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// KRI-587: right after the phone's own export, AVFoundation can briefly refuse to build or play the
+    /// editable composition. Rebuild it once, quietly, before showing the fallback card. Meanwhile the
+    /// finished render plays when it is current, and "Preparing preview" shows when it is not.
+    private func retrySourcePreviewQuietly(after error: Error) -> Bool {
+        guard !sourcePreviewQuietRetryUsed, Self.isTransientSourcePreviewFailure(error),
+              api != nil, let jobID, variantKey != nil else { return false }
+        sourcePreviewQuietRetryUsed = true
+        sourcePreviewState = .preparing
+        NativePreviewDiagnostics.record("source-preview-quiet-retry", fields: ["error": String((error as NSError).code)])
+        let sequence = sourcePreviewSequence
+        let delay = sourcePreviewQuietRetryDelay
+        sourcePreviewQuietRetryTask?.cancel()
+        sourcePreviewQuietRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            // A newer rebuild (an edit, another job) already owns the preview state.
+            guard let self, !Task.isCancelled, self.jobID == jobID, self.sourcePreviewSequence == sequence else { return }
+            await self.prepareSourcePreview()
+        }
+        return true
+    }
+
+    /// AVFoundation refusing the composition for the moment, not a problem with the edit itself:
+    /// building the same document again can work.
+    static func isTransientSourcePreviewFailure(_ error: Error) -> Bool {
+        if case NativeEditorPlaybackFailure.liveItem = error { return true }
+        return (error as NSError).domain == AVFoundationErrorDomain
+    }
+
+    /// A new render, or the creator's Retry, is a fresh start for every automatic recovery.
+    private func startPlaybackRecoveryEpisode() {
+        finishedRenderRetryCount = 0
+        sourcePreviewQuietRetryUsed = false
+    }
+
+    /// The canvas holds the finished render and it can no longer play.
+    private var finishedRenderIsDead: Bool {
+        guard let player, player === finishedRenderPlayer else { return false }
+        return finishedRenderFailed || player.currentItem?.status == .failed
+    }
+
+    /// This phone's copy of its own render, when the file is still there.
+    private var playableDeviceOutputURL: URL? {
+        guard let deviceOutputURL, FileManager.default.fileExists(atPath: deviceOutputURL.path) else { return nil }
+        return deviceOutputURL
+    }
+
+    /// Swaps in a new finished-render player without changing whether that render is current.
+    private func reinstallFinishedRender(url: URL, preferredDuration: TimeInterval?) {
+        let isCurrent = finishedRenderIsCurrent
+        installFinishedRenderPlayer(url: url, preferredDuration: preferredDuration)
+        finishedRenderIsCurrent = isCurrent
+    }
+
+    /// The Retry and Try again buttons: every automatic recovery starts over, a dead finished render is
+    /// reloaded, then the editable preview is rebuilt.
+    func retryPreview() async {
+        startPlaybackRecoveryEpisode()
+        if finishedRenderIsDead, let url = playableDeviceOutputURL ?? finishedRenderURL {
+            finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
+            reinstallFinishedRender(url: url, preferredDuration: finishedRenderDuration)
+        }
+        await prepareSourcePreview()
+    }
+
     /// One place for "the item AVPlayer is holding cannot play". Reports the error identity from every
     /// build, then recovers: a failed editable preview hands over to the finished render, and a failed
-    /// finished render gets one fresh link before the failure is surfaced.
+    /// finished render is retried (KRI-587) before the failure is surfaced.
     func handlePlayerItemFailure(_ item: AVPlayerItem, error: Error?) {
         guard let failedPlayer = player, failedPlayer.currentItem === item, failureHandledItem !== item else { return }
         failureHandledItem = item
@@ -5891,32 +6001,86 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// KRI-587: a finished render that fails is retried a few times, spaced out, before anything is
+    /// said. Each retry prefers this phone's own copy of a phone render, then a fresh server link, and
+    /// only then the same link again.
     private func recoverFinishedRender(failedPlayer: AVPlayer) {
-        guard !finishedRenderRefreshAttempted, let api, let jobID else {
+        guard finishedRenderRetryCount < finishedRenderRetryDelays.count else {
             surfaceUnplayableFinishedRender()
             return
         }
-        finishedRenderRefreshAttempted = true
+        let delay = finishedRenderRetryDelays[finishedRenderRetryCount]
+        finishedRenderRetryCount += 1
+        let attempt = finishedRenderRetryCount
+        let failedURL = (failedPlayer.currentItem?.asset as? AVURLAsset)?.url
         finishedRenderRecoveryTask?.cancel()
+        finishedRenderRecoveryInFlight = true
         finishedRenderRecoveryTask = Task { @MainActor [weak self, weak failedPlayer] in
-            let fresh = try? await api.playbackURL(jobID: jobID)
-            guard let self, !Task.isCancelled, let failedPlayer, self.player === failedPlayer else { return }
-            guard let fresh else { self.surfaceUnplayableFinishedRender(); return }
-            self.installFinishedRenderPlayer(url: fresh, preferredDuration: self.finishedRenderDuration)
+            try? await Task.sleep(for: delay)
+            // Whoever cancelled this (a newer failure, Retry, another job) owns the in-flight flag.
+            guard let self, !Task.isCancelled else { return }
+            let next = failedPlayer != nil && self.player === failedPlayer
+                ? await self.finishedRenderRetryTarget(after: failedURL) : nil
+            guard !Task.isCancelled else { return }
+            self.finishedRenderRecoveryInFlight = false
+            // The canvas moved on (the editable preview took over, another job loaded) while this waited.
+            guard let failedPlayer, self.player === failedPlayer else { return }
+            guard let next else { self.surfaceUnplayableFinishedRender(); return }
+            NativePreviewDiagnostics.record("finished-render-retry", fields: ["attempt": String(attempt), "source": next.source])
+            self.reinstallFinishedRender(url: next.url, preferredDuration: self.finishedRenderDuration)
             self.startPendingPlaybackIfPossible()
         }
+    }
+
+    private func finishedRenderRetryTarget(after failed: URL?) async -> (url: URL, source: String)? {
+        func untried(_ url: URL?) -> URL? {
+            guard let url, url != failed else { return nil }
+            return !url.isFileURL || FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+        if let device = untried(playableDeviceOutputURL) { return (device, "device") }
+        if let finished = untried(finishedRenderURL) { return (finished, "finished") }
+        if let api, let jobID, let fresh = try? await api.playbackURL(jobID: jobID) { return (fresh, "fresh") }
+        // Nothing new to try: the same link again still beats giving up after a moment's failure,
+        // unless it is a file that simply isn't there.
+        if let failed, !failed.isFileURL || FileManager.default.fileExists(atPath: failed.path) { return (failed, "same") }
+        return nil
     }
 
     private func surfaceUnplayableFinishedRender() {
         // An editable preview still building will take over by itself; only a settled state needs a message.
         guard sourcePreviewState != .preparing else { return }
-        sourcePreviewState = .failed(Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem))
+        let message = Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem)
+        if sourcePreviewState != .failed(message) { stateBeforeFinishedRenderFailure = sourcePreviewState }
+        finishedRenderFailed = true
+        sourcePreviewState = .failed(message)
         pendingPlayRequest = false
+        NativePreviewDiagnostics.record("finished-render-unplayable", fields: ["attempts": String(finishedRenderRetryCount)])
+    }
+
+    /// A player item that loads ends the finished render's failure streak. When it is the finished
+    /// render after its failure was surfaced, the "couldn't be loaded" message goes with it (KRI-587).
+    private func playerItemBecameReady() {
+        finishedRenderRetryCount = 0
+        guard finishedRenderFailed else { return }
+        finishedRenderFailed = false
+        if sourcePreviewState == .failed(Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem)) {
+            sourcePreviewState = stateBeforeFinishedRenderFailure ?? .idle
+        }
+        stateBeforeFinishedRenderFailure = nil
+        NativePreviewDiagnostics.record("finished-render-recovered")
     }
 
     private func restoreFinishedRenderFallback() {
-        guard let finishedRenderURL, player !== finishedRenderPlayer else { return }
-        installFinishedRenderPlayer(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
+        guard let finishedRenderURL else { return }
+        guard player === finishedRenderPlayer else {
+            installFinishedRenderPlayer(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
+            return
+        }
+        // KRI-587: a finished render that died while the editable preview was building (its message was
+        // held back) would otherwise stay a black box under the fallback card. A retry on its way wins.
+        guard finishedRenderIsDead, !finishedRenderRecoveryInFlight else { return }
+        finishedRenderRetryCount = 0
+        reinstallFinishedRender(url: playableDeviceOutputURL ?? finishedRenderURL, preferredDuration: finishedRenderDuration)
     }
 
     private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil) {
@@ -5957,9 +6121,7 @@ struct NativeEditorTemporaryVideo {
             Task { @MainActor [weak self, weak item] in
                 guard let self, let item else { return }
                 if status == .failed { self.handlePlayerItemFailure(item, error: error) }
-                else if status == .readyToPlay, self.player?.currentItem === item, self.player === self.finishedRenderPlayer {
-                    self.finishedRenderRefreshAttempted = false
-                }
+                else if status == .readyToPlay, self.player?.currentItem === item { self.playerItemBecameReady() }
             }
         }
         itemFailureObserver = NotificationCenter.default.addObserver(
@@ -6265,6 +6427,9 @@ struct NativeEditorTemporaryVideo {
             if !rebaseCleanDraft(from: variant) {
                 rebaseGenerationPreservingLocalEdits(currentGeneration)
             }
+            // A new render: the phone's copy of the previous one is no longer the video to retry.
+            deviceOutputURL = nil
+            startPlaybackRecoveryEpisode()
             installFinishedRenderPlayer(url: url, preferredDuration: authoritativeDuration)
             pendingRenderRetrySections.removeAll()
             pendingPreviewGeneration = nil
