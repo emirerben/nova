@@ -21,6 +21,7 @@ from app.agents._schemas.creator_policy import (
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     native_voiceover_all_scope,
     own_video_ids,
+    stated_media_counts,
 )
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.reply_language import say
@@ -106,27 +107,39 @@ def resolve_native_all_scope(
     strategy: CreativeStrategy,
     *,
     asked: Collection[str] = (),
-) -> tuple[CreativeStrategy, list[str], list[str]]:
+    creator_text: str = "",
+) -> tuple[CreativeStrategy, list[str], list[str], list[str]]:
     """``media_scope: "all"`` on a native-only voiceover edit -> every own clip.
 
     ``asked`` are the lost Visuals the caller already names in its own words
     (``lost_visual_asks``); the generic "not tied to a word" notice covers only the rest.
-    Returns ``(strategy, notices, clips_left_out)``: the own clips beyond what one native
-    edit takes. "All" asked for each of them, so the caller treats them as a lost ask (PR
-    1556 review, as the KRI-594 downgrade does). Unchanged, with nothing to say, for
-    anything else.
+    Returns ``(strategy, notices, clips_left_out, visuals_left_out)``:
+
+    - ``clips_left_out``: own clips beyond what one native edit takes. "All" asked for each
+      of them, so the caller treats them as a lost ask (PR 1556 review, as the KRI-594
+      downgrade does).
+    - ``visuals_left_out``: Visuals no word places when "all" asked for them too, i.e. the
+      creator's words do not count exactly the own clips ("use all my photos and videos",
+      "use all 8"; not "7 klibin hepsini kullan" with 7 clips). Same rule as the KRI-594
+      downgrade, so the native path asks as the guided one does.
+
+    Unchanged, with nothing to say, for anything else.
     """
 
     if not native_voiceover_all_scope(manifest, strategy):
-        return strategy, [], []
+        return strategy, [], [], []
     own = own_video_ids(manifest)
     notices: list[str] = []
     placed = _placed_visuals(manifest, strategy)
-    if any(
-        media.media_id not in placed and media.media_id not in asked
+    unplaced = [
+        media.media_id
         for media in manifest.media
-        if media.media_id.startswith("asset-") or media.kind != "video"
-    ):
+        if (media.media_id.startswith("asset-") or media.kind != "video")
+        and media.media_id not in placed
+        and media.media_id not in asked
+    ]
+    clips_only = stated_media_counts(creator_text) == {len(own)}
+    if unplaced:
         beats = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
         notices.append(
             say(en=VOICEOVER_VISUALS_LEFT_OUT_NOTICE, tr=_VOICEOVER_VISUALS_LEFT_OUT_NOTICE_TR)
@@ -140,7 +153,12 @@ def resolve_native_all_scope(
             "render_program": "native",
         }
     )
-    return resolved, notices, own[MAX_MAIN_CREATOR_SELECTED_MEDIA:]
+    return (
+        resolved,
+        notices,
+        own[MAX_MAIN_CREATOR_SELECTED_MEDIA:],
+        [] if clips_only else unplaced,
+    )
 
 
 __all__ = [

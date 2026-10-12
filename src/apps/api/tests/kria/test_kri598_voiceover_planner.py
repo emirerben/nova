@@ -732,3 +732,73 @@ def test_v1_all_scope_voiceover_still_needs_the_contract(prod_profile) -> None:
     with pytest.raises(SchemaError):
         agent.parse(_raw(_strategy()), _agent_input(TURN3, _manifest(runs_guided_voiceover=True)))
     assert "guided_voiceover_v1" in agent.schema_clarification()
+
+
+# PR 1556 review: an explicit all-media ask on the native path -------------------------
+
+
+@pytest.mark.parametrize(
+    "creator_text",
+    ["Use all my photos and videos", "Fotoğrafların ve videoların hepsini kullan", "use all 8"],
+)
+def test_an_all_media_ask_asks_when_a_visual_cannot_be_placed(prod_profile, creator_text) -> None:
+    """Parity with the KRI-594 guided downgrade: "all" that is not just the own clips asked
+    for the Visuals photo too, so a native edit that cannot place it asks first."""
+
+    checked = check_strategy_for_runtime_v2(
+        _manifest(),
+        CreativeStrategy.model_validate(_strategy(reaction_beats=None, media_scope="all")),
+        ask_before_simplifying=True,
+        creator_text=creator_text,
+        requested_media={},
+    )
+
+    assert isinstance(checked, RefusedStrategy), checked
+    assert VOICEOVER_VISUALS_LEFT_OUT_NOTICE in checked.question or ("Visuals" in checked.question)
+
+
+def test_all_seven_clips_on_the_native_path_stays_a_notice(prod_profile) -> None:
+    """The Tigre turn-3 wording counts exactly the own clips: the photo was not asked for by
+    "all", so leaving it out is a notice, not a question."""
+
+    checked = check_strategy_for_runtime_v2(
+        _manifest(),
+        CreativeStrategy.model_validate(_strategy(reaction_beats=None, media_scope="all")),
+        ask_before_simplifying=True,
+        creator_text="Sira seslendirmeyi takip etsin. 7 klibin hepsini kullan",
+        requested_media={},
+    )
+
+    assert isinstance(checked, CheckedStrategy), getattr(checked, "question", None)
+    assert sorted(checked.strategy.selected_media_ids) == sorted(OWN)
+
+
+def test_an_all_media_ask_with_the_photo_on_a_word_is_planned(prod_profile) -> None:
+    checked = check_strategy_for_runtime_v2(
+        _manifest(),
+        CreativeStrategy.model_validate(_strategy(media_scope="all")),
+        ask_before_simplifying=True,
+        creator_text="Use all my photos and videos",
+        requested_media={},
+    )
+
+    assert isinstance(checked, CheckedStrategy), getattr(checked, "question", None)
+
+
+async def test_an_all_media_ask_reaches_the_native_check_through_the_planner(
+    prod_profile, monkeypatch
+) -> None:
+    turn = {
+        **TURN3,
+        "user_message": "Use all my photos and videos",
+        "conversation": [{"role": "user", "content": "Use all my photos and videos"}],
+    }
+    planned = await _plan(
+        monkeypatch,
+        _raw(_strategy(reaction_beats=None, media_scope="all", opening_title=None)),
+        turn=turn,
+        brief=BRIEF_WITHOUT_PHOTO_ASK,
+    )
+
+    assert planned.plan.mode == "respond", planned.plan
+    assert planned.plan.response.endswith("?")

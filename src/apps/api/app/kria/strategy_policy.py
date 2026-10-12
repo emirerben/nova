@@ -781,8 +781,8 @@ def check_strategy_for_runtime_v2(
     # KRI-598: "use all my clips" on a native-only voiceover edit is every own clip. Own
     # clips beyond what one native edit takes were asked for by "all": a lost ask, like an
     # all-scope clip past the cap in the KRI-594 downgrade (PR 1556 review).
-    strategy, scope_notices, clips_left_out = resolve_native_all_scope(
-        manifest, strategy, asked=lost_asks
+    strategy, scope_notices, clips_left_out, visuals_left_out = resolve_native_all_scope(
+        manifest, strategy, asked=lost_asks, creator_text=creator_text
     )
     notices.extend(scope_notices)
     if clips_left_out:
@@ -819,6 +819,7 @@ def check_strategy_for_runtime_v2(
     if ask_before_simplifying and (
         lost_asks
         or clips_left_out
+        or visuals_left_out
         or _drops_requested_action(baseline, checked, stated_settings=ask_about_stated_settings)
     ):
         # The creator-stated setting that was dropped comes first: a notice alone (e.g.

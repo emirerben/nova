@@ -1922,13 +1922,17 @@ async def _plan_creator_action(
             # clips) and the media their live brief asks for in any turn ("kırkayak" -> the
             # bathtub photo). Not only a turn that still carries the guided contract needs
             # them: the Main Creator parse drops that contract on runtime v2, and a native
-            # answer can forget the beat just the same. Omitted when neither applies.
+            # answer can forget the beat just the same. An "all" scope needs the words too:
+            # "use all my photos and videos" asked for the Visuals, "7 klibin hepsini kullan"
+            # only for the clips (PR 1556 review). Omitted when none applies.
             **(
                 {
                     "creator_text": "\n".join(source for source in user_sources if source),
                     "requested_media": dict(requested_media or {}),
                 }
-                if action.strategy.execution_contract is not None or requested_media
+                if action.strategy.execution_contract is not None
+                or requested_media
+                or action.strategy.media_scope == "all"
                 else {}
             ),
         )
