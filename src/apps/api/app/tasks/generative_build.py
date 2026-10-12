@@ -6500,6 +6500,10 @@ def _run_phone_subtitled_job(
         crosscheck_detected_language,
         resolve_spoken_caption_language,
     )
+    from app.pipeline.caption_spelling import (  # noqa: PLC0415
+        apply_spelling_to_cues,
+        extract_spelling_asks,
+    )
     from app.pipeline.captions import (  # noqa: PLC0415
         PHONE_CUE_BUDGET,
         build_plain_cues,
@@ -7155,6 +7159,10 @@ def _run_phone_subtitled_job(
                 trusted_aliases=None,
             )
             cues = resplit_cues_into_sentences(cues)
+            # KRI-631: the creator's quoted spelling asks ("write 'community' in English").
+            cues = apply_spelling_to_cues(
+                cues, extract_spelling_asks(_creator_request_text(all_candidates))
+            )
 
             # The speaker's span exactly as the compiler plays it: the cleanup
             # cut, else the phone-measured clip (which can run a hair shorter

@@ -549,3 +549,29 @@ def test_the_draft_and_editor_answers_are_unchanged():
         receipt = check_requirement(_T3_R2, facts)
         assert receipt.reason == "I can't check the captions on this draft yet."
         assert not is_judged(_T3_R2, receipt)
+
+
+# KRI-631: quoted English words in a Turkish brief ("community" ve "cringe" İngilizce yazılsın).
+_T1_R2 = BriefRequirement(
+    id="r2",
+    kind="text",
+    scope="global",
+    facts={},
+    literal=None,
+    description=(
+        'Karaoke altyazı, önemli kelimeler vurgulu; "community" ve "cringe" İngilizce yazılsın.'
+    ),
+)
+
+
+def test_quoted_english_words_are_met_once_the_captions_spell_them():
+    lines = ("Biz bir community yaratıyoruz.", "Hatta community'nin adı cringe olmasın.")
+    receipt = _judged(_T1_R2, _t3_variant(lines, voiceover_caption_style="word"))
+    assert (receipt.status, receipt.verification) == ("met", "checked")
+
+
+def test_quoted_english_words_still_spelled_the_turkish_way_are_not_met():
+    lines = ("Biz bir komünite yaratıyoruz.", "Hatta cringe olmasın.")
+    receipt = _judged(_T1_R2, _t3_variant(lines, voiceover_caption_style="word"))
+    assert receipt.status == "partial"
+    assert "community" in receipt.reason

@@ -46,6 +46,7 @@ from app.kria.style_asks import (
     text_look_facts,
     value_matches,
 )
+from app.pipeline.caption_spelling import extract_spelling_asks
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.text_style_intent import (
     LABEL_ANCHORS,
@@ -4213,6 +4214,10 @@ def _spelled_names(req: BriefRequirement) -> tuple[str, ...] | None:
         for cue in _SPELL_CUE_RE.finditer(clause):
             cued = True
             names.extend(_names_near_cue(clause, cue))
+    # KRI-631: quoted words to write as given ("community" ve "cringe" İngilizce yazılsın).
+    quoted = extract_spelling_asks(text)
+    cued = cued or bool(quoted)
+    names.extend(quoted)
     if not cued:
         return None
     return tuple(dict.fromkeys(names))[:_MAX_SPELLED_NAMES]
