@@ -33,6 +33,13 @@ fi
 # Imports must resolve from this worktree after the cd above.
 unset PYTHONPATH
 
+# scripts/dev/test-db.sh records this worktree's migrated scratch database here, so
+# DB-backed tests do not error on the default `postgres` role (KRI-577 audit).
+if [ -z "${DATABASE_URL:-}" ] && [ -f "$ROOT_DIR/.dev/test-db-url" ]; then
+  DATABASE_URL="$(cat "$ROOT_DIR/.dev/test-db-url")"
+  export DATABASE_URL
+fi
+
 case "${1:-}" in
   test)
     shift
