@@ -1047,6 +1047,55 @@
       ],
       "follow_ups": [],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-612-clip-descriptions",
+      "tickets": [
+        "KRI-612"
+      ],
+      "symptom": "\"Explain the footages\" on a phone montage never drafted: the resolver asked what \"explain\" means, then one chapter caption stood in for a line on each clip, so the per-clip text receipt was not_possible every turn.",
+      "boundary": "planner",
+      "fix_prs": [
+        1569
+      ],
+      "fix_commit": "fb4e11d0e",
+      "paths": [
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/prompts/clip_intent_planner.txt",
+        "src/apps/api/prompts/clip_request_resolver.txt",
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri612_explain_the_footages.json"
+      ],
+      "regression_tests": [
+        "tests/evals/test_clip_request_resolver_evals.py",
+        "tests/services/test_kri612_clip_descriptions.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "the 4 clip records of prod thread 0ef4fdde; planner and resolver agents faked at run(), real resolution, brief and receipt; replay goldens kri612_explain_the_footages for both agents",
+        "live_model": "not run (no paid calls)",
+        "native_output": "pending: re-send the Salah prompt on the phone after deploy",
+        "production": "pending"
+      },
+      "neighbours_covered": [
+        "resolver question / grounded line / needs_vision / ungrounded line",
+        "duplicate line on two clips",
+        "empty record",
+        "planner caption / no intent / its own label",
+        "brief off leaves a described caption alone",
+        "EN/TR wording"
+      ],
+      "neighbours_gap": [
+        "Footage lines reuse the English clip records, so a Turkish chat gets English lines (true of every footage label today).",
+        "Live planner/resolver behaviour on the new prompts is unmeasured until a paid eval run."
+      ],
+      "follow_ups": [
+        "KRI-610 (#1562) breaks the repeated \"simpler version?\" loop"
+      ],
+      "red_control": "verified"
     }
   ]
 }
