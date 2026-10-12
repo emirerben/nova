@@ -505,7 +505,15 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/planner.py",
-                (True, "covered", "kri-524-creation,kri-557-thinking"),
+                (True, "covered", "kri-524-creation,kri-557-thinking,kri-577-reliability-gates"),
+            ),
+            (
+                "src/apps/api/app/tasks/content_plan_build.py",
+                (True, "covered", "kri-492-length-ownership,kri-577-reliability-gates"),
+            ),
+            (
+                "src/apps/api/app/kria/duplicate_uploads.py",
+                (True, "covered", "kri-577-reliability-gates"),
             ),
             (
                 "src/apps/ios/Kria/Features/ThoughtSummaryDisclosure.swift",
@@ -545,11 +553,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/pipeline/phone_subtitled_plan.py",
-                (True, "covered", "kri-547-speaker-framing"),
+                (True, "covered", "kri-547-speaker-framing,kri-577-reliability-gates"),
             ),
             (
                 "src/apps/api/app/pipeline/phone_subtitled_title.py",
-                (True, "covered", "kri-547-speaker-framing"),
+                (True, "covered", "kri-547-speaker-framing,kri-577-reliability-gates"),
             ),
             (
                 "src/apps/api/app/pipeline/render_geometry.py",
@@ -566,6 +574,10 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/tests/fixtures/agent_evals/main_creator/kri586_generate_after_choice.json",
                 (True, "covered", "kri-586-hook-copy"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/agent_evals/narrated_clip_alignment/golden/tigre_spoken_cues.json",
+                (True, "covered", "kri-590-voiceover-cues"),
             ),
             (
                 "src/apps/api/app/pipeline/phone_captions.py",

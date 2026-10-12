@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.232.0] - 2026-10-12
+
+### Changed
+- feat(gates): KRI-577 session audit and shared reliability gates for incident fixes (#1539) <!-- release-pr: 1539 -->
+
+## [0.78.231.0] - 2026-10-12
+
+### Changed
+- fix(kria): drop a title hold the creator never stated (KRI-591) (#1548) <!-- release-pr: 1548 -->
+
+## [0.78.230.0] - 2026-10-12
+
+### Changed
+- fix(narrated): follow the voiceover when spoken cues and the described order disagree (KRI-590, KRI-592) (#1547) <!-- release-pr: 1547 -->
+
+## [0.78.229.0] - 2026-10-12
+
+### Changed
+- fix(ios): after a render the editor shows the video, not a stuck "last finished video" card (KRI-587) (#1545) <!-- release-pr: 1545 -->
+
 ## [0.78.228.0] - 2026-10-12
 
 ### Changed

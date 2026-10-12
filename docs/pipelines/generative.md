@@ -734,7 +734,12 @@ order. Creator-stated `first`/`last` `order` intents are PINS (`pinned_first` /
 placed where the narration describes it (KRI-532). Unpositioned `order` intents are
 the creator's described sequence (`ordered_groups`: every clip of a group before every
 clip of the next; other clips free). In PINNED mode `parse` re-sorts the placements by
-start word (trace `resorted`) before checking pins/groups. With none of these, the agent
+start word (trace `resorted`) before checking pins/groups. Pins and LOCKED order are
+strict; the described sequence is not (KRI-590): "show X when I say Y" cues arrive as
+a sequence in typed order, and when the voiceover says them in another order the
+narration's order is kept, flagged `sequence_overridden` on the trace, and those steps
+carry `out_of_sequence` in `narrated_alignment` so an order receipt that names them reads
+"Partly" (`_check_narrated_order`), never "Done". With none of these, the agent
 may reorder freely. The agent never
 owns timestamps: `app.pipeline.narrated_alignment.resolve_aligned_steps` turns
 the chosen words into contiguous windows (first step starts at 0.0, minimum step
@@ -748,7 +753,8 @@ before using a simpler sequence when alignment is unavailable. The scripted film
 `fly secrets set NARRATED_CLIP_ALIGNMENT_ENABLED=false --app nova-video` + worker
 restart (restores the bucket split for unbound jobs; bound requests ask for recovery). Eval:
 `tests/evals/test_narrated_clip_alignment_evals.py` (goldens recorded from the
-cacio e pepe job, plus a pinned-last Cappadocia case from prod 38caaebd).
+cacio e pepe job, a pinned-last Cappadocia case from prod 38caaebd, and the Tigre
+spoken-cue case from prod ef8e35b8, KRI-590).
 
 Clip ORDER for native (phone) edits is set at dispatch, not by the model's
 `selected_media_ids` order: `content_plan_build._creator_intent_clip_order`

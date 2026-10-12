@@ -100,7 +100,8 @@ make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 - Frontend typecheck: `cd src/apps/web && npx tsc --noEmit`
 - Frontend tests: `cd src/apps/web && npm test` (Jest)
 - Kria gates: `make verify-kria`; iOS: `make ios-verify`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
-- Pre-PR gate: `bash scripts/preship-check.sh` — scoped ruff on changed files, tsc when web TS changed, drift vs origin/main, VERSION-slot check, CI `[skip-*]` marker list. Run before every PR.
+- Pre-PR gate: `bash scripts/preship-check.sh` — scoped ruff, tsc, drift vs origin/main, VERSION slot, `[skip-*]` markers, KRI-577 gates for changed paths. Run before every PR.
+- Reliability gates (KRI-577): `python3 scripts/reliability-gates.py select|run|red-control`; ledger `tests/gates/reliability-gates.json`; checklist `docs/runbooks/pr-acceptance-checklist.md`; scratch DB `bash scripts/dev/test-db.sh`.
 
 ## Testing rules
 - **Never write unit tests after you write code** (they restate the implementation and pass by construction).
@@ -292,11 +293,7 @@ fly secrets set -a nova-video \
 ## Lessons from prod
 
 ### Dockerfile / .dockerignore coupling
-Every new `COPY <src> ...` in the prod `Dockerfile` must be verified against
-`.dockerignore` — the two files do not track each other, and a mismatch fails at Fly's
-builder AFTER the PR merged. `.github/workflows/docker-build.yml` catches it on the PR
-for anything touching `Dockerfile`, `.dockerignore`, or `src/apps/api/**`. Narrative:
-agents/DECISIONS.md "Dockerfile / .dockerignore coupling" (PR #118/#119).
+Check every new `COPY` in the prod `Dockerfile` against `.dockerignore` (a mismatch fails at Fly's builder after merge); `docker-build.yml` catches it on the PR. See agents/DECISIONS.md.
 
 ## GBrain Search Guidance (configured by /sync-gbrain)
 <!-- gstack-gbrain-search-guidance:start -->

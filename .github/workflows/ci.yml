@@ -336,7 +336,7 @@ jobs:
           python3 - <<'PY'
           import os
           selected = os.environ["JOURNEY_IDS"].split(",")
-          allowed = {"kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-586-hook-copy"}
+          allowed = {"kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-577-reliability-gates", "kri-586-hook-copy", "kri-590-voiceover-cues"}
           if os.environ["COVERAGE"] != "covered" or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed:
               raise SystemExit("Journey selection has an unmapped or invalid incident")
           PY
@@ -604,6 +604,12 @@ jobs:
             --xctest SongOrderTests/testSubmissionListsPlacedTakesByTimeThenTheTrayInCaptureOrderAndEveryTakeOnce \
             --xctest SongOrderTests/testOldServerPayloadWithNoNewFieldsStillParsesAndGivesATimelineWithDefaults \
             --xctest SongOrderTests/testExtendingThePreviousBlockBy099IsHiddenAndBy1sIsVisible
+      - name: Run the KRI-577 reliability gates for the changed incident paths
+        if: contains(needs.changes.outputs.journey_ids, 'kri-577-reliability-gates')
+        run: |
+          set -o pipefail
+          python3 scripts/reliability-gates.py run --all --python python3 \
+            --log test-results/kri-559/reliability-gates.log
       - name: Verify watermark-aware caption compile and its device fixture
         if: contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
         working-directory: src/apps/api
@@ -682,6 +688,21 @@ jobs:
             tests/kria/test_creative_copy_planner.py \
             tests/evals/test_main_creator_evals.py -q \
             | tee ../../../test-results/kri-559/hook-copy-api-tests.log
+      - name: Verify spoken voiceover cues follow the narration and replay fixtures
+        if: contains(needs.changes.outputs.journey_ids, 'kri-590-voiceover-cues')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/agents/test_narrated_clip_alignment.py \
+            tests/evals/test_narrated_clip_alignment_evals.py \
+            tests/kria/test_brief_checks_narrated_alignment.py \
+            tests/kria/test_kri520_block_recovery.py \
+            tests/tasks/test_phone_subtitled_narrated_dispatch.py -q \
+            | tee ../../../test-results/kri-559/voiceover-cues-api-tests.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

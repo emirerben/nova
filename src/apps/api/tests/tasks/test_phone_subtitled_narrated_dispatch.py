@@ -2837,6 +2837,165 @@ def test_bound_narrated_alignment_never_silently_uses_bucket_fallback(monkeypatc
     assert recovery["binding_digest"] == snapshot["creator_brief_binding"]["digest"]
 
 
+# --- KRI-590: spoken-word cues vs a described sequence (prod job ef8e35b8) ---------
+#
+# "Nehir klibiyle başla. 'Deniz' dediğimde Deniz'i laptop başında göster. 'kırkayak'
+# dediğimde küvet fotoğrafını göster. 'mutfak' dediğimde mutfağı göster." Main Creator
+# encoded the three cues as unpositioned `order` intents in sentence order, so they reached
+# the alignment agent as a described sequence (Deniz, bathroom, kitchen). The voiceover says
+# kitchen, then Deniz, then the bathroom. The model placed every clip on its cue word; parse
+# rejected that twice and the bound job failed with "I couldn't match the narration...".
+# Here the REAL parse runs on the recorded prod answer (only the model call is replayed).
+
+_TIGRE = json.loads(
+    (
+        Path(__file__).parent.parent
+        / "fixtures/agent_evals/narrated_clip_alignment/golden/tigre_spoken_cues.json"
+    ).read_text()
+)
+_TIGRE_WORD_START = {w["word_id"]: float(w["start_s"]) for w in _TIGRE["input"]["words"]}
+
+
+def _tigre_raw_answer() -> str:
+    """The prod answer, with prod clip ids mapped onto this job's c0..c3 (same order)."""
+    raw = _TIGRE["raw_text"]
+    for index, clip in enumerate(_TIGRE["input"]["clips"]):
+        raw = raw.replace(clip["clip_id"], f"c{index}")
+    return raw
+
+
+def _tigre_candidates():
+    def intent(attribute, *media_ids, **extra):
+        return {
+            "op": "order",
+            "status": "resolved",
+            "attribute": attribute,
+            "assignments": [{"media_id": media_id, "confidence": 1.0} for media_id in media_ids],
+            **extra,
+        }
+
+    return {
+        "creator_request": _TIGRE["input"]["creator_request"],
+        "creator_strategy": {
+            "resolved_clip_intents": [
+                intent("Nehir klibi", "analysis-proxy-c0.mp4", position="first"),
+                intent("Deniz’i laptop başında", "analysis-proxy-c1.mp4"),
+                # The bathtub photo is a Visuals asset (a reaction beat), not a clip.
+                intent("küvet fotoğrafını", "analysis-proxy-c2.mp4", "asset-fe1c1382"),
+                intent("mutfağı", "analysis-proxy-c3.mp4"),
+            ]
+        },
+    }
+
+
+def _tigre_metas():
+    return [
+        SimpleNamespace(
+            clip_id=f"c{i}",
+            hook_score=5.0,
+            hook_text="",
+            transcript="",
+            clip_summary=clip["description"],
+            activity="",
+            detected_subject="",
+            setting="",
+            best_moments=[],
+        )
+        for i, clip in enumerate(_TIGRE["input"]["clips"])
+    ]
+
+
+def _replay_alignment_model(monkeypatch, raw_text: str) -> list[str]:
+    """Answer every alignment model call with ``raw_text``; parse is NOT mocked."""
+    from app.agents import _model_client
+    from app.agents._runtime import ModelClient, ModelInvocation
+
+    prompts: list[str] = []
+
+    class _Replay(ModelClient):
+        def invoke(self, *, model, prompt, **_kwargs):  # noqa: ANN001, ANN003, ANN202, ARG002
+            prompts.append(prompt)
+            return ModelInvocation(raw_text=raw_text)
+
+    monkeypatch.setattr(_model_client, "default_client", lambda: _Replay())
+    return prompts
+
+
+def test_bound_voiceover_follows_spoken_cues_over_the_described_sequence(monkeypatch):
+    from app.kria.brief import BriefRequirement, CreativeBrief
+    from app.kria.brief_binding import BriefBinding
+
+    job, snapshot, _session, _bindings = _setup_narrated(
+        monkeypatch,
+        edit_format="narrated_planned",
+        n_clips=4,
+        spoken_words=_words(
+            *[(w["text"], w["start_s"], w["end_s"]) for w in _TIGRE["input"]["words"]]
+        ),
+        voiceover_s=18.2,
+        metas=_tigre_metas(),
+        extra_candidates=_tigre_candidates(),
+        real_phrases=True,
+        alignment=True,
+        clip_duration_s=20.0,
+    )
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r3",
+                kind="order",
+                scope="global",
+                description="Kurgu nehir klibiyle başlayacak",
+                facts={"first_clip": "Nehir klibi"},
+            ),
+        ],
+    )
+    snapshot["creator_brief_binding"] = BriefBinding.create(uuid.uuid4(), brief).model_dump(
+        mode="json"
+    )
+    job.assembly_plan["creator_brief_binding"] = snapshot["creator_brief_binding"]
+    events = _capture_pipeline_events(monkeypatch)
+    prompts = _replay_alignment_model(monkeypatch, _tigre_raw_answer())
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    # The first answer is accepted: no schema retry, no recovery question, a pinned recipe.
+    assert len(prompts) == 1
+    assert job.status == "awaiting_device"
+    assert "request_recovery" not in job.assembly_plan
+    windows = _windows(job)
+    # River (pinned first), then each clip on its cue word, in the voiceover's order.
+    assert [w[0] for w in windows] == ["clip_0", "clip_3", "clip_1", "clip_2"]
+    assert [w[1] for w in windows] == pytest.approx(
+        [
+            0.0,
+            _TIGRE_WORD_START["w000009"],  # "Mutfak küçük ..."
+            _TIGRE_WORD_START["w000019"],  # "Deniz tabii ki ..."
+            _TIGRE_WORD_START["w000027"],  # "Banyoda bir kırık ayak vardı ..."
+        ],
+        abs=1e-3,  # persisted windows are rounded to milliseconds
+    )
+
+    # The override is visible on the job's pipeline trace (admin job debug).
+    (event,) = [e for e in events if e[1] == "narrated_clip_alignment"]
+    assert event[2]["status"] == "aligned"
+    assert event[2]["pinned_first"] == ["c0"]
+    assert event[2]["ordered_groups"] == [["c1"], ["c2"], ["c3"]]
+    assert event[2]["sequence_overridden"] is True
+
+    # The record marks the clips the voiceover moved, and the river anchor is still met.
+    record = job.assembly_plan["narrated_alignment"]
+    assert [(s["media_id"], s.get("out_of_sequence", False)) for s in record["steps"]] == [
+        ("c0", False),
+        ("c3", True),
+        ("c1", True),
+        ("c2", True),
+    ]
+    receipts = {r["requirement_id"]: r for r in record["requirement_receipts"]}
+    assert (receipts["r3"]["status"], receipts["r3"]["verification"]) == ("met", "checked")
+
+
 def test_narrated_alignment_preserves_long_creator_request(monkeypatch):
     """The alignment input keeps the full bounded creator request for grounding."""
     job, snapshot, _session, _bindings = _setup_cacio(monkeypatch)
