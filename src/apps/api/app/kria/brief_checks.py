@@ -125,7 +125,8 @@ class NarratedStepFact:
 
     ``labels`` are the creator's own words for the shot ("the balloons"), ``placed`` the
     first/last seats a resolved order intent gave it, and ``text`` what the voiceover says
-    while the clip is on screen.
+    while the clip is on screen. ``out_of_sequence``: the clip is part of a described
+    sequence the voiceover placed in another order (KRI-590).
     """
 
     media_id: str = ""
@@ -134,6 +135,7 @@ class NarratedStepFact:
     start_s: float = 0.0
     end_s: float = 0.0
     text: str = ""
+    out_of_sequence: bool = False
 
 
 @dataclass(frozen=True)
@@ -756,6 +758,7 @@ def plan_facts_from_narrated_alignment(record: Mapping[str, Any] | None) -> Plan
                 start_s=float(start) if isinstance(start, (int, float)) else 0.0,
                 end_s=float(end) if isinstance(end, (int, float)) else 0.0,
                 text=" ".join(str(row.get("text") or "").split()),
+                out_of_sequence=row.get("out_of_sequence") is True,
             )
         )
     basis = record.get("ordering_basis")
@@ -3753,11 +3756,55 @@ def _narrated_anchors(
     return anchors
 
 
+def _voice_moved_names(req: BriefRequirement, steps: Sequence[NarratedStepFact]) -> list[str]:
+    """The creator's names, in screen order, for the clips of a described sequence that the
+    voiceover placed in another order (KRI-590) and that this requirement's words mention."""
+    wording = _loose_req(req)
+    names: list[str] = []
+    for step in steps:
+        if not step.out_of_sequence:
+            continue
+        for name in step.labels:
+            core = _label_core(name)
+            if (
+                core
+                and _contains_text(wording, core)
+                and not any(_same_group(name, n) for n in names)
+            ):
+                names.append(name)
+    return names
+
+
+def _followed_voice_reason(names: Sequence[str]) -> str:
+    def joined(conjunction: str) -> str:
+        if len(names) == 1:
+            return names[0]
+        return f"{', '.join(names[:-1])} {conjunction} {names[-1]}"
+
+    return say(
+        en=(
+            f"Your voiceover mentions {joined('and')} in a different order, so I followed "
+            "the voiceover."
+        ),
+        tr=(
+            f"Seslendirmende {joined('ve')} farklı bir sırayla geçiyor, ben de "
+            "seslendirmeyi takip ettim."
+        ),
+    )
+
+
 def _check_narrated_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    """A stated first / last clip is met when that clip really opens / closes the edit."""
+    """A stated first / last clip is met when that clip really opens / closes the edit.
+
+    A described sequence the voiceover overrode (KRI-590: the worker kept the narration's
+    order) is never "met": an order ask that names those clips reads partly, with why.
+    """
     steps = facts.narrated_steps or ()
     anchors = _narrated_anchors(req, steps)
+    moved = _voice_moved_names(req, steps)
     if not anchors or not steps:
+        if moved:
+            return _receipt(req, "partial", _followed_voice_reason(moved))
         # No seat to judge: the voiceover sets this edit's order, so any other ordering
         # rule stays unverified, exactly as before the render recorded anything.
         return _receipt(req, "partial", _CANT_CHECK_ORDER_RULE)
@@ -3788,6 +3835,8 @@ def _check_narrated_order(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         )
     if problems:
         return _receipt(req, unmet, " ".join(problems))
+    if moved:
+        return _receipt(req, "partial", _followed_voice_reason(moved))
     if unknown:
         return _receipt(req, "partial", _CANT_CONFIRM_ORDER)
     return _receipt(req, "met", None)
@@ -4362,6 +4411,27 @@ NO_TITLE_BLOCKED = "I couldn't make the video yet: you asked for a title but gav
 TITLE_WORDS_ALTERNATIVE = 'Tell me the words for the title, or say "continue without a title".'
 _TITLE_WAY_FORWARD_MIXED = 'For the title, tell me the words or say "continue without a title".'
 _RENDER_BLOCK_SUFFIX = "Your draft is saved. Should I try again or simplify this request?"
+
+
+# The phone Voiceover worker's question when it could not place the clips on the spoken
+# words (`_run_phone_narrated_job`). The worker binds no chat language, so the stored copy
+# is this English text; the chat observer re-words it for a Turkish chat (KRI-592), the
+# same way it re-words `render_block_recovery`.
+NARRATED_ALIGNMENT_RECOVERY = (
+    "I couldn't match the narration to the actions reliably. Your draft is saved. "
+    "Should I try again or use a simpler clip sequence?"
+)
+
+
+def narrated_alignment_recovery() -> str:
+    """`NARRATED_ALIGNMENT_RECOVERY` in the bound chat language."""
+    return say(
+        en=NARRATED_ALIGNMENT_RECOVERY,
+        tr=(
+            "Seslendirmeyi kliplerle güvenilir bir şekilde eşleştiremedim. Taslağın "
+            "kaydedildi. Tekrar mı deneyeyim, yoksa daha basit bir klip sırası mı kullanayım?"
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -5166,6 +5236,7 @@ __all__ = [
     "BeatFact",
     "ClosingSpeechFact",
     "NO_TITLE_REASON",
+    "NARRATED_ALIGNMENT_RECOVERY",
     "RenderBlockRecovery",
     "NARRATED_ALIGNED_BASES",
     "NARRATED_ALIGNMENT_FIELD",
@@ -5182,6 +5253,7 @@ __all__ = [
     "is_judged",
     "is_no_title_reason",
     "judged_at_render",
+    "narrated_alignment_recovery",
     "needs_creator_choice",
     "SpeechSectionFact",
     "plan_facts_from_editor_payload",

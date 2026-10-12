@@ -317,14 +317,17 @@ jobs:
         run: python3 scripts/ci/api-tests.py "${{ matrix.shard }}"
 
   # KRI-559 executes only incident-corpus journeys selected by ci-changes.
-  # An affected source without a mapped fixture fails in the first step.
-  journey:
+  # An affected source without a mapped fixture fails here, on a cheap Ubuntu
+  # runner (KRI-604): the macOS `journey` job needs this job, so an unmapped
+  # selection never queues for a macOS runner just to fail in its first step.
+  # The `test-api` gate still goes red because a skipped `journey` is not the
+  # `success` it requires for a selected suite.
+  journey-mapping:
     needs: changes
     if: needs.changes.outputs.journey == 'true'
-    runs-on: macos-15
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
       - name: Require a mapped incident-corpus journey
         env:
           COVERAGE: ${{ needs.changes.outputs.journey_coverage }}
@@ -333,10 +336,18 @@ jobs:
           python3 - <<'PY'
           import os
           selected = os.environ["JOURNEY_IDS"].split(",")
-          allowed = {"kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-586-hook-copy", "kri-593-voiceover-clips"}
+          allowed = {"kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-586-hook-copy", "kri-590-voiceover-cues", "kri-593-voiceover-clips"}
           if os.environ["COVERAGE"] != "covered" or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed:
               raise SystemExit("Journey selection has an unmapped or invalid incident")
           PY
+
+  journey:
+    needs: [changes, journey-mapping]
+    if: needs.changes.outputs.journey == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
       - name: Set up Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -384,6 +395,30 @@ jobs:
       - name: Generate KRI-492 approved-length fixture through server approval and compiler
         if: contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
         run: python3 scripts/ios/kri-492-length-e2e.py test-results/kri-559/kri-492
+      # KRI-604: every native step below used to compile the whole app cold
+      # (~10 min). Restore the Xcode build data ios.yml saves on main (same key
+      # family; restore-only, so the two workflows never race to save), then
+      # build once and run each journey with test-without-building.
+      - name: Identify Xcode cache
+        if: needs.changes.outputs.journey_ids != 'kri-586-hook-copy'
+        id: xcode-cache
+        run: |
+          echo "toolchain=$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Restore Xcode build data
+        if: needs.changes.outputs.journey_ids != 'kri-586-hook-copy'
+        id: build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            src/apps/ios/.derived-data/Build
+            src/apps/ios/.derived-data/SourcePackages
+            src/apps/ios/.derived-data/ModuleCache.noindex
+            src/apps/ios/.derived-data/SDKStatCaches.noindex
+            src/apps/ios/.derived-data/CompilationCache.noindex
+          key: ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-${{ github.sha }}
+          restore-keys: |
+            ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
       - name: Generate iOS project and select simulator
         run: |
           mkdir -p test-results/kri-559
@@ -399,6 +434,17 @@ jobs:
           PY
           xcrun simctl boot "$(cat test-results/kri-559/simulator-id.txt)" || true
           xcrun simctl bootstatus "$(cat test-results/kri-559/simulator-id.txt)" -b
+      - name: Build the app and test bundles once
+        if: needs.changes.outputs.journey_ids != 'kri-586-hook-copy'
+        working-directory: src/apps/ios
+        run: |
+          # Same timestamp restore as scripts/ios/verify.sh: a fresh checkout
+          # would otherwise look newer than the cached objects and recompile.
+          python3 ../../../scripts/ios/cache-inputs.py restore
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
+            build-for-testing
       - name: Render captured creation journey on iPhone simulator
         if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
@@ -409,7 +455,7 @@ jobs:
             -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
             -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
             -only-testing:KriaTests/DeviceMontageRenderE2ETests/testCapturedCreationWordsRetimedThenExportOnTheIPhone \
-            -resultBundlePath ../../../test-results/kri-559/native.xcresult test
+            -resultBundlePath ../../../test-results/kri-559/native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/native.xcresult \
             > ../../../test-results/kri-559/native-test-results.json
           APP_INFO=$(find .derived-data/Build/Products -path '*/Kria.app/Info.plist' -print -quit)
@@ -443,7 +489,7 @@ jobs:
             -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
             -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
             -only-testing:KriaTests/DeviceMontageRenderE2ETests/testApprovedTwentyFourSecondLengthThenExportOnTheIPhone \
-            -resultBundlePath ../../../test-results/kri-559/kri-492/native.xcresult test
+            -resultBundlePath ../../../test-results/kri-559/kri-492/native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/kri-492/native.xcresult \
             > ../../../test-results/kri-559/kri-492/native-test-results.json
       - name: Require approved-length native journey test to pass
@@ -478,8 +524,14 @@ jobs:
         run: |
           set -o pipefail
           python3 -m pytest tests/agents/test_thinking_budget.py -q | tee ../../../test-results/kri-559/thought-api-tests.log
+      # KRI-604: the native steps from here to the speaker face-fill journey run plain
+      # KriaTests unit tests. On a push to main the iOS workflow (ios.yml, shard 1)
+      # already executes every KriaTests case (scripts/ios/verify.sh skips only
+      # KriaUITests), so they run on pull requests only, where they are the named
+      # incident evidence. The DeviceMontageRenderE2ETests journeys above need the
+      # server fixture and stay on every event.
       - name: Verify native thought disclosure, live updates, and reopened history
-        if: contains(needs.changes.outputs.journey_ids, 'kri-557-thinking')
+        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-557-thinking')
         working-directory: src/apps/ios
         run: |
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
@@ -488,11 +540,11 @@ jobs:
             -only-testing:KriaTests/ChatTimelineTests/testCompletedThoughtIsPlacedAfterItsUserRequestBeforeReply \
             -only-testing:KriaTests/SlidePostTests/testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory \
             -only-testing:KriaTests/SlidePostChatEditTests/testCompletedChatEditThoughtRemainsWithReplyAfterReopening \
-            -resultBundlePath ../../../test-results/kri-559/thought-native.xcresult test
+            -resultBundlePath ../../../test-results/kri-559/thought-native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/thought-native.xcresult \
             > ../../../test-results/kri-559/thought-native-test-results.json
       - name: Require each native thought journey test to pass
-        if: contains(needs.changes.outputs.journey_ids, 'kri-557-thinking')
+        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-557-thinking')
         run: |
           python3 scripts/ci/journey-gate.py verify-tests \
             --test-results test-results/kri-559/thought-native-test-results.json \
@@ -507,18 +559,18 @@ jobs:
           python3 -m pytest tests/routes/test_slide_post_native_routes.py -q \
             | tee ../../../test-results/kri-559/slide-post-binding-api-tests.log
       - name: Verify iOS binding round trip through chat and save requests
-        if: contains(needs.changes.outputs.journey_ids, 'slide-post-binding-recovery')
+        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'slide-post-binding-recovery')
         working-directory: src/apps/ios
         run: |
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
             -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
             -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
             -only-testing:KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave \
-            -resultBundlePath ../../../test-results/kri-559/slide-post-binding-native.xcresult test
+            -resultBundlePath ../../../test-results/kri-559/slide-post-binding-native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/slide-post-binding-native.xcresult \
             > ../../../test-results/kri-559/slide-post-binding-native-test-results.json
       - name: Require native slide-post binding journey to pass
-        if: contains(needs.changes.outputs.journey_ids, 'slide-post-binding-recovery')
+        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'slide-post-binding-recovery')
         run: |
           python3 scripts/ci/journey-gate.py verify-tests \
             --test-results test-results/kri-559/slide-post-binding-native-test-results.json \
@@ -532,7 +584,7 @@ jobs:
             tests/routes/test_phone_song_editor_commit.py -q \
             | tee ../../../test-results/kri-559/song-order-api-tests.log
       - name: Verify native song-timeline submission, parsing and tiling
-        if: contains(needs.changes.outputs.journey_ids, 'kri-561-song-order')
+        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-561-song-order')
         working-directory: src/apps/ios
         run: |
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
@@ -541,11 +593,11 @@ jobs:
             -only-testing:KriaTests/SongOrderTests/testSubmissionListsPlacedTakesByTimeThenTheTrayInCaptureOrderAndEveryTakeOnce \
             -only-testing:KriaTests/SongOrderTests/testOldServerPayloadWithNoNewFieldsStillParsesAndGivesATimelineWithDefaults \
             -only-testing:KriaTests/SongOrderTests/testExtendingThePreviousBlockBy099IsHiddenAndBy1sIsVisible \
-            -resultBundlePath ../../../test-results/kri-559/song-order-native.xcresult test
+            -resultBundlePath ../../../test-results/kri-559/song-order-native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/song-order-native.xcresult \
             > ../../../test-results/kri-559/song-order-native-test-results.json
       - name: Require native song-order journey tests to pass
-        if: contains(needs.changes.outputs.journey_ids, 'kri-561-song-order')
+        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-561-song-order')
         run: |
           python3 scripts/ci/journey-gate.py verify-tests \
             --test-results test-results/kri-559/song-order-native-test-results.json \
@@ -562,7 +614,7 @@ jobs:
             tests/kria/test_portable_text_layout.py -q \
             | tee ../../../test-results/kri-559/caption-watermark-api-tests.log
       - name: Export server-compiled captions under the watermark on the iPhone simulator
-        if: contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
+        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
         working-directory: src/apps/ios
         run: |
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
@@ -570,11 +622,11 @@ jobs:
             -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
             -only-testing:KriaTests/CaptionWatermarkClearanceTests/testServerRebrokenKadikoyCaptionsExportClearOfTheWatermark \
             -only-testing:KriaTests/CaptionWatermarkClearanceTests/testProdUnbrokenKadikoyCaptionsInkTheWatermarkCorner \
-            -resultBundlePath ../../../test-results/kri-559/caption-watermark-native.xcresult test
+            -resultBundlePath ../../../test-results/kri-559/caption-watermark-native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/caption-watermark-native.xcresult \
             > ../../../test-results/kri-559/caption-watermark-native-test-results.json
       - name: Require native caption-watermark journey tests to pass
-        if: contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
+        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
         run: |
           python3 scripts/ci/journey-gate.py verify-tests \
             --test-results test-results/kri-559/caption-watermark-native-test-results.json \
@@ -595,7 +647,7 @@ jobs:
             tests/tasks/test_phone_subtitled_speaker_framing_worker.py -q \
             | tee ../../../test-results/kri-559/speaker-framing-api-tests.log
       - name: Render the server face-fill crop and measure it on the iPhone simulator
-        if: contains(needs.changes.outputs.journey_ids, 'kri-547-speaker-framing')
+        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-547-speaker-framing')
         working-directory: src/apps/ios
         run: |
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
@@ -604,11 +656,11 @@ jobs:
             -only-testing:KriaTests/DeviceSpeakerFaceFillE2ETests/testFaceInTheLeftThirdShowsTheServerWindowOnTheIPhone \
             -only-testing:KriaTests/DeviceSpeakerFaceFillE2ETests/testFaceAtTheRightEdgeClampsWithNoBlackEdgeOnTheIPhone \
             -only-testing:KriaTests/DeviceSpeakerFaceFillE2ETests/testCentredFaceIsTheUnshiftedCentreCropOnTheIPhone \
-            -resultBundlePath ../../../test-results/kri-559/speaker-framing-native.xcresult test
+            -resultBundlePath ../../../test-results/kri-559/speaker-framing-native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/speaker-framing-native.xcresult \
             > ../../../test-results/kri-559/speaker-framing-native-test-results.json
       - name: Require native speaker face-fill journey tests to pass
-        if: contains(needs.changes.outputs.journey_ids, 'kri-547-speaker-framing')
+        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-547-speaker-framing')
         run: |
           python3 scripts/ci/journey-gate.py verify-tests \
             --test-results test-results/kri-559/speaker-framing-native-test-results.json \
@@ -630,6 +682,21 @@ jobs:
             tests/kria/test_creative_copy_planner.py \
             tests/evals/test_main_creator_evals.py -q \
             | tee ../../../test-results/kri-559/hook-copy-api-tests.log
+      - name: Verify spoken voiceover cues follow the narration and replay fixtures
+        if: contains(needs.changes.outputs.journey_ids, 'kri-590-voiceover-cues')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/agents/test_narrated_clip_alignment.py \
+            tests/evals/test_narrated_clip_alignment_evals.py \
+            tests/kria/test_brief_checks_narrated_alignment.py \
+            tests/kria/test_kri520_block_recovery.py \
+            tests/tasks/test_phone_subtitled_narrated_dispatch.py -q \
+            | tee ../../../test-results/kri-559/voiceover-cues-api-tests.log
       - name: Verify a voiceover edit keeps every clip through the planner and dispatch
         if: contains(needs.changes.outputs.journey_ids, 'kri-593-voiceover-clips')
         working-directory: src/apps/api

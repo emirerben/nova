@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.230.0] - 2026-10-12
+
+### Changed
+- fix(narrated): follow the voiceover when spoken cues and the described order disagree (KRI-590, KRI-592) (#1547) <!-- release-pr: 1547 -->
+
+## [0.78.229.0] - 2026-10-12
+
+### Changed
+- fix(ios): after a render the editor shows the video, not a stuck "last finished video" card (KRI-587) (#1545) <!-- release-pr: 1545 -->
+
+## [0.78.228.0] - 2026-10-12
+
+### Changed
+- fix(kria): an auto-selected song never outlasts the footage it backs (KRI-600) (#1557) <!-- release-pr: 1557 -->
+
+## [0.78.227.0] - 2026-10-12
+
+### Changed
+- fix(api): keep Slider in the native format picker under the iPhone-only fence (KRI-599) (#1552) <!-- release-pr: 1552 -->
+
+## [0.78.226.0] - 2026-10-11
+
+### Changed
+- ci: cut CI and iOS UI test time (KRI-604) (#1558) <!-- release-pr: 1558 -->
+
 ## [0.78.225.0] - 2026-10-11
 
 ### Changed

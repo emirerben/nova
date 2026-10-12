@@ -568,6 +568,10 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-586-hook-copy"),
             ),
             (
+                "src/apps/api/tests/fixtures/agent_evals/narrated_clip_alignment/golden/tigre_spoken_cues.json",
+                (True, "covered", "kri-590-voiceover-cues"),
+            ),
+            (
                 "src/apps/api/app/kria/voiceover_clips.py",
                 (True, "covered", "kri-593-voiceover-clips"),
             ),
