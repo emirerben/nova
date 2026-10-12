@@ -362,3 +362,84 @@ async def test_more_clips_than_one_edit_takes_keeps_the_models_pick(
     strategy = await _draft(monkeypatch, selected=CUE_CLIPS, manifest=manifest)
 
     assert strategy["selected_media_ids"] == CUE_CLIPS
+
+
+# PR 1549 review: every supported removal form, plain and negated, so polarity can't
+# regress one verb at a time.
+_REMOVAL_FORMS = [
+    "skip {x}",
+    "exclude {x}",
+    "omit {x}",
+    "ignore {x}",
+    "drop {x}",
+    "remove {x}",
+    "delete {x}",
+    "cut out {x}",
+    "lose {x}",
+    "ditch {x}",
+    "toss {x}",
+    "hide {x}",
+    "leave out {x}",
+    "leave {x} out",
+    "take out {x}",
+    "take {x} out",
+    "keep {x} out",
+    "throw out {x}",
+    "throw {x} away",
+    "get rid of {x}",
+]
+_TR_REMOVAL_PAIRS = [
+    ("banyo klibini çıkar", "banyo klibini çıkarma"),
+    ("banyo klibini atla", "banyo klibini atlama"),
+    ("banyo klibini sil", "banyo klibini silme"),
+    ("banyo klibini kaldır", "banyo klibini kaldırma"),
+    ("banyo klibini gizle", "banyo klibini gizleme"),
+    ("banyo klibini dışarıda bırak", "banyo klibini dışarıda bırakma"),
+    ("banyo klibini kullanma", "banyo klibini kullan"),
+    ("banyo klibini dahil etme", "banyo klibini dahil et"),
+]
+
+
+@pytest.mark.parametrize("form", _REMOVAL_FORMS)
+@pytest.mark.parametrize("negator", ["don't", "do not", "never"])
+def test_each_removal_form_limits_and_its_negation_does_not(form: str, negator: str) -> None:
+    removal = form.format(x="the bathroom clip")
+    count = len(OWN_VIDEOS)
+
+    assert creator_limits_clips([removal], own_clip_count=count)
+    assert not creator_limits_clips([f"{negator} {removal}"], own_clip_count=count)
+
+
+@pytest.mark.parametrize(("removal", "kept"), _TR_REMOVAL_PAIRS)
+def test_each_turkish_removal_limits_and_its_negation_does_not(removal: str, kept: str) -> None:
+    count = len(OWN_VIDEOS)
+
+    assert creator_limits_clips([removal], own_clip_count=count)
+    assert not creator_limits_clips([kept], own_clip_count=count)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A negated removal never swallows a real one after it.
+        "Don't skip the river clip, take out the bathroom clip",
+        "don't drop the river and leave out the bathroom",
+        "never remove the river clip; hide the bathroom clip",
+        "don't take the river clip out and throw the bathroom clip away",
+        "Nehir klibini atlama, banyo klibini çıkar",
+    ],
+)
+def test_a_negated_removal_next_to_a_real_one_still_limits(text: str) -> None:
+    assert creator_limits_clips([text], own_clip_count=len(OWN_VIDEOS))
+
+
+async def test_mixed_keep_and_remove_keeps_the_models_subset(prod_profile, monkeypatch) -> None:
+    selected = [c for c in OWN_VIDEOS if c != BATHROOM]
+    strategy = await _draft(
+        monkeypatch,
+        selected=selected,
+        messages=["Don't skip the river clip, take out the bathroom clip"],
+    )
+
+    assert strategy["selected_media_ids"] == selected
+    assert sorted(_dispatched_clips(strategy)) == sorted(selected)

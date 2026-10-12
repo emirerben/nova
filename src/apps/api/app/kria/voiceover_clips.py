@@ -93,7 +93,7 @@ _TR_NARROWING = re.compile(
     r"|atla(?:yin|yiniz|sin|yalim)?|gec(?:in|iniz|elim)?|cikar(?:in|iniz|t|tin|sin|alim)?"
     r"|sil(?:in|iniz|sin|elim)?|kaldir(?:in|iniz|sin|alim)?|istemiyorum|istemem"
     r"|dahil\s+etme(?:yin|yiniz|sin|yelim)?|gizle(?:yin|yiniz|sin|yelim)?"
-    r"|disari(?:da)?\s+birak\w*)\b"
+    r"|disari(?:da)?\s+birak(?:in|iniz|sin|alim)?)\b"
 )
 # The words of those asks, one by one: what remains of a clause once they (and glue
 # words) are gone is what the ask is about. Dropping words, not whole matches, keeps
@@ -177,12 +177,19 @@ def _stated_counts(clause: str) -> list[int]:
 
 # A removal the creator negates keeps the clip ("don't take out the loft clip", "never
 # remove it"): it is cut from the clause before the narrowing check, with its "… out" tail.
+# The "… out" / "… away" tail stays inside its own object: up to four plain words, never past
+# punctuation or a conjunction, so "don't skip the river clip, take out the bathroom clip"
+# cuts only "don't skip" and the real removal after it still counts.
+_REMOVAL_TAIL = r"(?:\s+(?!(?:and|then|but|or|also|plus)\b)[^\s,.;:!?]+){0,4}?\s+(?:out|away)\b"
 _NEGATED_REMOVAL = re.compile(
     r"\b(?:don'?t|do\s+not|doesn'?t|does\s+not|never|shouldn'?t|should\s+not|mustn'?t"
     r"|must\s+not|won'?t|will\s+not|not)(?:\s+(?:ever|even|please))?\s+"
-    r"(?:skip\w*|exclud\w*|omit\w*|ignor\w*|drop\w*|remov\w*|delet\w*|cut|lose|ditch\w*"
+    r"(?:(?:skip\w*|exclud\w*|omit\w*|ignor\w*|drop\w*|remov\w*|delet\w*|cut|lose|ditch\w*"
     r"|toss\w*|hid(?:e|ing)|leav(?:e|ing)|take|throw\w*|get\s+rid\s+of)\b"
-    r"(?:(?:\s+\S+){0,4}?\s+(?:out|away)\b)?"
+    rf"(?:{_REMOVAL_TAIL})?"
+    # "keep" removes only with its tail: "don't keep the clip out" keeps it, while a bare
+    # "don't keep the clip" is a narrowing ask and stays.
+    rf"|(?:keep|kept)\b{_REMOVAL_TAIL})"
 )
 
 
