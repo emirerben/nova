@@ -29,6 +29,7 @@
       "KriaUITests/SlidePostUITests/testAddStyleAndApplyTextToAllSlides",
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",
       "KriaUITests/SlidePostUITests/testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave",
+      "KriaUITests/SlidePostUITests/testDrawOnASlideLeavesInkThatSurvivesSaveAndSlideSwitching",
       "KriaUITests/SlidePostUITests/testAIButtonOpensSheetAndChatEditStagesOnThePage",
       "KriaUITests/SlidePostUITests/testLongPressDragReordersAndKeepsTheCover",
       "KriaUITests/SlidePostUITests/testDraggingToTheEdgeAutoScrollsTheStrip",

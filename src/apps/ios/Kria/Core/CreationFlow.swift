@@ -20,6 +20,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostFraming: Bool? = nil
     /// KRI-606: the post-wide Size sheet and per-photo Fit. Missing = off (no Size tool, no `aspect`/`fit` authored).
     var slidePostSizes: Bool? = nil
+    /// KRI-589: freehand drawing on slides. The server advertises it only to a build that speaks protocol 7. Missing = off (no Draw tool, no `drawing` authored).
+    var slidePostDrawing: Bool? = nil
     /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
     var clipSelectionQuestions: Bool? = nil
     /// Server sends `song_order_question` payloads and accepts `song_order` on a turn (KRI-374). Nil/false = no order card.
@@ -50,6 +52,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostExtendedDeviceExportEnabled: Bool { slidePostExtendedDeviceExport == true }
     var slidePostFramingEnabled: Bool { slidePostFraming == true }
     var slidePostSizesEnabled: Bool { slidePostSizes == true }
+    var slidePostDrawingEnabled: Bool { slidePostDrawing == true }
     var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
     var songOrderQuestionsEnabled: Bool { songOrderQuestions == true }
     /// Only meaningful together with `songOrderQuestionsEnabled`.
@@ -75,6 +78,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case slidePostExtendedDeviceExport = "slide_post_extended_device_export"
         case slidePostFraming = "slide_post_framing"
         case slidePostSizes = "slide_post_sizes"
+        case slidePostDrawing = "slide_post_drawing"
         case clipSelectionQuestions = "clip_selection_questions"
         case songOrderQuestions = "song_order_questions"
         case songOrderPlacements = "song_order_placements"
@@ -103,6 +107,7 @@ extension CreationCapabilities {
         slidePostExtendedDeviceExport = try container.decodeIfPresent(Bool.self, forKey: .slidePostExtendedDeviceExport)
         slidePostFraming = try container.decodeIfPresent(Bool.self, forKey: .slidePostFraming)
         slidePostSizes = try container.decodeIfPresent(Bool.self, forKey: .slidePostSizes)
+        slidePostDrawing = try container.decodeIfPresent(Bool.self, forKey: .slidePostDrawing)
         clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
         songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)
         songOrderPlacements = try container.decodeIfPresent(Bool.self, forKey: .songOrderPlacements)

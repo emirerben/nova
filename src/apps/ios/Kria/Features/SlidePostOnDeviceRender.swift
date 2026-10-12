@@ -6,7 +6,7 @@ import UIKit
 
 /// Renders photo slides on the phone from the ORIGINAL photos: cover-fit (framed by the slide's crop, centred by default) into the
 /// slide's canvas at 2x, then the same `SlidePostTextLayerView` the editor shows, drawn at real pixel size,
-/// then the Kria watermark the server render also puts on every slide (KRI-472). No server render, no
+/// then the slide's drawing (KRI-589), then the Kria watermark the server render also puts on every slide (KRI-472). No server render, no
 /// polling. The gated extension supports authored looks and delegates video slides to AVFoundation.
 /// Unsupported profiles, looks, fonts, or sources take the server path.
 @MainActor enum SlidePostOnDeviceRender {
@@ -71,6 +71,9 @@ import UIKit
             if let graded { graded.draw(in: CGRect(origin: .zero, size: pixels)) }
             else { photo.draw(in: SlidePostFraming.placement(imageSize: photo.size, crop: crop, canvas: pixels, fit: false)) }
             overlay?.draw(in: CGRect(origin: .zero, size: pixels))
+            // KRI-589: the slide's ink goes over the text and under the watermark (the server's stacking), painted from
+            // its strokes at the real pixel size, so it is as sharp as the text and needs no extra raster.
+            slide.edits?.drawing?.paint(in: context.cgContext, canvas: pixels)
             // Last, so no text buries it: the stacking the video engine and the server render use.
             context.cgContext.interpolationQuality = .high
             mark.draw(in: KriaBranding.watermarkTileRect(canvas: pixels, tileSize: mark.size))
