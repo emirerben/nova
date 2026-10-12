@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.247.0] - 2026-10-12
+
+### Changed
+- fix(ios): adding a video to a one-photo slide post switches it to Instagram carousel (KRI-615) (#1560) <!-- release-pr: 1560 -->
+
 ## [0.78.246.0] - 2026-10-12
 
 ### Changed
