@@ -55,6 +55,7 @@ from app.schemas.text_style_intent import (
 from app.services.clip_facts import CAPTURE_ORDER_KEYS
 from app.services.kria_editor_ops_diff import effective_entrance
 from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
+from app.services.start_quote_cut import start_quote_request
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
@@ -287,6 +288,8 @@ class PlanFacts:
     # "no_change" (it ran and found nothing to cut), "not_run" (the render kept the whole
     # take). None = unknown or a draft.
     speech_cleanup_outcome: str | None = None
+    # KRI-628: the render opened on the line the creator quoted (start_quote_cut applied).
+    start_cut_applied: bool = False
     # The strategy's caption style ("none", "clean", "kinetic", "karaoke",
     # "editorial", "auto"); None when the draft carries no strategy.
     caption_style: str | None = None
@@ -1238,6 +1241,9 @@ def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     if outcome in ("applied", "no_change"):
         facts["speech_cleanup_enabled"] = True
         facts["speech_cleanup_outcome"] = outcome
+        start_cut = variant.get("start_quote_cut")
+        if isinstance(start_cut, Mapping) and start_cut.get("status") == "applied":
+            facts["start_cut_applied"] = True
     elif outcome is None and device:
         facts["speech_cleanup_enabled"] = False
         facts["speech_cleanup_outcome"] = "not_run"
@@ -3053,8 +3059,9 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
     else:
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
     notes = [_loc(lead)]
-    if _wants_named_cuts(req):
+    if _wants_named_cuts(req) and not facts.start_cut_applied:
         # The cut removes pauses and filler sounds; a named line or retake stays.
+        # (A start cut the render applied covers the named opening lines.)
         notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
         status = "partial"
     if status == "met" and outcome == "applied":
@@ -4894,6 +4901,14 @@ def _has_checker(req: BriefRequirement) -> bool:
 
 
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if (
+        facts.rendered_variant
+        and facts.start_cut_applied
+        and start_quote_request([req.description or ""]) is not None
+    ):
+        # KRI-628: the render opened on the line this ask quotes ("start the video at ...").
+        # Any pause cleanup named in the same sentence is judged by the cleanup receipt.
+        return _receipt(req, "met", None)
     if (
         _wants_cleanup(req)
         and facts.edit_format in _SPEECH_FORMATS

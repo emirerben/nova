@@ -6543,6 +6543,10 @@ def _run_phone_subtitled_job(
         pipeline_trace_for,
         record_pipeline_event,
     )
+    from app.services.start_quote_cut import (  # noqa: PLC0415
+        apply_start_quote_cut,
+        start_quote_request,
+    )
 
     media_lanes_enabled = settings.phone_subtitled_media_lanes_enabled
     # KRI-176: whether a phone `subtitled` render may carry PiP overlay cards
@@ -6841,6 +6845,7 @@ def _run_phone_subtitled_job(
             speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None
             cut_plan: CutPlan | None = None
             speech_cleanup_outcome_context: dict[str, Any] | None = None
+            start_quote_cut_receipt: dict[str, Any] | None = None
             if cleanup_required:
                 try:
                     speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(
@@ -6863,6 +6868,28 @@ def _run_phone_subtitled_job(
                 speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
                     analysis_view="full_clip"
                 )
+                # KRI-628: "cut the intro, start the video at '…'" -- the cleanup
+                # plan only removes pauses, so trim it to open on the quoted line.
+                # Ungroundable or implausible asks leave the plan as it was.
+                start_quote = start_quote_request(
+                    [
+                        str(req.get("description") or "")
+                        for req in (
+                            ((snapshot.get("creator_brief_binding") or {}).get("brief") or {}).get(
+                                "requirements"
+                            )
+                            or []
+                        )
+                        if isinstance(req, dict)
+                    ]
+                )
+                if start_quote is not None:
+                    cut_plan, start_quote_cut_receipt = apply_start_quote_cut(
+                        cut_plan,
+                        speech_cleanup_snapshot.source_words(),
+                        start_quote,
+                        duration_s=float(probe.duration_s),
+                    )
 
             # KRI-547: the creator asked for a vertical / full-screen / face-in-frame
             # video. A sideways speaker clip is then face-filled -- the engine's
@@ -7824,6 +7851,8 @@ def _run_phone_subtitled_job(
             )
             new_entry["silence_cut_outcome"] = "applied" if cut_plan.removed else "no_change"
             new_entry["_speech_cleanup_outcome_context"] = speech_cleanup_outcome_context
+            if start_quote_cut_receipt is not None:
+                new_entry["start_quote_cut"] = start_quote_cut_receipt
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:
