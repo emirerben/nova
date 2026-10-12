@@ -756,8 +756,13 @@ def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, 
                 seen.add(phrase)
     if not parts:
         return _generic_question()
-    suffix = say(en=". Could you clarify?", tr=". Biraz açıklar mısın?")
     joined = "; ".join(parts)
+    # KRI-613: a resolver question already asks; "?. Could you clarify?" read as a typo.
+    suffix = (
+        ""
+        if joined.rstrip().endswith("?")
+        else say(en=". Could you clarify?", tr=". Biraz açıklar mısın?")
+    )
     if len(joined) + len(suffix) > 300:
         return say(
             en="I couldn't resolve all requested clip matches. Could you clarify?",

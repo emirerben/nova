@@ -3894,19 +3894,37 @@ async def _plan_live_turn(
             output=output,
         )
 
+    # KRI-611: the model owns which requirement a change/remove targets, never the
+    # concurrency token. Bind its `expected_version` to the brief its prompt showed, as
+    # the brief extractor does; apply_updates and the persist fence still refuse work
+    # that is genuinely stale. A copied wrong number made "make it more basic" fail.
+    shown_version = prior_brief.version if prior_brief else 0
     unique_updates = {
         json.dumps(update.model_dump(mode="json"), sort_keys=True): update
         for update in (
             pre_extracted_updates
             if extraction_complete
-            else tuple(update for result in outputs for update in result.brief_updates)
+            else tuple(
+                update
+                if update.operation == "add"
+                else update.model_copy(update={"expected_version": shown_version})
+                for result in outputs
+                for update in result.brief_updates
+            )
         )
     }
     updates = tuple(unique_updates.values())
     try:
         effective = apply_updates(prior_brief, updates, source_turn_id=None)
     except BriefUpdateBatchError as exc:
-        return _request_recovery(manifest, prior_brief, reason=str(exc))
+        # A brief update the server cannot apply is a reading failure, not a context
+        # limit. The error texts are fixed server strings, never the creator's words.
+        return _request_recovery(
+            manifest,
+            prior_brief,
+            reason="request_extraction_failed",
+            cause={**_recovery_cause("apply_updates", exc), "error": str(exc)[:80]},
+        )
     effective_request = render_brief_request(effective, latest_message=user_message)
     if (
         len(outputs) > 1
