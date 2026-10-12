@@ -26,6 +26,8 @@ struct SlidePostCachedImage: View {
     /// KRI-44: the slide's crop, in the upright frame. The view this fills has the slide's canvas aspect, so what
     /// shows here is what exports. nil = plain centred cover.
     var crop: NormalizedSourceRect? = nil
+    /// KRI-606: show the whole (cropped) photo with these bars instead of covering the frame. nil = fill.
+    var fit: SlidePostFit? = nil
 
     @State private var tick = 0
     @State private var failed = false
@@ -38,7 +40,7 @@ struct SlidePostCachedImage: View {
 
     var body: some View {
         let full = resolved()
-        let lookIdentity = "\(assetID)|\(lookPreset)|\(lookCanvas.width)x\(lookCanvas.height)|\(crop.map { "\($0.x),\($0.y),\($0.width),\($0.height)" } ?? "-")|\(full.map { ObjectIdentifier($0).debugDescription } ?? "missing")"
+        let lookIdentity = "\(assetID)|\(lookPreset)|\(fit?.rawValue ?? "fill")|\(lookCanvas.width)x\(lookCanvas.height)|\(crop.map { "\($0.x),\($0.y),\($0.width),\($0.height)" } ?? "-")|\(full.map { ObjectIdentifier($0).debugDescription } ?? "missing")"
         ZStack {
             if let full {
                 if lookedIdentity == lookIdentity, let lookedImage {
@@ -69,11 +71,11 @@ struct SlidePostCachedImage: View {
         .task(id: taskID) { await load() }
         .task(id: lookIdentity) {
             lookedImage = nil; lookedIdentity = lookIdentity; lookFailed = false
-            guard lookPreset != "none", let full else { return }
+            guard lookPreset != "none" || fit != nil, let full else { return }
             do {
-                let canvas = lookCanvas, preset = lookPreset, framing = crop
+                let canvas = lookCanvas, preset = lookPreset, framing = crop, bars = fit
                 let image = try await Task.detached(priority: .userInitiated) {
-                    try SlidePostOnDeviceRender.lookedImage(full, pixels: canvas, preset: preset, crop: framing)
+                    try SlidePostOnDeviceRender.lookedImage(full, pixels: canvas, preset: preset, crop: framing, fit: bars)
                 }.value
                 guard !Task.isCancelled else { return }
                 lookedImage = image
@@ -85,13 +87,19 @@ struct SlidePostCachedImage: View {
     }
 
     @ViewBuilder private func framed(_ image: UIImage) -> some View {
-        if let crop {
+        if crop != nil || fit != nil {
             GeometryReader { proxy in
-                let rect = SlidePostFraming.placement(imageSize: image.size, crop: crop, canvas: proxy.size)
+                let rect = SlidePostFraming.placement(imageSize: image.size, crop: crop, canvas: proxy.size, fit: fit != nil)
+                // With bars, only the cropped region is the photo; the rest of the source never shows in the bars.
+                let region: CGRect? = fit != nil ? crop.map {
+                    CGRect(x: rect.minX + $0.x * rect.width, y: rect.minY + $0.y * rect.height, width: $0.width * rect.width, height: $0.height * rect.height)
+                } : nil
                 Image(uiImage: image).resizable()
                     .frame(width: rect.width, height: rect.height)
                     .offset(x: rect.minX, y: rect.minY)
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+                    .clipShape(SlidePostRegionClip(region: region))
+                    .background(fit == .white ? Color.white : Color.black)
             }
             .clipped()
         } else {
@@ -129,6 +137,12 @@ struct SlidePostCachedImage: View {
             failed = true
         }
     }
+}
+
+/// Clips to `region` (top-left, in the view's coordinates) when there is one, else leaves the frame whole.
+private struct SlidePostRegionClip: Shape {
+    let region: CGRect?
+    func path(in rect: CGRect) -> Path { Path(region.map { $0.intersection(rect) } ?? rect) }
 }
 
 private struct PreviewStateReport: ViewModifier {

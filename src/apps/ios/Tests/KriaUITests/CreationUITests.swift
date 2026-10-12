@@ -1240,7 +1240,8 @@ final class CreationUITests: XCTestCase {
     /// Contract v2: structured payloads render rich cards, a malformed payload falls back to its summary, the 8th
     /// section (post caption) shows, and the finished feed offers the ink + butter "Review your video" CTA.
     func testLivePlanFeedRendersStructuredPayloadsAndOffersReview() {
-        let app = launchLivePlanFeed(reduceMotion: true, contractV2: true)
+        // `review` also serves the Review sheet's server model, which the card's Change hand-off at the end needs.
+        let app = launchLivePlanFeed(reduceMotion: true, review: true)
         let feed = app.otherElements["plan-feed"]
         XCTAssertTrue(feed.waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["Planning your video"].waitForExistence(timeout: 10))
@@ -1275,6 +1276,16 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["plan-feed.change.captions"].isEnabled, "Change is live on a v2 server")
         attach(app, "plan-feed-v2-captions-open")
         XCTAssertFalse(app.descendants(matching: .any)["plan-feed.change.post_caption"].exists, "a post caption is display only")
+
+        // A feed card's Change opens Review with that section flagged (the card is already open above).
+        element(app, "plan-feed.change.captions").tap()
+        XCTAssertTrue(element(app, "review-chip-captions").waitForExistence(timeout: 15), "the card's Change flags that section")
+        XCTAssertTrue(eventually(timeout: 5) { self.sectionValue(app, "captions") == "flagged" })
+        XCTAssertFalse(element(app, "review-chip-music").exists)
+        // Un-flagging from the card works the same as from the chip.
+        reveal(app, "review-change-captions").tap()
+        XCTAssertTrue(eventually(timeout: 5) { !self.element(app, "review-chip-captions").exists })
+        XCTAssertFalse(element(app, "review-update-video").isEnabled)
     }
 
     func testReadyVideoFollowupWaitsWithoutReplayingPriorPlan() {
@@ -1511,23 +1522,6 @@ final class CreationUITests: XCTestCase {
         let level = fieldText(app, "review-mix-music_level")
         XCTAssertTrue(level.hasSuffix("percent") && (Int(level.split(separator: " ").first ?? "") ?? 0) <= 30, "the new mix level landed: \(level)")
         attach(app, "review-manual-edits-updated")
-    }
-
-    func testReviewPlanChangeOnAFeedCardOpensReviewWithThatSectionFlagged() {
-        let app = launchLivePlanFeed(reduceMotion: true, review: true)
-        XCTAssertTrue(app.otherElements["plan-feed"].waitForExistence(timeout: 30))
-        XCTAssertTrue(app.buttons["plan-feed-review-cta"].waitForExistence(timeout: 100))
-        app.buttons["plan-feed.block.captions"].tap()
-        let change = element(app, "plan-feed.change.captions")
-        XCTAssertTrue(change.waitForExistence(timeout: 5))
-        change.tap()
-        XCTAssertTrue(element(app, "review-chip-captions").waitForExistence(timeout: 15), "the card's Change flags that section")
-        XCTAssertTrue(eventually(timeout: 5) { self.sectionValue(app, "captions") == "flagged" })
-        XCTAssertFalse(element(app, "review-chip-music").exists)
-        // Un-flagging from the card works the same as from the chip.
-        reveal(app, "review-change-captions").tap()
-        XCTAssertTrue(eventually(timeout: 5) { !self.element(app, "review-chip-captions").exists })
-        XCTAssertFalse(element(app, "review-update-video").isEnabled)
     }
 
     func testReviewPlanOpensFromTheProjectAndKeepAsIsSendsNothing() {

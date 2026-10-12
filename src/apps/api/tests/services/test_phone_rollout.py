@@ -12,6 +12,7 @@ from app.services.phone_rollout import (
     PHONE_SUBTITLED_SFX_FEATURES,
     PHONE_SUBTITLED_VIDEO_OVERLAY_FEATURES,
     PHONE_TALKING_HEAD_FEATURES,
+    phone_guided_sfx_supported,
     phone_subtitled_editor_lanes_supported,
     phone_subtitled_overlays_supported,
     phone_subtitled_reaction_beats_supported,
@@ -1009,3 +1010,20 @@ def test_a_layer_with_both_a_non_native_effect_and_a_bad_font_reports_both_cause
     files, effects = unqualified_font_causes(recipe)
     assert files == {"Fraunces-Bold.ttf"}
     assert effects == {"lyric-line"}
+
+
+@pytest.mark.parametrize("flag", [True, False])
+@pytest.mark.parametrize("sfx_enabled", [True, False])
+@pytest.mark.parametrize(
+    "verified", [["soundEffects", "audioMix"], ["soundEffects"], ["audioMix"], []]
+)
+def test_guided_sfx_needs_the_flag_the_generic_gate_and_both_device_features(
+    monkeypatch, flag, sfx_enabled, verified
+):
+    """KRI-608: one gate for the worker, Save, capabilities, chat and creation."""
+    monkeypatch.setattr(settings, "phone_guided_sfx_enabled", flag)
+    monkeypatch.setattr(settings, "sound_effects_enabled", sfx_enabled)
+    monkeypatch.setattr(settings, "phone_render_verified_features", verified)
+    assert phone_guided_sfx_supported() is (
+        flag and sfx_enabled and verified == ["soundEffects", "audioMix"]
+    )

@@ -1546,6 +1546,7 @@
                 "visual_block",
                 "motion_scene",
                 "camera_effect",
+                "drawing",
                 "carousel",
                 "lyric_line"
               ],
@@ -1699,6 +1700,23 @@
               "maxItems": 100,
               "title": "Deletions",
               "type": "array"
+            },
+            "drawings": {
+              "anyOf": [
+                {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "maxItems": 12,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Drawings"
             },
             "editor_state_version": {
               "anyOf": [

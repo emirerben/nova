@@ -348,3 +348,103 @@ def test_writer_keeps_prior_request_when_assets_changed(
     assert run.await_args.kwargs["brief_binding"].creator_request == (
         "Keep my original title.\n\nLatest message: Add a label to the new photo."
     )
+
+
+# ---- Post size and photo fit (KRI-606) ---------------------------------------------
+
+
+def _stored_sized(ids: list[uuid.UUID]) -> SlidePostDraft:
+    return SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[
+            SlideRef(id=f"s{i}", asset_id=a, kind="image", edits=SlideEdits(fit="blur"))
+            for i, a in enumerate(ids)
+        ],
+        version=5,
+        aspect="1:1",
+    )
+
+
+def test_old_client_draft_gets_the_stored_size_and_fit_back(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = [uuid.uuid4(), uuid.uuid4()]
+    item, run = _install(monkeypatch, _stored_sized(ids), ids)
+    # An older app decoded the draft, dropped the keys it doesn't know and sent the rest.
+    old = {
+        "platform_profile": "tiktok_photo",
+        "version": 5,
+        "slides": [{"id": f"s{i}", "asset_id": str(a), "kind": "image"} for i, a in enumerate(ids)],
+        "cover_index": 0,
+        "caption": "edited in the editor",
+    }
+    assert _post(client, item, draft=old).status_code == 200
+    draft = run.await_args.kwargs["draft"]
+    assert draft.aspect == "1:1"
+    assert [s.edits.fit for s in draft.slides] == ["blur", "blur"]
+    assert draft.caption == "edited in the editor"
+
+
+def test_a_new_client_that_cleared_the_size_is_not_overridden(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = [uuid.uuid4()]
+    item, run = _install(monkeypatch, _stored_sized(ids), ids)
+    cleared = {
+        "platform_profile": "tiktok_photo",
+        "version": 5,
+        "slides": [{"id": "s0", "asset_id": str(ids[0]), "kind": "image", "edits": {"fit": None}}],
+        "aspect": None,
+    }
+    assert _post(client, item, draft=cleared).status_code == 200
+    draft = run.await_args.kwargs["draft"]
+    assert draft.aspect is None and draft.slides[0].edits.fit is None
+
+
+def test_backfill_revalidates_so_a_platform_switch_cannot_leave_a_bad_pair(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = [uuid.uuid4(), uuid.uuid4()]
+    stored = _stored_sized(ids).model_copy(update={"aspect": "9:16"})
+    item, run = _install(monkeypatch, stored, ids)
+    switched = {
+        "platform_profile": "instagram_carousel",
+        "version": 5,
+        "slides": [{"id": f"s{i}", "asset_id": str(a), "kind": "image"} for i, a in enumerate(ids)],
+    }
+    assert _post(client, item, draft=switched).status_code == 200
+    # 9:16 is not an Instagram size: it must not survive into the binding snapshot.
+    assert run.await_args.kwargs["draft"].aspect is None
+
+
+@pytest.mark.parametrize(
+    ("sizes", "framing", "protocol", "expected"),
+    [
+        (True, True, 5, True),
+        (True, True, 6, True),
+        (True, True, 4, False),  # an app that can't round-trip the fields
+        (True, True, None, False),
+        (True, False, 5, False),
+        (False, True, 5, False),
+    ],
+)
+def test_size_ops_are_offered_only_to_a_client_that_round_trips_them(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    sizes: bool,
+    framing: bool,
+    protocol: int | None,
+    expected: bool,
+) -> None:
+    ids = [uuid.uuid4()]
+    item, run = _install(monkeypatch, _stored_sized(ids), ids)
+    monkeypatch.setattr(settings, "slide_post_sizes_enabled", sizes)
+    monkeypatch.setattr(settings, "slide_post_framing_enabled", framing)
+    headers = {"X-Kria-Client-Protocol": str(protocol)} if protocol is not None else {}
+    resp = client.post(
+        f"/plan-items/{item.id}/slide-post/chat-edit",
+        json={"message": "make it square"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert run.await_args.kwargs["sizes_enabled"] is expected

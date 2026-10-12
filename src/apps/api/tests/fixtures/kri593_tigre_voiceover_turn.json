@@ -1,0 +1,465 @@
+{
+  "_source": "Prod thread f77a5c16-16d2-43a1-ad6a-5197b3e48868, turn b9a5d1e9 (2026-10-11 17:55Z), Main Creator run 3613fba8 (prompt 2026-10-08-v53). `main_creator_input` is the recorded input (music catalog trimmed, prose context dropped); `model_strategy` is the strategy the turn applied (the raw model text is redacted in the trace) minus the server-owned resolved intents, which are under `resolved_clip_intents`.",
+  "clip_subjects": {
+    "analysis-proxy-ios-8F1D55F0-5B98-49E7-962A-4D87727D0686.mp4": "wooden attic room",
+    "analysis-proxy-ios-F4DBD4B3-0C0E-42DF-A249-70F332C3F22A.mp4": "person walking on a wooden pier",
+    "analysis-proxy-ios-80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4": "kitchen interior",
+    "analysis-proxy-ios-CFBEC1AE-2523-49F2-B675-04576EAED824.mp4": "man with laptop",
+    "analysis-proxy-ios-A9859821-B374-42D6-9F07-F9C4734506C7.mp4": "bathroom interior",
+    "analysis-proxy-ios-3F6FEFE1-E931-4D3F-8DEC-1EC7300D9E0F.mp4": "wooden cabin room interior",
+    "analysis-proxy-ios-ECCB47EC-0C2C-4F64-917F-85FB8039C9D7.mp4": "river with distant houses",
+    "asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff": "bathtub with murky water"
+  },
+  "main_creator_input": {
+    "user_message": "Evet baslik suresi onemli degil",
+    "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] İngilizce altyazı eklenecek (seslendirme Türkçe kalacak)\n- [r2] [text/title] \"Tigre’de bir gün\"\n- [r3] [order/global] Kurgu nehir klibiyle başlayacak facts={\"first_clip\":\"Nehir klibi\"}\n- [r4] [timing/clip:CFBEC1AE-2523-49F2-B675-04576EAED824.mp4] Seslendirmede 'Deniz' kelimesi duyulduğunda bu klip gösterilecek\n- [r5] [timing/clip:asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff] Seslendirmede 'kırkayak' kelimesi duyulduğunda bu küvet fotoğrafı belirecek\n- [r6] [timing/clip:80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4] Seslendirmede 'mutfak' kelimesi duyulduğunda mutfak klibi gösterilecek\n- [r7] [style/global] Başlık dışında ekranda başka yazı kullanılmayacak\nLatest message: Evet baslik suresi onemli degil",
+    "conversation": [
+      {
+        "role": "assistant",
+        "content": "What are we making? Pick a format and we’ll shape it together."
+      },
+      {
+        "role": "user",
+        "content": "Seslendirmem Türkçe ama altyazılar İngilizce olsun. Başlık: “Tigre’de bir gün”. Nehir klibiyle başla. “Deniz” dediğimde Deniz’i laptop başında göster. “kırkayak” dediğimde küvet fotoğrafını göster. “mutfak” dediğimde mutfağı göster. Başlık dışında başka yazı olmasın."
+      },
+      {
+        "role": "assistant",
+        "content": "Bu düzenleme başlığını tam 3 saniye tutamıyor. Daha sade bir sürüm yapayım mı?"
+      },
+      {
+        "role": "user",
+        "content": "Evet baslik suresi onemli degil"
+      }
+    ],
+    "brief_enabled": true,
+    "reply_language": "tr",
+    "creative_copy_state": [],
+    "capability_manifest": {
+      "media": [
+        {
+          "kind": "video",
+          "label": null,
+          "media_id": "analysis-proxy-ios-8F1D55F0-5B98-49E7-962A-4D87727D0686.mp4",
+          "duration_s": 5.5
+        },
+        {
+          "kind": "video",
+          "label": null,
+          "media_id": "analysis-proxy-ios-F4DBD4B3-0C0E-42DF-A249-70F332C3F22A.mp4",
+          "duration_s": 10.0
+        },
+        {
+          "kind": "video",
+          "label": null,
+          "media_id": "analysis-proxy-ios-80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4",
+          "duration_s": 4.5
+        },
+        {
+          "kind": "video",
+          "label": null,
+          "media_id": "analysis-proxy-ios-CFBEC1AE-2523-49F2-B675-04576EAED824.mp4",
+          "duration_s": 6.0
+        },
+        {
+          "kind": "video",
+          "label": null,
+          "media_id": "analysis-proxy-ios-A9859821-B374-42D6-9F07-F9C4734506C7.mp4",
+          "duration_s": 10.0
+        },
+        {
+          "kind": "video",
+          "label": null,
+          "media_id": "analysis-proxy-ios-3F6FEFE1-E931-4D3F-8DEC-1EC7300D9E0F.mp4",
+          "duration_s": 6.0
+        },
+        {
+          "kind": "video",
+          "label": null,
+          "media_id": "analysis-proxy-ios-ECCB47EC-0C2C-4F64-917F-85FB8039C9D7.mp4",
+          "duration_s": 12.0
+        },
+        {
+          "kind": "image",
+          "label": null,
+          "media_id": "asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff",
+          "duration_s": null
+        }
+      ],
+      "limits": {
+        "max_commands": 4,
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_output_duration_s": 120.0
+      },
+      "catalog": [],
+      "item_id": "07691b68-07c4-4f1c-91b4-1cde15949547",
+      "narration": {
+        "gcs_path": "users/creator/creation-threads/thread/ios-B61D5951-267B-45F0-A3CE-F54D40715FE0.m4a",
+        "duration_s": 22.151837,
+        "generation": "1791740737051693"
+      },
+      "edit_format": "narrated_planned",
+      "capabilities": {
+        "review": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "execution": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "wide_looks": {
+          "reason": "wide_looks cannot render on the iPhone yet",
+          "available": false,
+          "reason_code": "unsupported_on_phone"
+        },
+        "transitions": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "guided_story": {
+          "reason": "this edit format or audio contract requires the native renderer",
+          "available": false,
+          "reason_code": "native_render_required"
+        },
+        "automatic_cut": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "caption_style": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "motion_scenes": {
+          "reason": "motion_scenes cannot render on the iPhone yet",
+          "available": false,
+          "reason_code": "unsupported_on_phone"
+        },
+        "native_render": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "sound_effects": {
+          "reason": "sound_effects cannot render on the iPhone yet",
+          "available": false,
+          "reason_code": "unsupported_on_phone"
+        },
+        "visual_blocks": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "auto_iteration": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "media_overlays": {
+          "reason": "media_overlays cannot render on the iPhone yet",
+          "available": false,
+          "reason_code": "unsupported_on_phone"
+        },
+        "reaction_beats": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "dispatch_render": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "set_item_intent": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "guided_voiceover": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:slides": {
+          "reason": "slides is disabled or has no production renderer for this media snapshot",
+          "available": false,
+          "reason_code": "format_unavailable"
+        },
+        "guided_auto_design": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "main_creator_agent": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_source_audio": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_still_images": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:montage": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "guided_conversation": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:slides": {
+          "reason": "slides does not render on this iPhone yet",
+          "available": false,
+          "reason_code": "phone_format_unavailable"
+        },
+        "phone_visual_videos": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:day_vlog": {
+          "reason": "day_vlog uses the guided renderer and cannot carry a voiceover",
+          "available": false,
+          "reason_code": "native_render_required"
+        },
+        "edit_format:narrated": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:montage": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "select_ready_variant": {
+          "reason": "a ready variant is required before selection",
+          "available": false,
+          "reason_code": "no_ready_variant"
+        },
+        "draft_guided_proposal": {
+          "reason": "this edit format or audio contract requires the native renderer",
+          "available": false,
+          "reason_code": "native_render_required"
+        },
+        "edit_format:subtitled": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:day_vlog": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:narrated": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:subtitled": {
+          "reason": "talking-to-camera rendering on this iPhone requires exactly one clip and no recorded voiceover",
+          "available": false,
+          "reason_code": "phone_format_unavailable"
+        },
+        "edit_format:single_hero": {
+          "reason": "single_hero uses the guided renderer and cannot carry a voiceover",
+          "available": false,
+          "reason_code": "native_render_required"
+        },
+        "edit_format:talking_head": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:single_hero": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:talking_head": {
+          "reason": "talking_head does not render on this iPhone yet",
+          "available": false,
+          "reason_code": "phone_format_unavailable"
+        },
+        "edit_format:narrated_ready": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:narrated_ready": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:narrated_planned": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "guided_direction_confirmation": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:narrated_planned": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format_pending_voiceover:narrated": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format_pending_voiceover:narrated_ready": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format_pending_voiceover:narrated_planned": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        }
+      },
+      "context_hash": "187e0f33f7c4dfbc156c60082c15dfe5575c0df5b49e8d0196d935e2aedfad84",
+      "current_edit": null,
+      "has_voiceover": true,
+      "manifest_hash": "4db7cbcc5b570723d331291f13740c08ccac50f806b9ef68cfb263840e642a5b",
+      "render_program": "native",
+      "schema_version": 1
+    }
+  },
+  "model_summary": "Harika! Başlığı 'Tigre'de bir gün' olarak ekleyeceğim. Videoyu nehir manzarasıyla başlatıp anlattığınız sıraya sadık kalarak (Deniz, mutfak) kurgulayacağım. Seslendirmede 'Kırkayak' dediğiniz anda küvet fotoğrafı ekrana gelecek. İngilizce altyazılarla birlikte plana onay veriyor musunuz?",
+  "model_strategy": {
+    "pacing": "balanced",
+    "direction": "native",
+    "rationale": "Başlık süresi kısıtlaması olmadan 'Tigre'de bir gün' başlığı plana eklendi. Kurgunun nehir klibiyle başlaması ve anlattığınız sıraya (Deniz, mutfak) göre videoların dizilmesi planlandı. Seslendirmede 'kırkayak' kelimesi geçtiği an küvet fotoğrafı görsel bir tepki (reaction beat) olarak ekranda belirecek.",
+    "edit_format": "narrated_planned",
+    "media_scope": "selected",
+    "clip_intents": [
+      {
+        "op": "order",
+        "position": "first",
+        "attribute": "Nehir klibi",
+        "intent_id": "order_start_river"
+      },
+      {
+        "op": "order",
+        "attribute": "Deniz’i laptop başında",
+        "intent_id": "order_deniz_laptop"
+      },
+      {
+        "op": "order",
+        "attribute": "küvet fotoğrafını",
+        "intent_id": "order_kirkaya_bathtub"
+      },
+      {
+        "op": "order",
+        "attribute": "mutfağı",
+        "intent_id": "order_mutfak"
+      }
+    ],
+    "caption_style": "editorial",
+    "opening_title": "Tigre’de bir gün",
+    "audio_strategy": "voiceover",
+    "reaction_beats": [
+      {
+        "beat_id": "centipede-photo",
+        "trigger": "kırkayak",
+        "visual_id": "asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff",
+        "occurrence": "first",
+        "visual_role": "photo"
+      }
+    ],
+    "render_program": "native",
+    "story_structure": [
+      "Nehir manzarası ile açılış",
+      "Deniz'in bilgisayar başında gösterilmesi",
+      "Mutfak turu ve diğer detaylar"
+    ],
+    "target_duration_s": 35,
+    "selected_media_ids": [
+      "analysis-proxy-ios-ECCB47EC-0C2C-4F64-917F-85FB8039C9D7.mp4",
+      "analysis-proxy-ios-CFBEC1AE-2523-49F2-B675-04576EAED824.mp4",
+      "analysis-proxy-ios-A9859821-B374-42D6-9F07-F9C4734506C7.mp4",
+      "analysis-proxy-ios-80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4"
+    ],
+    "video_reuse_policy": "once",
+    "optional_treatments": []
+  },
+  "resolved_clip_intents": [
+    {
+      "op": "order",
+      "status": "resolved",
+      "position": "first",
+      "attribute": "Nehir klibi",
+      "intent_id": "order_start_river",
+      "assignments": [
+        {
+          "evidence": "subject: river with distant houses; summary: wide, calm muddy river",
+          "media_id": "analysis-proxy-ios-ECCB47EC-0C2C-4F64-917F-85FB8039C9D7.mp4",
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "op": "order",
+      "status": "resolved",
+      "attribute": "Deniz’i laptop başında",
+      "intent_id": "order_deniz_laptop",
+      "assignments": [
+        {
+          "evidence": "subject: man with laptop; summary: A man named Deniz is introduced... sitting at a wooden table with a laptop",
+          "media_id": "analysis-proxy-ios-CFBEC1AE-2523-49F2-B675-04576EAED824.mp4",
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "op": "order",
+      "status": "resolved",
+      "attribute": "küvet fotoğrafını",
+      "intent_id": "order_kirkaya_bathtub",
+      "assignments": [
+        {
+          "evidence": "summary: looking for a centipede... The camera pans across the room, showing a window, a bathtub",
+          "media_id": "analysis-proxy-ios-A9859821-B374-42D6-9F07-F9C4734506C7.mp4",
+          "confidence": 0.9
+        },
+        {
+          "evidence": "subject: bathtub with murky water",
+          "media_id": "asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff",
+          "confidence": 0.9
+        }
+      ]
+    },
+    {
+      "op": "order",
+      "status": "resolved",
+      "attribute": "mutfağı",
+      "intent_id": "order_mutfak",
+      "assignments": [
+        {
+          "evidence": "subject: kitchen interior; summary: quick tour of a kitchen",
+          "media_id": "analysis-proxy-ios-80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4",
+          "confidence": 1.0
+        }
+      ]
+    }
+  ]
+}

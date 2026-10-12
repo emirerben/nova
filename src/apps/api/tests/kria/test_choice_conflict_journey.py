@@ -54,6 +54,10 @@ def _flags(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest_asyncio.fixture(autouse=True)
 async def _dispose_async_engine():
+    # The shared async engine may hold pooled connections created on an earlier test
+    # module's event loop (xdist runs modules back to back on one worker); checking one
+    # out here raises "attached to a different loop". Dispose on both sides.
+    await async_engine.dispose()
     yield
     await async_engine.dispose()
 

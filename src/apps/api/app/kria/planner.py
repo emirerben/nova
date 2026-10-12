@@ -12,6 +12,7 @@ import copy
 import functools
 import hashlib
 import json
+import math
 import re
 import time
 import unicodedata
@@ -58,6 +59,7 @@ from app.kria.brief import (
     new_requirements,
     plan_shape_from_editor_snapshot,
     render_brief_request,
+    requested_media,
     route_requirements,
 )
 from app.kria.brief_route import loose_text
@@ -68,6 +70,8 @@ from app.kria.strategy_policy import (
     check_strategy_for_runtime_v2,
     song_captions_refusal,
 )
+from app.kria.style_asks import MOMENT_SHORT_MAX_S, brief_moment_ask
+from app.kria.voiceover_clips import keep_every_voiceover_clip
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -148,14 +152,24 @@ from app.services.song_range import (
     song_range_question_text,
     takes_ambiguous_between_repeats,
 )
+from app.services.spoken_quotes import closing_quote_notice, ground_closing_quote
 
 log = structlog.get_logger()
 
 
 def _enrich_best_parts_snapshot(
-    strategy: Mapping[str, Any], media_snapshot: dict | None, brief: CreativeBrief | None
+    strategy: Mapping[str, Any],
+    media_snapshot: dict | None,
+    brief: CreativeBrief | None,
+    *,
+    closing_quote: Mapping[str, Any] | None = None,
 ) -> dict | None:
-    """Attach source-bounded footage capacity before the choice collector runs."""
+    """Attach source-bounded footage capacity before the choice collector runs.
+
+    ``closing_quote`` is ``spoken_quotes.ground_closing_quote``'s record of the line the
+    creator asked to end on (KRI-597); the brief's moment ask (KRI-596, "the best six
+    moments, each very short") lets a long take give several windows.
+    """
     if not isinstance(media_snapshot, dict):
         return media_snapshot
     from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
@@ -186,12 +200,16 @@ def _enrich_best_parts_snapshot(
     recording = media_snapshot.get("voiceover_duration_s")
     if recording is None and isinstance(media_snapshot.get("voiceover"), dict):
         recording = media_snapshot["voiceover"].get("duration_s")
+    moments = brief_moment_ask(brief)
     length_plan = build_length_plan(
         {**strategy, "voiceover_duration_s": recording},
         media_snapshot,
         creator_target_s=creator_target_s,
         selected_ids=selected,
         order_ids=contract.order_ids if contract is not None else (),
+        closing_quote=closing_quote,
+        moment_count=moments.count if moments is not None else None,
+        moment_max_s=MOMENT_SHORT_MAX_S if moments is not None and moments.short else None,
     )
     enriched = dict(media_snapshot)
     enriched["length_plan"] = length_plan
@@ -203,6 +221,74 @@ def _enrich_best_parts_snapshot(
         {"code": item["code"], "message": item["message"]} for item in length_plan["conflicts"]
     ]
     return enriched
+
+
+def _moment_count_notice(
+    strategy: Mapping[str, Any], brief: CreativeBrief | None, length_plan: object
+) -> str | None:
+    """KRI-596: the reply says so when the montage can't hold the moments asked for."""
+    ask = brief_moment_ask(brief)
+    if (
+        ask is None
+        or ask.count is None
+        or strategy.get("edit_format") != "montage"
+        or not isinstance(length_plan, Mapping)
+        or length_plan.get("window_eligible") is not True
+    ):
+        return None
+    planned = len(length_plan.get("windows") or [])
+    if planned == ask.count:
+        return None
+    return say(
+        en=f"I could fit {planned} moments, not {ask.count}.",
+        tr=f"{ask.count} değil, {planned} an sığdırabildim.",
+    )
+
+
+def _fit_music_section_to_footage(
+    section: dict[str, Any], rows: Sequence[Any], *, selected_ids: set[str]
+) -> dict[str, Any]:
+    """Trim an auto-selected song section so the footage can always fill it (KRI-600).
+
+    A frozen licensed-music section becomes the edit's length owner, so a 12-18 s
+    "best section" over one 5 s clip is unfillable and the creator is told to "add
+    longer footage" for music they never asked for. The song is a background bed: keep
+    the section's start (the matcher's best moment) and end it where the footage ends.
+
+    Only trims when the capacity is known exactly: every selected row must be a video
+    with a finite duration. Stills (synthetic holds) or unmeasured clips leave the
+    section untouched, as does a section that already fits.
+    """
+    if section.get("status") != "selected":
+        return section
+    start, end = section.get("start_s"), section.get("end_s")
+    if isinstance(start, bool) or isinstance(end, bool):
+        return section
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or end <= start:
+        return section
+    capacity = 0.0
+    counted = 0
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if selected_ids and str(row.get("media_id")) not in selected_ids:
+            continue
+        duration = row.get("duration_s")
+        if (
+            row.get("kind", "video") != "video"
+            or isinstance(duration, bool)
+            or not isinstance(duration, (int, float))
+            or not 0 < duration < float("inf")
+        ):
+            return section
+        capacity += float(duration)
+        counted += 1
+    if not counted:
+        return section
+    fitted_end = math.floor((start + capacity) * 1000) / 1000
+    if fitted_end >= end - 1e-9 or fitted_end <= start:
+        return section
+    return {**section, "end_s": fitted_end}
 
 
 async def _freeze_licensed_music_section(
@@ -262,16 +348,20 @@ async def _freeze_licensed_music_section(
         or not 0 <= start < end <= catalog_duration < float("inf")
     ):
         return {"status": "fallback_footage"}
-    return {
-        "status": "selected",
-        "track_id": str(track.id),
-        "title": str(getattr(track, "title", "")),
-        "artist": str(getattr(track, "artist", "")),
-        "start_s": float(start),
-        "end_s": float(end),
-        "catalog_duration_s": catalog_duration,
-        "beat_timestamps_s": list(getattr(track, "beat_timestamps_s", None) or []),
-    }
+    return _fit_music_section_to_footage(
+        {
+            "status": "selected",
+            "track_id": str(track.id),
+            "title": str(getattr(track, "title", "")),
+            "artist": str(getattr(track, "artist", "")),
+            "start_s": float(start),
+            "end_s": float(end),
+            "catalog_duration_s": catalog_duration,
+            "beat_timestamps_s": list(getattr(track, "beat_timestamps_s", None) or []),
+        },
+        rows,
+        selected_ids=selected,
+    )
 
 
 @dataclass(frozen=True)
@@ -1019,7 +1109,11 @@ async def _copilot_clip_context(
         log.warning("kria_copilot_brief_unavailable", thread_id=str(thread_id), exc_info=True)
     try:
         # Mirrors the sfx capability: no query when the lane is server-disabled.
-        catalog = await _sfx_catalog_rows(db) if settings.sound_effects_enabled else []
+        catalog = (
+            await _sfx_catalog_rows(db, device=variant.get("render_destination") == "device")
+            if settings.sound_effects_enabled
+            else []
+        )
         if catalog:
             context["sfx_catalog"] = catalog
     except Exception:  # noqa: BLE001 - fail closed: empty catalog => no add_sfx
@@ -1030,28 +1124,40 @@ async def _copilot_clip_context(
 SFX_CATALOG_LIMIT = 40
 
 
-async def _sfx_catalog_rows(db: AsyncSession) -> list[dict]:
+async def _sfx_catalog_rows(db: AsyncSession, *, device: bool = False) -> list[dict]:
     """Public sound-effects catalog for the copilot's add_sfx (one query).
 
     Same publish filter as GET /sound-effects. Runs in a savepoint so a DB error
     cannot poison the outer read transaction.
+
+    ``device`` (KRI-608): the edit renders on the iPhone, which plays only m4a/wav/mp3/aac
+    (`PLAYABLE_SFX_EXTENSIONS`); offering any other effect would end in a refused Save.
     """
     from app.models import SoundEffect  # noqa: PLC0415
 
+    query = (
+        select(SoundEffect)
+        .where(SoundEffect.published_at.isnot(None))
+        .where(SoundEffect.archived_at.is_(None))
+        .where(SoundEffect.status == "ready")
+        .where(SoundEffect.audio_gcs_path.isnot(None))
+    )
+    if device:
+        from sqlalchemy import or_  # noqa: PLC0415
+
+        from app.pipeline.phone_subtitled_lanes import PLAYABLE_SFX_EXTENSIONS  # noqa: PLC0415
+
+        query = query.where(
+            or_(*(SoundEffect.audio_gcs_path.ilike(f"%{ext}") for ext in PLAYABLE_SFX_EXTENSIONS))
+        )
     async with db.begin_nested():
         rows = (
             (
                 await db.execute(
-                    select(SoundEffect)
-                    .where(SoundEffect.published_at.isnot(None))
-                    .where(SoundEffect.archived_at.is_(None))
-                    .where(SoundEffect.status == "ready")
-                    .where(SoundEffect.audio_gcs_path.isnot(None))
-                    .order_by(
+                    query.order_by(
                         SoundEffect.catalog_rank.asc().nulls_last(),
                         SoundEffect.created_at.desc(),
-                    )
-                    .limit(SFX_CATALOG_LIMIT)
+                    ).limit(SFX_CATALOG_LIMIT)
                 )
             )
             .scalars()
@@ -1715,6 +1821,8 @@ async def _plan_from_creator_output(
     output: MainCreatorOutput,
     brief_request: str | None = None,
     wants_capture_order: bool = False,
+    brief_selects_clips: bool = False,
+    requested_media: Mapping[str, str] | None = None,
 ) -> PlannedKriaTurn:
     """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
     decision = getattr(output, "creative_decision", None)
@@ -1757,6 +1865,8 @@ async def _plan_from_creator_output(
         output=output,
         brief_request=brief_request,
         wants_capture_order=wants_capture_order,
+        brief_selects_clips=brief_selects_clips,
+        requested_media=requested_media,
     )
     return replace(planned, creative_copy_resolution=resolution)
 
@@ -1806,6 +1916,152 @@ def ground_pinned_texts(
     return kept, len(pins) - len(kept)
 
 
+# KRI-591: number words a creator may type for a title hold, each paired only with its own
+# language's seconds unit, so English "on second" is never Turkish ten seconds. Turkish both
+# with and without diacritics ("üç"/"uc"): phone keyboards often drop them.
+_EN_HOLD_WORDS = {
+    "one": 1.0,
+    "two": 2.0,
+    "three": 3.0,
+    "four": 4.0,
+    "five": 5.0,
+    "six": 6.0,
+    "seven": 7.0,
+    "eight": 8.0,
+    "nine": 9.0,
+    "ten": 10.0,
+}
+_TR_HOLD_WORDS = {
+    "bir": 1.0,
+    "iki": 2.0,
+    "üç": 3.0,
+    "uc": 3.0,
+    "dört": 4.0,
+    "dort": 4.0,
+    "beş": 5.0,
+    "bes": 5.0,
+    "altı": 6.0,
+    "alti": 6.0,
+    "yedi": 7.0,
+    "sekiz": 8.0,
+    "dokuz": 9.0,
+    "on": 10.0,
+}
+_HOLD_NUMBER_WORDS = {**_EN_HOLD_WORDS, **_TR_HOLD_WORDS}
+
+
+def _words(table: dict[str, float]) -> str:
+    return "|".join(sorted(table, key=len, reverse=True))
+
+
+_TAIL_HALF = r"(?!\w)(?:\s+(?P<tail>and\s+a\s+half)(?!\w))?"
+# A seconds expression: a digit number (".5" too) may touch any unit ("2s", ".5s"); a spelled
+# number needs a space or hyphen before its own language's unit, so "ones" is not "one s".
+# An optional "and a half" / "buçuk" before the unit and a trailing "and a half" add 0.5.
+_HOLD_SECONDS = (
+    re.compile(
+        r"(?<![\w.:])(?P<num>\d+(?:[.,]\d+)?|[.,]\d+)"
+        r"(?:\s+(?P<half>and\s+a\s+half|bu[çc]uk))?\s*-?\s*"
+        r"(?:s|sn|secs?|seconds?|saniye\w*|segs?|segundos?|sekunden?|secondes?|second[io])"
+        + _TAIL_HALF
+    ),
+    re.compile(
+        rf"(?<![\w.:])(?P<num>{_words(_EN_HOLD_WORDS)})(?:\s+(?P<half>and\s+a\s+half))?"
+        r"(?:\s+|\s*-\s*)(?:secs?|seconds?)" + _TAIL_HALF
+    ),
+    re.compile(
+        rf"(?<![\w.:])(?P<num>{_words(_TR_HOLD_WORDS)})(?:\s+(?P<half>bu[çc]uk))?"
+        r"\s+(?:saniye\w*|sn)(?!\w)(?P<tail>)"
+    ),
+)
+# Half-second phrases with no leading number.
+_HOLD_HALF_PHRASES = (
+    (re.compile(r"(?<!\w)(?:a\s+)?(?:second|sec)\s+and\s+a\s+half(?!\w)"), 1.5),
+    (
+        re.compile(
+            r"(?<!\w)(?:half\s+a\s+(?:second|sec)|a\s+half[\s-]+second|yar[ıi]m\s+(?:saniye\w*|sn))"
+            r"(?!\w)"
+        ),
+        0.5,
+    ),
+)
+
+
+def _stated_holds(text: str) -> list[tuple[int, int, float]]:
+    """Every seconds expression in ``text`` as (start, end, seconds)."""
+
+    holds = []
+    for match in (m for pattern in _HOLD_SECONDS for m in pattern.finditer(text)):
+        value = _HOLD_NUMBER_WORDS.get(match["num"])
+        if value is None:
+            value = float(match["num"].replace(",", "."))
+        if match["half"] or match["tail"]:
+            value += 0.5
+        holds.append((match.start(), match.end(), value))
+    for pattern, value in _HOLD_HALF_PHRASES:
+        holds.extend((match.start(), match.end(), value) for match in pattern.finditer(text))
+    return holds
+
+
+def _hold_key(text: str) -> str:
+    """`_pin_key` without the combining dot a Turkish capital "İ" casefolds into, so a
+    creator typing "SANİYE" still says "saniye"."""
+    return _pin_key(text).replace("\N{COMBINING DOT ABOVE}", "")
+
+
+def _copy_span(text: str, key: str) -> tuple[int, int] | None:
+    """Where the on-screen copy itself sits in the creator's words: its quoted occurrence,
+    else its first one. Any other occurrence is the creator speaking, not the copy
+    ('Keep the title "3 seconds" for 3 seconds')."""
+    spans = []
+    start = text.find(key)
+    while start != -1:
+        spans.append((start, start + len(key)))
+        start = text.find(key, start + 1)
+    quoted = [
+        (lo, hi)
+        for lo, hi in spans
+        if text[:lo].rstrip()[-1:] in ("'", '"') and text[hi:].lstrip()[:1] in ("'", '"')
+    ]
+    return (quoted or spans or [None])[0]
+
+
+def title_hold_grounded(
+    hold_s: float,
+    *,
+    evidence: str | None,
+    user_sources: Sequence[str],
+    strip: Sequence[str | None] = (),
+) -> bool:
+    """KRI-591: whether the creator's own words state this title hold.
+
+    The model must quote the hold (`render_intent_evidence.opening_title_duration_s`): the
+    excerpt has to be the creator's own words (a verbatim piece of one of their messages,
+    compared like pinned text) and say this number of seconds ("2 saniye", "2,5 sn",
+    "for two seconds", "3-second", "iki buçuk saniye", "a second and a half", ".5 s").
+    Seconds inside the on-screen copy's own occurrence
+    (``strip``) never count, so "3 SECONDS TO MIDNIGHT" cannot ground a 3 s hold, while
+    seconds said outside it do: 'title "3" for 3 seconds' and 'Keep the title "3 seconds"
+    for 3 seconds' both keep the stated hold. A bare count ("7 klip") is not seconds.
+    """
+
+    quoted = _pin_key(evidence or "")
+    if not quoted or not any(quoted in _pin_key(source) for source in user_sources if source):
+        return False
+    text = _hold_key(quoted)
+    copy_spans = [
+        span
+        for on_screen in strip
+        if (key := _hold_key(on_screen or "")) and (span := _copy_span(text, key)) is not None
+    ]
+    for start, end, value in _stated_holds(text):
+        if any(lo <= start and end <= hi for lo, hi in copy_spans):
+            continue
+        if abs(value - hold_s) < 1e-6:
+            return True
+    return False
+
+
 async def _plan_creator_action(
     db: AsyncSession,
     *,
@@ -1818,6 +2074,8 @@ async def _plan_creator_action(
     output: MainCreatorOutput,
     brief_request: str | None = None,
     wants_capture_order: bool = False,
+    brief_selects_clips: bool = False,
+    requested_media: Mapping[str, str] | None = None,
 ) -> PlannedKriaTurn:
     action = output.action
     if isinstance(action, ProposeStrategy):
@@ -1877,7 +2135,55 @@ async def _plan_creator_action(
                     "wasn't in your words.".strip(),
                 }
             )
+    if isinstance(action, ProposeStrategy) and action.strategy.opening_title_duration_s is not None:
+        # KRI-591: a title hold is a creator-stated setting (KRI-476 asks before a renderer
+        # drops it), so it must be the creator's own seconds, like the title is their own
+        # words. A hold the model wrote itself is dropped here, before the policy asks about
+        # a length nobody gave ("tam 3 saniye tutamıyor" on `Başlık: "Tigre'de bir gün"`).
+        hold_strategy = action.strategy
+        if not title_hold_grounded(
+            hold_strategy.opening_title_duration_s,
+            evidence=getattr(action.render_intent_evidence, "opening_title_duration_s", None),
+            user_sources=user_sources,
+            strip=(
+                hold_strategy.opening_title,
+                hold_strategy.closing_title,
+                *(hold_strategy.shot_labels or ()),
+                *(pin.text for pin in hold_strategy.pinned_texts or ()),
+            ),
+        ):
+            log.info(
+                "kria_title_hold_ungrounded",
+                thread_id=str(thread_id),
+                hold_s=hold_strategy.opening_title_duration_s,
+            )
+            action = action.model_copy(
+                update={
+                    "strategy": hold_strategy.model_copy(update={"opening_title_duration_s": None})
+                }
+            )
     if isinstance(action, ProposeStrategy):
+        # KRI-593: a Voiceover cue ("show X when I say Y") places a clip; it never
+        # chooses which clips exist. Every attached video stays unless the creator
+        # limited them (their words, any turn, or a brief `select` ask).
+        kept_clips = keep_every_voiceover_clip(
+            manifest,
+            action.strategy,
+            creator_texts=[
+                getattr(inputs, "raw_creator_request", None),
+                getattr(inputs, "creator_request", None),
+                *user_sources,
+            ],
+            brief_selects_clips=brief_selects_clips,
+        )
+        if kept_clips is not action.strategy:
+            log.info(
+                "kria_voiceover_clips_kept",
+                thread_id=str(thread_id),
+                model_selected=len(action.strategy.selected_media_ids),
+                selected=len(kept_clips.selected_media_ids),
+            )
+            action = action.model_copy(update={"strategy": kept_clips})
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
         checked = check_strategy_for_runtime_v2(
@@ -1889,6 +2195,32 @@ async def _plan_creator_action(
             **(
                 {"ask_about_stated_settings": True}
                 if settings.brief_binding_for(creator_id) and settings.kria_choice_questions_enabled
+                else {}
+            ),
+            # KRI-594/KRI-598: the creator's words ("7 klibin hepsini kullan" counts the
+            # clips) and the media their live brief asks for in any turn ("kırkayak" -> the
+            # bathtub photo). Not only a turn that still carries the guided contract needs
+            # them: the Main Creator parse drops that contract on runtime v2, and a native
+            # answer can forget the beat just the same. An "all" scope needs the words too:
+            # "use all my photos and videos" asked for the Visuals, "7 klibin hepsini kullan"
+            # only for the clips (PR 1556 review). Omitted when none applies.
+            **(
+                {
+                    # Oldest first, the latest message last: the latest scope words decide
+                    # what "all" asked for (PR 1550 review).
+                    "creator_text": "\n".join(
+                        source
+                        for source in (
+                            *user_sources[1:],
+                            *([] if user_sources[1:][-1:] == [user_message] else [user_message]),
+                        )
+                        if source
+                    ),
+                    "requested_media": dict(requested_media or {}),
+                }
+                if action.strategy.execution_contract is not None
+                or requested_media
+                or action.strategy.media_scope == "all"
                 else {}
             ),
         )
@@ -2293,6 +2625,15 @@ def _brief_wants_capture_order(brief: CreativeBrief | None) -> bool:
     return brief_view(brief).order_by_capture
 
 
+def _brief_selects_clips(brief: CreativeBrief | None) -> bool:
+    """KRI-593: does the live brief carry a which-clips ask (kind ``select``)?
+
+    It outlives the bounded chat window, so a "skip the bathroom clip" said many turns
+    ago still keeps a Voiceover edit's selection the creator's.
+    """
+    return brief is not None and any(req.kind == "select" for req in brief.live())
+
+
 def _recovery_cause(stage: str, exc: BaseException) -> dict[str, str]:
     """Which step failed and with what, for the admin turn/event views (KRI-536).
 
@@ -2303,6 +2644,17 @@ def _recovery_cause(stage: str, exc: BaseException) -> dict[str, str]:
     cause: dict[str, str] = {"stage": stage, "error_type": type(exc).__name__}
     if exc.__cause__ is not None:
         cause["cause_type"] = type(exc.__cause__).__name__
+    # KRI-586: a redacted agent failure carries a value-free ``error_class`` (field paths +
+    # error types, never values) on some link of the chain; surface it for the admin views.
+    link: BaseException | None = exc
+    for _ in range(4):
+        error_class = getattr(link, "error_class", None)
+        if isinstance(error_class, str) and error_class:
+            cause["error_class"] = error_class[:80]
+            break
+        link = link.__cause__ if link is not None else None
+        if link is None:
+            break
     return cause
 
 
@@ -2810,6 +3162,13 @@ async def _gate_unresolved_choices(
         frozen_music = await _freeze_licensed_music_section(
             db, strategy, planned.media_snapshot, job_id=str(thread_id)
         )
+    elif isinstance(frozen_music, dict):
+        # A section frozen before KRI-600 may be longer than the footage can fill.
+        frozen_music = _fit_music_section_to_footage(
+            frozen_music,
+            (planned.media_snapshot or {}).get("clip_assignments") or [],
+            selected_ids={str(v) for v in strategy.get("selected_media_ids") or []},
+        )
     if frozen_music is not None:
         strategy = {**strategy, "selected_music_section": frozen_music}
     if frozen_music is not None:
@@ -2819,9 +3178,37 @@ async def _gate_unresolved_choices(
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         planned = replace(planned, plan=plan)
         arguments = apply_intent.arguments
-    enriched_snapshot = _enrich_best_parts_snapshot(strategy, planned.media_snapshot, brief)
+    # KRI-597: "end on the moment I say '...'" -- find when the line is said before the
+    # length plan freezes the closing window, and say so plainly when nobody can.
+    closing_quote = (
+        await ground_closing_quote(strategy, planned.media_snapshot)
+        if strategy.get("edit_format") == "montage"
+        else None
+    )
+    enriched_snapshot = _enrich_best_parts_snapshot(
+        strategy, planned.media_snapshot, brief, closing_quote=closing_quote
+    )
     if enriched_snapshot is not planned.media_snapshot:
         planned = replace(planned, media_snapshot=enriched_snapshot)
+    length_plan = (
+        enriched_snapshot.get("length_plan") if isinstance(enriched_snapshot, dict) else None
+    )
+    plan_notices = [
+        notice
+        for notice in (
+            closing_quote_notice(
+                length_plan.get("closing_quote") if isinstance(length_plan, dict) else closing_quote
+            ),
+            _moment_count_notice(strategy, brief, length_plan),
+        )
+        if notice
+    ]
+    if plan_notices:
+        summary = " ".join([str(arguments.get("summary") or ""), *plan_notices]).strip()
+        arguments = {**arguments, "summary": summary[:1000]}
+        apply_intent = apply_intent.model_copy(update={"arguments": arguments})
+        plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
+        planned = replace(planned, plan=plan)
     resolution = resolve_choices(
         strategy,
         answered_brief(brief, strategy),
@@ -2889,7 +3276,10 @@ async def _gate_unresolved_choices(
         planned,
         plan=plan.model_copy(update={"intents": [rewritten, *plan.intents[1:]]}),
         media_snapshot=_enrich_best_parts_snapshot(
-            resolution.strategy, enriched_snapshot, answered_brief(brief, resolution.strategy)
+            resolution.strategy,
+            enriched_snapshot,
+            answered_brief(brief, resolution.strategy),
+            closing_quote=closing_quote,
         ),
     )
 
@@ -2914,7 +3304,10 @@ async def _plan_scoped_turn(
     """
     from app.kria import plan_review  # noqa: PLC0415
 
-    manifest, _ = await resolve_item_creator_context(db, item, persona=persona)
+    # KRI-598: runtime v2 has no guided-proposal step, so it never offers guided voiceover.
+    manifest, _ = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
 
     def _planned(plan: KriaTurnPlan) -> PlannedKriaTurn:
         return PlannedKriaTurn(
@@ -3119,7 +3512,9 @@ async def _plan_live_turn(
             item = await db.get(PlanItem, item_id, populate_existing=True)
             plan = await db.get(ContentPlan, item.content_plan_id, populate_existing=True)
             persona = await db.get(Persona, plan.persona_id, populate_existing=True)
-    manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
+    manifest, media_context = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
     # A pending creative-copy discussion must reach Main Creator, never the editor
     # shortcut (which could otherwise stage/render unrelated text before wording is
     # settled). The durable fold reads all events, not the model's bounded context.
@@ -3630,6 +4025,8 @@ async def _plan_live_turn(
         output=output,
         brief_request=effective_request,
         wants_capture_order=_brief_wants_capture_order(effective),
+        brief_selects_clips=_brief_selects_clips(effective),
+        requested_media=requested_media(effective, (media.media_id for media in manifest.media)),
     )
     return replace(
         planned,
@@ -3666,7 +4063,9 @@ async def extract_deferred_brief(
     persona = await db.get(Persona, plan.persona_id) if plan is not None else None
     if plan is None or plan.user_id != creator_id or persona is None:
         return (), None
-    manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
+    manifest, media_context = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
     prior_brief = await load_latest_brief(db, thread_id)
     inputs = await _load_creator_inputs(
         db,

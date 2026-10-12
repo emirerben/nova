@@ -374,6 +374,7 @@ private struct CreationWorkspaceView: View {
     let openAccount: () -> Void
 
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @FocusState private var composerFocused: Bool
@@ -1284,6 +1285,7 @@ private struct CreationWorkspaceView: View {
                 }
             )
                 .environmentObject(model)
+                .environment(\.dynamicTypeSize, dynamicTypeSize)
                 .presentationDetents([.large])
         }
         .sheet(item: $reviewPresentation) { presentation in

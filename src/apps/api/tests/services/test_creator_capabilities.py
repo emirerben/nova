@@ -2150,6 +2150,46 @@ def test_media_overlays_phone_capability_matrix(
         assert entry.reason_code == "unsupported_on_phone"
 
 
+@pytest.mark.parametrize(
+    "edit_format", ["subtitled", "montage", "day_vlog", "single_hero", "narrated"]
+)
+@pytest.mark.parametrize("guided_sfx_flag", [True, False])
+@pytest.mark.parametrize("sfx_enabled", [True, False])
+@pytest.mark.parametrize("has_voiceover", [True, False])
+@pytest.mark.parametrize("verified", [["soundEffects", "audioMix"], ["soundEffects"]])
+def test_sound_effects_phone_capability_matrix(
+    monkeypatch, edit_format, guided_sfx_flag, sfx_enabled, has_voiceover, verified
+) -> None:
+    """KRI-608: `sound_effects` is available on a phone manifest iff the format is a
+    guided one (montage), there is no recorded voiceover, `PHONE_GUIDED_SFX_ENABLED` and
+    the generic `sound_effects_enabled` are on, and `soundEffects` + `audioMix` are
+    verified. Talking and narrated keep the blanket `unsupported_on_phone` refusal so
+    KRI-178 reaction beats still repair a Talking SFX request exactly as before."""
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "phone_guided_sfx_enabled", guided_sfx_flag)
+    monkeypatch.setattr(capabilities.settings, "sound_effects_enabled", sfx_enabled)
+    monkeypatch.setattr(capabilities.settings, "phone_render_verified_features", list(verified))
+    manifest = _phone_manifest(
+        monkeypatch,
+        edit_format,
+        [{"media_id": "phone-a", "kind": "video"}],
+        has_voiceover=has_voiceover,
+    )
+    entry = manifest.capabilities["sound_effects"]
+    should_be_available = (
+        edit_format in {"montage", "day_vlog", "single_hero"}
+        and not has_voiceover
+        and guided_sfx_flag
+        and sfx_enabled
+        and verified == ["soundEffects", "audioMix"]
+        and manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO].available
+    )
+    if should_be_available:
+        assert entry.available is True
+    else:
+        assert entry.available is False
+
+
 def test_media_overlays_subtitled_manifest_hash_unchanged_when_lanes_flag_off(
     monkeypatch,
 ) -> None:

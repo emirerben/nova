@@ -12,6 +12,7 @@ import KriaMediaEngine
 extension Notification.Name {
     static let kriaSessionExpired = Notification.Name("kria.session-expired")
     static let kriaNativeUpdateRequired = Notification.Name("kria.native-update-required")
+    static let kriaProjectDeleted = Notification.Name("kria.project-deleted")
 }
 
 /// Process-wide, deliberately one-way state for a server-enforced native
@@ -774,6 +775,8 @@ struct EditorCommitRequest: Codable, Sendable {
     var motionScenes: [JSONValue]?
     var motionRuntimeHash: String?
     var cameraEffects: [JSONValue]?
+    /// KRI-589 freehand drawings lane (`DrawingElement` rows); nil = untouched. Needs client protocol 5.
+    var drawings: [JSONValue]?
     var carouselMoment: EditorCarouselMomentPatch
     var title: String?
     var acceptedSuggestionIDs: [String]?
@@ -785,21 +788,21 @@ struct EditorCommitRequest: Codable, Sendable {
     var deletions: [EditorDeletion]?
     var baseGeneration: String
 
-    init(timelineSlots: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionCues: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, musicTrackID: String? = nil, removeMusic: Bool = false, musicWindow: EditorCommitMusicWindow? = nil, backgroundMusic: EditorCommitBackgroundMusic? = nil, userSong: EditorCommitUserSong? = nil, lyrics: EditorCommitLyrics? = nil, orientation: String? = nil, landscapeFit: String? = nil, soundEffects: [JSONValue]? = nil, mediaOverlays: [JSONValue]? = nil, visualBlocks: [JSONValue]? = nil, motionScenes: [JSONValue]? = nil, motionRuntimeHash: String? = nil, cameraEffects: [JSONValue]? = nil, carouselMoment: EditorCarouselMomentPatch = .omitted, title: String? = nil, acceptedSuggestionIDs: [String]? = nil, copilotReceiptIDs: [UUID] = [], guidedRevision: [String: JSONValue]? = nil, guidedRevisionNumber: Int? = nil, retryGuidedRevision: Bool = false, editorStateVersion: Int? = nil, deletions: [EditorDeletion]? = nil, baseGeneration: String) {
-        self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionCues = captionCues; self.captionMeta = captionMeta; self.mix = mix; self.musicTrackID = musicTrackID; self.removeMusic = removeMusic; self.musicWindow = musicWindow; self.backgroundMusic = backgroundMusic; self.userSong = userSong; self.lyrics = lyrics; self.orientation = orientation; self.landscapeFit = landscapeFit; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.title = title; self.acceptedSuggestionIDs = acceptedSuggestionIDs; self.copilotReceiptIDs = copilotReceiptIDs; self.guidedRevision = guidedRevision; self.guidedRevisionNumber = guidedRevisionNumber; self.retryGuidedRevision = retryGuidedRevision; self.editorStateVersion = editorStateVersion; self.deletions = deletions; self.baseGeneration = baseGeneration
+    init(timelineSlots: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionCues: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, musicTrackID: String? = nil, removeMusic: Bool = false, musicWindow: EditorCommitMusicWindow? = nil, backgroundMusic: EditorCommitBackgroundMusic? = nil, userSong: EditorCommitUserSong? = nil, lyrics: EditorCommitLyrics? = nil, orientation: String? = nil, landscapeFit: String? = nil, soundEffects: [JSONValue]? = nil, mediaOverlays: [JSONValue]? = nil, visualBlocks: [JSONValue]? = nil, motionScenes: [JSONValue]? = nil, motionRuntimeHash: String? = nil, cameraEffects: [JSONValue]? = nil, drawings: [JSONValue]? = nil, carouselMoment: EditorCarouselMomentPatch = .omitted, title: String? = nil, acceptedSuggestionIDs: [String]? = nil, copilotReceiptIDs: [UUID] = [], guidedRevision: [String: JSONValue]? = nil, guidedRevisionNumber: Int? = nil, retryGuidedRevision: Bool = false, editorStateVersion: Int? = nil, deletions: [EditorDeletion]? = nil, baseGeneration: String) {
+        self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionCues = captionCues; self.captionMeta = captionMeta; self.mix = mix; self.musicTrackID = musicTrackID; self.removeMusic = removeMusic; self.musicWindow = musicWindow; self.backgroundMusic = backgroundMusic; self.userSong = userSong; self.lyrics = lyrics; self.orientation = orientation; self.landscapeFit = landscapeFit; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.drawings = drawings; self.carouselMoment = carouselMoment; self.title = title; self.acceptedSuggestionIDs = acceptedSuggestionIDs; self.copilotReceiptIDs = copilotReceiptIDs; self.guidedRevision = guidedRevision; self.guidedRevisionNumber = guidedRevisionNumber; self.retryGuidedRevision = retryGuidedRevision; self.editorStateVersion = editorStateVersion; self.deletions = deletions; self.baseGeneration = baseGeneration
     }
 
-    private enum CodingKeys: String, CodingKey { case timelineSlots = "timeline_slots"; case textElements = "text_elements"; case captionCues = "caption_cues"; case captionMeta = "caption_meta"; case mix; case musicTrackID = "music_track_id"; case removeMusic = "remove_music"; case musicWindow = "music_window"; case backgroundMusic = "background_music"; case userSong = "user_song"; case lyrics; case orientation; case landscapeFit = "landscape_fit"; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case motionRuntimeHash = "motion_runtime_hash"; case cameraEffects = "camera_effects"; case carouselMoment = "carousel_moment"; case title; case acceptedSuggestionIDs = "accepted_suggestion_ids"; case copilotReceiptIDs = "copilot_receipt_ids"; case guidedRevision = "guided_revision"; case guidedRevisionNumber = "guided_revision_number"; case retryGuidedRevision = "retry_guided_revision"; case editorStateVersion = "editor_state_version"; case deletions; case baseGeneration = "base_generation" }
+    private enum CodingKeys: String, CodingKey { case timelineSlots = "timeline_slots"; case textElements = "text_elements"; case captionCues = "caption_cues"; case captionMeta = "caption_meta"; case mix; case musicTrackID = "music_track_id"; case removeMusic = "remove_music"; case musicWindow = "music_window"; case backgroundMusic = "background_music"; case userSong = "user_song"; case lyrics; case orientation; case landscapeFit = "landscape_fit"; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case motionRuntimeHash = "motion_runtime_hash"; case cameraEffects = "camera_effects"; case drawings; case carouselMoment = "carousel_moment"; case title; case acceptedSuggestionIDs = "accepted_suggestion_ids"; case copilotReceiptIDs = "copilot_receipt_ids"; case guidedRevision = "guided_revision"; case guidedRevisionNumber = "guided_revision_number"; case retryGuidedRevision = "retry_guided_revision"; case editorStateVersion = "editor_state_version"; case deletions; case baseGeneration = "base_generation" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encodeIfPresent(timelineSlots, forKey: .timelineSlots); try c.encodeIfPresent(textElements, forKey: .textElements); try c.encodeIfPresent(captionCues, forKey: .captionCues); try c.encodeIfPresent(captionMeta, forKey: .captionMeta); try c.encodeIfPresent(mix, forKey: .mix); try c.encodeIfPresent(musicTrackID, forKey: .musicTrackID); try c.encode(removeMusic, forKey: .removeMusic); try c.encodeIfPresent(musicWindow, forKey: .musicWindow); try c.encodeIfPresent(backgroundMusic, forKey: .backgroundMusic); try c.encodeIfPresent(userSong, forKey: .userSong); try c.encodeIfPresent(lyrics, forKey: .lyrics); try c.encodeIfPresent(orientation, forKey: .orientation); try c.encodeIfPresent(landscapeFit, forKey: .landscapeFit); try c.encodeIfPresent(soundEffects, forKey: .soundEffects); try c.encodeIfPresent(mediaOverlays, forKey: .mediaOverlays); try c.encodeIfPresent(visualBlocks, forKey: .visualBlocks); try c.encodeIfPresent(motionScenes, forKey: .motionScenes); try c.encodeIfPresent(motionRuntimeHash, forKey: .motionRuntimeHash); try c.encodeIfPresent(cameraEffects, forKey: .cameraEffects)
+        try c.encodeIfPresent(timelineSlots, forKey: .timelineSlots); try c.encodeIfPresent(textElements, forKey: .textElements); try c.encodeIfPresent(captionCues, forKey: .captionCues); try c.encodeIfPresent(captionMeta, forKey: .captionMeta); try c.encodeIfPresent(mix, forKey: .mix); try c.encodeIfPresent(musicTrackID, forKey: .musicTrackID); try c.encode(removeMusic, forKey: .removeMusic); try c.encodeIfPresent(musicWindow, forKey: .musicWindow); try c.encodeIfPresent(backgroundMusic, forKey: .backgroundMusic); try c.encodeIfPresent(userSong, forKey: .userSong); try c.encodeIfPresent(lyrics, forKey: .lyrics); try c.encodeIfPresent(orientation, forKey: .orientation); try c.encodeIfPresent(landscapeFit, forKey: .landscapeFit); try c.encodeIfPresent(soundEffects, forKey: .soundEffects); try c.encodeIfPresent(mediaOverlays, forKey: .mediaOverlays); try c.encodeIfPresent(visualBlocks, forKey: .visualBlocks); try c.encodeIfPresent(motionScenes, forKey: .motionScenes); try c.encodeIfPresent(motionRuntimeHash, forKey: .motionRuntimeHash); try c.encodeIfPresent(cameraEffects, forKey: .cameraEffects); try c.encodeIfPresent(drawings, forKey: .drawings)
         switch carouselMoment { case .omitted: break; case .remove: try c.encodeNil(forKey: .carouselMoment); case let .replace(value): try c.encode(value, forKey: .carouselMoment) }
         try c.encodeIfPresent(title, forKey: .title)
         try c.encodeIfPresent(acceptedSuggestionIDs, forKey: .acceptedSuggestionIDs); if !copilotReceiptIDs.isEmpty { try c.encode(copilotReceiptIDs, forKey: .copilotReceiptIDs) }; try c.encodeIfPresent(guidedRevision, forKey: .guidedRevision); try c.encodeIfPresent(guidedRevisionNumber, forKey: .guidedRevisionNumber); if retryGuidedRevision { try c.encode(retryGuidedRevision, forKey: .retryGuidedRevision) }; try c.encodeIfPresent(editorStateVersion, forKey: .editorStateVersion); try c.encodeIfPresent(deletions, forKey: .deletions); try c.encode(baseGeneration, forKey: .baseGeneration)
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        timelineSlots = try c.decodeIfPresent([JSONValue].self, forKey: .timelineSlots); textElements = try c.decodeIfPresent([JSONValue].self, forKey: .textElements); captionCues = try c.decodeIfPresent([JSONValue].self, forKey: .captionCues); captionMeta = try c.decodeIfPresent([String: JSONValue].self, forKey: .captionMeta); mix = try c.decodeIfPresent([String: JSONValue].self, forKey: .mix); musicTrackID = try c.decodeIfPresent(String.self, forKey: .musicTrackID); removeMusic = try c.decodeIfPresent(Bool.self, forKey: .removeMusic) ?? false; musicWindow = try c.decodeIfPresent(EditorCommitMusicWindow.self, forKey: .musicWindow); backgroundMusic = try c.decodeIfPresent(EditorCommitBackgroundMusic.self, forKey: .backgroundMusic); userSong = try c.decodeIfPresent(EditorCommitUserSong.self, forKey: .userSong); lyrics = try c.decodeIfPresent(EditorCommitLyrics.self, forKey: .lyrics); orientation = try c.decodeIfPresent(String.self, forKey: .orientation); landscapeFit = try c.decodeIfPresent(String.self, forKey: .landscapeFit); soundEffects = try c.decodeIfPresent([JSONValue].self, forKey: .soundEffects); mediaOverlays = try c.decodeIfPresent([JSONValue].self, forKey: .mediaOverlays); visualBlocks = try c.decodeIfPresent([JSONValue].self, forKey: .visualBlocks); motionScenes = try c.decodeIfPresent([JSONValue].self, forKey: .motionScenes); motionRuntimeHash = try c.decodeIfPresent(String.self, forKey: .motionRuntimeHash); cameraEffects = try c.decodeIfPresent([JSONValue].self, forKey: .cameraEffects); if !c.contains(.carouselMoment) { carouselMoment = .omitted } else if try c.decodeNil(forKey: .carouselMoment) { carouselMoment = .remove } else { carouselMoment = .replace(try c.decode([String: JSONValue].self, forKey: .carouselMoment)) }; title = try c.decodeIfPresent(String.self, forKey: .title); acceptedSuggestionIDs = try c.decodeIfPresent([String].self, forKey: .acceptedSuggestionIDs); copilotReceiptIDs = try c.decodeIfPresent([UUID].self, forKey: .copilotReceiptIDs) ?? []; guidedRevision = try c.decodeIfPresent([String: JSONValue].self, forKey: .guidedRevision); guidedRevisionNumber = try c.decodeIfPresent(Int.self, forKey: .guidedRevisionNumber); retryGuidedRevision = try c.decodeIfPresent(Bool.self, forKey: .retryGuidedRevision) ?? false; editorStateVersion = try c.decodeIfPresent(Int.self, forKey: .editorStateVersion); deletions = try c.decodeIfPresent([EditorDeletion].self, forKey: .deletions); baseGeneration = try c.decodeIfPresent(String.self, forKey: .baseGeneration) ?? ""
+        timelineSlots = try c.decodeIfPresent([JSONValue].self, forKey: .timelineSlots); textElements = try c.decodeIfPresent([JSONValue].self, forKey: .textElements); captionCues = try c.decodeIfPresent([JSONValue].self, forKey: .captionCues); captionMeta = try c.decodeIfPresent([String: JSONValue].self, forKey: .captionMeta); mix = try c.decodeIfPresent([String: JSONValue].self, forKey: .mix); musicTrackID = try c.decodeIfPresent(String.self, forKey: .musicTrackID); removeMusic = try c.decodeIfPresent(Bool.self, forKey: .removeMusic) ?? false; musicWindow = try c.decodeIfPresent(EditorCommitMusicWindow.self, forKey: .musicWindow); backgroundMusic = try c.decodeIfPresent(EditorCommitBackgroundMusic.self, forKey: .backgroundMusic); userSong = try c.decodeIfPresent(EditorCommitUserSong.self, forKey: .userSong); lyrics = try c.decodeIfPresent(EditorCommitLyrics.self, forKey: .lyrics); orientation = try c.decodeIfPresent(String.self, forKey: .orientation); landscapeFit = try c.decodeIfPresent(String.self, forKey: .landscapeFit); soundEffects = try c.decodeIfPresent([JSONValue].self, forKey: .soundEffects); mediaOverlays = try c.decodeIfPresent([JSONValue].self, forKey: .mediaOverlays); visualBlocks = try c.decodeIfPresent([JSONValue].self, forKey: .visualBlocks); motionScenes = try c.decodeIfPresent([JSONValue].self, forKey: .motionScenes); motionRuntimeHash = try c.decodeIfPresent(String.self, forKey: .motionRuntimeHash); cameraEffects = try c.decodeIfPresent([JSONValue].self, forKey: .cameraEffects); drawings = try c.decodeIfPresent([JSONValue].self, forKey: .drawings); if !c.contains(.carouselMoment) { carouselMoment = .omitted } else if try c.decodeNil(forKey: .carouselMoment) { carouselMoment = .remove } else { carouselMoment = .replace(try c.decode([String: JSONValue].self, forKey: .carouselMoment)) }; title = try c.decodeIfPresent(String.self, forKey: .title); acceptedSuggestionIDs = try c.decodeIfPresent([String].self, forKey: .acceptedSuggestionIDs); copilotReceiptIDs = try c.decodeIfPresent([UUID].self, forKey: .copilotReceiptIDs) ?? []; guidedRevision = try c.decodeIfPresent([String: JSONValue].self, forKey: .guidedRevision); guidedRevisionNumber = try c.decodeIfPresent(Int.self, forKey: .guidedRevisionNumber); retryGuidedRevision = try c.decodeIfPresent(Bool.self, forKey: .retryGuidedRevision) ?? false; editorStateVersion = try c.decodeIfPresent(Int.self, forKey: .editorStateVersion); deletions = try c.decodeIfPresent([EditorDeletion].self, forKey: .deletions); baseGeneration = try c.decodeIfPresent(String.self, forKey: .baseGeneration) ?? ""
     }
 }
 
@@ -807,9 +810,11 @@ struct EditorCommitSections: Codable, Sendable, Equatable {
     var textElements: Bool; var captionMeta: Bool; var timeline: Bool; var mix: Bool; var captionCues: Bool; var music: Bool; var backgroundMusic: Bool; var lyrics: Bool; var orientation: Bool; var landscapeFit: Bool; var soundEffects: Bool; var mediaOverlays: Bool; var visualBlocks: Bool; var motionScenes: Bool; var cameraEffects: Bool; var carouselMoment: Bool; var title: Bool
     /// KRI-428: echoed by servers that know the user_song section; absent = false.
     var userSong: Bool = false
+    /// KRI-589: echoed by servers that know the drawings section; absent = false.
+    var drawings: Bool = false
     init(textElements: Bool, captionMeta: Bool, timeline: Bool, mix: Bool, captionCues: Bool = false, music: Bool = false, backgroundMusic: Bool = false, lyrics: Bool = false, orientation: Bool = false, landscapeFit: Bool = false, soundEffects: Bool = false, mediaOverlays: Bool = false, visualBlocks: Bool = false, motionScenes: Bool = false, cameraEffects: Bool = false, carouselMoment: Bool = false, title: Bool = false) { self.textElements = textElements; self.captionMeta = captionMeta; self.timeline = timeline; self.mix = mix; self.captionCues = captionCues; self.music = music; self.backgroundMusic = backgroundMusic; self.lyrics = lyrics; self.orientation = orientation; self.landscapeFit = landscapeFit; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.title = title }
-    private enum CodingKeys: String, CodingKey { case textElements = "text_elements"; case captionMeta = "caption_meta"; case timeline, mix; case captionCues = "caption_cues"; case music; case backgroundMusic = "background_music"; case lyrics, orientation; case landscapeFit = "landscape_fit"; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case cameraEffects = "camera_effects"; case carouselMoment = "carousel_moment"; case title; case userSong = "user_song" }
-    init(from decoder: Decoder) throws { let c = try decoder.container(keyedBy: CodingKeys.self); userSong = try c.decodeIfPresent(Bool.self, forKey: .userSong) ?? false; textElements = try c.decodeIfPresent(Bool.self, forKey: .textElements) ?? false; captionMeta = try c.decodeIfPresent(Bool.self, forKey: .captionMeta) ?? false; timeline = try c.decodeIfPresent(Bool.self, forKey: .timeline) ?? false; mix = try c.decodeIfPresent(Bool.self, forKey: .mix) ?? false; captionCues = try c.decodeIfPresent(Bool.self, forKey: .captionCues) ?? false; music = try c.decodeIfPresent(Bool.self, forKey: .music) ?? false; backgroundMusic = try c.decodeIfPresent(Bool.self, forKey: .backgroundMusic) ?? false; lyrics = try c.decodeIfPresent(Bool.self, forKey: .lyrics) ?? false; orientation = try c.decodeIfPresent(Bool.self, forKey: .orientation) ?? false; landscapeFit = try c.decodeIfPresent(Bool.self, forKey: .landscapeFit) ?? false; soundEffects = try c.decodeIfPresent(Bool.self, forKey: .soundEffects) ?? false; mediaOverlays = try c.decodeIfPresent(Bool.self, forKey: .mediaOverlays) ?? false; visualBlocks = try c.decodeIfPresent(Bool.self, forKey: .visualBlocks) ?? false; motionScenes = try c.decodeIfPresent(Bool.self, forKey: .motionScenes) ?? false; cameraEffects = try c.decodeIfPresent(Bool.self, forKey: .cameraEffects) ?? false; carouselMoment = try c.decodeIfPresent(Bool.self, forKey: .carouselMoment) ?? false; title = try c.decodeIfPresent(Bool.self, forKey: .title) ?? false }
+    private enum CodingKeys: String, CodingKey { case textElements = "text_elements"; case captionMeta = "caption_meta"; case timeline, mix; case captionCues = "caption_cues"; case music; case backgroundMusic = "background_music"; case lyrics, orientation; case landscapeFit = "landscape_fit"; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case cameraEffects = "camera_effects"; case carouselMoment = "carousel_moment"; case title; case userSong = "user_song"; case drawings }
+    init(from decoder: Decoder) throws { let c = try decoder.container(keyedBy: CodingKeys.self); userSong = try c.decodeIfPresent(Bool.self, forKey: .userSong) ?? false; drawings = try c.decodeIfPresent(Bool.self, forKey: .drawings) ?? false; textElements = try c.decodeIfPresent(Bool.self, forKey: .textElements) ?? false; captionMeta = try c.decodeIfPresent(Bool.self, forKey: .captionMeta) ?? false; timeline = try c.decodeIfPresent(Bool.self, forKey: .timeline) ?? false; mix = try c.decodeIfPresent(Bool.self, forKey: .mix) ?? false; captionCues = try c.decodeIfPresent(Bool.self, forKey: .captionCues) ?? false; music = try c.decodeIfPresent(Bool.self, forKey: .music) ?? false; backgroundMusic = try c.decodeIfPresent(Bool.self, forKey: .backgroundMusic) ?? false; lyrics = try c.decodeIfPresent(Bool.self, forKey: .lyrics) ?? false; orientation = try c.decodeIfPresent(Bool.self, forKey: .orientation) ?? false; landscapeFit = try c.decodeIfPresent(Bool.self, forKey: .landscapeFit) ?? false; soundEffects = try c.decodeIfPresent(Bool.self, forKey: .soundEffects) ?? false; mediaOverlays = try c.decodeIfPresent(Bool.self, forKey: .mediaOverlays) ?? false; visualBlocks = try c.decodeIfPresent(Bool.self, forKey: .visualBlocks) ?? false; motionScenes = try c.decodeIfPresent(Bool.self, forKey: .motionScenes) ?? false; cameraEffects = try c.decodeIfPresent(Bool.self, forKey: .cameraEffects) ?? false; carouselMoment = try c.decodeIfPresent(Bool.self, forKey: .carouselMoment) ?? false; title = try c.decodeIfPresent(Bool.self, forKey: .title) ?? false }
 }
 struct EditorCommitResponse: Codable, Sendable {
     let ok: Bool
@@ -924,7 +929,15 @@ private enum KriaClientProtocolContract {
     /// KRI-465 needed no bump: the server sends that title without `read_only`
     /// (editable through the ordinary text paths) to the same protocol-4 builds,
     /// and `read_only` remains its kill-switch shape.
-    static let version = 4
+    ///
+    /// 5 (KRI-606): round-trips the slide post's size (`aspect`) and per-photo Fit, so the server may offer
+    /// the `set_post_aspect` / `set_slide_fit` chat ops. An older build would drop both keys on its next
+    /// save, so the server withholds those ops (and the Size sheet's capability) from it.
+    ///
+    /// 6 (KRI-589): understands the `drawings` editor lane and the recipe's `drawingLayers`. The server
+    /// answers 426 `client_update_required` to older builds for a variant that has drawings. It is its own
+    /// number because a build with only the protocol-5 slide work cannot decode drawings.
+    static let version = 6
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1351,7 +1364,11 @@ struct KriaAPI: KriaAPIClient {
             // Surface that machine code too, so a caller can distinguish e.g.
             // `speech_cleanup_pending` from an ordinary revision conflict.
             let problem = Self.decodeProblem(from: data)
-            throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message, code: problem?.code))
+            // KRI-609: routes such as `auth/mobile/exchange` refuse with an object
+            // `{"detail": {"code", "message"}}`. Read it last, so the string detail
+            // and the problem envelope above keep precedence.
+            let coded = Self.decodeCodedDetail(from: data)
+            throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message ?? coded?.message, code: problem?.code ?? coded?.code))
         }
         guard (200..<300).contains(http.statusCode) else {
             if await signalNativeUpdateRequiredIfNeeded(data: data, response: http) {
@@ -1434,6 +1451,14 @@ struct KriaAPI: KriaAPIClient {
         guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let problem = body["problem"] as? [String: Any] else { return nil }
         return (problem["code"] as? String, problem["message"] as? String)
+    }
+    /// Decodes FastAPI's object detail (`{"detail": {"code", "message"}}`), e.g. the
+    /// `provider_link_required` refusal from `auth/mobile/exchange`. Nil for the
+    /// string `detail` and validation-list shapes `decodeDetail` reads.
+    private static func decodeCodedDetail(from data: Data) -> (code: String?, message: String?)? {
+        guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let detail = body["detail"] as? [String: Any] else { return nil }
+        return (detail["code"] as? String, detail["message"] as? String)
     }
 }
 enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
@@ -1769,9 +1794,10 @@ enum APIError: Error, LocalizedError, Equatable {
     static let conflict = APIError.conflict(detail: ConflictDetail(nil))
     /// The server's human-readable reason for a conflict, if it sent one.
     var conflictDetail: String? { if case let .conflict(detail) = self { detail.message } else { nil } }
-    /// The runtime-v2 `KriaProblem.code` for this conflict, if the server sent
-    /// that envelope (e.g. `speech_cleanup_pending` from the approval decision
-    /// endpoint). Nil for the legacy `{"detail": "..."}` string shape.
+    /// The machine code for this conflict: the runtime-v2 `KriaProblem.code`
+    /// (e.g. `speech_cleanup_pending` from the approval decision endpoint) or an
+    /// object detail's `code` (e.g. `provider_link_required` from sign-in).
+    /// Nil for the legacy `{"detail": "..."}` string shape.
     var conflictCode: String? { if case let .conflict(detail) = self { detail.code } else { nil } }
     /// The server's human-readable reason for a non-2xx failure, if it sent
     /// one. Additive: most call sites still only care about `status`.
@@ -1819,8 +1845,9 @@ struct RequestFailureDetail: Equatable, Sendable, CustomStringConvertible {
 /// the detail is context for the UI and never changes which conflict checks match.
 struct ConflictDetail: Equatable, Sendable, CustomStringConvertible {
     let message: String?
-    /// The runtime-v2 `KriaProblem.code`, when the server sent that envelope
-    /// instead of the legacy `detail` string. See `decodeProblem`.
+    /// The runtime-v2 `KriaProblem.code` or an object detail's `code`, when the
+    /// server sent one instead of the legacy `detail` string. See `decodeProblem`
+    /// and `decodeCodedDetail`.
     let code: String?
     init(_ message: String?, code: String? = nil) {
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2047,7 +2074,7 @@ extension DraftSnapshot {
                 "caption_margin_v", "caption_y_frac",
                 "music_track_id", "music_window", "background_music", "lyrics", "orientation", "landscape_fit",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
-                "motion_runtime_hash", "camera_effects", "carousel_moment",
+                "motion_runtime_hash", "camera_effects", "drawings", "carousel_moment",
             ]
             // A chat-authored editor draft (kind `editor`, flat commit-shaped
             // lane keys) carries its edited lanes in `sections`. The rendered
@@ -2199,6 +2226,7 @@ extension DraftSnapshot {
         ("media_overlays", .mediaOverlays, ["media_overlays"]), ("visual_blocks", .visualBlocks, ["visual_blocks"]),
         ("motion_scenes", .motionScenes, ["motion_scenes", "motion_runtime_hash"]),
         ("camera_effects", .cameraEffects, ["camera_effects"]),
+        ("drawings", .drawings, ["drawings"]),
         ("carousel_moment", .carouselMoment, ["carousel_moment"]), ("title", .title, ["title"]),
     ]
 

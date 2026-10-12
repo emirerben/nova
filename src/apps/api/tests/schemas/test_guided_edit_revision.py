@@ -486,3 +486,52 @@ def test_a_creator_song_edit_is_hashed_validated_and_round_trips() -> None:
     ):
         with pytest.raises(ValueError):
             normalize_guided_editor_revision(_revision(user_song=bad))
+
+
+# ---- KRI-589: the drawings lane must not move any existing revision's hash -------------
+
+
+def _rich_revision() -> dict:
+    return _revision(
+        text_elements=[{"id": "t1", "text": "Hi", "start_s": 0.0, "end_s": 1.5}],
+        sound_effects=[{"id": "s1", "at_s": 0.5, "sound_effect_id": "pop"}],
+        caption_meta={"style": "word"},
+    )
+
+
+def test_a_revision_without_drawings_hashes_exactly_as_before_the_lane_existed() -> None:
+    """Frozen on the pre-drawings schema. In-flight render receipts pin ``state_hash`` and
+    ``lane_hashes``, so the new lane has to be absent from both while it is empty."""
+    for explicit in ({}, {"drawings": []}):
+        normalized = normalize_guided_editor_revision({**_rich_revision(), **explicit})
+        assert normalized["state_hash"] == (
+            "044e9701af268c8a4e3e700923f2fdf1ec820ae00995860fb481c9933a6b104b"
+        )
+        assert "drawings" not in normalized
+        assert "drawings" not in normalized["lane_hashes"]
+        # ...and a revision stored before the lane existed still validates and re-hashes.
+        assert (
+            GuidedEditorRevision.model_validate(normalized).state_hash == normalized["state_hash"]
+        )
+
+
+def test_a_revision_with_a_drawing_hashes_it_and_round_trips() -> None:
+    drawing = {
+        "id": "d1",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "canvas_aspect": 0.5625,
+        "strokes": [{"color": "#FF3B30", "width_frac": 0.01, "points": [[0.1, 0.1], [0.2, 0.2]]}],
+    }
+    normalized = normalize_guided_editor_revision({**_rich_revision(), "drawings": [drawing]})
+    assert normalized["drawings"] == [drawing]
+    assert "drawings" in normalized["lane_hashes"]
+    assert normalized["state_hash"] != (
+        "044e9701af268c8a4e3e700923f2fdf1ec820ae00995860fb481c9933a6b104b"
+    )
+    assert GuidedEditorRevision.model_validate(normalized).drawings == [drawing]
+    # A drawing id is part of the revision's cross-lane identity namespace.
+    with pytest.raises(ValueError, match="unique across lanes"):
+        normalize_guided_editor_revision(
+            {**_rich_revision(), "drawings": [{**drawing, "id": "t1"}]}
+        )

@@ -62,6 +62,43 @@ def _stated_media_count(normalized: str) -> int | None:
     return None
 
 
+def stated_media_counts(request: str) -> set[int]:
+    """Every media quantity the creator states: "7 clips", "all 30", "7 klibin" (KRI-594)."""
+
+    normalized = " ".join(str(request or "").casefold().split())
+    counts = {
+        int(count)
+        for count in re.findall(
+            rf"\b(\d{{1,4}})\s+(?:of\s+(?:the|my|your)\s+)?{_MEDIA_COUNT_NOUN}\b", normalized
+        )
+    }
+    english = _stated_media_count(normalized)
+    if english is not None:
+        counts.add(english)
+    counts.update(turkish_stated_media_counts(request))
+    return counts
+
+
+def latest_scope_counts_own_clips(creator_text: str, own_clip_count: int) -> bool:
+    """Whether "all" meant just the project's own clips, by the creator's LATEST scope words.
+
+    ``creator_text`` is the creator's words oldest first, one message per line. The last line
+    that states a media count or an all-media scope decides (PR 1550 review): an older "use 7
+    clips" never overrides a later "use all my photos and videos", nor the other way round.
+    """
+
+    # Lazy: main_creator imports this module.
+    from app.agents.main_creator import _explicit_media_scope_from_request  # noqa: PLC0415
+
+    for line in reversed(str(creator_text or "").splitlines()):
+        counts = stated_media_counts(line)
+        if counts:
+            return counts == {own_clip_count}
+        if _explicit_media_scope_from_request(line) == "all":
+            return False
+    return False
+
+
 def _attached_media_count(manifest: Any) -> int:
     """Count of non-asset media (video/image) attached to this manifest."""
 
@@ -145,6 +182,10 @@ def states_explicit_media_narrowing_cue(request: str) -> bool:
 CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
 CAPABILITY_GUIDED_VOICEOVER = "guided_voiceover"
 GUIDED_VOICEOVER_EXECUTION_CONTRACT = "guided_voiceover_v1"
+# KRI-598: `guided_voiceover`'s reason code on a manifest resolved for a planner with no
+# guided-proposal step (runtime v2). There a recorded voiceover is always the native edit
+# over the project's own clips, and Visuals reach it only as reaction beats.
+GUIDED_VOICEOVER_NATIVE_ONLY_CODE = "native_voiceover_only"
 CAPABILITY_PHONE_SOURCE_AUDIO = "phone_source_audio"
 # Each is present only on phone manifests whose device engine is verified for
 # that kind of Visuals media. The capability resolver reads that setting; this
@@ -168,6 +209,45 @@ def _requires_guided_voiceover(
         and strategy.execution_contract == GUIDED_VOICEOVER_EXECUTION_CONTRACT
         and (strategy.mixed_media_timing is not None or strategy.media_scope == "all")
     )
+
+
+def native_voiceover_only(manifest: ResolvedCreatorManifest) -> bool:
+    """KRI-598: a recorded voiceover that can only ever be the native edit (runtime v2)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
+    return bool(
+        manifest.has_voiceover
+        and capability is not None
+        and capability.reason_code == GUIDED_VOICEOVER_NATIVE_ONLY_CODE
+    )
+
+
+def native_voiceover_all_scope(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> bool:
+    """KRI-598: "use all my clips" on a native-only voiceover edit: every own clip.
+
+    The server's scope reader turns "7 klibin hepsini kullan" into ``media_scope: "all"``.
+    Without this reading the boundary refused that strategy on every retry (an all-media
+    voiceover needed the guided contract), so the turn could only end in that contract or
+    in a failure.
+    """
+
+    return bool(
+        strategy.media_scope == "all"
+        and strategy.execution_contract is None
+        and native_voiceover_only(manifest)
+    )
+
+
+def own_video_ids(manifest: ResolvedCreatorManifest) -> list[str]:
+    """The project's own clips, in manifest order: what a native voiceover edit plays."""
+
+    return [
+        media.media_id
+        for media in manifest.media
+        if media.kind == "video" and not media.media_id.startswith("asset-")
+    ]
 
 
 class MixedMediaTimingUnavailableError(ValueError):
@@ -265,10 +345,18 @@ def effective_render_program(
     strategy: CreativeStrategy,
     *,
     allow_missing_format_capability: bool = False,
+    model_boundary: bool = False,
 ) -> str:
-    """Resolve the renderer without importing runtime settings or services."""
+    """Resolve the renderer without importing runtime settings or services.
+
+    ``model_boundary`` is the Main Creator parse (``repair_model_output``): there a
+    refusal only makes the model retry, so a refusal the model cannot fix waits for the
+    planner's own policy check, which asks the creator instead.
+    """
 
     strategy_format = coerce_edit_format(strategy.edit_format)
+    native_only = native_voiceover_only(manifest)
+    native_all = native_voiceover_all_scope(manifest, strategy)
     format_capability = manifest.capabilities.get(f"edit_format:{strategy_format}")
     if format_capability is None and not allow_missing_format_capability:
         raise ValueError(f"edit format {strategy_format!r} is unavailable")
@@ -405,9 +493,17 @@ def effective_render_program(
                 and media.media_id not in source_ids
             )
 
+        # KRI-598: "all" on a native-only voiceover edit is the project's own clips;
+        # Visuals reach that edit only as reaction beats.
+        all_scope_ids = (
+            set(own_video_ids(manifest))
+            if native_all
+            else {media.media_id for media in manifest.media}
+            if strategy.media_scope == "all"
+            else set()
+        )
         if any(
-            not phone_renderable(media)
-            and (strategy.media_scope == "all" or media.media_id in selected_ids)
+            not phone_renderable(media) and media.media_id in all_scope_ids | selected_ids
             for media in manifest.media
         ):
             raise PhoneMediaUnavailableError(
@@ -418,8 +514,24 @@ def effective_render_program(
     guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
     guided_voiceover = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
     guided_voiceover_requested = _requires_guided_voiceover(manifest, strategy)
+    if native_only:
+        # KRI-598: this planner can never run the guided contract. The Main Creator
+        # parse drops one before it gets here; any other caller is refused with the
+        # capability's reason.
+        if strategy.execution_contract is not None:
+            raise MixedMediaTimingUnavailableError(
+                (guided_voiceover.reason if guided_voiceover is not None else None)
+                or "guided_voiceover_v1 is unavailable here: leave execution_contract unset"
+            )
+        if strategy.mixed_media_timing is not None and not model_boundary:
+            # Read from the creator's words, so the model cannot drop it: the planner's
+            # policy check asks the creator instead of the parse failing every retry.
+            raise MixedMediaTimingUnavailableError(
+                "exact photo and video timing cannot be kept on a native voiceover edit"
+            )
     if (
         manifest.has_voiceover
+        and not native_only
         and (strategy.mixed_media_timing is not None or strategy.media_scope == "all")
         and not guided_voiceover_requested
         and not (
@@ -448,7 +560,7 @@ def effective_render_program(
             )
             raise MixedMediaTimingUnavailableError(reason)
         return "guided"
-    if strategy.media_scope == "all":
+    if strategy.media_scope == "all" and not native_all:
         if not (guided and guided.available):
             raise MixedMediaTimingUnavailableError(
                 "all-media scope requires the guided proposal capability"
@@ -652,6 +764,7 @@ def normalize_creator_strategy_media(
         manifest,
         strategy,
         allow_missing_format_capability=repair_model_output,
+        model_boundary=repair_model_output,
     )
     manifest_ids = {media.media_id for media in manifest.media}
     unknown = [media_id for media_id in strategy.selected_media_ids if media_id not in manifest_ids]
@@ -697,11 +810,17 @@ def normalize_creator_strategy_media(
             media.media_id for media in manifest.media if not media.media_id.startswith("asset-")
         ]
         native_id_set = set(native_ids)
-        selected_media_ids = list(
-            dict.fromkeys(
-                media_id for media_id in strategy.selected_media_ids if media_id in native_id_set
-            )
-        )[:MAX_MAIN_CREATOR_SELECTED_MEDIA]
+        if native_voiceover_all_scope(manifest, strategy):
+            # KRI-598: "all" is every own clip, never the subset the model happened to list.
+            selected_media_ids = own_video_ids(manifest)[:MAX_MAIN_CREATOR_SELECTED_MEDIA]
+        else:
+            selected_media_ids = list(
+                dict.fromkeys(
+                    media_id
+                    for media_id in strategy.selected_media_ids
+                    if media_id in native_id_set
+                )
+            )[:MAX_MAIN_CREATOR_SELECTED_MEDIA]
         if not selected_media_ids and repair_model_output:
             selected_media_ids = native_ids[:MAX_MAIN_CREATOR_SELECTED_MEDIA]
         if not selected_media_ids:
@@ -969,6 +1088,7 @@ __all__ = [
     "CAPABILITY_DRAFT_GUIDED_PROPOSAL",
     "CAPABILITY_GUIDED_VOICEOVER",
     "GUIDED_VOICEOVER_EXECUTION_CONTRACT",
+    "GUIDED_VOICEOVER_NATIVE_ONLY_CODE",
     "STRICT_CREATOR_FORMATS",
     "MixedMediaTimingUnavailableError",
     "MontageCadenceUnavailableError",
@@ -976,7 +1096,10 @@ __all__ = [
     "PhoneMediaUnavailableError",
     "effective_render_program",
     "explicit_scope_from_stated_media_count",
+    "native_voiceover_all_scope",
+    "native_voiceover_only",
     "normalize_creator_strategy_media",
+    "own_video_ids",
     "repair_creator_strategy_shape",
     "states_explicit_media_narrowing_cue",
 ]

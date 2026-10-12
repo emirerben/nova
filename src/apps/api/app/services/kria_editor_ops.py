@@ -40,6 +40,8 @@ from app.routes.generative_jobs import (
     _guided_v2_layouts,
     _guided_v2_revision,
     _guided_v2_slot_rows,
+    is_phone_subtitled_editor_variant,
+    is_phone_voiceover_lane_variant,
     variant_render_baseline,
     visual_block_variant_duration,
 )
@@ -618,16 +620,32 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         guided_native and _has_label_lane(job, variant)
     ):
         families.append("visual_media")
-    # Phone recipes do not render the sound-effect or camera-effect lanes yet
-    # (KRI-114 Phase 4): the phone compiler rejects them at commit, so a
-    # device-rendered variant must not advertise families that can only end
-    # in a 422 unsupported_phone_edit.
+    # A device-rendered variant must not advertise a family that can only end in a
+    # 422 unsupported_phone_edit. `caps` is already the clamped capability map
+    # (`generative_jobs._clamp_phone_editor_capabilities`), which keeps `sfx` open only
+    # where Save compiles it into the phone recipe (Talking, Voiceover, and guided /
+    # montage with PHONE_GUIDED_SFX_ENABLED), so it is the single gate here too (KRI-608).
+    # The phone has no camera-effect lane yet (KRI-114 Phase 4).
     on_device = variant.get("render_destination") == "device"
-    if caps.get("sfx") is True and not on_device:
+    if caps.get("sfx") is True and not _sfx_base_missing(variant):
         families.append("sfx")
     if caps.get("camera_effects") is True and not on_device:
         families.append("effect")
     return sorted(set(families) & _PORTABLE_FAMILIES)
+
+
+def _sfx_base_missing(variant: dict[str, Any]) -> bool:
+    """True for a Talking / Voiceover device variant whose current effects are not on the row.
+
+    Those variants carry their effects only in the pinned recipe until an editor Save
+    persists ``sound_effects`` (the HTTP read paths backfill it; the chat draft base does
+    not). Offering ``add_sfx`` from that empty base would Save only the new effect and
+    silently drop the ones already playing, and ``patch_sfx`` / ``remove_sfx`` indexes
+    would not line up. Chat opens ``sfx`` there once a Save has written the key.
+    """
+    if "sound_effects" in variant:
+        return False
+    return is_phone_subtitled_editor_variant(variant) or is_phone_voiceover_lane_variant(variant)
 
 
 def _audio_notes(job: Any, variant: dict[str, Any]) -> list[str]:
@@ -968,6 +986,16 @@ def build_editor_snapshot(
             for index, row in enumerate(variant.get("camera_effects") or [])
             if isinstance(row, dict)
         ]
+    drawings = [row for row in variant.get("drawings") or [] if isinstance(row, dict)]
+    if drawings:
+        # Read-only context (KRI-589): no op family edits freehand drawings, so the model is
+        # only told they exist and when, never given their strokes.
+        snapshot["drawings"] = {
+            "count": len(drawings),
+            "windows": [
+                {"start_s": row.get("start_s"), "end_s": row.get("end_s")} for row in drawings
+            ],
+        }
     guided = _guided_v2_revision(job, variant)
     if guided is not None:
         snapshot["guided_revision"] = {
@@ -1112,7 +1140,9 @@ def project_editor_draft(
         }
     # KRI-219: full-replacement lanes (same wire shape the snapshot/compile read)
     # so a turn-2 add/patch/remove indexes the turn-1 draft, not the pre-draft list.
-    for key in ("sound_effects", "camera_effects"):
+    # KRI-589: `drawings` rides along read-only: no op edits it, but a turn-2 snapshot (and the
+    # draft a chat edit hands back) must see the creator's unsaved drawings, not drop them.
+    for key in ("sound_effects", "camera_effects", "drawings"):
         if payload.get(key) is not None:
             projected[key] = copy.deepcopy(payload[key])
     mix = payload.get("mix")

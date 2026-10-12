@@ -173,5 +173,170 @@
       "zoom": 1.0,
       "expected": null
     }
-  ]
+  ],
+  "fit_placements": [
+    {
+      "name": "fit_landscape_photo_in_4x5",
+      "image": [
+        4000,
+        3000
+      ],
+      "crop": null,
+      "canvas": [
+        1080,
+        1350
+      ],
+      "expected": [
+        0.0,
+        270.0,
+        1080.0,
+        810.0
+      ]
+    },
+    {
+      "name": "fit_portrait_photo_in_wide_1_91",
+      "image": [
+        3000,
+        4000
+      ],
+      "crop": null,
+      "canvas": [
+        1080,
+        566
+      ],
+      "expected": [
+        327.75,
+        0.0,
+        424.5,
+        566.0
+      ]
+    },
+    {
+      "name": "fit_quad_crop_in_square",
+      "image": [
+        2000,
+        2000
+      ],
+      "crop": {
+        "x": 0,
+        "y": 0,
+        "width": 0.5,
+        "height": 0.5
+      },
+      "canvas": [
+        1080,
+        1080
+      ],
+      "expected": [
+        0.0,
+        0.0,
+        2160.0,
+        2160.0
+      ]
+    },
+    {
+      "name": "fit_portrait_photo_in_landscape_slide",
+      "image": [
+        3000,
+        4000
+      ],
+      "crop": null,
+      "canvas": [
+        1920,
+        1080
+      ],
+      "expected": [
+        555.0,
+        0.0,
+        810.0,
+        1080.0
+      ]
+    },
+    {
+      "name": "fit_landscape_photo_in_3x4",
+      "image": [
+        4000,
+        3000
+      ],
+      "crop": null,
+      "canvas": [
+        1080,
+        1440
+      ],
+      "expected": [
+        0.0,
+        315.0,
+        1080.0,
+        810.0
+      ]
+    },
+    {
+      "name": "fit_middle_crop_in_4x5",
+      "image": [
+        4000,
+        3000
+      ],
+      "crop": {
+        "x": 0.25,
+        "y": 0,
+        "width": 0.5,
+        "height": 1.0
+      },
+      "canvas": [
+        1080,
+        1350
+      ],
+      "expected": [
+        -360.0,
+        0.0,
+        1800.0,
+        1350.0
+      ]
+    }
+  ],
+  "sizes": {
+    "canvases": {
+      "9:16": [
+        1080,
+        1920
+      ],
+      "4:5": [
+        1080,
+        1350
+      ],
+      "3:4": [
+        1080,
+        1440
+      ],
+      "1:1": [
+        1080,
+        1080
+      ],
+      "1.91:1": [
+        1080,
+        566
+      ]
+    },
+    "profiles": {
+      "tiktok_photo": {
+        "default": "9:16",
+        "allowed": [
+          "9:16",
+          "3:4",
+          "4:5",
+          "1:1"
+        ]
+      },
+      "instagram_carousel": {
+        "default": "4:5",
+        "allowed": [
+          "4:5",
+          "3:4",
+          "1:1",
+          "1.91:1"
+        ]
+      }
+    }
+  },
+  "fit_blur_sigma_px": 80
 }

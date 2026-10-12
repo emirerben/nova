@@ -719,7 +719,10 @@ struct NativeEditorTemporaryVideo {
     /// instead show only the server-rendered video, with canvas interaction
     /// deliberately disabled until a retry produces a source preview.
     var isShowingRenderedFallback: Bool {
-        guard sourcePreviewState.isFailure else { return false }
+        // KRI-587: a finished render that could not be loaded is a black box,
+        // not a fallback. Claiming "Showing your last finished video" over it
+        // was the confusing screen; the plain failure view shows instead.
+        guard sourcePreviewState.isFailure, !finishedRenderFailed else { return false }
         return player != nil && player === finishedRenderPlayer
     }
 
@@ -794,8 +797,19 @@ struct NativeEditorTemporaryVideo {
 
     func showDeviceOutput(_ url: URL) {
         guard rendersOnDevice else { return }
+        // KRI-587: a render made on this phone starts a fresh recovery, and its own copy is what a failed
+        // finished render retries first.
+        deviceOutputURL = url
+        startPlaybackRecoveryEpisode()
         // KRI-535: a device render made before a staged chat edit lacks that edit.
-        installPlayer(url: url, preferredDuration: authoritativeDuration, isCurrent: chatStagedDocument == nil)
+        let isCurrent = chatStagedDocument == nil
+        if finishedRenderIsDead {
+            // Replaced even while the editable preview builds: nothing else will swap out a dead player.
+            finishedRenderIsCurrent = isCurrent
+            reinstallFinishedRender(url: url, preferredDuration: authoritativeDuration)
+            return
+        }
+        installPlayer(url: url, preferredDuration: authoritativeDuration, isCurrent: isCurrent)
     }
 
     private let projectID: UUID
@@ -1016,8 +1030,26 @@ struct NativeEditorTemporaryVideo {
     /// A play tap that arrived while the editable preview was still building. Played as soon as a
     /// displayable player exists (the ready preview, or the finished-render fallback).
     private var pendingPlayRequest = false
-    private var finishedRenderRefreshAttempted = false
+    /// KRI-587: spaced automatic retries for a finished render that would not load. Right after the
+    /// phone's own export, AVFoundation can refuse a perfectly good MP4 for a moment (busy decoders,
+    /// media services settling). One immediate refresh was not enough and left "The video couldn't be
+    /// loaded" up for good. Internal so tests can shorten it.
+    var finishedRenderRetryDelays: [Duration] = [.milliseconds(500), .milliseconds(1500), .seconds(3)]
+    private var finishedRenderRetryCount = 0
     private var finishedRenderRecoveryTask: Task<Void, Never>?
+    private var finishedRenderRecoveryInFlight = false
+    /// This phone's own copy of a phone render: retried before any network link.
+    private var deviceOutputURL: URL?
+    /// Every retry of the finished render failed. The canvas then shows the plain failure view, never
+    /// the "Showing your last finished video" card over a dead player.
+    @Published private(set) var finishedRenderFailed = false
+    /// The editable preview's state before the finished-render failure replaced its message.
+    private var stateBeforeFinishedRenderFailure: NativeSourcePreviewState?
+    /// KRI-587: one quiet rebuild of the editable preview after a playback-level failure, before the
+    /// fallback card shows. Internal so tests can shorten it.
+    var sourcePreviewQuietRetryDelay: Duration = .seconds(1)
+    private var sourcePreviewQuietRetryUsed = false
+    private var sourcePreviewQuietRetryTask: Task<Void, Never>?
     private var durationLoadTask: Task<Void, Never>?
     private var promptRefreshSequence: UInt64 = 0
     private let playbackEndTolerance: TimeInterval = 0.05
@@ -1208,6 +1240,12 @@ struct NativeEditorTemporaryVideo {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-legacy-visuals") {
             itemID = "fixture-visual-item"
         }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-drawing") {
+            // KRI-589: Save goes through the real request encoder to a stub transport (no account, no server).
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-drawing-item"
+            variantKey = "initial"
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source") { loadState = .loading }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-song-reference") {
             previewVariant = NativeEditorUITestFixtures.songReferenceVariant
@@ -1318,6 +1356,7 @@ struct NativeEditorTemporaryVideo {
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
         finishedRenderRecoveryTask?.cancel()
+        sourcePreviewQuietRetryTask?.cancel()
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
@@ -1467,6 +1506,7 @@ struct NativeEditorTemporaryVideo {
         items += document.visualBlocks.enumerated().map { index, item in projected(EditorSelection(kind: .visualBlock, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 150 + index), sourceIndex: index) }
         items += document.motionScenes.enumerated().map { index, item in projected(EditorSelection(kind: .motionScene, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 250 + index), sourceIndex: index) }
         items += document.cameraEffects.enumerated().map { index, item in projected(EditorSelection(kind: .cameraEffect, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 260 + index), sourceIndex: index) }
+        items += document.drawings.enumerated().map { index, item in projected(EditorSelection(kind: .drawing, id: item.id), start: item.startS, end: item.endS, zIndex: 270 + index, sourceIndex: index) }
         if let carousel = projection.carouselItem { items.append(carousel) }
         if let music = document.music {
             items.append(
@@ -1942,6 +1982,12 @@ struct NativeEditorTemporaryVideo {
         sourcePreviewState = .idle; sourcePreviewGeneration = nil
         previewVariant = [:]
         pendingDeviceRenderIdentity = nil
+        // The old job's recovery must not touch the new job's player.
+        finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
+        sourcePreviewQuietRetryTask?.cancel()
+        deviceOutputURL = nil
+        finishedRenderFailed = false; stateBeforeFinishedRenderFailure = nil
+        startPlaybackRecoveryEpisode()
     }
 
     /// Gallery rows are render jobs, not creation-thread IDs. Promote the job
@@ -4056,6 +4102,118 @@ struct NativeEditorTemporaryVideo {
         select(.init(kind: .cameraEffect, id: effect.id))
     }
 
+    // MARK: Drawings (KRI-589)
+
+    /// The Draw tool exists only when the server opens `drawings.add` for this variant (a phone-rendered
+    /// variant on a build that speaks protocol 5, with the kill switch on). Never inferred from the lane.
+    var canAddDrawing: Bool {
+        cloudEditorUnavailableMessage == nil && document.capabilities["drawings.add"]?.editable == true
+    }
+    var canEditDrawings: Bool { canEditOperation(["drawings.edit"], section: .drawings) }
+    var canDeleteDrawings: Bool { canEditOperation(["drawings.delete"], section: .drawings) }
+    func drawing(id: String) -> EditorDrawing? { document.drawings.first { $0.id == id } }
+
+    /// Why the next stroke cannot be added to `id` (a new drawing when nil), or nil when it can: the same
+    /// caps the server enforces, checked before Done so a scribble is never lost to a 422 on Save.
+    func drawingCapMessage(extraPoints: Int = 0, extraStrokes: Int = 0, editing id: String? = nil) -> String? {
+        let others = document.drawings.filter { $0.id != id }
+        let current = id.flatMap { drawing(id: $0) }
+        if id == nil, document.drawings.count >= DrawingLimits.maxDrawings { return "You can add up to \(DrawingLimits.maxDrawings) drawings." }
+        if (current?.strokes.count ?? 0) + extraStrokes > DrawingLimits.maxStrokesPerDrawing { return "That’s as many strokes as one drawing holds." }
+        if (current?.pointCount ?? 0) + extraPoints > DrawingLimits.maxPointsPerDrawing { return "That drawing is as detailed as it can get." }
+        if others.reduce(0, { $0 + $1.pointCount }) + (current?.pointCount ?? 0) + extraPoints > DrawingLimits.maxPointsPerVariant {
+            return "This video has as many drawings as it can hold."
+        }
+        return nil
+    }
+
+    /// Adds the strokes drawn in Draw mode as one drawing at the playhead: a 3 s window clamped to the
+    /// video, the pen drawing itself on over 1.2 s, centred where the strokes are. One undo step.
+    @discardableResult
+    func addDrawing(strokes: [DrawingStroke], canvasAspect: Double) -> Bool {
+        guard canAddDrawing, !strokes.isEmpty else { return false }
+        let editableEnd = timelineClips.map(\.end).max() ?? duration
+        guard let window = NativeVisualAuthoring.window(at: currentTime, duration: editableEnd, projection: timelineProjection, preferred: 3, minimum: 0.5),
+              drawingCapMessage(extraPoints: strokes.reduce(0) { $0 + $1.points.count }, extraStrokes: strokes.count) == nil else {
+            visualError = "A drawing can’t be added at this position."
+            return false
+        }
+        var drawing = EditorDrawing(startS: window.start, endS: window.end, canvasAspect: min(4.9, max(0.21, canvasAspect)), strokes: strokes)
+        let center = drawing.strokeCenter
+        drawing.centerX = center.x; drawing.centerY = center.y
+        drawing.drawDurationS = min(1.2, window.end - window.start)
+        guard drawing.isValid else { visualError = "That drawing can’t be saved."; return false }
+        transactDocument(section: .drawings) { $0.drawings.append(drawing) }
+        // Show it finished: the playhead moves to where the pen lifts, so Done never leaves an empty-looking frame.
+        select(.init(kind: .drawing, id: drawing.id), seekToStart: false)
+        seek(to: timelineProjection.projectBaseTime(min(drawing.endS - 0.05, drawing.startS + drawing.drawDurationS)))
+        return true
+    }
+
+    /// "Draw more": new strokes drawn on the preview join an existing drawing. They arrive in preview
+    /// coordinates, so they are carried back through the drawing's own move / scale / rotation, and the
+    /// drawing's centre is re-pinned so the strokes already there do not shift when the bounding box grows.
+    @discardableResult
+    func appendDrawingStrokes(id: String, previewStrokes: [DrawingStroke]) -> Bool {
+        guard canEditDrawings, !previewStrokes.isEmpty, let index = document.drawings.firstIndex(where: { $0.id == id }),
+              drawingCapMessage(extraPoints: previewStrokes.reduce(0) { $0 + $1.points.count }, extraStrokes: previewStrokes.count, editing: id) == nil else { return false }
+        var value = document.drawings[index]
+        value.append(previewStrokes: previewStrokes)
+        guard value.isValid else { return false }
+        transactDocument(section: .drawings) { $0.drawings[index] = value }
+        return true
+    }
+
+    private func mutateDrawing(id: String, operation: String = "edit", _ body: (inout EditorDrawing) -> Void) {
+        guard canEditOperation(["drawings.\(operation)", "drawings.edit"], section: .drawings),
+              let index = document.drawings.firstIndex(where: { $0.id == id }) else { return }
+        var value = document.drawings[index]
+        body(&value)
+        guard value.isValid, value != document.drawings[index] else { return }
+        transactDocument(section: .drawings) { $0.drawings[index] = value }
+    }
+
+    func recolorDrawing(id: String, hex: String) {
+        mutateDrawing(id: id) { value in value.strokes = value.strokes.map { $0.withColor(hex.uppercased()) } }
+    }
+    func setDrawingEntrance(id: String, entrance: DrawingEntrance) { mutateDrawing(id: id) { $0.entrance = entrance } }
+    func setDrawingExit(id: String, exit: DrawingExit) { mutateDrawing(id: id) { $0.exit = exit } }
+    func setDrawingDrawDuration(id: String, seconds: Double) {
+        guard seconds.isFinite else { return }
+        mutateDrawing(id: id) { $0.drawDurationS = min($0.endS - $0.startS, min(DrawingLimits.maxDrawDuration, max(0.2, (seconds * 20).rounded() / 20))) }
+    }
+    func setDrawingTransform(id: String, centerX: Double, centerY: Double, scale: Double, rotationDeg: Double) {
+        guard [centerX, centerY, scale, rotationDeg].allSatisfy(\.isFinite) else { return }
+        mutateDrawing(id: id) { value in
+            value.centerX = min(1, max(0, centerX)); value.centerY = min(1, max(0, centerY))
+            value.scale = min(3, max(0.2, scale)); value.rotationDeg = EditorDrawing.wrappedRotation(rotationDeg)
+        }
+    }
+    func setDrawingTiming(id: String, startS: Double? = nil, endS: Double? = nil) {
+        guard canEditOperation(["drawings.trim", "drawings.edit"], section: .drawings),
+              let index = document.drawings.firstIndex(where: { $0.id == id }) else { return }
+        transactDocument(section: .drawings) { document in
+            var value = document.drawings[index]
+            if let startS { value.startS = max(0, startS) }
+            if let endS { value.endS = endS }
+            if value.endS - value.startS < DrawingLimits.minDuration { value.endS = value.startS + DrawingLimits.minDuration }
+            value.drawDurationS = min(max(0.2, value.drawDurationS), max(0.2, value.endS - value.startS))
+            document.drawings[index] = value
+        }
+    }
+
+    /// The preview shows a drawing mid-gesture without a recompile: only the portable layers are swapped
+    /// in the live composition. The document is committed once, when the gesture ends.
+    func previewDrawingInPlace(_ drawing: EditorDrawing) {
+        guard sourcePreviewState == .ready, let preview = sourcePreview, player?.currentItem === preview.preview.playerItem else { return }
+        var drawings = document.drawings
+        guard let index = drawings.firstIndex(where: { $0.id == drawing.id }) else { return }
+        drawings[index] = drawing
+        let total = TimelineMath.totalDuration(of: preview.recipe)
+        try? preview.updateDrawings(NativeDrawingCompile.layers(drawings, timelineDuration: total))
+        if !isPlaying { seek(to: currentTime) }
+    }
+
     /// Places a catalog sound effect at the playhead as a point `sfx` lane
     /// item. The `raw` shape matches the web editor's `addSfxFromGlossary`
     /// exactly (`id`/`sound_effect_id`/`src_gcs_path`/`source`/`at_s`/`gain`/
@@ -4202,6 +4360,7 @@ struct NativeEditorTemporaryVideo {
         case .visualBlock: setVisualBlockTiming(id: selected.id, startS: start, endS: end)
         case .motionScene: setMotionSceneTiming(id: selected.id, startS: start, endS: end)
         case .cameraEffect: setCameraEffectTiming(id: selected.id, startS: start, endS: end)
+        case .drawing: setDrawingTiming(id: selected.id, startS: start, endS: end)
         default: break
         }
     }
@@ -4334,6 +4493,12 @@ struct NativeEditorTemporaryVideo {
                 document.cameraEffects.removeAll { $0.id == selected.id }
                 appendIfPersisted(EditorDeletion(kind: "camera_effect", id: selected.id), selection: selected, to: &document)
             }
+        case .drawing:
+            guard document.drawings.contains(where: { $0.id == selected.id }) else { return false }
+            transactDocument(section: .drawings) { document in
+                document.drawings.removeAll { $0.id == selected.id }
+                appendIfPersisted(EditorDeletion(kind: "drawing", id: selected.id), selection: selected, to: &document)
+            }
         case .carousel:
             guard document.carouselMoment != nil else { return false }
             transactDocument(section: .carouselMoment) { document in
@@ -4358,6 +4523,7 @@ struct NativeEditorTemporaryVideo {
         case .visualBlock: return cleanDocument.visualBlocks.contains { $0.id == selection.id }
         case .motionScene: return cleanDocument.motionScenes.contains { $0.id == selection.id }
         case .cameraEffect: return cleanDocument.cameraEffects.contains { $0.id == selection.id }
+        case .drawing: return cleanDocument.drawings.contains { $0.id == selection.id }
         case .carousel: return cleanDocument.carouselMoment?["id"] == .string(selection.id)
         }
     }
@@ -5287,6 +5453,7 @@ struct NativeEditorTemporaryVideo {
         case .mediaOverlay: return .mediaOverlays
         case .motionScene: return .motionScenes
         case .cameraEffect: return .cameraEffects
+        case .drawing: return .drawings
         default: return nil
         }
     }
@@ -5307,7 +5474,8 @@ struct NativeEditorTemporaryVideo {
         let operation = kind == .move ? "timing" : "trim"
         guard activeTimedEdit == nil,
               let section = section(for: selection.kind),
-              canEditOperation(["\(section.rawValue).\(operation)", section.rawValue], section: section),
+              // KRI-589: a drawing's window moves and trims under the server's `drawings.trim` / `drawings.edit`.
+              canEditOperation(section == .drawings ? ["drawings.trim", "drawings.edit"] : ["\(section.rawValue).\(operation)", section.rawValue], section: section),
               timedObjectExists(selection),
               supportsTimedGesture(selection) else { return }
         activeTimedEdit = ActiveTimedEdit(selection: selection, edge: edge, kind: kind, baseline: document, redoBaseline: redoStack, projection: timelineProjection)
@@ -5381,6 +5549,7 @@ struct NativeEditorTemporaryVideo {
         case .visualBlock: guard let item = document.visualBlocks.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         case .motionScene: guard let item = document.motionScenes.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         case .cameraEffect: guard let item = document.cameraEffects.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
+        case .drawing: guard let item = document.drawings.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         default: return nil
         }
     }
@@ -5429,6 +5598,12 @@ struct NativeEditorTemporaryVideo {
             )
             document.cameraEffects[index].startS = clamped.0
             document.cameraEffects[index].endS = clamped.1
+        case .drawing:
+            guard let index = document.drawings.firstIndex(where: { $0.id == selection.id }) else { return }
+            document.drawings[index].startS = start
+            document.drawings[index].endS = end
+            // The pen can never take longer than the window it draws in.
+            document.drawings[index].drawDurationS = min(max(0.2, document.drawings[index].drawDurationS), max(0.2, end - start))
         default: break
         }
     }
@@ -5469,6 +5644,7 @@ struct NativeEditorTemporaryVideo {
         case .visualBlocks: return ["visual_blocks", "lanes.visual_blocks"]
         case .motionScenes: return ["motion_scenes", "lanes.motion_scenes"]
         case .cameraEffects: return ["camera_effects", "lanes.camera_effects"]
+        case .drawings: return ["drawings", "lanes.drawings"]
         case .carouselMoment: return ["carousel_moment", "carousel"]
         // KRI-216: line edits (caption_cues) and style/settings (caption_meta)
         // are separate server capabilities — `.captions` must prefer
@@ -5488,7 +5664,8 @@ struct NativeEditorTemporaryVideo {
         case .text: return canEditText
         case .captions, .captionMeta: return canEditCaptions
         case .mix, .music, .backgroundMusic: return canEditMix
-        case .soundEffects, .mediaOverlays, .visualBlocks, .motionScenes, .cameraEffects,
+        // KRI-589: only the per-operation `drawings.*` capabilities open drawings.
+        case .soundEffects, .mediaOverlays, .visualBlocks, .motionScenes, .cameraEffects, .drawings,
              .carouselMoment, .lyrics, .title: return false
         // KRI-306: the server capability decides; with no capability the section stays closed.
         case .orientation, .landscapeFit: return false
@@ -5521,6 +5698,7 @@ struct NativeEditorTemporaryVideo {
             case .visualBlocks: differs = document.visualBlocks != cleanDocument.visualBlocks
             case .motionScenes: differs = document.motionScenes != cleanDocument.motionScenes || document.motionRuntimeHash != cleanDocument.motionRuntimeHash
             case .cameraEffects: differs = document.cameraEffects != cleanDocument.cameraEffects
+            case .drawings: differs = document.drawings != cleanDocument.drawings
             case .carouselMoment: differs = document.carouselMoment != cleanDocument.carouselMoment
             case .title: differs = document.title != cleanDocument.title
             case .userSong: differs = document.userSong != cleanDocument.userSong
@@ -5665,6 +5843,7 @@ struct NativeEditorTemporaryVideo {
             motionScenes: array("motion_scenes", .motionScenes),
             motionRuntimeHash: changedSections.contains(.motionScenes) ? document.motionRuntimeHash : nil,
             cameraEffects: array("camera_effects", .cameraEffects),
+            drawings: array("drawings", .drawings),
             carouselMoment: changedSections.contains(.carouselMoment) ? (carouselObject.map(EditorCarouselMomentPatch.replace) ?? .remove) : .omitted,
             title: changedSections.contains(.title) ? value["title"]?.stringValue : nil,
             guidedRevisionNumber: guidedRevisionNumber,
@@ -5699,7 +5878,7 @@ struct NativeEditorTemporaryVideo {
         if sections.backgroundMusic { result.insert(.backgroundMusic) }; if sections.lyrics { result.insert(.lyrics) }
         if sections.orientation { result.insert(.orientation) }; if sections.landscapeFit { result.insert(.landscapeFit) }; if sections.soundEffects { result.insert(.soundEffects) }
         if sections.mediaOverlays { result.insert(.mediaOverlays) }; if sections.visualBlocks { result.insert(.visualBlocks) }
-        if sections.motionScenes { result.insert(.motionScenes) }; if sections.cameraEffects { result.insert(.cameraEffects) }
+        if sections.motionScenes { result.insert(.motionScenes) }; if sections.cameraEffects { result.insert(.cameraEffects) }; if sections.drawings { result.insert(.drawings) }
         if sections.carouselMoment { result.insert(.carouselMoment) }; if sections.title { result.insert(.title) }
         // KRI-428: a user_song the server accepted is saved even if it does not echo the section
         // (a rejected one answers 422 and never reaches here).
@@ -5785,6 +5964,7 @@ struct NativeEditorTemporaryVideo {
             baseline.motionScenes = submitted.motionScenes
             baseline.motionRuntimeHash = submitted.motionRuntimeHash
         case .cameraEffects: baseline.cameraEffects = submitted.cameraEffects
+        case .drawings: baseline.drawings = submitted.drawings
         case .carouselMoment: baseline.carouselMoment = submitted.carouselMoment
         case .title: baseline.title = submitted.title
         case .userSong: baseline.userSong = submitted.userSong
@@ -5844,7 +6024,14 @@ struct NativeEditorTemporaryVideo {
 
     private func failSourcePreview(_ error: Error) {
         sourcePreviewFailureIsPermanent = Self.isPermanentSourcePreviewFailure(error)
+        let finishedWasCurrent = finishedRenderIsCurrent
         restoreFinishedRenderFallback()
+        if retrySourcePreviewQuietly(after: error) {
+            // KRI-535: while the quiet rebuild runs, a render older than a staged edit stays hidden.
+            finishedRenderIsCurrent = finishedWasCurrent
+            if canDisplayCurrentPlayer { startPendingPlaybackIfPossible() }
+            return
+        }
         sourcePreviewState = Self.isMissingOriginals(error)
             ? .originalsUnavailable
             : .failed(Self.sourcePreviewMessage(for: error))
@@ -5867,9 +6054,73 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// KRI-587: right after the phone's own export, AVFoundation can briefly refuse to build or play the
+    /// editable composition. Rebuild it once, quietly, before showing the fallback card. Meanwhile the
+    /// finished render plays when it is current, and "Preparing preview" shows when it is not.
+    private func retrySourcePreviewQuietly(after error: Error) -> Bool {
+        guard !sourcePreviewQuietRetryUsed, Self.isTransientSourcePreviewFailure(error),
+              api != nil, let jobID, variantKey != nil else { return false }
+        sourcePreviewQuietRetryUsed = true
+        sourcePreviewState = .preparing
+        NativePreviewDiagnostics.record("source-preview-quiet-retry", fields: ["error": String((error as NSError).code)])
+        let sequence = sourcePreviewSequence
+        let delay = sourcePreviewQuietRetryDelay
+        sourcePreviewQuietRetryTask?.cancel()
+        sourcePreviewQuietRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            // A newer rebuild (an edit, another job) already owns the preview state.
+            guard let self, !Task.isCancelled, self.jobID == jobID, self.sourcePreviewSequence == sequence else { return }
+            await self.prepareSourcePreview()
+        }
+        return true
+    }
+
+    /// AVFoundation refusing the composition for the moment, not a problem with the edit itself:
+    /// building the same document again can work.
+    static func isTransientSourcePreviewFailure(_ error: Error) -> Bool {
+        if case NativeEditorPlaybackFailure.liveItem = error { return true }
+        return (error as NSError).domain == AVFoundationErrorDomain
+    }
+
+    /// A new render, or the creator's Retry, is a fresh start for every automatic recovery.
+    private func startPlaybackRecoveryEpisode() {
+        finishedRenderRetryCount = 0
+        sourcePreviewQuietRetryUsed = false
+    }
+
+    /// The canvas holds the finished render and it can no longer play.
+    private var finishedRenderIsDead: Bool {
+        guard let player, player === finishedRenderPlayer else { return false }
+        return finishedRenderFailed || player.currentItem?.status == .failed
+    }
+
+    /// This phone's copy of its own render, when the file is still there.
+    private var playableDeviceOutputURL: URL? {
+        guard let deviceOutputURL, FileManager.default.fileExists(atPath: deviceOutputURL.path) else { return nil }
+        return deviceOutputURL
+    }
+
+    /// Swaps in a new finished-render player without changing whether that render is current.
+    private func reinstallFinishedRender(url: URL, preferredDuration: TimeInterval?) {
+        let isCurrent = finishedRenderIsCurrent
+        installFinishedRenderPlayer(url: url, preferredDuration: preferredDuration)
+        finishedRenderIsCurrent = isCurrent
+    }
+
+    /// The Retry and Try again buttons: every automatic recovery starts over, a dead finished render is
+    /// reloaded, then the editable preview is rebuilt.
+    func retryPreview() async {
+        startPlaybackRecoveryEpisode()
+        if finishedRenderIsDead, let url = playableDeviceOutputURL ?? finishedRenderURL {
+            finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
+            reinstallFinishedRender(url: url, preferredDuration: finishedRenderDuration)
+        }
+        await prepareSourcePreview()
+    }
+
     /// One place for "the item AVPlayer is holding cannot play". Reports the error identity from every
     /// build, then recovers: a failed editable preview hands over to the finished render, and a failed
-    /// finished render gets one fresh link before the failure is surfaced.
+    /// finished render is retried (KRI-587) before the failure is surfaced.
     func handlePlayerItemFailure(_ item: AVPlayerItem, error: Error?) {
         guard let failedPlayer = player, failedPlayer.currentItem === item, failureHandledItem !== item else { return }
         failureHandledItem = item
@@ -5891,32 +6142,86 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// KRI-587: a finished render that fails is retried a few times, spaced out, before anything is
+    /// said. Each retry prefers this phone's own copy of a phone render, then a fresh server link, and
+    /// only then the same link again.
     private func recoverFinishedRender(failedPlayer: AVPlayer) {
-        guard !finishedRenderRefreshAttempted, let api, let jobID else {
+        guard finishedRenderRetryCount < finishedRenderRetryDelays.count else {
             surfaceUnplayableFinishedRender()
             return
         }
-        finishedRenderRefreshAttempted = true
+        let delay = finishedRenderRetryDelays[finishedRenderRetryCount]
+        finishedRenderRetryCount += 1
+        let attempt = finishedRenderRetryCount
+        let failedURL = (failedPlayer.currentItem?.asset as? AVURLAsset)?.url
         finishedRenderRecoveryTask?.cancel()
+        finishedRenderRecoveryInFlight = true
         finishedRenderRecoveryTask = Task { @MainActor [weak self, weak failedPlayer] in
-            let fresh = try? await api.playbackURL(jobID: jobID)
-            guard let self, !Task.isCancelled, let failedPlayer, self.player === failedPlayer else { return }
-            guard let fresh else { self.surfaceUnplayableFinishedRender(); return }
-            self.installFinishedRenderPlayer(url: fresh, preferredDuration: self.finishedRenderDuration)
+            try? await Task.sleep(for: delay)
+            // Whoever cancelled this (a newer failure, Retry, another job) owns the in-flight flag.
+            guard let self, !Task.isCancelled else { return }
+            let next = failedPlayer != nil && self.player === failedPlayer
+                ? await self.finishedRenderRetryTarget(after: failedURL) : nil
+            guard !Task.isCancelled else { return }
+            self.finishedRenderRecoveryInFlight = false
+            // The canvas moved on (the editable preview took over, another job loaded) while this waited.
+            guard let failedPlayer, self.player === failedPlayer else { return }
+            guard let next else { self.surfaceUnplayableFinishedRender(); return }
+            NativePreviewDiagnostics.record("finished-render-retry", fields: ["attempt": String(attempt), "source": next.source])
+            self.reinstallFinishedRender(url: next.url, preferredDuration: self.finishedRenderDuration)
             self.startPendingPlaybackIfPossible()
         }
+    }
+
+    private func finishedRenderRetryTarget(after failed: URL?) async -> (url: URL, source: String)? {
+        func untried(_ url: URL?) -> URL? {
+            guard let url, url != failed else { return nil }
+            return !url.isFileURL || FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+        if let device = untried(playableDeviceOutputURL) { return (device, "device") }
+        if let finished = untried(finishedRenderURL) { return (finished, "finished") }
+        if let api, let jobID, let fresh = try? await api.playbackURL(jobID: jobID) { return (fresh, "fresh") }
+        // Nothing new to try: the same link again still beats giving up after a moment's failure,
+        // unless it is a file that simply isn't there.
+        if let failed, !failed.isFileURL || FileManager.default.fileExists(atPath: failed.path) { return (failed, "same") }
+        return nil
     }
 
     private func surfaceUnplayableFinishedRender() {
         // An editable preview still building will take over by itself; only a settled state needs a message.
         guard sourcePreviewState != .preparing else { return }
-        sourcePreviewState = .failed(Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem))
+        let message = Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem)
+        if sourcePreviewState != .failed(message) { stateBeforeFinishedRenderFailure = sourcePreviewState }
+        finishedRenderFailed = true
+        sourcePreviewState = .failed(message)
         pendingPlayRequest = false
+        NativePreviewDiagnostics.record("finished-render-unplayable", fields: ["attempts": String(finishedRenderRetryCount)])
+    }
+
+    /// A player item that loads ends the finished render's failure streak. When it is the finished
+    /// render after its failure was surfaced, the "couldn't be loaded" message goes with it (KRI-587).
+    private func playerItemBecameReady() {
+        finishedRenderRetryCount = 0
+        guard finishedRenderFailed else { return }
+        finishedRenderFailed = false
+        if sourcePreviewState == .failed(Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem)) {
+            sourcePreviewState = stateBeforeFinishedRenderFailure ?? .idle
+        }
+        stateBeforeFinishedRenderFailure = nil
+        NativePreviewDiagnostics.record("finished-render-recovered")
     }
 
     private func restoreFinishedRenderFallback() {
-        guard let finishedRenderURL, player !== finishedRenderPlayer else { return }
-        installFinishedRenderPlayer(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
+        guard let finishedRenderURL else { return }
+        guard player === finishedRenderPlayer else {
+            installFinishedRenderPlayer(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
+            return
+        }
+        // KRI-587: a finished render that died while the editable preview was building (its message was
+        // held back) would otherwise stay a black box under the fallback card. A retry on its way wins.
+        guard finishedRenderIsDead, !finishedRenderRecoveryInFlight else { return }
+        finishedRenderRetryCount = 0
+        reinstallFinishedRender(url: playableDeviceOutputURL ?? finishedRenderURL, preferredDuration: finishedRenderDuration)
     }
 
     private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil) {
@@ -5957,9 +6262,7 @@ struct NativeEditorTemporaryVideo {
             Task { @MainActor [weak self, weak item] in
                 guard let self, let item else { return }
                 if status == .failed { self.handlePlayerItemFailure(item, error: error) }
-                else if status == .readyToPlay, self.player?.currentItem === item, self.player === self.finishedRenderPlayer {
-                    self.finishedRenderRefreshAttempted = false
-                }
+                else if status == .readyToPlay, self.player?.currentItem === item { self.playerItemBecameReady() }
             }
         }
         itemFailureObserver = NotificationCenter.default.addObserver(
@@ -6265,6 +6568,9 @@ struct NativeEditorTemporaryVideo {
             if !rebaseCleanDraft(from: variant) {
                 rebaseGenerationPreservingLocalEdits(currentGeneration)
             }
+            // A new render: the phone's copy of the previous one is no longer the video to retry.
+            deviceOutputURL = nil
+            startPlaybackRecoveryEpisode()
             installFinishedRenderPlayer(url: url, preferredDuration: authoritativeDuration)
             pendingRenderRetrySections.removeAll()
             pendingPreviewGeneration = nil

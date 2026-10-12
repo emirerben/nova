@@ -71,6 +71,11 @@ _STRUCTURED_ANSWER_KEYS = ("choice_selection", "clip_selection")
 # (duration 108 s from "clip 2 at 1:40") that failed a finished draft. Everything that feeds the
 # creator's words to a model reads this instead.
 SONG_ORDER_ANSWER_MESSAGE = "I confirmed where my clips go on the song timeline."
+# KRI-614: the same for a clip-picker answer. Its echo ("Img_7833: clip 1") was read as a new
+# `include` intent labelled with the echo, and Kria asked about it. The tapped clips are folded
+# from the `clip_selection` payload (`fold_clip_selections`), never from this text.
+CLIP_ANSWER_MESSAGE = "I tapped the clips you asked about."
+CLIP_SKIP_MESSAGE = "I skipped your clip question, so pick those clips for me."
 
 
 # KRI-588: the same for the answer to "which part of the song did you film?".
@@ -78,12 +83,15 @@ SONG_RANGE_ANSWER_MESSAGE = "I told you which part of the song I filmed."
 
 
 def model_text(payload: Any, content: Any) -> str:
-    """A user event's text as a model should read it (structured song answers are neutral)."""
+    """A user event's text as a model should read it (structured song/clip answers are neutral)."""
     if isinstance(payload, Mapping):
         if isinstance(payload.get(SONG_ORDER_ANSWER_KEY), Mapping):
             return SONG_ORDER_ANSWER_MESSAGE
         if isinstance(payload.get(SONG_RANGE_ANSWER_KEY), Mapping):
             return SONG_RANGE_ANSWER_MESSAGE
+        selection = payload.get("clip_selection")
+        if isinstance(selection, Mapping):
+            return CLIP_SKIP_MESSAGE if selection.get("skipped") is True else CLIP_ANSWER_MESSAGE
     return str(content or "")
 
 

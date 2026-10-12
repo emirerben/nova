@@ -1098,6 +1098,11 @@
             "title": "Slide Post Rich Text",
             "type": "boolean"
           },
+          "slide_post_sizes": {
+            "default": false,
+            "title": "Slide Post Sizes",
+            "type": "boolean"
+          },
           "song_filming_range": {
             "default": false,
             "title": "Song Filming Range",
@@ -2227,6 +2232,74 @@
         "title": "DraftWriteBody",
         "type": "object"
       },
+      "DrawingStroke": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "title": "Color",
+            "type": "string"
+          },
+          "opacity": {
+            "default": 1.0,
+            "maximum": 1.0,
+            "minimum": 0.1,
+            "title": "Opacity",
+            "type": "number"
+          },
+          "points": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "maxItems": 1500,
+            "minItems": 2,
+            "title": "Points",
+            "type": "array"
+          },
+          "seed": {
+            "default": 0,
+            "maximum": 2147483647,
+            "minimum": 0,
+            "title": "Seed",
+            "type": "integer"
+          },
+          "texture": {
+            "default": "pen",
+            "enum": [
+              "pen",
+              "marker",
+              "highlighter",
+              "neon",
+              "chalk",
+              "spray"
+            ],
+            "title": "Texture",
+            "type": "string"
+          },
+          "width_frac": {
+            "maximum": 0.08,
+            "minimum": 0.004,
+            "title": "Width Frac",
+            "type": "number"
+          }
+        },
+        "required": [
+          "color",
+          "width_frac",
+          "points"
+        ],
+        "title": "DrawingStroke",
+        "type": "object"
+      },
       "EditRecipeV1": {
         "additionalProperties": false,
         "description": "Portable, validated edit description; it contains no storage internals.",
@@ -2283,6 +2356,7 @@
                 "stillImages",
                 "visualVideos",
                 "sourceCrop",
+                "freehandDrawing",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -2350,6 +2424,14 @@
           "canvas": {
             "$ref": "#/components/schemas/Canvas"
           },
+          "drawing_layers": {
+            "items": {
+              "$ref": "#/components/schemas/PortableDrawingLayer"
+            },
+            "maxItems": 12,
+            "title": "Drawing Layers",
+            "type": "array"
+          },
           "frame_rate": {
             "default": 30,
             "exclusiveMinimum": true,
@@ -2394,6 +2476,7 @@
                 "stillImages",
                 "visualVideos",
                 "sourceCrop",
+                "freehandDrawing",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -2736,6 +2819,17 @@
             "title": "Deletions",
             "type": "array"
           },
+          "drawings": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 12,
+            "nullable": true,
+            "title": "Drawings",
+            "type": "array"
+          },
           "editor_state_version": {
             "default": null,
             "minimum": 1,
@@ -2984,6 +3078,11 @@
             "title": "Carousel Moment",
             "type": "boolean"
           },
+          "drawings": {
+            "default": false,
+            "title": "Drawings",
+            "type": "boolean"
+          },
           "landscape_fit": {
             "default": false,
             "title": "Landscape Fit",
@@ -3108,6 +3207,7 @@
               "visual_block",
               "motion_scene",
               "camera_effect",
+              "drawing",
               "carousel",
               "lyric_line"
             ],
@@ -3328,6 +3428,17 @@
             },
             "maxItems": 100,
             "title": "Deletions",
+            "type": "array"
+          },
+          "drawings": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 12,
+            "nullable": true,
+            "title": "Drawings",
             "type": "array"
           },
           "editor_state_version": {
@@ -6418,6 +6529,110 @@
         "title": "PoolUploadUrlsResponse",
         "type": "object"
       },
+      "PortableDrawingLayer": {
+        "additionalProperties": false,
+        "properties": {
+          "canvas_aspect": {
+            "exclusiveMaximum": true,
+            "exclusiveMinimum": true,
+            "maximum": 5.0,
+            "minimum": 0.2,
+            "title": "Canvas Aspect",
+            "type": "number"
+          },
+          "center_x": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Center X",
+            "type": "number"
+          },
+          "center_y": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Center Y",
+            "type": "number"
+          },
+          "draw_duration": {
+            "maximum": 10.0,
+            "minimum": 0.1,
+            "title": "Draw Duration",
+            "type": "number"
+          },
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "End",
+            "type": "number"
+          },
+          "entrance": {
+            "enum": [
+              "draw",
+              "fade",
+              "none"
+            ],
+            "title": "Entrance",
+            "type": "string"
+          },
+          "exit": {
+            "enum": [
+              "none",
+              "fade"
+            ],
+            "title": "Exit",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "rotation_deg": {
+            "maximum": 180,
+            "minimum": -180,
+            "title": "Rotation Deg",
+            "type": "number"
+          },
+          "scale": {
+            "maximum": 3.0,
+            "minimum": 0.2,
+            "title": "Scale",
+            "type": "number"
+          },
+          "start": {
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Start",
+            "type": "number"
+          },
+          "strokes": {
+            "items": {
+              "$ref": "#/components/schemas/DrawingStroke"
+            },
+            "maxItems": 60,
+            "minItems": 1,
+            "title": "Strokes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "start",
+          "end",
+          "canvas_aspect",
+          "center_x",
+          "center_y",
+          "scale",
+          "rotation_deg",
+          "entrance",
+          "draw_duration",
+          "exit",
+          "strokes"
+        ],
+        "title": "PortableDrawingLayer",
+        "type": "object"
+      },
       "PortableTextLayer": {
         "additionalProperties": false,
         "properties": {
@@ -7199,6 +7414,17 @@
       "SlideEdits": {
         "description": "Per-slide edit state, applied at render time in `pipeline/slide_post/build.py`.\n\n`text` is the legacy single drawtext overlay. `texts` is the rich model\n(max 4 styled elements). When `texts` is not None, `text` is ALWAYS a\nmirror of `texts[0]` (None when `texts` is empty) so old clients and the\nflag-off render path keep working. `look_preset` maps to an FFmpeg filter\nfragment; there is no separate rendering subsystem for it.",
         "properties": {
+          "fit": {
+            "default": null,
+            "enum": [
+              "blur",
+              "black",
+              "white"
+            ],
+            "nullable": true,
+            "title": "Fit",
+            "type": "string"
+          },
           "framing": {
             "$ref": "#/components/schemas/SlideFraming",
             "default": null,
@@ -7393,6 +7619,19 @@
       "SlidePostDraft": {
         "description": "The persisted draft document (`PlanItem.slide_post`).",
         "properties": {
+          "aspect": {
+            "default": null,
+            "enum": [
+              "9:16",
+              "4:5",
+              "3:4",
+              "1:1",
+              "1.91:1"
+            ],
+            "nullable": true,
+            "title": "Aspect",
+            "type": "string"
+          },
           "brief_binding": {
             "$ref": "#/components/schemas/BriefBinding",
             "default": null,
@@ -7458,6 +7697,19 @@
       "SlidePostDraftBody": {
         "description": "PUT /{item_id}/slide-post request \u2014 a full replacement of the draft's\nuser-editable fields. `version`/`rendered_version`/`user_edited` are\nserver-owned and never accepted from the client.",
         "properties": {
+          "aspect": {
+            "default": null,
+            "enum": [
+              "9:16",
+              "4:5",
+              "3:4",
+              "1:1",
+              "1.91:1"
+            ],
+            "nullable": true,
+            "title": "Aspect",
+            "type": "string"
+          },
           "brief_binding": {
             "$ref": "#/components/schemas/BriefBinding",
             "default": null,

@@ -305,6 +305,7 @@ def test_create_turn_returns_202_and_publishes_committed_turn(
         "editor_state": None,
         "clip_selection": None,
         "song_order": None,
+        "song_range": None,
         "choice_selection": None,
         "scope": None,
         "manual_edits": None,

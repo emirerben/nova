@@ -740,10 +740,17 @@ enum NativeEditorRenderError: Error, Equatable {
             let under = video.filter { $0.volume > 0 && $0.timelineStart < window.end && $0.timelineStart + $0.duration > window.start }.map(\.id)
             if !under.isEmpty, muteWindows.count < 100 { muteWindows.append(AudioMuteWindow(start: window.start, end: window.end, clipIDs: under)) }
         }
-        let recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas,
+        var recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas,
             assets: assets.values.sorted { $0.id < $1.id }, tracks: [TimelineTrack(id: "video", kind: .video, clips: video)] + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
             audio: AudioMixRecipe(originalVolume: originalGain, muteWindows: muteWindows),
             assetManifest: RenderAssetManifest(assets: references.values.sorted { $0.id < $1.id }), textLayers: text, cameraPulses: cameraPulses, motionScenes: motionProgram, visualFills: visualFills)
+        // KRI-589: drawings follow the timeline the cuts left them (the projected window), then take the
+        // same clamp the server's `compile_drawing_layers` applies; both are pinned by compile_v1.json.
+        recipe.drawingLayers = NativeDrawingCompile.layers(document.drawings.map { drawing in
+            var placed = drawing
+            if let item = items.first(where: { $0.kind == .drawing && $0.id == drawing.id }) { placed.startS = item.start; placed.endS = item.end }
+            return placed
+        }, timelineDuration: TimelineMath.totalDuration(of: recipe))
         try recipe.validate()
         return NativeEditorRenderProgram(recipe: recipe, assetURLs: urls)
     }

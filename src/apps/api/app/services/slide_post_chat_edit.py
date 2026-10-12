@@ -160,6 +160,7 @@ def _slide_rows(draft: SlidePostDraft) -> list[dict[str, Any]]:
                 "look_preset": slide.edits.look_preset if slide.edits else "none",
                 "orientation": _framing_of(slide)[0],
                 "source_crop": _framing_of(slide)[1],
+                "fit": slide.edits.fit if slide.edits else None,
             }
         )
     return rows
@@ -245,8 +246,14 @@ def build_slide_post_snapshot(
     *,
     user_id: object = None,
     brief_binding: BriefBinding | None = None,
+    sizes_enabled: bool = False,
 ) -> dict[str, Any]:
-    """The copilot's view of a slide post (``surface: "slide_post"``, editor ops v2)."""
+    """The copilot's view of a slide post (``surface: "slide_post"``, editor ops v2).
+
+    ``sizes_enabled`` (KRI-606) is decided by the route: the flags AND a client that
+    round-trips the post size and per-photo Fit. Without it the size/fit ops are
+    refused, so an older app is never told "it's square now" and then drops the field.
+    """
     facts_on = settings.clip_facts_for(user_id)
     slots: list[dict[str, Any]] = []
     for index, row in enumerate(_slide_rows(draft)):
@@ -258,6 +265,8 @@ def build_slide_post_snapshot(
             orientation, crop = _framing_of(slide)
             slot["orientation"] = orientation
             slot["cropped"] = crop is not None
+            if sizes_enabled and slide.kind == "image":
+                slot["fit"] = slide.edits.fit if slide.edits and slide.edits.fit else "fill"
             source_aspect = (
                 _asset_upright_aspect(assets_by_id.get(slide.asset_id))
                 if slide.kind == "image"
@@ -294,9 +303,19 @@ def build_slide_post_snapshot(
             "platform_profile": str(draft.platform_profile),
         },
     }
+    if draft.aspect is not None:
+        # Focus/zoom crops are resolved against the post's real shape.
+        snapshot["post"]["aspect"] = draft.aspect
     if settings.slide_post_framing_enabled:
         snapshot["post"]["framing_enabled"] = True
         snapshot["post"]["landscape_allowed"] = draft.platform_profile == "tiktok_photo"
+    if sizes_enabled and settings.slide_post_framing_enabled:
+        from app.pipeline.slide_post.profiles import PLATFORM_PROFILES  # noqa: PLC0415
+
+        spec = PLATFORM_PROFILES[draft.platform_profile]
+        snapshot["post"]["sizes_enabled"] = True
+        snapshot["post"]["aspect"] = draft.aspect or spec.default_aspect
+        snapshot["post"]["allowed_aspects"] = list(spec.allowed_aspects)
     if any(slot.get("facts") for slot in slots):
         snapshot["label_facts"] = True
     binding = brief_binding or draft.brief_binding
@@ -490,6 +509,7 @@ def compile_slide_post_ops(
         str(row["media_id"]): (row.get("orientation") or "portrait", row.get("source_crop"))
         for row in surviving
     }
+    fit_by_id = {str(row["media_id"]): row.get("fit") for row in surviving}
     alive = set(new_order)
 
     # Group the final bars per slide, in bar order (originals first, then new).
@@ -542,6 +562,7 @@ def compile_slide_post_ops(
     text_changed: list[int] = []
     look_changed = 0
     framing_changed = 0
+    fit_changed = 0
     for position, sid in enumerate(new_order):
         slide = by_id[sid]
         elements = per_slide[sid]
@@ -556,7 +577,10 @@ def compile_slide_post_ops(
         orientation, crop = framing_by_id[sid]
         original_framing = _framing_of(slide)
         framing_same = (orientation, crop) == original_framing
-        if same_text and look == original_look and framing_same:
+        fit = fit_by_id[sid]
+        original_fit = slide.edits.fit if slide.edits else None
+        fit_same = fit == original_fit
+        if same_text and look == original_look and framing_same and fit_same:
             new_slides.append(slide)
             continue
         if not same_text:
@@ -565,6 +589,8 @@ def compile_slide_post_ops(
             look_changed += 1
         if not framing_same:
             framing_changed += 1
+        if not fit_same:
+            fit_changed += 1
         payload: dict[str, Any] = {
             "text": None,
             "look_preset": look,
@@ -580,6 +606,8 @@ def compile_slide_post_ops(
             payload["text"] = slide.edits.text.model_dump()
         if orientation != "portrait" or crop is not None:
             payload["framing"] = {"orientation": orientation, "source_crop": crop}
+        if fit is not None:
+            payload["fit"] = fit
         try:
             new_slides.append(
                 slide.model_copy(update={"edits": SlideEdits.model_validate(payload)})
@@ -590,9 +618,10 @@ def compile_slide_post_ops(
     cover_id = str(state.post.get("cover_slide_id") or draft.slides[draft.cover_index].id)
     cover_index = new_order.index(cover_id) if cover_id in alive else 0
     caption = state.post.get("caption", draft.caption)
+    aspect = state.post.get("aspect", draft.aspect)
     try:
         next_draft = bump_slide_post_version(
-            draft, slides=new_slides, cover_index=cover_index, caption=caption
+            draft, slides=new_slides, cover_index=cover_index, caption=caption, aspect=aspect
         )
     except ValidationError as exc:
         raise KriaEditorOpError("That change isn't valid for a post") from exc
@@ -623,10 +652,26 @@ def compile_slide_post_ops(
         )
     if look_changed:
         changes.append(f"Look changed on {look_changed} slide{'s' if look_changed != 1 else ''}")
+    crops_reset = int(state.post.get("aspect_crops_reset", 0))
+    if next_draft.aspect != draft.aspect or state.post.get("aspect_changed"):
+        from app.pipeline.slide_post.profiles import PLATFORM_PROFILES  # noqa: PLC0415
+
+        shown = next_draft.aspect or PLATFORM_PROFILES[next_draft.platform_profile].default_aspect
+        was = draft.aspect or PLATFORM_PROFILES[draft.platform_profile].default_aspect
+        if shown != was:
+            line = f"Size is now {shown}"
+            if crops_reset:
+                noun = "slide" if crops_reset == 1 else "slides"
+                line += f" \u00b7 crops reset on {crops_reset} {noun}"
+            changes.append(line)
+        # Those resets are already named in the size line.
+        framing_changed = max(0, framing_changed - crops_reset)
     if framing_changed:
         changes.append(
             f"Framing changed on {framing_changed} slide{'s' if framing_changed != 1 else ''}"
         )
+    if fit_changed:
+        changes.append(f"Fit changed on {fit_changed} slide{'s' if fit_changed != 1 else ''}")
     if new_order[cover_index] != draft.slides[draft.cover_index].id:
         changes.append(f"Cover is now slide {cover_index + 1}")
     if caption != draft.caption:
@@ -688,6 +733,7 @@ async def run_slide_post_chat_edit(
     server_version: int,
     run_context: RunContext | None = None,
     brief_binding: BriefBinding | None = None,
+    sizes_enabled: bool = False,
 ) -> SlidePostChatEditResponse:
     """One chat-edit turn. Never writes; every outcome is honest about what changed."""
     from app.agents._model_client import default_client  # noqa: PLC0415
@@ -714,7 +760,11 @@ async def run_slide_post_chat_edit(
         )
 
     snapshot = build_slide_post_snapshot(
-        draft, assets_by_id, user_id=user_id, brief_binding=active_binding
+        draft,
+        assets_by_id,
+        user_id=user_id,
+        brief_binding=active_binding,
+        sizes_enabled=sizes_enabled,
     )
     agent_input = EditCopilotInput(
         utterance=message,

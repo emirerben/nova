@@ -143,6 +143,51 @@ import XCTest
         attach(app, "Workspace 4:5")
     }
 
+    /// KRI-606: the Size tool resizes the whole post at once, "Fit all" shows each photo whole with bars, and
+    /// both survive a save (the fixture server echoes exactly what the app sent, `aspect` and `fit` included).
+    func testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave() {
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1", "KRIA_SLIDE_POST_SIZES": "1"])
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 8))
+        XCTAssertEqual(preview.frame.width / preview.frame.height, 4.0 / 5.0, accuracy: 0.06, "starts at the Instagram default")
+        let size = app.buttons["slidepost-tool-size"]
+        XCTAssertTrue(size.waitForExistence(timeout: 8), "the Size tool is offered when the server advertises slide_post_sizes")
+        size.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-size-sheet"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["slidepost-size-chip-1x1"].exists)
+        XCTAssertFalse(app.buttons["slidepost-size-chip-9x16"].exists, "no full-screen size on Instagram")
+        attach(app, "Size sheet (Instagram)")
+        app.buttons["slidepost-size-chip-1x1"].tap()
+        app.buttons["slidepost-size-fit-fit"].tap()
+        XCTAssertTrue(app.buttons["slidepost-size-bars-blur"].waitForExistence(timeout: 3), "Fit offers bar styles")
+        app.buttons["slidepost-size-bars-white"].tap()
+        XCTAssertTrue(app.buttons["slidepost-size-bars-white"].isSelected)
+        attach(app, "Size sheet (square, white bars)")
+        app.buttons["slidepost-size-done"].tap()
+        XCTAssertTrue(waitForSquare(preview), "the stage reshapes to 1:1 once the sheet closes")
+        attach(app, "Square post, photos fit with white bars")
+        saveDraft(app)
+        // With sizes on, the status line is a button that reopens the sheet, not a plain text.
+        let subtitle = app.descendants(matching: .any)["slidepost-subtitle"].firstMatch
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "1:1"), evaluatedWith: subtitle)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(waitForSquare(preview), "the saved draft keeps the size")
+        subtitle.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-size-sheet"].waitForExistence(timeout: 5), "the status line reopens the Size sheet")
+        XCTAssertTrue(app.buttons["slidepost-size-fit-fit"].isSelected, "Fit survived the save")
+    }
+
+    /// True once the preview element is square (polls; `frame` is not predicate-addressable).
+    private func waitForSquare(_ element: XCUIElement, timeout: TimeInterval = 8) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let frame = element.frame
+            if frame.height > 0, abs(frame.width / frame.height - 1) < 0.06 { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return false
+    }
+
     private func revealInTextPanel(_ element: XCUIElement, app: XCUIApplication) {
         let scroll = app.scrollViews["native-editor-text-inspector-scroll"]
         for _ in 0..<6 where !(element.exists && element.isHittable) { scroll.swipeUp() }
@@ -401,6 +446,15 @@ import XCTest
         for _ in 0..<8 { fingerDrag(app, fromX: 40, toX: w - 40, y: y) }
         XCTAssertTrue(app.buttons["slidepost-tile-1"].isHittable, "scrolled back to the start")
         attach(app, "Strip: scrolled back")
+        // A rightward swipe along the strip from the left edge, at the start position, must not open the drawer.
+        for _ in 0..<3 { fingerDrag(app, fromX: 30, toX: w - 30, y: y) }
+        XCTAssertFalse(app.buttons["drawer-new-chat"].isHittable, "swiping the strip must not open the drawer")
+        // A swipe that starts above the strip still opens the drawer.
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        let py = preview.frame.minY + 30
+        windowPoint(app, x: 4, y: py).press(forDuration: 0.05, thenDragTo: windowPoint(app, x: w * 0.85, y: py), withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(app.buttons["drawer-new-chat"].waitForExistence(timeout: 3), "a swipe that starts above the strip still opens the drawer")
+        attach(app, "Drawer opens from outside the strip")
     }
 
     func testStripFlickScrollsFromATileTheGapAndTheAddBlock() {
@@ -434,19 +488,6 @@ import XCTest
         last.press(forDuration: 0.9, thenDragTo: prior, withVelocity: .slow, thenHoldForDuration: 0.2)
         attach(app, "Strip: after reorder at the end")
         XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "long press then drag reorders")
-    }
-
-    func testStripSwipeDoesNotOpenDrawerButAPreviewSwipeStillDoes() {
-        let app = openRichWorkspace(many: true)
-        let tile = app.buttons["slidepost-tile-3"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
-        let y = tile.frame.midY, w = app.windows.firstMatch.frame.width
-        for _ in 0..<3 { fingerDrag(app, fromX: 30, toX: w - 30, y: y) }
-        XCTAssertFalse(app.buttons["drawer-new-chat"].isHittable, "swiping the strip must not open the drawer")
-        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
-        let py = preview.frame.minY + 30
-        windowPoint(app, x: 4, y: py).press(forDuration: 0.05, thenDragTo: windowPoint(app, x: w * 0.85, y: py), withVelocity: .fast, thenHoldForDuration: 0)
-        XCTAssertTrue(app.buttons["drawer-new-chat"].waitForExistence(timeout: 3), "a swipe that starts above the strip still opens the drawer")
-        attach(app, "Drawer opens from outside the strip")
     }
 
     /// Media that finishes importing joins the post by itself: a placeholder while it is processing,
@@ -565,16 +606,10 @@ import XCTest
         app.buttons["slidepost-undo"].tap()
         XCTAssertEqual(unselected(before), unselected(text.value as? String ?? ""), "one more undo returns the text to where it started")
         XCTAssertEqual(text.label, "Athens", "undo did not remove the text")
-    }
 
-    func testHoldSelectThenCornerHandleResizesWithoutPanel() {
-        let app = openRichWorkspace()
-        addText(app, "Athens")
-        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
-        let text = canvasText(app)
-        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        // Hold-select alone shows the frame and handle with no panel, and the corner handle resizes in place.
+        // Runs after the undo checks above, which count drags: a resize here would add an undo step to them.
         text.press(forDuration: 0.9)
-        let handle = app.descendants(matching: .any)["slidepost-text-handle"].firstMatch
         XCTAssertTrue(handle.waitForExistence(timeout: 3), "hold selects and shows the handle")
         panelAndKeyboardAbsent(app, "after hold")
         attach(app, "Hold-select: frame and handle, no panel")
@@ -596,6 +631,8 @@ import XCTest
         let selection = app.descendants(matching: .any)["slidepost-text-selection"].firstMatch
         text.press(forDuration: 0.9)
         XCTAssertTrue(selection.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-text-handle"].firstMatch.waitForExistence(timeout: 3))
+        panelAndKeyboardAbsent(app, "after hold")
         let oneLineHeight = selection.frame.height
         XCTAssertGreaterThan(oneLineHeight, 0)
 
@@ -603,7 +640,8 @@ import XCTest
         Thread.sleep(forTimeInterval: 0.9)
         text.tap()
         let field = app.textViews["slidepost-text-field"].firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "tap after hold-select opens Edit text")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "keyboard is up")
         field.press(forDuration: 1.0)
         if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
         let longLine = "One long line the creator typed without a single line break"
@@ -636,21 +674,6 @@ import XCTest
         expectation(for: shrunk, evaluatedWith: nil); waitForExpectations(timeout: 5)
         XCTAssertLessThan(selection.frame.height, oneLineHeight * 1.5, "still one line after resizing")
         attach(app, "Long typed line: one line after shrinking")
-    }
-
-    func testTapOnHoldSelectedTextOpensEditTextWithKeyboard() {
-        let app = openRichWorkspace()
-        addText(app, "Athens")
-        let text = canvasText(app)
-        XCTAssertTrue(text.waitForExistence(timeout: 5))
-        text.press(forDuration: 0.9)
-        XCTAssertTrue(app.descendants(matching: .any)["slidepost-text-handle"].firstMatch.waitForExistence(timeout: 3))
-        panelAndKeyboardAbsent(app, "after hold")
-        Thread.sleep(forTimeInterval: 0.9)
-        text.tap()
-        XCTAssertTrue(app.textViews["slidepost-text-field"].firstMatch.waitForExistence(timeout: 5), "tap opens Edit text")
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "keyboard is up")
-        attach(app, "Tap after hold-select: Edit text with keyboard")
     }
 
     func testTappingAnotherTextWhilePanelIsOpenSwitchesToItsEditField() {

@@ -2,6 +2,116 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.244.0] - 2026-10-12
+
+### Changed
+- feat: draw on videos in the iOS editor (KRI-589) (#1555) <!-- release-pr: 1555 -->
+
+## [0.78.243.0] - 2026-10-12
+
+### Changed
+- feat(slides): post-wide size and per-photo Fit for Sliders (KRI-606) (#1561) <!-- release-pr: 1561 -->
+
+## [0.78.242.0] - 2026-10-12
+
+### Fixed
+- fix(auth): tell creators which sign-in opens their account when Apple's email already has one (KRI-609) (#1563) <!-- release-pr: 1563 -->
+
+## [0.78.241.0] - 2026-10-12
+
+### Fixed
+- fix(kria): name clips by the file name the app shows, and never re-read a clip-card answer as a request (KRI-614) (#1570) <!-- release-pr: 1570 -->
+
+## [0.78.240.0] - 2026-10-12
+
+### Changed
+- ci(journey): give the KRI-598 journey its needs_native flag (fixes main CI) (#1568) <!-- release-pr: 1568 -->
+
+## [0.78.239.0] - 2026-10-12
+
+### Changed
+- fix(narrated): keep every clip on a voiceover edit unless the creator dropped some (KRI-593) (#1549) <!-- release-pr: 1549 -->
+
+## [0.78.238.0] - 2026-10-12
+
+### Changed
+- fix(montage): several short moments per long take, end on the line the creator quotes (KRI-596, KRI-597) (#1554) <!-- release-pr: 1554 -->
+
+## [0.78.237.0] - 2026-10-12
+
+### Changed
+- fix(kria): plan phone voiceover cues as include and never offer a guided contract on runtime v2 (KRI-598) (#1556) <!-- release-pr: 1556 -->
+
+## [0.78.236.0] - 2026-10-12
+
+### Added
+- feat(ios): record talking videos with a movable teleprompter (KRI-583) (#1565) <!-- release-pr: 1565 -->
+
+## [0.78.235.0] - 2026-10-12
+
+### Changed
+- ci: retire web tests and keep Python journeys off Mac runners (#1566) <!-- release-pr: 1566 -->
+
+## [0.78.234.0] - 2026-10-12
+
+### Changed
+- fix(kria): ask before a voiceover downgrade only when it loses an ask (KRI-594) (#1550) <!-- release-pr: 1550 -->
+
+## [0.78.233.0] - 2026-10-12
+
+### Changed
+- feat(phone): sound effects on iPhone guided / montage videos + chat can add them (KRI-608) (#1564) <!-- release-pr: 1564 -->
+
+## [0.78.232.0] - 2026-10-12
+
+### Changed
+- feat(gates): KRI-577 session audit and shared reliability gates for incident fixes (#1539) <!-- release-pr: 1539 -->
+
+## [0.78.231.0] - 2026-10-12
+
+### Changed
+- fix(kria): drop a title hold the creator never stated (KRI-591) (#1548) <!-- release-pr: 1548 -->
+
+## [0.78.230.0] - 2026-10-12
+
+### Changed
+- fix(narrated): follow the voiceover when spoken cues and the described order disagree (KRI-590, KRI-592) (#1547) <!-- release-pr: 1547 -->
+
+## [0.78.229.0] - 2026-10-12
+
+### Changed
+- fix(ios): after a render the editor shows the video, not a stuck "last finished video" card (KRI-587) (#1545) <!-- release-pr: 1545 -->
+
+## [0.78.228.0] - 2026-10-12
+
+### Changed
+- fix(kria): an auto-selected song never outlasts the footage it backs (KRI-600) (#1557) <!-- release-pr: 1557 -->
+
+## [0.78.227.0] - 2026-10-12
+
+### Changed
+- fix(api): keep Slider in the native format picker under the iPhone-only fence (KRI-599) (#1552) <!-- release-pr: 1552 -->
+
+## [0.78.226.0] - 2026-10-11
+
+### Changed
+- ci: cut CI and iOS UI test time (KRI-604) (#1558) <!-- release-pr: 1558 -->
+
+## [0.78.225.0] - 2026-10-11
+
+### Changed
+- fix(kria): face-filled vertical crop for a sideways phone Talking speaker (KRI-547) (#1507) <!-- release-pr: 1507 -->
+
+## [0.78.224.0] - 2026-10-11
+
+### Changed
+- fix(length): approved length plan tolerates proxy frame-rounding and clamps windows to the real clip (KRI-595) (#1551) <!-- release-pr: 1551 -->
+
+## [0.78.223.0] - 2026-10-11
+
+### Changed
+- fix(kria): hook requests no longer dead-end on a creative_decision schema error (KRI-586) (#1544) <!-- release-pr: 1544 -->
+
 ## [0.78.222.0] - 2026-10-11
 
 ### Changed

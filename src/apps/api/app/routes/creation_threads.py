@@ -119,6 +119,7 @@ from app.services.job_storage_paths import (
     normalize_job_storage_path,
     owned_job_output_path,
 )
+from app.services.media_filenames import safe_media_basename
 from app.services.phone_destination import (
     has_device_intent,
     has_native_device_only_intent,
@@ -358,6 +359,8 @@ class CreationCapabilitiesOut(BaseModel):
     slide_post_rich_text: bool = False
     slide_post_chat_edit: bool = False
     slide_post_framing: bool = False
+    # KRI-606: post-wide size + per-photo Fit (needs framing for the Crop workspace).
+    slide_post_sizes: bool = False
     slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
@@ -774,10 +777,16 @@ def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web"
         from app.services.phone_rollout import phone_render_supported_formats  # noqa: PLC0415
 
         supported = phone_render_supported_formats()
+        # Slide posts render on the iPhone and the server only saves them (KRI-581), so
+        # the native-only fence (IOS_NATIVE_DEVICE_ONLY_ENABLED) keeps Slider like pilot
+        # does (KRI-599). The global IOS_DEVICE_ONLY_MODE cutover is unchanged: it still hides it.
+        keeps_slides = native_mode == "pilot" or (
+            native_mode == "strict" and not settings.ios_device_only_mode
+        )
         available = {
             key: value
             for key, value in available.items()
-            if value in supported or (native_mode == "pilot" and value == "slides")
+            if value in supported or (keeps_slides and value == "slides")
         }
     return available
 
@@ -3697,6 +3706,9 @@ async def capabilities(
             settings.slide_post_chat_edit_enabled and settings.slide_post_rich_text_enabled
         ),
         "slide_post_framing": bool(settings.slide_post_framing_enabled),
+        "slide_post_sizes": bool(
+            settings.slide_post_sizes_enabled and settings.slide_post_framing_enabled
+        ),
         "creation_mode": (
             "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"
         ),
@@ -6300,6 +6312,14 @@ async def attach_media(
                     "duration_s": source["duration_s"],
                     "has_audio": source["has_audio"],
                     "manifest_identity": source["media_id"],
+                    # KRI-614: the name the app shows for this clip ("IMG_7382.MOV"), so
+                    # "first IMG_7382 then ..." can name it. Evidence only: never part of
+                    # the manifest identity or hash.
+                    **(
+                        {"source_filename": filename}
+                        if (filename := safe_media_basename(source["filename"]))
+                        else {}
+                    ),
                     # KRI-189: authoritative filming context (source of truth for
                     # the fact layer); coarse by construction.
                     **({"capture": source["_capture"]} if "_capture" in source else {}),

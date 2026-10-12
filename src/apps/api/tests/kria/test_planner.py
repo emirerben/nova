@@ -506,7 +506,7 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
     monkeypatch.setattr(
         planner,
         "check_strategy_for_runtime_v2",
-        lambda _manifest, strategy: CheckedStrategy(strategy=strategy, notices=()),
+        lambda _manifest, strategy, **_kwargs: CheckedStrategy(strategy=strategy, notices=()),
     )
 
     class FakeAgent:
