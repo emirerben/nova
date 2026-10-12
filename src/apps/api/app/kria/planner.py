@@ -1778,10 +1778,10 @@ def ground_pinned_texts(
     return kept, len(pins) - len(kept)
 
 
-# KRI-591: number words a creator may type for a title hold. Turkish both with and without
-# diacritics ("üç"/"uc"): phone keyboards often drop them. A word only counts right before a
-# seconds unit, so "bir"/"on"/"altı" never read as a number elsewhere in the sentence.
-_HOLD_NUMBER_WORDS = {
+# KRI-591: number words a creator may type for a title hold, each paired only with its own
+# language's seconds unit, so English "on second" is never Turkish ten seconds. Turkish both
+# with and without diacritics ("üç"/"uc"): phone keyboards often drop them.
+_EN_HOLD_WORDS = {
     "one": 1.0,
     "two": 2.0,
     "three": 3.0,
@@ -1792,6 +1792,8 @@ _HOLD_NUMBER_WORDS = {
     "eight": 8.0,
     "nine": 9.0,
     "ten": 10.0,
+}
+_TR_HOLD_WORDS = {
     "bir": 1.0,
     "iki": 2.0,
     "üç": 3.0,
@@ -1807,15 +1809,32 @@ _HOLD_NUMBER_WORDS = {
     "dokuz": 9.0,
     "on": 10.0,
 }
-_HOLD_UNIT = r"(?:s|sn|secs?|seconds?|saniye\w*|segs?|segundos?|sekunden?|secondes?|second[io])"
-# A number (".5" too), an optional "and a half" / "buçuk" before the unit, the unit, and an
-# optional trailing "and a half" ("two seconds and a half").
-_HOLD_SECONDS = re.compile(
-    r"(?<![\w.:])(?P<num>\d+(?:[.,]\d+)?|[.,]\d+|"
-    + "|".join(sorted(_HOLD_NUMBER_WORDS, key=len, reverse=True))
-    + r")(?:\s+(?P<half>and\s+a\s+half|bu[çc]uk))?\s*-?\s*"
-    + _HOLD_UNIT
-    + r"(?!\w)(?:\s+(?P<tail>and\s+a\s+half)(?!\w))?"
+_HOLD_NUMBER_WORDS = {**_EN_HOLD_WORDS, **_TR_HOLD_WORDS}
+
+
+def _words(table: dict[str, float]) -> str:
+    return "|".join(sorted(table, key=len, reverse=True))
+
+
+_TAIL_HALF = r"(?!\w)(?:\s+(?P<tail>and\s+a\s+half)(?!\w))?"
+# A seconds expression: a digit number (".5" too) may touch any unit ("2s", ".5s"); a spelled
+# number needs a space or hyphen before its own language's unit, so "ones" is not "one s".
+# An optional "and a half" / "buçuk" before the unit and a trailing "and a half" add 0.5.
+_HOLD_SECONDS = (
+    re.compile(
+        r"(?<![\w.:])(?P<num>\d+(?:[.,]\d+)?|[.,]\d+)"
+        r"(?:\s+(?P<half>and\s+a\s+half|bu[çc]uk))?\s*-?\s*"
+        r"(?:s|sn|secs?|seconds?|saniye\w*|segs?|segundos?|sekunden?|secondes?|second[io])"
+        + _TAIL_HALF
+    ),
+    re.compile(
+        rf"(?<![\w.:])(?P<num>{_words(_EN_HOLD_WORDS)})(?:\s+(?P<half>and\s+a\s+half))?"
+        r"(?:\s+|\s*-\s*)(?:secs?|seconds?)" + _TAIL_HALF
+    ),
+    re.compile(
+        rf"(?<![\w.:])(?P<num>{_words(_TR_HOLD_WORDS)})(?:\s+(?P<half>bu[çc]uk))?"
+        r"\s+(?:saniye\w*|sn)(?!\w)(?P<tail>)"
+    ),
 )
 # Half-second phrases with no leading number.
 _HOLD_HALF_PHRASES = (
@@ -1834,7 +1853,7 @@ def _stated_holds(text: str) -> list[tuple[int, int, float]]:
     """Every seconds expression in ``text`` as (start, end, seconds)."""
 
     holds = []
-    for match in _HOLD_SECONDS.finditer(text):
+    for match in (m for pattern in _HOLD_SECONDS for m in pattern.finditer(text)):
         value = _HOLD_NUMBER_WORDS.get(match["num"])
         if value is None:
             value = float(match["num"].replace(",", "."))

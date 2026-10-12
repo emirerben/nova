@@ -321,6 +321,40 @@ def test_ordinary_half_second_holds_are_the_creators_words(
 
 
 @pytest.mark.parametrize(
+    ("evidence", "hold"),
+    [
+        # PR 1548 external review: ordinary words that are not a duration.
+        ("Use the bright ones", 1.0),
+        ("Put the title on second clip", 10.0),
+        ("Put the title on the second clip", 10.0),
+        ("two shots of the river", 2.0),
+        ("Show the title on seconds 3 to 5", 10.0),
+        ("iki saniyelik", 3.0),
+    ],
+)
+def test_ordinary_words_are_not_a_title_hold(evidence: str, hold: float) -> None:
+    assert not planner.title_hold_grounded(hold, evidence=evidence, user_sources=[evidence])
+
+
+@pytest.mark.parametrize(
+    ("evidence", "hold"),
+    [
+        # Compact digit forms and spaced or hyphenated words stay supported.
+        ("title for 2s", 2.0),
+        ("title for .5s", 0.5),
+        ("title for 2.5s", 2.5),
+        ("a 3-second title", 3.0),
+        ("a two-second title", 2.0),
+        ("title for two seconds", 2.0),
+        ("başlık on saniye kalsın", 10.0),
+        ("başlık iki sn", 2.0),
+    ],
+)
+def test_compact_and_spelled_holds_are_still_read(evidence: str, hold: float) -> None:
+    assert planner.title_hold_grounded(hold, evidence=evidence, user_sources=[evidence])
+
+
+@pytest.mark.parametrize(
     ("title", "evidence", "hold"),
     [
         ("ONE AND A HALF SECONDS", 'Open with "ONE AND A HALF SECONDS"', 1.5),
