@@ -70,6 +70,7 @@ from app.kria.strategy_policy import (
     check_strategy_for_runtime_v2,
     song_captions_refusal,
 )
+from app.kria.style_asks import MOMENT_SHORT_MAX_S, brief_moment_ask
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -143,14 +144,24 @@ from app.services.song_order import (
     thread_keeps_lipsync,
 )
 from app.services.song_range import restrict_alignment_to_range, song_range_of
+from app.services.spoken_quotes import closing_quote_notice, ground_closing_quote
 
 log = structlog.get_logger()
 
 
 def _enrich_best_parts_snapshot(
-    strategy: Mapping[str, Any], media_snapshot: dict | None, brief: CreativeBrief | None
+    strategy: Mapping[str, Any],
+    media_snapshot: dict | None,
+    brief: CreativeBrief | None,
+    *,
+    closing_quote: Mapping[str, Any] | None = None,
 ) -> dict | None:
-    """Attach source-bounded footage capacity before the choice collector runs."""
+    """Attach source-bounded footage capacity before the choice collector runs.
+
+    ``closing_quote`` is ``spoken_quotes.ground_closing_quote``'s record of the line the
+    creator asked to end on (KRI-597); the brief's moment ask (KRI-596, "the best six
+    moments, each very short") lets a long take give several windows.
+    """
     if not isinstance(media_snapshot, dict):
         return media_snapshot
     from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
@@ -181,12 +192,16 @@ def _enrich_best_parts_snapshot(
     recording = media_snapshot.get("voiceover_duration_s")
     if recording is None and isinstance(media_snapshot.get("voiceover"), dict):
         recording = media_snapshot["voiceover"].get("duration_s")
+    moments = brief_moment_ask(brief)
     length_plan = build_length_plan(
         {**strategy, "voiceover_duration_s": recording},
         media_snapshot,
         creator_target_s=creator_target_s,
         selected_ids=selected,
         order_ids=contract.order_ids if contract is not None else (),
+        closing_quote=closing_quote,
+        moment_count=moments.count if moments is not None else None,
+        moment_max_s=MOMENT_SHORT_MAX_S if moments is not None and moments.short else None,
     )
     enriched = dict(media_snapshot)
     enriched["length_plan"] = length_plan
@@ -198,6 +213,28 @@ def _enrich_best_parts_snapshot(
         {"code": item["code"], "message": item["message"]} for item in length_plan["conflicts"]
     ]
     return enriched
+
+
+def _moment_count_notice(
+    strategy: Mapping[str, Any], brief: CreativeBrief | None, length_plan: object
+) -> str | None:
+    """KRI-596: the reply says so when the montage can't hold the moments asked for."""
+    ask = brief_moment_ask(brief)
+    if (
+        ask is None
+        or ask.count is None
+        or strategy.get("edit_format") != "montage"
+        or not isinstance(length_plan, Mapping)
+        or length_plan.get("window_eligible") is not True
+    ):
+        return None
+    planned = len(length_plan.get("windows") or [])
+    if planned == ask.count:
+        return None
+    return say(
+        en=f"I could fit {planned} moments, not {ask.count}.",
+        tr=f"{ask.count} değil, {planned} an sığdırabildim.",
+    )
 
 
 def _fit_music_section_to_footage(
@@ -3079,9 +3116,37 @@ async def _gate_unresolved_choices(
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         planned = replace(planned, plan=plan)
         arguments = apply_intent.arguments
-    enriched_snapshot = _enrich_best_parts_snapshot(strategy, planned.media_snapshot, brief)
+    # KRI-597: "end on the moment I say '...'" -- find when the line is said before the
+    # length plan freezes the closing window, and say so plainly when nobody can.
+    closing_quote = (
+        await ground_closing_quote(strategy, planned.media_snapshot)
+        if strategy.get("edit_format") == "montage"
+        else None
+    )
+    enriched_snapshot = _enrich_best_parts_snapshot(
+        strategy, planned.media_snapshot, brief, closing_quote=closing_quote
+    )
     if enriched_snapshot is not planned.media_snapshot:
         planned = replace(planned, media_snapshot=enriched_snapshot)
+    length_plan = (
+        enriched_snapshot.get("length_plan") if isinstance(enriched_snapshot, dict) else None
+    )
+    plan_notices = [
+        notice
+        for notice in (
+            closing_quote_notice(
+                length_plan.get("closing_quote") if isinstance(length_plan, dict) else closing_quote
+            ),
+            _moment_count_notice(strategy, brief, length_plan),
+        )
+        if notice
+    ]
+    if plan_notices:
+        summary = " ".join([str(arguments.get("summary") or ""), *plan_notices]).strip()
+        arguments = {**arguments, "summary": summary[:1000]}
+        apply_intent = apply_intent.model_copy(update={"arguments": arguments})
+        plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
+        planned = replace(planned, plan=plan)
     resolution = resolve_choices(
         strategy,
         answered_brief(brief, strategy),
@@ -3149,7 +3214,10 @@ async def _gate_unresolved_choices(
         planned,
         plan=plan.model_copy(update={"intents": [rewritten, *plan.intents[1:]]}),
         media_snapshot=_enrich_best_parts_snapshot(
-            resolution.strategy, enriched_snapshot, answered_brief(brief, resolution.strategy)
+            resolution.strategy,
+            enriched_snapshot,
+            answered_brief(brief, resolution.strategy),
+            closing_quote=closing_quote,
         ),
     )
 
