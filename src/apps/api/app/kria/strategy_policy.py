@@ -16,18 +16,20 @@ Runtime-v2 also has no guided-proposal step, so ``dispatch_item_render_for``
 ``guided_voiceover_v1`` strategy with ``proposal_replan_required`` -- a render
 that can never start, however often the creator retries. Such a strategy is
 downgraded here to the native voiceover edit over the project's own clips, with
-a notice saying what was left out.
+a notice saying what was left out; it asks first only when the downgrade loses
+something the creator asked for (KRI-594).
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
 from app.agents._schemas.creator_policy import (
     CAPABILITY_USER_SONG,
+    MAX_MAIN_CREATOR_SELECTED_MEDIA,
     USER_SONG_BACKGROUND_NOTICE,
     USER_SONG_CONTRACT_NOTICE,
     USER_SONG_LIPSYNC_SHAPE_NOTICE,
@@ -38,22 +40,40 @@ from app.agents._schemas.creator_policy import (
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
     PhoneMediaUnavailableError,
+    latest_scope_counts_own_clips,
 )
 from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
 from app.kria.reply_language import current_reply_language, say
+from app.kria.voiceover_scope import lost_visual_asks, resolve_native_all_scope
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PINNED_TEXT_MAX_CHARS
 from app.services.creator_capabilities import (
+    CAPABILITY_REACTION_BEATS,
     TALKING_CLIP_INTENTS_DROPPED_NOTICE,
     CreatorSfxUnavailableError,
     compile_strategy_to_plan,
+    resolve_creator_image_media_ref,
+    resolve_creator_visual_video_media_ref,
 )
 from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
 
 # The English constants stay the canonical text (tests and callers compare them);
 # ``_notice`` picks the Turkish twin when the chat is Turkish (KRI-520).
+# Said only where the edit has no word-timed photos (no `reaction_beats`): there it is true.
 GUIDED_VOICEOVER_DOWNGRADE_NOTICE = (
     "Photos and videos from Visuals can't be timed to a voiceover here yet, so this "
     "edit uses your project's own clips."
+)
+# KRI-594: where photos pop in on a spoken word (KRI-519), say that instead.
+VISUALS_NEED_A_WORD_NOTICE = (
+    "In a voiceover edit, photos from Visuals show up on a word you say, so I left out "
+    "the ones that aren't tied to a word."
+)
+VOICEOVER_CLIP_CAP_NOTICE = (
+    f"A voiceover edit can use up to {MAX_MAIN_CREATOR_SELECTED_MEDIA} of your clips, so "
+    "I left out the rest."
+)
+VOICEOVER_MEDIA_TIMING_NOTICE = (
+    "I can't keep that exact photo and video timing in a voiceover edit."
 )
 CAPTIONS_KEPT_NOTICE = "This kind of edit always shows captions right now, so I kept them in."
 TRANSCRIPT_LABELS_DROPPED_NOTICE = (
@@ -65,6 +85,17 @@ _GUIDED_VOICEOVER_DOWNGRADE_NOTICE_TR = (
     "Visuals'taki fotoğraf ve videolar henüz seslendirmeye göre zamanlanamıyor, o yüzden "
     "bu düzenleme projenin kendi kliplerini kullanıyor."
 )
+_VISUALS_NEED_A_WORD_NOTICE_TR = (
+    "Seslendirmeli düzenlemede Visuals'taki fotoğraflar söylediğin bir kelimede beliriyor, "
+    "o yüzden bir kelimeye bağlı olmayanları koymadım."
+)
+_VOICEOVER_CLIP_CAP_NOTICE_TR = (
+    f"Seslendirmeli düzenleme kliplerinden en fazla {MAX_MAIN_CREATOR_SELECTED_MEDIA} "
+    "tanesini kullanabiliyor, o yüzden gerisini koymadım."
+)
+_VOICEOVER_MEDIA_TIMING_NOTICE_TR = (
+    "Seslendirmeli düzenlemede o tam fotoğraf ve video zamanlamasını koruyamıyorum."
+)
 _CAPTIONS_KEPT_NOTICE_TR = (
     "Bu tür düzenleme şu an her zaman altyazı gösteriyor, o yüzden altyazıları bıraktım."
 )
@@ -74,10 +105,25 @@ _TRANSCRIPT_LABELS_DROPPED_NOTICE_TR = (
 )
 
 
-def _guided_voiceover_downgrade_notice() -> str:
+def _guided_voiceover_downgrade_notice(manifest: ResolvedCreatorManifest) -> str:
+    """Why Visuals the guided plan would have shown are not in the voiceover edit."""
+
+    beats = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+    if beats is not None and beats.available:
+        return say(en=VISUALS_NEED_A_WORD_NOTICE, tr=_VISUALS_NEED_A_WORD_NOTICE_TR)
     return say(
         en=GUIDED_VOICEOVER_DOWNGRADE_NOTICE,
         tr=_GUIDED_VOICEOVER_DOWNGRADE_NOTICE_TR,
+    )
+
+
+def _asked_media_left_out_notice(kind: str | None, ask: str) -> str:
+    """KRI-594: a photo or video the creator's brief asks for, named in their own words."""
+
+    noun_en, noun_tr = ("photo", "fotoğraf") if kind == "image" else ("video", "video")
+    return say(
+        en=f'This version leaves out the {noun_en} you asked for: "{ask}".',
+        tr=f'Bu sürümde istediğin {noun_tr} yok: "{ask}".',
     )
 
 
@@ -241,9 +287,72 @@ def song_captions_refusal(
     )
 
 
+# The fields `_downgrade_guided_voiceover` rewrites. When the downgrade keeps every request,
+# a dropped request is judged against the creator's strategy with these already swapped.
+_DOWNGRADE_FIELDS = (
+    "execution_contract",
+    "mixed_media_timing",
+    "media_scope",
+    "selected_media_ids",
+    "clip_intents",
+    "resolved_clip_intents",
+    "render_program",
+)
+
+
+@dataclass(frozen=True)
+class _Downgrade:
+    strategy: CreativeStrategy
+    notices: tuple[str, ...]
+    # KRI-594: something the creator asked for is not in the downgraded edit.
+    loses_a_request: bool
+
+
+def _placed_media_ids(manifest: ResolvedCreatorManifest, strategy: CreativeStrategy) -> set[str]:
+    """What a native voiceover edit shows: its clips (up to the native cap) and every
+    Visual a spoken word (`reaction_beats`) or the closing shot (`closing_media`) places."""
+
+    placed = set(strategy.selected_media_ids[:MAX_MAIN_CREATOR_SELECTED_MEDIA])
+    refs = [beat.visual_id for beat in strategy.reaction_beats or ()]
+    if strategy.closing_media is not None:
+        refs += [strategy.closing_media.visual_id, strategy.closing_media.badge_visual_id]
+    for ref in refs:
+        if not ref:
+            continue
+        media = resolve_creator_image_media_ref(
+            manifest, ref
+        ) or resolve_creator_visual_video_media_ref(manifest, ref)
+        placed.add(media.media_id if media is not None else ref)
+    return placed
+
+
 def _downgrade_guided_voiceover(
-    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
-) -> tuple[CreativeStrategy, list[str]] | RefusedStrategy:
+    manifest: ResolvedCreatorManifest,
+    strategy: CreativeStrategy,
+    *,
+    creator_text: str = "",
+    requested_media: Mapping[str, str] | None = None,
+) -> _Downgrade | RefusedStrategy:
+    """The native voiceover edit over the project's own clips, and what it loses.
+
+    KRI-594: the contract itself is our mechanism, not a creator request. The downgrade
+    loses a request only when the edit no longer shows media the creator asked for, or drops
+    exact photo/video timing or narration labels, which only the guided contract carries.
+    Media the creator asked for:
+
+    * every medium a live brief requirement targets (``requested_media``: asked in ANY
+      turn, e.g. "show the bathtub photo when I say kırkayak"), when the guided plan would
+      have shown it;
+    * the plan's named ``selected_media_ids``;
+    * for an "all" scope, every item -- or only the clips when the creator's own count names
+      exactly the clips ("7 klibin hepsini kullan" with 7 clips and one Visuals photo). That
+      reading never un-asks a medium the brief asks for.
+
+    A Visual still shows when a reaction beat or the closing shot places it. A lost brief
+    ask is named in the question; Visuals the guided plan would have shown without being
+    asked for are left out with a notice, not a question.
+    """
+
     own_clips = [
         media.media_id
         for media in manifest.media
@@ -263,24 +372,60 @@ def _downgrade_guided_voiceover(
             ),
             code="guided_voiceover_unavailable",
         )
-    notices = [_guided_voiceover_downgrade_notice()]
     intents = strategy.clip_intents or []
     kept_intents = [intent for intent in intents if intent.label_source != "transcript"]
-    if len(kept_intents) != len(intents):
-        notices.append(_transcript_labels_dropped_notice())
+    every_item = strategy.media_scope == "all"
     selected = [media_id for media_id in strategy.selected_media_ids if media_id in own_clips]
     downgraded = strategy.model_copy(
         update={
             "execution_contract": None,
             "mixed_media_timing": None,
             "media_scope": "selected",
-            "selected_media_ids": selected or own_clips,
+            # An "all" scope keeps every clip; otherwise the clips the plan picked.
+            "selected_media_ids": own_clips if every_item else (selected or own_clips),
             "clip_intents": kept_intents or None,
             "resolved_clip_intents": None,
             "render_program": "native",
         }
     )
-    return downgraded, notices
+    everything = [media.media_id for media in manifest.media]
+    named = list(strategy.selected_media_ids)
+    # The guided program shows its explicit selection, else every item.
+    shown = named if strategy.media_scope == "selected" and named else everything
+    brief_asked = {
+        media_id: words for media_id, words in (requested_media or {}).items() if media_id in shown
+    }
+    if every_item:
+        # The creator's latest scope words decide (PR 1550 review).
+        clips_only = latest_scope_counts_own_clips(creator_text, len(own_clips))
+        asked = set(own_clips if clips_only else everything)
+    else:
+        asked = set(named)
+    asked |= set(brief_asked)
+    placed = _placed_media_ids(manifest, downgraded)
+    kinds = {media.media_id: media.kind for media in manifest.media}
+    notices = [
+        _asked_media_left_out_notice(kinds.get(media_id), words)
+        for media_id, words in brief_asked.items()
+        if media_id not in placed
+    ]
+    if any(
+        media_id not in own_clips and media_id not in placed and media_id not in brief_asked
+        for media_id in shown
+    ):
+        notices.append(_guided_voiceover_downgrade_notice(manifest))
+    if len(downgraded.selected_media_ids) > MAX_MAIN_CREATOR_SELECTED_MEDIA:
+        notices.append(say(en=VOICEOVER_CLIP_CAP_NOTICE, tr=_VOICEOVER_CLIP_CAP_NOTICE_TR))
+    if strategy.mixed_media_timing is not None:
+        notices.append(say(en=VOICEOVER_MEDIA_TIMING_NOTICE, tr=_VOICEOVER_MEDIA_TIMING_NOTICE_TR))
+    if len(kept_intents) != len(intents):
+        notices.append(_transcript_labels_dropped_notice())
+    loses_a_request = (
+        any(media_id not in placed for media_id in asked)
+        or strategy.mixed_media_timing is not None
+        or len(kept_intents) != len(intents)
+    )
+    return _Downgrade(downgraded, tuple(notices), loses_a_request)
 
 
 def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStrategy:
@@ -519,6 +664,11 @@ def _drops_requested_action(
         for key in fields
     ):
         return True
+    # PR 1556 review: a clip the strategy selected that the checked plan no longer has is
+    # a lost ask (a reorder, or a clip added to the selection, is not).
+    kept = set(next_values.get("selected_media_ids") or ())
+    if any(media_id not in kept for media_id in prior.get("selected_media_ids") or ()):
+        return True
     return prior.get("caption_style") == "none" and next_values.get("caption_style") != "none"
 
 
@@ -585,10 +735,23 @@ def check_strategy_for_runtime_v2(
     *,
     ask_before_simplifying: bool = False,
     ask_about_stated_settings: bool = False,
+    creator_text: str = "",
+    requested_media: Mapping[str, str] | None = None,
 ) -> CheckedStrategy | RefusedStrategy:
-    """Run v1's plan compile over a v2 strategy; never raises a policy error."""
+    """Run v1's plan compile over a v2 strategy; never raises a policy error.
+
+    Both keywords serve a guided-voiceover downgrade (KRI-594): ``creator_text`` is the
+    creator's own words (it tells an "all 7 clips" ask apart from "all my photos and
+    videos"); ``requested_media`` maps each medium a live brief requirement asks for to that
+    requirement's words (`app.kria.brief.requested_media`). ``requested_media`` also serves
+    the native voiceover edit with no contract (KRI-598): a Visual it asks for that no
+    reaction beat or closing shot places is named and asked about, never dropped silently.
+    """
 
     original = strategy
+    # What a dropped request is judged against: the creator's strategy, with a guided
+    # voiceover contract already swapped out when its downgrade keeps every request.
+    baseline = original
     notices: list[str] = []
     if strategy.caption_style == "none" and (
         strategy.edit_format == "subtitled" or strategy.edit_format in NARRATED_EDIT_FORMATS
@@ -608,11 +771,38 @@ def check_strategy_for_runtime_v2(
         # rewrite the selection and could refuse a project that has no video.
         strategy = strategy.model_copy(update={"execution_contract": None})
         notices.append(localize_known_message(USER_SONG_CONTRACT_NOTICE))
+    # KRI-598: a Visual the brief asks for that no spoken word places is lost on the native
+    # voiceover edit: named in the creator's words, and asked about below.
+    lost_asks = lost_visual_asks(manifest, strategy, requested_media)
+    kinds = {media.media_id: media.kind for media in manifest.media}
+    notices.extend(
+        _asked_media_left_out_notice(kinds.get(media_id), words)
+        for media_id, words in lost_asks.items()
+    )
+    # KRI-598: "use all my clips" on a native-only voiceover edit is every own clip. Own
+    # clips beyond what one native edit takes were asked for by "all": a lost ask, like an
+    # all-scope clip past the cap in the KRI-594 downgrade (PR 1556 review).
+    strategy, scope_notices, clips_left_out, visuals_left_out = resolve_native_all_scope(
+        manifest, strategy, asked=lost_asks, creator_text=creator_text
+    )
+    notices.extend(scope_notices)
+    if clips_left_out:
+        notices.append(say(en=VOICEOVER_CLIP_CAP_NOTICE, tr=_VOICEOVER_CLIP_CAP_NOTICE_TR))
+
     if strategy.execution_contract is not None:
-        downgraded = _downgrade_guided_voiceover(manifest, strategy)
-        if isinstance(downgraded, RefusedStrategy):
-            return downgraded
-        strategy, notices = downgraded
+        downgrade = _downgrade_guided_voiceover(
+            manifest, strategy, creator_text=creator_text, requested_media=requested_media
+        )
+        if isinstance(downgrade, RefusedStrategy):
+            return downgrade
+        strategy = downgrade.strategy
+        notices.extend(downgrade.notices)
+        if not downgrade.loses_a_request:
+            # KRI-594: runtime v2 never runs the guided contract, so swapping it for the
+            # native voiceover edit is not a lost request when everything asked for stays.
+            baseline = original.model_copy(
+                update={field: getattr(strategy, field) for field in _DOWNGRADE_FIELDS}
+            )
     pin_refusal = _pin_range_refusal(strategy)
     if pin_refusal is not None:
         return pin_refusal
@@ -627,16 +817,18 @@ def check_strategy_for_runtime_v2(
         # that specialist, so keep the selection the model boundary normalized.
         checked = checked.model_copy(update={"selected_media_ids": strategy.selected_media_ids})
     all_notices = (*notices, *(localize_known_message(n) for n in edit_plan.notices))
-    if ask_before_simplifying and _drops_requested_action(
-        original, checked, stated_settings=ask_about_stated_settings
+    if ask_before_simplifying and (
+        lost_asks
+        or clips_left_out
+        or visuals_left_out
+        or _drops_requested_action(baseline, checked, stated_settings=ask_about_stated_settings)
     ):
-        details = (
-            " ".join(all_notices)
-            or (_repair_detail(original, checked) if ask_about_stated_settings else "")
-            or say(
-                en="This edit cannot carry out that exact combination of requests.",
-                tr="Bu düzenleme istediklerinin bu birleşimini aynen yapamıyor.",
-            )
+        # The creator-stated setting that was dropped comes first: a notice alone (e.g.
+        # Visuals left out of a voiceover edit) may not be what made this a question.
+        repair = _repair_detail(baseline, checked) if ask_about_stated_settings else ""
+        details = " ".join(part for part in (repair, *all_notices) if part) or say(
+            en="This edit cannot carry out that exact combination of requests.",
+            tr="Bu düzenleme istediklerinin bu birleşimini aynen yapamıyor.",
         )
         # KRI-519: a first request has no draft to be "unchanged".
         has_edit = manifest.current_edit is not None and manifest.current_edit.status != "none"
@@ -661,6 +853,9 @@ def check_strategy_for_runtime_v2(
 __all__ = [
     "GUIDED_VOICEOVER_DOWNGRADE_NOTICE",
     "TRANSCRIPT_LABELS_DROPPED_NOTICE",
+    "VISUALS_NEED_A_WORD_NOTICE",
+    "VOICEOVER_CLIP_CAP_NOTICE",
+    "VOICEOVER_MEDIA_TIMING_NOTICE",
     "CheckedStrategy",
     "RefusedStrategy",
     "SONG_CAPTIONS_NEED_SONG_CODE",

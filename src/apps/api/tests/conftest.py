@@ -5,6 +5,7 @@ be present in the environment at collection time, not just at test runtime.
 """
 
 import os
+import sys
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -48,6 +49,24 @@ def prod_profile(monkeypatch):
     from tests._prod_profile import apply_prod_profile  # noqa: PLC0415
 
     return apply_prod_profile(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_async_engine_pool() -> None:
+    """Start every test with an empty pool on the shared async engine.
+
+    pytest-asyncio gives each test its own event loop, and an asyncpg connection is
+    bound to the loop that opened it. A module that returns connections to
+    ``app.database.engine``'s pool without disposing it leaves them for the next
+    DB-backed async test on the same xdist worker, which then fails with "got Future
+    attached to a different loop". Which module runs next depends on how CI shards
+    the files, so the failure moves whenever a test file is added (#1539 hit it twice).
+    Swapping the pool without closing it needs no I/O and no event loop.
+    """
+
+    database = sys.modules.get("app.database")
+    if database is not None:
+        database.engine.sync_engine.dispose(close=False)
 
 
 @pytest.fixture(scope="module")

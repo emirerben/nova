@@ -1,23 +1,23 @@
 # Change-based CI
 
 PRs targeting `main` or `dev` select whole suites from their merge-base diff.
-Every push to `main` runs full web, API, lint and iOS regression coverage.
+Every push to `main` runs full API and iOS regression coverage.
 PRs run the affected iOS build/unit phase; the exhaustive iOS UI phase runs on
-main and manual dispatch. The test assertions, web partitioning and iOS test
-execution remain unchanged.
+main and manual dispatch. Web application tests and lint are retired; public
+web assets bundled into iOS remain covered by native checks.
 Other specialized workflows and deployment triggers retain their existing rules.
 
 ## Selection policy
 
 | Changed files | PR coverage |
 | --- | --- |
-| `src/apps/web/**`, web test runner scripts | Web tests and web lint |
+| `src/apps/web/**` | No web suite; bundled public assets still select iOS coverage |
 | Native app, media engine, resources, UI tests, `scripts/ios/**`, iOS workflow | iOS build/unit on PRs; full iOS coverage on main and manual dispatch; shell tests and mobile contracts |
 | Native unit tests/fixture or `Kria/Generated/**` only | iOS build, unit tests and mobile contracts; no PR UI execution |
-| Web public fonts and type-posters bundled in Xcode | Web and iOS build/unit on PRs; full iOS coverage on main |
+| Web public fonts and type-posters bundled in Xcode | iOS build/unit on PRs; full iOS coverage on main |
 | `src/apps/ios/Kria/Core/NativeEditorDocument.swift`, `src/apps/ios/Kria/Core/SlidePost.swift` (Swift constants read by API drift guards) | API tests and API lint, plus iOS build/unit on PRs; full iOS coverage on main |
 | API internal implementation, prompts, tests | API tests and API lint |
-| API routes/schemas, Kria contracts, models/config/main/worker, mobile identity, API dependency definitions | Web, API and native build/unit contracts; fixture-driven UI tests are not selected |
+| API routes/schemas, Kria contracts, models/config/main/worker, mobile identity, API dependency definitions | API and native build/unit contracts; fixture-driven UI tests are not selected |
 | Shared packages, assets, root dependencies/build config, selector, general CI workflows or unknown paths | All suites |
 | `docs/**`, `plans/**`, `agents/**`, listed root documentation, `VERSION` | No heavyweight suites |
 | Root `package.json` / `package-lock.json` changing only release versions | No heavyweight suites |
@@ -46,11 +46,11 @@ An unavailable or empty diff selects all suites. A broken selector or failing
 selector test blocks the final gates instead of claiming a successful skip.
 The selection and reason appear in the workflow summary.
 
-Stable checks remain `lint`, `test-api`, `test-web`, and iOS `build-and-test`.
+Stable checks remain `lint`, `test-api`, and iOS `build-and-test`.
 The heavy jobs are conditional; the small final checks use `always()` and verify:
 
 - Selection completed successfully and provided a literal `true` or `false`.
-- Selected suites completed successfully (all web matrix jobs must pass).
+- Selected API and native suites completed successfully.
 - Unselected suites were actually skipped.
 - Missing, failed, cancelled or unexpectedly skipped jobs fail the check.
 
@@ -59,9 +59,7 @@ No branch-protection changes are needed for the existing required `lint` and
 avoid dependency installation, PostgreSQL/Redis services, five web workers and
 macOS runners. Superseded PR runs are cancelled; main runs are not cancelled.
 
-Web CI installs from the checked-in `src/apps/web/package-lock.json` with
-`npm ci`, so dependency resolution is locked rather than based on an unlocked
-pnpm install. API tests run as two deterministic round-robin shards over the
+API tests run as two deterministic round-robin shards over the
 complete non-quality test-file set; both shards feed the same stable `test-api`
 gate, so sharding changes wall-clock scheduling without reducing coverage.
 The iOS matrix runs mobile contracts on Linux alongside the Mac build/unit leg;
@@ -71,7 +69,6 @@ the stable `build-and-test` gate requires both legs to pass.
 
 ```sh
 python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
-node --test scripts/ci/web-tests.test.mjs
 actionlint .github/workflows/ci.yml .github/workflows/ci-changes.yml .github/workflows/ios.yml
 ```
 

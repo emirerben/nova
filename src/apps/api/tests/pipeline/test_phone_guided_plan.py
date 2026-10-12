@@ -8,7 +8,7 @@ from app.kria.device_render import recipe_digest
 from app.kria.media_sources import OriginalMediaDescriptor
 from app.kria.recipes import MediaCapability, MediaTransform
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import RenderFingerprint, VisualRenderAsset
+from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint, VisualRenderAsset
 from app.pipeline.generative_overlays import build_overlays_from_text_elements
 from app.pipeline.guided_story import (
     GuidedStoryExecutionPlan,
@@ -19,6 +19,7 @@ from app.pipeline.guided_story import (
 from app.pipeline.narration_labels import TOPIC_SENTENCE_REJECTION, materialize_narration_labels
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
 from app.pipeline.phone_recipe_shared import PhoneNarrationBed
+from app.pipeline.phone_subtitled_lanes import ResolvedSoundEffect, SubtitledSoundEffect
 from app.schemas.edit_proposal import EditProposalSnapshot, NarrationTrack, NarrationWord
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
@@ -598,7 +599,6 @@ def test_cannot_silently_drop_treatments_or_rebind_sources(field, value):
 @pytest.mark.parametrize(
     "lane,expected_capability",
     [
-        ("editor_sound_effects", "soundEffects"),
         ("editor_media_overlays", "mediaCards"),
         ("editor_visual_blocks", "visualBlocks"),
         ("editor_motion_scenes", "motionScenes"),
@@ -2264,3 +2264,142 @@ def test_a_label_ending_at_the_nominal_end_survives_float_noise_in_the_summed_ti
     # Only the overshoot moves, and only by float noise; every other layer is untouched.
     assert recipe.text_layers[-1].end == pytest.approx(ends[-1], abs=1e-9)
     assert [layer.end for layer in recipe.text_layers[:-1]] == ends[:-1]
+
+
+# --- KRI-608: sound effects on a phone guided / montage story ----------------
+
+
+def _guided_sfx_row(sfx_id: str, catalog_id: str | None, *, at_s: float, gain: float = 1.0):
+    row = {"id": sfx_id, "src_gcs_path": f"sound-effects/{catalog_id}/a.m4a", "at_s": at_s}
+    row["gain"] = gain
+    if catalog_id is not None:
+        row["sound_effect_id"] = catalog_id
+    return row
+
+
+def _resolved_guided_sfx(sfx_id: str, catalog_id: str, *, at_s: float, volume: float = 1.0):
+    return ResolvedSoundEffect(
+        request=SubtitledSoundEffect(id=sfx_id, catalog_id=catalog_id, at_s=at_s, volume=volume),
+        asset=LibraryRenderAsset(
+            id=f"sfx-{catalog_id}",
+            catalog="sound_effect",
+            catalog_id=catalog_id,
+            generation="1",
+            fingerprint=RenderFingerprint(sha256="e" * 64, byte_count=512),
+        ),
+        duration_s=1.0,
+    )
+
+
+def test_guided_sound_effects_compile_to_an_sfx_audio_track():
+    plan, bindings = fixture()
+    plan.editor_sound_effects = [
+        _guided_sfx_row("a", "pop", at_s=1.0, gain=0.8),
+        _guided_sfx_row("b", "pop", at_s=2.0),
+    ]
+    recipe = compile_phone_guided_plan(
+        plan,
+        bindings,
+        sound_effects=(
+            _resolved_guided_sfx("a", "pop", at_s=1.0, volume=0.8),
+            _resolved_guided_sfx("b", "pop", at_s=2.0),
+        ),
+    )
+    sfx = next(track for track in recipe.tracks if track.id == "sfx")
+    assert sfx.kind == "audio"
+    assert [(clip.id, clip.timeline_start, clip.volume) for clip in sfx.clips] == [
+        ("sfx-a", 1.0, 0.8),
+        ("sfx-b", 2.0, 1.0),
+    ]
+    assert {"soundEffects", "audioMix"} <= recipe.required_capabilities
+    # One asset, two clips: the repeated catalog effect is pinned once.
+    assert [a.id for a in recipe.asset_manifest.assets if a.kind == "library"] == ["sfx-pop"]
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+def test_guided_sound_effects_play_over_pinned_narration():
+    plan, bindings, visuals, bed = narration_fixture()
+    plan.editor_sound_effects = [_guided_sfx_row("a", "pop", at_s=2.0)]
+    recipe = compile_phone_guided_plan(
+        plan,
+        bindings,
+        visuals,
+        narration=bed,
+        sound_effects=(_resolved_guided_sfx("a", "pop", at_s=2.0),),
+    )
+    assert {track.id for track in recipe.tracks if track.kind == "audio"} == {"narration", "sfx"}
+    # The voiceover still hard-replaces the footage's own audio.
+    assert recipe.audio.original_volume == 0
+    assert {"narrationAudio", "soundEffects", "audioMix"} <= recipe.required_capabilities
+
+
+def test_guided_sound_effect_starting_after_the_timeline_is_dropped():
+    plan, bindings = fixture()
+    plan.editor_sound_effects = [_guided_sfx_row("late", "pop", at_s=plan.resolved_duration_s + 1)]
+    recipe = compile_phone_guided_plan(
+        plan,
+        bindings,
+        sound_effects=(_resolved_guided_sfx("late", "pop", at_s=plan.resolved_duration_s + 1),),
+    )
+    assert all(track.id != "sfx" for track in recipe.tracks)
+    assert "soundEffects" not in recipe.required_capabilities
+
+
+def test_guided_sound_effects_fail_closed_without_a_matching_binding():
+    plan, bindings = fixture()
+    plan.editor_sound_effects = [_guided_sfx_row("a", "pop", at_s=1.0)]
+    # Effects in the plan but none bound.
+    with pytest.raises(UnsupportedPhonePlan, match="sound effects") as excinfo:
+        compile_phone_guided_plan(plan, bindings)
+    assert excinfo.value.capability == "soundEffects"
+    # A binding for a different effect than the plan names.
+    with pytest.raises(UnsupportedPhonePlan, match="sound effects"):
+        compile_phone_guided_plan(
+            plan, bindings, sound_effects=(_resolved_guided_sfx("other", "pop", at_s=1.0),)
+        )
+    # A binding for a plan that carries none.
+    plan.editor_sound_effects = []
+    with pytest.raises(UnsupportedPhonePlan, match="sound effects"):
+        compile_phone_guided_plan(
+            plan, bindings, sound_effects=(_resolved_guided_sfx("a", "pop", at_s=1.0),)
+        )
+
+
+def test_guided_custom_upload_sound_effect_is_refused_not_dropped():
+    plan, bindings = fixture()
+    plan.editor_sound_effects = [_guided_sfx_row("up", None, at_s=1.0)]
+    with pytest.raises(UnsupportedPhonePlan, match="custom sound effect") as excinfo:
+        compile_phone_guided_plan(plan, bindings)
+    assert excinfo.value.capability == "soundEffects"
+
+
+def test_licensed_sfx_intent_without_placements_fails_closed_until_the_lane_is_on(monkeypatch):
+    plan, bindings = fixture()
+    plan.licensed_sfx_intent = {"effect_id": "pop"}
+    with pytest.raises(UnsupportedPhonePlan, match="licensed_sfx_intent"):
+        compile_phone_guided_plan(plan, bindings)
+    # Lane on: the planning-time dry run compiles the bare intent (the worker
+    # materializes the placements before the real compile).
+    monkeypatch.setattr(settings, "phone_guided_sfx_enabled", True)
+    monkeypatch.setattr(settings, "sound_effects_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["soundEffects", "audioMix"])
+    assert all(t.id != "sfx" for t in compile_phone_guided_plan(plan, bindings).tracks)
+
+
+@pytest.mark.parametrize(
+    "bound",
+    [
+        {"catalog_id": "boom"},
+        {"at_s": 1.5},
+        {"volume": 0.5},
+    ],
+)
+def test_guided_sound_effect_binding_must_match_the_plan_exactly(bound):
+    plan, bindings = fixture()
+    plan.editor_sound_effects = [_guided_sfx_row("a", "pop", at_s=1.0, gain=0.8)]
+    fields = {"sfx_id": "a", "catalog_id": "pop", "at_s": 1.0, "volume": 0.8} | bound
+    stale = _resolved_guided_sfx(
+        fields["sfx_id"], fields["catalog_id"], at_s=fields["at_s"], volume=fields["volume"]
+    )
+    with pytest.raises(UnsupportedPhonePlan, match="sound effects"):
+        compile_phone_guided_plan(plan, bindings, sound_effects=(stale,))

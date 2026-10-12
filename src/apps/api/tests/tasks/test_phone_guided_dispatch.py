@@ -842,3 +842,99 @@ def test_cleaned_narration_bed_fails_closed_when_its_source_drifts(monkeypatch, 
     assert inspected == []
     assert "_device_render_v1" not in job.assembly_plan
     cloud.assert_not_called()
+
+
+# --- KRI-608: sound effects on the first phone render ---------------------------------
+
+
+def sfx_setup(monkeypatch, *, enabled: bool = True):
+    """A guided phone job whose plan carries a materialized catalog sound effect."""
+    from tests.pipeline.test_phone_guided_plan import _guided_sfx_row
+
+    job, snapshot, session, planner, cloud = setup(monkeypatch)
+    plan, _bindings = fixture()
+    plan.editor_sound_effects = [_guided_sfx_row("a", "pop", at_s=1.0, gain=0.8)]
+    planner.return_value = (plan.model_dump(mode="json"), None)
+    monkeypatch.setattr(gb.settings, "phone_guided_sfx_enabled", enabled)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", True)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        ["basicComposition", "local1080Export", "audioMix", "soundEffects"],
+    )
+    return job, snapshot, session, planner, cloud
+
+
+def test_sound_effects_resolve_and_pin_into_the_first_device_recipe(monkeypatch):
+    from tests.pipeline.test_phone_guided_plan import _resolved_guided_sfx
+
+    job, snapshot, session, planner, cloud = sfx_setup(monkeypatch)
+    resolved = []
+
+    def fake_resolve(request):
+        resolved.append(request.catalog_id)
+        return _resolved_guided_sfx(request.id, request.catalog_id, at_s=request.at_s, volume=0.8)
+
+    monkeypatch.setattr(gb, "_resolve_phone_sound_effect", fake_resolve)
+
+    gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
+
+    assert resolved == ["pop"]
+    assert job.status == "awaiting_device"
+    request = device_status(job, "guided_story").request
+    sfx = next(track for track in request.recipe.tracks if track.id == "sfx")
+    assert [(clip.id, clip.timeline_start, clip.volume) for clip in sfx.clips] == [
+        ("sfx-a", 1.0, 0.8)
+    ]
+    assert {"soundEffects", "audioMix"} <= request.recipe.required_capabilities
+    # The editor and chat read the effects off the variant row, as on the cloud guided row.
+    assert [row["id"] for row in job.assembly_plan["variants"][0]["sound_effects"]] == ["a"]
+    cloud.assert_not_called()
+
+
+def test_sound_effects_flag_off_fails_closed_before_resolving_any(monkeypatch):
+    job, snapshot, session, planner, cloud = sfx_setup(monkeypatch, enabled=False)
+    calls = []
+    monkeypatch.setattr(gb, "_resolve_phone_sound_effect", lambda r: calls.append(r))
+
+    with pytest.raises(UnsupportedPhonePlan, match="sound effects"):
+        gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
+    assert calls == []
+    session.commit.assert_not_called()
+    cloud.assert_not_called()
+
+
+def test_unplayable_or_withdrawn_effect_fails_closed_after_approval(monkeypatch):
+    job, snapshot, session, planner, cloud = sfx_setup(monkeypatch)
+
+    def withdrawn(request):
+        raise UnsupportedPhonePlan(
+            "sound effect is no longer available for phone rendering", capability="soundEffects"
+        )
+
+    monkeypatch.setattr(gb, "_resolve_phone_sound_effect", withdrawn)
+
+    with pytest.raises(UnsupportedPhonePlan, match="no longer available"):
+        gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
+    session.commit.assert_not_called()
+
+
+def test_plan_without_sound_effects_never_resolves_one_and_keeps_the_row_unchanged(monkeypatch):
+    job, snapshot, session, planner, cloud = setup(monkeypatch)
+    calls = []
+    monkeypatch.setattr(gb, "_resolve_phone_sound_effect", lambda r: calls.append(r))
+
+    gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
+
+    assert calls == []
+    assert "sound_effects" not in job.assembly_plan["variants"][0]
+    recipe = device_status(job, "guided_story").request.recipe
+    assert all(track.id != "sfx" for track in recipe.tracks)
+
+
+def test_speech_cut_writers_refuse_a_requested_sound_effect_instead_of_dropping_it():
+    gb._refuse_sfx_on_speech_writer({})
+    gb._refuse_sfx_on_speech_writer({"creator_strategy": {"render_program": "guided"}})
+    with pytest.raises(UnsupportedPhonePlan, match="cut from what you say") as excinfo:
+        gb._refuse_sfx_on_speech_writer({"creator_strategy": {"licensed_sfx": {"effect_id": "x"}}})
+    assert excinfo.value.capability == "soundEffects"

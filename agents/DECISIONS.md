@@ -2918,3 +2918,29 @@ and siblings. Not changed: the iOS card still offers a dead "Retry speech check"
 non-retryable failure and makes "Create without cleanup" primary while the brief asks for
 cleanup -- an iOS follow-up.
 
+## [2026-10-11] Incident fixes carry a shared acceptance gate, not a private test (KRI-577)
+
+Between 2026-10-04 and 10-11 Yasin's agents opened 55 PRs; a session audit
+(`docs/reviews/kri-577-session-audit.md`) found that most follow-ups came from four
+habits, not from wrong code: fixing one symptom's call site while its siblings
+(other archetypes, the empty-selection path, the receipt) stayed open; verifying with
+tests that faked an internal boundary (KRI-454's resolver `run()`, KRI-515's harness
+pinning the failing case as correct); running the suite against a missing `postgres`
+role and reading "92 pre-existing failures" as green; and fanning out parallel PRs on
+one hot file (`brief_checks.py`, `MAIN_CREATOR_PROMPT_VERSION`). Fixes verified by unit
+tests alone failed on the phone within minutes of "live" three times in one chain
+(#1433 -> #1443 -> #1445).
+
+Decision: every incident gets a row in `tests/gates/reliability-gates.json` naming the
+boundary, the fix, the regression tests, how real the harness is, the evidence level
+reached and the neighbours still open. `scripts/reliability-gates.py` selects the
+gates for a diff, runs them (environment skips reported apart from failures) and runs
+the red control (the fix's parent must fail the gate). The CI journey
+`kri-577-reliability-gates` runs the whole union whenever one of those paths changes;
+`preship-check.sh` step 6 runs the mapped subset before a PR; the PR template asks for
+the five acceptance lines. `scripts/dev/test-db.sh` gives each worktree a migrated
+scratch database so the first test run is not thrown away. Rejected: a per-incident
+CI step (the kri-548 pattern) for each of 25 incidents -- the manifest union is one
+step and one source of truth; and blocking merges on the PR-body lines -- Emir's
+review reads them, CI runs the tests.
+
