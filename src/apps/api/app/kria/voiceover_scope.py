@@ -19,9 +19,9 @@ from collections.abc import Collection, Mapping
 from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
 from app.agents._schemas.creator_policy import (
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
+    latest_scope_counts_own_clips,
     native_voiceover_all_scope,
     own_video_ids,
-    stated_media_counts,
 )
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.reply_language import say
@@ -138,7 +138,8 @@ def resolve_native_all_scope(
         and media.media_id not in placed
         and media.media_id not in asked
     ]
-    clips_only = stated_media_counts(creator_text) == {len(own)}
+    # The creator's latest scope words decide, as in the KRI-594 downgrade (PR 1550 review).
+    clips_only = latest_scope_counts_own_clips(creator_text, len(own))
     if unplaced:
         beats = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
         notices.append(

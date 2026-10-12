@@ -802,3 +802,53 @@ async def test_an_all_media_ask_reaches_the_native_check_through_the_planner(
 
     assert planned.plan.mode == "respond", planned.plan
     assert planned.plan.response.endswith("?")
+
+
+@pytest.mark.parametrize(
+    ("creator_text", "asks"),
+    [
+        # PR 1550/1556 review: the latest scope words decide, on the native path too.
+        ("Earlier: use 7 clips\nUse all my photos and videos", True),
+        ("7 klibin hepsini kullan\nFotoğrafların ve videoların hepsini kullan", True),
+        ("Use all my photos and videos\nUse 7 clips", False),
+        ("Use all my photos and videos\n7 klibin hepsini kullan", False),
+    ],
+)
+def test_the_latest_scope_words_decide_on_the_native_path(prod_profile, creator_text, asks) -> None:
+    checked = check_strategy_for_runtime_v2(
+        _manifest(),
+        CreativeStrategy.model_validate(_strategy(reaction_beats=None, media_scope="all")),
+        ask_before_simplifying=True,
+        creator_text=creator_text,
+        requested_media={},
+    )
+
+    assert isinstance(checked, RefusedStrategy) is asks, getattr(checked, "question", checked)
+
+
+@pytest.mark.parametrize(
+    ("older", "latest", "asks"),
+    [
+        ("Use 7 clips", "Use all my photos and videos", True),
+        ("Use all my photos and videos", "7 klibin hepsini kullan", False),
+    ],
+)
+async def test_the_latest_scope_words_decide_through_the_planner(
+    prod_profile, monkeypatch, older, latest, asks
+) -> None:
+    turn = {
+        **TURN3,
+        "user_message": latest,
+        "conversation": [
+            {"role": "user", "content": older},
+            {"role": "user", "content": latest},
+        ],
+    }
+    planned = await _plan(
+        monkeypatch,
+        _raw(_strategy(reaction_beats=None, media_scope="all", opening_title=None)),
+        turn=turn,
+        brief=BRIEF_WITHOUT_PHOTO_ASK,
+    )
+
+    assert (planned.plan.mode == "respond") is asks, planned.plan
