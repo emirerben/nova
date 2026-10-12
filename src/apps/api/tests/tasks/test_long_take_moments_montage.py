@@ -359,7 +359,10 @@ async def test_incident_six_short_moments_end_on_the_quoted_line_and_verify() ->
 
     # 7 + 15: the finished video's receipts are honest.
     facts = plan_facts_from_rendered_montage(_finished(plan), plan.record())
-    assert check_requirement(R3, facts).status == "met"
+    # KRI-624: the moments all come from the long takes, but no receipt can see which
+    # clips are dark, so the "skip the dark ones" half stays unchecked.
+    moments = check_requirement(R3, facts)
+    assert moments.status == "partial" and "left out" in moments.reason
     ending = check_requirement(R5, facts)
     assert ending.status == "met", ending.reason
     assert facts.closing_speech is not None and QUOTE in facts.closing_speech.quote
@@ -568,11 +571,19 @@ def test_the_worker_refuses_overlapping_windows_of_one_take() -> None:
     [
         (
             "Pick the best six moments from the long takes, each very short",
-            MomentAsk(count=6, short=True),
+            MomentAsk(count=6, short=True, long_takes_only=True),
+        ),
+        (
+            "Pick the best six moments from the long takes, each very short, "
+            "and skip the dark ones",
+            MomentAsk(count=6, short=True, long_takes_only=True, excludes=True),
         ),
         ("use 8 quick cuts from these videos", MomentAsk(count=8, short=True)),
         ("give me the best 5 shots", MomentAsk(count=5, short=False)),
-        ("uzun videolardan en iyi altı anı seç, her biri çok kısa", MomentAsk(count=6, short=True)),
+        (
+            "uzun videolardan en iyi altı anı seç, her biri çok kısa",
+            MomentAsk(count=6, short=True, long_takes_only=True),
+        ),
         ("short moments from my walk", MomentAsk(count=None, short=True)),
         # the creator's footage is counted, not the moments (review of #1554)
         ("pick best 4 of my 10 clips", None),

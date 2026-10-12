@@ -435,6 +435,8 @@ class UnifiedMontagePlan:
     # lives in the receipt rather than the strict snapshot schema so existing
     # stored proposal payloads stay wire-compatible.
     best_parts_receipt: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-624: each footage clip's own length, so a receipt can tell the long takes apart.
+    clip_durations_s: dict[str, float] = field(default_factory=dict)
     best_parts_conflicts: list[dict[str, Any]] = field(default_factory=list)
     # KRI-569: the song's lyrics placed as captions ({status, style, words, lines}). Empty
     # when no lyric captions were planned, so every earlier record is unchanged.
@@ -467,6 +469,12 @@ class UnifiedMontagePlan:
         quote = {"closing_quote": dict(self.closing_quote)} if self.closing_quote else {}
         best_parts = (
             {"best_parts": list(self.best_parts_receipt)} if self.best_parts_receipt else {}
+        )
+        # Only a plan that picked source windows needs clip lengths to be judged (KRI-624).
+        durations = (
+            {"clip_durations_s": dict(self.clip_durations_s)}
+            if self.best_parts_receipt and self.clip_durations_s
+            else {}
         )
         best_parts_conflicts = (
             {"best_parts_conflicts": list(self.best_parts_conflicts)}
@@ -515,6 +523,7 @@ class UnifiedMontagePlan:
             **speech,
             **quote,
             **best_parts,
+            **durations,
             **best_parts_conflicts,
             **captions,
         }
@@ -1714,6 +1723,11 @@ def plan_unified_montage(
         closing_speech=closing_speech,
         closing_quote=closing_quote,
         best_parts_receipt=best_parts.receipt() if best_parts is not None else [],
+        clip_durations_s={
+            clip.media_id: round(clip.duration_s, 3)
+            for clip in ordered
+            if clip.lane == "clip" and clip.duration_s > 0
+        },
         best_parts_conflicts=best_parts_conflicts,
     )
 
