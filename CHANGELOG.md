@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.228.0] - 2026-10-12
+
+### Changed
+- fix(kria): an auto-selected song never outlasts the footage it backs (KRI-600) (#1557) <!-- release-pr: 1557 -->
+
 ## [0.78.227.0] - 2026-10-12
 
 ### Changed
