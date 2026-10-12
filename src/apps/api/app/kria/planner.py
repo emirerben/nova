@@ -59,6 +59,7 @@ from app.kria.brief import (
     new_requirements,
     plan_shape_from_editor_snapshot,
     render_brief_request,
+    requested_media,
     route_requirements,
 )
 from app.kria.brief_route import loose_text
@@ -1754,6 +1755,7 @@ async def _plan_from_creator_output(
     output: MainCreatorOutput,
     brief_request: str | None = None,
     wants_capture_order: bool = False,
+    requested_media: Mapping[str, str] | None = None,
 ) -> PlannedKriaTurn:
     """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
     decision = getattr(output, "creative_decision", None)
@@ -1796,6 +1798,7 @@ async def _plan_from_creator_output(
         output=output,
         brief_request=brief_request,
         wants_capture_order=wants_capture_order,
+        requested_media=requested_media,
     )
     return replace(planned, creative_copy_resolution=resolution)
 
@@ -2003,6 +2006,7 @@ async def _plan_creator_action(
     output: MainCreatorOutput,
     brief_request: str | None = None,
     wants_capture_order: bool = False,
+    requested_media: Mapping[str, str] | None = None,
 ) -> PlannedKriaTurn:
     action = output.action
     if isinstance(action, ProposeStrategy):
@@ -2101,6 +2105,26 @@ async def _plan_creator_action(
             **(
                 {"ask_about_stated_settings": True}
                 if settings.brief_binding_for(creator_id) and settings.kria_choice_questions_enabled
+                else {}
+            ),
+            # KRI-594: only a guided-voiceover downgrade reads these: the creator's words
+            # ("7 klibin hepsini kullan" counts the clips) and the media their live brief
+            # asks for in any turn ("kırkayak" -> the bathtub photo), so it never drops one.
+            **(
+                {
+                    # Oldest first, the latest message last: the latest scope words decide
+                    # what "all" asked for (PR 1550 review).
+                    "creator_text": "\n".join(
+                        source
+                        for source in (
+                            *user_sources[1:],
+                            *([] if user_sources[1:][-1:] == [user_message] else [user_message]),
+                        )
+                        if source
+                    ),
+                    "requested_media": dict(requested_media or {}),
+                }
+                if action.strategy.execution_contract is not None
                 else {}
             ),
         )
@@ -3860,6 +3884,7 @@ async def _plan_live_turn(
         output=output,
         brief_request=effective_request,
         wants_capture_order=_brief_wants_capture_order(effective),
+        requested_media=requested_media(effective, (media.media_id for media in manifest.media)),
     )
     return replace(
         planned,
