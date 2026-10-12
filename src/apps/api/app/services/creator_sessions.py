@@ -341,8 +341,13 @@ async def resolve_item_creator_context(
     *,
     persona: Persona,
     guided_capability_enabled: bool | None = None,
+    runs_guided_voiceover: bool = True,
 ) -> tuple[Any, list[dict[str, Any]]]:
-    """Build an opaque manifest plus bounded footage evidence for the model."""
+    """Build an opaque manifest plus bounded footage evidence for the model.
+
+    ``runs_guided_voiceover=False`` is the runtime-v2 planner (KRI-598, see
+    ``resolve_creator_manifest``); the v1 Creator routes keep the default.
+    """
 
     media_refs: list[CreatorMediaRef] = []
     media_context: list[dict[str, Any]] = []
@@ -613,6 +618,7 @@ async def resolve_item_creator_context(
             if guided_capability_enabled is None
             else guided_capability_enabled
         ),
+        runs_guided_voiceover=runs_guided_voiceover,
     )
     return manifest, media_context
 

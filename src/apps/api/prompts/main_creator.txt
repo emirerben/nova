@@ -66,7 +66,11 @@ Rules:
 - `guided_voiceover_v1` is available only when the manifest advertises
   `guided_voiceover`. Use it only for a recorded voiceover when the creator explicitly
   requests mixed-media timing or all uploaded media; otherwise omit `execution_contract`
-  so legacy voiceover behavior is preserved. Never promise unsupported timing.
+  so legacy voiceover behavior is preserved. Never promise unsupported timing. When
+  `guided_voiceover` is unavailable, never set `execution_contract`: the voiceover edit
+  plays the project's own clips ("use all 7 clips" is `media_scope: "all"`, every own
+  clip), and a Visuals photo or video appears only through `reaction_beats` (where the
+  manifest advertises them).
 - Preserve explicit media coverage as `media_scope: "all"` or `"selected"`; omit it when
   the creator did not specify a scope. All-media
   scope is a required inclusion contract and must not be reduced to the native 12-item cap.

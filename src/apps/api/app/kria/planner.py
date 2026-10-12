@@ -2107,9 +2107,13 @@ async def _plan_creator_action(
                 if settings.brief_binding_for(creator_id) and settings.kria_choice_questions_enabled
                 else {}
             ),
-            # KRI-594: only a guided-voiceover downgrade reads these: the creator's words
-            # ("7 klibin hepsini kullan" counts the clips) and the media their live brief
-            # asks for in any turn ("kırkayak" -> the bathtub photo), so it never drops one.
+            # KRI-594/KRI-598: the creator's words ("7 klibin hepsini kullan" counts the
+            # clips) and the media their live brief asks for in any turn ("kırkayak" -> the
+            # bathtub photo). Not only a turn that still carries the guided contract needs
+            # them: the Main Creator parse drops that contract on runtime v2, and a native
+            # answer can forget the beat just the same. An "all" scope needs the words too:
+            # "use all my photos and videos" asked for the Visuals, "7 klibin hepsini kullan"
+            # only for the clips (PR 1556 review). Omitted when none applies.
             **(
                 {
                     # Oldest first, the latest message last: the latest scope words decide
@@ -2125,6 +2129,8 @@ async def _plan_creator_action(
                     "requested_media": dict(requested_media or {}),
                 }
                 if action.strategy.execution_contract is not None
+                or requested_media
+                or action.strategy.media_scope == "all"
                 else {}
             ),
         )
@@ -3168,7 +3174,10 @@ async def _plan_scoped_turn(
     """
     from app.kria import plan_review  # noqa: PLC0415
 
-    manifest, _ = await resolve_item_creator_context(db, item, persona=persona)
+    # KRI-598: runtime v2 has no guided-proposal step, so it never offers guided voiceover.
+    manifest, _ = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
 
     def _planned(plan: KriaTurnPlan) -> PlannedKriaTurn:
         return PlannedKriaTurn(
@@ -3373,7 +3382,9 @@ async def _plan_live_turn(
             item = await db.get(PlanItem, item_id, populate_existing=True)
             plan = await db.get(ContentPlan, item.content_plan_id, populate_existing=True)
             persona = await db.get(Persona, plan.persona_id, populate_existing=True)
-    manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
+    manifest, media_context = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
     # A pending creative-copy discussion must reach Main Creator, never the editor
     # shortcut (which could otherwise stage/render unrelated text before wording is
     # settled). The durable fold reads all events, not the model's bounded context.
@@ -3921,7 +3932,9 @@ async def extract_deferred_brief(
     persona = await db.get(Persona, plan.persona_id) if plan is not None else None
     if plan is None or plan.user_id != creator_id or persona is None:
         return (), None
-    manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
+    manifest, media_context = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
     prior_brief = await load_latest_brief(db, thread_id)
     inputs = await _load_creator_inputs(
         db,
