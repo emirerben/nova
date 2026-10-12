@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.235.0] - 2026-10-12
+
+### Changed
+- ci: retire web tests and keep Python journeys off Mac runners (#1566) <!-- release-pr: 1566 -->
+
 ## [0.78.234.0] - 2026-10-12
 
 ### Changed
