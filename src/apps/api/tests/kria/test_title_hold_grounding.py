@@ -291,6 +291,51 @@ def test_a_title_that_matches_the_seconds_keeps_the_stated_hold(
     )
 
 
+@pytest.mark.parametrize(
+    ("evidence", "hold", "kept"),
+    [
+        # PR 1548 external review: ordinary half-second forms within the 0.5-10 s schema.
+        ("Hold the title for a second and a half", 1.5, True),
+        ("Başlık iki buçuk saniye kalsın", 2.5, True),
+        ("baslik iki bucuk saniye kalsin", 2.5, True),
+        ("title for .5 s", 0.5, True),
+        ("title for one and a half seconds", 1.5, True),
+        ("title for 2 and a half seconds", 2.5, True),
+        ("title for two seconds and a half", 2.5, True),
+        ("title for half a second", 0.5, True),
+        ("başlık yarım saniye", 0.5, True),
+        ("başlık bir buçuk saniye kalsın", 1.5, True),
+        ("başlık 3 buçuk saniye kalsın", 3.5, True),
+        # Controls the review confirmed, and the half must change the value.
+        ("title for 0.5 s", 0.5, True),
+        ("title for 2 seconds", 2.0, True),
+        ("başlık 2,5 saniye", 2.5, True),
+        ("title for 2 and a half seconds", 2.0, False),
+        ("Başlık iki buçuk saniye kalsın", 2.0, False),
+    ],
+)
+def test_ordinary_half_second_holds_are_the_creators_words(
+    evidence: str, hold: float, kept: bool
+) -> None:
+    assert planner.title_hold_grounded(hold, evidence=evidence, user_sources=[evidence]) is kept
+
+
+@pytest.mark.parametrize(
+    ("title", "evidence", "hold"),
+    [
+        ("ONE AND A HALF SECONDS", 'Open with "ONE AND A HALF SECONDS"', 1.5),
+        ("Yarım saniye", 'Başlık: "Yarım saniye"', 0.5),
+        ("İki buçuk saniye", 'Başlık: "İki buçuk saniye"', 2.5),
+    ],
+)
+def test_half_second_words_inside_the_title_are_not_a_hold(
+    title: str, evidence: str, hold: float
+) -> None:
+    assert not planner.title_hold_grounded(
+        hold, evidence=evidence, user_sources=[evidence], strip=(title,)
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("hold_evidence", "kept"),

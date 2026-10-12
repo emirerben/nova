@@ -1807,12 +1807,43 @@ _HOLD_NUMBER_WORDS = {
     "dokuz": 9.0,
     "on": 10.0,
 }
+_HOLD_UNIT = r"(?:s|sn|secs?|seconds?|saniye\w*|segs?|segundos?|sekunden?|secondes?|second[io])"
+# A number (".5" too), an optional "and a half" / "buçuk" before the unit, the unit, and an
+# optional trailing "and a half" ("two seconds and a half").
 _HOLD_SECONDS = re.compile(
-    r"(?<![\w.:])(\d+(?:[.,]\d+)?|"
+    r"(?<![\w.:])(?P<num>\d+(?:[.,]\d+)?|[.,]\d+|"
     + "|".join(sorted(_HOLD_NUMBER_WORDS, key=len, reverse=True))
-    + r")\s*-?\s*(?:s|sn|secs?|seconds?|saniye\w*|segs?|segundos?|sekunden?|secondes?|second[io])"
-    r"(?!\w)"
+    + r")(?:\s+(?P<half>and\s+a\s+half|bu[çc]uk))?\s*-?\s*"
+    + _HOLD_UNIT
+    + r"(?!\w)(?:\s+(?P<tail>and\s+a\s+half)(?!\w))?"
 )
+# Half-second phrases with no leading number.
+_HOLD_HALF_PHRASES = (
+    (re.compile(r"(?<!\w)(?:a\s+)?(?:second|sec)\s+and\s+a\s+half(?!\w)"), 1.5),
+    (
+        re.compile(
+            r"(?<!\w)(?:half\s+a\s+(?:second|sec)|a\s+half[\s-]+second|yar[ıi]m\s+(?:saniye\w*|sn))"
+            r"(?!\w)"
+        ),
+        0.5,
+    ),
+)
+
+
+def _stated_holds(text: str) -> list[tuple[int, int, float]]:
+    """Every seconds expression in ``text`` as (start, end, seconds)."""
+
+    holds = []
+    for match in _HOLD_SECONDS.finditer(text):
+        value = _HOLD_NUMBER_WORDS.get(match["num"])
+        if value is None:
+            value = float(match["num"].replace(",", "."))
+        if match["half"] or match["tail"]:
+            value += 0.5
+        holds.append((match.start(), match.end(), value))
+    for pattern, value in _HOLD_HALF_PHRASES:
+        holds.extend((match.start(), match.end(), value) for match in pattern.finditer(text))
+    return holds
 
 
 def _hold_key(text: str) -> str:
@@ -1850,7 +1881,8 @@ def title_hold_grounded(
     The model must quote the hold (`render_intent_evidence.opening_title_duration_s`): the
     excerpt has to be the creator's own words (a verbatim piece of one of their messages,
     compared like pinned text) and say this number of seconds ("2 saniye", "2,5 sn",
-    "for two seconds", "3-second"). Seconds inside the on-screen copy's own occurrence
+    "for two seconds", "3-second", "iki buçuk saniye", "a second and a half", ".5 s").
+    Seconds inside the on-screen copy's own occurrence
     (``strip``) never count, so "3 SECONDS TO MIDNIGHT" cannot ground a 3 s hold, while
     seconds said outside it do: 'title "3" for 3 seconds' and 'Keep the title "3 seconds"
     for 3 seconds' both keep the stated hold. A bare count ("7 klip") is not seconds.
@@ -1865,13 +1897,9 @@ def title_hold_grounded(
         for on_screen in strip
         if (key := _hold_key(on_screen or "")) and (span := _copy_span(text, key)) is not None
     ]
-    for match in _HOLD_SECONDS.finditer(text):
-        if any(lo <= match.start() and match.end() <= hi for lo, hi in copy_spans):
+    for start, end, value in _stated_holds(text):
+        if any(lo <= start and end <= hi for lo, hi in copy_spans):
             continue
-        token = match.group(1)
-        value = _HOLD_NUMBER_WORDS.get(token)
-        if value is None:
-            value = float(token.replace(",", "."))
         if abs(value - hold_s) < 1e-6:
             return True
     return False
