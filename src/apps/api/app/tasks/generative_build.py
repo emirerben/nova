@@ -6500,7 +6500,11 @@ def _run_phone_subtitled_job(
         crosscheck_detected_language,
         resolve_spoken_caption_language,
     )
-    from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
+    from app.pipeline.captions import (  # noqa: PLC0415
+        PHONE_CUE_BUDGET,
+        build_plain_cues,
+        resplit_cues_into_sentences,
+    )
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import remap_lanes_for_cut  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
@@ -7030,7 +7034,7 @@ def _run_phone_subtitled_job(
                     for item in remap_words(caption_words, cut_plan)
                     if not is_filler_token(item["text"])
                 ]
-                cues = build_plain_cues(cut_words, attach_words=True)
+                cues = build_plain_cues(cut_words, attach_words=True, budget=PHONE_CUE_BUDGET)
             else:
                 transcript = transcribe_whisper_cached(
                     clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
@@ -7113,7 +7117,9 @@ def _run_phone_subtitled_job(
                         }
                         for word in transcript.words
                     ]
-                cues = build_plain_cues(transcript.words, attach_words=True)
+                cues = build_plain_cues(
+                    transcript.words, attach_words=True, budget=PHONE_CUE_BUDGET
+                )
             cues = correct_caption_cues(
                 cues,
                 detected_lang,
