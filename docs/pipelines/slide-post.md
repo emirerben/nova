@@ -426,6 +426,50 @@ So every slide is rendered at one size. 3:4, 4:5 and 1:1 post cleanly to both ap
   Capability `slide_post_sizes` = sizes AND framing. **Rollback is the flag only**: once any post has a size or Fit,
   never roll the CODE back, because the draft models drop unknown keys and the next save or render stamp would erase them.
 
+## Slide drawings (KRI-589 PR2, flag `slide_post_drawing_enabled`, default on)
+
+Creators draw on a slide with a finger (pen, marker, highlighter, neon, chalk, spray). The ink is a STATIC
+overlay on one slide, saved as strokes, never as a raster.
+
+- **Wire.** `SlideEdits.drawing = SlideDrawing{canvas_aspect (0.2..5.0 exclusive), strokes[DrawingStroke]}`
+  (`app/schemas/slide_post.py`). Only `DrawingStroke` is shared with the video drawing lane
+  (`agents/_schemas/drawing.py`): no scale, centre, rotation or timing, so a slide drawing is the identity
+  transform of a still. Both models are `extra="forbid"`. Caps: at most 60 strokes and 3000 points per slide,
+  8000 points per post (`SlidePostDraft` validator). Omitted from the serialized edits while None, so drafts
+  without drawings keep their cache and binding digests (pinned in `test_slide_post_sizes.py`).
+  Frozen by `tests/fixtures/slide-drawing-parity/v1.json` (valid drawings, invalid cases, caps, geometry),
+  asserted by Python and Swift.
+- **Geometry (identity).** The authoring canvas is aspect-fit and centred into the slide's output canvas,
+  `px = origin + p * fitSize`, stroke width = `width_frac * min(W, H)`. A slide that later changes shape letterboxes
+  the ink (no re-projection).
+- **Save contract (three states, like `fit`).** `drawing` key missing keeps the stored value, explicit `null`
+  clears, a value sets (`merge_stored_edit_key(..., "drawing", accept_incoming=slide_post_drawing_enabled)` in
+  the PUT; `merge_legacy_text_edits` carries it only when sent). Flag off: the stored value always wins. The chat-edit
+  route backfills an omitted `drawing` (`_backfill_slide_post_sizes`); `compile_slide_post_ops` copies it into the
+  rebuilt slide (the one place a chat edit rebuilt edits from scratch and would have dropped it). The copilot only
+  sees a read-only `has_drawing` slot hint (present only when true); there is no draw op. `/propose` and `/compose`
+  carry edits through untouched.
+- **Capability.** `slide_post_drawing` in `/creation-threads/capabilities`: flag on AND the build declares
+  `X-Kria-Client-Protocol >= slide_post_drawing_min_client_protocol` (7). No 426: an older build ignores the unknown
+  key and its saves omit it, so the stored drawing survives.
+- **Server renderer** (`app/pipeline/slide_post/drawing_png.py`, skia-python). One canvas-sized transparent PNG per
+  drawn slide is an extra ffmpeg overlay input after the text PNGs and before the watermark, for photos and video
+  slides, independent of `rich_text_active`. Textures are deterministic functions of (seed, arc length), so the
+  content-addressed derivative never churns. Pen, marker and neon follow the iOS `NativeDrawingPainter`; **chalk,
+  spray and highlighter are approximate ports** (same noise and dot streams through a different rasteriser; the
+  highlighter uses the normal blend at its opacity because iOS multiplies against the frame, which a transparent
+  overlay cannot express). The phone export paints with `NativeDrawingPainter`.
+- **Cache and freshness.** A drawn slide's normalized key gets `_dr{SLIDE_DRAWING_PAINTER_VERSION}` (only then;
+  existing keys are unchanged). `SLIDES_DRAWING_RENDERER_VERSION = 4` is stamped on `slide_post.renderer_version`
+  when any slide has a drawing (otherwise 3), and `_slide_post_export_is_current` treats a drawn draft as stale
+  below 4. The dispatch fence stays 2.
+- **Rollback.** Flip `SLIDE_POST_DRAWING_ENABLED=false` (api + worker) and restart; stored drawings still render.
+  Never roll the CODE back once drawings exist: draft models drop unknown keys and `DrawingStroke` is
+  `extra="forbid"`, so `parse_slide_post` would fail closed to "no draft".
+- Tests: `tests/pipeline/test_slide_post_drawing.py` (fixture, geometry against the real painter, determinism,
+  real ffmpeg composite), `tests/routes/test_slide_post_drawing_routes.py` (merge, gating, freshness, chat-edit
+  copy-through, propose), `tests/tasks/test_slide_post_render.py` (stamp and key).
+
 ## Known v1 gaps (tracked, not silently shipped)
 
 - **No direct publish.** v1 is export-only (`bundle.zip`). TikTok photo
