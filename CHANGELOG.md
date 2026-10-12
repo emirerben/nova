@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.232.0] - 2026-10-12
+
+### Changed
+- feat(gates): KRI-577 session audit and shared reliability gates for incident fixes (#1539) <!-- release-pr: 1539 -->
+
 ## [0.78.231.0] - 2026-10-12
 
 ### Changed
