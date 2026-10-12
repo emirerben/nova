@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.248.0] - 2026-10-12
+
+### Changed
+- fix(ios): song-timeline order card works like the editor timeline (KRI-575) (#1533) <!-- release-pr: 1533 -->
+
 ## [0.78.247.0] - 2026-10-12
 
 ### Changed
