@@ -338,20 +338,56 @@ def _grouped_input(groups, **extra) -> NarratedClipAlignmentInput:
     )
 
 
-def test_ordered_groups_require_each_group_before_the_next() -> None:
+def test_ordered_groups_are_kept_when_the_narration_allows_and_flagged_when_it_does_not() -> None:
+    """KRI-590: a described sequence is the creator's preference, the narration decides.
+
+    A placement that keeps every group before the next is not flagged; one whose start
+    words put a later group first is ACCEPTED in the narration's order and flagged, so
+    the worker records the override instead of failing the render.
+    """
     agent = NarratedClipAlignmentAgent(None)
     input_ = _grouped_input([["a", "b"], ["c"]])  # d is in no group: free
     ok = agent.parse(
         _raw(("d", "w000000"), ("b", "w000002"), ("a", "w000003"), ("c", "w000006")), input_
     )
     assert [p.clip_id for p in ok.placements] == ["d", "b", "a", "c"]
+    assert ok.sequence_overridden is False
     # Members of one group need not be contiguous: d may sit between a and b.
-    agent.parse(
+    spread = agent.parse(
         _raw(("a", "w000000"), ("d", "w000002"), ("b", "w000003"), ("c", "w000006")), input_
     )
-    with pytest.raises(SchemaError, match="must all come before"):
+    assert spread.sequence_overridden is False
+    # The voice reaches c before b: the narration's order wins, and it is flagged.
+    overridden = agent.parse(
+        _raw(("a", "w000000"), ("c", "w000002"), ("b", "w000003"), ("d", "w000006")), input_
+    )
+    assert [p.clip_id for p in overridden.placements] == ["a", "c", "b", "d"]
+    assert [p.start_word_id for p in overridden.placements] == [
+        "w000000",
+        "w000002",
+        "w000003",
+        "w000006",
+    ]
+    assert overridden.sequence_overridden is True
+
+
+def test_a_sequence_override_never_excuses_a_pin_a_lock_or_backwards_words() -> None:
+    agent = NarratedClipAlignmentAgent(None)
+    breaks_sequence = _raw(("c", "w000000"), ("a", "w000002"), ("b", "w000003"), ("d", "w000006"))
+    # The pinned opening clip must still open the video.
+    with pytest.raises(SchemaError, match="pinned opening clips"):
+        agent.parse(breaks_sequence, _grouped_input([["a"], ["c"]], pinned_first=["b"]))
+    # The pinned closing clip must still close it.
+    with pytest.raises(SchemaError, match="pinned closing clips"):
+        agent.parse(breaks_sequence, _grouped_input([["a"], ["c"]], pinned_last=["b"]))
+    # A filming-guide (LOCKED) order is never overridden by the narration.
+    with pytest.raises(SchemaError, match="order is locked"):
+        agent.parse(breaks_sequence, _grouped_input([["a"], ["c"]], order_locked=True))
+    # Ties are still rejected after the re-sort.
+    with pytest.raises(SchemaError, match="strictly increasing"):
         agent.parse(
-            _raw(("a", "w000000"), ("c", "w000002"), ("b", "w000003"), ("d", "w000006")), input_
+            _raw(("c", "w000000"), ("a", "w000003"), ("b", "w000003"), ("d", "w000006")),
+            _grouped_input([["a"], ["c"]]),
         )
 
 
@@ -363,7 +399,40 @@ def test_ordered_groups_are_resorted_then_checked() -> None:
         _raw(("a", "w000000"), ("c", "w000006"), ("b", "w000003"), ("d", "w000004")), input_
     )
     assert output.resorted is True
+    assert output.sequence_overridden is False
     assert [p.clip_id for p in output.placements] == ["a", "b", "d", "c"]
+
+
+# --- Tigre regression: prod job ef8e35b8 (KRI-590) ---------------------------
+
+_TIGRE = (
+    Path(__file__).parent.parent
+    / "fixtures/agent_evals/narrated_clip_alignment/golden/tigre_spoken_cues.json"
+)
+
+
+def test_tigre_spoken_cues_follow_the_voiceover_not_the_sentence_order() -> None:
+    """'Nehir klibiyle başla. "Deniz" dediğimde ... "kırkayak" dediğimde ... "mutfak"
+    dediğimde ...': the cues arrived as a described sequence (Deniz, bathroom, kitchen)
+    but the voiceover says kitchen, then Deniz, then the bathroom. The prod answer put
+    each clip on its cue word and was rejected twice; it must now be accepted as is."""
+    data = json.loads(_TIGRE.read_text())
+    input_ = NarratedClipAlignmentInput.model_validate(data["input"])
+    river, deniz, bathroom, kitchen = (clip.clip_id for clip in input_.clips)
+    assert input_.pinned_first == [river]
+    assert input_.ordered_groups == [[deniz], [bathroom], [kitchen]]
+
+    output = NarratedClipAlignmentAgent(None).parse(data["raw_text"], input_)
+
+    assert [(p.clip_id, p.start_word_id) for p in output.placements] == [
+        (river, "w000000"),  # pinned first
+        (kitchen, "w000009"),  # "Mutfak küçük ..."
+        (deniz, "w000019"),  # "Deniz tabii ki ..."
+        (bathroom, "w000027"),  # "Banyoda bir kırık ayak vardı ..."
+    ]
+    assert output.sequence_overridden is True
+    assert output.resorted is False
+    assert output.model_dump(mode="json") == data["output"]
 
 
 def test_prompt_names_the_described_sequence() -> None:

@@ -1,0 +1,361 @@
+{
+  "agent": "nova.compose.narrated_clip_alignment",
+  "prompt_version": "2026-10-08.1",
+  "input": {
+    "clips": [
+      {
+        "clip_id": "files/mcg5y0j47p9r",
+        "duration_s": null,
+        "description": "The video shows a wide view of a brown river with a wooden dock in the foreground. The water flows gently, and distant houses or structures are visible on the opposite bank through green trees under a clear blue sky. | observing river flow | river with wooden dock | outdoor river bank on a sunny day",
+        "creator_label": "Nehir klibi"
+      },
+      {
+        "clip_id": "files/aj5nt22u4sje",
+        "duration_s": null,
+        "description": "A man named Deniz is introduced by the person filming while he is sitting at a wooden table, working on a laptop. He briefly looks up and smiles at the camera. | man at a laptop | wooden cabin interior",
+        "creator_label": "Deniz’i laptop başında"
+      },
+      {
+        "clip_id": "files/fyt1gwgkciu0",
+        "duration_s": null,
+        "description": "The speaker is searching for a centipede in a wooden-paneled bathroom, noting that it seems to have disappeared from where it was previously seen. | wooden bathroom interior | wooden-paneled bathroom/cabin with a window",
+        "creator_label": "küvet fotoğrafını"
+      },
+      {
+        "clip_id": "files/1oyxl8jkab4c",
+        "duration_s": null,
+        "description": "The video provides a brief glimpse of a rustic-style kitchen and opens with a welcome to a house tour in Tigre. | showing a kitchen interior | rustic kitchen interior | rustic house kitchen interior with wooden walls and ceiling",
+        "creator_label": "mutfağı"
+      }
+    ],
+    "words": [
+      {
+        "text": "Buenos",
+        "end_s": 0.900000023841858,
+        "start_s": 0.30000000000000004,
+        "word_id": "w000000"
+      },
+      {
+        "text": "Aires'in",
+        "end_s": 1.3,
+        "start_s": 0.900000023841858,
+        "word_id": "w000001"
+      },
+      {
+        "text": "bir",
+        "end_s": 1.5200000286102295,
+        "start_s": 1.3,
+        "word_id": "w000002"
+      },
+      {
+        "text": "saat",
+        "end_s": 1.7600000381469727,
+        "start_s": 1.5200000286102295,
+        "word_id": "w000003"
+      },
+      {
+        "text": "kuzeyinde,",
+        "end_s": 2.2600000381469725,
+        "start_s": 1.7600000381469727,
+        "word_id": "w000004"
+      },
+      {
+        "text": "Tigre'de",
+        "end_s": 3.2399998188018797,
+        "start_s": 2.4399998664855955,
+        "word_id": "w000005"
+      },
+      {
+        "text": "ahşap",
+        "end_s": 3.5599999904632567,
+        "start_s": 3.2399998188018797,
+        "word_id": "w000006"
+      },
+      {
+        "text": "bir",
+        "end_s": 3.8199997425079344,
+        "start_s": 3.5599999904632567,
+        "word_id": "w000007"
+      },
+      {
+        "text": "kulübedeyiz.",
+        "end_s": 4.119999933242798,
+        "start_s": 3.8199997425079344,
+        "word_id": "w000008"
+      },
+      {
+        "text": "Mutfak",
+        "end_s": 4.855437628067016,
+        "start_s": 4.49543797138977,
+        "word_id": "w000009"
+      },
+      {
+        "text": "küçük",
+        "end_s": 5.175437799728393,
+        "start_s": 4.855437628067016,
+        "word_id": "w000010"
+      },
+      {
+        "text": "ama",
+        "end_s": 5.395437589920044,
+        "start_s": 5.175437799728393,
+        "word_id": "w000011"
+      },
+      {
+        "text": "her",
+        "end_s": 5.695437780654907,
+        "start_s": 5.395437589920044,
+        "word_id": "w000012"
+      },
+      {
+        "text": "şey",
+        "end_s": 5.795437685287475,
+        "start_s": 5.695437780654907,
+        "word_id": "w000013"
+      },
+      {
+        "text": "var.",
+        "end_s": 6.035437933242798,
+        "start_s": 5.795437685287475,
+        "word_id": "w000014"
+      },
+      {
+        "text": "Ben",
+        "end_s": 6.6754382765655516,
+        "start_s": 6.515437952316284,
+        "word_id": "w000015"
+      },
+      {
+        "text": "çatı",
+        "end_s": 6.915438047683716,
+        "start_s": 6.6754382765655516,
+        "word_id": "w000016"
+      },
+      {
+        "text": "katında",
+        "end_s": 7.235437742507934,
+        "start_s": 6.915438047683716,
+        "word_id": "w000017"
+      },
+      {
+        "text": "yatıyorum.",
+        "end_s": 7.6754382765655516,
+        "start_s": 7.235437742507934,
+        "word_id": "w000018"
+      },
+      {
+        "text": "Deniz",
+        "end_s": 8.145438543594361,
+        "start_s": 7.9254382765655516,
+        "word_id": "w000019"
+      },
+      {
+        "text": "tabii",
+        "end_s": 8.425438276565552,
+        "start_s": 8.145438543594361,
+        "word_id": "w000020"
+      },
+      {
+        "text": "ki",
+        "end_s": 8.585438123977662,
+        "start_s": 8.425438276565552,
+        "word_id": "w000021"
+      },
+      {
+        "text": "evin",
+        "end_s": 8.765438429153443,
+        "start_s": 8.585438123977662,
+        "word_id": "w000022"
+      },
+      {
+        "text": "en",
+        "end_s": 9.045438162124634,
+        "start_s": 8.765438429153443,
+        "word_id": "w000023"
+      },
+      {
+        "text": "güzel",
+        "end_s": 9.045438162124634,
+        "start_s": 9.045438162124634,
+        "word_id": "w000024"
+      },
+      {
+        "text": "odasını",
+        "end_s": 9.365437856948853,
+        "start_s": 9.045438162124634,
+        "word_id": "w000025"
+      },
+      {
+        "text": "kaptı.",
+        "end_s": 9.785437933242799,
+        "start_s": 9.365437856948853,
+        "word_id": "w000026"
+      },
+      {
+        "text": "Banyoda",
+        "end_s": 10.260999818801881,
+        "start_s": 10.0809995136261,
+        "word_id": "w000027"
+      },
+      {
+        "text": "bir",
+        "end_s": 10.500999589920045,
+        "start_s": 10.260999818801881,
+        "word_id": "w000028"
+      },
+      {
+        "text": "kırık",
+        "end_s": 10.781000276565553,
+        "start_s": 10.500999589920045,
+        "word_id": "w000029"
+      },
+      {
+        "text": "ayak",
+        "end_s": 10.960999628067018,
+        "start_s": 10.781000276565553,
+        "word_id": "w000030"
+      },
+      {
+        "text": "vardı,",
+        "end_s": 11.281000276565553,
+        "start_s": 10.960999628067018,
+        "word_id": "w000031"
+      },
+      {
+        "text": "sonra",
+        "end_s": 11.960999628067018,
+        "start_s": 11.82100023841858,
+        "word_id": "w000032"
+      },
+      {
+        "text": "kayboldu.",
+        "end_s": 12.561000009536745,
+        "start_s": 11.960999628067018,
+        "word_id": "w000033"
+      },
+      {
+        "text": "Ama",
+        "end_s": 13.1409999332428,
+        "start_s": 12.840999742507936,
+        "word_id": "w000034"
+      },
+      {
+        "text": "asıl",
+        "end_s": 13.340999742507936,
+        "start_s": 13.1409999332428,
+        "word_id": "w000035"
+      },
+      {
+        "text": "olay",
+        "end_s": 13.600999971389772,
+        "start_s": 13.340999742507936,
+        "word_id": "w000036"
+      },
+      {
+        "text": "dışarısı,",
+        "end_s": 14.120999475479127,
+        "start_s": 13.600999971389772,
+        "word_id": "w000037"
+      },
+      {
+        "text": "iskele,",
+        "end_s": 14.8186879332428,
+        "start_s": 14.418688314712526,
+        "word_id": "w000038"
+      },
+      {
+        "text": "nehir",
+        "end_s": 15.438686865127565,
+        "start_s": 15.258686559951784,
+        "word_id": "w000039"
+      },
+      {
+        "text": "ve",
+        "end_s": 15.781437399185183,
+        "start_s": 15.438686865127565,
+        "word_id": "w000040"
+      },
+      {
+        "text": "o",
+        "end_s": 16.121437551773074,
+        "start_s": 15.781437399185183,
+        "word_id": "w000041"
+      },
+      {
+        "text": "sessizlik.",
+        "end_s": 16.521437170303347,
+        "start_s": 16.121437551773074,
+        "word_id": "w000042"
+      },
+      {
+        "text": "Huzuru",
+        "end_s": 17.01143694142151,
+        "start_s": 16.771437170303347,
+        "word_id": "w000043"
+      },
+      {
+        "text": "burada",
+        "end_s": 17.311436178482058,
+        "start_s": 17.01143694142151,
+        "word_id": "w000044"
+      },
+      {
+        "text": "bulduk.",
+        "end_s": 17.67143678883362,
+        "start_s": 17.311436178482058,
+        "word_id": "w000045"
+      }
+    ],
+    "language": "tr",
+    "pinned_last": [],
+    "order_locked": false,
+    "pinned_first": [
+      "files/mcg5y0j47p9r"
+    ],
+    "ordered_groups": [
+      [
+        "files/aj5nt22u4sje"
+      ],
+      [
+        "files/fyt1gwgkciu0"
+      ],
+      [
+        "files/1oyxl8jkab4c"
+      ]
+    ],
+    "creator_request": "Full creator request (chronological):\nSeslendirmem Türkçe ama altyazılar İngilizce olsun. Başlık: “Tigre’de bir gün”. Nehir klibiyle başla. “Deniz” dediğimde Deniz’i laptop başında göster. “kırkayak” dediğimde küvet fotoğrafını göster. “mutfak” dediğimde mutfağı göster. Başlık dışında başka yazı olmasın.\nEvet baslik suresi onemli degil\n\nCreative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] İngilizce altyazı eklenecek (seslendirme Türkçe kalacak)\n- [r2] [text/title] \"Tigre’de bir gün\"\n- [r3] [order/global] Kurgu nehir klibiyle başlayacak facts={\"first_clip\":\"Nehir klibi\"}\n- [r4] [timing/clip:CFBEC1AE-2523-49F2-B675-04576EAED824.mp4] Seslendirmede 'Deniz' kelimesi duyulduğunda bu klip gösterilecek\n- [r5] [timing/clip:asset-fe1c1382-89e1-440e-b54d-f3a4d945f4ff] Seslendirmede 'kırkayak' kelimesi duyulduğunda bu küvet fotoğrafı belirecek\n- [r6] [timing/clip:80DCD337-53E9-426D-8DC8-31AEC9359F76.mp4] Seslendirmede 'mutfak' kelimesi duyulduğunda mutfak klibi gösterilecek\n- [r7] [style/global] Başlık dışında ekranda başka yazı kullanılmayacak\nLatest message: Evet baslik suresi onemli degil"
+  },
+  "raw_text": "{\n  \"placements\": [\n    {\n      \"clip_id\": \"files/mcg5y0j47p9r\",\n      \"start_word_id\": \"w000000\",\n      \"reason\": \"Creator requested 'Nehir klibi' to start first (r3) and it makes sense with the intro.\"\n    },\n    {\n      \"clip_id\": \"files/1oyxl8jkab4c\",\n      \"start_word_id\": \"w000009\",\n      \"reason\": \"Creator requested 'mutfak' (w000009) to trigger the kitchen clip (r6). This is also the first mention of an indoor space.\"\n    },\n    {\n      \"clip_id\": \"files/aj5nt22u4sje\",\n      \"start_word_id\": \"w000019\",\n      \"reason\": \"Creator requested 'Deniz' (w000019) to trigger the clip showing Deniz (r4). The word 'Deniz' is also the start of a new sentence.\"\n    },\n    {\n      \"clip_id\": \"files/fyt1gwgkciu0\",\n      \"start_word_id\": \"w000027\",\n      \"reason\": \"Creator requested 'kırkayak' (w000029) to trigger the bathroom clip (r5). Starting at 'Banyoda' (w000027) is a natural clause/sentence start describing the bathroom.\"\n    }\n  ]\n}",
+  "output": {
+    "placements": [
+      {
+        "clip_id": "files/mcg5y0j47p9r",
+        "start_word_id": "w000000",
+        "reason": "Creator requested 'Nehir klibi' to start first (r3) and it makes sense with the intro."
+      },
+      {
+        "clip_id": "files/1oyxl8jkab4c",
+        "start_word_id": "w000009",
+        "reason": "Creator requested 'mutfak' (w000009) to trigger the kitchen clip (r6). This is also the first mention of an indoor space."
+      },
+      {
+        "clip_id": "files/aj5nt22u4sje",
+        "start_word_id": "w000019",
+        "reason": "Creator requested 'Deniz' (w000019) to trigger the clip showing Deniz (r4). The word 'Deniz' is also the start of a new sentence."
+      },
+      {
+        "clip_id": "files/fyt1gwgkciu0",
+        "start_word_id": "w000027",
+        "reason": "Creator requested 'kırkayak' (w000029) to trigger the bathroom clip (r5). Starting at 'Banyoda' (w000027) is a natural clause/sentence start describing the bathroom."
+      }
+    ],
+    "resorted": false,
+    "sequence_overridden": true
+  },
+  "meta": {
+    "source": "prod job ef8e35b8 (thread f77a5c16), narrated_clip_alignment raw answer (KRI-590)",
+    "scenario": "Turkish phone Voiceover. The creator pinned the opening clip (river) and asked for three spoken-word cues ('when I say Deniz / kırkayak / mutfak, show ...'). Main Creator encoded the cues as unpositioned order intents in sentence order, so the worker sent them as a described sequence (Deniz, bathroom, kitchen). The voiceover says them as kitchen, Deniz, bathroom; the model placed each clip on its cue word and parse rejected the answer twice, failing the render.",
+    "job": "prod ef8e35b8-43c6-4702-b747-f4fa3f7b4d49",
+    "prod_error": "narrated_clip_alignment: clips ['files/fyt1gwgkciu0'] must all come before ['files/1oyxl8jkab4c']"
+  }
+}

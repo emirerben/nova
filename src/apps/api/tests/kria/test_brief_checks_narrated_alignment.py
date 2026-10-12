@@ -56,7 +56,7 @@ LONG_TR = (
 )
 
 
-def _step(media_id, labels, start, end, text="", placed=()):
+def _step(media_id, labels, start, end, text="", placed=(), **extra):
     return {
         "media_id": media_id,
         "labels": list(labels),
@@ -64,6 +64,7 @@ def _step(media_id, labels, start, end, text="", placed=()):
         "start_s": start,
         "end_s": end,
         "text": text,
+        **extra,
     }
 
 
@@ -166,6 +167,76 @@ def test_an_order_intent_position_implies_the_anchor_when_the_brief_has_no_fact(
     steps = _record()["steps"]
     steps.reverse()
     assert _receipts(_record(steps), [plain])["p"].status == "not_possible"
+
+
+def _voice_led_record():
+    """KRI-590: river pinned first; the voiceover then reached the kitchen, Deniz and the
+    bathroom in that order, against the described sequence (Deniz, bathroom, kitchen)."""
+    return _record(
+        [
+            _step("m0", ["the river"], 0.0, 3.0, "Buenos Aires", placed=[("first", "the river")]),
+            _step("m3", ["the kitchen"], 3.0, 7.0, "Mutfak küçük", out_of_sequence=True),
+            _step("m1", ["Deniz"], 7.0, 10.0, "Deniz tabii ki", out_of_sequence=True),
+            _step("m2", ["the bathroom"], 10.0, 14.0, "Banyoda", out_of_sequence=True),
+        ]
+    )
+
+
+def test_an_order_the_voiceover_overrode_is_never_reported_as_met():
+    river_first = BriefRequirement(
+        id="a",
+        kind="order",
+        scope="global",
+        description="Start with the river",
+        facts={"first_clip": "the river"},
+    )
+    river_then_sequence = BriefRequirement(
+        id="c",
+        kind="order",
+        scope="global",
+        description="Start with the river, then Deniz, then the bathroom, then the kitchen",
+        facts={"first_clip": "the river"},
+    )
+    sequence_only = BriefRequirement(
+        id="s",
+        kind="order",
+        scope="global",
+        description="Deniz, then the bathroom, then the kitchen",
+    )
+    receipts = _receipts(_voice_led_record(), [river_first, river_then_sequence, sequence_only])
+
+    # The seat the creator pinned is really there.
+    assert (receipts["a"].status, receipts["a"].verification) == ("met", "checked")
+    # The described sequence is not: say what happened instead of "Done".
+    for rid in ("c", "s"):
+        assert (receipts[rid].status, receipts[rid].verification) == ("partial", "checked")
+        assert receipts[rid].reason == (
+            "Your voiceover mentions the kitchen, Deniz and the bathroom in a different "
+            "order, so I followed the voiceover."
+        )
+    # The same record with nothing moved keeps the old verdicts.
+    steps = [
+        {k: v for k, v in s.items() if k != "out_of_sequence"} for s in _voice_led_record()["steps"]
+    ]
+    plain = _receipts(_record(steps), [river_then_sequence, sequence_only])
+    assert plain["c"].status == "met"
+    assert plain["s"].verification == "unchecked"
+
+
+def test_an_overridden_order_in_turkish():
+    token = bind_reply_language("tr")
+    try:
+        sequence_only = BriefRequirement(
+            id="s", kind="order", scope="global", description="Deniz, sonra the bathroom"
+        )
+        receipt = _receipts(_voice_led_record(), [sequence_only])["s"]
+    finally:
+        release_reply_language(token)
+    assert receipt.status == "partial"
+    assert receipt.reason == (
+        "Seslendirmende Deniz ve the bathroom farklı bir sırayla geçiyor, ben de "
+        "seslendirmeyi takip ettim."
+    )
 
 
 def test_an_order_with_no_seat_to_judge_stays_unchecked():
