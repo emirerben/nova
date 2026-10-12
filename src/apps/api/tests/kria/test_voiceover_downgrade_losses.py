@@ -465,3 +465,75 @@ def test_other_asks_are_still_compared_after_a_lossless_downgrade(prod_profile) 
     held = _ask(_guided(opening_title_duration_s=2.0), creator_text=ORDER_REQUEST)
     assert isinstance(held, RefusedStrategy)
     assert "exactly 2 seconds" in held.question
+
+
+# --- PR 1550 review: leaving a medium out vs restricting how it looks ---------------------
+
+
+def _photo_select(words: str) -> CreativeBrief:
+    return CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r1", kind="select", scope=f"clip:{BATHTUB_PHOTO}", description=words
+            )
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        "Show the bathtub photo, no zoom",
+        "Show the bathtub photo without zoom",
+        "Remove the zoom on the bathtub photo",
+        "Skip the music on the bathtub photo",
+        "küvet fotoğrafını göster, zoom olmasın",
+        "fotoğrafı göster ama müzik olmasın",
+        "Küvet fotoğrafındaki efekti çıkar",
+        "zoom'u kaldır, küvet fotoğrafı kalsın",
+        "Leave the bathtub photo in and take the music and the zoom effect out",
+        # Turkish "çıkar" is also "comes out": a photo coming onto the screen is an ask.
+        "Kırkayak deyince küvet fotoğrafı ekrana çıkar",
+    ],
+)
+def test_a_select_that_only_restricts_how_the_photo_looks_still_asks_for_it(words) -> None:
+    """The negation governs a treatment (zoom, music, an effect), not the photo."""
+
+    assert requested_media(_photo_select(words), [BATHTUB_PHOTO]) == {BATHTUB_PHOTO: words}
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        "Remove the bathtub photo",
+        "Don't use the bathtub photo",
+        "Show it without the bathtub photo",
+        "leave the photo out",
+        "Get rid of it",
+        "küvet fotoğrafını çıkar",
+        "küvet fotoğrafını kullanma",
+        "fotoğraf olmasın",
+        "Küvet fotoğrafını koyma",
+    ],
+)
+def test_a_select_that_leaves_the_photo_out_is_not_an_ask(words) -> None:
+    assert requested_media(_photo_select(words), [BATHTUB_PHOTO]) == {}
+
+
+def test_a_no_zoom_photo_the_downgrade_would_drop_is_asked_about(prod_profile) -> None:
+    """The reviewer's case end to end: "Show the bathtub photo, no zoom" is an ask, so a
+    guided plan downgraded without a beat for that photo asks instead of dropping it."""
+
+    words = "Show the bathtub photo, no zoom"
+    refused = _ask(
+        _guided(),
+        creator_text=ORDER_REQUEST,
+        requested=requested_media(_photo_select(words), [*TIGRE_CLIPS, BATHTUB_PHOTO]),
+    )
+
+    assert isinstance(refused, RefusedStrategy)
+    assert refused.code == "simplification_requires_choice"
+    assert refused.question.startswith(
+        f'This version leaves out the photo you asked for: "{words}".'
+    )

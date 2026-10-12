@@ -874,21 +874,108 @@ def route_requirements(
 # ---------------------------------------------------------------- request rendering
 
 
-# KRI-594: a select requirement on one clip may ask to leave it OUT ("remove the bathtub
-# photo", "küvet fotoğrafını çıkar"). Written against `loose_text` with punctuation as spaces.
-_LEAVE_OUT_ASK = re.compile(
-    r"\b(?:remove|delete|drop|skip|cut|avoid|exclude|leave out|get rid of|without|no|never"
-    r"|don t|do not)\b"
-    r"|\b(?:cikar|sil|atla|kullanma|koyma|olmasin|istemiyorum)\w*"
+# KRI-594 (PR 1550 review): a select requirement on one clip may leave the medium OUT
+# ("remove the bathtub photo", "küvet fotoğrafını çıkar") or only restrict how it looks ("show
+# the bathtub photo, no zoom", "zoom olmasın"). Only the first is a leave-out, so a negation
+# counts only when it governs the medium, never a treatment of it. When unsure it reads as an
+# ask: a kept ask costs a question, a lost one silently drops the photo. Words are matched
+# whole, on `loose_text` (lower case, no diacritics) with punctuation as spaces.
+_MEDIA_NOUN = re.compile(
+    r"photos?|pictures?|pics?|images?|clips?|videos?|shots?|footage|stills?"
+    r"|foto\w*|resim\w*|resm\w*|gorsel\w*|kli[pb]\w*|video\w*|cekim\w*|goruntu\w*"
 )
+_TREATMENT_NOUN = re.compile(
+    r"zoom\w*|pan|panning|motion|movement|animations?|effects?|filters?|music|sounds?|audio"
+    r"|sfx|text|captions?|subtitles?|titles?|labels?|borders?|frames?|transitions?|crop\w*"
+    r"|blur\w*|stickers?|emojis?|fade\w*|shake\w*"
+    r"|efekt\w*|filtre\w*|muzik\w*|ses\w*|yazi\w*|altyazi\w*|baslik\w*|etiket\w*"
+    r"|gecis\w*|animasyon\w*|hareket\w*|kirpma\w*|bulanik\w*|cerceve\w*|titreme\w*"
+)
+_MEDIUM_PRONOUNS = frozenset({"it", "this", "that", "them", "these", "those"})
+_EN_REMOVE_VERBS = frozenset({"remove", "removing", "delete", "drop", "skip", "exclude", "avoid"})
+_EN_NEGATED_VERBS = frozenset({"use", "show", "include", "put", "add", "want", "need", "keep"})
+# Turkish puts the object first and the verb last ("küvet fotoğrafını çıkar"). Removal verbs
+# leave the medium out unless the nearest noun before them is a treatment ("efekti çıkar");
+# the weak ones ("olmasın", "koyma") only with a medium noun there ("fotoğraf olmasın").
+_TR_REMOVE_VERB = re.compile(
+    r"cikar(?:t)?(?:in|iniz|sin|alim)?|sil(?:in|iniz|sin)?|atla(?:yin|sin)?"
+    r"|kaldir(?:in|iniz|sin)?|kullanma(?:yin|yiniz|sin)?|kullanilmasin"
+    r"|gosterme(?:yin|sin)?|gosterilmesin"
+)
+_TR_WEAK_NEGATION = re.compile(
+    r"olmasin|istemiyorum|istemiyoruz|yok|koyma(?:yin|sin)?|konmasin|ekleme(?:yin|sin)?"
+    r"|eklenmesin"
+)
+_CLAUSE_BREAK = re.compile(r"[,.;:!?()]+|\b(?:but|however|ama|fakat|ancak)\b")
+
+
+def _noun_kind(word: str) -> str | None:
+    if _TREATMENT_NOUN.fullmatch(word):
+        return "treatment"
+    if _MEDIA_NOUN.fullmatch(word):
+        return "media"
+    return None
+
+
+def _first_noun(words: list[str]) -> str | None:
+    return next((kind for kind in map(_noun_kind, words) if kind), None)
+
+
+def _clause_leaves_medium_out(words: list[str]) -> bool:
+    for index, word in enumerate(words):
+        before, after = words[:index], words[index + 1 :]
+        # English: a removal verb leaves the medium out unless its object is a treatment
+        # ("remove the bathtub photo", "get rid of it" vs "remove the zoom", "skip the music").
+        governed: list[str] | None = None
+        if word in _EN_REMOVE_VERBS:
+            governed = after
+        elif word == "get" and after[:2] == ["rid", "of"]:
+            governed = after[2:]
+        elif word in ("cut", "take", "leave") and after[:1] == ["out"]:
+            governed = after[1:]
+        elif word == "leave" and "out" in after[:5]:
+            # "leave the bathtub photo out"; a far "out" belongs to another object.
+            governed = after[: after.index("out")]
+        else:
+            negated: list[str] = []
+            if (word == "don" and after[:1] == ["t"]) or (word == "do" and after[:1] == ["not"]):
+                negated = after[1:]
+            elif word in ("dont", "never"):
+                negated = after
+            if negated[:1] and negated[0] in _EN_NEGATED_VERBS:
+                governed = negated[1:]
+        if governed is not None and _first_noun(governed) != "treatment":
+            return True
+        # A bare "no" / "without" / "never" counts only when it governs the medium:
+        # "without the bathtub photo", "no photo here" -- never "no zoom".
+        if word in ("no", "without", "never") and after:
+            if after[0] in _MEDIUM_PRONOUNS or _first_noun(after[:4]) == "media":
+                return True
+        # Turkish: "çıkar" is also "comes out", so "fotoğraf ekrana çıkar" stays an ask.
+        if _TR_REMOVE_VERB.fullmatch(word) and before[-1:] not in (["ekrana"], ["ekranda"]):
+            if _first_noun(before[::-1]) != "treatment":
+                return True
+        if _TR_WEAK_NEGATION.fullmatch(word) and _first_noun(before[::-1]) == "media":
+            return True
+    return False
+
+
+def _leaves_medium_out(words: str) -> bool:
+    """Whether a requirement's words leave its medium out, rather than ask for it."""
+
+    return any(
+        _clause_leaves_medium_out(re.sub(r"[^\w\s]", " ", clause).split())
+        for clause in _CLAUSE_BREAK.split(loose_text(words))
+    )
 
 
 def requested_media(brief: CreativeBrief | None, media_ids: Iterable[str]) -> dict[str, str]:
     """KRI-594: each medium a live requirement asks to show, with that requirement's words.
 
     A ``clip:<id>`` scope names the medium by its id, or by a unique tail of it (the brief
-    may drop an own clip's "analysis-proxy-ios-" prefix). A select requirement that reads as
-    leaving the medium out is the opposite of an ask and never counts.
+    may drop an own clip's "analysis-proxy-ios-" prefix). A select requirement that leaves the
+    medium out ("remove the bathtub photo") is the opposite of an ask and never counts; one
+    that only restricts how it looks ("show the bathtub photo, no zoom") still does.
     """
 
     if brief is None:
@@ -906,9 +993,7 @@ def requested_media(brief: CreativeBrief | None, media_ids: Iterable[str]) -> di
         if media_id is None:
             continue
         words = req.text()
-        if req.kind == "select" and _LEAVE_OUT_ASK.search(
-            " ".join(re.sub(r"[^\w\s]", " ", loose_text(words)).split())
-        ):
+        if req.kind == "select" and _leaves_medium_out(words):
             continue
         asked.setdefault(media_id, words)
     return asked
