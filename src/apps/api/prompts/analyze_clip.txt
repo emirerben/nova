@@ -82,6 +82,8 @@ HARD RULES for best_moments (any violation makes the output unusable downstream 
 
 Omit > pad. If a candidate window has no concrete action, leave it out. Two strong, well-spaced moments beat five clustered weak ones — the downstream assembler will discard padding anyway. An empty best_moments list is a valid output when the segment has no meaningful action — don't invent moments to satisfy the 2–5 range.
 
+- "unusable_spans": list of {"start_s": float, "end_s": float, "reason": string} — stretches where NO viewer-worthy shot can be cut: a finger/hand/object covering the lens, the camera pointing at the ground or at the creator's own feet/shoes, the camera pocketed or tilted at the sky/ceiling, or heavy motion blur / out-of-focus footage. Be conservative: only clear cases, at least 1.0s long, with a short reason. Use [] when the whole clip is watchable. Never list a stretch you also use as a best_moment.
+
 Ordering. Moments must be in start_s order, non-overlapping. start_s < end_s strictly.
 
 Before returning, self-check your best_moments list against rules 1–5. If any rule fails, fix the list (widen the span, drop duplicates, regrade energies) before emitting JSON.

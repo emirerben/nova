@@ -1358,6 +1358,19 @@ def _analyze_video(
         # KRI-127: one shared open-vocabulary understanding record per clip.
         # `understanding_payload` is getattr-tolerant so a degraded/partial
         # `meta` still yields a valid (if mostly-empty) block.
+        unusable_spans = []
+        for sp in getattr(meta, "unusable_spans", None) or []:
+            try:
+                start_s = round(float(_moment_field(sp, "start_s", 0.0)), 3)
+                end_s = round(float(_moment_field(sp, "end_s", 0.0)), 3)
+            except (TypeError, ValueError):
+                continue
+            if end_s > start_s:
+                reason = str(_moment_field(sp, "reason", "") or "").strip()[:80]
+                unusable_spans.append({"start_s": start_s, "end_s": end_s, "reason": reason})
+        if unusable_spans:
+            # KRI-625: absent key = no quality data (moment pickers fail open).
+            analysis["unusable_spans"] = unusable_spans
         analysis[UNDERSTANDING_KEY] = understanding_payload(meta, best_moments=best_moments)
         return analysis, aspect, duration, dims
     except SoftTimeLimitExceeded:
