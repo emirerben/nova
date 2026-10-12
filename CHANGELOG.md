@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.234.0] - 2026-10-12
+
+### Changed
+- fix(kria): ask before a voiceover downgrade only when it loses an ask (KRI-594) (#1550) <!-- release-pr: 1550 -->
+
 ## [0.78.233.0] - 2026-10-12
 
 ### Changed
