@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.226.0] - 2026-10-11
+
+### Changed
+- ci: cut CI and iOS UI test time (KRI-604) (#1558) <!-- release-pr: 1558 -->
+
 ## [0.78.225.0] - 2026-10-11
 
 ### Changed
