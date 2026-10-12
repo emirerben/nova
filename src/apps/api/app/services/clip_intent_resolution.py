@@ -70,9 +70,11 @@ from app.schemas.clip_intents import (
     chapter_name_caption,
     clean_caption_text,
     clean_label_text,
+    footage_lines,
     ground_caption,
     ground_label,
     ground_placeholder_label,
+    is_clip_description_label,
 )
 from app.schemas.clip_understanding import ClipUnderstanding
 from app.services.clip_facts import order_by_capture_time
@@ -541,6 +543,60 @@ def _record_is_empty(record: ClipUnderstanding) -> bool:
 
 def _fallback_question(intent: ClipIntent) -> str:
     return f"What is the {intent.attribute}?"
+
+
+def _describe_clips(
+    intent: ClipIntent,
+    resolved: ResolverIntentOut | None,
+    *,
+    clips: list[IntentClip],
+    records_by_id: dict[str, ClipUnderstanding],
+    media_to_alias: dict[str, str],
+) -> list[ClipAssignment]:
+    """One short line per clip for "explain / summarise each clip" (KRI-612).
+
+    Every clip's record already says what happens in it, so nothing here asks the
+    creator or re-checks the footage: the resolver's own line is kept when it passes the
+    fence, and any clip it left out, could not ground, or gave a line an earlier clip
+    already carries (the montage drops a repeat) gets the first unused line from its own
+    record instead. A clip with an empty record gets nothing. The line is always Kria's
+    reading of the footage (``record_span``), never reported as the creator's own words,
+    even when the creator happened to use the same ones.
+    """
+    by_alias = {a.media: a for a in (resolved.assignments if resolved else [])}
+    used: set[str] = set()
+    kept: list[ClipAssignment] = []
+    for clip in clips:
+        record = records_by_id[clip.media_id]
+        proposed = by_alias.get(media_to_alias.get(clip.media_id, ""))
+        options = [(proposed.value, proposed.confidence, proposed.evidence)] if proposed else []
+        options.extend((line, 1.0, "clip record") for line in footage_lines(record))
+        for value, confidence, evidence in options:
+            label = ground_label(
+                media_id=clip.media_id,
+                value=value,
+                confidence=confidence,
+                creator_request="",
+                record=record,
+                intent_id=intent.intent_id,
+            )
+            if label is None:
+                continue
+            key = " ".join(label.text.casefold().split())
+            if key in used:
+                continue
+            used.add(key)
+            kept.append(
+                ClipAssignment(
+                    media_id=clip.media_id,
+                    value=label.text,
+                    evidence=evidence,
+                    confidence=label.confidence,
+                    grounding=label.grounding,
+                )
+            )
+            break
+    return kept
 
 
 def _membership_question(attribute: str) -> str:
@@ -1086,6 +1142,23 @@ async def resolve_clip_intents_for_turn(
     for intent in intents:
         work = work_by_id[intent.intent_id]
         resolved = resolver_by_id.get(intent.intent_id)
+        if is_clip_description_label(intent):
+            # KRI-612: "explain the footages" is answered by every clip's own record. It
+            # never asks the creator what "explain" means, and never pays for vision.
+            work.kept.extend(
+                _describe_clips(
+                    intent,
+                    resolved,
+                    clips=clips,
+                    records_by_id=records_by_id,
+                    media_to_alias=media_to_alias,
+                )
+            )
+            work.had_any_candidate = bool(work.kept)
+            if resolved is not None and resolved.question:
+                stray_questions_ignored += 1
+            intent_stats.append(f"{intent.intent_id}:described={len(work.kept)}")
+            continue
         if resolved is None:
             continue
         has_candidates = bool(resolved.assignments or resolved.needs_vision)

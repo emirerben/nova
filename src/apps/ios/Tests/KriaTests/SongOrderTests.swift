@@ -322,7 +322,7 @@ final class SongOrderTests: XCTestCase {
         XCTAssertEqual(state.segments().first, SongTimelineState.Segment(mediaID: "a", start: 0, end: 5, hidden: false))
         XCTAssertEqual(state.gaps(), [SongTimelineState.Gap(index: 0, start: 5, end: 20)])
         XCTAssertEqual(state.submission(includePlacements: true).placements?.first, .init(mediaID: "a", deltaS: -3))
-        XCTAssertNil(state.move("a", toDelta: -50), "a drag far before the song stops with a second of the take still on it")
+        XCTAssertNil(state.move("a", toDelta: -50).refusal, "a drag far before the song stops with a second of the take still on it")
         XCTAssertEqual(state.delta(of: "a"), -7, "8 s take keeps 1 s on the song")
     }
 
@@ -338,20 +338,19 @@ final class SongOrderTests: XCTestCase {
         XCTAssertEqual(state.gaps(), [SongTimelineState.Gap(index: 0, start: 20, end: 30)])
     }
 
-    func testExtendingThePreviousBlockBy099IsHiddenAndBy1sIsVisible() {
-        var near = timeline([block("a", start: 0, duration: 10), block("b", duration: 5.99)])
-        XCTAssertEqual(near.move("b", toDelta: 5), .hidden, "ends 0.99 s past the previous block: the server drops it")
-        XCTAssertFalse(near.isPlaced("b"))
-        var enough = timeline([block("a", start: 0, duration: 10), block("b", duration: 6)])
-        XCTAssertNil(enough.move("b", toDelta: 5), "ends 1.0 s past: kept")
-        XCTAssertEqual(enough.segments().map(\.hidden), [false, false])
+    func testAServerSeedThatExtendsThePreviousBlockBy099StaysHiddenUntilTheCreatorMovesSomething() {
+        let state = timeline([block("a", start: 0, duration: 10), block("b", start: 5, duration: 5.99)])
+        XCTAssertEqual(state.segments().map(\.hidden), [false, true], "ends 0.99 s past the previous block: the server drops it")
+        XCTAssertEqual(state.placed, ["a": 0, "b": 5], "loading never rewrites the server's seed")
+        XCTAssertEqual(timeline([block("a", start: 0, duration: 10), block("b", start: 5, duration: 6)]).segments().map(\.hidden), [false, false], "1.0 s past: kept")
     }
 
-    func testAMoveThatWouldHideAnotherBlockIsRefusedToo() {
+    func testAClipDroppedOverAnotherNeverRefusesItPushesTheOtherAside() {
         var state = timeline([block("a", start: 10, duration: 6), block("b", duration: 30)])
-        XCTAssertEqual(state.move("b", toDelta: 0), .hidden, "a 30 s block over a would swallow it")
-        XCTAssertEqual(state.placed, ["a": 10])
-        XCTAssertEqual(SongTimelineState.Refusal.hidden.message, "That clip would be hidden behind another one.")
+        let outcome = state.move("b", toDelta: 0)
+        XCTAssertNil(outcome.refusal, "a 30 s clip over a is allowed now")
+        XCTAssertEqual(state.placed, ["a": 30, "b": 0], "the anchor stays; a moves to its end")
+        XCTAssertEqual(outcome.moved, [.init(mediaID: "a", from: 10, to: 30)])
     }
 
     func testGapIsOfferedFromSixTenthsOfASecond() {
@@ -377,25 +376,25 @@ final class SongOrderTests: XCTestCase {
         XCTAssertEqual(state.snapped("a", 10.25), 10, "exactly 0.25 s away snaps")
         XCTAssertEqual(state.snapped("a", 9.75), 10)
         XCTAssertEqual(state.snapped("a", 10.26), 10.3, "0.26 s away stays free (rounded to 0.1 s)")
-        XCTAssertNil(state.move("a", toDelta: 10.2))
+        XCTAssertNil(state.move("a", toDelta: 10.2).refusal)
         XCTAssertEqual(state.delta(of: "a"), 10)
     }
 
     func testTheVideoMayRunExactlyTheCapAndNotAMomentLonger() {
         var state = timeline([block("a", start: 0, duration: 8), block("b", duration: 8)], maxWindow: 20)
-        XCTAssertNil(state.move("b", toDelta: 12), "0 to 20 s is exactly the cap")
+        XCTAssertNil(state.move("b", toDelta: 12).refusal, "0 to 20 s is exactly the cap")
         XCTAssertEqual(state.span, 20)
-        XCTAssertEqual(state.move("b", toDelta: 12.1), .tooLong(maxSeconds: 20))
+        XCTAssertEqual(state.move("b", toDelta: 12.1).refusal, .tooLong(maxSeconds: 20))
         XCTAssertEqual(state.delta(of: "b"), 12, "a refused move leaves the arrangement as it was")
         XCTAssertEqual(SongTimelineState.Refusal.tooLong(maxSeconds: 20).message, "That makes the video longer than 20 seconds.")
-        XCTAssertNil(state.move("b", toDelta: 11), "moving closer is always allowed")
+        XCTAssertNil(state.move("b", toDelta: 11).refusal, "moving closer is always allowed")
     }
 
     func testAServerArrangementOverTheCapCanBeFixedByMovingTowardTheCap() {
         var state = timeline([block("a", start: 0, duration: 8), block("b", start: 40, duration: 8)], maxWindow: 20)
         XCTAssertEqual(state.span, 48)
-        XCTAssertNil(state.move("b", toDelta: 30), "shortening an over-long video is allowed")
-        XCTAssertEqual(state.move("b", toDelta: 60), .tooLong(maxSeconds: 20), "lengthening it is not")
+        XCTAssertNil(state.move("b", toDelta: 30).refusal, "shortening an over-long video is allowed")
+        XCTAssertEqual(state.move("b", toDelta: 60).refusal, .tooLong(maxSeconds: 20), "lengthening it is not")
     }
 
     func testResetReturnsToTheServersProposalAfterAnyEdits() {
@@ -413,24 +412,27 @@ final class SongOrderTests: XCTestCase {
                               block("d", status: .unmatched, duration: 6, candidates: [(2, 0.9)])])
         let gap = state.gaps()[0]
         XCTAssertEqual(gap, SongTimelineState.Gap(index: 0, start: 10, end: 40))
-        XCTAssertNil(state.place("c", inGap: gap))
+        XCTAssertNil(state.place("c", inGap: gap).refusal)
         XCTAssertEqual(state.delta(of: "c"), 30, "the likeliest candidate that starts inside the gap, not the 0.9 one outside it")
-        XCTAssertNil(state.place("d", inGap: state.gaps()[0]))
+        XCTAssertNil(state.place("d", inGap: state.gaps()[0]).refusal)
         XCTAssertEqual(state.delta(of: "d"), 10, "no candidate in the gap: its start")
     }
 
-    func testFillingAGapWithATakeTooLongForItIsRefused() {
+    func testFillingAGapWithATakeTooLongForItPushesTheNeighbourAside() {
         var state = timeline([block("a", start: 0, duration: 10), block("b", start: 20, duration: 10), block("c", status: .unmatched, duration: 20)])
-        XCTAssertEqual(state.place("c", inGap: state.gaps()[0]), .hidden, "a 20 s take from 10 s would swallow b")
-        XCTAssertEqual(state.tray, ["c"])
+        let outcome = state.place("c", inGap: state.gaps()[0])
+        XCTAssertNil(outcome.refusal)
+        XCTAssertEqual(state.placed, ["a": 0, "b": 30, "c": 10], "c keeps its spot; b makes room (left would have pushed a off the song)")
+        XCTAssertEqual(outcome.moved, [.init(mediaID: "b", from: 20, to: 30)])
+        XCTAssertTrue(state.tray.isEmpty)
     }
 
     func testAddToTheSongWorksWithNoGapAndPrefersTheLikeliestFittingCandidate() {
         var empty = timeline([block("a", status: .unmatched, candidates: [(3, 0.2), (9, 0.7)])])
-        XCTAssertNil(empty.placeAnywhere("a"))
+        XCTAssertNil(empty.placeAnywhere("a").refusal)
         XCTAssertEqual(empty.delta(of: "a"), 9)
         var after = timeline([block("a", start: 0, duration: 10), block("b", status: .unmatched)])
-        XCTAssertNil(after.placeAnywhere("b"))
+        XCTAssertNil(after.placeAnywhere("b").refusal)
         XCTAssertEqual(after.delta(of: "b"), 10, "straight after the last clip")
     }
 
@@ -484,5 +486,139 @@ final class SongOrderTests: XCTestCase {
         XCTAssertEqual(link.generation, 4); XCTAssertEqual(link.durationS, 93.5); XCTAssertEqual(SongAudioCache.fileExtension(for: link.url, contentType: nil), "mp3")
         XCTAssertEqual(SongAudioCache.fileExtension(for: URL(string: "https://x.test/blob")!, contentType: "audio/mpeg; charset=x"), "mp3")
         XCTAssertEqual(SongAudioCache.key(threadID: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!, generation: 4), "11111111-1111-1111-1111-111111111111-4.audio")
+    }
+
+    // MARK: push aside (KRI-575)
+
+    private func tray(_ id: String, duration: Double = 8) -> SongOrderQuestion.Item { block(id, status: .unmatched, duration: duration) }
+    private func visibleOverlaps(_ state: SongTimelineState) -> Bool {
+        let visible = state.segments().filter { !$0.hidden }
+        return zip(visible, visible.dropFirst()).contains { $1.start < $0.end - 1e-6 }
+    }
+
+    func testTheDroppedClipNeverMovesAndTheOverlappedOneGoesToTheSideNeedingTheSmallerShift() {
+        var left = timeline([block("a", start: 40, duration: 20), tray("x", duration: 4)])
+        let outcome = left.move("x", toDelta: 53)
+        XCTAssertEqual(left.placed, ["a": 33, "x": 53], "left needs 7 s, right 17 s: a ends exactly where x starts")
+        XCTAssertEqual(outcome.moved, [.init(mediaID: "a", from: 40, to: 33)])
+        var right = timeline([block("a", start: 40, duration: 20), tray("x", duration: 4)])
+        right.move("x", toDelta: 48)
+        XCTAssertEqual(right.placed, ["a": 52, "x": 48], "a tie goes right: a starts exactly where x ends")
+        var nearer = timeline([block("a", start: 40, duration: 20), tray("x", duration: 4)])
+        nearer.move("x", toDelta: 41)
+        XCTAssertEqual(nearer.placed["a"], 45, "dropped near a's start the right side is the smaller shift")
+    }
+
+    func testPushingCascadesThroughAdjacentClipsAndKeepsThemAdjacentAndInOrder() {
+        var state = timeline([block("a", start: 40, duration: 8), block("b", start: 48, duration: 8), block("c", start: 56, duration: 8), tray("x")])
+        let outcome = state.move("x", toDelta: 61)
+        XCTAssertEqual(state.placed, ["a": 37, "b": 45, "c": 53, "x": 61], "c, then b, then a each end where the next starts")
+        XCTAssertEqual(outcome.moved.map(\.mediaID), ["a", "b", "c"])
+        XCTAssertFalse(visibleOverlaps(state))
+        var right = timeline([block("a", start: 0, duration: 8), block("b", start: 8, duration: 8), block("c", start: 16, duration: 8), tray("x")])
+        right.move("x", toDelta: 4)
+        XCTAssertEqual(right.placed, ["a": 12, "b": 20, "c": 28, "x": 4], "blocked at 0 on the left, so all three go right, adjacent")
+    }
+
+    func testAPushLeftBlockedAtZeroGoesRightInsteadOfLosingTheClip() {
+        var state = timeline([block("a", start: 0, duration: 8), tray("x")])
+        let outcome = state.move("x", toDelta: 4)
+        XCTAssertEqual(state.placed, ["a": 12, "x": 4])
+        XCTAssertTrue(outcome.sentToTray.isEmpty, "the way that keeps everything placed wins")
+    }
+
+    func testAClipThatFitsNeitherWayGoesToTheTrayAndTheOutcomeSaysSo() {
+        var state = timeline([block("a", start: 0, duration: 8), tray("x", duration: 4)], songDuration: 10)
+        let outcome = state.move("x", toDelta: 2)
+        XCTAssertEqual(outcome.sentToTray, ["a"])
+        XCTAssertEqual(state.tray, ["a"])
+        XCTAssertEqual(state.placed, ["x": 2])
+        XCTAssertEqual(outcome.message(clipNumber: { $0 == "a" ? 1 : 2 }), "Clip 1 didn't fit and went to the tray.")
+    }
+
+    func testRatherThanPushPastTheSongEndTheClipsGoLeftAndStayOnTheSong() {
+        var state = timeline([block("a", start: 90, duration: 8), block("b", start: 82, duration: 8), tray("x", duration: 10)], songDuration: 100)
+        let outcome = state.move("x", toDelta: 86)
+        XCTAssertNil(outcome.refusal)
+        XCTAssertEqual(state.delta(of: "x"), 86)
+        XCTAssertFalse(visibleOverlaps(state))
+        XCTAssertTrue(state.segments().allSatisfy { $0.end <= 100 + 1e-9 })
+    }
+
+    func testExactlyAdjacentDoesNotPushButAnOverlapOfEvenUnderASecondDoes() {
+        var adjacent = timeline([block("a", start: 0, duration: 8), tray("x")])
+        let flush = adjacent.move("x", toDelta: 8)
+        XCTAssertFalse(flush.displacedAnything); XCTAssertEqual(adjacent.placed, ["a": 0, "x": 8])
+        var sliver = timeline([block("a", start: 0, duration: 7.99), tray("x")])
+        let pushed = sliver.move("x", toDelta: 7)
+        XCTAssertEqual(pushed.moved, [.init(mediaID: "a", from: 0, to: 15)], "0.99 s of overlap is still overlap")
+    }
+
+    func testMovingAClipWithinItsOwnOldSpanNeverPushesItself() {
+        var alone = timeline([block("a", start: 0, duration: 8)])
+        let moved = alone.move("a", toDelta: 2)
+        XCTAssertEqual(alone.placed, ["a": 2]); XCTAssertFalse(moved.displacedAnything); XCTAssertNil(moved.refusal)
+        var withNeighbour = timeline([block("a", start: 0, duration: 8), block("b", start: 8, duration: 8)])
+        let outcome = withNeighbour.move("a", toDelta: 3)
+        XCTAssertEqual(withNeighbour.placed, ["a": 3, "b": 11], "only the neighbour it now covers moves")
+        XCTAssertEqual(outcome.moved.map(\.mediaID), ["b"])
+    }
+
+    func testDroppingOnAHiddenSeedPushesThatBlockOutOfTheWayToo() {
+        var state = timeline([block("a", start: 0, duration: 20), block("h", start: 5, duration: 4), tray("x", duration: 3)])
+        XCTAssertEqual(state.segments().filter(\.hidden).map(\.mediaID), ["h"], "h is a hidden seed under a")
+        let outcome = state.move("x", toDelta: 6)
+        XCTAssertEqual(state.delta(of: "x"), 6, "the anchor does not move")
+        XCTAssertFalse(visibleOverlaps(state))
+        XCTAssertTrue(state.segments().filter(\.hidden).isEmpty, "nothing is left hidden under the drop")
+        XCTAssertEqual(Set(outcome.moved.map(\.mediaID)), ["a", "h"])
+    }
+
+    func testAnOverflowingVideoSendsThePushedClipsFarthestFromTheDropToTheTray() {
+        var state = timeline([block("a", start: 0, duration: 10), block("b", start: 10, duration: 10), block("c", start: 20, duration: 10), tray("x", duration: 10)], maxWindow: 30)
+        let outcome = state.move("x", toDelta: 5)
+        XCTAssertNil(outcome.refusal)
+        XCTAssertEqual(outcome.sentToTray, ["c"], "c is the farthest, so it goes first and that is enough")
+        XCTAssertEqual(state.placed, ["a": 15, "b": 25, "x": 5])
+        XCTAssertEqual(state.span, 30)
+    }
+
+    func testAnAnchorLongerThanTheCapIsStillRefusedAndNothingChanges() {
+        var state = timeline([block("a", start: 0, duration: 8), tray("x", duration: 25)], maxWindow: 20)
+        let outcome = state.move("x", toDelta: 30)
+        XCTAssertEqual(outcome.refusal, .tooLong(maxSeconds: 20))
+        XCTAssertEqual(state.placed, ["a": 0]); XCTAssertEqual(state.tray, ["x"])
+    }
+
+    func testResetUndoesEveryPushAndTheSubmissionListsEveryTakeOnceByTime() {
+        var state = timeline([block("a", start: 40, duration: 8), block("b", start: 48, duration: 8), tray("x")])
+        let seed = state.placed
+        state.move("x", toDelta: 44)
+        XCTAssertTrue(state.isChanged)
+        let submission = state.submission(includePlacements: true)
+        XCTAssertEqual(submission.placements?.map(\.deltaS), submission.placements?.map(\.deltaS).sorted(), "placements are in song order")
+        XCTAssertEqual(Set(submission.orderedMediaIDs), ["a", "b", "x"]); XCTAssertEqual(submission.orderedMediaIDs.count, 3)
+        state.reset()
+        XCTAssertEqual(state.placed, seed); XCTAssertEqual(state.tray, ["x"])
+    }
+
+    func testMovedClipsAreNamedInOneSentenceWithTheirNumbers() {
+        let number: (String) -> Int = { ["a": 1, "b": 2, "c": 3, "d": 4][$0] ?? 0 }
+        func outcome(_ moved: [String], tray: [String] = []) -> SongTimelineState.MoveOutcome {
+            .init(moved: moved.map { .init(mediaID: $0, from: 0, to: 1) }, sentToTray: tray, refusal: nil)
+        }
+        XCTAssertEqual(outcome(["b"]).message(clipNumber: number), "Clip 2 moved over to make room.")
+        XCTAssertEqual(outcome(["b", "c"]).message(clipNumber: number), "Clips 2 and 3 moved over to make room.")
+        XCTAssertEqual(outcome(["a", "b", "d"]).message(clipNumber: number), "Clips 1, 2 and 4 moved over to make room.")
+        XCTAssertEqual(outcome([], tray: ["c", "d"]).message(clipNumber: number), "Clips 3 and 4 didn't fit and went to the tray.")
+        XCTAssertEqual(outcome(["a"], tray: ["d"]).message(clipNumber: number), "Clip 1 moved over to make room. Clip 4 didn't fit and went to the tray.")
+        XCTAssertNil(outcome([]).message(clipNumber: number), "nothing moved: no notice")
+    }
+
+    func testPreviewingAMoveShowsTheLandingWithoutChangingTheRealArrangement() {
+        let state = timeline([block("a", start: 40, duration: 20), tray("x", duration: 4)])
+        let landing = state.previewing("x", toDelta: 53)
+        XCTAssertEqual(landing.placed, ["a": 33, "x": 53])
+        XCTAssertEqual(state.placed, ["a": 40], "the real arrangement is untouched until the drop")
     }
 }

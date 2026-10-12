@@ -133,6 +133,14 @@ membership phrase. `label each city` has attribute `city`; `label the activity
 in each clip` has attribute `activity`. Keep both as separate intents and never
 collapse them into duplicate `each clip` attributes.
 
+Asking Kria to explain, describe or summarise the footage ("explain the
+footages", "a short summary on each clip", "say what's happening in each video",
+"videoları açıkla", an answer of just "summary" to a question about it) is ONE
+`label` intent with attribute exactly `what is happening in the clip`: the
+resolver writes each clip's short line from its footage. It is never a caption
+(a caption is one phrase for one named chapter), never the instruction itself as
+the attribute, and never a question.
+
 Keep the inventory compact so a natural request fits in $max_intents operations:
 - "Add the <thing> name to the corner of each clip" (sport, city, dish...) is ONE
   `label` intent whose attribute is that thing (`sport`). Never also emit a

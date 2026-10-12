@@ -1,0 +1,56 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-12.1",
+  "input": {
+    "creator_request": "these are the footages of mohammed salahs and trabzonspor football team first match for the 2026/27 football season there is welcome day of mohammed salah,streching of the team before the firts match against ferncvaros and there is also some gassed up funs from Trabzon this match was mohammed salah first game ı want you to collab all those videos and explain the footages",
+    "latest_user_message": "summary",
+    "generated_brief": "Creative brief v2 (everything the creator has asked for, still in force):\n- [r1] [select/global] collab all those videos\n- [r2] [text/per_clip] a summary of the match day event\nLatest message: summary",
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"include_all_clips\", \"op\": \"include\", \"attribute\": \"all the videos\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": null, \"caption_attribute\": null, \"position\": null, \"placeholder\": false, \"source_quote\": \"collab all those videos\"}, {\"intent_id\": \"describe_clips\", \"op\": \"label\", \"attribute\": \"what is happening in the clip\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": null, \"caption_attribute\": null, \"position\": null, \"placeholder\": false, \"source_quote\": \"explain the footages\"}], \"question\": null}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "include_all_clips",
+        "op": "include",
+        "attribute": "all the videos",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "collab all those videos"
+      },
+      {
+        "intent_id": "describe_clips",
+        "op": "label",
+        "attribute": "what is happening in the clip",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "explain the footages"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-612 (prod thread 0ef4fdde): 'explain the footages', then 'summary'. A line on each clip saying what it shows is ONE label with attribute 'what is happening in the clip' -- never a chapter caption (a phone montage never prints a caption Kria wrote, and one caption is not text on each clip) and never a question.",
+    "expect_intents": [
+      {
+        "op": "label",
+        "source_quote_keywords": [
+          "explain"
+        ]
+      },
+      {
+        "op": "include",
+        "source_quote_keywords": [
+          "all"
+        ]
+      }
+    ],
+    "expect_absent_ops": [
+      "caption"
+    ],
+    "expect_question": false
+  }
+}

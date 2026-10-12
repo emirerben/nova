@@ -61,6 +61,7 @@ from app.kria.brief import (
     render_brief_request,
     requested_media,
     route_requirements,
+    wants_clip_descriptions,
 )
 from app.kria.brief_route import loose_text
 from app.kria.contracts import KriaTurnPlan
@@ -1823,6 +1824,7 @@ async def _plan_from_creator_output(
     wants_capture_order: bool = False,
     brief_selects_clips: bool = False,
     requested_media: Mapping[str, str] | None = None,
+    describe_clips: bool = False,
 ) -> PlannedKriaTurn:
     """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
     decision = getattr(output, "creative_decision", None)
@@ -1867,6 +1869,7 @@ async def _plan_from_creator_output(
         wants_capture_order=wants_capture_order,
         brief_selects_clips=brief_selects_clips,
         requested_media=requested_media,
+        describe_clips=describe_clips,
     )
     return replace(planned, creative_copy_resolution=resolution)
 
@@ -2076,6 +2079,7 @@ async def _plan_creator_action(
     wants_capture_order: bool = False,
     brief_selects_clips: bool = False,
     requested_media: Mapping[str, str] | None = None,
+    describe_clips: bool = False,
 ) -> PlannedKriaTurn:
     action = output.action
     if isinstance(action, ProposeStrategy):
@@ -2360,6 +2364,8 @@ async def _plan_creator_action(
                 ),
                 understanding_wait_until=_clip_understanding_wait_until(),
                 **({"clip_selections": clip_selections} if clip_selections else {}),
+                # KRI-612: "explain the footages" puts a line from the footage on each clip.
+                **({"describe_clips": True} if describe_clips else {}),
             )
         except Exception as exc:  # noqa: BLE001 - no provider failure may mint a draft
             log.warning(
@@ -4027,6 +4033,7 @@ async def _plan_live_turn(
         wants_capture_order=_brief_wants_capture_order(effective),
         brief_selects_clips=_brief_selects_clips(effective),
         requested_media=requested_media(effective, (media.media_id for media in manifest.media)),
+        describe_clips=wants_clip_descriptions(effective),
     )
     return replace(
         planned,
