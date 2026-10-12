@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.231.0] - 2026-10-12
+
+### Changed
+- fix(kria): drop a title hold the creator never stated (KRI-591) (#1548) <!-- release-pr: 1548 -->
+
 ## [0.78.230.0] - 2026-10-12
 
 ### Changed
