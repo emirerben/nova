@@ -64,6 +64,7 @@ from app.kria.brief import (
     wants_clip_descriptions,
 )
 from app.kria.brief_route import loose_text
+from app.kria.clip_scope import apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
 from app.kria.reply_language import current_reply_language, say
 from app.kria.strategy_policy import (
@@ -1795,6 +1796,7 @@ async def _plan_from_creator_output(
     brief_request: str | None = None,
     wants_capture_order: bool = False,
     brief_selects_clips: bool = False,
+    clip_scope_texts: Sequence[str] = (),
     requested_media: Mapping[str, str] | None = None,
     describe_clips: bool = False,
 ) -> PlannedKriaTurn:
@@ -1840,6 +1842,7 @@ async def _plan_from_creator_output(
         brief_request=brief_request,
         wants_capture_order=wants_capture_order,
         brief_selects_clips=brief_selects_clips,
+        clip_scope_texts=clip_scope_texts,
         requested_media=requested_media,
         describe_clips=describe_clips,
     )
@@ -2050,6 +2053,7 @@ async def _plan_creator_action(
     brief_request: str | None = None,
     wants_capture_order: bool = False,
     brief_selects_clips: bool = False,
+    clip_scope_texts: Sequence[str] = (),
     requested_media: Mapping[str, str] | None = None,
     describe_clips: bool = False,
 ) -> PlannedKriaTurn:
@@ -2160,6 +2164,21 @@ async def _plan_creator_action(
                 selected=len(kept_clips.selected_media_ids),
             )
             action = action.model_copy(update={"strategy": kept_clips})
+        # KRI-623: "from the long takes" / "skip the short clips" leaves clips out, whatever
+        # the model picked (v56 took every clip on the cabin M2 prompt). Read from the live
+        # brief's `select` asks and this message, on every plan, so it cannot drift back.
+        scoped = apply_clip_scope(
+            manifest, action.strategy, creator_texts=[*clip_scope_texts, user_message]
+        )
+        if scoped is not action.strategy:
+            log.info(
+                "kria_clip_scope_applied",
+                thread_id=str(thread_id),
+                model_selected=len(action.strategy.selected_media_ids),
+                model_scope=action.strategy.media_scope,
+                selected=len(scoped.selected_media_ids),
+            )
+            action = action.model_copy(update={"strategy": scoped})
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
         checked = check_strategy_for_runtime_v2(
@@ -2610,6 +2629,15 @@ def _brief_selects_clips(brief: CreativeBrief | None) -> bool:
     ago still keeps a Voiceover edit's selection the creator's.
     """
     return brief is not None and any(req.kind == "select" for req in brief.live())
+
+
+def _brief_clip_scope_texts(brief: CreativeBrief | None) -> tuple[str, ...]:
+    """KRI-623: the live brief's which-clips asks, oldest first ("from the long takes")."""
+    if brief is None:
+        return ()
+    return tuple(
+        req.description for req in brief.live() if req.kind == "select" and req.description
+    )
 
 
 def _recovery_cause(stage: str, exc: BaseException) -> dict[str, str]:
@@ -4022,6 +4050,7 @@ async def _plan_live_turn(
         brief_request=effective_request,
         wants_capture_order=_brief_wants_capture_order(effective),
         brief_selects_clips=_brief_selects_clips(effective),
+        clip_scope_texts=_brief_clip_scope_texts(effective),
         requested_media=requested_media(effective, (media.media_id for media in manifest.media)),
         describe_clips=wants_clip_descriptions(effective),
     )
