@@ -42,7 +42,7 @@ import uuid
 import pytest
 
 from app.config import settings
-from app.kria.brief import BriefRequirement, CreativeBrief
+from app.kria.brief import BriefRequirement, BriefUpdate, CreativeBrief, apply_updates
 from app.kria.brief_binding import BriefBinding
 from app.kria.brief_checks import (
     check_requirement,
@@ -456,6 +456,42 @@ async def test_moments_that_do_not_fit_are_said_before_approval() -> None:
     assert notice == "I could fit 2 moments, not 6."
     plan_ok = await _plan(words=_words())
     assert _moment_count_notice(plan_ok[0], plan_ok[4], plan_ok[1]["length_plan"]) is None
+
+
+def test_a_taken_back_moment_ask_stops_slicing_and_counting() -> None:
+    # 8 + 15, after "actually, forget the six moments" / "make it three instead".
+    # A removed ask stays in the brief as superseded; only live asks may shape the cut.
+    short_clips = {
+        "clip_assignments": [
+            {**row, "duration_s": 4.0, "analysis": {"best_moments": []}}
+            for row in _snapshot()["clip_assignments"]
+            if row["media_id"] in (INDOOR, OUTDOOR)
+        ]
+    }
+    strategy = _strategy([_wrong_seat().model_copy(update={"attribute": "the river clip"})])
+    asked = _brief(R3)
+    remove = BriefUpdate(operation="remove", target_requirement_id="r3", expected_version=1)
+    retracted = apply_updates(asked, [remove], source_turn_id="t2")
+    three = BriefUpdate(
+        kind="select", scope="global", description="Pick the best 3 moments from the long takes"
+    )
+    replaced = apply_updates(asked, [remove, three], source_turn_id="t2")
+    assert [req.id for req in retracted.live()] == ["r1", "r2"]
+
+    only_three = _brief(replaced.live()[-1])
+    for clips in (_snapshot(), short_clips):
+        after_retraction = _enrich_best_parts_snapshot(strategy, clips, retracted)
+        assert after_retraction == _enrich_best_parts_snapshot(strategy, clips, _brief())
+        after_replacement = _enrich_best_parts_snapshot(strategy, clips, replaced)
+        assert after_replacement == _enrich_best_parts_snapshot(strategy, clips, only_three)
+    assert (
+        len(_enrich_best_parts_snapshot(strategy, _snapshot(), asked)["length_plan"]["windows"])
+        == 6
+    )
+    assert len(after_replacement["length_plan"]["windows"]) == 2
+    assert _moment_count_notice(strategy, retracted, after_retraction["length_plan"]) is None
+    notice = _moment_count_notice(strategy, replaced, after_replacement["length_plan"])
+    assert notice == "I could fit 2 moments, not 3."
 
 
 def test_the_worker_refuses_overlapping_windows_of_one_take() -> None:

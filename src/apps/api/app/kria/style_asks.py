@@ -20,7 +20,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.agents._schemas.text_element import _HEX_COLOR_RE
-from app.kria.brief import BriefRequirement, normalize_style_intent, resolve_font_name
+from app.kria.brief import (
+    BriefRequirement,
+    CreativeBrief,
+    normalize_style_intent,
+    resolve_font_name,
+)
 from app.kria.brief_route import loose_text
 from app.schemas.text_style_intent import normalize_title_animation
 from app.services.kria_editor_ops_diff import color_family, font_family_key
@@ -440,9 +445,9 @@ def moment_ask(req: BriefRequirement) -> MomentAsk | None:
     return MomentAsk(count=count, short=short)
 
 
-def brief_moment_ask(brief: Any) -> MomentAsk | None:
-    """The brief's first moment ask, if any."""
-    for req in getattr(brief, "requirements", None) or []:
+def brief_moment_ask(brief: CreativeBrief | None) -> MomentAsk | None:
+    """The brief's first live moment ask, if any; a retracted ask stays superseded."""
+    for req in brief.live() if brief is not None else []:
         ask = moment_ask(req)
         if ask is not None:
             return ask
