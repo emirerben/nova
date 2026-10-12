@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.244.0] - 2026-10-12
+
+### Changed
+- feat: draw on videos in the iOS editor (KRI-589) (#1555) <!-- release-pr: 1555 -->
+
 ## [0.78.243.0] - 2026-10-12
 
 ### Changed
