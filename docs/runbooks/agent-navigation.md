@@ -88,6 +88,19 @@ Keep offline replay, live model, native output and production observations as
 separate evidence levels. Recheck evidence after a HEAD change, enforce the
 required render gate in CI, and record unknown test time or cost as `unknown`.
 
+## Before coding a fix (KRI-577)
+
+Follow [`pr-acceptance-checklist.md`](pr-acceptance-checklist.md). In short: replay
+the real turn or job through the real boundary first; enumerate the sibling paths
+(other archetypes, empty vs explicit selection, EN/TR, draft vs render-ready, phone
+proxies) before patching one; check `python3 scripts/reliability-gates.py select`
+for incidents that already touched your paths; create the scratch test database
+with `bash scripts/dev/test-db.sh` before the first test run; and treat a
+phone-visible fix as done only after a device re-send. One worktree, one PR, one hot
+file: never fan out parallel PRs that edit `brief_checks.py` or bump
+`MAIN_CREATOR_PROMPT_VERSION` at the same time, and never stack a PR on an unmerged
+branch.
+
 ## Durable ticket handoff
 
 Use this compact record in the authorized ticket update or PR. If ticket writes

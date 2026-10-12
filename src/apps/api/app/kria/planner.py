@@ -1866,6 +1866,152 @@ def ground_pinned_texts(
     return kept, len(pins) - len(kept)
 
 
+# KRI-591: number words a creator may type for a title hold, each paired only with its own
+# language's seconds unit, so English "on second" is never Turkish ten seconds. Turkish both
+# with and without diacritics ("üç"/"uc"): phone keyboards often drop them.
+_EN_HOLD_WORDS = {
+    "one": 1.0,
+    "two": 2.0,
+    "three": 3.0,
+    "four": 4.0,
+    "five": 5.0,
+    "six": 6.0,
+    "seven": 7.0,
+    "eight": 8.0,
+    "nine": 9.0,
+    "ten": 10.0,
+}
+_TR_HOLD_WORDS = {
+    "bir": 1.0,
+    "iki": 2.0,
+    "üç": 3.0,
+    "uc": 3.0,
+    "dört": 4.0,
+    "dort": 4.0,
+    "beş": 5.0,
+    "bes": 5.0,
+    "altı": 6.0,
+    "alti": 6.0,
+    "yedi": 7.0,
+    "sekiz": 8.0,
+    "dokuz": 9.0,
+    "on": 10.0,
+}
+_HOLD_NUMBER_WORDS = {**_EN_HOLD_WORDS, **_TR_HOLD_WORDS}
+
+
+def _words(table: dict[str, float]) -> str:
+    return "|".join(sorted(table, key=len, reverse=True))
+
+
+_TAIL_HALF = r"(?!\w)(?:\s+(?P<tail>and\s+a\s+half)(?!\w))?"
+# A seconds expression: a digit number (".5" too) may touch any unit ("2s", ".5s"); a spelled
+# number needs a space or hyphen before its own language's unit, so "ones" is not "one s".
+# An optional "and a half" / "buçuk" before the unit and a trailing "and a half" add 0.5.
+_HOLD_SECONDS = (
+    re.compile(
+        r"(?<![\w.:])(?P<num>\d+(?:[.,]\d+)?|[.,]\d+)"
+        r"(?:\s+(?P<half>and\s+a\s+half|bu[çc]uk))?\s*-?\s*"
+        r"(?:s|sn|secs?|seconds?|saniye\w*|segs?|segundos?|sekunden?|secondes?|second[io])"
+        + _TAIL_HALF
+    ),
+    re.compile(
+        rf"(?<![\w.:])(?P<num>{_words(_EN_HOLD_WORDS)})(?:\s+(?P<half>and\s+a\s+half))?"
+        r"(?:\s+|\s*-\s*)(?:secs?|seconds?)" + _TAIL_HALF
+    ),
+    re.compile(
+        rf"(?<![\w.:])(?P<num>{_words(_TR_HOLD_WORDS)})(?:\s+(?P<half>bu[çc]uk))?"
+        r"\s+(?:saniye\w*|sn)(?!\w)(?P<tail>)"
+    ),
+)
+# Half-second phrases with no leading number.
+_HOLD_HALF_PHRASES = (
+    (re.compile(r"(?<!\w)(?:a\s+)?(?:second|sec)\s+and\s+a\s+half(?!\w)"), 1.5),
+    (
+        re.compile(
+            r"(?<!\w)(?:half\s+a\s+(?:second|sec)|a\s+half[\s-]+second|yar[ıi]m\s+(?:saniye\w*|sn))"
+            r"(?!\w)"
+        ),
+        0.5,
+    ),
+)
+
+
+def _stated_holds(text: str) -> list[tuple[int, int, float]]:
+    """Every seconds expression in ``text`` as (start, end, seconds)."""
+
+    holds = []
+    for match in (m for pattern in _HOLD_SECONDS for m in pattern.finditer(text)):
+        value = _HOLD_NUMBER_WORDS.get(match["num"])
+        if value is None:
+            value = float(match["num"].replace(",", "."))
+        if match["half"] or match["tail"]:
+            value += 0.5
+        holds.append((match.start(), match.end(), value))
+    for pattern, value in _HOLD_HALF_PHRASES:
+        holds.extend((match.start(), match.end(), value) for match in pattern.finditer(text))
+    return holds
+
+
+def _hold_key(text: str) -> str:
+    """`_pin_key` without the combining dot a Turkish capital "İ" casefolds into, so a
+    creator typing "SANİYE" still says "saniye"."""
+    return _pin_key(text).replace("\N{COMBINING DOT ABOVE}", "")
+
+
+def _copy_span(text: str, key: str) -> tuple[int, int] | None:
+    """Where the on-screen copy itself sits in the creator's words: its quoted occurrence,
+    else its first one. Any other occurrence is the creator speaking, not the copy
+    ('Keep the title "3 seconds" for 3 seconds')."""
+    spans = []
+    start = text.find(key)
+    while start != -1:
+        spans.append((start, start + len(key)))
+        start = text.find(key, start + 1)
+    quoted = [
+        (lo, hi)
+        for lo, hi in spans
+        if text[:lo].rstrip()[-1:] in ("'", '"') and text[hi:].lstrip()[:1] in ("'", '"')
+    ]
+    return (quoted or spans or [None])[0]
+
+
+def title_hold_grounded(
+    hold_s: float,
+    *,
+    evidence: str | None,
+    user_sources: Sequence[str],
+    strip: Sequence[str | None] = (),
+) -> bool:
+    """KRI-591: whether the creator's own words state this title hold.
+
+    The model must quote the hold (`render_intent_evidence.opening_title_duration_s`): the
+    excerpt has to be the creator's own words (a verbatim piece of one of their messages,
+    compared like pinned text) and say this number of seconds ("2 saniye", "2,5 sn",
+    "for two seconds", "3-second", "iki buçuk saniye", "a second and a half", ".5 s").
+    Seconds inside the on-screen copy's own occurrence
+    (``strip``) never count, so "3 SECONDS TO MIDNIGHT" cannot ground a 3 s hold, while
+    seconds said outside it do: 'title "3" for 3 seconds' and 'Keep the title "3 seconds"
+    for 3 seconds' both keep the stated hold. A bare count ("7 klip") is not seconds.
+    """
+
+    quoted = _pin_key(evidence or "")
+    if not quoted or not any(quoted in _pin_key(source) for source in user_sources if source):
+        return False
+    text = _hold_key(quoted)
+    copy_spans = [
+        span
+        for on_screen in strip
+        if (key := _hold_key(on_screen or "")) and (span := _copy_span(text, key)) is not None
+    ]
+    for start, end, value in _stated_holds(text):
+        if any(lo <= start and end <= hi for lo, hi in copy_spans):
+            continue
+        if abs(value - hold_s) < 1e-6:
+            return True
+    return False
+
+
 async def _plan_creator_action(
     db: AsyncSession,
     *,
@@ -1935,6 +2081,33 @@ async def _plan_creator_action(
                     ),
                     "summary": f"{action.summary.strip()} I left out on-screen text that "
                     "wasn't in your words.".strip(),
+                }
+            )
+    if isinstance(action, ProposeStrategy) and action.strategy.opening_title_duration_s is not None:
+        # KRI-591: a title hold is a creator-stated setting (KRI-476 asks before a renderer
+        # drops it), so it must be the creator's own seconds, like the title is their own
+        # words. A hold the model wrote itself is dropped here, before the policy asks about
+        # a length nobody gave ("tam 3 saniye tutamıyor" on `Başlık: "Tigre'de bir gün"`).
+        hold_strategy = action.strategy
+        if not title_hold_grounded(
+            hold_strategy.opening_title_duration_s,
+            evidence=getattr(action.render_intent_evidence, "opening_title_duration_s", None),
+            user_sources=user_sources,
+            strip=(
+                hold_strategy.opening_title,
+                hold_strategy.closing_title,
+                *(hold_strategy.shot_labels or ()),
+                *(pin.text for pin in hold_strategy.pinned_texts or ()),
+            ),
+        ):
+            log.info(
+                "kria_title_hold_ungrounded",
+                thread_id=str(thread_id),
+                hold_s=hold_strategy.opening_title_duration_s,
+            )
+            action = action.model_copy(
+                update={
+                    "strategy": hold_strategy.model_copy(update={"opening_title_duration_s": None})
                 }
             )
     if isinstance(action, ProposeStrategy):
