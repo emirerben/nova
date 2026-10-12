@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.229.0] - 2026-10-12
+
+### Changed
+- fix(ios): after a render the editor shows the video, not a stuck "last finished video" card (KRI-587) (#1545) <!-- release-pr: 1545 -->
+
 ## [0.78.228.0] - 2026-10-12
 
 ### Changed
