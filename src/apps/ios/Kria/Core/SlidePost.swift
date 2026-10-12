@@ -1072,6 +1072,7 @@ private struct SlidePostItemResponse: Decodable {
         if let notice = plan.notice { autoAppendNotice = notice }
         guard !plan.toAppend.isEmpty else { return 0 }
         var value = current
+        if plan.switchedToInstagram { value.platformProfile = "instagram_carousel" }
         value.slides.append(contentsOf: plan.toAppend.map { SlidePostSlide(id: UUID().uuidString, assetID: $0.id, kind: $0.kind) })
         stageDraft(value)
         return plan.toAppend.count

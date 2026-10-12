@@ -31,7 +31,9 @@ visible, while legacy callers retain their existing omission behavior.
 | A reply has unchecked receipts | Omit a generic success summary and name the unverified requirement. |
 | A checker makes a determinate factual comparison | Mark it `verification: "checked"` and include the furthest evidence stage (`understood`, `matched`, `applied`, or `checked`). |
 | A checked receipt only describes what the chosen format does (a Talking edit's length follows the take; speech cleanup is chosen at approval and cuts pauses, never a named line) | Keep it an honest `partial`, but never turn the draft into the "simpler version?" question: `brief_checks.is_format_limit` / `needs_creator_choice` (reason prefixes in `_FORMAT_LIMIT_REASON_PREFIXES`). |
-| The gate fires on a thread with no draft | Say "I haven't started a draft yet", never "Your current draft is unchanged". |
+| The gate fires on a thread with no draft | Say "I held this first draft back" (the receipt lines say "in this draft"), never "Your current draft is unchanged" or "I haven't started a draft yet" (KRI-613). |
+| The creator already got the "simpler version?" question for these same unmet requirements, and no draft was made since | Never ask again: draft the simpler version, lead with "Here's the simpler version.", and keep the honest Couldn't/Partly lines (`kria_runtime._simpler_version_already_offered`, KRI-610; thread 0ef4fdde asked 5 times in an hour). Clip questions in between don't reset it; a requirement never offered as a choice is still asked about; editor-op turns are unchanged. |
+| The Main Creator's `change`/`remove` carries a wrong `expected_version` | The server binds it to the brief version the prompt showed (as the extractor does); any other unappliable update is the `request_extraction_failed` copy, never "exceeds the context" (KRI-611). |
 
 Draft-time checkers added for Talking / voiceover asks (thread 17f666cb, 2026-10-06):
 `_check_speech_cleanup` (a removal verb plus pauses/filler/a named retake, never a

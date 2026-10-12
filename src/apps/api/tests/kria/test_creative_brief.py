@@ -1253,6 +1253,68 @@ async def test_replan_strategy_request_reaches_the_planner_from_the_brief(
     assert '"20K Koşu"' in runs[0].creator_request
 
 
+def _salah_brief():  # noqa: ANN202 - thread 0ef4fdde's brief v2
+    return apply_updates(
+        None,
+        [
+            _upd("select", "global", description="collab all those videos"),
+            _upd("text", "per_clip", description="a summary of the match day event"),
+        ],
+        source_turn_id="t0",
+    ).model_copy(update={"version": 2})
+
+
+async def _plan_simpler_answer(monkeypatch, update: BriefUpdate) -> PlannedKriaTurn:  # noqa: ANN001
+    output = SimpleNamespace(action=AskUser(**_ASK), brief_updates=[update])
+    db, item, creator_id, _copilot, runs = _wire_planner(
+        monkeypatch, output=output, editor_plan=None, snapshot=None
+    )
+    item.current_job_id = None  # nothing rendered yet: the Main Creator reads the brief
+    monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=_salah_brief()))
+    result = await plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item.id,
+        creator_id=creator_id,
+        user_message="make it more basic",
+    )
+    assert runs  # the Main Creator planned this turn
+    return result
+
+
+@pytest.mark.asyncio
+async def test_the_main_creator_does_not_own_the_brief_version_it_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-611 (thread 0ef4fdde): "make it more basic" got "Your complete request exceeds
+    the context this planning step can safely read" because the Main Creator copied a
+    wrong `expected_version` into its `remove`. Like the brief extractor, the server binds
+    the version the prompt showed; the persist fence still refuses genuinely stale work."""
+    result = await _plan_simpler_answer(
+        monkeypatch, BriefUpdate(operation="remove", target_requirement_id="r2", expected_version=1)
+    )
+
+    assert "exceeds the context" not in str(result.plan.response or "")
+    assert [
+        (u.operation, u.target_requirement_id, u.expected_version) for u in result.brief_updates
+    ] == [("remove", "r2", 2)]
+    assert result.brief_expected_version == 2
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_brief_update_is_not_called_a_context_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = await _plan_simpler_answer(
+        monkeypatch, BriefUpdate(operation="remove", target_requirement_id="r9", expected_version=2)
+    )
+
+    assert str(result.plan.response).startswith("I couldn't reliably read every requested change.")
+    assert "exceeds the context" not in str(result.plan.response)
+    assert result.brief_coverage["reason"] == "request_extraction_failed"
+    assert result.brief_coverage["cause"]["error"] == "target requirement is missing or superseded"
+
+
 @pytest.mark.asyncio
 async def test_bound_rendered_extraction_failure_recovers_without_creation_or_editor(
     monkeypatch: pytest.MonkeyPatch,

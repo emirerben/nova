@@ -22,6 +22,14 @@ struct SongAuditionRequest: Equatable, Sendable {
     /// Starts (or restarts) from `request.start`; a restart fades the old position out first.
     func play(_ request: SongAuditionRequest)
     func stop()
+    /// Where in the song file the player is right now; nil unless it is audibly playing the last `play`.
+    /// The song timeline (KRI-575) reads this every frame to keep its playhead on the audio.
+    var currentTime: TimeInterval? { get }
+}
+
+extension SongAuditionEngine {
+    /// Engines that cannot report a position (test recorders) simply have none.
+    var currentTime: TimeInterval? { nil }
 }
 
 /// Drives one audition session: opens when the creator starts dragging, restarts from the new start
@@ -40,6 +48,9 @@ struct SongAuditionRequest: Equatable, Sendable {
 
     /// True from the first drag sample until the audition is over.
     @Published private(set) var isActive = false
+
+    /// Song position of the running audition, or nil when nothing is audible (not started yet, or finished).
+    var playbackPosition: TimeInterval? { engineRunning ? engine.currentTime : nil }
 
     static let defaultDebounce: TimeInterval = 0.15
 
@@ -145,9 +156,17 @@ struct SongAuditionRequest: Equatable, Sendable {
     private var player: AVAudioPlayer?
     private var loadedURL: URL?
     private var task: Task<Void, Never>?
+    /// True once the current `play` has seeked and started the player (before that `currentTime` is stale).
+    private var positioned = false
+
+    var currentTime: TimeInterval? {
+        guard positioned, let player, player.isPlaying else { return nil }
+        return player.currentTime
+    }
 
     func play(_ request: SongAuditionRequest) {
         task?.cancel()
+        positioned = false
         if loadedURL != request.url || player == nil {
             player = try? AVAudioPlayer(contentsOf: request.url)
             player?.prepareToPlay()
@@ -170,18 +189,21 @@ struct SongAuditionRequest: Equatable, Sendable {
             player.volume = 0
             player.play()
             player.setVolume(request.volume, fadeDuration: fade)
+            self?.positioned = true
             try? await Task.sleep(for: .seconds(length - fade))
             guard !Task.isCancelled else { return }
             player.setVolume(0, fadeDuration: fade)
             try? await Task.sleep(for: .seconds(fade))
             guard !Task.isCancelled else { return }
             player.pause()
+            self?.positioned = false
             self?.onFinished?()
         }
     }
 
     func stop() {
         task?.cancel()
+        positioned = false
         guard let player, player.isPlaying else { return }
         player.setVolume(0, fadeDuration: Self.fade)
         task = Task { [weak player] in

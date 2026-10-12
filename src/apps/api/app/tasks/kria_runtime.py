@@ -608,6 +608,51 @@ def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resoluti
     )
 
 
+_SIMPLER_VERSION_REASON = "simplification_requires_choice"
+
+
+def _simpler_version_already_offered(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread_id: uuid.UUID,
+    requirement_ids: list[str],
+) -> bool:
+    """True when the creator was already asked "different approach, or simpler version?"
+    about these same unmet requirements, and no draft has been made since.
+
+    KRI-610: answering that question relied on the planner dropping the requirement.
+    When it didn't, every reply ("simpler version", "you decide", "skip") got the same
+    question back; thread 0ef4fdde asked five times in an hour and never drafted. The
+    creator's reply is their answer, so the caller drafts the simpler version and its
+    receipts report what is missing. Clip questions in between don't reset the ask; a
+    draft does, and a requirement never offered as a choice is still asked about.
+    """
+    if not requirement_ids:
+        return False
+    rows = db.execute(
+        select(CreationThreadEvent.event_type, CreationThreadEvent.payload)
+        .where(
+            CreationThreadEvent.thread_id == thread_id,
+            CreationThreadEvent.event_type.in_(("assistant_response", "draft_applied")),
+        )
+        .order_by(CreationThreadEvent.sequence.desc())
+        .limit(50)
+    ).all()
+    for event_type, payload in rows:
+        if event_type == "draft_applied":
+            return False
+        payload = payload if isinstance(payload, Mapping) else {}
+        coverage = payload.get("brief_coverage")
+        if not isinstance(coverage, Mapping) or coverage.get("reason") != _SIMPLER_VERSION_REASON:
+            continue
+        offered = {
+            str(receipt.get("requirement_id"))
+            for receipt in payload.get("requirement_receipts") or []
+            if isinstance(receipt, Mapping) and needs_creator_choice(receipt)
+        }
+        return set(requirement_ids) <= offered
+    return False
+
+
 def _complete_draft_turn(
     turn_id: uuid.UUID,
     *,
@@ -1014,9 +1059,30 @@ def _complete_draft_turn(
                         reply_text = reply_from_diff(
                             phrases, notices=planned.policy_notices, notes=arguments.notes
                         )
+        unmet_ids = [
+            str(receipt.get("requirement_id"))
+            for receipt in requirement_receipts
+            if needs_creator_choice(receipt)
+        ]
+        simpler_version_chosen = (
+            bool(unmet_ids)
+            and apply_intent.tool_name == "draft.apply_strategy"
+            and settings.brief_binding_for(thread.creator_id)
+            and _simpler_version_already_offered(db, thread.id, unmet_ids)
+        )
+        if simpler_version_chosen:
+            log.info(
+                "kria_simpler_version_drafted",
+                thread_id=str(thread.id),
+                turn_id=str(turn.id),
+                requirement_ids=unmet_ids,
+            )
+            lead = say(en="Here's the simpler version.", tr="İşte daha basit sürüm.")
+            reply_text = f"{lead}\n{reply_text}"
         if (
             settings.brief_binding_for(thread.creator_id)
-            and any(needs_creator_choice(receipt) for receipt in requirement_receipts)
+            and unmet_ids
+            and not simpler_version_chosen
             # KRI-558: an editor draft that really changed something is kept, and its
             # Partly / Couldn't lines say what is missing. Only an edit that changed
             # nothing falls back to the "different approach?" question.
@@ -1031,7 +1097,11 @@ def _complete_draft_turn(
             draft_state = (
                 say(en="Your current draft is unchanged.", tr="Mevcut taslağın değişmedi.")
                 if head is not None
-                else say(en="I haven't started a draft yet.", tr="Henüz bir taslağa başlamadım.")
+                # KRI-613: the receipt lines above describe "this draft", so the state
+                # line says it was held back rather than denying it exists.
+                else say(
+                    en="I held this first draft back.", tr="Bu ilk taslağı şimdilik beklettim."
+                )
             )
             recovery = KriaTurnPlan(
                 mode="respond",
@@ -1058,7 +1128,7 @@ def _complete_draft_turn(
                 brief_coverage={
                     **(planned.brief_coverage or {}),
                     "stage": "draft",
-                    "reason": "simplification_requires_choice",
+                    "reason": _SIMPLER_VERSION_REASON,
                 },
                 brief_expected_version=planned.brief_expected_version,
             )

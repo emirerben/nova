@@ -350,7 +350,7 @@ struct SongOrderPreview: View {
 /// A bare video surface. SwiftUI's `VideoPlayer` builds hidden playback controls that stall XCUITest's
 /// idle tracking (see `NativeEditorPlayerSurface`), and a preview needs none of them. The preview plays the
 /// take's own audio (the creator is checking where it sits against the song), so there is no mute control.
-private struct SongOrderPlayerSurface: UIViewRepresentable {
+struct SongOrderPlayerSurface: UIViewRepresentable {
     let player: AVPlayer
 
     func makeUIView(context: Context) -> Surface {

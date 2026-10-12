@@ -176,7 +176,7 @@
       "xctests": [
         "KriaTests/SongOrderTests/testSubmissionListsPlacedTakesByTimeThenTheTrayInCaptureOrderAndEveryTakeOnce",
         "KriaTests/SongOrderTests/testOldServerPayloadWithNoNewFieldsStillParsesAndGivesATimelineWithDefaults",
-        "KriaTests/SongOrderTests/testExtendingThePreviousBlockBy099IsHiddenAndBy1sIsVisible"
+        "KriaTests/SongOrderTests/testExactlyAdjacentDoesNotPushButAnOverlapOfEvenUnderASecondDoes"
       ],
       "paths": [
         "src/apps/api/app/pipeline/lipsync_montage.py",

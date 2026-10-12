@@ -791,7 +791,8 @@ async def test_described_caption_still_ungrounded_after_vision_asks_creator(monk
     resolved = result.intents[0]
     assert resolved.status == "needs_creator"
     assert resolved.caption_text is None
-    assert result.question == "What should the caption on the park clips say?. Could you clarify?"
+    # KRI-613: a model question that already asks is not followed by "?. Could you clarify?".
+    assert result.question == "What should the caption on the park clips say?"
 
 
 async def test_caption_intent_with_no_members_asks_creator(monkeypatch) -> None:
