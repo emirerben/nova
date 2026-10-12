@@ -142,7 +142,29 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.emirerben.kria.uitests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: Kria
+  KriaHardwareUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: Tests/KriaHardwareUITests
+    dependencies:
+      - target: Kria
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kria.teleprompter.hardware-tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Kria
 schemes:
+  Kria Hardware QA:
+    build:
+      targets:
+        Kria: all
+        KriaHardwareUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - KriaHardwareUITests
   Kria Live Development:
     build:
       targets:
