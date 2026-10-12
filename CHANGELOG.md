@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.250.0] - 2026-10-12
+
+### Changed
+- chore(gates): mark KRI-547 and KRI-568 gates fixed; KRI-612 squash SHA (#1572) <!-- release-pr: 1572 -->
+
 ## [0.78.249.0] - 2026-10-12
 
 ### Fixed
