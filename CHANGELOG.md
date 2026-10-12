@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.227.0] - 2026-10-12
+
+### Changed
+- fix(api): keep Slider in the native format picker under the iPhone-only fence (KRI-599) (#1552) <!-- release-pr: 1552 -->
+
 ## [0.78.226.0] - 2026-10-11
 
 ### Changed
