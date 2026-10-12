@@ -204,6 +204,32 @@ final class SlidePostAutoAppendPlanTests: XCTestCase {
         XCTAssertEqual(SlidePostAutoAppend.maxSlides(profile: "instagram_carousel"), 20)
     }
 
+    func testVideoSwitchesAOnePhotoTikTokPostToInstagram() {
+        let plan = SlidePostAutoAppend.plan(draft: draft(["a"], profile: "tiktok_photo"), ready: [asset("a"), asset("vid", kind: "video")], seen: ["a"])
+        XCTAssertEqual(plan.toAppend.map(\.id), ["vid"])
+        XCTAssertTrue(plan.switchedToInstagram)
+        XCTAssertTrue(plan.skippedForVideo.isEmpty)
+        XCTAssertEqual(plan.notice, "Switched to Instagram carousel so the video fits.")
+    }
+
+    func testSwitchAppliesTheInstagramLimitToTheRestOfTheBatch() {
+        let existing = (0..<18).map { "e\($0)" }
+        let plan = SlidePostAutoAppend.plan(draft: draft(existing, profile: "tiktok_photo"),
+                                            ready: existing.map { asset($0) } + [asset("vid", kind: "video"), asset("p1"), asset("p2")], seen: Set(existing))
+        XCTAssertEqual(plan.toAppend.map(\.id), ["vid", "p1"])
+        XCTAssertEqual(plan.skippedForLimit, ["p2"])
+        XCTAssertEqual(plan.notice, "Switched to Instagram carousel so the video fits. Not added: 1 over the slide limit.")
+    }
+
+    func testVideoStillRefusedWhenTikTokPostIsTooBigForInstagram() {
+        let existing = (0..<20).map { "e\($0)" }
+        let plan = SlidePostAutoAppend.plan(draft: draft(existing, profile: "tiktok_photo"),
+                                            ready: existing.map { asset($0) } + [asset("vid", kind: "video")], seen: Set(existing))
+        XCTAssertTrue(plan.toAppend.isEmpty)
+        XCTAssertFalse(plan.switchedToInstagram)
+        XCTAssertEqual(plan.skippedForVideo, ["vid"])
+    }
+
     func testNoNoticeWhenEverythingFit() {
         XCTAssertNil(SlidePostAutoAppend.plan(draft: draft(["a"]), ready: [asset("a"), asset("n")], seen: ["a"]).notice)
     }
