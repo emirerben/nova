@@ -178,6 +178,9 @@ class IntentClip:
     # When the phone says it was filmed (UTC). Only the conflict detector reads it
     # (KRI-282): never sent to a model.
     capture_time: datetime | None = None
+    # The name the app shows for the upload ("IMG_7382"). Only the deterministic file-name
+    # match reads it (KRI-614, `apply_file_name_references`): never sent to the resolver.
+    file_name: str | None = None
 
 
 @dataclass(frozen=True)

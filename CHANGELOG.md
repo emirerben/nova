@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.241.0] - 2026-10-12
+
+### Fixed
+- fix(kria): name clips by the file name the app shows, and never re-read a clip-card answer as a request (KRI-614) (#1570) <!-- release-pr: 1570 -->
+
+## [0.78.240.0] - 2026-10-12
+
+### Changed
+- ci(journey): give the KRI-598 journey its needs_native flag (fixes main CI) (#1568) <!-- release-pr: 1568 -->
+
 ## [0.78.239.0] - 2026-10-12
 
 ### Changed
