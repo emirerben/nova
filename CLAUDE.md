@@ -8,7 +8,7 @@ Start with [docs/README.md](docs/README.md) to locate code and focused tests by 
 
 Routine delegation is explicitly authorized: use bounded subagents for independent work. Parent default: Astra Low; parent owns architecture, integration, and high-risk review. Choose Luna Medium (`default`/`cheap_worker`: mechanical edits; `explorer`: read-only), Terra Medium (`implementer`: normal multi-file work), or Astra Medium (`debugger`: ambiguous/risky analysis).
 
-Before delegating, read `docs/runbooks/codex-agent-routing.md`. Provide ownership, acceptance criteria, findings, focused checks. Reuse workers; parallel edits need disjoint files or worktrees. Workers do not delegate. Return to parent if scope exceeds the role or two corrective attempts yield no new evidence; routine test failures stay with the worker. Parent manages Luna → Terra → Astra escalation.
+Before delegating, read `docs/runbooks/codex-agent-routing.md`. Provide ownership, acceptance criteria, findings, and focused checks. Reuse workers; parallel edits need disjoint files or worktrees. Workers do not delegate. Return to parent if scope exceeds the role or two corrective attempts yield no new evidence; a routine test failure stays with its worker. Parent manages Luna → Terra → Astra escalation.
 
 Without named roles, use explicit `model` + `reasoning_effort="medium"`, `fork_turns="none"`, and a self-contained handoff including role instructions. Never silently inherit a costlier parent model. Unsupported overrides must be reported, not replaced. User choices and runtime restrictions take precedence.
 
@@ -20,9 +20,9 @@ Keep inline: invariants, guard-test names, run commands, file pointers. Move out
 
 ## Session workflow: isolate in a worktree
 
-The primary checkout `/Users/emirerben/Projects/nova` is shared across sessions. Before non-trivial implementation (including autoship intake), create an isolated worktree from the freshly fetched `origin/main` (within granted permissions) on a `codex/<topic>` branch, and use it as the explicit working directory for every subsequent tool. Preserve all staged, unstaged, and untracked files in the shared checkout; never commit, stash, pull, rebase, or reset it to make room. Diverged `main` also uses a fresh worktree.
+The primary checkout at `/Users/emirerben/Projects/nova` is shared across sessions. Before non-trivial implementation (including autoship intake), automatically create an isolated worktree from the freshly fetched `origin/main`, within granted filesystem permissions, using a `codex/<topic>` branch and that worktree as the explicit working directory for every subsequent tool. Preserve all staged, unstaged, and untracked files in the shared checkout; do not commit, stash, pull, rebase, or reset it to make room. Diverged `main` also uses a fresh worktree.
 
-In Plan Mode, inspect `origin/main` read-only, defer worktree creation until execution; dirty or divergent `main` is no blocker. For execution, use `git fetch origin main` followed by `git worktree add -b codex/<topic> <path> origin/main`; then use `<path>` explicitly. For manual setup, `nova-fresh <topic>` (or `bash scripts/new-session.sh <topic>`) creates and bootstraps one with its helper-default `feat/<topic>-<date>` branch; `cd` to the printed path. Bootstrap symlinks `.env`/`.venv`/`node_modules`, runs migrations (re-run `bash scripts/worktree-setup.sh` if needed).
+In Plan Mode, inspect `origin/main` read-only, defer worktree creation until execution, and do not treat dirty or divergent `main` as a blocker. For execution, use `git fetch origin main` followed by `git worktree add -b codex/<topic> <path> origin/main`; then use `<path>` explicitly. For manual setup, `nova-fresh <topic>` (or `bash scripts/new-session.sh <topic>`) creates and bootstraps one with its helper-default `feat/<topic>-<date>` branch; then `cd` to the printed path. Bootstrap symlinks `.env`/`.venv`/`node_modules` and runs migrations. Re-run `bash scripts/worktree-setup.sh` if needed.
 
 The `SessionStart` hook (`.claude/settings.json` → `scripts/session-check.sh`) fetches `origin/main`, auto fast-forwards only a clean `main`, and prints fresh-worktree guidance for dirty, divergent, or stale checkouts.
 
@@ -72,7 +72,7 @@ cp .env.example .env            # fill in values
 ./scripts/dev-auto.sh            # single-command dev env with hot reload
 ```
 
-`dev-auto.sh` starts redis + postgres (`docker-compose up -d redis db`), runs migrations, then launches API (`uvicorn --reload`), Celery worker (`watchfiles`) and Next.js (HMR) natively. Logs: `.dev/<service>.log`. Do NOT restart servers manually (hot reload). Stop with `./scripts/dev-stop.sh`. A plan stuck in `generating` after a worker crash: `python3 scripts/dev/reset-stuck-plans.py` (local-only).
+`dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only), runs migrations, then launches API (`uvicorn --reload`), Celery worker (`watchfiles`), and Next.js (HMR) natively. Logs go to `.dev/<service>.log`. Do NOT restart servers manually (hot reload). Stop with `./scripts/dev-stop.sh`. A plan stuck in `generating` after a worker crash: `python3 scripts/dev/reset-stuck-plans.py` (local-only).
 
 Alternatives:
 - `./scripts/dev-no-docker.sh` — same flow but assumes postgres@16 + redis already running
@@ -164,10 +164,10 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - See `docs/pipelines/generative.md` (music reuse, variant mechanics).
 
 ## Template pipeline
-- **Single-pass CFR-before-xfade invariant:** every per-clip chain in `app/pipeline/single_pass.py` (`_per_clip_filter_chain`) must end with `fps={output_fps}, setpts=PTS-STARTPTS, settb=AVTB` before its labelled output. It handles `avg_frame_rate=1/0` inputs (phone HEVC, screen recordings). Locked by `test_per_clip_chain_forces_cfr_before_xfade` (`tests/pipeline/test_single_pass.py`); agents/DECISIONS.md (2026-05-18).
+- **Single-pass CFR-before-xfade invariant:** every per-clip chain in `app/pipeline/single_pass.py` (`_per_clip_filter_chain`) must end with `fps={output_fps}, setpts=PTS-STARTPTS, settb=AVTB` before its labelled output. It covers `avg_frame_rate=1/0` inputs (phone HEVC, screen recordings) where `framerate=fps=N` aborts. Locked by `test_per_clip_chain_forces_cfr_before_xfade` in `tests/pipeline/test_single_pass.py`. See agents/DECISIONS.md (2026-05-18).
 - **Renderer split:** agentic templates + music-job lyrics → `text_overlay_skia.py` (skia-python, HarfBuzz shaping, per-frame PNG sequences); classic non-music + non-agentic → Pillow + libass. Dispatch: `_burn_text_overlays(use_skia=...)` + `_pre_burn_curtain_slot_text(is_agentic=...)` in `template_orchestrate.py`. Kill switch: `TEXT_RENDERER_SKIA_ENABLED=false`.
 - **Renderer-parity invariant:** any overlay field plumbed through the burn dict MUST be honored by BOTH renderers. Guard: `test_both_renderers_honor_text_anchor_left` in `tests/pipeline/test_text_overlay_skia.py` — extend for any new anchor/position field. An agentic/music overlay change is NOT verified by the admin preview. See agents/DECISIONS.md (2026-05 #296/#297) for the incident.
-- **Pre-PR text-overlay verify (`make verify-overlays`):** before any PR touching the Skia renderer, overlay layout, or the burn dict. Renders via the REAL Skia path in the prod Docker image, asserts no clipping, writes `montage.png` + `report.json` to `.overlay-verify/`. Library: `app/pipeline/overlay_verify.py`; CLI: `app.cli.verify_overlays`; guard: `tests/pipeline/test_overlay_verify.py`. **Agent gate:** run it, read both files, fix any FAIL, then `/ship`.
+- **Pre-PR text-overlay verify (`make verify-overlays`):** before any PR touching the Skia renderer, overlay layout, or the burn dict. Renders through the REAL Skia path in the prod Docker image, asserts overlays are un-clipped, writes `montage.png` + `report.json` to `.overlay-verify/`. Library: `app/pipeline/overlay_verify.py`; CLI: `app.cli.verify_overlays`; guard: `tests/pipeline/test_overlay_verify.py`. **Agent pre-PR gate:** run it, read `report.json` + `montage.png`, fix any FAIL, then `/ship`.
 - **Gemini metadata never becomes on-screen overlay text** (architectural invariant). Overlay substitution input is exclusively user-provided (`inputs.location`). `TestNoGeminiTextLeaks` in `tests/tasks/test_template_orchestrate.py` is the sentinel. See agents/DECISIONS.md (2026-05-13). Does NOT cover `copy_writer` captions.
 - Placeholder substitution: `_resolve_overlay_text()` + `_is_subject_placeholder()` in `template_orchestrate.py`. Literal overlays SHOULD set `"subject_substitute": False`; `tests/scripts/test_seed_overlays_literal.py` enforces this.
 - Font bundle: Playfair Display (Bold + Regular) in `assets/fonts/`, referenced via `fontsdir` in ASS subtitle filters.
@@ -208,7 +208,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `MEDIA_OVERLAY_ALPHA_ENABLED` — defaults **`false`**. When true, transparent image pip cards keep alpha (PNG normalize + `format=rgba`); off is byte-identical JPEG flatten. Apply: fly secret + worker restart.
 - `FULLSCREEN_CUTAWAYS_ENABLED` — default **`false`**; AI fullscreen branch. Dual-flag with `NEXT_PUBLIC_FULLSCREEN_CUTAWAYS_ENABLED`: **Fly first, then Vercel** (new web + OLD api bakes manual fullscreen as pip). Rollback = `MEDIA_OVERLAYS_ENABLED`. Guards: `tests/test_overlay_fullscreen_rules.py`, `tests/test_media_overlay_command.py`; plans/009.
 - `SUBTITLED_TEXT_LANE_ENABLED` — default **`false`**; text burns onto the caption-free base first, captions last (`_compose_subtitled_final`); fast-reburns mint a NEW GCS key. Dual-flag `NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED`; Fly first, then Vercel; restart api + worker. Internals: `docs/pipelines/generative.md`.
-- `SUBTITLED_ARCHETYPE_ENABLED` — **ON in prod** (code default `false`); off ⇒ montage. Dual-flag `NEXT_PUBLIC_SUBTITLED_ENABLED` (Vercel, build-time ⇒ `vercel --prod`). Companions: `SUBTITLED_CAPTION_CORRECTION_ENABLED`, `CAPTION_CORRECTION_MODEL`. Rollback + detail: DECISIONS.md "CLAUDE.md flag detail".
+- `SUBTITLED_ARCHETYPE_ENABLED` — **ON in prod** (code default `false`); off ⇒ montage. Dual-flag `NEXT_PUBLIC_SUBTITLED_ENABLED` (Vercel, build-time inlined ⇒ `vercel --prod`). Companions: `SUBTITLED_CAPTION_CORRECTION_ENABLED`, `CAPTION_CORRECTION_MODEL`. Rollback + detail: DECISIONS.md "CLAUDE.md flag detail".
 - `NARRATED_SELF_NARRATION_ENABLED` — default **`false`**; narrated items without a voiceover use the footage's own audio. SOLE gate, bypasses the archetype flags. Twin `NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED`; Fly first. Guards: `tests/tasks/test_generative_dispatch.py`. Detail: DECISIONS.md "CLAUDE.md flag detail".
 - `CAPTION_PUNCTUATION_ENABLED` — defaults `true`; restores punctuation/case onto timed words (`align_punctuated_text()`, fail-open on ANY mismatch). `false` ⇒ byte-identical. Internals: `docs/pipelines/smart-captions.md`. Apply: fly secret `…=false` + restart.
 - `POSTER_ONDEMAND_REPAIR_ENABLED` / `POSTER_REPAIR_QUEUE` — default **`false`** / `celery`; enqueues `tasks.repair_job_poster`. **Set the queue FIRST** — needs `autoplace-jobs` (2GB), never the 1GB `light` machine. Guards: `tests/tasks/test_poster_repair.py`, `tests/routes/test_me_jobs.py`. Apply order: DECISIONS.md "Storage retention incidents".
@@ -217,9 +217,8 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `PHONE_TALKING_HEAD_RENDERING_ENABLED` — default `false`. 2+-clip self-narration renders on the phone: speaker clip + muted full-frame cutaways (`compile_phone_subtitled_plan(cutaways=)`), no speech cleanup. `docs/reviews/kri-132/phone-format-matrix.md`.
 - `USER_SONG_MONTAGE_ENABLED` — default `true` (KRI-374). Creator-uploaded song on phone montages (background bed / lip-sync by song time); off hides `media.song` + refuses `user_song`. Needs `musicBed`+`audioMix` verified. Apply: fly secret `…=false` (api+worker) + restart. `docs/runbooks/phone-rendering.md`. `SONG_CAPTIONS_ENABLED` (KRI-569): lyric captions, same apply.
 - `SLIDE_POSTS_ENABLED` — defaults `true`. Mixed-media posts; docs/pipelines/slide-post.md. Rollback: fly secret `…=false` + restart (api+worker).
-- `FREEHAND_DRAWING_ENABLED` / `FREEHAND_DRAWING_MIN_CLIENT_PROTOCOL` — default `true` / `6` (KRI-589). Needs `freehandDrawing` in `PHONE_RENDER_VERIFIED_FEATURES` (fly secret, api+worker); older builds get 426. `false` ⇒ no new drawings, stored ones still play/delete. `docs/pipelines/drawing.md`.
+- `FREEHAND_DRAWING_ENABLED` (min protocol `6`) / `SLIDE_POST_DRAWING_ENABLED` (`7`) — default `true`, KRI-589 kill switches. Video needs `freehandDrawing` in `PHONE_RENDER_VERIFIED_FEATURES`; old builds get 426. `false` ⇒ no new drawings; never roll code back once drawings exist. `docs/pipelines/drawing.md`.
 - `SLIDE_POST_RICH_TEXT_ENABLED` / `SLIDE_POST_CHAT_EDIT_ENABLED` — default `false`. Styled slide text (off = drawtext) / slide chat-edit route (404 off; needs rich text); caps `slide_post_*`.
-- `SLIDE_POST_DRAWING_ENABLED` / `SLIDE_POST_DRAWING_MIN_CLIENT_PROTOCOL` — default `true` / `7` (KRI-589). Slide-drawing kill switch (cap `slide_post_drawing`); never roll code back once drawings exist; `docs/pipelines/slide-post.md`.
 - `REVIEWER_LOGIN_ENABLED` — default `false`; gates `POST /auth/mobile/reviewer-login` (404 off), Apple Beta App Review demo login. `REVIEWER_LOGIN_EMAIL`/`_PASSWORD_HASH` (scrypt via `app.cli.reviewer_login hash`) are Fly-secrets only: `docs/runbooks/testflight.md`.
 
 ## Agent evals
@@ -269,8 +268,10 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - CORS: `ALLOWED_ORIGINS` env var — JSON array format
 
 ### Custom deploy hooks
+- Pre-merge: none
 - Deploy trigger (API): **Fly Deploy** (push or manual rerun)
 - Deploy trigger (Frontend): push to `main` (Vercel auto-deploy) or `cd src/apps/web && vercel --prod`
+- Deploy status (API): `fly status --app nova-video`
 - Health check (API): https://nova-video.fly.dev/health
 
 ### Fly.io Secrets (set via `fly secrets set`)
