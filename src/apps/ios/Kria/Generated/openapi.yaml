@@ -1098,6 +1098,11 @@
             "title": "Slide Post Rich Text",
             "type": "boolean"
           },
+          "slide_post_sizes": {
+            "default": false,
+            "title": "Slide Post Sizes",
+            "type": "boolean"
+          },
           "song_filming_range": {
             "default": false,
             "title": "Song Filming Range",
@@ -7194,6 +7199,17 @@
       "SlideEdits": {
         "description": "Per-slide edit state, applied at render time in `pipeline/slide_post/build.py`.\n\n`text` is the legacy single drawtext overlay. `texts` is the rich model\n(max 4 styled elements). When `texts` is not None, `text` is ALWAYS a\nmirror of `texts[0]` (None when `texts` is empty) so old clients and the\nflag-off render path keep working. `look_preset` maps to an FFmpeg filter\nfragment; there is no separate rendering subsystem for it.",
         "properties": {
+          "fit": {
+            "default": null,
+            "enum": [
+              "blur",
+              "black",
+              "white"
+            ],
+            "nullable": true,
+            "title": "Fit",
+            "type": "string"
+          },
           "framing": {
             "$ref": "#/components/schemas/SlideFraming",
             "default": null,
@@ -7388,6 +7404,19 @@
       "SlidePostDraft": {
         "description": "The persisted draft document (`PlanItem.slide_post`).",
         "properties": {
+          "aspect": {
+            "default": null,
+            "enum": [
+              "9:16",
+              "4:5",
+              "3:4",
+              "1:1",
+              "1.91:1"
+            ],
+            "nullable": true,
+            "title": "Aspect",
+            "type": "string"
+          },
           "brief_binding": {
             "$ref": "#/components/schemas/BriefBinding",
             "default": null,
@@ -7453,6 +7482,19 @@
       "SlidePostDraftBody": {
         "description": "PUT /{item_id}/slide-post request \u2014 a full replacement of the draft's\nuser-editable fields. `version`/`rendered_version`/`user_edited` are\nserver-owned and never accepted from the client.",
         "properties": {
+          "aspect": {
+            "default": null,
+            "enum": [
+              "9:16",
+              "4:5",
+              "3:4",
+              "1:1",
+              "1.91:1"
+            ],
+            "nullable": true,
+            "title": "Aspect",
+            "type": "string"
+          },
           "brief_binding": {
             "$ref": "#/components/schemas/BriefBinding",
             "default": null,

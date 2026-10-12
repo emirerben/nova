@@ -119,7 +119,7 @@ import XCTest
     func testExportsPlayableH264CarouselMP4WithSourceAudioAndBoundedDuration() async throws {
         let input = try source()
         let output = directory.appending(path: "slide.mp4")
-        try await SlidePostVideoRender.renderSlide(slide: slide(), asset: asset(input), profile: "instagram_carousel", outputURL: output)
+        try await SlidePostVideoRender.renderSlide(slide: slide(), asset: asset(input), profile: "instagram_carousel", aspect: nil, outputURL: output)
 
         let rendered = AVURLAsset(url: output)
         let renderedVideos = try await rendered.loadTracks(withMediaType: .video)
@@ -152,7 +152,7 @@ import XCTest
         try Data("not a movie".utf8).write(to: temporary)
         let remote = SlidePostAsset(id: "asset", kind: "video", status: "ready", displayURL: nil, sourceURL: URL(string: "https://example.test/video.mp4"))
         do {
-            try await SlidePostVideoRender.renderSlide(slide: slide(), asset: remote, profile: "instagram_carousel", outputURL: directory.appending(path: "bad.mp4"), download: { _ in temporary })
+            try await SlidePostVideoRender.renderSlide(slide: slide(), asset: remote, profile: "instagram_carousel", aspect: nil, outputURL: directory.appending(path: "bad.mp4"), download: { _ in temporary })
             XCTFail("expected invalid source to fail")
         } catch { XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path)) }
     }
@@ -160,7 +160,7 @@ import XCTest
     func testNinetyTwoSecondSourceTrimsVideoAndAudioAtNinetySeconds() async throws {
         let input = try await ninetyTwoSecondSource()
         let output = directory.appending(path: "trimmed.mp4")
-        try await SlidePostVideoRender.renderSlide(slide: slide(), asset: asset(input), profile: "instagram_carousel", outputURL: output)
+        try await SlidePostVideoRender.renderSlide(slide: slide(), asset: asset(input), profile: "instagram_carousel", aspect: nil, outputURL: output)
 
         let rendered = AVURLAsset(url: output)
         let duration = try await rendered.load(.duration).seconds
@@ -182,9 +182,9 @@ import XCTest
     func testGoldenHourPreviewAndExportAgreeAwayFromBranding() async throws {
         let input = try source()
         let sourceAsset = AVURLAsset(url: input)
-        let preview = try await SlidePostVideoRender.previewComposition(asset: sourceAsset, profile: "instagram_carousel", lookPreset: "golden_hour")
+        let preview = try await SlidePostVideoRender.previewComposition(asset: sourceAsset, profile: "instagram_carousel", aspect: nil, lookPreset: "golden_hour")
         let output = directory.appending(path: "golden-hour.mp4")
-        try await SlidePostVideoRender.renderSlide(slide: slide(look: "golden_hour"), asset: asset(input), profile: "instagram_carousel", outputURL: output)
+        try await SlidePostVideoRender.renderSlide(slide: slide(look: "golden_hour"), asset: asset(input), profile: "instagram_carousel", aspect: nil, outputURL: output)
         let previewFrame = try await frame(input, composition: preview)
         let exportFrame = try await frame(output)
         let width = CGFloat(previewFrame.width), height = CGFloat(previewFrame.height)
@@ -199,7 +199,7 @@ import XCTest
         let input = try source()
         let plain = directory.appending(path: "plain.mp4")
         let texted = directory.appending(path: "texted.mp4")
-        try await SlidePostVideoRender.renderSlide(slide: slide(), asset: asset(input), profile: "instagram_carousel", outputURL: plain)
+        try await SlidePostVideoRender.renderSlide(slide: slide(), asset: asset(input), profile: "instagram_carousel", aspect: nil, outputURL: plain)
         var top = SlidePostTextElement(id: "top", text: "KRIA")
         top.position = "top"; top.sizePx = 200; top.color = "#000000"; top.shadowEnabled = false
         // The packaged paper outro is nearly white at 0.2s. Black gives the
@@ -211,7 +211,7 @@ import XCTest
         rasterAttachment.lifetime = .keepAlways
         add(rasterAttachment)
         let withText = SlidePostSlide(id: "slide", assetID: "asset", kind: "video", edits: .init(lookPreset: "none", texts: [top]))
-        try await SlidePostVideoRender.renderSlide(slide: withText, asset: asset(input), profile: "instagram_carousel", outputURL: texted)
+        try await SlidePostVideoRender.renderSlide(slide: withText, asset: asset(input), profile: "instagram_carousel", aspect: nil, outputURL: texted)
         let baseline = try await frame(plain), rendered = try await frame(texted)
         for (name, image) in [("baseline-frame", baseline), ("texted-frame", rendered)] {
             let attachment = XCTAttachment(image: UIImage(cgImage: image))

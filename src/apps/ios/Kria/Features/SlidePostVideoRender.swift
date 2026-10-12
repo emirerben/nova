@@ -27,12 +27,13 @@ import UIKit
             && (slide.edits?.effectiveTexts ?? []).allSatisfy { NativeFontCatalog.shared.ctFont($0.fontFamily, size: 12) != nil }
     }
 
-    /// Renders one source video to the exact 2160×2700 carousel canvas. The caller owns `outputURL`;
+    /// Renders one source video to the carousel's canvas at 2x (2160×2700 for 4:5, 2160×2160 for 1:1, ...). The caller owns `outputURL`;
     /// this method removes it on cancellation or any export failure so an incomplete MP4 is never saved.
     static func renderSlide(
         slide: SlidePostSlide,
         asset: SlidePostAsset,
         profile: String,
+        aspect: String?,
         outputURL: URL,
         download: Download? = nil
     ) async throws {
@@ -47,7 +48,7 @@ import UIKit
             try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: outputURL.path) { try FileManager.default.removeItem(at: outputURL) }
             let asset = AVURLAsset(url: source.url)
-            let prepared = try await prepare(asset: asset, profile: profile, lookPreset: slide.edits?.lookPreset ?? "none")
+            let prepared = try await prepare(asset: asset, profile: profile, aspect: aspect, lookPreset: slide.edits?.lookPreset ?? "none")
             let overlay = try staticOverlay(texts: slide.edits?.effectiveTexts ?? [], pixels: prepared.pixels)
             let composition = videoComposition(prepared: prepared, overlay: overlay)
             guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
@@ -76,9 +77,9 @@ import UIKit
 
     /// The preview uses the same orientation, cover crop, and look as export. Text and branding stay out
     /// of this composition because the workspace draws its existing SwiftUI overlay above the player.
-    static func previewComposition(asset: AVAsset, profile: String, lookPreset: String) async throws -> AVVideoComposition {
+    static func previewComposition(asset: AVAsset, profile: String, aspect: String?, lookPreset: String) async throws -> AVVideoComposition {
         guard profile == "instagram_carousel", SlidePostLookRenderer.supports(lookPreset) else { throw RenderError.unsupported }
-        let prepared = try await prepare(asset: asset, profile: profile, lookPreset: lookPreset)
+        let prepared = try await prepare(asset: asset, profile: profile, aspect: aspect, lookPreset: lookPreset)
         return videoComposition(prepared: prepared, overlay: nil)
     }
 
@@ -89,7 +90,7 @@ import UIKit
         let lookPreset: String
     }
 
-    private static func prepare(asset: AVAsset, profile: String, lookPreset: String) async throws -> Prepared {
+    private static func prepare(asset: AVAsset, profile: String, aspect: String?, lookPreset: String) async throws -> Prepared {
         guard profile == "instagram_carousel", SlidePostLookRenderer.supports(lookPreset),
               let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw RenderError.missingVideoTrack
@@ -101,8 +102,8 @@ import UIKit
         guard naturalSize.width.isFinite, naturalSize.height.isFinite, naturalSize.width > 0, naturalSize.height > 0 else {
             throw RenderError.missingVideoTrack
         }
-        let pixels = CGSize(width: SlidePostOnDeviceRender.canvas(for: profile).width * SlidePostOnDeviceRender.outputScale,
-                            height: SlidePostOnDeviceRender.canvas(for: profile).height * SlidePostOnDeviceRender.outputScale)
+        let canvas = SlidePostOnDeviceRender.canvas(profile: profile, aspect: aspect)
+        let pixels = CGSize(width: canvas.width * SlidePostOnDeviceRender.outputScale, height: canvas.height * SlidePostOnDeviceRender.outputScale)
         return Prepared(asset: asset,
                         pixels: pixels,
                         duration: CMTime(seconds: min(seconds, maximumDuration), preferredTimescale: 60_000),

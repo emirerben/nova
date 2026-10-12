@@ -106,6 +106,11 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_RICH_TEXT"] == "1" { capabilities["slide_post_rich_text"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_EXTENDED_DEVICE_EXPORT"] == "1" { capabilities["slide_post_extended_device_export"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CHAT_EDIT"] == "1" { capabilities["slide_post_chat_edit"] = true }
+            // KRIA_SLIDE_POST_SIZES (KRI-606): the Size sheet and per-photo Fit. The server needs framing on too.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_SIZES"] == "1" {
+                capabilities["slide_post_framing"] = true
+                capabilities["slide_post_sizes"] = true
+            }
             // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
             // sends the clip_question payload but does not advertise the capability (old-server fallback).
             if ["1", "history"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
