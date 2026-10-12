@@ -34,7 +34,7 @@ import XCTest
             let crop = item.crop.map { NormalizedSourceRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
             let rect = SlidePostFraming.placement(
                 imageSize: CGSize(width: item.image[0], height: item.image[1]), crop: crop,
-                canvas: CGSize(width: item.canvas[0], height: item.canvas[1]))
+                canvas: CGSize(width: item.canvas[0], height: item.canvas[1]), fit: false)
             XCTAssertEqual(rect.minX, item.expected[0], accuracy: 0.01, item.name)
             XCTAssertEqual(rect.minY, item.expected[1], accuracy: 0.01, item.name)
             XCTAssertEqual(rect.width, item.expected[2], accuracy: 0.01, item.name)
@@ -44,10 +44,10 @@ import XCTest
 
     func testLandscapeIsOnlyHonouredOnTikTokPhotoPosts() {
         let slide = SlidePostSlide(id: "s", assetID: "a", kind: "image", edits: .init(framing: .init(orientation: .landscape)))
-        XCTAssertEqual(SlidePostFraming.canvas(for: slide, profile: "tiktok_photo"), CGSize(width: 1920, height: 1080))
-        XCTAssertEqual(SlidePostFraming.canvas(for: slide, profile: "instagram_carousel"), CGSize(width: 1080, height: 1350))
+        XCTAssertEqual(SlidePostFraming.canvas(for: slide, profile: "tiktok_photo", aspect: nil), CGSize(width: 1920, height: 1080))
+        XCTAssertEqual(SlidePostFraming.canvas(for: slide, profile: "instagram_carousel", aspect: nil), CGSize(width: 1080, height: 1350))
         let plain = SlidePostSlide(id: "s", assetID: "a", kind: "image")
-        XCTAssertEqual(SlidePostFraming.canvas(for: plain, profile: "tiktok_photo"), CGSize(width: 1080, height: 1920))
+        XCTAssertEqual(SlidePostFraming.canvas(for: plain, profile: "tiktok_photo", aspect: nil), CGSize(width: 1080, height: 1920))
     }
 
     // MARK: Three-state save semantics

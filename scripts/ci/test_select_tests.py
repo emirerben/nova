@@ -154,11 +154,19 @@ class GateTests(unittest.TestCase):
                 ci.gate(needs, "web", "suite")
 
     def test_required_journey_gate_accepts_only_selected_success_or_explicit_skip(self):
-        for selected, result in (("true", "success"), ("false", "skipped")):
+        for selected, ios, result in (
+            ("true", "false", "success"),
+            ("false", "true", "success"),
+            ("false", "false", "skipped"),
+        ):
             needs = {
                 "changes": {
                     "result": "success",
-                    "outputs": {"journey": selected, "shared_motion": "false"},
+                    "outputs": {
+                        "journey": selected,
+                        "ios": ios,
+                        "shared_motion": "false",
+                    },
                 },
                 "journey": {"result": result},
                 # test-api has other dependencies; they must not weaken this gate.
@@ -167,13 +175,18 @@ class GateTests(unittest.TestCase):
                 "shared-motion-runtime": {"result": "skipped"},
             }
             ci.gate(needs, "journey", "journey")
-        for selected, result in (
-            ("true", "skipped"),
-            ("false", "success"),
-            (None, "skipped"),
+        for selected, ios, result in (
+            ("true", "false", "skipped"),
+            ("false", "true", "skipped"),
+            ("false", "false", "success"),
+            (None, "false", "skipped"),
+            ("false", None, "skipped"),
         ):
             needs = {
-                "changes": {"result": "success", "outputs": {"journey": selected}},
+                "changes": {
+                    "result": "success",
+                    "outputs": {"journey": selected, "ios": ios},
+                },
                 "journey": {"result": result},
             }
             with self.assertRaises(ValueError):
@@ -199,6 +212,35 @@ class GateTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 ci.gate(needs, "web", "suite")
+
+    def test_pr_ios_gate_shares_the_journey_job(self):
+        for ios, journey, result in (
+            ("true", "false", "success"),
+            ("false", "true", "success"),
+            ("false", "false", "skipped"),
+        ):
+            needs = {
+                "changes": {
+                    "result": "success",
+                    "outputs": {
+                        "ios": ios,
+                        "journey": journey,
+                        "ios_ui": "false",
+                        "ios_ui_groups": "none",
+                        "ios_ui_shards": "1",
+                    },
+                },
+                "journey": {"result": result},
+                "ios-contracts": {"result": "success" if ios == "true" else "skipped"},
+            }
+            ci.gate(needs, "ios", "journey")
+            needs["journey"]["result"] = "failure"
+            with self.assertRaises(ValueError):
+                ci.gate(needs, "ios", "journey")
+            needs["journey"]["result"] = result
+            needs["ios-contracts"]["result"] = "failure"
+            with self.assertRaises(ValueError):
+                ci.gate(needs, "ios", "journey")
 
     def test_ios_gate_rejects_missing_or_inconsistent_ui_selection(self):
         for ios, ui in (("true", None), ("true", ""), ("false", "true")):
@@ -303,20 +345,16 @@ class GateTests(unittest.TestCase):
                 ci.gate(needs(ui, shards), "ios", "ios-tests")
 
     def test_ui_shards_follow_the_executed_selection(self):
-        # Non-PR events run the full suite on every leg the workflow defines.
-        self.assertEqual(ci.ui_shards("push", "full"), ci.ui_tests.MAX_SHARDS)
+        # Main keeps one Mac busy; explicit manual runs retain parallel shards.
+        self.assertEqual(ci.ui_shards("push", "full"), 1)
         self.assertEqual(
             ci.ui_shards("workflow_dispatch", "full"), ci.ui_tests.MAX_SHARDS
         )
-        # A PR that wants full coverage executes only the smoke tripwire.
+        # One PR Mac job owns the selected UI and journey scenarios.
         self.assertEqual(ci.ui_shards("pull_request", "full"), 1)
         self.assertEqual(ci.ui_shards("pull_request", "none"), 1)
         self.assertEqual(ci.ui_shards("pull_request", "smoke,projects"), 1)
-        self.assertEqual(
-            ci.ui_shards("pull_request", "smoke,editor"),
-            ci.ui_tests.shard_count("smoke,editor"),
-        )
-        self.assertGreater(ci.ui_shards("pull_request", "smoke,editor"), 1)
+        self.assertEqual(ci.ui_shards("pull_request", "smoke,editor"), 1)
         # An unusable selection keeps one leg; its UI step fails closed.
         with patch.object(ci.ui_tests, "shard_count", side_effect=ValueError):
             self.assertEqual(ci.ui_shards("pull_request", "smoke,editor"), 1)
@@ -626,14 +664,6 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/app/kria/voiceover_clips.py",
                 (True, "covered", "kri-593-voiceover-clips"),
-            ),
-            (
-                "src/apps/api/prompts/clip_request_resolver.txt",
-                (True, "covered", "kri-613-resolver-question"),
-            ),
-            (
-                "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/find_the_clip.json",
-                (True, "covered", "kri-613-resolver-question"),
             ),
             (
                 "src/apps/api/app/pipeline/phone_captions.py",

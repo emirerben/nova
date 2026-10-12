@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import Field, model_serializer, model_validator
 
 from app.kria.portable_camera import CameraPulse
+from app.kria.portable_drawing import PortableDrawingLayer
 from app.kria.portable_motion import MotionSceneProgram
 from app.kria.portable_text import PortableTextLayer
 from app.kria.portable_visual import VisualCanvasFill
@@ -29,6 +30,7 @@ class EditRecipeV2(EditRecipeV1):
     visual_fills: list[VisualCanvasFill] = Field(default_factory=list, max_length=100)
     camera_pulses: list[CameraPulse] = Field(default_factory=list, max_length=100)
     text_layers: list[PortableTextLayer] = Field(default_factory=list, max_length=500)
+    drawing_layers: list[PortableDrawingLayer] = Field(default_factory=list, max_length=12)
 
     @model_serializer(mode="wrap")
     def preserve_legacy_camera_shape(self, handler):
@@ -39,6 +41,8 @@ class EditRecipeV2(EditRecipeV1):
             payload.pop("motion_scenes", None)
         if not self.camera_pulses:
             payload.pop("camera_pulses", None)
+        if not self.drawing_layers:
+            payload.pop("drawing_layers", None)
         return payload
 
     @model_validator(mode="after")
@@ -59,6 +63,12 @@ class EditRecipeV2(EditRecipeV1):
             raise ValueError("camera pulses must be unique and within the timeline")
         if self.camera_pulses:
             self.required_capabilities |= {"cameraEffects"}
+        if len({layer.id for layer in self.drawing_layers}) != len(self.drawing_layers) or any(
+            layer.end > self.duration for layer in self.drawing_layers
+        ):
+            raise ValueError("drawing layers must be unique and within the timeline")
+        if self.drawing_layers:
+            self.required_capabilities |= {"freehandDrawing"}
         manifest = {asset.id: asset for asset in self.asset_manifest.assets}
         if set(manifest) != {asset.id for asset in self.assets}:
             raise ValueError("recipe and manifest must name exactly the same assets")

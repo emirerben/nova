@@ -4,11 +4,12 @@ Nova CI covers the API and native phone contracts. Web application tests and
 web lint are retired because the web app is no longer developed. Web assets
 bundled into the iOS app still select native coverage.
 
-Pull requests run API checks on Linux. Journey selections use the manifest's
-`needs_native` flag: Python only journeys run on Linux, while any mixed
-selection containing a native journey runs on macOS and keeps its Xcode/iPhone
-validation. Unknown Kria journey paths fail closed to the shared API plus
-native contract selection.
+Pull requests run API and mobile contract checks on Linux. One selected PR Mac
+job compiles the iPhone app once, then runs its selected unit, UI and native
+journey scenarios without rebuilding. The journey manifest's `needs_native`
+flag keeps Python only journeys on Linux. A mixed selection with a native
+journey uses the Mac job. Unknown Kria journey paths fail closed to the shared
+API plus native contract selection.
 
 Pushes to `main` retain full regression coverage, including native checks.
 

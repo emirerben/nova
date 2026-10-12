@@ -305,6 +305,95 @@ def vision_evidence_text(record: ClipUnderstanding) -> str:
     return " ".join(p for p in parts if p)
 
 
+# KRI-612: "explain the footages", "a short summary on each clip", "say what's happening
+# in each video", "videoları açıkla". The creator asks Kria to write what each clip shows:
+# a label whose value every clip's own record already holds. Matched on `_word_list`
+# folding (case, accents, Turkish ı), so "Açıkla" and "acikla" are the same word.
+# "described" / "as I explained" / "açıkladığım" point at words said elsewhere and
+# "anlatım" is narration: none of them asks for a description.
+_CLIP_DESCRIPTION_RE = re.compile(
+    r"\b(?:explain|explaining|explanations?|describe|describing|descriptions?"
+    r"|summar(?:y|ies|ise|ize|ising|izing)|recaps?"
+    r"|what (?:s |is |was )?(?:happening|going on)|what happens"
+    r"|acikla(?!dig)\w*|ozet\w*|ne(?:ler)? oluyor)\b"
+)
+# The intent the inventory planner (and the server, see
+# ``clip_intent_planning.with_clip_descriptions``) writes for such an ask.
+CLIP_DESCRIPTION_ATTRIBUTE = "what is happening in the clip"
+
+
+def asks_clip_description(text: str | None) -> bool:
+    """Does ``text`` ask Kria to say what each clip shows (KRI-612)?"""
+    return bool(text) and bool(_CLIP_DESCRIPTION_RE.search(" ".join(_word_list(text or ""))))
+
+
+def is_clip_description_label(intent: ClipIntent) -> bool:
+    """A footage label that describes each clip, rather than naming one attribute of it.
+
+    Its value for every clip is in that clip's own record, so it never needs a question
+    or a vision re-check. The creator's own words and the fixed placeholder are never one.
+    """
+    return (
+        intent.op == "label"
+        and intent.label_source == "clip"
+        and not intent.placeholder
+        and intent.creator_text is None
+        and asks_clip_description(intent.attribute)
+    )
+
+
+# Where a footage line stops: "football players jogging | and stretching on the pitch".
+_LINE_STOP_WORDS = frozenset(
+    "and or but while with at on in into onto near by during before after for to from of "
+    "as under over inside outside behind through across around about".split()
+)
+_LEADING_ARTICLES_RE = re.compile(r"^(?:the|a|an)\s+", re.IGNORECASE)
+
+
+def footage_lines(record: ClipUnderstanding) -> list[str]:
+    """Short lines (label shape) saying what a clip shows, best first (KRI-612).
+
+    Every word is the vision model's own (``vision_evidence_text``), so each line passes
+    ``ground_label`` as ``record_span``. A whole field that already fits a label comes
+    first; then the start of a longer field up to its first linking word, two or three
+    words before one; never a cut mid-phrase ("players on") or a lone article. The
+    clip's setting is the last resort: it says where, not what happens.
+    """
+
+    def ranked(sources: list[str]) -> list[str]:
+        whole: list[str] = []
+        heads: list[str] = []
+        singles: list[str] = []
+        for source in sources:
+            text = _LEADING_ARTICLES_RE.sub("", " ".join((source or "").split()))
+            if not text:
+                continue
+            if clean_label_text(text):
+                whole.append(text)
+                continue
+            words: list[str] = []
+            for word in text.split(",", 1)[0].split():
+                if word.casefold() in _LINE_STOP_WORDS:
+                    break
+                words.append(word)
+            head = clean_label_text(" ".join(words))
+            if head is not None:
+                (heads if len(words) > 1 else singles).append(head)
+        return [*whole, *heads, *singles]
+
+    what = [
+        record.activity,
+        record.subject,
+        *(moment.description for moment in record.notable_moments),
+    ]
+    lines: list[str] = []
+    for line in [*ranked(what), *ranked([record.setting])]:
+        line = line[:1].upper() + line[1:]
+        if _match_key(line) not in {_match_key(kept) for kept in lines}:
+            lines.append(line)
+    return lines
+
+
 def ground_label(
     *,
     media_id: str,

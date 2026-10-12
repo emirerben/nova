@@ -128,6 +128,25 @@ Flow (flag on):
    a `caption` op is only for one chapter the creator named or described. Unlike
    the Talking skip this is a prompt rule, so the `montage_add_captions*` /
    `montage_altyazi_ekle` live-eval fixtures are its guard.
+   **Clips named by file name (KRI-614).** The iOS app lists each upload by its
+   file name, so creators write "first IMG_7382 then IMG_7820 ... at the end
+   IMG_7833". The attach route keeps the uploaded name on the clip assignment
+   (`source_filename`); `clip_display_name` strips the iOS staging UUID and the
+   extension, and the Main Creator sees it as `filename` in its media context
+   (never on `CreatorMediaRef.label`, so the manifest hash is unchanged). Before
+   the resolver, `apply_file_name_references` settles any intent whose attribute
+   is only file names (plus filler like "then", "the clip"), each naming exactly
+   one clip (`services/clip_file_names.py`: case, dotless ı and dotted İ folded;
+   letters-and-digits names only; a leading part like "B964DD9A" counts at 6+
+   characters; a name two clips share matches neither). An `order` intent that
+   names several clips (Flash sometimes makes the whole sentence one intent) is
+   split into one order intent per clip in the order named, so the sequence rule
+   seats them in that order; a clip a single-clip first/last intent already pins
+   stays there. Settled and picker-answered intents keep the creator's listed
+   order in the resolved list (`_as_listed`); they used to move to its end, which
+   changed the middle of a stated sequence. Clips attached before this change
+   carry no name, so a creator testing it needs a new chat. Journey test:
+   `tests/kria/test_kri614_file_name_clips.py`.
 2. **Resolve, inside the chat turn** (`app/services/clip_intent_resolution.py`,
    DB-free, the session row lock is released around it): `ClipRequestResolverAgent`
    (text-only, media aliases, id set-membership) matches intents to the shared
@@ -150,6 +169,15 @@ Flow (flag on):
    `named_guesses_settled`). The resolver runs as ONE call while the project
    fits the measured 12-clip x 8-intent (96-cell) load; bigger projects split into
    ~48-cell shards, which see only part of the footage at once.
+   A label that asks what happens in each clip ("explain the footages", "a summary
+   on each clip"; `is_clip_description_label`, canonical attribute "what is
+   happening in the clip") never asks the creator and never re-checks the
+   footage: every clip keeps the resolver's grounded line or else takes the first
+   unused line from its own record (`footage_lines`), so no two clips repeat one.
+   When the Creative Brief holds such a described per-clip text, the server
+   makes sure exactly one of these labels exists and replaces a chapter caption
+   the inventory planner wrote for the same ask (`with_clip_descriptions`,
+   KRI-612).
    Clips the record cannot answer go to `ClipQuestionAgent` (the vision
    model re-watches THAT clip): at most `clip_intents_max_vision_requeries`
    (4) per turn, under one `clip_intents_vision_deadline_s` (25 s) deadline, video
@@ -184,7 +212,11 @@ Flow (flag on):
    (`reason_code: clip_intent_unresolved`). Provider, budget, media, and failed
    dispatch states retain KRI-151's technical error path. Pending queries and
    partial assignments never authorize a strategy or an on-screen label.
-   The creator's answer arrives as a normal next message.
+   The creator's answer arrives as a normal next message. A tapped clip-picker
+   answer (`clip_selection`, KRI-282) is folded from its payload; its visible echo
+   ("Img_7833: clip 1") is transcript copy, so `song_order.model_text` gives every
+   model a neutral sentence instead (KRI-614; the echo used to become a new
+   `include` intent and a second question about the answer itself).
 5. **Plan.** On confirm the intents travel `ProposalBrief.clip_intents` (chat
    `asset-{uuid}` ids translated to planner ids) into `EditProposalAgent` as
    alias-only constraints: group (creator's words as the chapter title), order

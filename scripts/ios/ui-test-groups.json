@@ -28,6 +28,7 @@
       "KriaUITests/SlidePostUITests/testSlidePreviewLeavesToolbarAndStripVisible",
       "KriaUITests/SlidePostUITests/testAddStyleAndApplyTextToAllSlides",
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",
+      "KriaUITests/SlidePostUITests/testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave",
       "KriaUITests/SlidePostUITests/testAIButtonOpensSheetAndChatEditStagesOnThePage",
       "KriaUITests/SlidePostUITests/testLongPressDragReordersAndKeepsTheCover",
       "KriaUITests/SlidePostUITests/testDraggingToTheEdgeAutoScrollsTheStrip",
@@ -97,6 +98,7 @@
       "KriaUITests/SignInUITests/testSignInAtLargestDynamicTypeKeepsEveryActionReachable",
       "KriaUITests/SignInUITests/testSignInWithReduceMotionIsInteractiveImmediately",
       "KriaUITests/SignInUITests/testSignInErrorMessageIsAnnounced",
+      "KriaUITests/SignInUITests/testExistingAccountRefusalIsReadableOnScreen",
       "KriaUITests/NativeUpdateRequiredUITests/testTyped426ReplacesEachRootRoute",
       "KriaUITests/NativeUpdateRequiredUITests/testBlockingScreenScrollsAtAccessibilitySizeAndActionsUseFixtureSeam"
     ],
@@ -174,7 +176,9 @@
       "KriaUITests/NativeQuickAddMenuUITests/testPlusOpensMenuWithThreeOptions",
       "KriaUITests/NativeQuickAddMenuUITests/testTappingOutsideTheMenuDismissesIt",
       "KriaUITests/NativeQuickAddMenuUITests/testTappingPlusAgainClosesTheMenu",
-      "KriaUITests/NativeQuickAddMenuUITests/testTextOptionStartsTextCreation"
+      "KriaUITests/NativeQuickAddMenuUITests/testTextOptionStartsTextCreation",
+      "KriaUITests/DrawingJourneyUITests/testDrawDoneTrimSaveReopenPersists",
+      "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -259,6 +263,10 @@
     "src/apps/ios/Kria/Core/ReviewPlanModel.swift": "creation",
     "src/apps/ios/Kria/Features/ReviewPlanView.swift": "creation",
     "src/apps/ios/Kria/Features/ReviewPlanUITestFixture.swift": "creation",
+    "src/apps/ios/Kria/Core/EditorDrawing.swift": "editor",
+    "src/apps/ios/Kria/Core/NativeDrawingSketch.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeDrawingViews.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/DrawingJourneyUITests.swift": "editor",
     "src/apps/ios/Kria/Features/TeleprompterScreen.swift": "creation",
     "src/apps/ios/Kria/Features/TeleprompterRecordingFlow.swift": "creation",
     "src/apps/ios/Kria/Features/TeleprompterCamera.swift": "creation",

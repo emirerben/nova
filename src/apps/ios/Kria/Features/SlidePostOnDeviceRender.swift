@@ -16,13 +16,15 @@ import UIKit
     static let outputScale: CGFloat = 2
     static let jpegQuality: CGFloat = 0.92
 
-    /// Logical canvas in points (the server's output size at scale 1).
-    static func canvas(for profile: String) -> CGSize {
-        profile == "instagram_carousel" ? CGSize(width: 1080, height: 1350) : CGSize(width: 1080, height: 1920)
-    }
+    /// Logical canvas in points (the server's output size at scale 1): the post's size (KRI-606). No default
+    /// for `aspect`, so a call site that forgets the draft's size fails to compile instead of exporting the
+    /// platform default.
+    static func canvas(profile: String, aspect: String?) -> CGSize { SlidePostSize.canvas(profile: profile, aspect: aspect) }
 
-    /// A slide's export canvas: its own shape (KRI-44), not just the profile's.
-    static func canvas(for slide: SlidePostSlide, profile: String) -> CGSize { SlidePostFraming.canvas(for: slide, profile: profile) }
+    /// A slide's export canvas: its own shape (KRI-44), else the post's size.
+    static func canvas(for slide: SlidePostSlide, profile: String, aspect: String?) -> CGSize {
+        SlidePostFraming.canvas(for: slide, profile: profile, aspect: aspect)
+    }
 
     static func supports(_ draft: SlidePostDraft?, assets: [SlidePostAsset], extended: Bool = false) -> Bool {
         guard let draft, !draft.slides.isEmpty else { return false }
@@ -44,17 +46,20 @@ import UIKit
     /// One slide as JPEG data. Throws `SlidePostImageCache.LoadError.expired` for a stale signed URL so the
     /// caller can refresh the session once and retry.
     static func renderSlide(
-        slide: SlidePostSlide, asset: SlidePostAsset, profile: String,
+        slide: SlidePostSlide, asset: SlidePostAsset, profile: String, aspect: String?,
         scale: CGFloat = outputScale, fetch: Fetch = SlidePostImageCache.defaultFetch
     ) async throws -> Data {
         guard let url = asset.sourceURL ?? asset.displayURL else { throw RenderError.undecodable }
         let data = try await fetch(url)
-        let canvas = canvas(for: slide, profile: profile)
+        let canvas = canvas(for: slide, profile: profile, aspect: aspect)
         let pixels = CGSize(width: canvas.width * scale, height: canvas.height * scale)
         let crop = SlidePostFraming.effectiveCrop(for: slide)
-        guard let photo = decode(data, maxPixel: decodeLongSide(data, crop: crop, pixels: pixels)) else { throw RenderError.undecodable }
+        let fit = SlidePostFraming.effectiveFit(for: slide)
+        guard let photo = decode(data, maxPixel: decodeLongSide(data, crop: crop, pixels: pixels, fit: fit != nil)) else { throw RenderError.undecodable }
         let preset = slide.edits?.lookPreset ?? "none"
-        let graded = preset == "none" ? nil : try lookedImage(photo, pixels: pixels, preset: preset, crop: crop)
+        // Bars need the Core Image composite; a plain fill keeps the cheap UIKit draw.
+        let graded = preset == "none" && fit == nil ? nil
+            : try lookedImage(photo, pixels: pixels, preset: preset, crop: crop, fit: fit, blurSigma: SlidePostFit.blurSigmaPx * scale)
         let texts = slide.edits?.effectiveTexts ?? []
         let overlay = texts.isEmpty ? nil : textLayer(texts, pixels: pixels)
         let mark = try watermark()
@@ -64,7 +69,7 @@ import UIKit
         let image = UIGraphicsImageRenderer(size: pixels, format: format).image { context in
             UIColor.black.setFill(); UIRectFill(CGRect(origin: .zero, size: pixels))
             if let graded { graded.draw(in: CGRect(origin: .zero, size: pixels)) }
-            else { photo.draw(in: SlidePostFraming.placement(imageSize: photo.size, crop: crop, canvas: pixels)) }
+            else { photo.draw(in: SlidePostFraming.placement(imageSize: photo.size, crop: crop, canvas: pixels, fit: false)) }
             overlay?.draw(in: CGRect(origin: .zero, size: pixels))
             // Last, so no text buries it: the stacking the video engine and the server render use.
             context.cgContext.interpolationQuality = .high
@@ -74,9 +79,13 @@ import UIKit
         return jpeg
     }
 
-    /// Grade the cropped media, before graphics. The preview uses the same profile geometry.
+    /// Frame the media in the canvas (crop, then fill or fit with bars), then grade the whole frame, before graphics.
+    /// The preview uses the same geometry. `blurSigma` is in `pixels` (80 at scale 1; the export passes 80 x scale).
     nonisolated static let lookContext = CIContext(options: [.workingColorSpace: NSNull()])
-    nonisolated static func lookedImage(_ photo: UIImage, pixels: CGSize, preset: String, crop: NormalizedSourceRect? = nil) throws -> UIImage {
+    nonisolated static func lookedImage(
+        _ photo: UIImage, pixels: CGSize, preset: String, crop: NormalizedSourceRect? = nil,
+        fit: SlidePostFit? = nil, blurSigma: CGFloat = SlidePostFit.blurSigmaPx
+    ) throws -> UIImage {
         // Cache thumbnails retain their source color profile; export decoding
         // already normalizes to sRGB. Normalize both before encoded-RGB LUTs.
         guard let cg = photo.cgImage, let srgb = CGColorSpace(name: CGColorSpace.sRGB),
@@ -92,15 +101,42 @@ import UIKit
         }
         let source = CIImage(cgImage: normalized, options: [.colorSpace: NSNull()])
         let extent = CGRect(origin: .zero, size: pixels)
-        // `rect` is in top-left canvas pixels; Core Image's origin is bottom-left, so the y offset is flipped.
-        let rect = SlidePostFraming.placement(imageSize: source.extent.size, crop: crop, canvas: pixels)
-        let cropped = source.transformed(by: CGAffineTransform(translationX: -source.extent.minX, y: -source.extent.minY))
-            .transformed(by: CGAffineTransform(scaleX: rect.width / source.extent.width, y: rect.height / source.extent.height))
-            .transformed(by: CGAffineTransform(translationX: rect.minX, y: pixels.height - rect.maxY)).cropped(to: extent)
-        let looked = try SlidePostLookRenderer.apply(cropped, preset: preset)
+        let framed = framedBase(source, crop: crop, fit: fit, pixels: pixels, blurSigma: blurSigma)
+        let looked = preset == "none" ? framed : try SlidePostLookRenderer.apply(framed, preset: preset)
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let output = lookContext.createCGImage(looked, from: extent, format: .RGBA8, colorSpace: colorSpace) else { throw RenderError.encodeFailed }
         return UIImage(cgImage: output)
+    }
+
+    /// The photo placed in the canvas. Fill covers it (edges trimmed); a fit shows the whole cropped region and
+    /// fills the rest with black, white or a blurred cover-fill of the same region -- the server's `_frame_filter`.
+    nonisolated static func framedBase(_ source: CIImage, crop: NormalizedSourceRect?, fit: SlidePostFit?, pixels: CGSize, blurSigma: CGFloat) -> CIImage {
+        let extent = CGRect(origin: .zero, size: pixels)
+        // `rect` is in top-left canvas pixels; Core Image's origin is bottom-left, so the y offset is flipped.
+        func layer(_ rect: CGRect) -> CIImage {
+            source.transformed(by: CGAffineTransform(translationX: -source.extent.minX, y: -source.extent.minY))
+                .transformed(by: CGAffineTransform(scaleX: rect.width / source.extent.width, y: rect.height / source.extent.height))
+                .transformed(by: CGAffineTransform(translationX: rect.minX, y: pixels.height - rect.maxY))
+        }
+        let cover = SlidePostFraming.placement(imageSize: source.extent.size, crop: crop, canvas: pixels, fit: false)
+        guard let fit else { return layer(cover).cropped(to: extent) }
+        let whole = SlidePostFraming.placement(imageSize: source.extent.size, crop: crop, canvas: pixels, fit: true)
+        var photo = layer(whole)
+        if let crop {
+            // Only the cropped region is the photo: the rest of the source must never show up in the bars (the
+            // server crops first). `region` is in top-left canvas pixels; Core Image's origin is bottom-left.
+            let region = CGRect(x: whole.minX + crop.x * whole.width, y: whole.minY + crop.y * whole.height,
+                                width: crop.width * whole.width, height: crop.height * whole.height)
+            photo = photo.cropped(to: CGRect(x: region.minX, y: pixels.height - region.maxY, width: region.width, height: region.height))
+        }
+        photo = photo.cropped(to: extent)
+        let bars: CIImage
+        switch fit {
+        case .black: bars = CIImage(color: .black).cropped(to: extent)
+        case .white: bars = CIImage(color: .white).cropped(to: extent)
+        case .blur: bars = layer(cover).clampedToExtent().applyingGaussianBlur(sigma: Double(blurSigma)).cropped(to: extent)
+        }
+        return photo.composited(over: bars)
     }
 
     /// The phone's default mark, with its opacity and shadow baked in. Missing from the bundle is a build
@@ -115,14 +151,14 @@ import UIKit
 
     /// The long side to decode at: enough pixels for the cropped region to fill the canvas sharply, never more
     /// than the original has and never beyond a memory-safe ceiling.
-    nonisolated static func decodeLongSide(_ data: Data, crop: NormalizedSourceRect?, pixels: CGSize) -> CGFloat {
+    nonisolated static func decodeLongSide(_ data: Data, crop: NormalizedSourceRect?, pixels: CGSize, fit: Bool) -> CGFloat {
         let base = max(pixels.width, pixels.height)
         guard let crop, let source = CGImageSourceCreateWithData(data as CFData, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
               let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue, width > 0, height > 0 else { return base }
         let turned = [5, 6, 7, 8].contains((properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1)
-        let placed = SlidePostFraming.placement(imageSize: turned ? CGSize(width: height, height: width) : CGSize(width: width, height: height), crop: crop, canvas: pixels)
+        let placed = SlidePostFraming.placement(imageSize: turned ? CGSize(width: height, height: width) : CGSize(width: width, height: height), crop: crop, canvas: pixels, fit: fit)
         return min(max(base, max(placed.width, placed.height)), 6144)
     }
 

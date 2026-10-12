@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.246.0] - 2026-10-12
+
+### Changed
+- fix(kria): write a footage line on each clip for "explain the footages" (KRI-612) (#1569) <!-- release-pr: 1569 -->
+
+## [0.78.245.0] - 2026-10-12
+
+### Changed
+- Unblock Mac CI and reuse one iPhone build per PR (#1567) <!-- release-pr: 1567 -->
+
+## [0.78.244.0] - 2026-10-12
+
+### Changed
+- feat: draw on videos in the iOS editor (KRI-589) (#1555) <!-- release-pr: 1555 -->
+
+## [0.78.243.0] - 2026-10-12
+
+### Changed
+- feat(slides): post-wide size and per-photo Fit for Sliders (KRI-606) (#1561) <!-- release-pr: 1561 -->
+
+## [0.78.242.0] - 2026-10-12
+
+### Fixed
+- fix(auth): tell creators which sign-in opens their account when Apple's email already has one (KRI-609) (#1563) <!-- release-pr: 1563 -->
+
+## [0.78.241.0] - 2026-10-12
+
+### Fixed
+- fix(kria): name clips by the file name the app shows, and never re-read a clip-card answer as a request (KRI-614) (#1570) <!-- release-pr: 1570 -->
+
+## [0.78.240.0] - 2026-10-12
+
+### Changed
+- ci(journey): give the KRI-598 journey its needs_native flag (fixes main CI) (#1568) <!-- release-pr: 1568 -->
+
 ## [0.78.239.0] - 2026-10-12
 
 ### Changed

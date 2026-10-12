@@ -41,6 +41,7 @@ from app.models import (
 )
 from app.schemas.edit_proposal import parse_edit_proposal
 from app.services.clip_facts import assignment_facts, facts_for_prompt
+from app.services.clip_file_names import clip_display_name
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_understanding import clip_record
 from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS, resolve_creator_manifest
@@ -423,6 +424,14 @@ async def resolve_item_creator_context(
             "media_id": media_id,
             "kind": clip_kind,
             "duration_s": duration_s,
+            # KRI-614: the name the app shows ("IMG_7382"), which creators use to name
+            # clips. Like the Visuals `filename` below, never on `CreatorMediaRef.label`
+            # (manifest hash). Omitted when unknown so older clips render unchanged.
+            **(
+                {"filename": name}
+                if (name := clip_display_name(assignment.get("source_filename")))
+                else {}
+            ),
             "creator_note": user_note or None,
             # AI evidence is clearly segregated and must never be copied to
             # on-screen text (also enforced in the main prompt). Populated
@@ -714,6 +723,7 @@ async def load_intent_clips_for_item(
                 )
                 or None,
                 capture_time=_assignment_capture_time(assignment),
+                file_name=clip_display_name(assignment.get("source_filename")),
             )
         )
 
@@ -754,6 +764,7 @@ async def load_intent_clips_for_item(
                     capture_time=_assignment_capture_time(
                         {"capture": getattr(asset, "capture", None)}
                     ),
+                    file_name=clip_display_name(getattr(asset, "source_filename", None)),
                 )
             )
 

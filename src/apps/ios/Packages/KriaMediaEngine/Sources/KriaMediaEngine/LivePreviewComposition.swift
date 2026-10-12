@@ -96,7 +96,8 @@ public struct LivePreviewExportSnapshot: Sendable {
                     layers: original.layers.filter { $0.overlayAboveText == above },
                     text: above ? Array(active.suffix(from: index + 1)) : Array(active.prefix(index)),
                     canvas: composition.renderSize, cameraPulses: original.cameraPulses,
-                    motionScenes: above ? nil : original.motionScenes, transparentBackground: above)
+                    motionScenes: above ? nil : original.motionScenes,
+                    drawings: above ? original.drawings : nil, transparentBackground: above)
             }
             return copy
         }
@@ -120,24 +121,33 @@ public struct LivePreviewExportSnapshot: Sendable {
         let selected = instruction.layers[index]
         let textBelowSelected = selected.overlayAboveText == true
         let activeText = try instruction.activeText(at: time)
-        func slice(layers: [RecipeVideoLayer], text: [RecipeTextLayer], transparent: Bool) -> AVVideoComposition {
+        func slice(layers: [RecipeVideoLayer], text: [RecipeTextLayer], transparent: Bool, drawings paintsDrawings: Bool = false) -> AVVideoComposition {
             let copy = composition.mutableCopy() as! AVMutableVideoComposition
             copy.instructions = (composition.instructions as! [RecipeVideoInstruction]).map { original in
                 guard original.timeRange == instruction.timeRange else { return original }
                 return RecipeVideoInstruction(timeRange: original.timeRange, layers: layers, text: text,
                     canvas: composition.renderSize, cameraPulses: original.cameraPulses,
                     motionScenes: transparent ? nil : original.motionScenes,
-                    transparentBackground: transparent)
+                    drawings: paintsDrawings ? original.drawings : nil, transparentBackground: transparent)
             }
             return copy
         }
         let below = slice(layers: Array(instruction.layers.prefix(index)),
                           text: textBelowSelected ? activeText : [], transparent: false)
+        // Drawings sit above everything, so only the foreground slice paints them; the moving media slice must not.
         let above = slice(layers: Array(instruction.layers.suffix(from: index + 1)),
-                          text: textBelowSelected ? [] : activeText, transparent: true)
+                          text: textBelowSelected ? [] : activeText, transparent: true, drawings: true)
         let media = slice(layers: [selected], text: [], transparent: true)
         return (below, above, media, CGRect(x: bounds.centerX - bounds.width / 2,
             y: bounds.centerY - bounds.height / 2, width: bounds.width, height: bounds.height))
+    }
+
+    /// Swaps only the freehand drawings (KRI-589): the cheap path for a move / scale / rotate gesture on a
+    /// drawing, which changes no other layer.
+    public func updateDrawings(_ layers: [PortableDrawingLayer]) throws {
+        var next = recipe
+        next.drawingLayers = layers
+        try updateText(recipe: next)
     }
 
     public func updateText(recipe next: EditRecipe, assetURLs nextURLs: [String: URL]? = nil) throws {
@@ -193,6 +203,7 @@ public struct LivePreviewExportSnapshot: Sendable {
         expected.motionScenes = next.motionScenes
         expected.visualFills = next.visualFills
         expected.textLayers = next.textLayers
+        expected.drawingLayers = next.drawingLayers
         expected.requiredCapabilities = next.requiredCapabilities
         guard expected == next,
               let current = preview.playerItem.videoComposition,
@@ -216,6 +227,9 @@ public struct LivePreviewExportSnapshot: Sendable {
         let nextClips = Dictionary(uniqueKeysWithValues: next.tracks.flatMap(\.clips).map { ($0.id, $0) })
         let motion = recipe.motionScenes == next.motionScenes ? first.motionScenes : try NativeMotionPainter.make(next.motionScenes,
             assets: urls, canvas: current.renderSize, duration: TimelineMath.totalDuration(of: next), frameRate: next.frameRate)
+        let drawings = next.drawingLayers.isEmpty ? nil
+            : recipe.drawingLayers == next.drawingLayers ? first.drawings
+            : NativeDrawingStore(layers: next.drawingLayers, canvas: current.renderSize)
         let oldFillIDs = Set(recipe.visualFills.map(\.id))
         var seen = Set<String>()
         let sourceLayers = instructions.flatMap(\.layers).filter { layer in
@@ -262,7 +276,7 @@ public struct LivePreviewExportSnapshot: Sendable {
         let total = TimelineMath.totalDuration(of: next)
         replacement.instructions = RecipeInstructionTiming.tiledRanges(total: total, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: painted, canvas: current.renderSize,
-                cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore)
+                cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings)
         }
         // Publish only after every layer validates successfully. Never touch
         // `audioMix` here (see `withoutVisuals`).

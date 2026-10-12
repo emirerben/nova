@@ -75,6 +75,7 @@ from app.services.guided_speech_cleanup import (
     require_guided_cleanup_binding,
 )
 from app.services.job_storage_paths import project_media_reference_lock_key
+from app.services.phone_rollout import freehand_drawing_client_supported
 from app.services.render_library import catalog_path, inspect_library_asset
 from app.services.speech_cleanup import SpeechCleanupFailure
 from app.services.speech_cleanup_outcome import build_preflight_public_outcome
@@ -227,6 +228,12 @@ async def get_device_render(
     except KeyError as exc:
         raise HTTPException(404, "Device recipe unavailable") from exc
     record, status = _record(job, status.request.identity)
+    if getattr(status.request.recipe, "drawing_layers", None) and (
+        not freehand_drawing_client_supported()
+    ):
+        # KRI-589: an older build rejects `drawingLayers` as an unknown recipe key and would
+        # FAIL the job instead of rendering. Tell it to update; the pinned recipe is untouched.
+        raise HTTPException(426, detail={"code": "client_update_required", "feature": "drawing"})
     now = datetime.now(UTC)
     last_polled_raw = record.get("last_polled_at")
     should_touch = True

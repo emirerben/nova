@@ -3,6 +3,8 @@ import SwiftUI
 /// One destination owns both the visible inspector and the rail highlight.
 enum NativeEditorPanel: Equatable {
     case text(String), textCreation, captions, visuals, sounds
+    /// KRI-589: a selected drawing's Edit / Animation panel.
+    case drawing(String)
 
     var tool: NativeEditorTool {
         switch self {
@@ -10,6 +12,7 @@ enum NativeEditorPanel: Equatable {
         case .captions: return .captions
         case .visuals: return .visuals
         case .sounds: return .sounds
+        case .drawing: return .draw
         }
     }
 }

@@ -1240,6 +1240,12 @@ struct NativeEditorTemporaryVideo {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-legacy-visuals") {
             itemID = "fixture-visual-item"
         }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-drawing") {
+            // KRI-589: Save goes through the real request encoder to a stub transport (no account, no server).
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-drawing-item"
+            variantKey = "initial"
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source") { loadState = .loading }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-song-reference") {
             previewVariant = NativeEditorUITestFixtures.songReferenceVariant
@@ -1500,6 +1506,7 @@ struct NativeEditorTemporaryVideo {
         items += document.visualBlocks.enumerated().map { index, item in projected(EditorSelection(kind: .visualBlock, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 150 + index), sourceIndex: index) }
         items += document.motionScenes.enumerated().map { index, item in projected(EditorSelection(kind: .motionScene, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 250 + index), sourceIndex: index) }
         items += document.cameraEffects.enumerated().map { index, item in projected(EditorSelection(kind: .cameraEffect, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 260 + index), sourceIndex: index) }
+        items += document.drawings.enumerated().map { index, item in projected(EditorSelection(kind: .drawing, id: item.id), start: item.startS, end: item.endS, zIndex: 270 + index, sourceIndex: index) }
         if let carousel = projection.carouselItem { items.append(carousel) }
         if let music = document.music {
             items.append(
@@ -4095,6 +4102,118 @@ struct NativeEditorTemporaryVideo {
         select(.init(kind: .cameraEffect, id: effect.id))
     }
 
+    // MARK: Drawings (KRI-589)
+
+    /// The Draw tool exists only when the server opens `drawings.add` for this variant (a phone-rendered
+    /// variant on a build that speaks protocol 5, with the kill switch on). Never inferred from the lane.
+    var canAddDrawing: Bool {
+        cloudEditorUnavailableMessage == nil && document.capabilities["drawings.add"]?.editable == true
+    }
+    var canEditDrawings: Bool { canEditOperation(["drawings.edit"], section: .drawings) }
+    var canDeleteDrawings: Bool { canEditOperation(["drawings.delete"], section: .drawings) }
+    func drawing(id: String) -> EditorDrawing? { document.drawings.first { $0.id == id } }
+
+    /// Why the next stroke cannot be added to `id` (a new drawing when nil), or nil when it can: the same
+    /// caps the server enforces, checked before Done so a scribble is never lost to a 422 on Save.
+    func drawingCapMessage(extraPoints: Int = 0, extraStrokes: Int = 0, editing id: String? = nil) -> String? {
+        let others = document.drawings.filter { $0.id != id }
+        let current = id.flatMap { drawing(id: $0) }
+        if id == nil, document.drawings.count >= DrawingLimits.maxDrawings { return "You can add up to \(DrawingLimits.maxDrawings) drawings." }
+        if (current?.strokes.count ?? 0) + extraStrokes > DrawingLimits.maxStrokesPerDrawing { return "That’s as many strokes as one drawing holds." }
+        if (current?.pointCount ?? 0) + extraPoints > DrawingLimits.maxPointsPerDrawing { return "That drawing is as detailed as it can get." }
+        if others.reduce(0, { $0 + $1.pointCount }) + (current?.pointCount ?? 0) + extraPoints > DrawingLimits.maxPointsPerVariant {
+            return "This video has as many drawings as it can hold."
+        }
+        return nil
+    }
+
+    /// Adds the strokes drawn in Draw mode as one drawing at the playhead: a 3 s window clamped to the
+    /// video, the pen drawing itself on over 1.2 s, centred where the strokes are. One undo step.
+    @discardableResult
+    func addDrawing(strokes: [DrawingStroke], canvasAspect: Double) -> Bool {
+        guard canAddDrawing, !strokes.isEmpty else { return false }
+        let editableEnd = timelineClips.map(\.end).max() ?? duration
+        guard let window = NativeVisualAuthoring.window(at: currentTime, duration: editableEnd, projection: timelineProjection, preferred: 3, minimum: 0.5),
+              drawingCapMessage(extraPoints: strokes.reduce(0) { $0 + $1.points.count }, extraStrokes: strokes.count) == nil else {
+            visualError = "A drawing can’t be added at this position."
+            return false
+        }
+        var drawing = EditorDrawing(startS: window.start, endS: window.end, canvasAspect: min(4.9, max(0.21, canvasAspect)), strokes: strokes)
+        let center = drawing.strokeCenter
+        drawing.centerX = center.x; drawing.centerY = center.y
+        drawing.drawDurationS = min(1.2, window.end - window.start)
+        guard drawing.isValid else { visualError = "That drawing can’t be saved."; return false }
+        transactDocument(section: .drawings) { $0.drawings.append(drawing) }
+        // Show it finished: the playhead moves to where the pen lifts, so Done never leaves an empty-looking frame.
+        select(.init(kind: .drawing, id: drawing.id), seekToStart: false)
+        seek(to: timelineProjection.projectBaseTime(min(drawing.endS - 0.05, drawing.startS + drawing.drawDurationS)))
+        return true
+    }
+
+    /// "Draw more": new strokes drawn on the preview join an existing drawing. They arrive in preview
+    /// coordinates, so they are carried back through the drawing's own move / scale / rotation, and the
+    /// drawing's centre is re-pinned so the strokes already there do not shift when the bounding box grows.
+    @discardableResult
+    func appendDrawingStrokes(id: String, previewStrokes: [DrawingStroke]) -> Bool {
+        guard canEditDrawings, !previewStrokes.isEmpty, let index = document.drawings.firstIndex(where: { $0.id == id }),
+              drawingCapMessage(extraPoints: previewStrokes.reduce(0) { $0 + $1.points.count }, extraStrokes: previewStrokes.count, editing: id) == nil else { return false }
+        var value = document.drawings[index]
+        value.append(previewStrokes: previewStrokes)
+        guard value.isValid else { return false }
+        transactDocument(section: .drawings) { $0.drawings[index] = value }
+        return true
+    }
+
+    private func mutateDrawing(id: String, operation: String = "edit", _ body: (inout EditorDrawing) -> Void) {
+        guard canEditOperation(["drawings.\(operation)", "drawings.edit"], section: .drawings),
+              let index = document.drawings.firstIndex(where: { $0.id == id }) else { return }
+        var value = document.drawings[index]
+        body(&value)
+        guard value.isValid, value != document.drawings[index] else { return }
+        transactDocument(section: .drawings) { $0.drawings[index] = value }
+    }
+
+    func recolorDrawing(id: String, hex: String) {
+        mutateDrawing(id: id) { value in value.strokes = value.strokes.map { $0.withColor(hex.uppercased()) } }
+    }
+    func setDrawingEntrance(id: String, entrance: DrawingEntrance) { mutateDrawing(id: id) { $0.entrance = entrance } }
+    func setDrawingExit(id: String, exit: DrawingExit) { mutateDrawing(id: id) { $0.exit = exit } }
+    func setDrawingDrawDuration(id: String, seconds: Double) {
+        guard seconds.isFinite else { return }
+        mutateDrawing(id: id) { $0.drawDurationS = min($0.endS - $0.startS, min(DrawingLimits.maxDrawDuration, max(0.2, (seconds * 20).rounded() / 20))) }
+    }
+    func setDrawingTransform(id: String, centerX: Double, centerY: Double, scale: Double, rotationDeg: Double) {
+        guard [centerX, centerY, scale, rotationDeg].allSatisfy(\.isFinite) else { return }
+        mutateDrawing(id: id) { value in
+            value.centerX = min(1, max(0, centerX)); value.centerY = min(1, max(0, centerY))
+            value.scale = min(3, max(0.2, scale)); value.rotationDeg = EditorDrawing.wrappedRotation(rotationDeg)
+        }
+    }
+    func setDrawingTiming(id: String, startS: Double? = nil, endS: Double? = nil) {
+        guard canEditOperation(["drawings.trim", "drawings.edit"], section: .drawings),
+              let index = document.drawings.firstIndex(where: { $0.id == id }) else { return }
+        transactDocument(section: .drawings) { document in
+            var value = document.drawings[index]
+            if let startS { value.startS = max(0, startS) }
+            if let endS { value.endS = endS }
+            if value.endS - value.startS < DrawingLimits.minDuration { value.endS = value.startS + DrawingLimits.minDuration }
+            value.drawDurationS = min(max(0.2, value.drawDurationS), max(0.2, value.endS - value.startS))
+            document.drawings[index] = value
+        }
+    }
+
+    /// The preview shows a drawing mid-gesture without a recompile: only the portable layers are swapped
+    /// in the live composition. The document is committed once, when the gesture ends.
+    func previewDrawingInPlace(_ drawing: EditorDrawing) {
+        guard sourcePreviewState == .ready, let preview = sourcePreview, player?.currentItem === preview.preview.playerItem else { return }
+        var drawings = document.drawings
+        guard let index = drawings.firstIndex(where: { $0.id == drawing.id }) else { return }
+        drawings[index] = drawing
+        let total = TimelineMath.totalDuration(of: preview.recipe)
+        try? preview.updateDrawings(NativeDrawingCompile.layers(drawings, timelineDuration: total))
+        if !isPlaying { seek(to: currentTime) }
+    }
+
     /// Places a catalog sound effect at the playhead as a point `sfx` lane
     /// item. The `raw` shape matches the web editor's `addSfxFromGlossary`
     /// exactly (`id`/`sound_effect_id`/`src_gcs_path`/`source`/`at_s`/`gain`/
@@ -4241,6 +4360,7 @@ struct NativeEditorTemporaryVideo {
         case .visualBlock: setVisualBlockTiming(id: selected.id, startS: start, endS: end)
         case .motionScene: setMotionSceneTiming(id: selected.id, startS: start, endS: end)
         case .cameraEffect: setCameraEffectTiming(id: selected.id, startS: start, endS: end)
+        case .drawing: setDrawingTiming(id: selected.id, startS: start, endS: end)
         default: break
         }
     }
@@ -4373,6 +4493,12 @@ struct NativeEditorTemporaryVideo {
                 document.cameraEffects.removeAll { $0.id == selected.id }
                 appendIfPersisted(EditorDeletion(kind: "camera_effect", id: selected.id), selection: selected, to: &document)
             }
+        case .drawing:
+            guard document.drawings.contains(where: { $0.id == selected.id }) else { return false }
+            transactDocument(section: .drawings) { document in
+                document.drawings.removeAll { $0.id == selected.id }
+                appendIfPersisted(EditorDeletion(kind: "drawing", id: selected.id), selection: selected, to: &document)
+            }
         case .carousel:
             guard document.carouselMoment != nil else { return false }
             transactDocument(section: .carouselMoment) { document in
@@ -4397,6 +4523,7 @@ struct NativeEditorTemporaryVideo {
         case .visualBlock: return cleanDocument.visualBlocks.contains { $0.id == selection.id }
         case .motionScene: return cleanDocument.motionScenes.contains { $0.id == selection.id }
         case .cameraEffect: return cleanDocument.cameraEffects.contains { $0.id == selection.id }
+        case .drawing: return cleanDocument.drawings.contains { $0.id == selection.id }
         case .carousel: return cleanDocument.carouselMoment?["id"] == .string(selection.id)
         }
     }
@@ -5326,6 +5453,7 @@ struct NativeEditorTemporaryVideo {
         case .mediaOverlay: return .mediaOverlays
         case .motionScene: return .motionScenes
         case .cameraEffect: return .cameraEffects
+        case .drawing: return .drawings
         default: return nil
         }
     }
@@ -5346,7 +5474,8 @@ struct NativeEditorTemporaryVideo {
         let operation = kind == .move ? "timing" : "trim"
         guard activeTimedEdit == nil,
               let section = section(for: selection.kind),
-              canEditOperation(["\(section.rawValue).\(operation)", section.rawValue], section: section),
+              // KRI-589: a drawing's window moves and trims under the server's `drawings.trim` / `drawings.edit`.
+              canEditOperation(section == .drawings ? ["drawings.trim", "drawings.edit"] : ["\(section.rawValue).\(operation)", section.rawValue], section: section),
               timedObjectExists(selection),
               supportsTimedGesture(selection) else { return }
         activeTimedEdit = ActiveTimedEdit(selection: selection, edge: edge, kind: kind, baseline: document, redoBaseline: redoStack, projection: timelineProjection)
@@ -5420,6 +5549,7 @@ struct NativeEditorTemporaryVideo {
         case .visualBlock: guard let item = document.visualBlocks.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         case .motionScene: guard let item = document.motionScenes.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         case .cameraEffect: guard let item = document.cameraEffects.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
+        case .drawing: guard let item = document.drawings.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         default: return nil
         }
     }
@@ -5468,6 +5598,12 @@ struct NativeEditorTemporaryVideo {
             )
             document.cameraEffects[index].startS = clamped.0
             document.cameraEffects[index].endS = clamped.1
+        case .drawing:
+            guard let index = document.drawings.firstIndex(where: { $0.id == selection.id }) else { return }
+            document.drawings[index].startS = start
+            document.drawings[index].endS = end
+            // The pen can never take longer than the window it draws in.
+            document.drawings[index].drawDurationS = min(max(0.2, document.drawings[index].drawDurationS), max(0.2, end - start))
         default: break
         }
     }
@@ -5508,6 +5644,7 @@ struct NativeEditorTemporaryVideo {
         case .visualBlocks: return ["visual_blocks", "lanes.visual_blocks"]
         case .motionScenes: return ["motion_scenes", "lanes.motion_scenes"]
         case .cameraEffects: return ["camera_effects", "lanes.camera_effects"]
+        case .drawings: return ["drawings", "lanes.drawings"]
         case .carouselMoment: return ["carousel_moment", "carousel"]
         // KRI-216: line edits (caption_cues) and style/settings (caption_meta)
         // are separate server capabilities — `.captions` must prefer
@@ -5527,7 +5664,8 @@ struct NativeEditorTemporaryVideo {
         case .text: return canEditText
         case .captions, .captionMeta: return canEditCaptions
         case .mix, .music, .backgroundMusic: return canEditMix
-        case .soundEffects, .mediaOverlays, .visualBlocks, .motionScenes, .cameraEffects,
+        // KRI-589: only the per-operation `drawings.*` capabilities open drawings.
+        case .soundEffects, .mediaOverlays, .visualBlocks, .motionScenes, .cameraEffects, .drawings,
              .carouselMoment, .lyrics, .title: return false
         // KRI-306: the server capability decides; with no capability the section stays closed.
         case .orientation, .landscapeFit: return false
@@ -5560,6 +5698,7 @@ struct NativeEditorTemporaryVideo {
             case .visualBlocks: differs = document.visualBlocks != cleanDocument.visualBlocks
             case .motionScenes: differs = document.motionScenes != cleanDocument.motionScenes || document.motionRuntimeHash != cleanDocument.motionRuntimeHash
             case .cameraEffects: differs = document.cameraEffects != cleanDocument.cameraEffects
+            case .drawings: differs = document.drawings != cleanDocument.drawings
             case .carouselMoment: differs = document.carouselMoment != cleanDocument.carouselMoment
             case .title: differs = document.title != cleanDocument.title
             case .userSong: differs = document.userSong != cleanDocument.userSong
@@ -5704,6 +5843,7 @@ struct NativeEditorTemporaryVideo {
             motionScenes: array("motion_scenes", .motionScenes),
             motionRuntimeHash: changedSections.contains(.motionScenes) ? document.motionRuntimeHash : nil,
             cameraEffects: array("camera_effects", .cameraEffects),
+            drawings: array("drawings", .drawings),
             carouselMoment: changedSections.contains(.carouselMoment) ? (carouselObject.map(EditorCarouselMomentPatch.replace) ?? .remove) : .omitted,
             title: changedSections.contains(.title) ? value["title"]?.stringValue : nil,
             guidedRevisionNumber: guidedRevisionNumber,
@@ -5738,7 +5878,7 @@ struct NativeEditorTemporaryVideo {
         if sections.backgroundMusic { result.insert(.backgroundMusic) }; if sections.lyrics { result.insert(.lyrics) }
         if sections.orientation { result.insert(.orientation) }; if sections.landscapeFit { result.insert(.landscapeFit) }; if sections.soundEffects { result.insert(.soundEffects) }
         if sections.mediaOverlays { result.insert(.mediaOverlays) }; if sections.visualBlocks { result.insert(.visualBlocks) }
-        if sections.motionScenes { result.insert(.motionScenes) }; if sections.cameraEffects { result.insert(.cameraEffects) }
+        if sections.motionScenes { result.insert(.motionScenes) }; if sections.cameraEffects { result.insert(.cameraEffects) }; if sections.drawings { result.insert(.drawings) }
         if sections.carouselMoment { result.insert(.carouselMoment) }; if sections.title { result.insert(.title) }
         // KRI-428: a user_song the server accepted is saved even if it does not echo the section
         // (a rejected one answers 422 and never reaches here).
@@ -5824,6 +5964,7 @@ struct NativeEditorTemporaryVideo {
             baseline.motionScenes = submitted.motionScenes
             baseline.motionRuntimeHash = submitted.motionRuntimeHash
         case .cameraEffects: baseline.cameraEffects = submitted.cameraEffects
+        case .drawings: baseline.drawings = submitted.drawings
         case .carouselMoment: baseline.carouselMoment = submitted.carouselMoment
         case .title: baseline.title = submitted.title
         case .userSong: baseline.userSong = submitted.userSong

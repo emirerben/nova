@@ -37,7 +37,7 @@ from pydantic import (
 from app.kria.brief_binding import BriefBinding
 from app.kria.recipes import NormalizedSourceCrop
 from app.pipeline.look_presets import LookPreset
-from app.pipeline.slide_post.profiles import PlatformProfile
+from app.pipeline.slide_post.profiles import PlatformProfile, SlideAspect, coerce_aspect
 
 # Hard outer bound independent of platform profile — the tightest profile
 # (tiktok_photo, 35) is looser than this only by convention; this cap exists
@@ -210,6 +210,10 @@ def _position_bucket(element: SlideTextElement) -> str:
 
 SlideOrientation = Literal["portrait", "landscape"]
 
+# How a photo sits in the post canvas (KRI-606). None = fill (cover-crop, the
+# historical behaviour); a value shows the whole (cropped) photo with these bars.
+SlideFit = Literal["blur", "black", "white"]
+
 
 class SlideFraming(BaseModel):
     """How this slide's media is framed (KRI-44).
@@ -241,12 +245,20 @@ class SlideEdits(BaseModel):
     # Omitted from the serialized form while None (see `_omit_unset_framing`) so
     # an unframed slide hashes/serializes exactly as before this field existed.
     framing: SlideFraming | None = None
+    # A sibling of `framing`, not nested in it: the KRI-44 iOS build re-encodes
+    # `framing` from its own struct and would drop an unknown nested key, whereas
+    # an unknown sibling key is simply omitted by that build (and the server's
+    # "missing means keep" merge protects it). Omitted while None for the same
+    # cache-digest reason as `framing`.
+    fit: SlideFit | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_framing(self, handler: Any) -> dict[str, Any]:
         data = handler(self)
-        if isinstance(data, dict) and data.get("framing") is None:
-            data.pop("framing", None)
+        if isinstance(data, dict):
+            for key in ("framing", "fit"):
+                if data.get(key) is None:
+                    data.pop(key, None)
         return data
 
     @model_validator(mode="after")
@@ -310,6 +322,13 @@ def _portrait_slide(slide: SlideRef) -> SlideRef:
     return slide.model_copy(update={"edits": slide.edits.model_copy(update={"framing": None})})
 
 
+def _without_video_fit(slide: SlideRef) -> SlideRef:
+    """Fit is a photo-only treatment: a video slide never carries it."""
+    if slide.kind != "video" or slide.edits is None or slide.edits.fit is None:
+        return slide
+    return slide.model_copy(update={"edits": slide.edits.model_copy(update={"fit": None})})
+
+
 class SlidePostDraft(BaseModel):
     """The persisted draft document (`PlanItem.slide_post`)."""
 
@@ -332,6 +351,17 @@ class SlidePostDraft(BaseModel):
     # Immutable creator-request/asset identity authority for follow-up chat
     # edits. Optional keeps legacy draft readers and rollback payloads valid.
     brief_binding: BriefBinding | None = None
+    # Post-wide size (KRI-606). None = the profile's default size; omitted from
+    # the serialized draft while None so existing drafts, their brief-binding
+    # snapshot digests and render cache keys are byte-identical.
+    aspect: SlideAspect | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_aspect(self, handler: Any) -> dict[str, Any]:
+        data = handler(self)
+        if isinstance(data, dict) and data.get("aspect") is None:
+            data.pop("aspect", None)
+        return data
 
     @field_validator("brief_binding", mode="before")
     @classmethod
@@ -340,6 +370,14 @@ class SlidePostDraft(BaseModel):
 
     @model_validator(mode="after")
     def _validate_cover_and_ids(self) -> SlidePostDraft:
+        # An aspect the profile doesn't allow (or its default) collapses to None,
+        # so switching platform falls back to the new platform's default size.
+        # Assign only on a real change: assignment adds the field to `model_fields_set`,
+        # and the chat-edit backfill reads that set to tell "client omitted it" apart
+        # from "client sent it".
+        coerced = coerce_aspect(self.platform_profile, self.aspect)
+        if coerced != self.aspect:
+            self.aspect = coerced
         if self.slides:
             if self.cover_index >= len(self.slides):
                 raise ValueError("cover_index out of range")
@@ -350,6 +388,8 @@ class SlidePostDraft(BaseModel):
                 # Instagram forces one shape for every slide, so a slide that was
                 # landscape on the TikTok profile falls back to the post's shape.
                 self.slides = [_portrait_slide(s) for s in self.slides]
+            # Video slides always cover-fill the post canvas.
+            self.slides = [_without_video_fit(s) for s in self.slides]
         elif self.cover_index != 0:
             raise ValueError("cover_index must be 0 when there are no slides")
         return self
@@ -486,45 +526,58 @@ def merge_legacy_text_edits(
                     if "framing" in incoming.model_fields_set
                     else {}
                 ),
+                # Only when sent: passing fit=None unconditionally would mark it
+                # explicit and the later merge would clear a stored Fit (the web
+                # editor has no `texts`, so every web save takes this path).
+                **({"fit": incoming.fit} if "fit" in incoming.model_fields_set else {}),
             }
         )
         merged.append(ref.model_copy(update={"edits": new_edits}))
     return merged
 
 
-def merge_stored_framing(
-    stored: SlidePostDraft | None, slides: list[SlideRef], *, accept_incoming: bool
+def merge_stored_edit_key(
+    stored: SlidePostDraft | None,
+    slides: list[SlideRef],
+    key: Literal["framing", "fit"],
+    *,
+    accept_incoming: bool,
 ) -> list[SlideRef]:
-    """Protect stored `framing` (crop/orientation) from a client that omits it.
+    """Protect a stored per-slide edit key from a client that omits it.
 
     Three states, decided per slide via `model_fields_set`:
-    - `framing` key missing (an older iOS build, the web editor, or
-      `edits: null`) -> keep what is stored.
-    - explicit `framing: null` -> cleared.
+    - key missing (an older iOS build, the web editor, or `edits: null`)
+      -> keep what is stored.
+    - explicit `null` -> cleared.
     - a value -> set as sent.
-    With ``accept_incoming=False`` (SLIDE_POST_FRAMING_ENABLED off) every slide
-    keeps its stored framing, so no framed draft exists until api and worker
-    both run the new code.
+    With ``accept_incoming=False`` (the key's feature flag off) every slide
+    keeps its stored value, so no such draft exists until api and worker both
+    run the new code.
     """
     stored_by_id = {s.id: s for s in stored.slides} if stored is not None else {}
     merged: list[SlideRef] = []
     for ref in slides:
         old = stored_by_id.get(ref.id)
-        old_framing = old.edits.framing if old is not None and old.edits is not None else None
+        old_value = getattr(old.edits, key) if old is not None and old.edits is not None else None
         incoming = ref.edits
-        explicit = (
-            accept_incoming and incoming is not None and "framing" in incoming.model_fields_set
-        )
+        explicit = accept_incoming and incoming is not None and key in incoming.model_fields_set
         if explicit:
             merged.append(ref)
             continue
-        current = incoming.framing if incoming is not None else None
-        if old_framing == current:
+        current = getattr(incoming, key) if incoming is not None else None
+        if old_value == current:
             merged.append(ref)
             continue
         if incoming is None:
-            edits = SlideEdits(framing=old_framing)
+            edits = SlideEdits(**{key: old_value})
         else:
-            edits = incoming.model_copy(update={"framing": old_framing})
+            edits = incoming.model_copy(update={key: old_value})
         merged.append(ref.model_copy(update={"edits": edits}))
     return merged
+
+
+def merge_stored_framing(
+    stored: SlidePostDraft | None, slides: list[SlideRef], *, accept_incoming: bool
+) -> list[SlideRef]:
+    """Protect stored `framing` (crop/orientation) — see `merge_stored_edit_key`."""
+    return merge_stored_edit_key(stored, slides, "framing", accept_incoming=accept_incoming)
