@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.239.0] - 2026-10-12
+
+### Changed
+- fix(narrated): keep every clip on a voiceover edit unless the creator dropped some (KRI-593) (#1549) <!-- release-pr: 1549 -->
+
 ## [0.78.238.0] - 2026-10-12
 
 ### Changed
