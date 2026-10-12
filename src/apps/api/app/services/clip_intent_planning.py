@@ -21,12 +21,16 @@ from app.agents.clip_intent_planner import (
 from app.config import settings
 from app.kria.reply_language import current_reply_language, say
 from app.schemas.clip_intents import (
+    CLIP_DESCRIPTION_ATTRIBUTE,
+    MAX_CLIP_INTENTS,
     ClipAssignment,
     ClipIntent,
     ResolvedClipIntent,
+    asks_clip_description,
     ground_caption,
     ground_label,
     ground_placeholder_label,
+    is_clip_description_label,
 )
 from app.services.clip_intent_resolution import (
     IntentClip,
@@ -122,6 +126,46 @@ def resolve_order_by_intent(intent: ClipIntent, clips: list[IntentClip]) -> Reso
             for clip in clips
         ],
     )
+
+
+# KRI-612: the label the server adds when the brief asks for a line on each clip.
+CLIP_DESCRIPTIONS_INTENT_ID = "clip-descriptions"
+
+
+def _caption_asking_description(intent: ClipIntent) -> bool:
+    return (
+        intent.op == "caption"
+        and intent.creator_text is None
+        and (
+            asks_clip_description(intent.caption_attribute)
+            or asks_clip_description(intent.attribute)
+        )
+    )
+
+
+def with_clip_descriptions(intents: list[ClipIntent]) -> list[ClipIntent]:
+    """Make ONE description label carry "explain / summarise each clip" (KRI-612).
+
+    Only called when the Creative Brief asks for described text on each clip. The
+    inventory planner may read "a summary" as one chapter caption (a phone montage never
+    prints a caption Kria wrote, and one caption is not text on each clip) or drop the ask
+    as context. Such a caption is replaced by the label and a missing label is added; a
+    description label the planner already wrote is kept as it is.
+    """
+    has_label = any(is_clip_description_label(intent) for intent in intents)
+    kept = [intent for intent in intents if not _caption_asking_description(intent)]
+    if has_label:
+        return kept
+    if len(kept) >= MAX_CLIP_INTENTS:
+        return intents
+    taken = {intent.intent_id for intent in kept}
+    intent_id, n = CLIP_DESCRIPTIONS_INTENT_ID, 2
+    while intent_id in taken:
+        intent_id, n = f"{CLIP_DESCRIPTIONS_INTENT_ID}-{n}", n + 1
+    return [
+        *kept,
+        ClipIntent(intent_id=intent_id, op="label", attribute=CLIP_DESCRIPTION_ATTRIBUTE),
+    ]
 
 
 def apply_creator_selections(
@@ -241,7 +285,10 @@ async def plan_and_resolve_clip_intents(
     refresh_clips: ClipRefresh | None = None,
     understanding_wait_until: float | None = None,
     clip_selections: ClipSelections | None = None,
+    describe_clips: bool = False,
 ) -> PlannedIntentResolution:
+    """``describe_clips`` (KRI-612): the Creative Brief asks for a line on each clip saying
+    what it shows, so the inventory always carries one description label for it."""
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
             [],
@@ -376,6 +423,8 @@ async def plan_and_resolve_clip_intents(
             intent.model_copy(update={"order_by": None}) if intent.order_by else intent
             for intent in intents
         ]
+    if describe_clips:
+        intents = with_clip_descriptions(intents)
     visual_intents = [intent for intent in intents if intent.label_source == "clip"]
     order_by_intents = [intent for intent in visual_intents if intent.order_by]
     visual_intents = [intent for intent in visual_intents if not intent.order_by]

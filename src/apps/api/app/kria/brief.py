@@ -43,6 +43,7 @@ from app.agents._schemas.text_element import _ALLOWED_FONTS, _HEX_COLOR_RE
 from app.kria.brief_route import loose_text, wants_filming_time_text
 from app.kria.reply_language import detect_chat_language
 from app.models import CreativeBriefVersion
+from app.schemas.clip_intents import asks_clip_description
 from app.schemas.text_style_intent import normalize_title_animation
 from app.services.kria_editor_ops_diff import font_family_key
 
@@ -1003,6 +1004,23 @@ def _leaves_medium_out(words: str) -> bool:
                 return True
             segment = []
     return False
+
+
+def wants_clip_descriptions(brief: CreativeBrief | None) -> bool:
+    """KRI-612: does a live requirement ask Kria to write what each clip shows?
+
+    "explain the footages" / "a summary of the match day event" is described text on each
+    clip (no literal): a line per clip read from its footage. Exact words, a placeholder
+    and any other scope are something else.
+    """
+    return brief is not None and any(
+        req.kind == "text"
+        and req.scope == "per_clip"
+        and not req.literal
+        and not (req.facts or {}).get("placeholder")
+        and asks_clip_description(req.description)
+        for req in brief.live()
+    )
 
 
 def requested_media(brief: CreativeBrief | None, media_ids: Iterable[str]) -> dict[str, str]:

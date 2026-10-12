@@ -150,6 +150,15 @@ Flow (flag on):
    `named_guesses_settled`). The resolver runs as ONE call while the project
    fits the measured 12-clip x 8-intent (96-cell) load; bigger projects split into
    ~48-cell shards, which see only part of the footage at once.
+   A label that asks what happens in each clip ("explain the footages", "a summary
+   on each clip"; `is_clip_description_label`, canonical attribute "what is
+   happening in the clip") never asks the creator and never re-checks the
+   footage: every clip keeps the resolver's grounded line or else takes the first
+   unused line from its own record (`footage_lines`), so no two clips repeat one.
+   When the Creative Brief holds such a described per-clip text, the server
+   makes sure exactly one of these labels exists and replaces a chapter caption
+   the inventory planner wrote for the same ask (`with_clip_descriptions`,
+   KRI-612).
    Clips the record cannot answer go to `ClipQuestionAgent` (the vision
    model re-watches THAT clip): at most `clip_intents_max_vision_requeries`
    (4) per turn, under one `clip_intents_vision_deadline_s` (25 s) deadline, video

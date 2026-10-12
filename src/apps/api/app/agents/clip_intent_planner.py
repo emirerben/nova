@@ -678,7 +678,9 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         name="nova.plan.clip_intent_planner",
         prompt_id="clip_intent_planner",
         # KRI-598: a voiceover cue for a clip is `include`, never a described sequence.
-        prompt_version="2026-10-11.1",
+        # KRI-612: "explain / summarise the footage" is one `what is happening in the clip`
+        # label, never a caption.
+        prompt_version="2026-10-12.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
