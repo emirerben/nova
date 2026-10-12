@@ -2303,6 +2303,25 @@ def _shadow_route(
         log.warning("route_shadow_unavailable", job_id=job_id, point=point)
 
 
+def _refuse_sfx_on_speech_writer(candidates: dict) -> None:
+    """KRI-608: the speech-cut phone writers have no sound-effect lane.
+
+    The creation manifest opens ``sound_effects`` for the guided formats, and only the
+    guided / unified writers materialize a licensed effect. Rather than build a speech edit
+    that quietly omits the effect the creator asked for (KRI-129: no silent overrides),
+    refuse it with the reason.
+    """
+    strategy = candidates.get("creator_strategy")
+    if isinstance(strategy, dict) and (strategy.get("licensed_sfx") or strategy.get("sfx_intent")):
+        from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+
+        raise UnsupportedPhonePlan(
+            "Sound effects can't be added to an edit cut from what you say yet. "
+            "Ask for the edit without the sound effect, then add it in the editor.",
+            capability="soundEffects",
+        )
+
+
 def _voice_behind_footage_route(snapshot: dict, candidates: dict) -> bool:
     """KRI-479: does this STAMPED plan resolve to ``voice_behind_footage``?
 
@@ -2500,6 +2519,7 @@ def _run_generative_job_impl(
                         run_phone_voice_behind_footage_job,
                     )
 
+                    _refuse_sfx_on_speech_writer(candidates)
                     _shadow_route(
                         job_id,
                         phone_snapshot,
@@ -2567,6 +2587,8 @@ def _run_generative_job_impl(
                             ),
                             "phone_dispatch",
                         )
+                        if required_speech:
+                            _refuse_sfx_on_speech_writer(candidates)
                         if required_speech or (
                             contract is None and not candidates.get("user_song")
                         ):
@@ -4301,6 +4323,7 @@ def _run_phone_guided_job(
     )
     from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
         UnsupportedPhonePlan,
+        guided_sfx_requests,
     )
     from app.pipeline.phone_plan_repair import compile_phone_guided_repaired  # noqa: PLC0415
     from app.services.device_narration_binding import make_device_narration_binding  # noqa: PLC0415
@@ -4313,6 +4336,7 @@ def _run_phone_guided_job(
     )
     from app.services.phone_rollout import (  # noqa: PLC0415
         phone_guided_narration_supported,
+        phone_guided_sfx_supported,
         validate_phone_pilot_recipe,
     )
     from app.services.phone_sources import (  # noqa: PLC0415
@@ -4413,6 +4437,19 @@ def _run_phone_guided_job(
                 capability="musicBed",
             )
         song_bed = _resolve_phone_song_bed(job_id, plan.user_song)
+    # KRI-608: the plan's sound effects (licensed ones were materialized into placements
+    # by `_guided_execution_plan`). Same recheck as the lanes above: the dispatch gate
+    # cleared this, but a redelivery or a flag flip mid-flight must fail closed here.
+    sound_effects: tuple = ()
+    if plan.editor_sound_effects:
+        if not phone_guided_sfx_supported():
+            raise UnsupportedPhonePlan(
+                "phone rendering of sound effects is currently unavailable",
+                capability="soundEffects",
+            )
+        sound_effects = tuple(
+            _resolve_phone_sound_effect(request) for request in guided_sfx_requests(plan)
+        )
     # KRI-286: deterministic repairs (sequence effect, unqualified font) are applied
     # and noted instead of failing the job after approval. Kwargs are forwarded as-is.
     compiled = compile_phone_guided_repaired(
@@ -4421,6 +4458,7 @@ def _run_phone_guided_job(
         visuals=visuals,
         narration=narration_bed,
         song=song_bed,
+        sound_effects=sound_effects,
         landscape_fit="fit" if landscape_fit == "fit" else "fill",
     )
     recipe, repair_notes = compiled.recipe, compiled.notes
@@ -4489,6 +4527,12 @@ def _run_phone_guided_job(
                 "ok": False,
             }
         ]
+        if raw_plan.get("editor_sound_effects"):
+            # The editor and chat read the current effects off the variant row (as on the
+            # cloud guided row); absent when there are none, so other rows are unchanged.
+            current["variants"][0]["sound_effects"] = copy.deepcopy(
+                raw_plan["editor_sound_effects"]
+            )
         if repair_notes:
             # Creator-visible (job projection -> render_notes): what Kria changed so
             # the plan could render on the phone (KRI-129: never a silent override).

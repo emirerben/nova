@@ -57,7 +57,7 @@ A case existing in the enum is **vocabulary**, never a claim of support. Three s
 
 | Capability | Plan lane / source catalog | What's missing |
 | --- | --- | --- |
-| `soundEffects` | `.licensed_sfx_intent`, `.editor_sound_effects` | `SoundEffectPlacement` (library + user uploads, `at_s`, gain, trim, effect groups) — `app/agents/_schemas/sound_effect.py`. |
+| `soundEffects` | `.editor_sound_effects` (KRI-608: compiled for guided / montage behind `PHONE_GUIDED_SFX_ENABLED`; `.licensed_sfx_intent` is provenance only) | Now renders: Talking (KRI-174), Voiceover (KRI-281) and guided / montage (KRI-608) share the `sfx` audio track from `phone_subtitled_plan._compile_sfx_track`. Still missing: custom uploads (catalog only) and loudness normalization — `SoundEffectPlacement` in `app/agents/_schemas/sound_effect.py`. |
 | `mediaCards` | `.editor_media_overlays` | `MediaOverlay` (pip/fullscreen, entrance/exit tokens, source crop, playback rate, z-order) — `app/agents/_schemas/media_overlay.py`. |
 | `customEffects` | `.editor_custom_effects` | 20 FFmpeg effect tokens (`boxblur`…`zoompan`), `pipeline/custom_effects.py`; combinations of up to six plus timeline semantics required. |
 | `motionPresets` | (no dedicated plan field; authored via the web motion-runtime editor) | 9 presets in `src/packages/motion-runtime/creator-blocks.catalog.json` (`card_stack`, `cloud_break`, `donut_text`, `evolving_type`, `film_strip`, `flow_field`, `kinetic_word`, `offer_swap`, `tag_stack`). Not the same runtime as native `motionScenes` above. |

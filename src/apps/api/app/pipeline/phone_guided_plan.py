@@ -7,7 +7,7 @@ their native implementations and parity fixtures are available.
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from app.kria.recipes import (
     AssetFingerprint,
@@ -46,6 +46,9 @@ from app.services.phone_sources import (
     require_bound_visual,
 )
 
+if TYPE_CHECKING:
+    from app.pipeline.phone_subtitled_lanes import ResolvedSoundEffect, SubtitledSoundEffect
+
 
 class UnsupportedPhonePlan(ValueError):
     """A device recipe cannot yet represent the full approved plan.
@@ -83,10 +86,16 @@ class UserSongPlanDeclined(UnsupportedPhonePlan):
 # `narration` is deliberately NOT here (KRI-132 phone-voiceover-gate
 # follow-up): the guided-story narration lane now has a phone compiler --
 # see the `plan.narration` handling below instead of the reject loop.
+#
+# Sound effects are deliberately NOT here either (KRI-608):
+# `editor_sound_effects` compiles to an `sfx` audio track through
+# `phone_subtitled_plan._compile_sfx_track` (the `sound_effects=` binding
+# below). `licensed_sfx_intent` is provenance only -- the cloud renders just
+# the `editor_sound_effects` the worker materialized from it -- so it needs
+# no lane of its own. A plan that carries effects without a binding still
+# fails closed (see `guided_sfx_requests`).
 _UNSUPPORTED_PHONE_LANE_CAPABILITY: dict[str, str] = {
     "music": "musicBed",
-    "licensed_sfx_intent": "soundEffects",
-    "editor_sound_effects": "soundEffects",
     "editor_media_overlays": "mediaCards",
     "editor_visual_blocks": "visualBlocks",
     "editor_motion_scenes": "motionScenes",
@@ -154,6 +163,7 @@ def compile_phone_guided_plan(
     narration: PhoneNarrationBed | None = None,
     allow_editor_media: bool = False,
     song: PhoneSongBed | None = None,
+    sound_effects: tuple[ResolvedSoundEffect, ...] = (),
     landscape_fit: Literal["fill", "fit"] = "fill",
 ) -> EditRecipeV2:
     """``visuals`` pins approved Visuals-pool photos and videos (KRI-121). Callers
@@ -181,6 +191,14 @@ def compile_phone_guided_plan(
     0.5 s in/out; lip-sync 0.05 s in, 0.3 s out. A lip-sync take is never
     start-shifted by the on-device refit: only its END may be truncated, and a
     take whose start no longer fits fails closed.
+
+    ``sound_effects`` (KRI-608): the catalog effects resolved by the caller
+    (`_resolve_phone_sound_effect` on the worker, `lanes_from_editor_sections` on
+    Save), required exactly when ``plan.editor_sound_effects`` is non-empty and
+    re-checked against the plan's own request ids so a stale binding fails
+    closed. Compiles to the same ``TimelineTrack(id="sfx", kind="audio")`` Talking
+    plays and adds ``soundEffects`` + ``audioMix``. Mirrors the cloud mix
+    (``_compose_guided_sfx``): trim + placement + gain, no speech duck.
 
     ``landscape_fit`` (KRI-285, ``"fill"`` default = unchanged output): ``"fit"``
     letterboxes a landscape (display-wide) video moment inside a PORTRAIT canvas
@@ -252,6 +270,28 @@ def compile_phone_guided_plan(
         raise UnsupportedPhonePlan(
             "phone song binding was provided for a plan with no creator song",
             capability="musicBed",
+        )
+    if plan.licensed_sfx_intent and not plan.editor_sound_effects:
+        from app.services.phone_rollout import phone_guided_sfx_supported  # noqa: PLC0415
+
+        # With the lane off the intent was never rendered, so keep failing closed rather
+        # than silently dropping the ask. With it on, the worker materializes the intent
+        # into placements before compiling (and raises when it can't ground one); the
+        # planning-time dry run compiles the bare intent, which must not reject the plan.
+        if not phone_guided_sfx_supported():
+            raise UnsupportedPhonePlan(
+                "unsupported phone lane: licensed_sfx_intent", capability="soundEffects"
+            )
+    sfx_requests = guided_sfx_requests(plan)
+    if sorted(_sfx_key(resolved.request) for resolved in sound_effects) != sorted(
+        _sfx_key(request) for request in sfx_requests
+    ):
+        # Either side missing (effects but no binding, a binding for a plan that has
+        # none), or a bound effect whose identity, time, level or trim differs from the
+        # plan's: never bind the wrong audio.
+        raise UnsupportedPhonePlan(
+            "the sound effects bound for the phone do not match the approved plan",
+            capability="soundEffects",
         )
     lipsync_takes = user_song.takes if user_song is not None and user_song.mode == "lipsync" else {}
     transition_names = {
@@ -877,6 +917,21 @@ def compile_phone_guided_plan(
         required_capabilities |= set(USER_SONG_REQUIRED_CAPABILITIES)
         if creator_hears_camera:
             required_capabilities |= {"audioMix"}
+    if sound_effects:
+        # Imported lazily: phone_subtitled_plan imports UnsupportedPhonePlan from here.
+        from app.pipeline.phone_subtitled_plan import _compile_sfx_track  # noqa: PLC0415
+
+        # `compiled_duration`, not the plan's nominal duration: an on-device refit can
+        # shrink the timeline, and an effect must never outlast the video it plays on.
+        sfx_track = _compile_sfx_track(
+            list(sound_effects),
+            timeline_end=compiled_duration,
+            assets=assets,
+            manifest=manifest,
+        )
+        if sfx_track.clips:
+            tracks.append(sfx_track)
+            required_capabilities |= {"soundEffects", "audioMix"}
     return EditRecipeV2(
         canvas=Canvas(width=canvas.width, height=canvas.height),
         assets=list(assets.values()),
@@ -886,3 +941,50 @@ def compile_phone_guided_plan(
         audio=audio,
         required_capabilities=required_capabilities,
     )
+
+
+def _sfx_key(request: SubtitledSoundEffect) -> tuple:
+    return (
+        request.id,
+        request.catalog_id,
+        round(request.at_s, 3),
+        round(request.volume, 3),
+        request.trim_start_s,
+        request.trim_end_s,
+    )
+
+
+def guided_sfx_requests(plan: GuidedStoryExecutionPlan) -> list[SubtitledSoundEffect]:
+    """The plan's ``editor_sound_effects`` as phone lane requests (KRI-608).
+
+    Rows are ``SoundEffectPlacement`` dicts (``gain`` becomes ``volume``). The phone
+    plays catalog effects only: a row with no ``sound_effect_id`` (a creator upload)
+    fails closed rather than being silently dropped.
+    """
+    from app.pipeline.phone_subtitled_lanes import SubtitledSoundEffect  # noqa: PLC0415
+
+    requests: list[SubtitledSoundEffect] = []
+    for row in plan.editor_sound_effects:
+        catalog_id = row.get("sound_effect_id")
+        if not isinstance(catalog_id, str) or not catalog_id.strip():
+            raise UnsupportedPhonePlan(
+                "a custom sound effect can't play on the iPhone yet; pick one from the library",
+                capability="soundEffects",
+            )
+        try:
+            requests.append(
+                SubtitledSoundEffect(
+                    id=str(row.get("id") or ""),
+                    catalog_id=catalog_id,
+                    at_s=float(row.get("at_s") or 0.0),
+                    volume=float(row.get("gain", 1.0)),
+                    trim_start_s=row.get("trim_start_s"),
+                    trim_end_s=row.get("trim_end_s"),
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise UnsupportedPhonePlan(
+                "a sound effect in this plan can't be rendered on the iPhone",
+                capability="soundEffects",
+            ) from exc
+    return requests
