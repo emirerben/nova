@@ -624,6 +624,10 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-598-voiceover-planner"),
             ),
             (
+                "src/apps/api/app/kria/voiceover_clips.py",
+                (True, "covered", "kri-593-voiceover-clips"),
+            ),
+            (
                 "src/apps/api/app/pipeline/phone_captions.py",
                 (True, "covered", "kri-548-caption-watermark"),
             ),
