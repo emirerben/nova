@@ -172,6 +172,10 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted
     /// `songOrder` and `choiceSelection` are independent structured answers (a turn carries at most one); each is nil = omitted.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted
+    /// `songRange` answers a "which part of the song did you film?" question (KRI-588, server capability
+    /// `song_range_questions`); nil = omitted. A 409 `song_range_stale` means the question is closed; a 422
+    /// `song_range_invalid` carries the server's copy for the card.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?) async throws -> TurnAccepted
     /// A short-lived signed URL for the thread's attached song, so the song timeline can draw and play it
     /// (KRI-561). `generation` pins the song the question was built against; a 409 `song_changed` means it was
     /// replaced. A 404 means the server does not offer it.
@@ -326,6 +330,10 @@ extension KriaAPIClient {
         return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder)
     }
 
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection)
+    }
+
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink { throw APIError.unsupported }
     func creationBrief(threadID: UUID) async throws -> CreativeBrief { throw APIError.unsupported }
@@ -384,9 +392,12 @@ struct TurnAccepted: Codable, Sendable {
     /// KRI-374: a take-order question carried on the turn response, when the server sends it there. Decoded
     /// leniently: a malformed or newer shape is dropped (nil), never a decode failure for the turn.
     var songOrderQuestion: SongOrderQuestion? = nil
-    enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status; case songOrderQuestion = "song_order_question" }
-    init(turnID: String, threadRevision: Int, status: String, songOrderQuestion: SongOrderQuestion? = nil) {
-        self.turnID = turnID; self.threadRevision = threadRevision; self.status = status; self.songOrderQuestion = songOrderQuestion
+    /// KRI-588: a song-range question carried on the turn response, decoded the same lenient way.
+    var songRangeQuestion: SongRangeQuestion? = nil
+    enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status; case songOrderQuestion = "song_order_question"; case songRangeQuestion = "song_range_question" }
+    init(turnID: String, threadRevision: Int, status: String, songOrderQuestion: SongOrderQuestion? = nil, songRangeQuestion: SongRangeQuestion? = nil) {
+        self.turnID = turnID; self.threadRevision = threadRevision; self.status = status
+        self.songOrderQuestion = songOrderQuestion; self.songRangeQuestion = songRangeQuestion
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -394,6 +405,7 @@ struct TurnAccepted: Codable, Sendable {
         threadRevision = try c.decode(Int.self, forKey: .threadRevision)
         status = try c.decode(String.self, forKey: .status)
         songOrderQuestion = (try? c.decodeIfPresent(JSONValue.self, forKey: .songOrderQuestion)).flatMap { $0 }.flatMap(SongOrderQuestion.init(json:))
+        songRangeQuestion = (try? c.decodeIfPresent(JSONValue.self, forKey: .songRangeQuestion)).flatMap { $0 }.flatMap(SongRangeQuestion.init(json:))
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -1130,7 +1142,11 @@ struct KriaAPI: KriaAPIClient {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: nil, choiceSelection: choiceSelection)
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
-        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection)), decode: TurnAccepted.self)
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: nil)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?) async throws -> TurnAccepted {
+        let body = SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange)
+        return try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(body), decode: TurnAccepted.self)
     }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
         try await request(
@@ -1650,9 +1666,9 @@ private enum ServerDateCoding {
         throw DecodingError.dataCorruptedError(in: try decoder.singleValueContainer(), debugDescription: "Expected ISO-8601 date")
     }
 }
-private struct SubmitTurnRequest: Encodable {
-    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil
-    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection" }
+struct SubmitTurnRequest: Encodable {
+    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil; var songRange: SongRangeAnswer? = nil
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
@@ -1661,6 +1677,7 @@ private struct SubmitTurnRequest: Encodable {
         try c.encodeIfPresent(clipSelection, forKey: .clipSelection)
         try c.encodeIfPresent(songOrder, forKey: .songOrder)
         try c.encodeIfPresent(choiceSelection, forKey: .choiceSelection)
+        try c.encodeIfPresent(songRange, forKey: .songRange)
     }
 }
 

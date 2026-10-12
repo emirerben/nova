@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.schemas.user_song import SongOrderQuestion
+from app.schemas.user_song import SongOrderQuestion, SongRangeQuestion
 
 KRIA_SCHEMA_VERSION = 2
 
@@ -57,6 +57,10 @@ class KriaTurnPlan(_KriaModel):
     # KRI-374: the "where do these takes sit in your song?" video-widget question.
     # Omitted from the dump when unset so every other plan stays byte-identical.
     song_order_question: SongOrderQuestion | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # KRI-588: the "which part of the song did you film?" question. Same omit-when-unset rule.
+    song_range_question: SongRangeQuestion | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     # KRI-282: conflict-choice payload (options to tap). Same omit-when-unset rule.

@@ -745,7 +745,15 @@ async def test_the_capability_is_advertised_with_the_song_and_has_its_own_kill_s
     monkeypatch.setattr(settings, "song_filming_range_enabled", False)
     manifest = await _caps()
     assert manifest["song_filming_range"] is False
+    assert manifest["song_range_questions"] is False  # KRI-588: the chat question goes with it
     assert manifest["song_order_questions"] is True  # the song itself is unaffected
+
+
+@pytest.mark.asyncio
+async def test_the_chat_range_question_is_advertised_only_with_the_song(monkeypatch) -> None:
+    assert (await _caps())["song_range_questions"] is True
+    monkeypatch.setattr(settings, "user_song_montage_enabled", False)
+    assert (await _caps())["song_range_questions"] is False
 
 
 @pytest.mark.asyncio
