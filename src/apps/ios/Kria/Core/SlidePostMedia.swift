@@ -9,18 +9,22 @@ enum SlidePostAutoAppend {
         var toAppend: [SlidePostAsset] = []
         /// Ready assets that did not fit the platform's slide limit.
         var skippedForLimit: [String] = []
-        /// Videos that cannot join a photos-only post (TikTok photo mode).
+        /// Videos that cannot join a photos-only post (TikTok photo mode) and could not switch it to Instagram.
         var skippedForVideo: [String] = []
+        /// A video arrived in a TikTok photo post with room under the Instagram limit, so the post becomes an
+        /// Instagram carousel instead of refusing the video (KRI-615).
+        var switchedToInstagram = false
         /// The seen-set to store afterwards. Everything the plan decided about is in it, so a removed
         /// slide's asset is never silently re-added and a skipped one is not retried forever.
         var seen: Set<String> = []
 
         var notice: String? {
             var parts: [String] = []
+            let switched = switchedToInstagram ? "Switched to Instagram carousel so the video fits." : nil
             if !skippedForLimit.isEmpty { parts.append("\(skippedForLimit.count) over the slide limit") }
             if !skippedForVideo.isEmpty { parts.append("\(skippedForVideo.count) video\(skippedForVideo.count == 1 ? "" : "s") can't go in a TikTok photo post") }
-            guard !parts.isEmpty else { return nil }
-            return "Not added: " + parts.joined(separator: ", ") + "."
+            guard !parts.isEmpty else { return switched }
+            return [switched, "Not added: " + parts.joined(separator: ", ") + "."].compactMap { $0 }.joined(separator: " ")
         }
     }
 
@@ -33,13 +37,18 @@ enum SlidePostAutoAppend {
         var plan = Plan(seen: seen)
         var used = Set(draft.slides.map(\.assetID))
         var count = draft.slides.count
-        let limit = maxSlides(profile: draft.platformProfile)
+        var profile = draft.platformProfile
         for asset in ready where !seen.contains(asset.id) {
             plan.seen.insert(asset.id)
             // Already a slide (or a duplicate row in the same pool snapshot): one asset, one slide.
             guard !used.contains(asset.id) else { continue }
-            if draft.platformProfile == "tiktok_photo", asset.kind == "video" { plan.skippedForVideo.append(asset.id); continue }
-            guard count < limit else { plan.skippedForLimit.append(asset.id); continue }
+            if profile == "tiktok_photo", asset.kind == "video" {
+                // Only a post that still fits Instagram's limit can switch; a bigger TikTok post keeps refusing.
+                guard count < maxSlides(profile: "instagram_carousel") else { plan.skippedForVideo.append(asset.id); continue }
+                profile = "instagram_carousel"
+                plan.switchedToInstagram = true
+            }
+            guard count < maxSlides(profile: profile) else { plan.skippedForLimit.append(asset.id); continue }
             plan.toAppend.append(asset); used.insert(asset.id); count += 1
         }
         return plan
