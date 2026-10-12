@@ -56,10 +56,15 @@ async def propose_slide_post_draft(
     current_draft: SlidePostDraft | None = None,
     instruction: str = "",
     run_context: RunContext | None = None,
+    aspect: str | None = None,
 ) -> SlidePostProposalResult:
     """Return a new `SlidePostDraft` ordering `assets` — AI-proposed when
     possible, pool order as the fail-open fallback. Never raises."""
 
+    # The post-wide size (KRI-606) survives a recompose; the validator drops it
+    # if the (possibly switched) platform doesn't allow it.
+    if aspect is None and current_draft is not None:
+        aspect = current_draft.aspect
     previous_by_asset = (
         {ref.asset_id: ref for ref in current_draft.slides} if current_draft is not None else {}
     )
@@ -88,6 +93,7 @@ async def propose_slide_post_draft(
         caption=current_draft.caption if current_draft is not None else "",
         version=previous_version + 1,
         user_edited=False,
+        aspect=aspect,
     )
 
     try:
@@ -167,6 +173,7 @@ async def propose_slide_post_draft(
             caption=result.caption,
             version=previous_version + 1,
             user_edited=False,
+            aspect=aspect,
         ),
         fallback_used=False,
     )
@@ -179,6 +186,7 @@ async def compose_slide_post_draft(
     platform_profile: PlatformProfile,
     previous_version: int,
     run_context: RunContext | None = None,
+    aspect: str | None = None,
 ) -> SlidePostDraft:
     """Backward-compatible persisted-compose helper used by the web route."""
     return (
@@ -188,5 +196,6 @@ async def compose_slide_post_draft(
             platform_profile=platform_profile,
             previous_version=previous_version,
             run_context=run_context,
+            aspect=aspect,
         )
     ).draft

@@ -150,19 +150,31 @@ struct SlidePostTransportRow: View {
     let canRedo: Bool
     let onUndo: () -> Void
     let onRedo: () -> Void
+    /// KRI-606: the status line opens the Size sheet when the post can be resized.
+    var onSubtitle: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(subtitle)
-                .font(KriaFont.body(13).weight(.semibold))
-                .foregroundStyle(unsaved ? KriaColor.ink : KriaColor.zinc)
-                .lineLimit(1).minimumScaleFactor(0.7)
-                .accessibilityIdentifier("slidepost-subtitle")
+            subtitleView
             Spacer(minLength: 4)
             historyButton("arrow.uturn.backward", label: "Undo", id: "slidepost-undo", enabled: canUndo, action: onUndo)
             historyButton("arrow.uturn.forward", label: "Redo", id: "slidepost-redo", enabled: canRedo, action: onRedo)
         }
         .padding(.horizontal, 14).frame(height: 54).background(KriaColor.paper)
+    }
+
+    @ViewBuilder private var subtitleView: some View {
+        let text = Text(subtitle)
+            .font(KriaFont.body(13).weight(.semibold))
+            .foregroundStyle(unsaved ? KriaColor.ink : KriaColor.zinc)
+            .lineLimit(1).minimumScaleFactor(0.7)
+        if let onSubtitle {
+            Button(action: onSubtitle) { text.frame(minHeight: 44) }
+                .buttonStyle(.plain).accessibilityHint("Change the post size")
+                .accessibilityIdentifier("slidepost-subtitle")
+        } else {
+            text.accessibilityIdentifier("slidepost-subtitle")
+        }
     }
 
     /// Same 44pt icon buttons as the video editor's undo/redo (`native-editor-undo`).
@@ -526,6 +538,9 @@ struct SlidePostToolBar: View {
     /// Crop shows only when the server's `slide_post_framing` is on and the slide is a photo.
     var showsCrop = false
     var onCrop: () -> Void = {}
+    /// KRI-606: the post-wide Size sheet, when the server's `slide_post_sizes` is on.
+    var showsSize = false
+    var onSize: () -> Void = {}
     let onText: () -> Void
     let onCover: () -> Void
     let onLook: () -> Void
@@ -553,6 +568,7 @@ struct SlidePostToolBar: View {
             item("star.square", "Cover", id: "slidepost-tool-cover", active: false, enabled: canCover, action: onCover)
             item("circle.lefthalf.filled", "Look", id: "slidepost-tool-look", active: mode == .look, action: onLook)
             if showsCrop { item("crop", "Crop", id: "slidepost-tool-crop", active: mode == .crop, action: onCrop) }
+            if showsSize { item("aspectratio", "Size", id: "slidepost-tool-size", active: false, action: onSize) }
             Menu {
                 Button(role: .destructive, action: onRemove) { Label("Remove slide", systemImage: "trash") }.disabled(!canRemove)
                 Button(action: onDuplicateText) { Label("Duplicate text", systemImage: "plus.square.on.square") }.disabled(!canDuplicateText)

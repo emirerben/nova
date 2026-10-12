@@ -98,6 +98,33 @@ def cover_placement(
     return (dest_x, dest_y, dest_w, dest_h)
 
 
+def fit_placement(
+    image_size: tuple[float, float],
+    crop: CropRect | dict[str, float] | None,
+    canvas: tuple[float, float],
+) -> tuple[float, float, float, float]:
+    """Where the FULL source image is drawn so ``crop`` sits whole inside ``canvas``.
+
+    The "Fit" twin of ``cover_placement`` (KRI-606): ``min`` instead of ``max``,
+    so nothing of the (cropped) region is trimmed and the leftover canvas shows
+    bars. Mirrored by ``SlidePostFraming.placement(fit:)`` in Swift and pinned
+    by the same parity fixture.
+    """
+    iw, ih = image_size
+    cw, ch = canvas
+    cx, cy, cwid, chei = (
+        (0.0, 0.0, 1.0, 1.0)
+        if crop is None
+        else (crop["x"], crop["y"], crop["width"], crop["height"])
+    )
+    region_w, region_h = iw * cwid, ih * chei
+    scale = min(cw / region_w, ch / region_h)
+    dest_w, dest_h = iw * scale, ih * scale
+    dest_x = cw / 2 - (cx + cwid / 2) * dest_w
+    dest_y = ch / 2 - (cy + chei / 2) * dest_h
+    return (dest_x, dest_y, dest_w, dest_h)
+
+
 def _num(value: float) -> str:
     return format(float(value), ".6f").rstrip("0").rstrip(".") or "0"
 

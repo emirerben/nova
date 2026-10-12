@@ -358,6 +358,8 @@ class CreationCapabilitiesOut(BaseModel):
     slide_post_rich_text: bool = False
     slide_post_chat_edit: bool = False
     slide_post_framing: bool = False
+    # KRI-606: post-wide size + per-photo Fit (needs framing for the Crop workspace).
+    slide_post_sizes: bool = False
     slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
@@ -3724,6 +3726,9 @@ async def capabilities(
             settings.slide_post_chat_edit_enabled and settings.slide_post_rich_text_enabled
         ),
         "slide_post_framing": bool(settings.slide_post_framing_enabled),
+        "slide_post_sizes": bool(
+            settings.slide_post_sizes_enabled and settings.slide_post_framing_enabled
+        ),
         "creation_mode": (
             "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"
         ),

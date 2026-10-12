@@ -139,28 +139,72 @@ def probe_duration_s(path: str) -> float:
     return float(out)
 
 
+# Gaussian sigma of the Fit "blur" bars, in full-resolution pixels. The filter
+# runs on a quarter-size copy (sigma 20); the phone mirrors this as a CIGaussianBlur
+# radius of this value x its output scale. Pinned by the parity fixture.
+FIT_BLUR_SIGMA_PX = 80
+_FIT_BLUR_DOWNSCALE = 4
+
+
+def _even(value: float) -> int:
+    return max(2, int(round(value / 2.0)) * 2)
+
+
 def _scale_crop_filter(canvas: Canvas, source_crop: dict[str, float] | None = None) -> str:
+    """Fill: cover-fit the (cropped) photo into the canvas."""
+    return _frame_filter(canvas, source_crop, None)
+
+
+def _frame_filter(canvas: Canvas, source_crop: dict[str, float] | None, fit: str | None) -> str:
+    """Frame the photo in the canvas: fill (cover-crop) or fit with bars (KRI-606).
+
+    A framing `source_crop` (upright space) is cut out first, so both the cover
+    fit and the Fit are of that region -- the same order the device and `reframe`
+    use. ``fit=None`` is the historical cover-fit, byte for byte.
+
+    The blur variant is one graph whose first and last chains are unlabelled, so
+    `_overlay_filter_complex`'s ``[0:v]{vf}[b0]`` wrap and the ``,``-joined look
+    fragment still work; its ``k*`` labels never collide with ``b0..bN``/``wm``.
+    ``format=auto`` matches every other overlay here (the default would convert
+    Fit slides to limited-range 4:2:0 and shift their colour against Fill ones).
+    """
     cw, ch = canvas
-    # Cover-fit: scale so the shorter axis fills the target, then center-crop
-    # the overflow. Same fit policy as image_to_video._normalize_to_9x16,
-    # expressed as one ffmpeg filter instead of a PIL resize+crop pass.
-    # A framing `source_crop` (upright space) is cut out first, so the cover fit
-    # is of that region -- the same order the device and `reframe` use.
-    fit = f"scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch}"
     pre = ffmpeg_crop_filter(source_crop)
-    return f"{pre},{fit}" if pre else fit
+    if fit is None:
+        # Cover-fit: scale so the shorter axis fills the target, then center-crop
+        # the overflow. Same fit policy as image_to_video._normalize_to_9x16,
+        # expressed as one ffmpeg filter instead of a PIL resize+crop pass.
+        cover = f"scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch}"
+        return f"{pre},{cover}" if pre else cover
+    head = f"{pre}," if pre else ""
+    if fit in ("black", "white"):
+        return (
+            f"{head}scale={cw}:{ch}:force_original_aspect_ratio=decrease,"
+            f"pad={cw}:{ch}:(ow-iw)/2:(oh-ih)/2:color={fit},setsar=1"
+        )
+    if fit == "blur":
+        bw, bh = _even(cw / _FIT_BLUR_DOWNSCALE), _even(ch / _FIT_BLUR_DOWNSCALE)
+        sigma = FIT_BLUR_SIGMA_PX // _FIT_BLUR_DOWNSCALE
+        return (
+            f"{head}split=2[kfg][kbg];"
+            f"[kbg]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},"
+            f"gblur=sigma={sigma},scale={cw}:{ch}[kbgo];"
+            f"[kfg]scale={cw}:{ch}:force_original_aspect_ratio=decrease[kfgo];"
+            f"[kbgo][kfgo]overlay=(W-w)/2:(H-h)/2:format=auto,setsar=1"
+        )
+    raise SlideBuildError(f"unknown fit {fit!r}")
 
 
-def slide_canvas(profile: str, edits: SlideEdits | None) -> Canvas:
-    """The canvas this slide exports at: the profile's, or 1920x1080 when the
+def slide_canvas(profile: str, edits: SlideEdits | None, aspect: str | None = None) -> Canvas:
+    """The canvas this slide exports at: the post's size, or 1920x1080 when the
     slide is landscape and the profile allows mixing shapes (KRI-44)."""
-    from app.pipeline.slide_post.profiles import PLATFORM_PROFILES  # noqa: PLC0415
+    from app.pipeline.slide_post.profiles import PLATFORM_PROFILES, post_canvas  # noqa: PLC0415
 
     spec = PLATFORM_PROFILES[profile]  # type: ignore[index]
     framing = edits.framing if edits is not None else None
     if framing is not None and framing.orientation == "landscape" and spec.allows_landscape:
         return LANDSCAPE_CANVAS
-    return spec.canvas
+    return post_canvas(profile, aspect)  # type: ignore[arg-type]
 
 
 def _framing_crop(edits: SlideEdits | None) -> dict[str, float] | None:
@@ -469,7 +513,7 @@ def normalize_image_slide(
         ) as edit_fragment,
         _text_pngs(edits, canvas=canvas, out_path=out_path) as pngs,
     ):
-        vf = _scale_crop_filter(canvas, _framing_crop(edits))
+        vf = _frame_filter(canvas, _framing_crop(edits), edits.fit if edits is not None else None)
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
         cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", decoded_path]
@@ -702,12 +746,16 @@ def build_post_manifest(
     caption: str,
     cover_index: int,
     slides: list[BundleSlideFile],
+    aspect: str | None = None,
 ) -> dict:
     """The `post.json` manifest — the platform-agnostic, order-authoritative
     description of the export bundle's contents."""
     return {
         "schema_version": 1,
         "platform_profile": platform_profile,
+        # Only when the creator chose a non-default size, so default bundles
+        # keep their historical manifest.
+        **({"aspect": aspect} if aspect else {}),
         "caption": caption,
         "cover_index": cover_index,
         "slides": [

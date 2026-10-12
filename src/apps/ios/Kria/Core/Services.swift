@@ -913,7 +913,11 @@ private enum KriaClientProtocolContract {
     /// KRI-465 needed no bump: the server sends that title without `read_only`
     /// (editable through the ordinary text paths) to the same protocol-4 builds,
     /// and `read_only` remains its kill-switch shape.
-    static let version = 4
+    ///
+    /// 5 (KRI-606): round-trips the slide post's size (`aspect`) and per-photo Fit, so the server may offer
+    /// the `set_post_aspect` / `set_slide_fit` chat ops. An older build would drop both keys on its next
+    /// save, so the server withholds those ops (and the Size sheet's capability) from it.
+    static let version = 5
     static let header = "X-Kria-Client-Protocol"
 }
 
