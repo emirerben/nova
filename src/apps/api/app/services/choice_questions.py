@@ -298,9 +298,15 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
     if candidate.kind == CONFLICT_VOICE_VS_DURATION and len(options) == 1:
         # Only the length the clips and the voice allow: a statement, never "the most I can do".
         only = options[0]
-        return (
-            f"{candidate.intro} {candidate.reason} I can make it {only.label}. "
-            f'Reply "{only.label}" to go with that, or change your request.'
+        return say(
+            en=(
+                f"{candidate.intro} {candidate.reason} I can make it {only.label}. "
+                f'Reply "{only.label}" to go with that, or change your request.'
+            ),
+            tr=(
+                f"{candidate.intro} {candidate.reason} Şunu yapabilirim: {only.label}. "
+                f'Bunu istiyorsan "{only.label}" yaz ya da isteğini değiştir.'
+            ),
         )
     if len(options) == 1:
         # One way forward is a statement, not a choice.
@@ -1421,15 +1427,20 @@ def _which_voice(
         row = by_id[media_id]
         length = _voice_length_s(row)
         quote = _spoken_quote(row)
-        label = f"Clip {index}" + (f" ({_clean_seconds(length)} s)" if length else "")
-        label += f": \u201c{quote}\u201d" if quote else ""
+        suffix = (f" ({_clean_seconds(length)} s)" if length else "") + (
+            f": \u201c{quote}\u201d" if quote else ""
+        )
         key = f"clip_{index}"
         options.append(
-            ConflictOption(
-                key=key,
-                label=label,
-                description="Use this recording's voice under the other clips.",
+            _option(
+                key,
+                label=(f"Clip {index}{suffix}", f"Klip {index}{suffix}"),
+                description=(
+                    "Use this recording's voice under the other clips.",
+                    "Bu kaydın sesi diğer klipleri altından çalsın.",
+                ),
                 aliases=(f"clip {index}",),
+                tr_aliases=(f"klip {index}",),
             )
         )
         effects[key] = {
@@ -1445,8 +1456,14 @@ def _which_voice(
         conflict_id=CONFLICT_WHICH_VOICE,
         field_path="montage_audio.source_media_ids[]",
         requirement_ids=(),
-        intro="More than one of your clips has someone talking.",
-        reason="only one recording can be the voice that plays under the rest.",
+        intro=say(
+            en="More than one of your clips has someone talking.",
+            tr="Birden fazla klibinde biri konuşuyor.",
+        ),
+        reason=say(
+            en="only one recording can be the voice that plays under the rest.",
+            tr="diğerlerinin altında yalnızca bir kaydın sesi çalabilir.",
+        ),
         options=tuple(options),
         input_digest=_digest(CONFLICT_WHICH_VOICE, sorted(pool)),
         effects=effects,
@@ -1501,17 +1518,23 @@ def _voice_vs_duration(
             return None
         whole = int(math.floor(length))
         asked_s, voice_s = _clean_seconds(asked), _clean_seconds(whole)
-        said = quoted or f"{asked_s} seconds"
+        said = quoted or say(en=f"{asked_s} seconds", tr=f"{asked_s} saniye")
         options: list[ConflictOption] = []
         effects: dict[str, Mapping[str, Any]] = {}
         # Each option only if the clips can actually be cut to it (never a promise that ends in
         # "won't loop": the footage must reach it and every clip must be seen).
         if whole >= _MIN_ASKED_VOICE_S and (bounds is None or bounds[0] <= whole <= bounds[1]):
             options.append(
-                ConflictOption(
-                    key=OPT_MATCH_VOICE,
-                    label=f"End the edit when your voice ends ({voice_s} seconds)",
-                    description="The video is exactly as long as your voice.",
+                _option(
+                    OPT_MATCH_VOICE,
+                    label=(
+                        f"End the edit when your voice ends ({voice_s} seconds)",
+                        f"Sesin bitince kurguyu bitir ({voice_s} saniye)",
+                    ),
+                    description=(
+                        "The video is exactly as long as your voice.",
+                        "Video tam olarak sesin kadar sürer.",
+                    ),
                     recommended=True,
                     aliases=("end when my voice ends", "match my voice", "match the voice"),
                 )
@@ -1525,13 +1548,18 @@ def _voice_vs_duration(
             }
         if bounds is None or asked <= bounds[1]:
             options.append(
-                ConflictOption(
-                    key=OPT_SILENT_TAIL,
+                _option(
+                    OPT_SILENT_TAIL,
                     label=(
                         f"Keep {asked_s} seconds, the last {_clean_seconds(asked - whole)} "
-                        "seconds play without voice"
+                        "seconds play without voice",
+                        f"{asked_s} saniyeyi koru, son {_clean_seconds(asked - whole)} "
+                        "saniye sessiz oynar",
                     ),
-                    description="Your voice plays first, then the footage carries on in silence.",
+                    description=(
+                        "Your voice plays first, then the footage carries on in silence.",
+                        "Önce sesin çalar, sonra çekimler sessizce devam eder.",
+                    ),
                     aliases=("keep the length", "keep the length without voice"),
                 )
             )
@@ -1545,8 +1573,14 @@ def _voice_vs_duration(
             }
         if not options:
             return None
-        intro = f'Your brief says "{said}" and your voice runs {voice_s} seconds.'
-        reason = "your voice can't fill the whole video."
+        intro = say(
+            en=f'Your brief says "{said}" and your voice runs {voice_s} seconds.',
+            tr=f'Brief\'inde "{said}" yazıyor ve sesin {voice_s} saniye sürüyor.',
+        )
+        reason = say(
+            en="your voice can't fill the whole video.",
+            tr="sesin videonun tamamını dolduramıyor.",
+        )
     elif length > _VOICE_IMPLICIT_ASK_S:
         count = len(_picture_ids(strategy, rows, cap))
         lo_s, hi_s = bounds if bounds is not None else (None, None)
@@ -1564,17 +1598,24 @@ def _voice_vs_duration(
         for index, seconds in enumerate(values):
             key = length_option_key(seconds)
             options.append(
-                ConflictOption(
-                    key=key,
-                    label=f"{seconds} seconds",
+                _option(
+                    key,
+                    label=(f"{seconds} seconds", f"{seconds} saniye"),
                     description=(
-                        "The shortest length where every clip stays on screen long enough "
-                        "to be seen."
+                        (
+                            "The shortest length where every clip stays on screen long "
+                            "enough to be seen.",
+                            "Her klibin görülebilecek kadar ekranda kaldığı en kısa süre.",
+                        )
                         if index == 0
-                        else "Longer: each clip stays on screen a little longer."
+                        else (
+                            "Longer: each clip stays on screen a little longer.",
+                            "Daha uzun: her klip ekranda biraz daha uzun kalır.",
+                        )
                     ),
                     recommended=index == 0,
                     aliases=(str(seconds), f"{seconds} seconds"),
+                    tr_aliases=(f"{seconds} saniye",),
                 )
             )
             effects[key] = {
@@ -1584,12 +1625,20 @@ def _voice_vs_duration(
                     "creator_duration_s": seconds,
                 }
             }
-        intro = f"Your voice runs {_clean_seconds(length)} seconds."
-        reason = (
-            "How long should the video be?"
-            if len(values) > 1
-            else f"{count} clips need at least {_clean_seconds(lo_s)} seconds to each be seen."
+        intro = say(
+            en=f"Your voice runs {_clean_seconds(length)} seconds.",
+            tr=f"Sesin {_clean_seconds(length)} saniye sürüyor.",
         )
+        if len(values) > 1:
+            reason = say(en="How long should the video be?", tr="Video ne kadar sürsün?")
+        else:
+            reason = say(
+                en=f"{count} clips need at least {_clean_seconds(lo_s)} seconds to each be seen.",
+                tr=(
+                    f"{count} klibin her birinin görülebilmesi için en az "
+                    f"{_clean_seconds(lo_s)} saniye gerekiyor."
+                ),
+            )
         requirement_ids = []
     else:
         return None
@@ -1777,6 +1826,14 @@ def _natural_capacity_s(
     return None
 
 
+def _asks_speech_cleanup(brief: Any) -> bool:
+    """The live brief already asks to cut pauses / fillers / retakes from the speech."""
+
+    from app.kria.brief_checks import _wants_cleanup  # noqa: PLC0415
+
+    return any(_wants_cleanup(req) for req in _live(brief))
+
+
 def _length_vs_natural(
     strategy: Mapping[str, Any],
     brief: Any,
@@ -1797,6 +1854,11 @@ def _length_vs_natural(
     if natural is None:
         return None
     owner, capacity, can_trim = natural
+    if owner == "take" and _asks_speech_cleanup(brief):
+        # KRI-629: the take's raw length is not what the edit will run. Pause/filler
+        # cleanup is consented to at approval, after this question would have been
+        # asked; the length ask is judged against the cleaned render instead.
+        return None
     source_capacity = capacity
     if capacity > cap.max_duration_s:
         if not can_trim:
@@ -1826,17 +1888,31 @@ def _length_vs_natural(
         "take": "spoken take",
         "footage": "footage",
     }[owner]
+    source_tr = {
+        "song": "şarkı",
+        "voiceover": "seslendirme ve seçilen çekimler",
+        "take": "konuşma kaydı",
+        "footage": "çekimler",
+    }[owner]
     asked_s, capacity_s = _clean_seconds(asked), _clean_seconds(capacity)
-    natural_description = (
-        f"Use {capacity_s} seconds of the recording and selected footage; "
-        "the remaining recording is left out."
-        if owner == "voiceover"
-        else f"The video follows the {source} without reuse or a silent extension."
-    )
     if source_capacity > capacity:
         natural_description = (
             f"Use a supported {capacity_s}-second window of the {source}; "
-            "the remaining source is left out."
+            "the remaining source is left out.",
+            f"{source_tr} için desteklenen {capacity_s} saniyelik bir bölümü kullanır; "
+            "kalan kısım dışarıda kalır.",
+        )
+    elif owner == "voiceover":
+        natural_description = (
+            f"Use {capacity_s} seconds of the recording and selected footage; "
+            "the remaining recording is left out.",
+            f"Kaydın ve seçilen çekimlerin {capacity_s} saniyesini kullanır; "
+            "kaydın kalanı dışarıda kalır.",
+        )
+    else:
+        natural_description = (
+            f"The video follows the {source} without reuse or a silent extension.",
+            f"Video tekrar veya sessiz uzatma olmadan {source_tr} süresini takip eder.",
         )
     options = [
         _option(
@@ -1845,10 +1921,7 @@ def _length_vs_natural(
                 f"Use the available {capacity_s} seconds",
                 f"Mevcut {capacity_s} saniyeyi kullan",
             ),
-            description=(
-                natural_description,
-                f"Video tekrar veya sessiz uzatma olmadan {source} süresini takip eder.",
-            ),
+            description=natural_description,
             recommended=asked > capacity,
             aliases=("use available length", "use the available length", "match the source"),
         )
@@ -1870,7 +1943,7 @@ def _length_vs_natural(
                 label=(f"Trim it to {asked_s} seconds", f"{asked_s} saniyeye kısalt"),
                 description=(
                     f"Use the supported trim for this {source}.",
-                    f"Bu {source} için desteklenen kırpmayı kullanır.",
+                    f"{source_tr} için desteklenen kırpmayı kullanır.",
                 ),
                 recommended=True,
                 aliases=("trim it", "trim", "keep requested length"),
@@ -1883,15 +1956,25 @@ def _length_vs_natural(
                 "creator_duration_s": asked_s,
             }
         }
-    said = quoted or f"{asked_s} seconds"
+    said = quoted or say(en=f"{asked_s} seconds", tr=f"{asked_s} saniye")
     return UnresolvedChoice(
         kind=CONFLICT_LENGTH_VS_NATURAL,
         conflict_id=CONFLICT_LENGTH_VS_NATURAL,
         field_path="target_duration_s",
         requirement_ids=tuple(requirement_ids),
-        intro=f'Your brief says "{said}", but the available {source} is {capacity_s} seconds.',
-        reason=(
-            f"That {source} cannot make a {asked_s}-second edit without changing the source timing."
+        intro=say(
+            en=f'Your brief says "{said}", but the available {source} is {capacity_s} seconds.',
+            tr=f'Brief\'inde "{said}" yazıyor, ama mevcut {source_tr} {capacity_s} saniye.',
+        ),
+        reason=say(
+            en=(
+                f"That {source} cannot make a {asked_s}-second edit without changing the "
+                "source timing."
+            ),
+            tr=(
+                f"bu {source_tr} kaynak zamanlamasını değiştirmeden {asked_s} saniyelik "
+                "bir kurgu çıkaramaz."
+            ),
         ),
         options=tuple(options),
         input_digest=_digest(CONFLICT_LENGTH_VS_NATURAL, owner, asked, capacity, snapshot),
@@ -1946,60 +2029,89 @@ def _source_coverage(
         }
     ):
         return None
+    update = ("Update the selected clips", "Seçili klipleri güncelle")
+    fewer = ("Choose fewer clips", "Daha az klip seç")
+    longer = ("Add longer footage", "Daha uzun çekim ekle")
     if "single_hero_order_conflict" in codes:
         reason = (
             "The selected order conflicts with the single-hero composition. "
-            "Choose the hero first, followed by its supporting clips."
+            "Choose the hero first, followed by its supporting clips.",
+            "seçilen sıra tek kahramanlı kurguyla çelişiyor. Önce ana klibi, ardından "
+            "destekleyen klipleri seç.",
         )
-        label = "Update the selected clips"
+        label = update
     elif "insufficient_media" in codes or "duration_out_of_bounds" in codes:
         reason = (
             "Choose a hero clip with at least 3 seconds and usable supporting clips "
-            "so the hero can keep at least 60% of this edit."
+            "so the hero can keep at least 60% of this edit.",
+            "en az 3 saniyelik bir ana klip ve kullanılabilir destek klipleri seç; böylece "
+            "ana klip bu kurgunun en az %60'ını koruyabilir.",
         )
-        label = "Update the selected clips"
+        label = update
     elif "authored_hold_coverage" in codes:
         requested = envelope.get("target_duration_s")
         reason = (
             f"The requested {requested:g} seconds cannot include these clips with their "
-            "approved holds. Choose fewer clips or change those holds before rendering."
+            "approved holds. Choose fewer clips or change those holds before rendering.",
+            f"istenen {requested:g} saniye, onaylı bekleme süreleriyle bu klipleri "
+            "kapsayamaz. Render öncesi daha az klip seç ya da bekleme sürelerini değiştir.",
         )
-        label = "Update the selected clips"
+        label = update
     elif "source_count_limit" in codes:
         reason = (
-            f"Choose at most {source_limit} clips for this edit so the recipe can include each one."
+            f"Choose at most {source_limit} clips for this edit so the recipe can include "
+            "each one.",
+            f"tarifin her klibi kapsayabilmesi için bu kurguda en fazla {source_limit} klip seç.",
         )
-        label = "Choose fewer clips"
+        label = fewer
     elif "natural_source_capacity" in codes:
         natural_owner = envelope.get("natural_owner")
         natural_duration = envelope.get("natural_duration_s")
+        owner_tr = {
+            "song": "şarkı",
+            "voiceover": "seslendirme",
+            "take": "konuşma kaydı",
+            "footage": "çekim",
+        }.get(str(natural_owner), str(natural_owner))
         reason = (
             f"The selected {natural_owner} runs {natural_duration:g} seconds, but the footage "
-            f"can provide only {raw_duration:g} seconds without reuse. Add longer footage."
+            f"can provide only {raw_duration:g} seconds without reuse. Add longer footage.",
+            f"seçilen {owner_tr} {natural_duration:g} saniye sürüyor, ama çekimler tekrar "
+            f"olmadan yalnızca {raw_duration:g} saniye sağlayabiliyor. Daha uzun çekim ekle.",
         )
-        label = "Add longer footage"
+        label = longer
     elif "cap_below_coverage" in codes:
         reason = (
-            "Choose fewer clips so each can appear for at least 0.1 seconds within 120 seconds."
+            "Choose fewer clips so each can appear for at least 0.1 seconds within 120 seconds.",
+            "her klibin 120 saniye içinde en az 0,1 saniye görünebilmesi için daha az klip seç.",
         )
-        label = "Choose fewer clips"
+        label = fewer
     elif "source_below_minimum" in codes or "no_usable_sources" in codes:
-        reason = "Replace clips shorter than 0.1 seconds, or leave them out of this edit."
-        label = "Update the selected clips"
+        reason = (
+            "Replace clips shorter than 0.1 seconds, or leave them out of this edit.",
+            "0,1 saniyeden kısa klipleri değiştir ya da bu kurgudan çıkar.",
+        )
+        label = update
     else:
-        reason = "Add footage so the selected clips can provide at least 3 seconds without reuse."
-        label = "Add longer footage"
+        reason = (
+            "Add footage so the selected clips can provide at least 3 seconds without reuse.",
+            "seçili klipler tekrar olmadan en az 3 saniye sağlayabilsin diye çekim ekle.",
+        )
+        label = longer
     return UnresolvedChoice(
         kind=CONFLICT_SOURCE_COVERAGE,
         conflict_id=CONFLICT_SOURCE_COVERAGE,
         field_path="selected_media_ids",
         requirement_ids=(),
-        intro="The selected footage cannot meet the included-clip constraints.",
-        reason=reason,
+        intro=say(
+            en="The selected footage cannot meet the included-clip constraints.",
+            tr="Seçilen çekimler, dahil edilen klip koşullarını karşılayamıyor.",
+        ),
+        reason=say(en=reason[0], tr=reason[1]),
         options=(
             _option(
                 OPT_UPDATE_FOOTAGE,
-                label=(label, label),
+                label=label,
                 description=(
                     "I will wait for your updated footage before making this edit.",
                     "Bu düzenlemeyi yapmadan önce güncel çekimlerini bekleyeceğim.",

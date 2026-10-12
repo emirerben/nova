@@ -8,6 +8,7 @@ import math
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import func, select
@@ -973,6 +974,40 @@ async def _failure_settled_by_observer(
     return row is not None
 
 
+async def _render_ready_message(db: AsyncSession, session: CreatorAgentSession) -> str:
+    """The render-ready line, in the chat's language (KRI-630).
+
+    This runs from status polls with no turn language bound, so it reads the language
+    off the thread that owns the session.
+    """
+
+    from app.kria.reply_language import (  # noqa: PLC0415
+        reply_language_for,
+        say,
+        thread_reply_language,
+    )
+
+    state = (
+        await db.execute(
+            select(CreationThread.state).where(
+                CreationThread.creator_id == session.creator_id,
+                CreationThread.active_creator_agent_session_id == session.id,
+            )
+        )
+    ).scalar_one_or_none()
+    with reply_language_for(thread_reply_language(SimpleNamespace(state=state))):
+        return say(
+            en=(
+                "The confirmed edit is ready. Watch it and tell me what feels "
+                "right or what you want changed."
+            ),
+            tr=(
+                "Onayladığın kurgu hazır. İzle ve neyin iyi geldiğini ya da neyi "
+                "değiştirmek istediğini söyle."
+            ),
+        )
+
+
 async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession) -> bool:
     """Advance a rendering session against its exact target Job generation."""
 
@@ -1341,10 +1376,7 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             session,
             event_type="assistant_review" if review_enabled else "assistant_execution",
             payload={
-                "message": (
-                    "The confirmed edit is ready. Watch it and tell me what feels "
-                    "right or what you want changed."
-                ),
+                "message": await _render_ready_message(db, session),
                 **({"decision": "approve"} if review_enabled else {}),
             },
         )

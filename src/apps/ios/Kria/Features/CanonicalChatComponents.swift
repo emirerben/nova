@@ -638,6 +638,7 @@ struct DirectionStage: View {
     private var directionTitle: String {
         approval.consequenceSummary
             .replacingOccurrences(of: "Render this draft:", with: "")
+            .replacingOccurrences(of: "Bu taslağı render et:", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

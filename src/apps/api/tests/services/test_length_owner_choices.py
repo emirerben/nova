@@ -172,3 +172,29 @@ def test_answer_is_replayed_until_selected_footage_changes_then_reopens():
     assert changed.question is not None
     assert changed.question.kind == CONFLICT_LENGTH_VS_NATURAL
     assert changed.question.effects[OPT_ACCEPT_NATURAL]["strategy"]["target_duration_s"] == 10
+
+
+_TAKE_STRATEGY = {"audio_strategy": "original_audio", "edit_format": "talking_head"}
+_TAKE_SNAPSHOT = {"clip_assignments": [{"media_id": "take", "duration_s": 51.6}]}
+
+
+def _take_brief(*cleanup_asks: str) -> CreativeBrief:
+    base = brief(40)
+    extra = [
+        BriefRequirement(id=f"cleanup{i}", kind="timing", scope="global", description=text)
+        for i, text in enumerate(cleanup_asks)
+    ]
+    return CreativeBrief(version=1, requirements=[*base.requirements, *extra])
+
+
+def test_a_long_take_still_asks_when_the_brief_cannot_shorten_it():
+    # KRI-629 control: the question stays for a brief with no cleanup in it.
+    found = collect_conflicts(_TAKE_STRATEGY, _take_brief(), _TAKE_SNAPSHOT)
+    assert any(item.kind == CONFLICT_LENGTH_VS_NATURAL for item in found)
+
+
+def test_a_long_take_does_not_ask_about_length_when_the_brief_cuts_the_pauses():
+    found = collect_conflicts(
+        _TAKE_STRATEGY, _take_brief("Cut out the long pauses"), _TAKE_SNAPSHOT
+    )
+    assert not any(item.kind == CONFLICT_LENGTH_VS_NATURAL for item in found)

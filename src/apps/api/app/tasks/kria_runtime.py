@@ -1424,7 +1424,10 @@ def _complete_draft_turn(
             target_manifest_hash=planned.manifest_hash,
             target_ownership_epoch=int(session.ownership_epoch),
             execution_ids=[str(render_execution.id)],
-            consequence_summary=f"Render this draft: {arguments.summary}",
+            consequence_summary=say(
+                en=f"Render this draft: {arguments.summary}",
+                tr=f"Bu taslağı render et: {arguments.summary}",
+            ),
             cost_summary=say(en="One render", tr="Tek bir video"),
             status="pending",
             expires_at=datetime.now(UTC) + _APPROVAL_TTL,

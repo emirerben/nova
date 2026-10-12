@@ -2238,6 +2238,11 @@ def _cleanup_wording(req: BriefRequirement) -> bool:
     return bool(_CLEANUP_NOUN_RE.search(text) or _NAMED_CUT_RE.search(text))
 
 
+def _round_s(value: float) -> str:
+    """Seconds for creator copy: one decimal at most (37.9765 -> "38")."""
+    return f"{round(float(value), 1):g}"
+
+
 def _wants_beats(req: BriefRequirement) -> bool:
     if req.kind not in _BEAT_ASK_KINDS:
         return False
@@ -3673,25 +3678,36 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
         return _receipt(req, "partial", _CANT_CONFIRM_LENGTH)
     if creator_duration_matches(facts.duration_s, float(target)):
         return _receipt(req, "met", None)
+    if (
+        natural_owner == "take"
+        and facts.speech_cleanup_outcome == "applied"
+        and facts.duration_s < float(target)
+    ):
+        # The target is the take's natural length (accepted as such, or implied by the
+        # brief); cleanup cutting pauses legitimately brings it under that (KRI-629).
+        return _receipt(req, "met", None)
     # The edit's own length is what is compared: the phone adds its outro after the edit,
     # so the file runs `outro_s` longer than this (28.0s of edit is a ~29.6s video).
     outro = ""
     if facts.outro_s:
         outro = say(
-            en=f" (plus a {facts.outro_s:g}s outro on the finished video)",
-            tr=f" (bitmiş videoda buna ek olarak {facts.outro_s:g} saniyelik bir kapanış var)",
+            en=f" (plus a {_round_s(facts.outro_s)}s outro on the finished video)",
+            tr=(
+                f" (bitmiş videoda buna ek olarak {_round_s(facts.outro_s)} saniyelik "
+                "bir kapanış var)"
+            ),
         )
     return _receipt(
         req,
         "partial",
         say(
             en=(
-                f"This draft is about {facts.duration_s:g}s{outro}; "
-                f"you asked for {float(target):g}s."
+                f"This draft is about {_round_s(facts.duration_s)}s{outro}; "
+                f"you asked for {_round_s(float(target))}s."
             ),
             tr=(
-                f"Bu taslak yaklaşık {facts.duration_s:g} saniye{outro}; sen "
-                f"{float(target):g} saniye istedin."
+                f"Bu taslak yaklaşık {_round_s(facts.duration_s)} saniye{outro}; sen "
+                f"{_round_s(float(target))} saniye istedin."
             ),
         ),
     )

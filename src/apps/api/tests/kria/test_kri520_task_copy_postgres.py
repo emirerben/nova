@@ -244,8 +244,10 @@ async def test_draft_card_and_ready_review_follow_the_chat_language(
         ["Tempo: Hızlı", "Format: Günlük vlog"] if turkish else ["Fast pacing", "Day Vlog format"]
     )
     assert ctx["cost_summary"] == ("Tek bir video" if turkish else "One render")
-    # The prefix is a contract with the iOS card, in every language.
-    assert ctx["consequence_summary"].startswith("Render this draft: ")
+    # The prefix follows the chat language; the iOS card strips both spellings (KRI-630).
+    assert ctx["consequence_summary"].startswith(
+        "Bu taslağı render et: " if turkish else "Render this draft: "
+    )
 
     await _approve(ctx)
     monkeypatch.setattr(

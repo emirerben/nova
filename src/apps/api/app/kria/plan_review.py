@@ -1241,7 +1241,10 @@ async def _mint_restore_turn(
         target_manifest_hash=session.manifest_hash,
         target_ownership_epoch=int(session.ownership_epoch),
         execution_ids=[str(render_execution.id)],
-        consequence_summary=f"Render this draft: {reply}",
+        consequence_summary=say(
+            en=f"Render this draft: {reply}",
+            tr=f"Bu taslağı render et: {reply}",
+        ),
         cost_summary=say(en="One render", tr="Tek bir video"),
         status="pending",
         expires_at=now + _APPROVAL_TTL,
