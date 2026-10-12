@@ -214,6 +214,19 @@ class Settings(BaseSettings):
     # source clips bumps its protocol to this value; builds that predate it
     # send a lower one (or none) and keep the lanes closed.
     phone_voiceover_editor_min_client_protocol: int = 3
+    # KRI-608: sound effects on a phone-rendered guided / montage story. The
+    # guided phone compiler used to reject `editor_sound_effects` /
+    # `licensed_sfx_intent`; with this flag on it compiles them to an `sfx`
+    # audio track (the same track Talking and Voiceover already play).
+    # `phone_rollout.phone_guided_sfx_supported()` is the single source of
+    # truth: this flag AND `sound_effects_enabled` AND `soundEffects` +
+    # `audioMix` in `phone_render_verified_features`. Capabilities, chat,
+    # Save, the worker and creation all consult it, so none advertises what
+    # another would refuse. False (default): byte-identical, guided phone
+    # edits stay SFX-free and a Save carrying SFX 422s.
+    # Rollback: `fly secrets set PHONE_GUIDED_SFX_ENABLED=false --app
+    # nova-video` + `fly machine restart <id>` (api + worker).
+    phone_guided_sfx_enabled: bool = False
     # KRI-519 kill switch: KRI-178 reaction beats ("when I say the medal, show
     # my medal photo") on a phone Voiceover (`narrated*` + recorded voiceover)
     # edit. Only takes effect while

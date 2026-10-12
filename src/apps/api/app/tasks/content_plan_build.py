@@ -1510,6 +1510,7 @@ def _phone_unrenderable_reason(approved_snapshot: dict, owner_id: uuid.UUID) -> 
     from app.schemas.edit_proposal import EditProposalSnapshot  # noqa: PLC0415
     from app.services.edit_proposals import phone_story_layouts  # noqa: PLC0415
     from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
+    from app.services.phone_rollout import phone_guided_sfx_supported  # noqa: PLC0415
 
     snapshot = EditProposalSnapshot.model_validate(approved_snapshot)
     selected_ids = {media_id for beat in snapshot.story_beats for media_id in beat.media_ids} | {
@@ -1525,8 +1526,8 @@ def _phone_unrenderable_reason(approved_snapshot: dict, owner_id: uuid.UUID) -> 
     # The phone compiler fails the whole job on a video moment that is not fullscreen.
     if phone_story_layouts(snapshot, owner_id, visuals_only_device=True) is not snapshot:
         return "video_on_card"
-    # The phone has no licensed-SFX lane.
-    if snapshot.licensed_sfx is not None:
+    # The phone has a licensed-SFX lane only behind PHONE_GUIDED_SFX_ENABLED (KRI-608).
+    if snapshot.licensed_sfx is not None and not phone_guided_sfx_supported():
         return "licensed_sfx"
     return None
 

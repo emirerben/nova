@@ -1043,7 +1043,11 @@ async def _copilot_clip_context(
         log.warning("kria_copilot_brief_unavailable", thread_id=str(thread_id), exc_info=True)
     try:
         # Mirrors the sfx capability: no query when the lane is server-disabled.
-        catalog = await _sfx_catalog_rows(db) if settings.sound_effects_enabled else []
+        catalog = (
+            await _sfx_catalog_rows(db, device=variant.get("render_destination") == "device")
+            if settings.sound_effects_enabled
+            else []
+        )
         if catalog:
             context["sfx_catalog"] = catalog
     except Exception:  # noqa: BLE001 - fail closed: empty catalog => no add_sfx
@@ -1054,28 +1058,40 @@ async def _copilot_clip_context(
 SFX_CATALOG_LIMIT = 40
 
 
-async def _sfx_catalog_rows(db: AsyncSession) -> list[dict]:
+async def _sfx_catalog_rows(db: AsyncSession, *, device: bool = False) -> list[dict]:
     """Public sound-effects catalog for the copilot's add_sfx (one query).
 
     Same publish filter as GET /sound-effects. Runs in a savepoint so a DB error
     cannot poison the outer read transaction.
+
+    ``device`` (KRI-608): the edit renders on the iPhone, which plays only m4a/wav/mp3/aac
+    (`PLAYABLE_SFX_EXTENSIONS`); offering any other effect would end in a refused Save.
     """
     from app.models import SoundEffect  # noqa: PLC0415
 
+    query = (
+        select(SoundEffect)
+        .where(SoundEffect.published_at.isnot(None))
+        .where(SoundEffect.archived_at.is_(None))
+        .where(SoundEffect.status == "ready")
+        .where(SoundEffect.audio_gcs_path.isnot(None))
+    )
+    if device:
+        from sqlalchemy import or_  # noqa: PLC0415
+
+        from app.pipeline.phone_subtitled_lanes import PLAYABLE_SFX_EXTENSIONS  # noqa: PLC0415
+
+        query = query.where(
+            or_(*(SoundEffect.audio_gcs_path.ilike(f"%{ext}") for ext in PLAYABLE_SFX_EXTENSIONS))
+        )
     async with db.begin_nested():
         rows = (
             (
                 await db.execute(
-                    select(SoundEffect)
-                    .where(SoundEffect.published_at.isnot(None))
-                    .where(SoundEffect.archived_at.is_(None))
-                    .where(SoundEffect.status == "ready")
-                    .where(SoundEffect.audio_gcs_path.isnot(None))
-                    .order_by(
+                    query.order_by(
                         SoundEffect.catalog_rank.asc().nulls_last(),
                         SoundEffect.created_at.desc(),
-                    )
-                    .limit(SFX_CATALOG_LIMIT)
+                    ).limit(SFX_CATALOG_LIMIT)
                 )
             )
             .scalars()
