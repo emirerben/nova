@@ -891,7 +891,16 @@ _TREATMENT_NOUN = re.compile(
     r"|efekt\w*|filtre\w*|muzik\w*|ses\w*|yazi\w*|altyazi\w*|baslik\w*|etiket\w*"
     r"|gecis\w*|animasyon\w*|hareket\w*|kirpma\w*|bulanik\w*|cerceve\w*|titreme\w*"
 )
-_MEDIUM_PRONOUNS = frozenset({"it", "this", "that", "them", "these", "those"})
+_MEDIUM_PRONOUNS = frozenset(
+    {"it", "this", "that", "them", "these", "those", "bunu", "onu", "sunu", "bunlari", "onlari"}
+)
+# A removal's object ends at the next conjunction ("skip the intro AND show the photo") or,
+# in English, at a preposition ("remove the zoom ON the photo", "the photo OF the bathtub").
+_SEGMENT_BREAK = frozenset({"and", "then", "plus", "also", "ve", "sonra", "ardindan"})
+_OBJECT_END = frozenset(
+    {"of", "on", "in", "at", "from", "with", "for", "during", "to", "into", "onto", "over"}
+    | {"under", "after", "before", "while", "so", "instead"}
+)
 _EN_REMOVE_VERBS = frozenset({"remove", "removing", "delete", "drop", "skip", "exclude", "avoid"})
 _EN_NEGATED_VERBS = frozenset({"use", "show", "include", "put", "add", "want", "need", "keep"})
 # Turkish puts the object first and the verb last ("küvet fotoğrafını çıkar"). Removal verbs
@@ -921,11 +930,28 @@ def _first_noun(words: list[str]) -> str | None:
     return next((kind for kind in map(_noun_kind, words) if kind), None)
 
 
-def _clause_leaves_medium_out(words: list[str]) -> bool:
+def _object_kind(words: list[str]) -> str | None:
+    """What an English removal's object is: its head noun, past a possessive "'s"."""
+
+    words = list(words)
+    for index, word in enumerate(words):
+        if word in _OBJECT_END:
+            words = words[:index]
+            break
+    if "s" in words:  # "the bathtub photo's zoom": the zoom is removed, not the photo
+        words = words[len(words) - words[::-1].index("s") :]
+    kinds = [kind for kind in map(_noun_kind, words) if kind]
+    if kinds:
+        return kinds[-1]
+    return "media" if words[:1] and words[0] in _MEDIUM_PRONOUNS else None
+
+
+def _segment_leaves_medium_out(words: list[str]) -> bool:
     for index, word in enumerate(words):
         before, after = words[:index], words[index + 1 :]
-        # English: a removal verb leaves the medium out unless its object is a treatment
-        # ("remove the bathtub photo", "get rid of it" vs "remove the zoom", "skip the music").
+        # English: a removal verb leaves the medium out when its own object is the medium
+        # ("remove the bathtub photo", "get rid of it") or there is none ("Skip."); never when
+        # it is a treatment or something else ("remove the zoom", "skip the intro").
         governed: list[str] | None = None
         if word in _EN_REMOVE_VERBS:
             governed = after
@@ -944,16 +970,16 @@ def _clause_leaves_medium_out(words: list[str]) -> bool:
                 negated = after
             if negated[:1] and negated[0] in _EN_NEGATED_VERBS:
                 governed = negated[1:]
-        if governed is not None and _first_noun(governed) != "treatment":
+        if governed is not None and (not governed or _object_kind(governed) == "media"):
             return True
         # A bare "no" / "without" / "never" counts only when it governs the medium:
         # "without the bathtub photo", "no photo here" -- never "no zoom".
-        if word in ("no", "without", "never") and after:
-            if after[0] in _MEDIUM_PRONOUNS or _first_noun(after[:4]) == "media":
-                return True
-        # Turkish: "çıkar" is also "comes out", so "fotoğraf ekrana çıkar" stays an ask.
+        if word in ("no", "without", "never") and _object_kind(after) == "media":
+            return True
+        # Turkish puts the object first: the nearest noun before the verb is what it removes.
+        # "çıkar" is also "comes out", so "fotoğraf ekrana çıkar" stays an ask.
         if _TR_REMOVE_VERB.fullmatch(word) and before[-1:] not in (["ekrana"], ["ekranda"]):
-            if _first_noun(before[::-1]) != "treatment":
+            if not before or before[-1] in _MEDIUM_PRONOUNS or _first_noun(before[::-1]) == "media":
                 return True
         if _TR_WEAK_NEGATION.fullmatch(word) and _first_noun(before[::-1]) == "media":
             return True
@@ -961,12 +987,22 @@ def _clause_leaves_medium_out(words: list[str]) -> bool:
 
 
 def _leaves_medium_out(words: str) -> bool:
-    """Whether a requirement's words leave its medium out, rather than ask for it."""
+    """Whether a requirement's words leave its medium out, rather than ask for it.
 
-    return any(
-        _clause_leaves_medium_out(re.sub(r"[^\w\s]", " ", clause).split())
-        for clause in _CLAUSE_BREAK.split(loose_text(words))
-    )
+    Each clause is split at conjunctions, so a removal only governs its own object: "skip
+    the intro and show the bathtub photo" asks for the photo. When unsure it is an ask.
+    """
+
+    for clause in _CLAUSE_BREAK.split(loose_text(words)):
+        segment: list[str] = []
+        for word in [*re.sub(r"[^\w\s]", " ", clause).split(), "and"]:
+            if word not in _SEGMENT_BREAK:
+                segment.append(word)
+                continue
+            if segment and _segment_leaves_medium_out(segment):
+                return True
+            segment = []
+    return False
 
 
 def requested_media(brief: CreativeBrief | None, media_ids: Iterable[str]) -> dict[str, str]:

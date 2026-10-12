@@ -495,6 +495,16 @@ def _photo_select(words: str) -> CreativeBrief:
         "Leave the bathtub photo in and take the music and the zoom effect out",
         # Turkish "çıkar" is also "comes out": a photo coming onto the screen is an ask.
         "Kırkayak deyince küvet fotoğrafı ekrana çıkar",
+        # PR 1550 re-review: the removal's own object is something else, and the photo is
+        # asked for after it, or only its treatment is removed.
+        "Remove the black bars and show the bathtub photo",
+        "Skip the intro and show the bathtub photo",
+        "Remove the bathtub photo's zoom",
+        "Remove the black bars, then show the bathtub photo",
+        "Remove the black bars to show the bathtub photo",
+        "Drop the intro then show the bathtub photo",
+        "Intro'yu atla ve küvet fotoğrafını göster",
+        "Siyah bantları kaldır ve küvet fotoğrafını göster",
     ],
 )
 def test_a_select_that_only_restricts_how_the_photo_looks_still_asks_for_it(words) -> None:
@@ -515,6 +525,13 @@ def test_a_select_that_only_restricts_how_the_photo_looks_still_asks_for_it(word
         "küvet fotoğrafını kullanma",
         "fotoğraf olmasın",
         "Küvet fotoğrafını koyma",
+        # The removal's bounded object is the photo itself.
+        "Remove the photo of the bathtub",
+        "Remove the bathtub photo and the river clip",
+        "Skip it and show the river clip instead",
+        "Skip",
+        "No photo here",
+        "Bunu çıkar",
     ],
 )
 def test_a_select_that_leaves_the_photo_out_is_not_an_ask(words) -> None:
