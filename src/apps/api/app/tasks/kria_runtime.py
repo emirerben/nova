@@ -4343,11 +4343,22 @@ def _localized_block_recovery(message: str, receipts: list[dict[str, Any]]) -> s
     a Turkish chat.
 
     The worker has no chat language bound. Only a message that is exactly the English
-    ``render_block_recovery`` of these receipts is rebuilt; anything else shows as stored.
+    ``render_block_recovery`` of these receipts, or the phone Voiceover worker's own
+    alignment question (KRI-592, with or without receipts), is rebuilt; anything else
+    shows as stored.
     """
-    if current_reply_language() != "tr" or not receipts:
+    if current_reply_language() != "tr":
         return message
-    from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        NARRATED_ALIGNMENT_RECOVERY,
+        narrated_alignment_recovery,
+        render_block_recovery,
+    )
+
+    if message.strip() == NARRATED_ALIGNMENT_RECOVERY:
+        return narrated_alignment_recovery()
+    if not receipts:
+        return message
 
     failures = [
         row

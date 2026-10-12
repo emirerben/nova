@@ -264,6 +264,15 @@
         "src/apps/api/prompts/main_creator.txt",
         "src/apps/api/tests/fixtures/agent_evals/main_creator/"
       ]
+    },
+    {
+      "id": "kri-590-voiceover-cues",
+      "api_tests": "tests/agents/test_narrated_clip_alignment.py tests/evals/test_narrated_clip_alignment_evals.py tests/kria/test_brief_checks_narrated_alignment.py tests/kria/test_kri520_block_recovery.py tests/tasks/test_phone_subtitled_narrated_dispatch.py",
+      "paths": [
+        "src/apps/api/app/agents/narrated_clip_alignment.py",
+        "src/apps/api/prompts/narrated_clip_alignment.txt",
+        "src/apps/api/tests/fixtures/agent_evals/narrated_clip_alignment/"
+      ]
     }
   ]
 }
