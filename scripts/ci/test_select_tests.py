@@ -612,6 +612,22 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-590-voiceover-cues"),
             ),
             (
+                "src/apps/api/app/kria/voiceover_scope.py",
+                (True, "covered", "kri-598-voiceover-planner"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/agent_evals/clip_intent_planner/golden/kri598_tigre_spoken_cues.json",
+                (True, "covered", "kri-598-voiceover-planner"),
+            ),
+            (
+                "src/apps/api/tests/kria/test_voiceover_downgrade_losses.py",
+                (True, "covered", "kri-598-voiceover-planner"),
+            ),
+            (
+                "src/apps/api/app/kria/voiceover_clips.py",
+                (True, "covered", "kri-593-voiceover-clips"),
+            ),
+            (
                 "src/apps/api/app/pipeline/phone_captions.py",
                 (True, "covered", "kri-548-caption-watermark"),
             ),
