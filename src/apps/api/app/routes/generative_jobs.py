@@ -6736,6 +6736,22 @@ def _phone_voiceover_editor_lanes_available(variant: dict) -> bool:
     return is_phone_voiceover_lane_variant(variant) and phone_voiceover_editor_lanes_supported()
 
 
+def _phone_guided_sfx_available(job: Job, variant: dict) -> bool:
+    """True when `sfx` may stay open in the phone capability clamp for a guided /
+    montage device variant (KRI-608): the variant shape, the rollout gate, and the
+    canonical v2 revision Save recompiles the effects from (a legacy guided editor
+    has none, and its Save raises). Gate off => False => the clamp stays
+    byte-identical to before for every guided variant."""
+    from app.services.phone_rollout import phone_guided_sfx_supported  # noqa: PLC0415
+
+    return (
+        variant.get("resolved_archetype") == "guided_story"
+        and phone_guided_sfx_supported()
+        and bool(getattr(settings, "guided_story_editor_v2_enabled", False))
+        and _guided_v2_revision(job, variant) is not None
+    )
+
+
 def _phone_editor_lanes_available(job: Job, variant: dict) -> bool:
     """Either phone lane rollout (Talking KRI-182 or Voiceover KRI-281) is open
     for this variant; both bridge editor sections through the same lane state."""
@@ -6900,8 +6916,13 @@ def _clamp_phone_editor_capabilities(
     voiceover_media: bool = False,
     shape: Any = None,
     subtitled_text: bool = False,
+    guided_sfx: bool = False,
 ) -> dict:
     """Close every control a device-rendered variant cannot save, shape-preserving.
+
+    ``guided_sfx`` (KRI-608): a guided / montage device variant with the guided-SFX
+    rollout on and a canonical v2 revision keeps `sfx` (only) open; its Save
+    compiles the effects into the pinned recipe's `sfx` track.
 
     ``shape`` (KRI-306, `render_shape.device_editor_offer`): what Save accepts for
     orientation and bars/crop on this variant. Orientation is only ever CLOSED
@@ -6943,6 +6964,8 @@ def _clamp_phone_editor_capabilities(
     # motion_scenes, camera_effects, clip add/looks/source_crop/playback_rate)
     # stays closed; the phone subtitled compiler has no lane for those.
     subtitled_carve_out = {"sfx", "overlays"} if (subtitled_lanes or voiceover_lanes) else set()
+    if guided_sfx:
+        subtitled_carve_out = subtitled_carve_out | {"sfx"}
     if voiceover_media:
         media_carve_out = {("lanes", "visual_blocks")}
     elif media_enabled:
@@ -7170,6 +7193,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             voiceover_media=voiceover_media,
             shape=shape,
             subtitled_text=subtitled_lanes and _phone_subtitled_text_lane_available(variant),
+            guided_sfx=_phone_guided_sfx_available(job, variant),
             source_crop=(
                 "sourceCrop" in settings.phone_render_verified_features
                 and (
