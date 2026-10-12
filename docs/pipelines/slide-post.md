@@ -447,8 +447,9 @@ overlay on one slide, saved as strokes, never as a raster.
   the PUT; `merge_legacy_text_edits` carries it only when sent). Flag off: the stored value always wins. The chat-edit
   route backfills an omitted `drawing` (`_backfill_slide_post_sizes`); `compile_slide_post_ops` copies it into the
   rebuilt slide (the one place a chat edit rebuilt edits from scratch and would have dropped it). The copilot only
-  sees a read-only `has_drawing` slot hint (present only when true); there is no draw op. `/propose` and `/compose`
-  carry edits through untouched.
+  sees a read-only `has_drawing` slot hint (present only when true); there is no draw op. `/propose` carries edits
+  through. `/compose` (web only; iOS never calls it) rebuilds every slide from scratch and resets ALL edits, ink
+  included: existing behaviour for text, size and framing, not introduced here.
 - **Capability.** `slide_post_drawing` in `/creation-threads/capabilities`: flag on AND the build declares
   `X-Kria-Client-Protocol >= slide_post_drawing_min_client_protocol` (7). No 426: an older build ignores the unknown
   key and its saves omit it, so the stored drawing survives.
@@ -463,6 +464,15 @@ overlay on one slide, saved as strokes, never as a raster.
   existing keys are unchanged). `SLIDES_DRAWING_RENDERER_VERSION = 4` is stamped on `slide_post.renderer_version`
   when any slide has a drawing (otherwise 3), and `_slide_post_export_is_current` treats a drawn draft as stale
   below 4. The dispatch fence stays 2.
+- **Deploy order.** Deploy the API and worker FIRST, then ship the app build with protocol 7: an older worker that
+  re-dumps a drawn draft through its older `SlideEdits` (the render stamp) drops the drawing.
+- **Painter fixes.** `SLIDE_DRAWING_PAINTER_VERSION` only changes the cache key; to refresh old exports after a painter
+  fix, bump `SLIDES_DRAWING_RENDERER_VERSION` as well.
+- **`DrawingStroke` is persisted twice** (video lane and every stored slide draft), and `parse_slide_post` fails closed
+  on an invalid stroke. Change it only additively with defaults (`test_the_stroke_model_stays_the_persisted_wire`
+  pins the field set); tightening a bound would blank every stored draft that has ink.
+- **Known cost.** Spray is capped per stroke, not per slide; an adversarial 60-stroke spray drawing took ~12 s to
+  render one slide locally (chalk about 1 s). Tracked as a follow-up, not a correctness issue.
 - **Rollback.** Flip `SLIDE_POST_DRAWING_ENABLED=false` (api + worker) and restart; stored drawings still render.
   Never roll the CODE back once drawings exist: draft models drop unknown keys and `DrawingStroke` is
   `extra="forbid"`, so `parse_slide_post` would fail closed to "no draft".

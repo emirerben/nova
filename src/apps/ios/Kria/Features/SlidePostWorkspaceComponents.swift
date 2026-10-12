@@ -50,8 +50,8 @@ enum SlidePostMode: Equatable {
 
 // MARK: Saved drawing
 
-/// The slide's saved ink, painted by the same `NativeDrawingPainter` the export uses, over the media and under
-/// the text (the order the renderers stack them). Static: slides have no drawing animation.
+/// The slide's saved ink, painted by the same `NativeDrawingPainter` the export uses, over the media AND the text
+/// (the order every renderer stacks them: text, ink, watermark). Static: slides have no drawing animation.
 struct SlidePostDrawingLayerView: View {
     let drawing: SlidePostDrawing
 
@@ -566,7 +566,7 @@ struct SlidePostToolBar: View {
     /// KRI-589: the Draw tool, when the server's `slide_post_drawing` is on.
     var showsDraw = false
     var onDraw: () -> Void = {}
-    /// "Clear drawing" in the More menu, only for a slide that has ink.
+    /// "Remove drawing" in the More menu, only for a slide that has ink.
     var canClearDrawing = false
     var onClearDrawing: () -> Void = {}
     let onText: () -> Void
@@ -603,7 +603,7 @@ struct SlidePostToolBar: View {
                 Button(action: onDuplicateText) { Label("Duplicate text", systemImage: "plus.square.on.square") }.disabled(!canDuplicateText)
                 Button(action: onCaption) { Label("Caption", systemImage: "text.alignleft") }
                 if canClearDrawing {
-                    Button(role: .destructive, action: onClearDrawing) { Label("Clear drawing", systemImage: "scribble") }
+                    Button(role: .destructive, action: onClearDrawing) { Label("Remove drawing", systemImage: "scribble") }
                         .accessibilityIdentifier("slidepost-clear-drawing")
                 }
             } label: { label("ellipsis", "More", active: false) }

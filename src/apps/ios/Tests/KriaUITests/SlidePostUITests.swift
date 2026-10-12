@@ -234,7 +234,7 @@ import XCTest
         XCTAssertEqual(ink.value as? String, "2 strokes")
         attach(app, "Saved ink after switching slides")
 
-        // Clear drawing (More menu) removes it, and undo brings it back.
+        // Remove drawing (More menu) removes it, and undo brings it back.
         app.buttons["slidepost-tool-more"].tap()
         let clear = app.buttons["slidepost-clear-drawing"]
         XCTAssertTrue(clear.waitForExistence(timeout: 3)); clear.tap()

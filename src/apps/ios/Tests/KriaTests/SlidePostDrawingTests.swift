@@ -160,7 +160,7 @@ import XCTest
         XCTAssertTrue(session.addDrawingStrokes(slideID: "s1", strokes: strokes(2, points: 5), canvas: portrait))
         XCTAssertEqual(session.draft?.slides[0].edits?.drawing?.strokes.count, 2)
         XCTAssertEqual(session.draft?.slides[0].edits?.drawing?.canvasAspect, 0.5625)
-        XCTAssertTrue(session.hasUnsavedChanges || session.draft != nil)
+        XCTAssertTrue(session.hasUnsavedChanges, "Done is an unsaved edit")
         session.undoEdit()
         XCTAssertNil(session.draft?.slides[0].edits?.drawing, "one Done, one undo")
         session.redoEdit()
@@ -278,6 +278,11 @@ import XCTest
             return maxX < 0 ? nil : CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
         }
         /// Top-left pixel coordinates.
+        func isWhite(_ x: Double, _ y: Double) -> Bool {
+            let px = min(width - 1, max(0, Int(x.rounded()))), py = min(height - 1, max(0, Int(y.rounded())))
+            let i = (py * width + px) * 4
+            return bytes[i] > 220 && bytes[i + 1] > 220 && bytes[i + 2] > 220
+        }
         func isInk(_ x: Double, _ y: Double) -> Bool {
             let px = min(width - 1, max(0, Int(x.rounded()))), py = min(height - 1, max(0, Int(y.rounded())))
             let i = (py * width + px) * 4
@@ -344,6 +349,32 @@ import XCTest
             for (x, y) in margins { XCTAssertFalse(out.isInk(x, y), "\(g.name): the margin at (\(x), \(y)) stays clean") }
             XCTAssertEqual(margins.isEmpty, origin[0] <= 1 && origin[1] <= 1, g.name)
         }
+    }
+
+    /// Every export stacks photo, text, ink, watermark, and the editor preview matches: ink drawn across a caption
+    /// covers it. A stroke thick enough to cover the glyph heights at the canvas middle must leave no caption pixel
+    /// along its centre line (the same slide without ink proves the caption really is there).
+    func testInkIsPaintedOverTextInThePhotoRender() async throws {
+        let asset = SlidePostAsset(id: "asset-s", kind: "image", status: "ready", sourceURL: try gray("stack.jpg"))
+        var caption = SlidePostTextElement(id: "t", text: "KRIA")
+        caption.position = "center"; caption.sizePx = 200; caption.color = "#FFFFFF"; caption.shadowEnabled = false
+        var edits = SlidePostEdits()
+        edits.setTexts([caption])
+        var inked = edits
+        inked.drawing = SlidePostDrawing(canvasAspect: 0.5625, strokes: [
+            DrawingStroke(color: "#FF0000", opacity: 1, widthFrac: 0.08, texture: .pen, seed: 1, points: [[0.0, 0.5], [1.0, 0.5]]),
+        ])
+        let plain = SlidePostSlide(id: "s", assetID: "asset-s", kind: "image", edits: edits)
+        let drawn = SlidePostSlide(id: "s", assetID: "asset-s", kind: "image", edits: inked)
+
+        let plainData = try await SlidePostOnDeviceRender.renderSlide(slide: plain, asset: asset, profile: "tiktok_photo", aspect: nil, scale: 1)
+        let drawnData = try await SlidePostOnDeviceRender.renderSlide(slide: drawn, asset: asset, profile: "tiktok_photo", aspect: nil, scale: 1)
+        let textOnly = try Bitmap(try XCTUnwrap(XCTUnwrap(UIImage(data: plainData)).cgImage))
+        let both = try Bitmap(try XCTUnwrap(XCTUnwrap(UIImage(data: drawnData)).cgImage))
+        let y = Double(textOnly.height) / 2
+        let xs = stride(from: Double(textOnly.width) * 0.3, through: Double(textOnly.width) * 0.7, by: 4).map { $0 }
+        XCTAssertTrue(xs.contains { textOnly.isWhite($0, y) }, "precondition: the caption has pixels on the stroke's centre line")
+        for x in xs { XCTAssertTrue(both.isInk(x, y), "ink covers the caption at x=\(x)") }
     }
 
     /// The PR 1 bug: the painter moves the strokes' bounding-box centre onto the layer centre, so a stroke away from the

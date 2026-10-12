@@ -498,9 +498,6 @@ struct SlidePostWorkspaceView: View {
                 .accessibilityLabel("Slide preview")
                 .accessibilityIdentifier("slidepost-preview")
             previewMediaView(rich: true).frame(width: size.width, height: size.height).clipped()
-            if let drawing = session.selectedSlide?.edits?.drawing {
-                SlidePostDrawingLayerView(drawing: drawing).frame(width: size.width, height: size.height)
-            }
             SlidePostTextCanvas(
                 texts: texts, size: size, selectedID: session.selectedTextID, interactive: mode == .text,
                 directSelected: mode == .browse && session.selectedTextID != nil, tapsToEdit: mode != .text && mode != .draw,
@@ -514,6 +511,11 @@ struct SlidePostWorkspaceView: View {
                 }
             )
             .allowsHitTesting(mode != .draw)
+            // The ink sits ABOVE the text, the order every export stacks them (photo, video and server: text, ink, watermark).
+            // It never takes a touch, so a text under a stroke is still selectable.
+            if let drawing = session.selectedSlide?.edits?.drawing {
+                SlidePostDrawingLayerView(drawing: drawing).frame(width: size.width, height: size.height)
+            }
             if mode == .draw {
                 // The sketch lies over the region the slide's drawing lives in (its own aspect, letterboxed when the
                 // canvas has changed since), so strokes are authored in the drawing's space and appended unchanged.
@@ -611,11 +613,13 @@ struct SlidePostWorkspaceView: View {
     /// Done merges the new strokes into the slide's drawing (one undo step); Cancel throws them away.
     private func leaveDrawMode(save: Bool, slideID: String? = nil) {
         let strokes = save ? sketch.finishedStrokes() : []
+        if !strokes.isEmpty, let slideID, let draft = session.draft, let slide = draft.slides.first(where: { $0.id == slideID }) {
+            let canvas = SlidePostFraming.canvas(for: slide, profile: draft.platformProfile, aspect: draft.aspect)
+            // Refused (a save is in flight, or the caps): stay in Draw mode with the ink intact instead of losing it silently.
+            guard session.addDrawingStrokes(slideID: slideID, strokes: strokes, canvas: canvas) else { return }
+        }
         sketch.reset(canvasAspect: sketch.canvasAspect) { _, _ in nil }
         mode = .browse
-        guard !strokes.isEmpty, let slideID, let draft = session.draft, let slide = draft.slides.first(where: { $0.id == slideID }) else { return }
-        let canvas = SlidePostFraming.canvas(for: slide, profile: draft.platformProfile, aspect: draft.aspect)
-        session.addDrawingStrokes(slideID: slideID, strokes: strokes, canvas: canvas)
     }
     private func finishEditing() {
         if let id = session.selectedSlide?.id { session.removeEmptyTexts(slideID: id) }

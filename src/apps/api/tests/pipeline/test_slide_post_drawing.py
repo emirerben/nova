@@ -26,6 +26,7 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
+from app.agents._schemas.drawing import DrawingStroke
 from app.config import settings
 from app.pipeline.slide_post import build
 from app.pipeline.slide_post.build import (
@@ -433,3 +434,21 @@ class TestRealFfmpegComposite:
         )
         assert _pixels(frame)[int(0.3 * 1920), 540].min() > 150
         assert _pixels(frame)[int(0.7 * 1920), 540].max() < 40
+
+
+def test_the_stroke_model_stays_the_persisted_wire() -> None:
+    """DrawingStroke is persisted by the video drawing lane AND by every stored slide draft, and
+    `parse_slide_post` fails closed to "no draft" on an invalid stroke. Evolve it only additively
+    with defaults; a new required field or a tighter bound would blank every draft that has ink
+    (docs/pipelines/slide-post.md, "Slide drawings")."""
+    assert set(DrawingStroke.model_fields) == {
+        "color",
+        "opacity",
+        "width_frac",
+        "texture",
+        "seed",
+        "points",
+    }
+    # Everything but the colour, width and points has a default, so an older payload still parses.
+    required = {name for name, field in DrawingStroke.model_fields.items() if field.is_required()}
+    assert required == {"color", "width_frac", "points"}
