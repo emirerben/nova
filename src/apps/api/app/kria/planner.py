@@ -149,9 +149,9 @@ from app.services.song_range import (
     build_song_range_question,
     fold_song_range_events,
     restrict_alignment_to_range,
+    should_ask_song_range,
     song_range_of,
     song_range_question_text,
-    takes_ambiguous_between_repeats,
 )
 from app.services.spoken_quotes import closing_quote_notice, ground_closing_quote
 
@@ -826,14 +826,14 @@ async def _song_order_gate(
 
     # KRI-580: the creator said which stretch of the song they filmed in; a take is only matched
     # there (a repeated verse elsewhere must not split the group).
-    alignment = restrict_alignment_to_range(alignment, song_range)
+    durations = _song_take_durations(manifest, take_ids)
+    alignment = restrict_alignment_to_range(alignment, song_range, durations=durations)
 
     if kept_strategy is not None and events is not None:
         # Only keep lip-sync for an exchange about THIS song generation.
         if not thread_keeps_lipsync(events, song_generation):
             return _SongGateResult()
 
-    durations = _song_take_durations(manifest, take_ids)
     song_duration_s, first_line_s = _song_timing(item_song_analysis)
     if events is None:
         events = await _load_thread_events(db, thread_id)
@@ -854,13 +854,14 @@ async def _song_order_gate(
         and not answered
         and settings.song_filming_range_enabled
         and song_generation not in fold_song_range_events(events).asked_generations
-        and takes_ambiguous_between_repeats(alignment, take_ids)
+        and should_ask_song_range(alignment, take_ids)
     ):
-        # KRI-588: the song repeats its verses and some clip fits more than one repeat. The
-        # creator knows which part of the song they filmed in: ask ONCE per song, before any
-        # order question, and match the clips only inside the answer. Skippable ("the whole
-        # song"), and never asked again whether it was answered, skipped or ignored (a client
-        # that cannot answer must not loop).
+        # KRI-588/650: the song repeats its verses and a clip fits more than one repeat, or
+        # several clips could not be placed with confidence. The creator knows which part of
+        # the song they filmed in: ask ONCE per song, before any order question, and match the
+        # clips only inside the answer. Skippable ("the whole song"), and never asked again
+        # whether it was answered, skipped or ignored (a client that cannot answer must not
+        # loop).
         range_question = build_song_range_question(song_generation, song_duration_s)
         return _SongGateResult(
             plan=KriaTurnPlan(

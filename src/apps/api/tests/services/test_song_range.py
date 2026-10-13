@@ -224,4 +224,103 @@ def test_the_takes_still_needing_an_answer_shrink_when_the_range_removes_a_tie()
 def test_module_constants_are_the_documented_ones() -> None:
     assert SONG_RANGE_TOLERANCE_S == 3.0
     assert sr.SongRange(1.0, 2.0).contains_start(-1.9)
+    assert sr.REPEAT_MIN_LIKELIHOOD == 0.08
+    assert sr.WEAK_TAKES_ASK_MIN == 2
     assert SONG_DURATION_S > 0
+
+
+# -- KRI-650: the thread that never asked (job 76bf... / "Create Lipsync", 2026-10-13) --------
+# Real candidates: sure placements at 44.3 s and 99.7 s, the chorus repeat near 145-154 s scored
+# only 0.08-0.17, and three of the five takes were unsure. The question needs a 0.2 repeat, so it
+# never fired and the creator was sent straight to the order card.
+
+_NEVER_ASKED_DURATIONS = {"T29": 29.8, "T33": 33.5, "T10": 10.83, "T7": 7.67, "T14": 14.27}
+
+
+def _never_asked() -> SongAlignment:
+    return SongAlignment(
+        song_generation=1,
+        takes={
+            "T29": _row("T29", (44.303, 0.9), (151.54, 0.164), (147.86, 0.105), (144.0, 0.08)),
+            "T33": TakeAlignment(media_id="T33", status="ambiguous"),
+            "T10": _row("T10", (88.6, 0.29)),
+            "T7": _row("T7", (99.7, 0.95), (150.4, 0.17), (154.1, 0.16), (145.2, 0.08)),
+            "T14": _row("T14", (185.0, 0.14)),
+        },
+    )
+
+
+def test_the_job_that_never_asked_now_asks() -> None:
+    ids = list(_NEVER_ASKED_DURATIONS)
+    alignment = _never_asked()
+    assert sr.takes_ambiguous_between_repeats(alignment, ids) == ["T29", "T7"]
+    assert sr.should_ask_song_range(alignment, ids)
+
+
+@pytest.mark.parametrize(
+    ("statuses", "asks"),
+    [
+        (("confident", "confident", "confident"), False),
+        (("ambiguous", "confident", "confident"), False),
+        (("ambiguous", "unmatched", "confident"), True),
+        (("unmatched", "unmatched", "unmatched"), True),
+    ],
+)
+def test_several_unsure_takes_ask_even_without_a_visible_repeat(statuses, asks) -> None:
+    takes = {
+        f"M{i}": (
+            _row(f"M{i}", (10.0 + 40 * i, 0.95))
+            if status == "confident"
+            else TakeAlignment(media_id=f"M{i}", status=status)
+        )
+        for i, status in enumerate(statuses)
+    }
+    alignment = SongAlignment(song_generation=1, takes=takes)
+    assert sr.should_ask_song_range(alignment, list(takes)) is asks
+
+
+def test_a_take_that_would_run_past_the_end_of_the_stretch_is_not_matched_there() -> None:
+    # "I filmed seconds 1-50": a 29.8 s take starting at 44 s would play over seconds 44-74.
+    stretch = SongRange(1.0, 50.0)
+    row = restrict_alignment_to_range(
+        _never_asked(), stretch, durations=_NEVER_ASKED_DURATIONS
+    ).takes["T29"]
+    assert row.status == "unmatched"
+    assert row.candidates_or_legacy() == []
+
+
+def test_a_take_that_fits_the_stretch_keeps_its_placement() -> None:
+    stretch = SongRange(40.0, 110.0)
+    restricted = restrict_alignment_to_range(
+        _never_asked(), stretch, durations=_NEVER_ASKED_DURATIONS
+    )
+    assert restricted.takes["T29"].delta_s == pytest.approx(44.303)  # 44.3 + 29.8 = 74.1 <= 113
+    assert restricted.takes["T7"].delta_s == pytest.approx(99.7)  # 99.7 + 7.67 <= 113
+    assert restricted.takes["T7"].candidates_or_legacy()[0].delta_s == pytest.approx(99.7)
+    assert len(restricted.takes["T7"].candidates_or_legacy()) == 1  # the chorus repeat is gone
+
+
+def test_without_clip_lengths_only_the_start_is_checked() -> None:
+    stretch = SongRange(1.0, 50.0)
+    row = restrict_alignment_to_range(_never_asked(), stretch).takes["T29"]
+    assert row.delta_s == pytest.approx(44.303)
+
+
+def test_a_take_longer_than_the_whole_stretch_is_judged_by_where_it_starts() -> None:
+    stretch = SongRange(40.0, 60.0)
+    assert stretch.contains_take(44.0, 29.8)  # cannot fit anywhere; starts inside
+    assert not stretch.contains_take(100.0, 29.8)
+
+
+@pytest.mark.parametrize(
+    ("delta", "duration", "fits"),
+    [
+        (10.0, 30.0, True),
+        (22.0, 30.0, True),  # 52 <= 50 + 3
+        (24.0, 30.0, False),  # 54 > 53
+        (-2.5, 20.0, True),  # a little run-up before the stretch
+        (-4.0, 20.0, False),
+    ],
+)
+def test_the_whole_take_must_fit_with_the_run_up_slack(delta, duration, fits) -> None:
+    assert SongRange(0.0, 50.0).contains_take(delta, duration) is fits
