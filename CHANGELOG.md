@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.261.0] - 2026-10-13
+
+### Changed
+- fix(ios): the recorder never silently records silence, and every take is saved to Photos (KRI-653) (#1592) <!-- release-pr: 1592 -->
+
 ## [0.78.260.0] - 2026-10-13
 
 ### Changed
