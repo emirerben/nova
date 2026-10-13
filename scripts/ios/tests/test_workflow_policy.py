@@ -6,6 +6,7 @@ import unittest
 
 WORKFLOW = Path(__file__).resolve().parents[3] / ".github/workflows/ios.yml"
 CI_WORKFLOW = WORKFLOW.with_name("ci.yml")
+TESTFLIGHT_WORKFLOW = WORKFLOW.with_name("testflight.yml")
 
 
 class IOSWorkflowPolicyTests(unittest.TestCase):
@@ -164,3 +165,34 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_main_never_cancels_a_running_ios_build(self):
+        # A cancel-on-push policy starved main of finished runs, so TestFlight
+        # never received a release.
+        self.assertIn("cancel-in-progress: false", self.workflow)
+        self.assertNotIn("cancel-in-progress: ${{", self.workflow)
+
+    def test_testflight_releases_after_build_and_unit_on_the_first_native_leg(self):
+        step = self.workflow.split(
+            "- name: Release to TestFlight after build and unit tests", 1
+        )
+        self.assertEqual(len(step), 2)
+        before, after = step
+        # Only after the compile + unit step and the cache save, never on PRs,
+        # and ahead of the long UI suite so it does not wait for it.
+        self.assertIn("- name: Build and unit tests", before)
+        self.assertIn("- name: Save Xcode build data", before)
+        self.assertTrue(after.index("- name: Native UI tests") > 0)
+        condition = after.split("\n", 2)[1]
+        self.assertIn("matrix.lane == 'native'", condition)
+        self.assertIn("(!matrix.shard || startsWith(matrix.shard, '1/'))", condition)
+        self.assertIn("github.event_name != 'pull_request'", condition)
+        self.assertIn("github.ref == 'refs/heads/main'", condition)
+        self.assertEqual(self.workflow.count("gh workflow run testflight.yml"), 1)
+        self.assertIn("actions: write", self.workflow)
+
+    def test_testflight_skips_a_commit_an_earlier_upload_already_contains(self):
+        testflight = TESTFLIGHT_WORKFLOW.read_text()
+        # An out-of-order or duplicate dispatch must not downgrade the upload.
+        self.assertIn('git merge-base --is-ancestor "$HEAD_SHA" "$sha"', testflight)
+        self.assertIn("superseded", testflight)

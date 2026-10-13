@@ -14,10 +14,13 @@ on:
     branches: [main]
 
 concurrency:
-  # A newer main build tests all prior commits. Keep manual regressions separate
-  # so a push cannot cancel an explicitly requested run.
+  # Never cancel a running main build: a busy day of merges used to kill every
+  # run before it finished, so nothing was ever released. GitHub keeps one
+  # running and one pending run per group and a newer push replaces only the
+  # pending one, so the newest commit is always next. Manual regressions have
+  # their own group so a push cannot delay an explicitly requested run.
   group: ios-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: false
 
 jobs:
   changes:
@@ -30,10 +33,10 @@ jobs:
     # stable, fail-closed required check. Contracts are portable, so running
     # them on Ubuntu leaves the macOS runner for the native build sooner.
     #
-    # Main uses one Mac for its full suite so post-merge checks do not consume
-    # three scarce runners while PRs wait. Explicit manual regressions may use
-    # the duration-balanced shards; each leg builds from the warm cache, and
-    # shard 1 also runs unit tests and saves the cache.
+    # Main and manual regressions use the duration-balanced shards: the full
+    # suite run serially outlasts timeout-minutes (build+unit ~19 min, UI >56).
+    # Each leg builds from the warm cache, and shard 1 also runs unit tests,
+    # saves the cache and releases to TestFlight once those pass.
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.ios_ui_shards == '3' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/3"},{"lane":"native","runner":"macos-15","shard":"2/3"},{"lane":"native","runner":"macos-15","shard":"3/3"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '2' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/2"},{"lane":"native","runner":"macos-15","shard":"2/2"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || '{"include":[{"lane":"native","runner":"macos-15"},{"lane":"contracts","runner":"ubuntu-latest"}]}') }}
@@ -41,6 +44,9 @@ jobs:
     # Green native runs on main took 31-54 minutes (median 42) in September
     # 2026 as one serial job. See KRI-168 in docs/runbooks/ios-development.md.
     timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python for portable contract checks
@@ -144,6 +150,13 @@ jobs:
             src/apps/ios/.derived-data/SDKStatCaches.noindex
             src/apps/ios/.derived-data/CompilationCache.noindex
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
+      # Release as soon as build and unit tests pass. The full UI suite below
+      # still gates main's status, but no longer delays the TestFlight upload.
+      - name: Release to TestFlight after build and unit tests
+        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/')) && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run testflight.yml --ref main -f head_sha="${{ github.sha }}"
       - name: Native UI tests (reuse compiled build)
         # main and workflow_dispatch run the fail-closed full regression. A PR
         # that touches native UI inputs runs a bounded pre-merge subset: smoke
