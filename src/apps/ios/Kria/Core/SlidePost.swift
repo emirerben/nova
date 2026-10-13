@@ -633,7 +633,7 @@ private struct SlidePostItemResponse: Decodable {
     @Published private(set) var isPastingSticker = false
     /// File names of the pictures this device uploaded as stickers. A sticker's asset lives in the same pool as the
     /// slides' photos, so without this it would be appended to the post as a NEW SLIDE the moment it is ready (and again
-    /// after a relaunch or a refresh). Names are random per paste and never removed.
+    /// after a relaunch or a refresh). Names come from the picture's bytes and are never removed.
     private(set) var stickerUploadNames: Set<String> = []
     /// Why some freshly imported media did not become a slide (limit / photos-only). Cleared by the user.
     @Published var autoAppendNotice: String?
@@ -1185,7 +1185,6 @@ private struct SlidePostItemResponse: Decodable {
         guard let context else { return }
         isPastingSticker = true
         defer { isPastingSticker = false }
-        let known = Set(state?.assets.map(\.id) ?? [])
         let filename = BackgroundUploadCoordinator.displayFilename(fileURL.lastPathComponent)
         // Before the upload starts: from this moment the picture's asset must never be offered as a slide.
         stickerUploadNames.insert(filename)
@@ -1198,7 +1197,9 @@ private struct SlidePostItemResponse: Decodable {
         for _ in 0..<Self.stickerPollAttempts {
             guard !Task.isCancelled, itemID == context.itemID else { return }
             await refresh(api: context.api, itemID: context.itemID)
-            if let asset = state?.assets.first(where: { !known.contains($0.id) && ($0.sourceFilename.map(BackgroundUploadCoordinator.displayFilename) == filename) }) {
+            // Any asset with this name, not only a new one: the file is named from its bytes and the pool dedupes
+            // identical uploads, so pasting the same picture again finds the copy it already holds.
+            if let asset = state?.assets.first(where: { $0.sourceFilename.map(BackgroundUploadCoordinator.displayFilename) == filename }) {
                 // Decided now, so even a relaunch before it is ready cannot turn it into a slide.
                 seenAssetIDs = (seenAssetIDs ?? []).union([asset.id])
                 persist()
