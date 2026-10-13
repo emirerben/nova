@@ -394,6 +394,20 @@ import XCTest
         attach(app, "More menu then undo")
     }
 
+    /// KRI-647: the system Paste control in the tool dock turns copied text into a text on the selected slide.
+    func testPasteAddsCopiedTextToTheSelectedSlide() {
+        UIPasteboard.general.string = "5.2 km in 28:14"
+        let app = openRichWorkspace()
+        XCTAssertFalse(canvasText(app).exists, "a fresh slide has no text")
+        let paste = app.descendants(matching: .any)["slidepost-paste"].firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 5))
+        paste.tap()
+        XCTAssertTrue(canvasText(app).waitForExistence(timeout: 5), "the pasted text appears on the canvas")
+        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes")
+        XCTAssertTrue(app.buttons["slidepost-undo"].isEnabled)
+        attach(app, "Pasted text on a slide")
+    }
+
     /// The page has ONE AI entry (the editor's sparkles button). It opens a sheet that drives the chat
     /// edit: the server's edit is STAGED on the page behind (unsaved, undoable) and Save quotes the
     /// server's base version (the stub 409s otherwise).

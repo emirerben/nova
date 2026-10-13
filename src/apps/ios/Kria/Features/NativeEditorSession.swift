@@ -3465,14 +3465,111 @@ struct NativeEditorTemporaryVideo {
         beginTextCreationTransaction()
         player?.pause()
         isPlaying = false
+        pendingText = newTextElement(content: "")
+    }
+
+    /// A new centered text element at the playhead, 2 s long. Shared by the Text tool and paste.
+    private func newTextElement(content: String) -> EditorTextElement {
         let start = min(max(0, currentTime), max(0, duration - 0.1))
-        pendingText = EditorTextElement(
-            id: UUID().uuidString, text: "", startS: timelineProjection.unprojectOutputTime(start),
+        return EditorTextElement(
+            id: UUID().uuidString, text: content, startS: timelineProjection.unprojectOutputTime(start),
             endS: timelineProjection.unprojectOutputTime(min(duration, start + 2)),
             raw: ["font_family": .string("Inter Regular"), "size_px": .number(72),
                   "x_frac": .number(0.5), "y_frac": .number(0.5), "position": .string("custom"),
                   "color": .string("#FFFFFF"), "effect": .string("none"), "wrap_lines": .bool(false)]
         )
+    }
+
+    // MARK: - Paste (KRI-647)
+
+    /// True while a pasted image is uploading to the visual pool and becoming a layer.
+    @Published private(set) var isPastingImage = false
+    /// Shown as an alert by the editor: paste comes from the "+" menu, where the Visuals panel's own error line isn't on screen.
+    @Published var pasteError: String?
+
+    /// Why Paste can't act right now, or nil when it can. Text needs the Text lane, an image needs visuals.
+    func pasteUnavailableMessage(for content: PastedContent) -> String? {
+        switch content {
+        case .text:
+            return canEditSection(.text) && duration > 0 ? nil : "Adding text isn’t available for this edit."
+        case .image:
+            if itemID == nil { return "Open a saved edit to paste a picture." }
+            if let message = visualImportUnavailableMessage { return message }
+            return canAuthorVisuals ? nil : "Adding pictures isn’t available for this edit."
+        }
+    }
+
+    /// Entry point for the system Paste control. Anything that can't be placed says why, never a silent no-op.
+    func paste(providers: [NSItemProvider]) async {
+        guard let content = await PasteboardIntake.load(from: providers) else {
+            pasteError = "Kria can’t use what’s on your clipboard. Copy text or a picture and try again."
+            return
+        }
+        if let message = pasteUnavailableMessage(for: content) {
+            pasteError = message
+            if case .image(let url) = content { try? FileManager.default.removeItem(at: url) }
+            return
+        }
+        pasteError = nil
+        visualError = nil
+        switch content {
+        case .text(let text): pasteText(text)
+        case .image(let url): await pasteImage(fileURL: url)
+        }
+    }
+
+    @discardableResult func pasteText(_ text: String) -> EditorSelection? {
+        guard let value = PasteboardIntake.normalizedText(text), canEditSection(.text), duration > 0 else { return nil }
+        player?.pause()
+        isPlaying = false
+        let item = newTextElement(content: value)
+        transactDocument(section: .text) { $0.textElements.append(item) }
+        let selected = EditorSelection(kind: .text, id: item.id)
+        select(selected, seekToStart: false)
+        return selected
+    }
+
+    /// Uploads the picture into the edit's visual pool, then places it exactly as a library tap would
+    /// (cloud edit: `addLibraryVisual`; phone-rendered edit: `admitDeviceVisual`), so a pasted PNG
+    /// keeps whatever transparency handling those paths give a picked one.
+    func pasteImage(fileURL: URL) async {
+        guard !isPastingImage, let uploads = mediaUploads, let itemID else {
+            pasteError = "Adding a picture isn’t available right now."
+            return
+        }
+        isPastingImage = true
+        defer { isPastingImage = false }
+        _ = await refreshVisualLibrary()
+        let known = Set(visualLibrary.map(\.id))
+        let filename = BackgroundUploadCoordinator.displayFilename(fileURL.lastPathComponent)
+        let accepted = await uploads.enqueue(fileURL: fileURL, projectID: threadID ?? projectID, source: .files,
+            consentGiven: true, purpose: .cloudRenderSource, role: .visual, itemID: itemID)
+        guard accepted else {
+            // A refused upload never takes ownership of the temp file.
+            try? FileManager.default.removeItem(at: fileURL)
+            pasteError = uploads.lastError ?? "That picture couldn’t be added. Your edit is unchanged."
+            return
+        }
+        // The background uploader registers the asset with the pool, then analysis marks it ready.
+        for _ in 0..<120 {
+            guard !Task.isCancelled, self.itemID == itemID else { return }
+            _ = await refreshVisualLibrary()
+            // Match the upload by its own filename so a stale refresh or a second upload can't hand back another asset.
+            let fresh = visualLibrary.filter { !known.contains($0.id) }
+            if let asset = fresh.first(where: { $0.sourceFilename == filename }) ?? fresh.first(where: { $0.sourceFilename == nil }) {
+                if asset.status == "ready" {
+                    await addLibraryVisual(asset)
+                    if let failure = visualError { pasteError = failure }
+                    return
+                }
+                if asset.status == "failed" {
+                    pasteError = "That picture couldn’t be prepared. Your edit is unchanged."
+                    return
+                }
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        pasteError = "Adding the picture is taking longer than expected. It will appear in your visuals when ready."
     }
 
     func updatePendingText(_ content: String) { pendingText?.text = content }

@@ -560,6 +560,7 @@ struct SlidePostWorkspaceView: View {
                 showsSize: sizesOn, onSize: { session.selectedTextID = nil; showsSize = true },
                 showsDraw: drawingOn, onDraw: beginDrawing,
                 canClearDrawing: slide?.edits?.drawing != nil, onClearDrawing: { if let id = slide?.id { session.clearDrawing(slideID: id) } },
+                onPaste: slide.map { target in { providers in Task { await session.paste(providers: providers, slideID: target.id) } } },
                 onText: beginTextEditing,
                 onCover: { if let id = slide?.id { session.setCover(id: id); UINotificationFeedbackGenerator().notificationOccurred(.success) } },
                 onLook: { mode = .look },
