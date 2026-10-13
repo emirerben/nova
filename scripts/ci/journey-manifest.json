@@ -451,6 +451,16 @@
         "src/apps/api/app/pipeline/phone_opening_cut.py",
         "src/apps/api/app/services/spoken_quotes.py"
       ]
+    },
+    {
+      "id": "kri-632-phone-captions",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_caption_cue_budget.py tests/pipeline/test_caption_spelling.py",
+      "paths": [
+        "src/apps/api/app/pipeline/captions.py",
+        "src/apps/api/app/pipeline/caption_spelling.py",
+        "src/apps/api/tests/fixtures/kri632_t1_talking_words.json"
+      ]
     }
   ]
 }
