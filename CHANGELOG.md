@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.255.0] - 2026-10-13
+
+### Changed
+- fix(ios): drawing Animation tab polish - speed direction, previews, layout, haptics (KRI-637) (#1577) <!-- release-pr: 1577 -->
+
 ## [0.78.254.0] - 2026-10-13
 
 ### Changed
