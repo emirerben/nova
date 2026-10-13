@@ -24,7 +24,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
 import structlog
@@ -926,6 +926,37 @@ class LibraryPlaybackDiagnostic(BaseModel):
     underlying_domain: str | None = Field(default=None, max_length=120)
     underlying_code: int | None = None
     source_state: str = Field(max_length=32)
+    app_build: str | None = Field(default=None, max_length=32)
+
+
+class RecorderDiagnostic(BaseModel):
+    """The in-app teleprompter recorder heard nothing (KRI-653).
+
+    A talk-to-camera take recorded in-app came back with a digitally silent audio
+    track and nothing on the phone said why. The app reports its audio-session state
+    and the last few camera/scene transitions so the trigger can be named from logs.
+    Short bounded labels (each capped at 40 characters, lists capped) and numbers only: no
+    file names, script text, or anything the creator typed or said.
+    """
+
+    # Not named ``event``: structlog reserves that keyword for the log message itself.
+    kind: Literal["take_silent", "live_mic_silent"]
+    audio_category: str | None = Field(default=None, max_length=40)
+    audio_mode: str | None = Field(default=None, max_length=40)
+    route_inputs: list[Annotated[str, Field(max_length=40)]] = Field(
+        default_factory=list, max_length=6
+    )
+    route_outputs: list[Annotated[str, Field(max_length=40)]] = Field(
+        default_factory=list, max_length=6
+    )
+    other_audio_playing: bool | None = None
+    # e.g. "ready+0", "scene_inactive+812", "recording+2400": label + ms offset.
+    phase_history: list[Annotated[str, Field(max_length=40)]] = Field(
+        default_factory=list, max_length=16
+    )
+    channel_count: int | None = Field(default=None, ge=0, le=16)
+    max_power_db: float | None = Field(default=None, ge=-200, le=20)
+    take_duration_s: float | None = Field(default=None, ge=0, le=7200)
     app_build: str | None = Field(default=None, max_length=32)
 
 
@@ -1994,6 +2025,17 @@ async def report_library_playback_failure(
         user_id=str(user.id),
         **body.model_dump(),
     )
+
+
+@router.post("/recorder-diagnostics", status_code=status.HTTP_204_NO_CONTENT)
+async def report_recorder_audio_silent(body: RecorderDiagnostic, user: CurrentUser) -> None:
+    """Log that the in-app recorder produced (or is producing) a silent take (KRI-653).
+
+    Log-only (no DB write) and best-effort for the client: the app fires it once per
+    silent take so the next occurrence names its own trigger in the Fly logs
+    (`recorder_audio_silent`).
+    """
+    log.warning("recorder_audio_silent", user_id=str(user.id), **body.model_dump())
 
 
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)

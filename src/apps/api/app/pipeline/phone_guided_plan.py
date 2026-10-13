@@ -79,6 +79,15 @@ class UserSongPlanDeclined(UnsupportedPhonePlan):
     """
 
 
+class SilentAudioPlanDeclined(UnsupportedPhonePlan):
+    """The talking take has no sound at all (KRI-653).
+
+    A dead microphone records a valid audio track of zeros; captions and a speech cut over it
+    only produce hallucinated words. Like ``UserSongPlanDeclined`` the message is creator-facing
+    copy, stored on ``error_detail`` and shown verbatim in chat under ``silent_audio_declined``.
+    """
+
+
 # Plan lane -> the MediaCapability it would require once the recipe schema
 # carries its content. Kept next to the reject loop so a new plan lane and
 # its capability name are added together.

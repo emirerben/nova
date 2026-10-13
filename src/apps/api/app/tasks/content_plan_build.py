@@ -818,6 +818,11 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
         "I couldn't line your clips up with your song. Film with the song playing out "
         "loud, or sing along clearly, then try again."
     ),
+    # KRI-653: the talking take has no sound; `error_detail` carries the actionable copy.
+    "silent_audio_declined": (
+        "Your video has no sound, so there's nothing to caption or cut. Record it again "
+        "and check that nothing is covering the microphone."
+    ),
     "phone_plan_unsupported": (
         "This edit uses something your iPhone can't render yet. Start a new edit "
         "with a different clip or format."
@@ -884,7 +889,7 @@ _DEFAULT_JOB_FAILURE_MESSAGE = (
 
 # Failure codes whose `Job.error_detail` is written for the creator (not a stack
 # trace), so chat/route surfaces show it instead of the generic sentence.
-CREATOR_FACING_DETAIL_CODES = {"user_song_plan_declined"}
+CREATOR_FACING_DETAIL_CODES = {"user_song_plan_declined", "silent_audio_declined"}
 _CREATOR_DETAIL_MAX_CHARS = 500
 
 

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.261.0] - 2026-10-13
+
+### Changed
+- fix(ios): the recorder never silently records silence, and every take is saved to Photos (KRI-653) (#1592) <!-- release-pr: 1592 -->
+
+## [0.78.260.0] - 2026-10-13
+
+### Changed
+- fix(api): refuse silent talk-to-camera audio instead of shipping a 4 s video (KRI-653) (#1591) <!-- release-pr: 1591 -->
+
 ## [0.78.259.0] - 2026-10-13
 
 ### Changed
