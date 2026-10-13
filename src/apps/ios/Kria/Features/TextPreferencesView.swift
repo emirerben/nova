@@ -157,7 +157,7 @@ struct TextPreferencesView: View {
                         Text("Use defaults").tag("defaults")
                         Text("Automatic").tag("automatic")
                         ForEach(NativeFontCatalog.shared.pickerFonts, id: \.self) { Text($0).tag($0) }
-                    }
+                    }.accessibilityIdentifier("text-preference-font")
                     NavigationLink("Favorite fonts (\(rule.favoriteFonts.count))") {
                         fontChoices(title: "Favorite fonts", selected: $rule.favoriteFonts, other: $rule.excludedFonts)
                     }
@@ -167,10 +167,10 @@ struct TextPreferencesView: View {
                 }
                 Section("Placement and color") {
                     Picker("Placement", selection: Binding(get: { rule.position ?? "" }, set: { rule.position = $0.isEmpty ? nil : $0 })) {
-                        Text("Automatic").tag("")
+                        Text("Use defaults").tag("")
                         ForEach(["top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right"], id: \.self) { Text(label($0)).tag($0) }
                     }
-                    TextField("Color hex, or blank for automatic", text: $color)
+                    TextField("Color hex, or blank to use defaults", text: $color)
                         .textInputAutocapitalization(.characters).autocorrectionDisabled()
                         .accessibilityLabel("Text color hex")
                 }
@@ -186,10 +186,12 @@ struct TextPreferencesView: View {
                     status
                     Button("Save preferences") {
                         rule.color = color.isEmpty ? nil : color
-                        Task { await model.save(role: role, rule: rule) }
+                        let savedRole = role, savedRule = rule
+                        Task { await model.save(role: savedRole, rule: savedRule) }
                     }.accessibilityIdentifier("text-preferences-save")
                     Button("Reset \(label(role).lowercased()) preferences") {
-                        Task { await model.reset(role: role); reloadRule() }
+                        let resetRole = role
+                        Task { await model.reset(role: resetRole); reloadRule() }
                     }
                     if let undo = memory.recentUndo { Button("Undo last preference change") { Task { await model.undo(undo.id); reloadRule() } } }
                 }.disabled(model.isWorking)
@@ -217,6 +219,7 @@ struct TextPreferencesView: View {
             if model.memory?.textStylingAvailable != true { status }
             if model.isWorking { ProgressView("Loading preferences") }
         }
+        .disabled(model.isWorking)
         .scrollContentBackground(.hidden).background(KriaColor.paper)
         .navigationTitle("Text preferences").navigationBarTitleDisplayMode(.inline)
         .task { await model.load(); reloadRule() }

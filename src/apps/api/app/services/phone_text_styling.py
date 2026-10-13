@@ -140,7 +140,7 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
     from app.agents._model_client import default_client
     from app.agents._runtime import RunContext
     from app.agents.phone_typography import PhoneTypographyAgent, PhoneTypographyInput
-    from app.pipeline.phone_text_style import _covers, text_role
+    from app.pipeline.phone_text_style import _covers, coverage_text, text_role
     from app.services.pipeline_trace import record_pipeline_event
 
     roles = {}
@@ -150,7 +150,7 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
         if rule.get("font_family"):
             continue
         texts = [
-            str(row.get("text") or "")
+            coverage_text(row)
             for row in rows
             if text_role(row) == role
             and "font_family"
@@ -304,6 +304,15 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
     rule = effective_text_rule(
         policy.get("preferences") or {}, policy.get("requested") or {}, "caption"
     )
+    if (
+        float(rule.get("stroke_width", 0)) > 12
+        or not float(rule.get("stroke_width", 0)).is_integer()
+    ):
+        from app.pipeline.phone_text_style import _style_decline
+
+        raise _style_decline(
+            "Caption outlines use whole pixel widths from 0 to 12. Choose a supported width."
+        )
     texts = [str(cue.get("text") or "") for cue in cues]
     selected = policy.get("selected_fonts") or {}
     if (
@@ -408,6 +417,7 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
                 role="caption",
                 wanted=rule,
                 canvas=canvas,
+                block_rows=rows,
                 obstacles=[
                     *(
                         face["box"] if isinstance(face, dict) else face
@@ -452,6 +462,7 @@ def remember_caption_bounds(layers, *, canvas):
     # The actual compiler has already rewrapped around the watermark. Reserve
     # those final ink bounds, not the original cue's nominal anchor.
     from app.pipeline.phone_captions import caption_ink_box
+    from app.pipeline.phone_text_style import animation_box
     from app.pipeline.text_overlay_skia import _resolve_typeface_for_overlay
 
     look = policy.get("caption_look")
@@ -467,11 +478,24 @@ def remember_caption_bounds(layers, *, canvas):
                 {
                     "start_s": layer.start,
                     "end_s": layer.end,
-                    "box": (
-                        min(b[0] for b in ink) / canvas.width,
-                        min(b[1] for b in ink) / canvas.height,
-                        max(b[2] for b in ink) / canvas.width,
-                        max(b[3] for b in ink) / canvas.height,
+                    "box": animation_box(
+                        {
+                            "effect": layer.effect,
+                            "x_frac": layer.anchor_x / canvas.width,
+                            "y_frac": layer.anchor_y / canvas.height,
+                            "size_px": look.text_size_px,
+                            "font_family": look.font_family,
+                            "text": " ".join(run.text for run in layer.runs),
+                            "stroke_width": look.outline_px,
+                            "shadow_enabled": look.shadow_enabled,
+                        },
+                        (
+                            min(b[0] for b in ink) / canvas.width,
+                            min(b[1] for b in ink) / canvas.height,
+                            max(b[2] for b in ink) / canvas.width,
+                            max(b[3] for b in ink) / canvas.height,
+                        ),
+                        canvas,
                     ),
                 }
             )
@@ -685,14 +709,21 @@ def style_guided_generation(plan, bindings, *, job_id: str) -> dict:
     raw = plan.model_dump(mode="json", exclude_none=False)
     lanes = ("text_elements", "context_label_text_elements", "narration_label_text_elements")
     rows = [row for lane in lanes for row in raw.get(lane) or []]
+    from app.pipeline.phone_text_style import text_role
+
+    for lane in lanes[1:]:
+        for row in raw.get(lane) or []:
+            if text_role(row) == "title":
+                row["source_params"] = {
+                    **(row.get("source_params") or {}),
+                    "phone_text_role": "label",
+                }
     boxes = []
     frames = []
     policy = _POLICY.get()
     if policy is not None:
         policy["_environment_sampled"] = True
     if bindings and rows:
-        from app.pipeline.phone_text_style import text_role
-
         all_anchors = sorted(
             {
                 round(

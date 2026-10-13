@@ -43,11 +43,15 @@ def text_role(row: dict) -> str:
     source = row.get("source_params") or {}
     if "pinned" in key or key.startswith("pin-") or row.get("role") == "pinned_text":
         return "pinned"
-    if "lyric" in key or source.get("source") == "song_caption":
+    if "lyric" in key or key.startswith("song-caption-") or source.get("source") == "song_caption":
         return "lyric"
     if "caption" in key or source.get("source") == "caption_cue":
         return "caption"
-    if "label" in key or row.get("role") in {"label", "context_label", "narration_label"}:
+    if (
+        "label" in key
+        or source.get("phone_text_role") == "label"
+        or row.get("role") in {"label", "context_label", "narration_label"}
+    ):
         return "label"
     return "title"
 
@@ -56,7 +60,59 @@ def text_role(row: dict) -> str:
 def _covers(family: str, text: str) -> bool:
     from app.pipeline.unified_montage import skia_font_covers
 
-    return skia_font_covers(family, text)
+    return skia_font_covers(
+        family, "".join(character for character in text if not character.isspace())
+    )
+
+
+def displayed_text(row: dict) -> str:
+    from app.agents._schemas.text_element import apply_text_case
+
+    return apply_text_case(str(row.get("text") or ""), row.get("text_case"))
+
+
+def cursor_text(row: dict) -> str:
+    phases = row.get("animation_phases") or {}
+    if row.get("effect") not in {"typewriter", "stream-in"} and "typewriter" not in (
+        phases.get("entrance"),
+        phases.get("exit"),
+    ):
+        return ""
+    return {"block": " ▮", "underscore": " _", "none": ""}.get(
+        (row.get("motion") or {}).get("cursor_style", "bar"), " |"
+    )
+
+
+def coverage_text(row: dict) -> str:
+    return displayed_text(row) + cursor_text(row)
+
+
+@lru_cache(maxsize=1024)
+def _cursor_width(family: str, size: int, cursor: str) -> float:
+    import skia
+
+    from app.pipeline.text_overlay_skia import _resolve_typeface_for_overlay
+
+    return skia.Font(
+        _resolve_typeface_for_overlay({"font_family": family}).typeface, size
+    ).measureText(cursor)
+
+
+@lru_cache(maxsize=1024)
+def _glyph_overhang(family: str, size: int, text: str) -> float:
+    import skia
+
+    from app.pipeline.text_overlay_skia import _resolve_typeface_for_overlay
+
+    font = skia.Font(_resolve_typeface_for_overlay({"font_family": family}).typeface, size)
+    glyphs = font.textToGlyphs("".join(character for character in text if not character.isspace()))
+    return max(
+        (
+            max(0, -bound.left(), bound.right() - width)
+            for bound, width in zip(font.getBounds(glyphs), font.getWidths(glyphs), strict=True)
+        ),
+        default=0,
+    )
 
 
 def measure_box(row: dict, canvas: Canvas = PORTRAIT) -> tuple[float, float, float, float]:
@@ -118,7 +174,39 @@ def _same_window(a: dict, b: dict) -> bool:
 
 def animation_box(row: dict, box, canvas: Canvas = PORTRAIT):
     """A conservative swept envelope from the actual native motion parameters."""
+    import math
+
     from app.pipeline.text_motion_v2 import normalize_text_motion
+    from app.pipeline.text_overlay_skia import _text_shadow_layers, _text_shadow_style
+
+    rotation = math.radians(float(row.get("rotation_deg") or 0))
+    if rotation:
+        cx = float(row.get("x_frac", 0.5)) * canvas.width
+        cy = float(row.get("y_frac", 0.5)) * canvas.height
+        corners = [
+            (
+                (
+                    cx
+                    + (x * canvas.width - cx) * math.cos(rotation)
+                    - (y * canvas.height - cy) * math.sin(rotation)
+                )
+                / canvas.width,
+                (
+                    cy
+                    + (x * canvas.width - cx) * math.sin(rotation)
+                    + (y * canvas.height - cy) * math.cos(rotation)
+                )
+                / canvas.height,
+            )
+            for x in (box[0], box[2])
+            for y in (box[1], box[3])
+        ]
+        box = (
+            min(x for x, _ in corners),
+            min(y for _, y in corners),
+            max(x for x, _ in corners),
+            max(y for _, y in corners),
+        )
 
     effect = row.get("effect") or "static"
     motion = normalize_text_motion(effect, row.get("motion"))
@@ -142,16 +230,50 @@ def animation_box(row: dict, box, canvas: Canvas = PORTRAIT):
     if effect == "staggered-slice":
         dx += 0.01
         dy += float(row.get("size_px") or 76) * 0.25 / canvas.height
+    if row.get("font_family"):
+        dx += (
+            _glyph_overhang(row["font_family"], int(row.get("size_px") or 76), displayed_text(row))
+            / canvas.width
+        )
     # Match the portable compiler's enabled outline and shadow footprint.
     outline = float(row.get("stroke_width") or 0)
-    effect_padding = outline + (10 if row.get("shadow_enabled") else 0)
-    dx += effect_padding / canvas.width
-    dy += effect_padding / canvas.height
+    shadows = _text_shadow_layers(_text_shadow_style(row))
+    glow = 62 if float(row.get("glow_strength") or 0) > 0 else 0
+    dx += (
+        max(outline, glow, *(math.ceil(3 * shadow.sigma + abs(shadow.dx)) for shadow in shadows))
+        / canvas.width
+    )
+    dy += (
+        max(outline, glow, *(math.ceil(3 * shadow.sigma + abs(shadow.dy)) for shadow in shadows))
+        / canvas.height
+    )
+    if row.get("font_family") and (cursor := cursor_text(row)):
+        dx += (
+            _cursor_width(row["font_family"], int(row.get("size_px") or 76), cursor) / canvas.width
+        )
     return box[0] - dx, box[1] - dy, box[2] + dx, box[3] + dy
 
 
-def _place(row: dict, *, role: str, wanted: dict, obstacles: list, canvas: Canvas) -> dict:
+def _place(
+    row: dict, *, role: str, wanted: dict, obstacles: list, canvas: Canvas, block_rows=None
+) -> dict:
     from app.schemas.text_style_intent import LABEL_ANCHORS
+
+    def measure(candidate):
+        if not block_rows:
+            return measure_box(candidate, canvas)
+        peers = [{**candidate, "text": peer["text"]} for peer in block_rows]
+        boxes = [measure_box(peer, canvas) for peer in peers]
+        fitted_size = min(peer["size_px"] for peer in peers)
+        if fitted_size < candidate["size_px"]:
+            candidate["size_px"] = fitted_size
+            boxes = [measure_box({**candidate, "text": peer["text"]}, canvas) for peer in peers]
+        return (
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        )
 
     original = deepcopy(row)
     authored = set((row.get("source_params") or {}).get("creator_style_fields") or [])
@@ -216,18 +338,18 @@ def _place(row: dict, *, role: str, wanted: dict, obstacles: list, canvas: Canva
         sizes = (
             [int(original["size_px"])]
             if "size_px" in authored
-            else range(min(104, int(original.get("size_px") or 76)), 39, -2)
+            else range(max(40, min(104, int(original.get("size_px") or 76))), 39, -2)
         )
         for size in sizes:
             row["size_px"] = size
-            box = measure_box(row, canvas)
+            box = measure(row)
             height = box[3] - box[1]
             if position.startswith("bottom"):
                 row["y_frac"] = round(y - height / 2, 5)
-                box = measure_box(row, canvas)
+                box = measure(row)
             elif position.startswith("top"):
                 row["y_frac"] = round(y + height / 2, 5)
-                box = measure_box(row, canvas)
+                box = measure(row)
             swept = animation_box(row, box, canvas)
             if position != "authored" and alignment in {"left", "right"}:
                 shift = (
@@ -237,7 +359,7 @@ def _place(row: dict, *, role: str, wanted: dict, obstacles: list, canvas: Canva
                 )
                 if shift:
                     row["x_frac"] += shift
-                    box = measure_box(row, canvas)
+                    box = measure(row)
                     swept = animation_box(row, box, canvas)
             if (
                 swept[0] >= 0.05
@@ -286,9 +408,11 @@ def resolve_phone_text_style(
     for role in {text_role(row) for row in rows}:
         rules[role] = effective_text_rule(preferences, requested, role)
     for role, wanted in rules.items():
+        if not float(wanted.get("stroke_width", 0)).is_integer():
+            raise _style_decline("Text outlines use whole pixel widths. Choose a whole number.")
         role_rows = [row for row in rows if text_role(row) == role]
         texts = [
-            str(row.get("text") or "")
+            coverage_text(row)
             for row in role_rows
             if "font_family"
             not in ((row.get("source_params") or {}).get("creator_style_fields") or [])
@@ -334,6 +458,8 @@ def resolve_phone_text_style(
             if "color" in wanted:
                 row["color"] = wanted["color"]
             source_fields = (row.get("source_params") or {}).get("creator_style_fields") or []
+            if "glow_strength" not in source_fields:
+                row["glow_strength"] = 0
             before = next(original for original in original_rows if original["id"] == row["id"])
             for field in source_fields:
                 if (
@@ -350,8 +476,10 @@ def resolve_phone_text_style(
                     and before.get(field) is not None
                 ):
                     row[field] = before[field]
+            if not float(row["stroke_width"]).is_integer():
+                raise _style_decline("Text outlines use whole pixel widths. Choose a whole number.")
             if "font_family" in source_fields and not _covers(
-                row["font_family"], str(row.get("text") or "")
+                row["font_family"], coverage_text(row)
             ):
                 raise _style_decline("This font cannot draw all of your text. Choose another font.")
     # The watermark is measured in the reference frame; keep its padding too.

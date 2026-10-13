@@ -39,11 +39,26 @@ No automatic merge/deploy. Record each command, result and HEAD in the autoship 
 ## Evidence notes
 
 Real iPhone 13 Pro exports passed for short/medium/long EN and Turkish titles,
-captions and narrated text. Sampled title preview/export bounds differed by at
-most one pixel. Artifacts live outside git in
-`/private/tmp/nova-kri-648-evidence/device-frames` and the physical XCTest bundle.
-The render kit uses synthetic footage and supplied moving-face rectangles;
-this does not establish live-face detection accuracy.
+captions, narrated titles/pins and all 15 palette faces. Sampled caption
+preview/export bounds matched exactly; title bounds differed by at most one pixel. Artifacts live outside git in
+`/private/tmp/nova-kri-648-evidence/device-frames-final` and the physical XCTest bundle.
+The repeatable kit includes synthetic footage and a panned installed sample portrait.
+The actual proxy/OpenCV path detected its face at five samples and reused those
+proxies for five background observations. Supplied moving-face rectangles separately
+exercise the collision contract. These fixtures do not establish live-camera accuracy.
+
+The all-font device proof caught Pacifico ligature drift between the unshaped
+portable recipe and CoreText preview. Only version-1 rows now request shared shaping;
+legacy rows retain their existing render path. The corrected 24-case proof passed.
+
+Current-source production-runtime overlay proofs passed 62 legacy and 27 new styled
+overlays. Docker disk exhaustion required task-owned RAM mounts with current source;
+no unrelated images or containers were pruned. Reports and reviewed montages are
+in `overlay-proof/legacy` and `overlay-proof/kri648` under the evidence directory.
+
+New caption geometry requires client protocol 8. The independent settings choices
+include Use defaults, Automatic and a required font, avoiding a misleading inherited
+font state. Caption appearance includes the resolved corner, width and alignment.
 
 The physical journey reproduced a cache failure for the second font on iOS:
 Foundation normalized an existing parent to `/var` and a missing leaf to

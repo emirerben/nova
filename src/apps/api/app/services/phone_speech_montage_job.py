@@ -40,7 +40,11 @@ from app.services.creator_render_contract import (
     read_render_contract,
     verify_phone_recipe,
 )
-from app.services.phone_text_styling import generation_style_fields, phone_text_generation
+from app.services.phone_text_styling import (
+    generation_resolved_rows,
+    generation_style_fields,
+    phone_text_generation,
+)
 from app.services.speech_montage_planning import (
     SpeechCandidate,
     plan_speech_montage,
@@ -386,7 +390,19 @@ def run_phone_speech_montage_job(
                 "duration_s": round(receipt.duration_s, 3),
                 "intro_mode": "linear",
                 "intro_layout": "linear",
-                "text_elements": pin_rows,
+                "text_elements": [
+                    *(
+                        {
+                            **row,
+                            "source_params": {
+                                **(row.get("source_params") or {}),
+                                "read_only": True,
+                            },
+                        }
+                        for row in generation_resolved_rows("title")
+                    ),
+                    *pin_rows,
+                ],
                 "orientation": "portrait",
                 "ok": False,
             }
@@ -759,7 +775,19 @@ def run_phone_voice_behind_footage_job(
                 "duration_s": round(receipt.duration_s, 3),
                 "intro_mode": "linear",
                 "intro_layout": "linear",
-                "text_elements": pin_rows,
+                "text_elements": [
+                    *(
+                        {
+                            **row,
+                            "source_params": {
+                                **(row.get("source_params") or {}),
+                                "read_only": True,
+                            },
+                        }
+                        for row in generation_resolved_rows("title")
+                    ),
+                    *pin_rows,
+                ],
                 "orientation": "portrait",
                 "ok": False,
             }

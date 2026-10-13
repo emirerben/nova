@@ -185,6 +185,56 @@ def main():
         )
         add(f"kri648_palette_{index:02}", recipe, rows, title_preview=True)
 
+    lyric = TextElement(
+        id="song-caption-0",
+        text="İstanbul",
+        start_s=0,
+        end_s=2.8,
+        source_params={"source": "caption_cue", "origin": "song"},
+        effect="static",
+    ).model_dump(mode="json", exclude_none=True)
+    rows = resolve_phone_text_style(
+        [lyric],
+        preferences={
+            "lyric": {"font_family": "Inter Medium"},
+            "caption": {"font_family": "Montserrat Bold"},
+        },
+    )
+    assert rows[0]["font_family"] == "Inter Medium" and rows[0]["text"] == lyric["text"]
+    recipe = compile_phone_voiceover_montage_plan(
+        decision, bindings, narration=voice, resolved_text_elements=rows
+    )
+    add("kri648_lyrics", recipe, rows, title_preview=True)
+    label = TextElement(
+        id="context-label-0",
+        role="generative_sequence",
+        text="DAY ONE",
+        start_s=0,
+        end_s=2.8,
+        size_px=52,
+        effect="static",
+    ).model_dump(mode="json", exclude_none=True)
+    title = TextElement(
+        id="voiceover-intro-0",
+        text="Lisbon diary",
+        start_s=0,
+        end_s=2.8,
+        size_px=104,
+        effect="fade-in",
+    ).model_dump(mode="json", exclude_none=True)
+    rows = resolve_phone_text_style(
+        [title, label],
+        preferences={
+            "title": {"font_family": "Inter Medium"},
+            "label": {"font_family": "Montserrat Bold", "position": "top_right"},
+        },
+    )
+    assert rows[0]["font_family"] == "Inter Medium" and rows[1]["font_family"] == "Montserrat Bold"
+    recipe = compile_phone_voiceover_montage_plan(
+        decision, bindings, narration=voice, resolved_text_elements=rows
+    )
+    add("kri648_labels", recipe, rows, title_preview=True)
+
     policy = {
         "version": 1,
         "preferences": {},

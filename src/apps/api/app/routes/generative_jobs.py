@@ -7235,6 +7235,7 @@ def _drawing_capabilities(job: Job, variant: dict) -> dict[str, dict[str, Any]]:
 
 
 def _editor_capabilities(job: Job, variant: dict) -> dict:
+    """Editor capability map for one variant, clamped to what its renderer can save."""
     if variant.get("render_destination") == "device":
         from app.services.phone_text_styling import (
             PHONE_TEXT_STYLE_FIELD,
@@ -7242,7 +7243,6 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         )
 
         require_phone_text_style_client(variant.get(PHONE_TEXT_STYLE_FIELD))
-    """Editor capability map for one variant, clamped to what its renderer can save."""
     return {
         **_device_clamped_editor_capabilities(job, variant),
         "drawings": _drawing_capabilities(job, variant),

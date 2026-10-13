@@ -136,7 +136,15 @@ def explicit_text_rule(instruction: str) -> tuple[str, dict] | None:
         if re.search(pattern, remaining):
             fonts.append(font)
             remaining = re.sub(pattern, "", remaining)
-    if fonts and re.search(r"\bfont|typeface|yazı tipi|\buse\b|\bkullan", text):
+    font_cue = re.search(r"\bfonts?\b|typeface|yazı tipi", text) or any(
+        re.search(
+            rf"\b(?:use|choose|select|set|kullan)\s+(?:the\s+)?{re.escape(font.casefold())}"
+            r"(?=\s+(?:for|on|as|and|with|without|\d)|\s*[,.;!]|\s*$)",
+            text,
+        )
+        for font in fonts
+    )
+    if fonts and font_cue:
         if re.search(r"\bnever use|\bexclude|\bdon't use|asla", text):
             values["excluded_fonts"] = fonts
         elif re.search(r"\bfavou?rites?\b", text):
@@ -152,7 +160,12 @@ def explicit_text_rule(instruction: str) -> tuple[str, dict] | None:
             ("red", "#FF0000"),
             ("blue", "#0000FF"),
         )
-        if re.search(rf"\b{name} (?:text|titles?|captions?|labels?)\b", text)
+        if re.search(
+            rf"\b{name} (?:text|titles?|captions?|labels?)\b"
+            r"|\b(?:text|titles?|captions?|labels?)\s+"
+            rf"(?:(?:should be|must be|in|are)\s+)?{name}\b",
+            text,
+        )
     }
     if len(colors) == 1:
         values["color"] = next(iter(colors.values()))
@@ -195,11 +208,4 @@ def effective_text_rule(preferences: dict, requested: dict, role: str) -> dict:
             and not source.get("font_family")
         ):
             values.pop("font_family", None)
-    current = requested.get(role, {}).get("font_family") or requested.get("all_text", {}).get(
-        "font_family"
-    )
-    if current:
-        values["excluded_fonts"] = [
-            font for font in values.get("excluded_fonts", []) if font != current
-        ]
     return TextStyleRule.model_validate(values).values()
