@@ -34,9 +34,9 @@ from app.schemas.user_song import (
     TakeAlignment,
 )
 
-# A take's song position is where the TAKE STARTS, and creators film with a run-up or a late start,
-# so a candidate a little outside the stated stretch still counts. Wider than any run-up, narrower
-# than the distance between two repeats of a verse.
+# Creators film with a run-up or a late start and name their stretch loosely, so a take a little
+# outside the stated stretch still counts. Wider than any run-up, narrower than the distance
+# between two repeats of a verse.
 SONG_RANGE_TOLERANCE_S = 3.0
 
 
@@ -47,6 +47,26 @@ class SongRange:
 
     def contains_start(self, delta_s: float, tolerance_s: float = SONG_RANGE_TOLERANCE_S) -> bool:
         return self.start_s - tolerance_s <= delta_s <= self.end_s + tolerance_s
+
+    def contains_take(
+        self,
+        delta_s: float,
+        duration_s: float | None,
+        tolerance_s: float = SONG_RANGE_TOLERANCE_S,
+    ) -> bool:
+        """The whole take sits inside the stretch, not only its first frame.
+
+        "I filmed seconds 1-50" rules out a 30 s take that starts at 49 s: it would play over
+        seconds 49-79. A take longer than the stretch itself (plus slack) cannot fit anywhere,
+        so it is judged by where it starts, like a take whose length is unknown.
+        """
+        if not self.contains_start(delta_s, tolerance_s):
+            return False
+        if duration_s is None or duration_s <= 0:
+            return True
+        if duration_s > (self.end_s - self.start_s) + 2 * tolerance_s:
+            return True
+        return delta_s + duration_s <= self.end_s + tolerance_s
 
 
 def parse_song_range(start_s: Any, end_s: Any) -> SongRange | None:
@@ -75,9 +95,11 @@ def song_range_of(item: Any) -> SongRange | None:
     )
 
 
-def _row_in_range(row: TakeAlignment, song_range: SongRange, cfg: Any) -> TakeAlignment:
+def _row_in_range(
+    row: TakeAlignment, song_range: SongRange, cfg: Any, duration_s: float | None = None
+) -> TakeAlignment:
     candidates = row.candidates_or_legacy()
-    kept = [c for c in candidates if song_range.contains_start(c.delta_s)]
+    kept = [c for c in candidates if song_range.contains_take(c.delta_s, duration_s)]
     if len(kept) == len(candidates):
         return row  # nothing outside the range: byte-identical row
     if not kept:
@@ -133,9 +155,15 @@ def _row_in_range(row: TakeAlignment, song_range: SongRange, cfg: Any) -> TakeAl
 
 
 def restrict_alignment_to_range(
-    alignment: SongAlignment, song_range: SongRange | None, cfg: Any | None = None
+    alignment: SongAlignment,
+    song_range: SongRange | None,
+    cfg: Any | None = None,
+    durations: Mapping[str, float] | None = None,
 ) -> SongAlignment:
     """``alignment`` with every take's candidates cut to the creator's stretch of the song.
+
+    ``durations`` (media id -> seconds) lets a candidate be dropped when the take would run past
+    the end of the stretch; without it only the take's start is checked.
 
     ``None`` (no range) returns the alignment unchanged. A take left with no candidate inside the
     stretch becomes unmatched; one left with several is re-ranked and re-derived like the aligner
@@ -145,8 +173,10 @@ def restrict_alignment_to_range(
         return alignment
     if cfg is None:
         from app.config import settings as cfg  # noqa: PLC0415
+    lengths = durations or {}
     rows = {
-        media_id: _row_in_range(row, song_range, cfg) for media_id, row in alignment.takes.items()
+        media_id: _row_in_range(row, song_range, cfg, lengths.get(media_id))
+        for media_id, row in alignment.takes.items()
     }
     if all(rows[m] is alignment.takes[m] for m in rows):
         return alignment
@@ -217,8 +247,14 @@ def apply_song_range(thread: Any, item: Any, value: tuple[float, float] | None) 
 # Verses and choruses repeat tens of seconds apart; two candidates a few seconds apart are the
 # same line.
 REPEAT_APART_S = 15.0
-# A candidate below this is noise, not a second place the take could really be.
-REPEAT_MIN_LIKELIHOOD = 0.2
+# A candidate below this is noise, not a second place the take could really be. Real repeats of a
+# chorus score low next to the sure placement (0.08-0.17 against 0.9 on the job that motivated
+# KRI-650); 0.2 never saw them, and the question was never asked.
+REPEAT_MIN_LIKELIHOOD = 0.08
+# Clips the aligner could not place with confidence (a tie, a weak match, or none) before the
+# creator is asked where in the song they filmed: one such clip is a bad take, several mean the
+# aligner is searching the whole song for something the creator can point to.
+WEAK_TAKES_ASK_MIN = 2
 
 Events = Iterable[tuple[str, "dict[str, Any] | None"]]
 
@@ -236,6 +272,18 @@ def takes_ambiguous_between_repeats(alignment: SongAlignment, take_ids: Sequence
         if len(places) >= 2 and places[-1] - places[0] >= REPEAT_APART_S:
             found.append(media_id)
     return found
+
+
+def should_ask_song_range(alignment: SongAlignment, take_ids: Sequence[str]) -> bool:
+    """Ask "which part of the song did you film?": a repeat splits a take, or several are unsure."""
+    if takes_ambiguous_between_repeats(alignment, take_ids):
+        return True
+    weak = sum(
+        1
+        for media_id in take_ids
+        if (row := alignment.takes.get(media_id)) is not None and row.status != "confident"
+    )
+    return weak >= WEAK_TAKES_ASK_MIN
 
 
 def build_song_range_question(
@@ -256,12 +304,12 @@ def song_range_question_text(question: SongRangeQuestion) -> str:
     """Self-sufficient copy (the app also renders the card)."""
     return say(
         en=(
-            "Your song repeats its verses, and some of your clips could fit more than one place. "
+            "I can't tell exactly where some of your clips sit in the song, and verses repeat. "
             "Which part of the song did you film? Pick it below, or use the whole song."
         ),
         tr=(
-            "Şarkın bölümlerini tekrar ediyor ve bazı klipler birden fazla yere uyabiliyor. "
-            "Şarkının hangi kısmında çektin? Aşağıdan seç ya da tüm şarkıyı kullan."
+            "Bazı kliplerin şarkının neresine denk geldiğini net çıkaramıyorum, üstelik bölümler "
+            "tekrar ediyor. Şarkının hangi kısmında çektin? Aşağıdan seç ya da tüm şarkıyı kullan."
         ),
     )
 

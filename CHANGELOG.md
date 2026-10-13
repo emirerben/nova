@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.257.0] - 2026-10-13
+
+### Changed
+- fix(kria): ask which part of the song you filmed on real clips, and keep every take inside the answer (KRI-650) (#1582) <!-- release-pr: 1582 -->
+
 ## [0.78.256.0] - 2026-10-13
 
 ### Changed
