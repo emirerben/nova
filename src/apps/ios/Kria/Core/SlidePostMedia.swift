@@ -81,8 +81,14 @@ enum SlidePostPendingMedia {
         progress: [UUID: Double],
         inFlight: [UUID: BackgroundUploadCoordinator.InFlightUpload],
         failures: [UploadFailure],
-        projectID: UUID
+        projectID: UUID,
+        stickerUploadNames: Set<String> = []
     ) -> [SlidePostPendingTile] {
+        // A pasted picture (KRI-460) rides the same uploader as the slides' photos but is never a slide, so it gets no tile.
+        func isSticker(_ filename: String) -> Bool { stickerUploadNames.contains(BackgroundUploadCoordinator.displayFilename(filename)) }
+        let records = records.filter { !isSticker($0.filename) }
+        let inFlight = inFlight.filter { !isSticker($0.value.filename ?? "") }
+        let failures = failures.filter { !isSticker($0.filename) }
         var tiles: [SlidePostPendingTile] = []
         let assetIDs = Set(assets.map(\.id))
         for asset in assets where !draftAssetIDs.contains(asset.id) {

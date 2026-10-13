@@ -6,7 +6,7 @@ import UIKit
 
 /// Renders photo slides on the phone from the ORIGINAL photos: cover-fit (framed by the slide's crop, centred by default) into the
 /// slide's canvas at 2x, then the same `SlidePostTextLayerView` the editor shows, drawn at real pixel size,
-/// then the slide's drawing (KRI-589), then the Kria watermark the server render also puts on every slide (KRI-472). No server render, no
+/// then the slide's drawing (KRI-589), then its pasted pictures (KRI-460), then the Kria watermark the server render also puts on every slide (KRI-472). No server render, no
 /// polling. The gated extension supports authored looks and delegates video slides to AVFoundation.
 /// Unsupported profiles, looks, fonts, or sources take the server path.
 @MainActor enum SlidePostOnDeviceRender {
@@ -31,6 +31,11 @@ import UIKit
         let byID = Dictionary(assets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return draft.slides.allSatisfy { slide in
             guard let asset = byID[slide.assetID] else { return false }
+            // A pasted picture needs its asset and a URL for the original; without them the server renders the slide.
+            let stickersReady = (slide.edits?.effectiveStickers ?? []).allSatisfy { sticker in
+                byID[sticker.assetID].map { $0.kind == "image" && ($0.sourceURL ?? $0.displayURL) != nil } == true
+            }
+            guard stickersReady else { return false }
             if slide.kind == "video" {
                 return extended && SlidePostVideoRender.supports(slide: slide, asset: asset, profile: draft.platformProfile)
             }
@@ -47,6 +52,7 @@ import UIKit
     /// caller can refresh the session once and retry.
     static func renderSlide(
         slide: SlidePostSlide, asset: SlidePostAsset, profile: String, aspect: String?,
+        stickers: [SlidePostPreparedSticker] = [],
         scale: CGFloat = outputScale, fetch: Fetch = SlidePostImageCache.defaultFetch
     ) async throws -> Data {
         guard let url = asset.sourceURL ?? asset.displayURL else { throw RenderError.undecodable }
@@ -74,6 +80,8 @@ import UIKit
             // KRI-589: the slide's ink goes over the text and under the watermark (the server's stacking), painted from
             // its strokes at the real pixel size, so it is as sharp as the text and needs no extra raster.
             slide.edits?.drawing?.paint(in: context.cgContext, canvas: pixels)
+            // KRI-460: pasted pictures over the ink, in list order (the last is on top), drawn from the same geometry the editor uses.
+            for sticker in stickers { sticker.draw(in: context.cgContext, canvas: pixels) }
             // Last, so no text buries it: the stacking the video engine and the server render use.
             context.cgContext.interpolationQuality = .high
             mark.draw(in: KriaBranding.watermarkTileRect(canvas: pixels, tileSize: mark.size))

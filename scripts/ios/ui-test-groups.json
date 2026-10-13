@@ -29,6 +29,8 @@
       "KriaUITests/SlidePostUITests/testAddStyleAndApplyTextToAllSlides",
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",
       "KriaUITests/SlidePostUITests/testPasteAddsCopiedTextToTheSelectedSlide",
+      "KriaUITests/SlidePostUITests/testPastedPictureBecomesAStickerOnTheSlideNotANewSlide",
+      "KriaUITests/SlidePostUITests/testPastingAPictureWithoutTheCapabilityExplainsItself",
       "KriaUITests/SlidePostUITests/testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave",
       "KriaUITests/SlidePostUITests/testDrawOnASlideLeavesInkThatSurvivesSaveAndSlideSwitching",
       "KriaUITests/SlidePostUITests/testAIButtonOpensSheetAndChatEditStagesOnThePage",

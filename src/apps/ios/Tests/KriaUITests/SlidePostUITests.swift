@@ -1,3 +1,4 @@
+import UniformTypeIdentifiers
 import XCTest
 
 @MainActor final class SlidePostUITests: XCTestCase {
@@ -120,6 +121,12 @@ import XCTest
         if save.waitForExistence(timeout: 5), save.isEnabled { save.tap() }
         expectation(for: NSPredicate(format: "label != %@", "Unsaved changes"), evaluatedWith: app.staticTexts["slidepost-subtitle"])
         waitForExpectations(timeout: 10)
+    }
+    /// Polls a condition on the main run loop (a CGRect key path is not usable in an NSPredicate).
+    private func eventually(timeout: TimeInterval = 6, _ condition: () -> Bool) -> Bool {
+        let end = Date().addingTimeInterval(timeout)
+        while Date() < end { if condition() { return true }; RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
+        return condition()
     }
     private func attach(_ app: XCUIApplication, _ name: String) {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = name; shot.lifetime = .keepAlways; add(shot)
@@ -406,6 +413,96 @@ import XCTest
         XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes")
         XCTAssertTrue(app.buttons["slidepost-undo"].isEnabled)
         attach(app, "Pasted text on a slide")
+    }
+
+    /// KRI-460: copying a transparent PNG (Strava's share image) and tapping Paste puts it on the selected slide as a sticker:
+    /// it is NOT a new slide, it moves with a finger, it survives a save and a slide switch, it is removable (and undoable),
+    /// and the export (which renders on the phone from the original bytes) still saves every slide.
+    func testPastedPictureBecomesAStickerOnTheSlideNotANewSlide() throws {
+        // A transparent PNG: an orange disc with an opaque white bar, and fully clear corners (the photo must show there).
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = false
+        let png = try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 480, height: 300), format: format).image { _ in
+            UIColor(red: 0.99, green: 0.32, blue: 0.0, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 90, y: 0, width: 300, height: 300)).fill()
+            UIColor.white.setFill(); UIRectFill(CGRect(x: 160, y: 130, width: 160, height: 40))
+        }.pngData())
+        UIPasteboard.general.setData(png, forPasteboardType: UTType.png.identifier)
+
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1", "KRIA_SLIDE_POST_STICKERS": "1"])
+        let sticker = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'slidepost-canvas-sticker-'")).firstMatch
+        XCTAssertFalse(sticker.exists, "a fresh slide has no picture")
+        XCTAssertTrue(app.buttons["slidepost-tile-3"].exists)
+        let paste = app.descendants(matching: .any)["slidepost-paste"].firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 8), "Paste is offered when the clipboard holds a picture")
+        paste.tap()
+
+        XCTAssertTrue(sticker.waitForExistence(timeout: 20), "the pasted picture appears on the canvas")
+        // The picture reached the pool as a ready asset; give the workspace time to (wrongly) turn it into a slide.
+        Thread.sleep(forTimeInterval: 4)
+        XCTAssertFalse(app.buttons["slidepost-tile-4"].exists, "a pasted picture is a sticker, never a new slide")
+        XCTAssertTrue(app.staticTexts["slidepost-subtitle"].label == "Unsaved changes")
+        XCTAssertTrue(app.buttons["slidepost-sticker-delete"].exists, "the new sticker is selected")
+        XCTAssertFalse(app.descendants(matching: .any)["slidepost-paste-notice"].exists, "no refusal notice")
+        attach(app, "Pasted picture on slide 1 (selected)")
+
+        // A finger drag moves it.
+        let before = sticker.frame
+        sticker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+            forDuration: 0.1, thenDragTo: sticker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: -70, dy: -110)))
+        XCTAssertTrue(eventually { sticker.frame.minY < before.minY - 60 }, "dragging moved it up")
+        XCTAssertLessThan(sticker.frame.minX, before.minX - 40, "dragging moved it left")
+        XCTAssertEqual(sticker.frame.width, before.width, accuracy: 3, "moving never resizes")
+        attach(app, "Picture dragged up and left")
+        XCTAssertFalse(app.buttons["slidepost-tile-4"].exists)
+
+        // The corner handle's drag resizes it.
+        let widthBefore = sticker.frame.width
+        let handle = app.descendants(matching: .any)["slidepost-sticker-handle"].firstMatch
+        XCTAssertTrue(handle.exists)
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+            forDuration: 0.1, thenDragTo: handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 60, dy: 60)))
+        XCTAssertTrue(eventually { sticker.frame.width > widthBefore + 10 }, "the handle's drag made it bigger")
+        attach(app, "Picture enlarged with the corner handle")
+
+        // It stays on its own slide, through a save.
+        saveDraft(app)
+        XCTAssertTrue(sticker.exists, "the save keeps it")
+        app.buttons["slidepost-tile-2"].tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: sticker); waitForExpectations(timeout: 5)
+        app.buttons["slidepost-tile-1"].tap()
+        XCTAssertTrue(sticker.waitForExistence(timeout: 5), "the picture is back on slide 1")
+        attach(app, "Picture still on slide 1 after a save and a slide switch")
+
+        // Export renders on the phone from the original PNG; every slide is saved and nothing fails.
+        app.buttons["slidepost-export"].tap()
+        app.buttons["slidepost-save-photos"].tap()
+        let banner = app.descendants(matching: .any)["slidepost-export-state"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 10))
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "Saved 3 slides"), evaluatedWith: banner); waitForExpectations(timeout: 30)
+        attach(app, "Exported with the picture")
+
+        // Remove (X) takes it off, and Undo brings it back.
+        if !app.buttons["slidepost-sticker-delete"].exists { sticker.tap() }
+        XCTAssertTrue(app.buttons["slidepost-sticker-delete"].waitForExistence(timeout: 3))
+        app.buttons["slidepost-sticker-delete"].tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: sticker); waitForExpectations(timeout: 5)
+        app.buttons["slidepost-undo"].tap()
+        XCTAssertTrue(sticker.waitForExistence(timeout: 5), "undo brings the picture back")
+        XCTAssertFalse(app.buttons["slidepost-tile-4"].exists)
+    }
+
+    /// Without `slide_post_stickers` a picture paste says so and uploads nothing.
+    func testPastingAPictureWithoutTheCapabilityExplainsItself() throws {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        UIPasteboard.general.setData(try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 40, height: 40), format: format).image { _ in
+            UIColor.red.setFill(); UIRectFill(CGRect(x: 0, y: 0, width: 40, height: 40))
+        }.pngData()), forPasteboardType: UTType.png.identifier)
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1"])
+        let paste = app.descendants(matching: .any)["slidepost-paste"].firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 8)); paste.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-paste-notice"].waitForExistence(timeout: 5), "the refusal is visible, not silent")
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'slidepost-canvas-sticker-'")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["slidepost-tile-4"].exists)
     }
 
     /// The page has ONE AI entry (the editor's sparkles button). It opens a sheet that drives the chat

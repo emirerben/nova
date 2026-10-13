@@ -233,7 +233,7 @@ import XCTest
         let a = try photo(name: "1.jpg")
         let session = await session(slides: [slide("a")], assets: [asset("asset-a", source: a)])
         var calls = 0, saved = 0
-        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in saved += 1 }, onDeviceRender: { slide, asset, profile, aspect in
+        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in saved += 1 }, onDeviceRender: { slide, asset, profile, aspect, _ in
             calls += 1
             if calls == 1 { throw SlidePostImageCache.LoadError.expired }
             return try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile, aspect: aspect)
@@ -246,7 +246,7 @@ import XCTest
         let a = try photo(name: "1.jpg")
         let session = await session(slides: [slide("a")], assets: [asset("asset-a", source: a)])
         var saved = 0
-        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in saved += 1 }, onDeviceRender: { _, _, _, _ in throw SlidePostOnDeviceRender.RenderError.undecodable })
+        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in saved += 1 }, onDeviceRender: { _, _, _, _, _ in throw SlidePostOnDeviceRender.RenderError.undecodable })
         await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID)
         XCTAssertEqual(saved, 0)
         if case .failed = exporter.status {} else { XCTFail("expected failed, got \(exporter.status)") }
