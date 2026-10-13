@@ -603,7 +603,12 @@ def ensure_song_alignment(
     alignment = _alignment_current(song["alignment"], song["generation"])
     if alignment is not None:
         # KRI-580: the creator's stretch of the song (None = the whole song).
-        alignment = restrict_alignment_to_range(alignment, song.get("range"))
+        durations = {
+            str(row["media_id"]): float(row["duration_s"])
+            for row in song.get("clips") or []
+            if isinstance(row.get("duration_s"), (int, float)) and row["duration_s"] > 0
+        }
+        alignment = restrict_alignment_to_range(alignment, song.get("range"), durations=durations)
     return _analysis_current(song["analysis"], song["generation"]), alignment
 
 
