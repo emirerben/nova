@@ -416,6 +416,15 @@
         "src/apps/api/app/services/clip_speech.py",
         "src/apps/api/app/services/transcript_quality.py"
       ]
+    },
+    {
+      "id": "kri-623-ruled-out-clips",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri623_ruled_out_clips.py",
+      "paths": [
+        "src/apps/api/app/kria/clip_scope.py",
+        "src/apps/api/tests/fixtures/kri623_tigre_m2_montage_turn.json"
+      ]
     }
   ]
 }

@@ -1,0 +1,495 @@
+{
+ "_source": "Prod thread 35ccc8ef-cdce-4976-b5b5-00b60cffcd93, turn 9faec657 (2026-10-12 20:14Z), Main Creator run b5639c8f (prompt 2026-10-12-v56). `main_creator_input` is the recorded input (music catalog trimmed, prose context dropped); `model_strategy` is the strategy the turn applied (the raw model text is redacted in the trace) minus the server-owned resolved intents, which are under `resolved_clip_intents`; `brief` is the brief the job pinned.",
+ "clip_subjects": {
+  "analysis-proxy-ios-4DD4C6F8-EE8C-429D-B286-D4356E6F63E1.mp4": "wooden room interior",
+  "analysis-proxy-ios-91A2CC1A-66BA-4671-889B-5307A669374F.mp4": "wooden room interior",
+  "analysis-proxy-ios-28ECDA66-FB56-4E85-9312-3E09A969AE77.mp4": "wooden cabin interior",
+  "analysis-proxy-ios-044463CA-9E6C-41D4-A58D-5F46C00CE340.mp4": "wooden dock and river"
+ },
+ "main_creator_input": {
+  "user_message": "Two long handheld walkthrough takes of our cabin, plus a couple of clips that are too dark to use. Pick the best six moments from the long takes, each very short, and skip the dark ones. Keep the original sound, and end on the moment I say \"Huzuru buldum ben burada\". Title: \"Our cabin in Tigre\". Make it 18 seconds.",
+  "creator_request": "",
+  "conversation": [
+   {
+    "role": "assistant",
+    "content": "What are we making? Pick a format and we’ll shape it together."
+   },
+   {
+    "role": "user",
+    "content": "Two long handheld walkthrough takes of our cabin, plus a couple of clips that are too dark to use. Pick the best six moments from the long takes, each very short, and skip the dark ones. Keep the original sound, and end on the moment I say \"Huzuru buldum ben burada\". Title: \"Our cabin in Tigre\". Make it 18 seconds."
+   }
+  ],
+  "brief_enabled": true,
+  "reply_language": "en",
+  "creative_copy_state": [],
+  "capability_manifest": {
+   "media": [
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-4DD4C6F8-EE8C-429D-B286-D4356E6F63E1.mp4",
+     "duration_s": 5.0
+    },
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-91A2CC1A-66BA-4671-889B-5307A669374F.mp4",
+     "duration_s": 7.0
+    },
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-044463CA-9E6C-41D4-A58D-5F46C00CE340.mp4",
+     "duration_s": 67.0
+    },
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-28ECDA66-FB56-4E85-9312-3E09A969AE77.mp4",
+     "duration_s": 70.0
+    }
+   ],
+   "limits": {
+    "max_commands": 4,
+    "max_media_refs": 50,
+    "max_catalog_refs": 50,
+    "max_output_duration_s": 120.0
+   },
+   "catalog": [],
+   "item_id": "46bb0fb1-2986-4f23-9c33-752aba0810bd",
+   "narration": null,
+   "edit_format": "montage",
+   "capabilities": {
+    "review": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "execution": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "wide_looks": {
+     "reason": "wide_looks cannot render on the iPhone yet",
+     "available": false,
+     "reason_code": "unsupported_on_phone"
+    },
+    "transitions": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "guided_story": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "automatic_cut": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "caption_style": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "motion_scenes": {
+     "reason": "motion_scenes cannot render on the iPhone yet",
+     "available": false,
+     "reason_code": "unsupported_on_phone"
+    },
+    "native_render": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "sound_effects": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "visual_blocks": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "auto_iteration": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "media_overlays": {
+     "reason": "media_overlays cannot render on the iPhone yet",
+     "available": false,
+     "reason_code": "unsupported_on_phone"
+    },
+    "reaction_beats": {
+     "reason": "reaction beats are only available on an iPhone talking-to-camera edit",
+     "available": false,
+     "reason_code": "phone_talking_only"
+    },
+    "dispatch_render": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "set_item_intent": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "guided_voiceover": {
+     "reason": "guided voiceover requires a recorded voiceover",
+     "available": false,
+     "reason_code": "requires_voiceover"
+    },
+    "edit_format:slides": {
+     "reason": "slides is disabled or has no production renderer for this media snapshot",
+     "available": false,
+     "reason_code": "format_unavailable"
+    },
+    "guided_auto_design": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "main_creator_agent": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_source_audio": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_still_images": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "edit_format:montage": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "guided_conversation": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:slides": {
+     "reason": "slides does not render on this iPhone yet",
+     "available": false,
+     "reason_code": "phone_format_unavailable"
+    },
+    "phone_visual_videos": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "edit_format:day_vlog": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "edit_format:narrated": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:montage": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "select_ready_variant": {
+     "reason": "a ready variant is required before selection",
+     "available": false,
+     "reason_code": "no_ready_variant"
+    },
+    "draft_guided_proposal": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "edit_format:subtitled": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:day_vlog": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:narrated": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:subtitled": {
+     "reason": "talking-to-camera rendering on this iPhone requires exactly one clip and no recorded voiceover",
+     "available": false,
+     "reason_code": "phone_format_unavailable"
+    },
+    "edit_format:single_hero": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "edit_format:talking_head": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:single_hero": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:talking_head": {
+     "reason": "talking_head does not render on this iPhone yet",
+     "available": false,
+     "reason_code": "phone_format_unavailable"
+    },
+    "edit_format:narrated_ready": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:narrated_ready": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "edit_format:narrated_planned": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "guided_direction_confirmation": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:narrated_planned": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format_pending_voiceover:narrated": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format_pending_voiceover:narrated_ready": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format_pending_voiceover:narrated_planned": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    }
+   },
+   "context_hash": "74fecf71d6e5ecfc2bcb6effe1bfc56037acd8517849f9dcfdd990b061925b0c",
+   "current_edit": null,
+   "has_voiceover": false,
+   "manifest_hash": "b54bae12317f22742839ed5b66c04ac043022ae718267937189a39b08b7a210c",
+   "render_program": "guided",
+   "schema_version": 1
+  }
+ },
+ "model_summary": "I'll create an energetic 18-second montage of the best six moments from your bright walkthrough takes. We'll keep the original audio, start with your title, and end exactly on your quote about finding peace.",
+ "model_strategy": {
+  "pacing": "fast",
+  "direction": "guided_story",
+  "rationale": "Using the guided montage program to ensure exactly 6 short highlight moments are selected from the usable bright footage. Preserving original audio and setting voice mode to excerpts allows us to keep the ambient walkthrough feel and hit your exact requested 18-second duration, ending perfectly on your closing quote.",
+  "voice_mode": "excerpts",
+  "edit_format": "montage",
+  "clip_intents": [
+   {
+    "op": "order",
+    "position": "last",
+    "attribute": "the moment I say \"Huzuru buldum ben burada\"",
+    "intent_id": "order_last_moment"
+   }
+  ],
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "opening_title": "Our cabin in Tigre",
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "story_structure": [
+   "Opening title introducing the cabin",
+   "Fast-paced sequence of the 6 best short moments from the bright walkthrough takes",
+   "Ending on the exact requested quote"
+  ],
+  "target_duration_s": 18.0,
+  "creator_duration_s": 18.0,
+  "selected_media_ids": [],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "target_duration_requested": true
+ },
+ "resolved_clip_intents": [
+  {
+   "op": "order",
+   "status": "resolved",
+   "position": "last",
+   "attribute": "the moment I say \"Huzuru buldum ben burada\"",
+   "intent_id": "order_last_moment",
+   "assignments": [
+    {
+     "evidence": "transcript: Huzuru buldum burada ben ya.",
+     "media_id": "analysis-proxy-ios-044463CA-9E6C-41D4-A58D-5F46C00CE340.mp4",
+     "confidence": 1.0
+    }
+   ]
+  }
+ ],
+ "brief": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Pick the best six moments from the long takes, each very short, and skip the dark ones",
+    "source_turn_id": "9faec657-9d17-4605-851d-e0bda1d522ba"
+   },
+   {
+    "id": "r2",
+    "kind": "audio",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Keep the original sound",
+    "source_turn_id": "9faec657-9d17-4605-851d-e0bda1d522ba"
+   },
+   {
+    "id": "r3",
+    "kind": "order",
+    "facts": {
+     "last_clip": "the moment I say \"Huzuru buldum ben burada\""
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "End on the moment I say \"Huzuru buldum ben burada\"",
+    "source_turn_id": "9faec657-9d17-4605-851d-e0bda1d522ba"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Our cabin in Tigre",
+    "description": null,
+    "source_turn_id": "9faec657-9d17-4605-851d-e0bda1d522ba"
+   },
+   {
+    "id": "r5",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 18
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it 18 seconds",
+    "source_turn_id": "9faec657-9d17-4605-851d-e0bda1d522ba"
+   }
+  ]
+ },
+ "clip_analysis": {
+  "analysis-proxy-ios-4DD4C6F8-EE8C-429D-B286-D4356E6F63E1.mp4": {
+   "duration_s": 5.0,
+   "best_moments": [
+    {
+     "start_s": 0.0,
+     "end_s": 1.9,
+     "energy": 3.0,
+     "description": "camera panning towards an air conditioner"
+    },
+    {
+     "start_s": 2.2,
+     "end_s": 3.9,
+     "energy": 4.0,
+     "description": "camera panning across a wooden wall with a window"
+    }
+   ]
+  },
+  "analysis-proxy-ios-91A2CC1A-66BA-4671-889B-5307A669374F.mp4": {
+   "duration_s": 7.0,
+   "best_moments": []
+  },
+  "analysis-proxy-ios-044463CA-9E6C-41D4-A58D-5F46C00CE340.mp4": {
+   "duration_s": 67.0,
+   "best_moments": [
+    {
+     "start_s": 0.0,
+     "end_s": 1.7,
+     "energy": 3.0,
+     "description": "indoor kayak view"
+    },
+    {
+     "start_s": 3.0,
+     "end_s": 5.0,
+     "energy": 4.0,
+     "description": "panning across outdoor deck"
+    },
+    {
+     "start_s": 10.0,
+     "end_s": 15.0,
+     "energy": 5.0,
+     "description": "wide view of deck and surrounding trees"
+    },
+    {
+     "start_s": 22.0,
+     "end_s": 27.0,
+     "energy": 6.0,
+     "description": "revealing river view through trees"
+    },
+    {
+     "start_s": 38.0,
+     "end_s": 49.0,
+     "energy": 7.5,
+     "description": "walking onto wooden dock over water"
+    },
+    {
+     "start_s": 54.0,
+     "end_s": 61.0,
+     "energy": 8.0,
+     "description": "pan to wide river and forest view from dock"
+    }
+   ]
+  },
+  "analysis-proxy-ios-28ECDA66-FB56-4E85-9312-3E09A969AE77.mp4": {
+   "duration_s": 70.0,
+   "best_moments": []
+  }
+ },
+ "closing_quote": {
+  "end_s": 55.8,
+  "quote": "Huzuru buldum ben burada",
+  "source": "words",
+  "status": "found",
+  "start_s": 53.9,
+  "media_id": "analysis-proxy-ios-044463CA-9E6C-41D4-A58D-5F46C00CE340.mp4",
+  "intent_id": "order_last_moment"
+ }
+}
