@@ -42,6 +42,20 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
             ci,
         )
 
+    def test_portable_only_journeys_do_not_require_a_native_fixture_artifact(self):
+        ci = CI_WORKFLOW.read_text()
+        for name in (
+            "Seal portable fixture inputs for this exact workflow attempt",
+            "Transfer fixture inputs and offline evidence",
+            "Download this attempt's portable fixture inputs",
+            "Check fixture provenance and transferred bytes",
+        ):
+            step = ci.split(f"- name: {name}", 1)[1].split("- name:", 1)[0]
+            with self.subTest(step=name):
+                self.assertIn(
+                    "if: needs.changes.outputs.journey_needs_native == 'true'", step
+                )
+
     def matrices(self):
         """{leg count: legs} from the matrix fromJSON expression, keyed on the
         selector's ios_ui_shards output; the final fallback literal is count 1."""

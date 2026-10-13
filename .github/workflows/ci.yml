@@ -613,19 +613,21 @@ jobs:
             tests/tasks/test_silent_audio_gate.py -q \
             | tee ../../../test-results/kri-559/silent-take-api-tests.log
       - name: Seal portable fixture inputs for this exact workflow attempt
+        if: needs.changes.outputs.journey_needs_native == 'true'
         run: python3 scripts/ci/journey-gate.py seal-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
       - name: Transfer fixture inputs and offline evidence
+        if: needs.changes.outputs.journey_needs_native == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: fixture-bundle-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
           path: test-results/kri-559/
           retention-days: 14
           if-no-files-found: error
-      - name: Upload failed portable diagnostics
-        if: failure()
+      - name: Upload portable diagnostics
+        if: failure() || needs.changes.outputs.journey_needs_native != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: kri-559-offline-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          name: kri-559-offline-${{ github.run_id }}-${{ github.run_attempt }}
           path: test-results/kri-559/
           retention-days: 14
           if-no-files-found: ignore
@@ -646,13 +648,13 @@ jobs:
       - name: Prepare native result directories
         run: mkdir -p test-results/kri-559 test-results/ios
       - name: Download this attempt's portable fixture inputs
-        if: needs.changes.outputs.journey == 'true'
+        if: needs.changes.outputs.journey_needs_native == 'true'
         uses: actions/download-artifact@v4
         with:
           name: fixture-bundle-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
           path: test-results/kri-559/
       - name: Check fixture provenance and transferred bytes
-        if: needs.changes.outputs.journey == 'true'
+        if: needs.changes.outputs.journey_needs_native == 'true'
         env:
           JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
         run: |

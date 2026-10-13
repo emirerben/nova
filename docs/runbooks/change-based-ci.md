@@ -81,7 +81,8 @@ aggregate independently checks that decision against the event and manifest,
 then requires success or an explicit skip for each dependency.
 
 Portable checks and synthetic fixture generation finish before a Mac queues.
-Fixtures use an artifact name containing the workflow run, attempt, and commit.
+API-only journeys keep Linux evidence without requiring a native fixture bundle.
+Native fixtures use an artifact name containing the workflow run, attempt, and commit.
 The transfer manifest verifies that identity and every relative file hash; the
 existing creation proof is checked again before native rendering. Native unit
 journeys verify the existing unit result where available; otherwise they run
