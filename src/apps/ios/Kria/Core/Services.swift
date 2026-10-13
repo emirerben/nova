@@ -951,8 +951,12 @@ private enum KriaClientProtocolContract {
     /// key on its next save, so the server advertises `slide_post_stickers` only to 8 and answers 426 `client_update_required`
     /// to an older build for a post that has stickers.
     ///
-    /// 9 (KRI-648): replays resolved caption corner/width preferences in native preview and Save.
-    static let version = 9
+    /// 9 (KRI-646): draws text Bend (curved text) and decodes the recipe's text-layer `bend`. The server
+    /// advertises `text_bend` only to this protocol and answers 426 `client_update_required` to older builds
+    /// for a document that has a bend, since they would draw it straight.
+    ///
+    /// 10 (KRI-648): replays resolved caption corner/width preferences in native preview and Save.
+    static let version = 10
     static let header = "X-Kria-Client-Protocol"
 }
 

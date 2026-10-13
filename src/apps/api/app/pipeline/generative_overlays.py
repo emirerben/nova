@@ -174,6 +174,7 @@ def build_intro_overlay(
     line_spacing: float | None = None,
     max_width_frac: float | None = None,
     behind_subject: bool = False,
+    bend: float | None = None,
 ) -> dict | None:
     """Build a single hero-intro overlay dict in the Skia overlay schema.
 
@@ -243,6 +244,10 @@ def build_intro_overlay(
         overlay["position_y_frac"] = float(position_y_frac)
     if rotation_deg is not None:
         overlay["rotation_deg"] = float(rotation_deg)
+    # KRI-646: bend is carried for the phone recipe compiler only (drawn on device);
+    # server renderers ignore the key. Omitted when unset/zero => byte-identical dict.
+    if bend:
+        overlay["bend"] = float(bend)
 
     # Parity-gated spacing fields (T11): clamped here so the burn dict always
     # carries renderer-safe values (same clamps as the schema + the TS layout).
@@ -1103,6 +1108,7 @@ def build_overlays_from_text_elements(
                 position_x_frac=pos_x_frac,
                 position_y_frac=pos_y_frac,
                 rotation_deg=elem.rotation_deg,
+                bend=elem.bend,
                 letter_spacing=elem.letter_spacing,
                 line_spacing=elem.line_spacing,
                 max_width_frac=elem.max_width_frac,
@@ -1145,6 +1151,7 @@ def build_overlays_from_text_elements(
                 position_x_frac=pos_x_frac,
                 position_y_frac=pos_y_frac,
                 rotation_deg=elem.rotation_deg,
+                bend=elem.bend,
                 letter_spacing=elem.letter_spacing,
                 line_spacing=elem.line_spacing,
                 max_width_frac=elem.max_width_frac,
@@ -1180,6 +1187,7 @@ def build_overlays_from_text_elements(
             position_x_frac=pos_x_frac,
             position_y_frac=pos_y_frac,
             rotation_deg=elem.rotation_deg,
+            bend=elem.bend,
             letter_spacing=elem.letter_spacing,
             line_spacing=elem.line_spacing,
             max_width_frac=elem.max_width_frac,

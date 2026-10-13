@@ -100,7 +100,7 @@ typography export, two settings journeys and two new paste journeys passed witho
 retries in `native-main-integrated.xcresult`. The physical proof's compiler, render
 engine, font assets and fixture generator were unchanged by that main integration.
 
-New caption geometry requires client protocol 9. The independent settings choices
+New caption geometry requires client protocol 10. The independent settings choices
 include Use defaults, Automatic and a required font, avoiding a misleading inherited
 font state. Caption appearance includes the resolved corner, width and alignment.
 

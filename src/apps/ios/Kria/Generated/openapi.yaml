@@ -1133,6 +1133,11 @@
             "title": "Song Range Questions",
             "type": "boolean"
           },
+          "text_bend": {
+            "default": false,
+            "title": "Text Bend",
+            "type": "boolean"
+          },
           "visuals_enabled": {
             "default": false,
             "title": "Visuals Enabled",
@@ -2367,6 +2372,7 @@
                 "visualVideos",
                 "sourceCrop",
                 "freehandDrawing",
+                "textBend",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -2487,6 +2493,7 @@
                 "visualVideos",
                 "sourceCrop",
                 "freehandDrawing",
+                "textBend",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -7171,6 +7178,14 @@
             "default": null,
             "nullable": true
           },
+          "bend": {
+            "default": null,
+            "maximum": 100,
+            "minimum": -100,
+            "nullable": true,
+            "title": "Bend",
+            "type": "number"
+          },
           "discrete_reveal": {
             "$ref": "#/components/schemas/DiscreteRevealContent",
             "default": null,
@@ -8758,6 +8773,12 @@
             "pattern": "^#[0-9A-Fa-f]{6}$",
             "title": "Background Color",
             "type": "string"
+          },
+          "bend": {
+            "default": null,
+            "nullable": true,
+            "title": "Bend",
+            "type": "number"
           },
           "color": {
             "default": "#FFFFFF",

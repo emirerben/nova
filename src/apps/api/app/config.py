@@ -652,6 +652,16 @@ class Settings(BaseSettings):
     # Apply: `fly secrets set FREEHAND_DRAWING_ENABLED=false` (api + worker) + restart.
     freehand_drawing_enabled: bool = True
     freehand_drawing_min_client_protocol: int = 6
+    # KRI-646: text "Bend" (curved/rainbow text, `bend` in [-100, 100]) drawn ON DEVICE.
+    # The server only stores it, passes it into the phone recipe's text layers
+    # (`PortableTextLayer.bend`) and gates old builds; server renderers never draw it.
+    # Default TRUE; needs `textBend` in PHONE_RENDER_VERIFIED_FEATURES (fly secret) and
+    # an app build declaring `X-Kria-Client-Protocol` >= `text_bend_min_client_protocol`.
+    # False: capability `text_bend` is not advertised and newly authored bend is refused
+    # by the app; stored values still round-trip. Apply:
+    # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
+    text_bend_enabled: bool = True
+    text_bend_min_client_protocol: int = 9
     # KRI-561: the song-order question is answered on a horizontal song timeline (play the
     # song, drop clips onto song time) instead of the vertical reorder list. Kill switch:
     # `fly secrets set SONG_ORDER_TIMELINE_ENABLED=false` + restart (api): capabilities drop

@@ -27,6 +27,7 @@
       "KriaUITests/SlidePostUITests/testReEnteringAfterBackAlwaysLandsInTheSlideEditor",
       "KriaUITests/SlidePostUITests/testSlidePreviewLeavesToolbarAndStripVisible",
       "KriaUITests/SlidePostUITests/testAddStyleAndApplyTextToAllSlides",
+      "KriaUITests/SlidePostUITests/testBendSliderCurvesTheTextAndApplyToAllCopiesIt",
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",
       "KriaUITests/SlidePostUITests/testPasteAddsCopiedTextToTheSelectedSlide",
       "KriaUITests/SlidePostUITests/testPastedPictureBecomesAStickerOnTheSlideNotANewSlide",
@@ -123,6 +124,7 @@
     "editor": [
       "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
       "KriaUITests/EditorUITests/testTextTabListsEveryTextBlockAndOpensOneForEditing",
+      "KriaUITests/EditorUITests/testBendSliderCurvesAVideoTextOnlyWhenTheServerOffersIt",
       "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface",
       "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock",
       "KriaUITests/EditorUITests/testNativeEditorPlaysTheRenderedAssetThroughItsRealEndAndReplays",

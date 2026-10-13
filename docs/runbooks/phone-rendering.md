@@ -2979,7 +2979,7 @@ for a variant that has drawings.
 `phone_text_style` version 1 with immutable account/current-video rules. Only
 initial phone writers consume it; old generations and editor saves replay their
 saved rows. Disabling the flag affects new generations, not existing exports.
-New resolved caption geometry requires client protocol 9. Older native builds
+New resolved caption geometry requires client protocol 10. Older native builds
 receive `426 client_update_required` for styled device recipes/editor payloads.
 Distribute the compatible TestFlight build before enabling the flag.
 
@@ -3008,3 +3008,15 @@ Run mapped reliability gates, the native gate and real exported frame comparison
 before rollout. API/workers must run the same revision and flags before new jobs
 are admitted. Release 2's repeated-edit learning remains separately gated under
 KRI-336 and is not activated by the typography flag.
+
+
+## Text Bend capability (KRI-646)
+
+| Capability | Recipe field | Gate | Detail |
+|---|---|---|---|
+| `textBend` | `EditRecipeV2.text_layers[].bend` (`-100..100`, omitted when 0) | `TEXT_BEND_ENABLED` (default on) + `textBend` in `PHONE_RENDER_VERIFIED_FEATURES` + client protocol >= `TEXT_BEND_MIN_CLIENT_PROTOCOL` (9) | The phone draws the curve; the server only stores and passes `bend` through (`portable_text_layout._bend_supported` decides which layers keep it) |
+
+Prod step before the Bend control appears: add `textBend` to `PHONE_RENDER_VERIFIED_FEATURES`
+(fly secret, api + worker, restart). Builds below protocol 9 get `426 client_update_required`
+(`feature: "text_bend"`) from `device-render` and `editor-commit` for a variant with bent text.
+The app reads `capabilities.text_bend` (creation) and `editor_capabilities.text_bend` (per variant).

@@ -60,6 +60,7 @@ _COPY_STYLE_KEYS = (
     "letter_spacing",
     "line_spacing",
     "rotation_deg",
+    "bend",
     "background_color",
     "animation_phases",
     "editor_preset",

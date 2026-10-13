@@ -34,6 +34,8 @@ import SwiftUI
     func applyTextPreset(id: String, preset: String)
     func setTextPhase(id: String, phase: String, effect: String)
     func setTextAnimationSpeed(id: String, speed: Double)
+    /// KRI-646: whether the Text panel offers Bend (the server advertises it; the phone must be able to draw it).
+    var supportsTextBend: Bool { get }
 }
 
 extension NativeTextEditing {
@@ -46,6 +48,7 @@ extension NativeTextEditing {
 }
 
 extension NativeEditorSession: NativeTextEditing {
+    var supportsTextBend: Bool { canEdit("text_bend") && canEdit(.text) }
     func textElement(id: String) -> EditorTextElement? { document.textElements.first { $0.id == id } }
     func textAnchor(id: String) -> CGPoint? { textElement(id: id)?.anchor }
 }

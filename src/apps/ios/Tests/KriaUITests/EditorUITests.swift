@@ -463,6 +463,54 @@ final class EditorUITests: XCTestCase {
         )
     }
 
+    /// KRI-646: the video editor's Text panel offers Bend only when the server advertises `text_bend`; dragging it
+    /// curves the text on the preview (the real on-device painter) and the slider reads back what it set.
+    func testBendSliderCurvesAVideoTextOnlyWhenTheServerOffersIt() {
+        func openStyle(_ app: XCUIApplication) {
+            app.launch()
+            XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
+            app.buttons["native-editor-tool-text"].tap()
+            let note = app.descendants(matching: .any)["native-editor-text-row-creator-note"].firstMatch
+            XCTAssertTrue(note.waitForExistence(timeout: 5))
+            note.tap()
+            let style = app.buttons["Style"]
+            XCTAssertTrue(style.waitForExistence(timeout: 5))
+            style.tap()
+            XCTAssertTrue(app.sliders["native-editor-text-rotation"].waitForExistence(timeout: 5)
+                          || app.scrollViews["native-editor-text-inspector-scroll"].waitForExistence(timeout: 5))
+        }
+        func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+            // The panel is a short sheet: drag inside its upper part so the gesture scrolls the content.
+            let scroll = app.scrollViews["native-editor-text-inspector-scroll"]
+            for _ in 0..<10 where !(element.exists && element.isHittable) {
+                scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+                    .press(forDuration: 0.05, thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.02)))
+            }
+        }
+        let off = XCUIApplication()
+        off.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-guided-text"]
+        openStyle(off)
+        reveal(off.sliders["native-editor-text-rotation"], in: off)
+        XCTAssertTrue(off.sliders["native-editor-text-rotation"].exists, "rotation is a slider")
+        XCTAssertFalse(off.sliders["native-editor-text-bend"].exists, "no Bend slider without the capability")
+        off.terminate()
+
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-guided-text", "-ui-testing-editor-text-bend"]
+        openStyle(app)
+        let bend = app.sliders["native-editor-text-bend"]
+        reveal(bend, in: app)
+        XCTAssertTrue(bend.exists && bend.isHittable, "the Bend slider is offered (and reachable) when the server advertises text_bend")
+        XCTAssertEqual(bend.value as? String, "0", "text starts straight")
+        bend.adjust(toNormalizedSliderPosition: 0.85)
+        let applied = bend.value as? String
+        XCTAssertNotNil(applied)
+        XCTAssertNotEqual(applied, "0", "the slider moved the bend")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Bend slider on a video text"; screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     /// KRI-185: the Text tab lists every on-screen text block, so a title or a
     /// per-clip label is one tap away instead of a hunt along the timeline.
     func testTextTabListsEveryTextBlockAndOpensOneForEditing() {

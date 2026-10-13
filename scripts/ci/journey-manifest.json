@@ -433,6 +433,16 @@
       ]
     },
     {
+      "id": "kri-646-text-bend",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_text_bend.py",
+      "paths": [
+        "src/apps/api/app/kria/portable_text.py",
+        "src/apps/api/app/pipeline/generative_overlays.py",
+        "src/apps/api/tests/kria/test_text_bend.py"
+      ]
+    },
+    {
       "id": "kri-648-phone-text",
       "needs_native": true,
       "fixture_generator": "scripts/ios/phone-text-style-e2e.py",
