@@ -46,6 +46,30 @@ def _report_without_test_case(report, method_name):
 
 
 class UISelectionTests(unittest.TestCase):
+    def test_measured_durations_preserve_new_feature_timings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            legacy = Path(directory) / "feature.json"
+            measured = Path(directory) / "measured.json"
+            legacy.write_text(json.dumps({"existing": 300, "new": 90}))
+            measured.write_text(json.dumps({"existing": 60}))
+            with (
+                patch.object(ui, "DURATIONS", measured),
+                patch.object(ui, "LEGACY_DURATIONS", legacy, create=True),
+            ):
+                self.assertEqual(
+                    ui.weights({"existing", "new"}), {"existing": 60, "new": 90}
+                )
+
+    def test_feature_durations_work_before_any_bulk_measurement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            legacy = Path(directory) / "feature.json"
+            legacy.write_text(json.dumps({"new": 90}))
+            with (
+                patch.object(ui, "DURATIONS", Path(directory) / "missing.json"),
+                patch.object(ui, "LEGACY_DURATIONS", legacy, create=True),
+            ):
+                self.assertEqual(ui.weights({"new"}), {"new": 90})
+
     def test_every_current_test_is_classified(self):
         self.assertTrue(ui.inventory_matches())
         data = ui.manifest()
@@ -179,7 +203,7 @@ class UISelectionTests(unittest.TestCase):
 
     def test_shards_partition_the_full_suite_and_balance_recorded_time(self):
         inventory = ui.discovered()
-        durations = json.loads(ui.DURATIONS.read_text())
+        durations = ui.load_durations()
         self.assertTrue(all(float(value) > 0 for value in durations.values()))
         for count in range(1, 5):
             parts = [

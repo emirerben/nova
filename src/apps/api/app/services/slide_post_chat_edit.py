@@ -165,6 +165,9 @@ def _slide_rows(draft: SlidePostDraft) -> list[dict[str, Any]]:
             # Read-only hint (KRI-589): the creator drew on this slide. Present only
             # when true so a draft without drawings builds a byte-identical snapshot.
             row["has_drawing"] = True
+        if slide.edits is not None and slide.edits.stickers:
+            # Read-only hint (KRI-647), present only when true like has_drawing.
+            row["has_stickers"] = True
         rows.append(row)
     return rows
 
@@ -266,6 +269,8 @@ def build_slide_post_snapshot(
         slot["is_cover"] = index == draft.cover_index
         if row.get("has_drawing"):
             slot["has_drawing"] = True
+        if row.get("has_stickers"):
+            slot["has_stickers"] = True
         if settings.slide_post_framing_enabled:
             orientation, crop = _framing_of(slide)
             slot["orientation"] = orientation
@@ -617,6 +622,9 @@ def compile_slide_post_ops(
             # Rebuilt from scratch above: copy the creator's ink through, or a text/look
             # change on a drawn slide would silently erase it (KRI-589).
             payload["drawing"] = slide.edits.drawing.model_dump(mode="python")
+        if slide.edits is not None and slide.edits.stickers:
+            # Same for pasted image stickers (KRI-647).
+            payload["stickers"] = [s.model_dump(mode="python") for s in slide.edits.stickers]
         try:
             new_slides.append(
                 slide.model_copy(update={"edits": SlideEdits.model_validate(payload)})

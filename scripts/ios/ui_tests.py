@@ -12,7 +12,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path(__file__).with_name("ui-test-groups.json")
 # Median seconds per UI test on GitHub's macos-15 runners; sizes and balances shards.
-DURATIONS = Path(__file__).with_name("ui-test-durations.json")
+DURATIONS = Path(__file__).with_name("ui-test-measured-durations.json")
+LEGACY_DURATIONS = Path(__file__).with_name("ui-test-durations.json")
 # Each extra native leg repeats ~7 minutes of setup and compilation, so a
 # selection splits only when one leg would run more than this much recorded UI
 # time. Nightly/manual full regression gets three legs; PRs use one Mac.
@@ -339,10 +340,19 @@ def parse_shard(spec):
     return int(match.group(1)), int(match.group(2))
 
 
+def load_durations():
+    """Keep new feature timings while applying the bulk measured baseline."""
+    durations = {}
+    for path in (LEGACY_DURATIONS, DURATIONS):
+        if path.exists():
+            durations.update(json.loads(path.read_text()))
+    return durations
+
+
 def weights(tests, durations=None):
     """Recorded seconds per test; tests without a recorded duration weigh the median."""
     if durations is None:
-        durations = json.loads(DURATIONS.read_text()) if DURATIONS.exists() else {}
+        durations = load_durations()
     known = sorted(float(value) for value in durations.values())
     default = known[len(known) // 2] if known else 30.0
     return {test: float(durations.get(test, default)) for test in tests}

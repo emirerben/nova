@@ -532,3 +532,111 @@ def test_a_drawing_busts_the_normalized_key_of_that_slide_only(monkeypatch) -> N
     # The undrawn slide beside it, and every key of an undrawn post, are unchanged.
     assert drawn[1] == plain[1] and "_dr" not in drawn[1]
     assert plain[0] == plain[1] and "_dr" not in plain[0]
+
+
+# ── Slide stickers (KRI-647): pool image that is never a slide ───────────────────────────
+
+
+def _sticker_job(monkeypatch, *, sticker_fp="fp-sticker", sticker_owner="me", sticker_kind="image"):
+    """Run a two-slide post whose slide 0 carries one sticker through `_run_slide_post_job`.
+
+    Returns (variant result, normalize call kwargs, normalized keys)."""
+    job_id = str(uuid.uuid4())
+    item_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    slide_asset, sticker_asset = uuid.uuid4(), uuid.uuid4()
+    job = SimpleNamespace(id=uuid.UUID(job_id), content_plan_item_id=item_id, user_id=user_id)
+    sticker = {
+        "id": "st1",
+        "asset_id": str(sticker_asset),
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "width_frac": 0.3,
+        "rotation_deg": 15,
+    }
+    draft = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[
+            SlideRef(
+                id="s0",
+                asset_id=slide_asset,
+                kind="image",
+                edits=SlideEdits(stickers=[sticker]),
+            ),
+        ],
+    )
+    item = SimpleNamespace(slide_post=draft.model_dump(mode="json"))
+    prefix = f"users/{user_id}/plan/{item_id}/pool"
+    assets = [
+        _asset(
+            asset_id=slide_asset,
+            gcs_path=f"{prefix}/photo.jpg",
+            kind="image",
+            plan_item_id=item_id,
+            user_id=user_id,
+        ),
+        _asset(
+            asset_id=sticker_asset,
+            gcs_path=f"{prefix}/strava.png",
+            kind=sticker_kind,
+            plan_item_id=item_id,
+            user_id=user_id if sticker_owner == "me" else uuid.uuid4(),
+            content_fingerprint=sticker_fp,
+        ),
+    ]
+    monkeypatch.setattr(gb, "_sync_session", lambda: _FakeSession(job, item, assets))
+    uploaded = _patch_storage_and_ffmpeg(monkeypatch)
+    calls: list[dict] = []
+    downloaded: list[str] = []
+    real_download = storage_module.download_to_file
+
+    def _download(path, local):
+        downloaded.append(path)
+        real_download(path, local)
+
+    monkeypatch.setattr(storage_module, "download_to_file", _download)
+    monkeypatch.setattr(
+        slide_build_module,
+        "normalize_image_slide",
+        lambda *a, **k: calls.append({**k, "downloaded": list(downloaded)}),
+    )
+    captured: dict = {}
+    monkeypatch.setattr(
+        gb, "_upsert_variant_entry", lambda _j, result: captured.setdefault("r", result) or True
+    )
+    monkeypatch.setattr(gb, "_finalize_job", lambda _j, _r: True)
+    gb._run_slide_post_job(job_id, render_trace_id="trace-stickers")
+    keys = [k for k in uploaded if "/normalized/" in k]
+    return captured["r"], calls, keys, f"{prefix}/strava.png"
+
+
+def test_a_sticker_is_downloaded_rendered_and_never_becomes_a_slide(monkeypatch) -> None:
+    from app.agents._schemas.edit_format import (  # noqa: PLC0415
+        SLIDES_RENDERER_VERSION,
+        SLIDES_STICKER_RENDERER_VERSION,
+    )
+
+    result, calls, keys, sticker_path = _sticker_job(monkeypatch)
+    assert len(result["slides"]) == 1  # the pool's sticker image is not a slide
+    assert result["slide_post"]["renderer_version"] == SLIDES_STICKER_RENDERER_VERSION == 5
+    assert result["slides_renderer_version"] == SLIDES_RENDERER_VERSION == 2
+    assert keys[0].endswith(f"_wm1_st{slide_build_module.SLIDE_STICKER_COMPOSITOR_VERSION}.jpg")
+    assert sticker_path in calls[0]["downloaded"]
+    assert set(calls[0]["sticker_sources"]) == {"st1"}
+
+
+def test_a_stale_foreign_or_non_image_sticker_is_dropped_not_fatal(monkeypatch) -> None:
+    for kwargs in ({"sticker_owner": "other"}, {"sticker_kind": "video"}):
+        result, calls, _keys, sticker_path = _sticker_job(monkeypatch, **kwargs)
+        assert result["render_status"] == "ready"
+        assert calls[0]["sticker_sources"] == {}
+        assert sticker_path not in calls[0]["downloaded"]  # never fetched
+
+
+def test_replacing_the_sticker_image_busts_the_key(monkeypatch) -> None:
+    def name(key):
+        return key.split("/slides/normalized/")[1].split("_", 1)[1]
+
+    a = _sticker_job(monkeypatch, sticker_fp="fp-a")[2]
+    b = _sticker_job(monkeypatch, sticker_fp="fp-b")[2]
+    assert name(a[0]) != name(b[0])

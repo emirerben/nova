@@ -20,6 +20,14 @@ evidence = load("throughput_evidence", "journey-gate.py")
 
 
 class ThroughputTests(unittest.TestCase):
+    def test_new_ruled_out_clips_journey_runs_on_linux(self):
+        workflow = (
+            Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
+        ).read_text()
+        portable, native = workflow.split("  journey-native:", 1)
+        self.assertIn("tests/kria/test_kri623_ruled_out_clips.py", portable)
+        self.assertNotIn("tests/kria/test_kri623_ruled_out_clips.py", native)
+
     def test_only_main_push_defers_native_regression(self):
         for event in ("pull_request", "schedule", "workflow_dispatch", "unknown"):
             self.assertTrue(ci.native_validation(event, {"ios"}, False))

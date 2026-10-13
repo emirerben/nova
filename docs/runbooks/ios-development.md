@@ -984,7 +984,11 @@ batch executes all selected plain unit cases. Export scenarios that need generat
 fixtures retain their separate invocations and evidence.
 
 Refresh timings with `python3 scripts/ios/refresh-ui-durations.py --runs 30` after
-adding or reshaping tests. Durations change scheduling, never coverage. Record
+adding or reshaping tests. Bulk measurements go to
+`scripts/ios/ui-test-measured-durations.json`; new feature PRs can keep adding
+estimates to `ui-test-durations.json`. The loader combines both, preferring the
+measured value for an existing test. This avoids conflicts between a bulk
+refresh and concurrently added tests. Durations change scheduling, never coverage. Record
 queue time, execution time, retry cost and summed Mac minutes separately when
 comparing hosted runs. KRI-605's baseline included 35–49 minutes of PR Mac queue
 wait and about 144 Mac minutes in one main full regression. The main native gate

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rewrite ui-test-durations.json from recent GitHub Actions iOS runs.
+"""Rewrite ui-test-measured-durations.json from recent GitHub Actions iOS runs.
 
 Run from the repo root with an authenticated `gh`:
 
@@ -56,8 +56,14 @@ def main():
     parser.add_argument("--runs", type=int, default=120)
     options = parser.parse_args()
     runs = gh_json(
-        "run", "list", "--workflow", "ios.yml", "--limit", str(options.runs),
-        "--json", "databaseId,conclusion",
+        "run",
+        "list",
+        "--workflow",
+        "ios.yml",
+        "--limit",
+        str(options.runs),
+        "--json",
+        "databaseId,conclusion",
     )
     samples, legs = {}, 0
     for run in runs:
@@ -67,10 +73,17 @@ def main():
             "api", f"repos/{{owner}}/{{repo}}/actions/runs/{run['databaseId']}/jobs"
         )["jobs"]
         for job in jobs:
-            if "native" not in job["name"] or job["conclusion"] not in ("success", "failure"):
+            if "native" not in job["name"] or job["conclusion"] not in (
+                "success",
+                "failure",
+            ):
                 continue
             log = subprocess.run(
-                ["gh", "api", f"repos/{{owner}}/{{repo}}/actions/jobs/{job['id']}/logs"],
+                [
+                    "gh",
+                    "api",
+                    f"repos/{{owner}}/{{repo}}/actions/jobs/{job['id']}/logs",
+                ],
                 capture_output=True,
             )
             if log.returncode:
@@ -79,13 +92,17 @@ def main():
             for test, seconds in passed_durations(log.stdout.decode(errors="replace")):
                 samples.setdefault(test, []).append(seconds)
     inventory = ui_tests.discovered()
-    previous = json.loads(ui_tests.DURATIONS.read_text()) if ui_tests.DURATIONS.exists() else {}
+    previous = ui_tests.load_durations()
     durations = medians(samples, inventory, previous)
     ui_tests.DURATIONS.write_text(json.dumps(durations, indent=2) + "\n")
     unsampled = sorted(inventory - samples.keys())
-    print(f"Parsed {legs} native legs; {len(durations)} of {len(inventory)} tests recorded.")
+    print(
+        f"Parsed {legs} native legs; {len(durations)} of {len(inventory)} tests recorded."
+    )
     if unsampled:
-        print("No samples (kept previous or median weight):\n  " + "\n  ".join(unsampled))
+        print(
+            "No samples (kept previous or median weight):\n  " + "\n  ".join(unsampled)
+        )
 
 
 if __name__ == "__main__":
