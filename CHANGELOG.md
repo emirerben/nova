@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.268.0] - 2026-10-13
+
+### Changed
+- ci: free Mac capacity and shorten PR queues (KRI-605) (#1595) <!-- release-pr: 1595 -->
+
 ## [0.78.267.0] - 2026-10-13
 
 ### Changed
