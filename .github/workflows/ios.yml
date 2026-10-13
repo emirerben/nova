@@ -150,9 +150,16 @@ jobs:
             src/apps/ios/.derived-data/SDKStatCaches.noindex
             src/apps/ios/.derived-data/CompilationCache.noindex
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
-      # Release as soon as build and unit tests pass. The full UI suite below
-      # still gates main's status, but no longer delays the TestFlight upload.
-      - name: Release to TestFlight after build and unit tests
+      # Release as soon as build, unit tests and the smoke tripwire pass (~2 min:
+      # creation to a ready cut, plus the editor). The full UI suite below still
+      # gates main's status, but no longer delays the TestFlight upload.
+      - name: Smoke UI tests before release
+        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/')) && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          KRIA_IOS_TEST_MODE: ui
+          KRIA_IOS_UI_GROUPS: smoke
+        run: bash scripts/ios/verify.sh
+      - name: Release to TestFlight after build, unit and smoke tests
         if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/')) && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}

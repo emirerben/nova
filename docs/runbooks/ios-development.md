@@ -827,11 +827,13 @@ regressions use a separate concurrency group.
 
 #### TestFlight release gate
 
-A `main` commit is released to TestFlight as soon as its **build and unit tests**
-pass. The first native leg of `ios-tests` runs the step "Release to TestFlight
-after build and unit tests", which dispatches `testflight.yml` with the commit's
-SHA; the full UI suite keeps running afterwards and still turns `main` red if it
-fails, but no longer delays the upload. `testflight.yml` has no `workflow_run`
+A `main` commit is released to TestFlight as soon as its **build, unit tests and
+smoke UI tests** pass (about 21 minutes). The first native leg of `ios-tests` runs
+the smoke group (creation to a ready cut, plus the editor), then the step "Release
+to TestFlight after build, unit and smoke tests" dispatches `testflight.yml` with
+the commit's SHA; the full UI suite keeps running afterwards and still turns
+`main` red if it fails, but no longer delays the upload. A UI regression outside
+the smoke group can therefore reach testers before the full suite flags it. `testflight.yml` has no `workflow_run`
 trigger. It skips a SHA that an earlier upload already contains and otherwise
 diffs release inputs from the last uploaded commit, so an iOS change in a commit
 that was never released still ships with the next one.
@@ -980,9 +982,10 @@ The PR Mac job appears in CI as `journey`; main's native legs appear in iOS.
   shards are disjoint and cover the full suite. Each leg's `verify` requires
   exactly its part; an empty part fails. The `ios-tests` aggregate fails unless
   every leg passes.
-- Shard 1 of main and manual runs runs unit tests, saves the build cache and
-  dispatches the TestFlight release (`KRIA_IOS_UNIT_TESTS=0` on the other legs). PRs save their build after
-  compilation and unit tests, before selected UI or journey scenarios finish.
+- Shard 1 of main and manual runs runs unit tests, saves the build cache, runs
+  the smoke tests and dispatches the TestFlight release (`KRIA_IOS_UNIT_TESTS=0`
+  on the other legs). PRs save their build after compilation and unit tests,
+  before selected UI or journey scenarios finish.
 - Refresh the durations with `python3 scripts/ios/refresh-ui-durations.py`. It
   takes the median passing attempt from the native legs of the last 120 `iOS`
   runs (about 8 minutes through `gh`). Refresh after adding or reshaping UI

@@ -172,22 +172,24 @@ if __name__ == "__main__":
         self.assertIn("cancel-in-progress: false", self.workflow)
         self.assertNotIn("cancel-in-progress: ${{", self.workflow)
 
-    def test_testflight_releases_after_build_and_unit_on_the_first_native_leg(self):
-        step = self.workflow.split(
-            "- name: Release to TestFlight after build and unit tests", 1
-        )
-        self.assertEqual(len(step), 2)
-        before, after = step
-        # Only after the compile + unit step and the cache save, never on PRs,
-        # and ahead of the long UI suite so it does not wait for it.
-        self.assertIn("- name: Build and unit tests", before)
-        self.assertIn("- name: Save Xcode build data", before)
-        self.assertTrue(after.index("- name: Native UI tests") > 0)
-        condition = after.split("\n", 2)[1]
-        self.assertIn("matrix.lane == 'native'", condition)
-        self.assertIn("(!matrix.shard || startsWith(matrix.shard, '1/'))", condition)
-        self.assertIn("github.event_name != 'pull_request'", condition)
-        self.assertIn("github.ref == 'refs/heads/main'", condition)
+    def test_testflight_releases_after_build_unit_and_smoke_on_the_first_native_leg(self):
+        smoke_name = "- name: Smoke UI tests before release"
+        release_name = "- name: Release to TestFlight after build, unit and smoke tests"
+        before_smoke, rest = self.workflow.split(smoke_name, 1)
+        smoke, rest = rest.split(release_name, 1)
+        release, after = rest.split("- name: Native UI tests", 1)
+        # Compile + unit tests and the cache save come first; the release step
+        # follows the smoke tripwire and precedes the long UI suite.
+        self.assertIn("- name: Build and unit tests", before_smoke)
+        self.assertIn("- name: Save Xcode build data", before_smoke)
+        self.assertIn("KRIA_IOS_TEST_MODE: ui", smoke)
+        self.assertIn("KRIA_IOS_UI_GROUPS: smoke", smoke)
+        for step in (smoke, release):
+            condition = step.split("\n", 2)[1]
+            self.assertIn("matrix.lane == 'native'", condition)
+            self.assertIn("(!matrix.shard || startsWith(matrix.shard, '1/'))", condition)
+            self.assertIn("github.event_name != 'pull_request'", condition)
+            self.assertIn("github.ref == 'refs/heads/main'", condition)
         self.assertEqual(self.workflow.count("gh workflow run testflight.yml"), 1)
         self.assertIn("actions: write", self.workflow)
 
