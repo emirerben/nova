@@ -344,34 +344,38 @@ def test_lanes_from_editor_sections_rejects_an_unpinned_overlay_path():
         )
 
 
-def test_lanes_from_editor_sections_accepts_a_fullscreen_card_and_refuses_a_stack():
-    """KRI-661: a card may be promoted to full screen, but two can't overlap."""
+def test_lanes_from_editor_sections_accepts_a_fullscreen_card_and_honours_the_kill_switch(
+    monkeypatch,
+):
+    """KRI-661: a card may be promoted to full screen -- unless the rollout switch is off."""
     photo = _photo_visual()
-
-    def card(card_id: str, start_s: float, end_s: float) -> dict:
-        return {
-            "id": card_id,
+    committed = [
+        {
+            "id": "card-full",
             "kind": "image",
             "src_gcs_path": PHOTO_PATH,
             "display_mode": "fullscreen",
-            "start_s": start_s,
-            "end_s": end_s,
+            "start_s": 0.0,
+            "end_s": 2.0,
         }
-
+    ]
     lanes = lanes_from_editor_sections(
-        previous=None,
-        sound_effects=None,
-        media_overlays=[card("a", 0.0, 2.0), card("b", 2.0, 4.0)],
-        visuals=(photo,),
+        previous=None, sound_effects=None, media_overlays=committed, visuals=(photo,)
     )
-    assert [c.display_mode for c in lanes.overlays] == ["fullscreen", "fullscreen"]
-    with pytest.raises(ValueError, match="same time"):
+    assert [c.display_mode for c in lanes.overlays] == ["fullscreen"]
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "phone_subtitled_fullscreen_overlays_enabled", False)
+    with pytest.raises(ValueError, match="turned off"):
         lanes_from_editor_sections(
-            previous=None,
-            sound_effects=None,
-            media_overlays=[card("a", 0.0, 3.0), card("b", 2.0, 4.0)],
-            visuals=(photo,),
+            previous=None, sound_effects=None, media_overlays=committed, visuals=(photo,)
         )
+    # A card that was already full screen still round-trips with the switch off.
+    kept = lanes_from_editor_sections(
+        previous=lanes, sound_effects=None, media_overlays=committed, visuals=(photo,)
+    )
+    assert [c.display_mode for c in kept.overlays] == ["fullscreen"]
 
 
 def test_lanes_from_editor_sections_keeps_the_ending_clip_unchanged():

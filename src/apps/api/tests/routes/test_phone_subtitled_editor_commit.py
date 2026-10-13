@@ -234,6 +234,18 @@ def test_editor_can_promote_a_pip_card_to_fullscreen_and_back(monkeypatch):
     assert "subtitled-overlays" in track_ids and "subtitled-fullscreen" not in track_ids
 
 
+def test_two_overlapping_fullscreen_cards_are_refused_on_save(monkeypatch):
+    """Full-screen cutaways are a sequence; the compiler's refusal reaches the creator as a 422."""
+    job = phone_job(monkeypatch)
+    cards = [
+        _overlay_payload(card_id="card-1", display_mode="fullscreen", start_s=1.0, end_s=3.0),
+        _overlay_payload(card_id="card-2", display_mode="fullscreen", start_s=2.0, end_s=4.0),
+    ]
+    with pytest.raises(HTTPException) as error:
+        save(job, media_overlays=cards)
+    assert error.value.status_code == 422
+
+
 def test_sound_delete_removes_the_sfx_clip(monkeypatch):
     job = phone_job(monkeypatch)
     save(job, sound_effects=[])

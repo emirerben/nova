@@ -63,30 +63,84 @@ SPECS: list[OpSpec] = [
 ]
 
 
-def _require_fullscreen_sequence(cards: list[dict[str, Any]]) -> None:
+def _placeholder_geometry(card: dict[str, Any]) -> bool:
+    """A full-screen card carries stand-in geometry (centred over the speaker)."""
+    return all(
+        abs(float(card.get(key, default)) - default) < 1e-6
+        for key, default in (("x_frac", 0.5), ("y_frac", 0.4), ("scale", 0.35))
+    )
+
+
+def _fullscreen_allowed() -> bool:
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", True))
+
+
+def _check_fullscreen(state: Any, touched: list[dict[str, Any]]) -> None:
+    """Refuse, in plain words, a full-screen card the render would drop or stack.
+
+    Mirrors `_compile_fullscreen_track` (phone_subtitled_plan): windows are clamped to the
+    speaker's length, a window under the minimum is silently skipped, and two cutaways may
+    not overlap. Only the cards this op touched can raise, so an edit that already carried
+    an odd (but compilable) pair is never refused for something the creator did not change.
+    """
+    from app.pipeline.phone_subtitled_plan import _MIN_FULLSCREEN_S  # noqa: PLC0415
+    from app.routes.generative_jobs import visual_block_variant_duration  # noqa: PLC0415
     from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
 
-    previous_end = 0.0
-    for card in sorted(
-        (c for c in cards if c.get("display_mode") == "fullscreen"),
-        key=lambda c: (float(c.get("start_s") or 0.0), float(c.get("end_s") or 0.0)),
-    ):
-        start, end = float(card.get("start_s") or 0.0), float(card.get("end_s") or 0.0)
-        if start < previous_end - 1e-6:
+    total = visual_block_variant_duration(state.variant) or 0.0
+
+    def window(card: dict[str, Any]) -> tuple[float, float]:
+        start = max(float(card.get("start_s") or 0.0), 0.0)
+        end = float(card.get("end_s") or 0.0)
+        return start, min(end, total) if total > 0 else end
+
+    touched_ids = {id(c) for c in touched if c.get("display_mode") == "fullscreen"}
+    for card in state.media_overlays:
+        if id(card) in touched_ids:
+            start, end = window(card)
+            if end - start < _MIN_FULLSCREEN_S:
+                raise KriaEditorOpError(
+                    "A full-screen picture needs at least a third of a second on screen, "
+                    "inside the video -- lengthen it or keep it on top of the video"
+                )
+    spans = [
+        (start, end, card)
+        for card in state.media_overlays
+        if card.get("display_mode") == "fullscreen"
+        for start, end in [window(card)]
+        if end - start >= _MIN_FULLSCREEN_S
+    ]
+    holder: dict[str, Any] | None = None  # the earlier card whose window reaches furthest
+    reach = 0.0
+    for start, end, card in sorted(spans, key=lambda row: (row[0], row[1])):
+        if (
+            holder is not None
+            and start < reach - 1e-6
+            and (id(card) in touched_ids or id(holder) in touched_ids)
+        ):
             raise KriaEditorOpError(
                 "Two full-screen pictures would be on screen at the same time -- keep one "
                 "of them on top of the video or move one"
             )
-        previous_end = max(previous_end, end)
+        if end > reach:
+            holder, reach = card, end
 
 
-def _to_pip(card: dict[str, Any], *, keep_geometry: bool) -> None:
+def _to_pip(card: dict[str, Any]) -> None:
     card["display_mode"] = "pip"
-    if keep_geometry:
-        return
-    # A full-screen card carries placeholder geometry (centred, over the face): give it
-    # the corner a card normally gets.
-    card.update(PIP_DEFAULT_GEOMETRY)
+    # Only a stand-in position is replaced: a card the creator placed keeps its place and size.
+    if _placeholder_geometry(card):
+        card.update(PIP_DEFAULT_GEOMETRY)
+
+
+def _to_fullscreen(card: dict[str, Any]) -> None:
+    from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
+
+    if not _fullscreen_allowed():
+        raise KriaEditorOpError("Full-screen pictures are turned off right now")
+    card["display_mode"] = "fullscreen"
 
 
 def _op_set_overlay_display(state: Any, op: dict[str, Any]) -> None:
@@ -107,19 +161,15 @@ def _op_set_overlay_display(state: Any, op: dict[str, Any]) -> None:
         ]
     if not targets:
         raise KriaEditorOpError("There are no pictures to change")
-    changed = False
+    touched: list[dict[str, Any]] = []
     for card in targets:
-        before = card.get("display_mode") or "pip"
-        if before == mode:
+        if (card.get("display_mode") or "pip") == mode:
             continue
-        if mode == "pip":
-            _to_pip(card, keep_geometry=False)
-        else:
-            card["display_mode"] = "fullscreen"
-        changed = True
-    if not changed:
+        _to_pip(card) if mode == "pip" else _to_fullscreen(card)
+        touched.append(card)
+    if not touched:
         raise KriaEditorOpError("Those pictures already show that way")
-    _require_fullscreen_sequence(state.media_overlays)
+    _check_fullscreen(state, touched)
     state.changed.add("media_overlays")
 
 
@@ -136,12 +186,20 @@ def _op_patch_overlay(state: Any, op: dict[str, Any]) -> None:
     end = float(patch.get("end_s", card.get("end_s") or 0.0))
     if end <= start:
         raise KriaEditorOpError("A picture needs to stay on screen for some time")
-    if patch.get("display_mode") == "pip" and (card.get("display_mode") or "pip") != "pip":
-        geometry = {k for k in ("x_frac", "y_frac", "scale") if k in patch}
-        _to_pip(card, keep_geometry=len(geometry) == 3)
-        patch.pop("display_mode")
-    card.update(patch)
-    _require_fullscreen_sequence(state.media_overlays)
+    target = patch.pop("display_mode", None) or (card.get("display_mode") or "pip")
+    geometry = {k: patch[k] for k in ("x_frac", "y_frac", "scale") if k in patch}
+    if target == "fullscreen" and geometry and set(patch) <= set(geometry):
+        raise KriaEditorOpError(
+            "A full-screen picture has no position -- put it on top of the video first"
+        )
+    was_fullscreen = (card.get("display_mode") or "pip") == "fullscreen"
+    if target == "pip" and was_fullscreen:
+        card.update(geometry)
+        _to_pip(card)
+    elif target == "fullscreen" and not was_fullscreen:
+        _to_fullscreen(card)
+    card.update({k: v for k, v in patch.items() if target == "pip" or k in ("start_s", "end_s")})
+    _check_fullscreen(state, [card])
     state.changed.add("media_overlays")
 
 

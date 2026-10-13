@@ -123,3 +123,78 @@ def test_overlay_family_is_not_offered_when_the_lane_is_closed(monkeypatch):
     _base, snapshot, _ops = _chat(job, [])
     assert "overlay" not in snapshot["allowed_op_families"]
     assert "overlays" not in snapshot
+
+
+def _two_cards(job):
+    """The derived base plus a second photo card (fullscreen 5-7s) so windows can collide."""
+    variant = job.assembly_plan["variants"][0]
+    base = project_editor_draft(variant, {}, job)
+    second = {**base["media_overlays"][0], "id": "card-2", "start_s": 5.0, "end_s": 7.0}
+    base["media_overlays"].append(second)
+    return base
+
+
+def _run(job, base, raw_ops):
+    snapshot = build_editor_snapshot(job, base)
+    ops = [_parse_op(raw, snapshot, _ParseState(0.9)) for raw in raw_ops]
+    assert None not in ops
+    return compile_editor_ops(job, base, ops)
+
+
+def test_chat_says_so_instead_of_stacking_two_full_screen_pictures(monkeypatch):
+    job = _rendered_job(monkeypatch)
+    base = _two_cards(job)
+    base["media_overlays"][0].update(display_mode="pip", start_s=4.0, end_s=6.0)
+    base["media_overlays"][1]["display_mode"] = "fullscreen"
+    with pytest.raises(KriaEditorOpError, match="same time"):
+        _run(
+            job,
+            base,
+            [{"op": "set_overlay_display", "display_mode": "fullscreen", "overlay_index": 0}],
+        )
+
+
+def test_chat_refuses_a_full_screen_window_the_render_would_silently_drop(monkeypatch):
+    job = _rendered_job(monkeypatch)
+    base = project_editor_draft(job.assembly_plan["variants"][0], {}, job)
+    for patch in ({"start_s": 2.0, "end_s": 2.1}, {"start_s": 50.0, "end_s": 53.0}):
+        with pytest.raises(KriaEditorOpError, match="third of a second"):
+            _run(
+                job,
+                base,
+                [
+                    {
+                        "op": "patch_overlay",
+                        "overlay_index": 0,
+                        "patch": {**patch, "display_mode": "fullscreen"},
+                    }
+                ],
+            )
+
+
+def test_chat_keeps_a_card_where_the_creator_put_it(monkeypatch):
+    job = _rendered_job(monkeypatch)
+    base = project_editor_draft(job.assembly_plan["variants"][0], {}, job)
+    base["media_overlays"][0].update(display_mode="pip", x_frac=0.9, y_frac=0.1, scale=0.2)
+    compiled = _run(
+        job,
+        base,
+        [
+            {"op": "set_overlay_display", "display_mode": "fullscreen", "overlay_index": 0},
+            {"op": "set_overlay_display", "display_mode": "pip", "overlay_index": 0},
+        ],
+    )
+    card = compiled.payload.media_overlays[0]
+    assert (card["x_frac"], card["y_frac"], card["scale"]) == (0.9, 0.1, 0.2)
+
+
+def test_the_full_screen_kill_switch_stops_chat_and_save(monkeypatch):
+    job = _rendered_job(monkeypatch)
+    base = project_editor_draft(job.assembly_plan["variants"][0], {}, job)
+    monkeypatch.setattr(settings, "phone_subtitled_fullscreen_overlays_enabled", False)
+    with pytest.raises(KriaEditorOpError, match="turned off"):
+        _run(
+            job,
+            base,
+            [{"op": "set_overlay_display", "display_mode": "fullscreen", "overlay_index": 0}],
+        )
