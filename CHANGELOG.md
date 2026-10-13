@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.259.0] - 2026-10-13
+
+### Changed
+- fix(kria): preserve approved hooks through generation and retry (KRI-651) (#1589) <!-- release-pr: 1589 -->
+
 ## [0.78.258.0] - 2026-10-13
 
 ### Changed
