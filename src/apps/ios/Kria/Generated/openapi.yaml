@@ -2560,6 +2560,30 @@
             "title": "Highlight Spoken Word",
             "type": "boolean"
           },
+          "max_width_frac": {
+            "default": null,
+            "maximum": 1.0,
+            "minimum": 0.2,
+            "nullable": true,
+            "title": "Max Width Frac",
+            "type": "number"
+          },
+          "position_x_frac": {
+            "default": null,
+            "maximum": 0.95,
+            "minimum": 0.05,
+            "nullable": true,
+            "title": "Position X Frac",
+            "type": "number"
+          },
+          "position_y_frac": {
+            "default": null,
+            "maximum": 0.9,
+            "minimum": 0.1,
+            "nullable": true,
+            "title": "Position Y Frac",
+            "type": "number"
+          },
           "shadow_color": {
             "default": null,
             "nullable": true,

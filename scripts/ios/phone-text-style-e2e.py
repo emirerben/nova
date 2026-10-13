@@ -326,6 +326,44 @@ def main():
             == recipe.text_layers
         )
 
+    multi_cues = [
+        {"id": "short-cue", "text": "Today", "start_s": 0.3, "end_s": 1.5},
+        {
+            "id": "wide-cue",
+            "text": "A slow morning in beautiful Lisbon",
+            "start_s": 1.6,
+            "end_s": 2.8,
+        },
+    ]
+    with phone_text_policy_scope(policy):
+        recipe = compile_phone_subtitled_plan(bindings, caption_cues=multi_cues)
+        add("kri648_caption_blocks", recipe, [])
+        meta["cases"]["kri648_caption_blocks"]["caption_snapshot"] = {
+            **generation_style_fields(),
+            "edit_format": "subtitled",
+            "caption_cues": multi_cues,
+        }
+        meta["cases"]["kri648_caption_blocks"]["caption_samples"].append(
+            {
+                "name": "wide-cue",
+                "t": 1.8,
+                "region": base._caption_region(
+                    recipe.text_layers[1], canvas_width=1080, canvas_height=1920
+                ),
+                "expect_text": True,
+            }
+        )
+        assert (
+            compile_caption_layers(
+                multi_cues,
+                canvas_width=1080,
+                canvas_height=1920,
+                look=caption_look_from_variant(generation_style_fields()),
+                timeline_duration_s=recipe.duration,
+            )
+            == recipe.text_layers
+        )
+
     try:
         resolve_phone_text_style(
             [TextElement(id="title", text="İstanbul", start_s=0, end_s=3).model_dump(mode="json")],

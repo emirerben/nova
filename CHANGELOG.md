@@ -12,18 +12,6 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - fix(ios): the recorder never silently records silence, and every take is saved to Photos (KRI-653) (#1592) <!-- release-pr: 1592 -->
 
-## [0.78.262.0] - 2026-10-13
-
-### Added
-- Save text preferences by role in the iPhone account page or chat, with Undo and individual resets (KRI-648, release 1).
-
-### Changed
-- New iPhone videos use the curated 15-font palette, measured placement and wrapping, and default-off outlines and shadows. Saved videos retain their existing style.
-
-### Fixed
-- Keep generated titles clear of pins and captions, preserve Turkish letters, and replay caption corners consistently in preview and export.
-- Resolve multiple bundled fonts reliably in the iPhone render cache.
-
 ## [0.78.260.0] - 2026-10-13
 
 ### Changed
