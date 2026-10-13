@@ -70,6 +70,9 @@ and none failed. All 190 selected UI journeys passed on an isolated simulator;
 the existing gallery read/upload journey passed on its third attempt and is
 reported as flaky. A separate final-build run covers the two settings journeys.
 Results, logs, measurement reports and exported media remain outside Git.
+The final 27-case kit passed native simulator preview/export, including differently
+sized caption blocks. CI maps `kri-648-phone-text` to the same export kit and both
+settings journeys, retaining their results under the existing journey artifact.
 
 New caption geometry requires client protocol 8. The independent settings choices
 include Use defaults, Automatic and a required font, avoiding a misleading inherited
