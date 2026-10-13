@@ -983,7 +983,8 @@ The PR Mac job appears in CI as `journey`; main's native legs appear in iOS.
   exactly its part; an empty part fails. The `ios-tests` aggregate fails unless
   every leg passes.
 - Shard 1 of main and manual runs runs unit tests, saves the build cache, runs
-  the smoke tests and dispatches the TestFlight release (`KRIA_IOS_UNIT_TESTS=0`
+  the smoke tests, dispatches the TestFlight release and renews `verify.sh`'s
+  single-use UI receipt for the full suite (`KRIA_IOS_UNIT_TESTS=0`
   on the other legs). PRs save their build after compilation and unit tests,
   before selected UI or journey scenarios finish.
 - Refresh the durations with `python3 scripts/ios/refresh-ui-durations.py`. It
