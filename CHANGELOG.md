@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.252.0] - 2026-10-13
+
+### Changed
+- feat: draw on slide posts (KRI-589 PR 2) (#1573) <!-- release-pr: 1573 -->
+
 ## [0.78.251.0] - 2026-10-12
 
 ### Changed
