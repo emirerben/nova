@@ -11,6 +11,10 @@ reuse the app's existing XCUITests rather than adding implementation-shaped test
 - A successful old build could drive changed native inputs. Doctor must reject
   a changed fingerprint, mismatched receipt, wrong installed binary, or stopped
   instance. Doctor itself must not write files or launch anything.
+- Debug builds put native code in `Kria.debug.dylib` while their launcher can
+  remain byte-identical across source changes. App identity must include the
+  root code dylibs as well as the executable; changing that code must change
+  the identity even when the launcher stays unchanged.
 - Build failure, UI failure, interruption, or missing persistence could strand a
   simulator or erase useful evidence. Capture failures and clean up only the owned
   target; screenshots, logs, result bundles, and draft copies must survive.

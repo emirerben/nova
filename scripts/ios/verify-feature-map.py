@@ -3,13 +3,13 @@
 
 import argparse
 from fnmatch import fnmatchcase
-import hashlib
 import json
 from pathlib import Path
 import shutil
 import subprocess
 
 import ui_tests
+from app_identity import app_code_sha256
 
 ROOT = Path(__file__).resolve().parents[2]
 MAP_PATH = ROOT / ".cursor/skills/verify-kria-ios/features/ci.json"
@@ -99,16 +99,16 @@ def save(path, value):
 
 
 def build_identity():
-    binary = (
+    app = (
         ROOT
-        / "src/apps/ios/.derived-data/Build/Products/Debug-iphonesimulator/Kria.app/Kria"
+        / "src/apps/ios/.derived-data/Build/Products/Debug-iphonesimulator/Kria.app"
     )
     return {
         "head": query("git", "rev-parse", "HEAD"),
         "fingerprint": query(
             "python3", str(ROOT / "scripts/ios/cache-inputs.py"), "fingerprint"
         ),
-        "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+        "binary_sha256": app_code_sha256(app),
         "simulator_id": (ROOT / "test-results/ios/simulator-id.txt")
         .read_text()
         .strip(),

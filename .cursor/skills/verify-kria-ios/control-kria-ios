@@ -2,7 +2,6 @@
 """Owned, offline simulator lifecycle around Nova's existing XCTest harness."""
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,6 +14,9 @@ import sys
 import uuid
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts/ios"))
+from app_identity import app_code_sha256  # noqa: E402
+
 RESULTS = ROOT / "test-results/verify-kria-ios"
 LOCK = ROOT / ".dev/verify-kria-ios.lock"
 IOS = ROOT / "src/apps/ios"
@@ -52,10 +54,6 @@ def query(*args):
 
 def fingerprint():
     return query("python3", str(ROOT / "scripts/ios/cache-inputs.py"), "fingerprint")
-
-
-def sha(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def devices():
@@ -170,7 +168,7 @@ def prepare(state):
     if receipt != [state["simulator_id"], fingerprint()]:
         raise RuntimeError("Preparation produced an invalid simulator/build receipt")
     state["fingerprint"] = receipt[1]
-    state["binary_sha256"] = sha(APP / "Kria")
+    state["binary_sha256"] = app_code_sha256(APP)
     state["head"] = query("git", "rev-parse", "HEAD")
     shutil.copy2(RECEIPT, RESULTS / state["run"] / "preparation-receipt.txt")
     save(state)
@@ -229,7 +227,7 @@ def doctor(state):
         info = plistlib.load(handle)
     if (
         info["CFBundleIdentifier"] != BUNDLE
-        or sha(installed / info["CFBundleExecutable"]) != state["binary_sha256"]
+        or app_code_sha256(installed) != state["binary_sha256"]
     ):
         raise RuntimeError("Installed app does not match this run's build")
     process = query("ps", "-p", str(state["app_pid"]), "-o", "command=")

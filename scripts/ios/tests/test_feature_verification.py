@@ -16,6 +16,16 @@ spec.loader.exec_module(verification)
 
 
 class FeatureVerificationTests(unittest.TestCase):
+    def test_app_identity_includes_debug_code_not_only_the_thin_launcher(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory)
+            (app / "Kria").write_bytes(b"unchanged launcher")
+            code = app / "Kria.debug.dylib"
+            code.write_bytes(b"first build")
+            first = verification.app_code_sha256(app)
+            code.write_bytes(b"second build")
+            self.assertNotEqual(first, verification.app_code_sha256(app))
+
     def test_feature_paths_select_their_user_journeys(self):
         cases = {
             "src/apps/ios/Kria/Features/TeleprompterScreen.swift": ["teleprompter"],
