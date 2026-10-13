@@ -330,11 +330,11 @@ def test_layer_rejects_bend_with_a_typewriter_animation_phase() -> None:
 
 def test_defaults() -> None:
     assert settings.text_bend_enabled is True
-    assert settings.text_bend_min_client_protocol == 8
+    assert settings.text_bend_min_client_protocol == 9
 
 
 @pytest.mark.parametrize(
-    ("protocol", "expected"), [(None, False), (7, False), (8, True), (9, True)]
+    ("protocol", "expected"), [(None, False), (7, False), (8, False), (9, True), (10, True)]
 )
 def test_client_gate_inside_a_request(protocol, expected) -> None:
     set_client_protocol(protocol)
@@ -347,7 +347,7 @@ def test_client_gate_outside_a_request_is_open() -> None:
 
 
 def test_supported_needs_flag_verified_feature_and_build(monkeypatch) -> None:
-    set_client_protocol(8)
+    set_client_protocol(9)
     assert text_bend_supported() is False  # not verified on device yet
     _verify_bend(monkeypatch)
     assert text_bend_supported() is True
@@ -362,14 +362,14 @@ def _variant(destination: str) -> dict:
 @pytest.mark.parametrize(
     ("flag", "verified", "protocol", "destination", "expected"),
     [
-        (True, True, 8, "device", True),
-        (True, True, 8, "phone", True),
+        (True, True, 9, "device", True),
+        (True, True, 9, "phone", True),
         (True, True, 7, "device", False),
         (True, True, None, "device", False),
-        (True, True, 8, "cloud", False),
-        (True, True, 8, None, False),
-        (True, False, 8, "device", False),
-        (False, True, 8, "device", False),
+        (True, True, 9, "cloud", False),
+        (True, True, 9, None, False),
+        (True, False, 9, "device", False),
+        (False, True, 9, "device", False),
     ],
 )
 def test_editor_capability_text_bend(
@@ -385,7 +385,7 @@ def test_editor_capability_text_bend(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("flag", "protocol", "expected"),
-    [(True, None, False), (True, 7, False), (True, 8, True), (False, 8, False)],
+    [(True, None, False), (True, 7, False), (True, 8, False), (True, 9, True), (False, 9, False)],
 )
 async def test_creation_capabilities_text_bend(monkeypatch, flag, protocol, expected) -> None:
     from types import SimpleNamespace
@@ -453,7 +453,7 @@ def test_a_bend_save_is_accepted_from_the_minimum_build_and_pins_the_capability(
     assert all("bend" not in layer.model_dump(mode="json") for layer in env.recipe.text_layers)
 
 
-@pytest.mark.parametrize("protocol", [4, 7, None])
+@pytest.mark.parametrize("protocol", [4, 7, 8, None])
 def test_an_old_build_saving_bent_text_is_told_to_update(monkeypatch, protocol) -> None:
     env, element = _guided_env(monkeypatch)
     pinned = copy.deepcopy(env.job.assembly_plan)

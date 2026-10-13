@@ -145,7 +145,7 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_DRAWING"] == "1" { capabilities["slide_post_drawing"] = true }
             // KRIA_SLIDE_POST_STICKERS (KRI-460): pasted pictures on slides. The server only advertises it to protocol 8 builds.
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_STICKERS"] == "1" { capabilities["slide_post_stickers"] = true }
-            // KRIA_TEXT_BEND (KRI-646): the Bend slider. The server only advertises it to protocol 8 builds.
+            // KRIA_TEXT_BEND (KRI-646): the Bend slider. The server only advertises it to protocol 9 builds.
             if ProcessInfo.processInfo.environment["KRIA_TEXT_BEND"] == "1" { capabilities["text_bend"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_SIZES"] == "1" {
                 capabilities["slide_post_framing"] = true

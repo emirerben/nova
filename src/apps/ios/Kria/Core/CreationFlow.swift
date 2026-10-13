@@ -24,7 +24,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostDrawing: Bool? = nil
     /// KRI-460: pasted pictures placed on a slide. The server advertises it only to a build that speaks protocol 8. Missing = off (no sticker paste, no `stickers` authored).
     var slidePostStickers: Bool? = nil
-    /// KRI-646: text Bend (curved text). The server advertises it only to a build that speaks protocol 8. Missing = off (no Bend slider).
+    /// KRI-646: text Bend (curved text). The server advertises it only to a build that speaks protocol 9. Missing = off (no Bend slider).
     var textBend: Bool? = nil
     /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
     var clipSelectionQuestions: Bool? = nil

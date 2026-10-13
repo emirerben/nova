@@ -661,7 +661,7 @@ class Settings(BaseSettings):
     # by the app; stored values still round-trip. Apply:
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
-    text_bend_min_client_protocol: int = 8
+    text_bend_min_client_protocol: int = 9
     # KRI-561: the song-order question is answered on a horizontal song timeline (play the
     # song, drop clips onto song time) instead of the vertical reorder list. Kill switch:
     # `fly secrets set SONG_ORDER_TIMELINE_ENABLED=false` + restart (api): capabilities drop
