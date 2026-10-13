@@ -1135,6 +1135,20 @@ class CreatorDirectionService:
                 raise DirectionConflict("locked memory requires creator review")
             if normalized_key is None or target.normalized_key != normalized_key:
                 raise DirectionConflict("replacement key does not match active memory")
+            from app.schemas.phone_text_style import (  # noqa: PLC0415
+                TEXT_STYLE_KEYS,
+                TextStyleRule,
+                effective_text_rule,
+            )
+
+            if normalized_key in TEXT_STYLE_KEYS:
+                # A chat replacement names changed properties; settings PATCH
+                # remains a full replacement so Use defaults can reset a field.
+                role = normalized_key.removeprefix("text_style_")
+                previous = (target.structured_value or {}).get(normalized_key, {})
+                replacement = (structured_value or {}).get(normalized_key, {})
+                merged = effective_text_rule({role: previous}, {role: replacement}, role)
+                structured_value = {normalized_key: TextStyleRule.model_validate(merged).values()}
             target.state = "superseded"
             # PostgreSQL may check the partial unique index before applying a
             # same-flush UPDATE batch. Retire the old key first.

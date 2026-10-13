@@ -84,6 +84,14 @@ The raw-request reader exception is limited to initial dispatch pinning validate
 visual properties. Route, duration, voice, order and required copy retain their
 existing authority; workers and retries use stored rules.
 
+The real-memory font-only chat replacement journey failed before its fix:
+superseding a title rule dropped its zero outline, disabled shadow, color and
+corner, exposing the parent rule's effects. Chat supersede now merges only
+specified properties before atomically replacing the row. Settings PATCH remains
+a complete rule replacement for individual resets. The journey passes through
+revision-checked storage, duplicate replay, actual text compilation and Undo;
+all 65 focused memory/extractor/typography checks passed.
+
 New caption geometry requires client protocol 8. The independent settings choices
 include Use defaults, Automatic and a required font, avoiding a misleading inherited
 font state. Caption appearance includes the resolved corner, width and alignment.
