@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.257.0] - 2026-10-13
+
+### Changed
+- fix(kria): ask which part of the song you filmed on real clips, and keep every take inside the answer (KRI-650) (#1582) <!-- release-pr: 1582 -->
+
+## [0.78.256.0] - 2026-10-13
+
+### Changed
+- ci(ios): renew the UI receipt after the pre-release smoke run (KRI-636) (#1578) <!-- release-pr: 1578 -->
+
+## [0.78.255.0] - 2026-10-13
+
+### Changed
+- fix(ios): drawing Animation tab polish - speed direction, previews, layout, haptics (KRI-637) (#1577) <!-- release-pr: 1577 -->
+
+## [0.78.254.0] - 2026-10-13
+
+### Changed
+- fix(ios): Kria thinking shows a one-line summary, full text on tap (KRI-627) (#1574) <!-- release-pr: 1574 -->
+
+## [0.78.253.0] - 2026-10-13
+
+### Changed
+- ci(ios): release to TestFlight after build+unit+smoke; shard and never cancel main (KRI-636) (#1576) <!-- release-pr: 1576 -->
+
+## [0.78.252.0] - 2026-10-13
+
+### Changed
+- feat: draw on slide posts (KRI-589 PR 2) (#1573) <!-- release-pr: 1573 -->
+
+## [0.78.251.0] - 2026-10-12
+
+### Changed
+- feat(lipsync): ask which part of the song you filmed, in the chat (KRI-588) (#1546) <!-- release-pr: 1546 -->
+
 ## [0.78.250.0] - 2026-10-12
 
 ### Changed

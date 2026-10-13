@@ -819,9 +819,30 @@ xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
   -test-iterations 20 -run-tests-until-failure test-without-building
 ```
 
-`cancelled` iOS runs on `main` are concurrency coalescing, not failures: a new
-push cancels the older running or pending iOS run so scarce Mac runners test the
-newest tip. Manual regressions use a separate concurrency group.
+iOS runs on `main` are never cancelled by a newer push. GitHub keeps one running
+and one pending run per concurrency group and a newer push replaces only the
+pending one, so the newest tip is always next. (Cancel-on-push starved `main` of
+finished runs on busy days; see "TestFlight release gate" below.) Manual
+regressions use a separate concurrency group.
+
+#### TestFlight release gate
+
+A `main` commit is released to TestFlight as soon as its **build, unit tests and
+smoke UI tests** pass (about 21 minutes). The first native leg of `ios-tests` runs
+the smoke group (creation to a ready cut, plus the editor), then the step "Release
+to TestFlight after build, unit and smoke tests" dispatches `testflight.yml` with
+the commit's SHA; the full UI suite keeps running afterwards and still turns
+`main` red if it fails, but no longer delays the upload. A UI regression outside
+the smoke group can therefore reach testers before the full suite flags it. `testflight.yml` has no `workflow_run`
+trigger. It skips a SHA that an earlier upload already contains and otherwise
+diffs release inputs from the last uploaded commit, so an iOS change in a commit
+that was never released still ships with the next one.
+
+If TestFlight looks stuck, check `gh run list --workflow iOS --branch main`
+first. A `cancelled` build that ran for about 75 minutes hit `timeout-minutes`
+(the 2026-10-12 incident: a serial full UI suite outlasted the cap after #1567),
+and the release can be started by hand with
+`gh workflow run testflight.yml --ref main -f head_sha=<main sha>`.
 
 #### Baseline and interpretation
 
@@ -938,16 +959,15 @@ line.
 
 #### Sharded UI runs (KRI-168)
 
-On main, `ios-tests` runs the full UI suite on one Mac to leave capacity for
-PRs. Manual regressions use `ios_ui_shards` to split it across three native
-legs. PRs use one CI Mac job so their selected UI and journey scenarios can
+On main and manual regressions, `ios-tests` uses `ios_ui_shards` to split the
+full UI suite across three native legs; run serially it outlasts the job's
+75-minute cap (build+unit ~19 min, UI >56 min). PRs use one CI Mac job so their selected UI and journey scenarios can
 share a single compiled build. The September 24, 2026 durations show the UI
 work before build and journey time:
 
 | Execution | Estimated UI time | Native legs |
 |---|---|---|
-| `full` (main) | 39.7 min | 1 |
-| `full` (manual) | 39.7 min | 3 (`shard: 1/3` … `3/3`) |
+| `full` (main, manual) | 39.7 min | 3 (`shard: 1/3` … `3/3`) |
 | `smoke,editor` (PR) | 26.3 min | 1 |
 | `smoke,creation` (PR) | 9.6 min | 1 |
 | `smoke,projects` (PR) | 7.1 min | 1 |
@@ -958,17 +978,19 @@ The PR Mac job appears in CI as `journey`; main's native legs appear in iOS.
 - `ui_tests.shard_tests` places tests longest-first into the least-loaded shard,
   using median CI durations from `scripts/ios/ui-test-durations.json`. Unknown
   tests weigh the median.
-- On manual runs, every leg computes the same partition from the checkout, so
+- On main and manual runs, every leg computes the same partition from the checkout, so
   shards are disjoint and cover the full suite. Each leg's `verify` requires
   exactly its part; an empty part fails. The `ios-tests` aggregate fails unless
   every leg passes.
-- Main's sole leg and manual shard 1 run unit tests and save the build cache
-  (`KRIA_IOS_UNIT_TESTS=0` on the other manual legs). PRs save their build after
-  compilation and unit tests, before selected UI or journey scenarios finish.
+- Shard 1 of main and manual runs runs unit tests, saves the build cache, runs
+  the smoke tests, dispatches the TestFlight release and renews `verify.sh`'s
+  single-use UI receipt for the full suite (`KRIA_IOS_UNIT_TESTS=0`
+  on the other legs). PRs save their build after compilation and unit tests,
+  before selected UI or journey scenarios finish.
 - Refresh the durations with `python3 scripts/ios/refresh-ui-durations.py`. It
   takes the median passing attempt from the native legs of the last 120 `iOS`
   runs (about 8 minutes through `gh`). Refresh after adding or reshaping UI
-  tests. Stale values only unbalance manual legs; they never drop coverage.
+  tests. Stale values only unbalance sharded legs; they never drop coverage.
 - PRs now trade parallel UI execution for one Mac allocation and one compiled
   build across native checks. Compare hosted CI runs before claiming a wall
   clock improvement, especially for long editor UI selections.

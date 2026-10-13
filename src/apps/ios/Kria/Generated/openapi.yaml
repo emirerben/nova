@@ -1083,6 +1083,11 @@
             "title": "Slide Post Chat Edit",
             "type": "boolean"
           },
+          "slide_post_drawing": {
+            "default": false,
+            "title": "Slide Post Drawing",
+            "type": "boolean"
+          },
           "slide_post_extended_device_export": {
             "default": false,
             "title": "Slide Post Extended Device Export",
@@ -1116,6 +1121,11 @@
           "song_order_questions": {
             "default": false,
             "title": "Song Order Questions",
+            "type": "boolean"
+          },
+          "song_range_questions": {
+            "default": false,
+            "title": "Song Range Questions",
             "type": "boolean"
           },
           "visuals_enabled": {
@@ -7406,9 +7416,43 @@
         "title": "ResolvedTextMotion",
         "type": "object"
       },
+      "SlideDrawing": {
+        "additionalProperties": false,
+        "description": "A static freehand drawing over one slide (KRI-589 PR2).\n\nStrokes only (the shared ``DrawingStroke``), never a raster: every renderer\npaints them (iOS ``NativeDrawingPainter``, the server's ``drawing_png``).\nCoordinates are normalised to the authoring canvas (``canvas_aspect`` =\nwidth / height); a renderer aspect-fits that canvas into the slide's output\ncanvas, so a slide whose shape later changes letterboxes the ink instead of\nstretching it. No scale/rotation/centre/timing: a slide drawing is the\nidentity transform of a still. Frozen by\n``tests/fixtures/slide-drawing-parity/v1.json``.",
+        "properties": {
+          "canvas_aspect": {
+            "exclusiveMaximum": true,
+            "exclusiveMinimum": true,
+            "maximum": 5.0,
+            "minimum": 0.2,
+            "title": "Canvas Aspect",
+            "type": "number"
+          },
+          "strokes": {
+            "items": {
+              "$ref": "#/components/schemas/DrawingStroke"
+            },
+            "maxItems": 60,
+            "minItems": 1,
+            "title": "Strokes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "canvas_aspect",
+          "strokes"
+        ],
+        "title": "SlideDrawing",
+        "type": "object"
+      },
       "SlideEdits": {
         "description": "Per-slide edit state, applied at render time in `pipeline/slide_post/build.py`.\n\n`text` is the legacy single drawtext overlay. `texts` is the rich model\n(max 4 styled elements). When `texts` is not None, `text` is ALWAYS a\nmirror of `texts[0]` (None when `texts` is empty) so old clients and the\nflag-off render path keep working. `look_preset` maps to an FFmpeg filter\nfragment; there is no separate rendering subsystem for it.",
         "properties": {
+          "drawing": {
+            "$ref": "#/components/schemas/SlideDrawing",
+            "default": null,
+            "nullable": true
+          },
           "fit": {
             "default": null,
             "enum": [
@@ -8455,6 +8499,36 @@
         "title": "SongOrderPlacementIn",
         "type": "object"
       },
+      "SongRangeAnswerIn": {
+        "additionalProperties": false,
+        "description": "The creator's answer: a stretch of the song, or both null for \"the whole song\" / skip.",
+        "properties": {
+          "end_s": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "minimum": 0,
+            "nullable": true,
+            "title": "End S",
+            "type": "number"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          },
+          "start_s": {
+            "default": null,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Start S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "question_id"
+        ],
+        "title": "SongRangeAnswerIn",
+        "type": "object"
+      },
       "SongRenderAsset": {
         "additionalProperties": false,
         "description": "A creator-uploaded song for one content-plan item, pinned to one storage\ngeneration (KRI-374).\n\nPrivate creator media addressed by its owning plan item, exactly like\n``VoiceoverRenderAsset`` but a distinct kind: the song grant is authorised\nonly for an item whose ``audio_mode`` is ``song``, and the device mixes it\nas the music bed (``AudioMixRecipe.music_asset_id``) rather than as\nnarration. The grant re-checks that the job's own plan item still carries\nthis exact ``(path, generation)``; the device re-hashes the downloaded\nbytes against ``fingerprint``.",
@@ -8664,6 +8738,11 @@
           },
           "song_order": {
             "$ref": "#/components/schemas/SongOrderAnswerIn",
+            "default": null,
+            "nullable": true
+          },
+          "song_range": {
+            "$ref": "#/components/schemas/SongRangeAnswerIn",
             "default": null,
             "nullable": true
           }

@@ -1,12 +1,17 @@
 name: TestFlight
 
-# The iOS workflow is the release gate. A workflow_run trigger keeps TestFlight
-# credentials unavailable to pull requests while still releasing the exact
-# commit whose native tests passed on main.
+# The iOS workflow releases a main commit as soon as its build and unit tests
+# pass: its first native leg dispatches this workflow while the long UI suite
+# keeps running as a report-only check on main. Dispatch needs write access and
+# iOS no longer runs on pull_request, so TestFlight credentials stay out of
+# reach of pull requests.
 on:
-  workflow_run:
-    workflows: [iOS]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      head_sha:
+        description: Main commit whose build and unit tests passed
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -18,16 +23,14 @@ concurrency:
 
 jobs:
   release:
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main'
+    if: github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 120
     environment: testflight-production
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.head_sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -35,13 +38,14 @@ jobs:
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ inputs.head_sha }}
         run: |
           set -euo pipefail
           git fetch origin main --unshallow 2>/dev/null || git fetch origin main
-          # iOS and TestFlight runs are serialized, so green results arrive in commit
-          # order and releasing the exact tested SHA is monotonic even when main has
-          # since moved on.  Only refuse a SHA that is no longer on main (force-push).
+          # Releasing the exact tested SHA is monotonic even when main has since
+          # moved on.  Refuse a SHA that is no longer on main (force-push), and
+          # skip one that an earlier upload already contains (out-of-order or
+          # duplicate dispatch).
           if ! git merge-base --is-ancestor "$HEAD_SHA" FETCH_HEAD; then
             echo "::error::stale head_sha $HEAD_SHA is not an ancestor of origin/main"
             exit 1
@@ -50,13 +54,24 @@ jobs:
           # a commit whose own iOS run was cancelled or red still ships with the next
           # green commit.  Falls back to the parent commit when none is found.
           base=""
+          superseded=false
           for run_id in $(gh run list --workflow TestFlight --branch main --status success --limit 30 --json databaseId,headSha --jq '.[] | "\(.databaseId):\(.headSha)"'); do
             id="${run_id%%:*}"; sha="${run_id##*:}"
             uploaded="$(gh run view "$id" --json jobs --jq '[.jobs[].steps[] | select(.name == "Upload and distribute to external TestFlight" and .conclusion == "success")] | length')"
-            if [ "$uploaded" != "0" ] && git cat-file -e "$sha^{commit}" 2>/dev/null && git merge-base --is-ancestor "$sha" "$HEAD_SHA"; then
-              base="$sha"; break
+            if [ "$uploaded" != "0" ] && git cat-file -e "$sha^{commit}" 2>/dev/null; then
+              if git merge-base --is-ancestor "$HEAD_SHA" "$sha"; then
+                superseded=true; break
+              elif git merge-base --is-ancestor "$sha" "$HEAD_SHA"; then
+                base="$sha"; break
+              fi
             fi
           done
+          if [ "$superseded" = "true" ]; then
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "requires_api_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: a newer or identical commit was already uploaded."
+            exit 0
+          fi
           [ -n "$base" ] || base="$HEAD_SHA^"
           echo "Comparing release inputs since ${base}"
           if git diff --quiet "$base" "$HEAD_SHA" -- \
@@ -88,7 +103,7 @@ jobs:
         if: steps.gate.outputs.eligible == 'true' && steps.gate.outputs.requires_api_deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ inputs.head_sha }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail

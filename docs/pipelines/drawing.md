@@ -4,7 +4,8 @@ Creators draw over their video with a finger in the Kria iOS editor: a brush
 (pen, marker, highlighter, neon, chalk, spray), a colour and a size. The drawing
 sits on the timeline like text or a Visual, can draw itself on or fade in and out,
 and is moved, scaled and rotated with the usual gestures. Device-rendered
-variants only; slides get static drawings in a follow-up (PR2).
+variants only for the timeline lane; slide posts get static drawings through a separate,
+strokes-only contract (see "Slide drawings" in [slide-post.md](slide-post.md)).
 
 ## Contract (frozen first; the server and the app code against it)
 

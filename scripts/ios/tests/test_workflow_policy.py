@@ -6,6 +6,7 @@ import unittest
 
 WORKFLOW = Path(__file__).resolve().parents[3] / ".github/workflows/ios.yml"
 CI_WORKFLOW = WORKFLOW.with_name("ci.yml")
+TESTFLIGHT_WORKFLOW = WORKFLOW.with_name("testflight.yml")
 
 
 class IOSWorkflowPolicyTests(unittest.TestCase):
@@ -164,3 +165,41 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_main_never_cancels_a_running_ios_build(self):
+        # A cancel-on-push policy starved main of finished runs, so TestFlight
+        # never received a release.
+        self.assertIn("cancel-in-progress: false", self.workflow)
+        self.assertNotIn("cancel-in-progress: ${{", self.workflow)
+
+    def test_testflight_releases_after_build_unit_and_smoke_on_the_first_native_leg(self):
+        smoke_name = "- name: Smoke UI tests before release"
+        release_name = "- name: Release to TestFlight after build, unit and smoke tests"
+        before_smoke, rest = self.workflow.split(smoke_name, 1)
+        smoke, rest = rest.split(release_name, 1)
+        release, rest = rest.split("- name: Renew the UI build receipt after smoke", 1)
+        renew, after = rest.split("- name: Native UI tests", 1)
+        # The UI receipt is single-use: smoke consumes it, so it must be renewed
+        # (without rerunning unit tests) before the full suite needs it.
+        self.assertIn("KRIA_IOS_TEST_MODE: prepare-ui", renew)
+        self.assertIn('KRIA_IOS_UNIT_TESTS: "0"', renew)
+        # Compile + unit tests and the cache save come first; the release step
+        # follows the smoke tripwire and precedes the long UI suite.
+        self.assertIn("- name: Build and unit tests", before_smoke)
+        self.assertIn("- name: Save Xcode build data", before_smoke)
+        self.assertIn("KRIA_IOS_TEST_MODE: ui", smoke)
+        self.assertIn("KRIA_IOS_UI_GROUPS: smoke", smoke)
+        for step in (smoke, release, renew):
+            condition = step.split("\n", 2)[1]
+            self.assertIn("matrix.lane == 'native'", condition)
+            self.assertIn("(!matrix.shard || startsWith(matrix.shard, '1/'))", condition)
+            self.assertIn("github.event_name != 'pull_request'", condition)
+            self.assertIn("github.ref == 'refs/heads/main'", condition)
+        self.assertEqual(self.workflow.count("gh workflow run testflight.yml"), 1)
+        self.assertIn("actions: write", self.workflow)
+
+    def test_testflight_skips_a_commit_an_earlier_upload_already_contains(self):
+        testflight = TESTFLIGHT_WORKFLOW.read_text()
+        # An out-of-order or duplicate dispatch must not downgrade the upload.
+        self.assertIn('git merge-base --is-ancestor "$HEAD_SHA" "$sha"', testflight)
+        self.assertIn("superseded", testflight)

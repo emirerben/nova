@@ -345,8 +345,8 @@ class GateTests(unittest.TestCase):
                 ci.gate(needs(ui, shards), "ios", "ios-tests")
 
     def test_ui_shards_follow_the_executed_selection(self):
-        # Main keeps one Mac busy; explicit manual runs retain parallel shards.
-        self.assertEqual(ci.ui_shards("push", "full"), 1)
+        # Main and manual runs shard the full suite: serial no longer fits the cap.
+        self.assertEqual(ci.ui_shards("push", "full"), ci.ui_tests.MAX_SHARDS)
         self.assertEqual(
             ci.ui_shards("workflow_dispatch", "full"), ci.ui_tests.MAX_SHARDS
         )

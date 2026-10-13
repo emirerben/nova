@@ -87,8 +87,38 @@ final class CreationChatFixture: @unchecked Sendable {
     private let review = ReviewPlanFixture()
     private var reviewEnabled: Bool { ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_REVIEW"] == "1" }
     private var editorTurnTicks: [String: Int] = [:]
+    /// `KRIA_CHAT_THOUGHTS` (KRI-627): `1` serves a thought that completes with the follow-up turn; `hold` keeps that turn
+    /// (and so the streaming thought) open for the whole test. This is the client request id of the latest turn.
+    private var thoughtsEnabled: Bool { ["1", "hold"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_THOUGHTS"] ?? "") }
+    private var thoughtRequestIDs: [String: String] = [:]
+    private static let fixtureThoughtText = """
+    **Reading your direction**
+
+    The user wants a new title on the Lisbon clip.
+
+    ```json
+    {"slot": 1, "op": "add_text"}
+    ```
+
+    **Matching the Lisbon title to your clip**
+
+    Checking which moment of the clip the title should land on.
+    """
     private let approvalID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     private var runtime: Int { ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1 }
+    /// KRI-588: why the fixture server refuses a `song_range` answer, or nil when it takes it. A whole-song answer
+    /// (both ends null) is always fine; "invalid" / "stale" modes refuse every range.
+    private func songRangeRefusal(_ range: [String: Any]?) -> (status: Int, code: String, message: String)? {
+        guard let range else { return nil }
+        let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE_Q"]
+        let start = range["start_s"] as? Double, end = range["end_s"] as? Double
+        if mode == "stale" { return (409, "song_range_stale", "That question is already answered.") }
+        if mode == "invalid", start != nil || end != nil { return (422, "song_range_invalid", "That starts after your song ends.") }
+        guard let start, let end else { return nil }
+        if start >= 90 { return (422, "song_range_invalid", "That starts after your song ends.") }
+        if end - start < 5 { return (422, "song_range_invalid", "Pick at least five seconds of your song.") }
+        return nil
+    }
     /// Returns nil when the request should fail without any HTTP response.
     func respond(_ request: URLRequest) -> (Int, Data)? {
         lock.lock(); defer { lock.unlock() }
@@ -108,6 +138,8 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_EXTENDED_DEVICE_EXPORT"] == "1" { capabilities["slide_post_extended_device_export"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CHAT_EDIT"] == "1" { capabilities["slide_post_chat_edit"] = true }
             // KRIA_SLIDE_POST_SIZES (KRI-606): the Size sheet and per-photo Fit. The server needs framing on too.
+            // KRIA_SLIDE_POST_DRAWING (KRI-589): the Draw tool. The server only advertises it to protocol 7 builds.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_DRAWING"] == "1" { capabilities["slide_post_drawing"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_SIZES"] == "1" {
                 capabilities["slide_post_framing"] = true
                 capabilities["slide_post_sizes"] = true
@@ -129,6 +161,16 @@ final class CreationChatFixture: @unchecked Sendable {
             if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE"] {
                 capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]]
                 if mode == "1" { capabilities["song_filming_range"] = true }
+            }
+            // KRIA_CHAT_SONG_RANGE_Q (KRI-588): a 90 s song is attached and the first turn is answered with the
+            // "Which part of the song did you film?" question. "1" = the server advertises song_range_questions;
+            // "off" = it advertises media.song and song_order_questions only (an older server: the text still shows);
+            // "invalid" / "stale" = like "1", but every range answer is refused (422 / 409), as if the server's
+            // rules had drifted from the card's.
+            if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE_Q"] {
+                capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]]
+                capabilities["song_order_questions"] = true
+                if mode != "off" { capabilities["song_range_questions"] = true }
             }
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
             // choice_question payload but does not advertise the capability (old-server text fallback).
@@ -274,6 +316,21 @@ final class CreationChatFixture: @unchecked Sendable {
                                  "snapshot": [String: Any](), "can_undo": false, "created_at": "2026-10-09T10:05:00Z"])
             }
         }
+        if parts.last == "thought-summaries", thoughtsEnabled {
+            // Streaming while the follow-up editor turn is still running, completed (3s) once its reply has landed.
+            let queried = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "client_request_id" })?.value
+            guard let requestID = thoughtRequestIDs[id], queried == nil || queried == requestID else {
+                return response(["client_request_id": queried.map { $0 as Any } ?? NSNull(), "summaries": [Any]()])
+            }
+            let running = editorTurnTicks[id] != nil
+            // Like the server, history (no request id) lists completed thoughts only.
+            if queried == nil, running { return response(["client_request_id": NSNull(), "summaries": [Any]()]) }
+            return response(["client_request_id": requestID, "summaries": [[
+                "id": "thought-fixture-1", "client_request_id": requestID, "status": running ? "streaming" : "completed",
+                "text": Self.fixtureThoughtText, "started_at": "2026-10-12T10:00:00Z",
+                "completed_at": running ? NSNull() as Any : "2026-10-12T10:00:03Z" as Any, "duration_ms": running ? NSNull() as Any : 3000 as Any,
+            ]]])
+        }
         if parts.last == "cancel-render" {
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_CANCEL"] == "unavailable" {
                 return response(["problem": ["code": "turn_not_cancellable", "message": "This render can no longer be stopped."]], status: 409)
@@ -317,7 +374,7 @@ final class CreationChatFixture: @unchecked Sendable {
                     if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] != nil || ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] != nil {
                         media += (2...4).map { ["media_id": "fixture-clip-\($0)", "kind": "video", "filename": "sample-\($0).mov"] }
                     }
-                    if ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE"] != nil {
+                    if ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE"] != nil || ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE_Q"] != nil {
                         media.append(["media_id": "fixture-song", "kind": "audio", "role": "song", "filename": "fixture-song.mp3", "duration_s": 90])
                     }
                     if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_VOICEOVER"] == "1" {
@@ -374,6 +431,11 @@ final class CreationChatFixture: @unchecked Sendable {
             // Like the server (`runtime.py`), a stored user message echoes the structured answer it carried
             // (`song_order` / `choice_selection`); that echo is what closes the order card.
             var userPayload: [String: Any] = [:]
+            // KRI-588: a range answer is checked like the server does before anything is stored.
+            if let refusal = songRangeRefusal(body["song_range"] as? [String: Any]) {
+                return response(["problem": ["code": refusal.code, "message": refusal.message]], status: refusal.status)
+            }
+            if let range = body["song_range"] as? [String: Any] { userPayload["song_range"] = range }
             if let order = body["song_order"] as? [String: Any] { userPayload["song_order"] = order }
             if let selection = body["choice_selection"] as? [String: Any] { userPayload["choice_selection"] = selection }
             if let scope = body["scope"] as? [String] {
@@ -400,6 +462,25 @@ final class CreationChatFixture: @unchecked Sendable {
                (thread["job"] as? [String: Any])?["status"] as? String == "ready" {
                 editorTurnIDs[id] = turnID
                 editorTurnTicks[id] = 0
+                if thoughtsEnabled { thoughtRequestIDs[id] = turnID }
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE_Q"] != nil {
+                if let range = body["song_range"] as? [String: Any] {
+                    // The server stores the range on the song, then the planner continues. Echo what it received.
+                    let start = range["start_s"] as? Double, end = range["end_s"] as? Double
+                    var media = state["media"] as? [[String: Any]] ?? []
+                    if let songIndex = media.firstIndex(where: { $0["role"] as? String == "song" }) {
+                        if let start, let end { media[songIndex]["song_range"] = ["start_s": start, "end_s": min(end, 90)] }
+                        else { media[songIndex].removeValue(forKey: "song_range") }
+                        state["media"] = media
+                    }
+                    let shown = start.flatMap { from in end.map { "\(Int(from))-\(Int($0))" } } ?? "whole"
+                    append("assistant_response", text: "Got it. range[\(shown)] question[\(range["question_id"] ?? "")]")
+                } else {
+                    append("assistant_question", text: "Your song repeats its verses, and some of your clips could fit more than one place. Which part of the song did you film? Pick it below, or use the whole song.", payload: [
+                        "turn_id": turnID, "turn_value": "question",
+                        "song_range_question": ["question_id": "range-q-\(events.count)", "song_generation": 1, "song_duration_s": 90.0] as [String: Any],
+                    ])
+                }
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] != nil {
                 if let order = body["song_order"] as? [String: Any] {
                     // Echo what the server received so the UI test can pin the structured payload.
@@ -538,7 +619,8 @@ final class CreationChatFixture: @unchecked Sendable {
                 append("plan_block", role: "system", payload: ["turn_id": oldTurnID, "job_id": id, "blocks": Self.planScript.last ?? []])
                 append("assistant_review", text: "Late prior render event", payload: ["turn_id": oldTurnID])
             }
-            if tick >= 6 {
+            // `KRIA_CHAT_THOUGHTS=hold` never finishes the turn, so a UI test can inspect the live (streaming) thought.
+            if tick >= 6, ProcessInfo.processInfo.environment["KRIA_CHAT_THOUGHTS"] != "hold" {
                 append("assistant_response", text: "Review the Lisbon title edit before saving.", payload: ["turn_id": turnID])
                 append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
                 editorTurnTicks[id] = nil

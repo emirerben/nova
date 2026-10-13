@@ -60,7 +60,7 @@ from app.models import (
     Job,
     PlanItem,
 )
-from app.schemas.user_song import SongOrderAnswerIn
+from app.schemas.user_song import SongOrderAnswerIn, SongRangeAnswerIn
 from app.services.choice_questions import (
     ChoiceSelectionIn,
     delegated_choice,
@@ -80,6 +80,15 @@ from app.services.song_order import (
     SongOrderError,
     latest_open_song_order_question,
     validate_song_order_answer,
+)
+from app.services.song_range import (
+    STALE_CODE as SONG_RANGE_STALE_CODE,
+)
+from app.services.song_range import (
+    SongRangeError,
+    apply_song_range,
+    latest_open_song_range_question,
+    validate_song_range_answer,
 )
 from app.services.speech_cleanup_decision import (
     SPEECH_CLEANUP_CONFLICT_COPY,
@@ -115,6 +124,7 @@ def request_digest(body: SubmitTurnBody) -> str:
         | ({"clip_selection"} if body.clip_selection is None else set())
         | ({"choice_selection"} if body.choice_selection is None else set())
         | ({"song_order"} if body.song_order is None else set())  # KRI-374: additive digest
+        | ({"song_range"} if body.song_range is None else set())  # KRI-588: additive the same way
         # KRI-441: additive the same way, so every pre-existing digest holds.
         | ({"scope"} if body.scope is None else set())
         | ({"manual_edits"} if body.manual_edits is None else set())
@@ -233,6 +243,43 @@ async def _validate_song_order(
             recovery="refresh_replan",
             current_revision=int(thread.revision),
         ) from exc
+
+
+async def _apply_song_range_answer(
+    db: AsyncSession, thread: CreationThread, answer: SongRangeAnswerIn
+) -> None:
+    """The answer must target the thread's latest UNANSWERED range question (KRI-588); the range
+    it names is stored on the plan item (authoritative: the planner and the render worker read
+    it) and mirrored onto the thread's song entry. Both ends empty = the whole song / skip.
+    Stale -> 409 `song_range_stale`; unusable range -> 422 `song_range_invalid`."""
+
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    question = latest_open_song_range_question((role, payload) for role, payload in rows)
+    try:
+        chosen = validate_song_range_answer(answer, question)
+    except SongRangeError as exc:
+        stale = exc.code == SONG_RANGE_STALE_CODE
+        raise RuntimeFailure(
+            409 if stale else 422,
+            exc.code,
+            str(exc),
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        ) from exc
+    if not thread.active_plan_item_id:
+        return
+    item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
+    if item is not None and getattr(item, "song_gcs_path", None):
+        apply_song_range(thread, item, chosen)
 
 
 async def _validate_choice_selection(
@@ -609,6 +656,7 @@ async def submit_turn(
         choice_selection is None
         and body.clip_selection is None
         and body.song_order is None
+        and body.song_range is None
         and scope is None  # a scoped ask is an edit; free text must not become an answer
     ):
         # The request digest above stays that of the body as sent (idempotency); only
@@ -620,6 +668,8 @@ async def submit_turn(
         await _validate_clip_selection(db, thread, body.clip_selection)
     if body.song_order is not None and settings.user_song_montage_enabled:
         await _validate_song_order(db, thread, body.song_order)
+    if body.song_range is not None and settings.song_filming_range_enabled:
+        await _apply_song_range_answer(db, thread, body.song_range)
     if choice_selection is not None:
         await _validate_choice_selection(db, thread, choice_selection)
 
@@ -845,6 +895,12 @@ async def submit_turn(
             **(
                 {"song_order": body.song_order.model_dump(mode="json")}
                 if body.song_order is not None and settings.user_song_montage_enabled
+                else {}
+            ),
+            # KRI-588: flag off -> dropped silently, nothing stored.
+            **(
+                {"song_range": body.song_range.model_dump(mode="json")}
+                if body.song_range is not None and settings.song_filming_range_enabled
                 else {}
             ),
             # KRI-441: the worker reads these back through `turn.source_event_id`.
