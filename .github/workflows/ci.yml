@@ -396,6 +396,7 @@ jobs:
           KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}
         run: |
           python3 scripts/ios/kri-524-creation-e2e.py test-results/kri-559/fixture
+          python3 scripts/ios/kri-651-approved-hook-e2e.py test-results/kri-559/approved-hook
           python3 scripts/ios/kri-524-trim-save-e2e.py test-results/kri-559/trim-save
           python3 scripts/ios/kri-524-trim-save-e2e.py test-results/kri-559/extend --extend
           python3 scripts/ci/journey-gate.py verify-input --fixture test-results/kri-559/fixture --head "$KRIA_JOURNEY_HEAD_SHA"
@@ -484,6 +485,22 @@ jobs:
             /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_INFO"
             /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_INFO"
           } > ../../../test-results/kri-559/app-build.txt
+      - name: Render approved Unicode hook on the built iPhone simulator
+        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
+        working-directory: src/apps/ios
+        env:
+          TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/approved-hook
+        run: |
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
+            -only-testing:KriaTests/DeviceMontageRenderE2ETests/testApprovedUnicodeHookExportsWithoutContextCaptionOnTheIPhone \
+            -resultBundlePath ../../../test-results/kri-559/approved-hook.xcresult test-without-building
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/approved-hook.xcresult \
+            > ../../../test-results/kri-559/approved-hook-tests.json
+          python3 ../../../scripts/ci/journey-gate.py verify-tests \
+            --test-results ../../../test-results/kri-559/approved-hook-tests.json \
+            --xctest DeviceMontageRenderE2ETests/testApprovedUnicodeHookExportsWithoutContextCaptionOnTheIPhone
       - name: Render trim-save journey on the built iPhone simulator
         if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
