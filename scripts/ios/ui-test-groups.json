@@ -28,6 +28,7 @@
       "KriaUITests/SlidePostUITests/testSlidePreviewLeavesToolbarAndStripVisible",
       "KriaUITests/SlidePostUITests/testAddStyleAndApplyTextToAllSlides",
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",
+      "KriaUITests/SlidePostUITests/testPasteAddsCopiedTextToTheSelectedSlide",
       "KriaUITests/SlidePostUITests/testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave",
       "KriaUITests/SlidePostUITests/testDrawOnASlideLeavesInkThatSurvivesSaveAndSlideSwitching",
       "KriaUITests/SlidePostUITests/testAIButtonOpensSheetAndChatEditStagesOnThePage",
@@ -192,6 +193,7 @@
       "KriaUITests/NativeQuickAddMenuUITests/testTappingOutsideTheMenuDismissesIt",
       "KriaUITests/NativeQuickAddMenuUITests/testTappingPlusAgainClosesTheMenu",
       "KriaUITests/NativeQuickAddMenuUITests/testTextOptionStartsTextCreation",
+      "KriaUITests/NativeQuickAddMenuUITests/testPasteOptionAddsCopiedTextAsTextElement",
       "KriaUITests/DrawingJourneyUITests/testDrawDoneTrimSaveReopenPersists",
       "KriaUITests/DrawingJourneyUITests/testAnimationTabKeepsItsLayoutWhateverTheEntranceIs",
       "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability"

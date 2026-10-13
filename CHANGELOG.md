@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.264.0] - 2026-10-13
+
+### Changed
+- feat(ios): paste text and images onto video edits, text onto slides (KRI-647) (#1581) <!-- release-pr: 1581 -->
+
+## [0.78.263.0] - 2026-10-13
+
+### Changed
+- fix(kria): preserve hook context and first-step recovery (KRI-651) (#1594) <!-- release-pr: 1594 -->
+
 ## [0.78.262.0] - 2026-10-13
 
 ### Changed

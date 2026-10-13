@@ -569,6 +569,8 @@ struct SlidePostToolBar: View {
     /// "Remove drawing" in the More menu, only for a slide that has ink.
     var canClearDrawing = false
     var onClearDrawing: () -> Void = {}
+    /// KRI-647: the system Paste control (no "Allow Paste" prompt). Nil hides it.
+    var onPaste: (([NSItemProvider]) -> Void)?
     let onText: () -> Void
     let onCover: () -> Void
     let onLook: () -> Void
@@ -598,6 +600,7 @@ struct SlidePostToolBar: View {
             if showsCrop { item("crop", "Crop", id: "slidepost-tool-crop", active: mode == .crop, action: onCrop) }
             if showsSize { item("aspectratio", "Size", id: "slidepost-tool-size", active: false, action: onSize) }
             if showsDraw { item("pencil.tip", "Draw", id: "slidepost-tool-draw", active: mode == .draw, action: onDraw) }
+            if let onPaste { pasteItem(onPaste) }
             Menu {
                 Button(role: .destructive, action: onRemove) { Label("Remove slide", systemImage: "trash") }.disabled(!canRemove)
                 Button(action: onDuplicateText) { Label("Duplicate text", systemImage: "plus.square.on.square") }.disabled(!canDuplicateText)
@@ -611,6 +614,15 @@ struct SlidePostToolBar: View {
         }
         .padding(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding)
         .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
+    }
+
+    private func pasteItem(_ onPaste: @escaping ([NSItemProvider]) -> Void) -> some View {
+        PasteButton(supportedContentTypes: PasteboardIntake.supportedTypes, payloadAction: onPaste)
+            .labelStyle(.iconOnly)
+            .buttonBorderShape(.capsule)
+            .tint(KriaColor.ink)
+            .frame(width: NativeEditorIslandMetrics.toolWidth, height: NativeEditorIslandMetrics.toolHeight)
+            .accessibilityIdentifier("slidepost-paste")
     }
 
     private func item(_ symbol: String, _ title: String, id: String, active: Bool, enabled: Bool = true, action: @escaping () -> Void) -> some View {
