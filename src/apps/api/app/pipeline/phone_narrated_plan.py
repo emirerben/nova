@@ -855,8 +855,10 @@ def compile_phone_narrated_plan(
         audio=audio,
         required_capabilities=required_capabilities,
     )
-    from app.services.phone_text_styling import current_phone_text_policy
-    from app.services.phone_text_styling import register_generation_timeline
+    from app.services.phone_text_styling import (
+        current_phone_text_policy,
+        register_generation_timeline,
+    )
 
     register_generation_timeline(clips)
 

@@ -789,3 +789,71 @@ async def test_a_creator_who_already_ordered_the_takes_is_not_asked(monkeypatch)
     db = _Db(_item(_alignment(_conf("a", 20.0), _repeat_take())))
     result = await _gate(db, _manifest("a", "b"), _strategy())
     assert result.plan is None or result.plan.song_range_question is None
+
+
+# -- KRI-650: the thread that never asked -------------------------------------------------
+# "Create Lipsync" (2026-10-13): the chorus repeat scored 0.08-0.17 and three of five takes were
+# unsure, so the gate skipped the range question and went straight to the order card.
+
+_REAL_LENGTHS = {"T29": 29.8, "T33": 33.5, "T10": 10.83, "T7": 7.67, "T14": 14.27}
+
+
+def _real_manifest() -> SimpleNamespace:
+    media = [
+        SimpleNamespace(media_id=m, kind="video", duration_s=d) for m, d in _REAL_LENGTHS.items()
+    ]
+    return SimpleNamespace(media=media, manifest_hash="m" * 64, context_hash="c" * 64)
+
+
+def _real_alignment() -> dict:
+    def row(mid: str, *cands: tuple[float, float]) -> TakeAlignment:
+        ranked = sorted(cands, key=lambda c: -c[1])
+        margin = 1.0 if len(ranked) == 1 else (ranked[0][1] - ranked[1][1]) / ranked[0][1]
+        weak = (
+            margin < settings.song_align_ask_margin
+            or ranked[0][1] < settings.song_align_ask_likelihood
+        )
+        return TakeAlignment(
+            media_id=mid,
+            status="ambiguous" if weak else "confident",
+            delta_s=ranked[0][0],
+            confidence=ranked[0][1],
+            likelihood=ranked[0][1],
+            margin=margin,
+            candidates=[
+                PlacementCandidate(delta_s=d, likelihood=li, method="lyrics") for d, li in ranked
+            ],
+        )
+
+    return _alignment(
+        row("T29", (44.303, 0.9), (151.54, 0.164), (147.86, 0.105), (144.0, 0.08)),
+        TakeAlignment(media_id="T33", status="ambiguous"),
+        row("T10", (88.6, 0.29)),
+        row("T7", (99.7, 0.95), (150.4, 0.17), (154.1, 0.16), (145.2, 0.08)),
+        row("T14", (185.0, 0.14)),
+    )
+
+
+@pytest.mark.usefixtures("_range_on")
+async def test_the_real_thread_that_never_asked_now_asks_before_the_order_card() -> None:
+    db = _Db(_item(_real_alignment()))
+    plan = (await _gate(db, _real_manifest(), _strategy())).plan
+    assert plan is not None and plan.song_range_question is not None
+    assert plan.song_order_question is None
+
+
+@pytest.mark.usefixtures("_range_on")
+async def test_the_answer_limits_what_the_order_card_may_offer() -> None:
+    # "I filmed seconds 0-60": the 29.8 s take at 44.3 s would run to 74 s, the 7.7 s take at
+    # 99.7 s starts after the stretch. Neither may be offered a place outside it.
+    item = _item(_real_alignment(), analysis={**READY, "lines": [{"start_s": 29.7, "end_s": 33.0}]})
+    item.song_range_start_s, item.song_range_end_s = 0.0, 60.0
+    plan = (await _gate(_Db(item), _real_manifest(), _strategy())).plan
+    assert plan is not None and plan.song_order_question is not None
+    offered = {
+        it.media_id: [c.delta_s for c in it.candidates] for it in plan.song_order_question.items
+    }
+    for mid, deltas in offered.items():
+        for delta in deltas:
+            assert delta >= -3.0 and delta + _REAL_LENGTHS[mid] <= 63.0, (mid, delta)
+    assert offered["T29"] == [] and offered["T7"] == []

@@ -10,6 +10,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import unicodedata
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,7 @@ from app.agents.edit_copilot import (
     _font_catalog,
     _format_snapshot,
 )
+from app.kria.brief import BriefRequirement
 from app.schemas.edit_proposal import EditProposalSnapshot
 from app.schemas.text_composition import TextCompositionProgram
 from app.services.kria_editor_ops import apply_text_lane_ops, is_caption_text_bar
@@ -56,6 +59,11 @@ requested animated title. Keep independently requested labels/placeholders and o
 If already satisfied, return intent describe with no ops. If text behavior is ambiguous or
 unsupported, report clarification/unmet_requests; never claim completion after omitting it.
 Return the normal editor response schema. No operation may change media or audio.
+Confirmed copy is server-owned. Preserve punctuation, accents and emoji. Historical
+explanations are context, never substitute copy. Restyle, retime or split confirmed copy
+into consecutive chunks only if their combined wording is unchanged.
+When a current text brief is present, add independent text only when a live non-title
+text requirement requests it. A title styling request never authorizes another caption.
 """
 
 
@@ -71,7 +79,7 @@ class CreationTextComposer(EditCopilotAgent):
     # This is background creation, not the latency-limited interactive route.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v3-creation-text-composition",
+        prompt_version="v5-confirmed-creation-copy-brief",
         timeout_s=90.0,
     )
 
@@ -100,6 +108,21 @@ class CreationTextComposer(EditCopilotAgent):
                 "Fonts: " + _font_catalog(),
                 "Creator request: " + json.dumps(input.utterance, ensure_ascii=False),
                 "Current draft: " + _format_snapshot(input.variant_snapshot),
+                "Confirmed copy: "
+                + json.dumps(
+                    (input.variant_snapshot or {}).get("copy_constraints", {}), ensure_ascii=False
+                ),
+                *(
+                    [
+                        "Current text brief: "
+                        + json.dumps(
+                            input.variant_snapshot["text_requirements"], ensure_ascii=False
+                        )
+                    ]
+                    if input.variant_snapshot is not None
+                    and "text_requirements" in input.variant_snapshot
+                    else []
+                ),
                 *(
                     ["Caption lane: " + json.dumps(caption_lane, ensure_ascii=False)]
                     if caption_lane
@@ -137,6 +160,73 @@ def _digest(texts: list[dict], slots: list[dict]) -> str:
     ).hexdigest()
 
 
+def _copy_key(value: str) -> str:
+    return unicodedata.normalize("NFC", " ".join(value.split()))
+
+
+def _check_copy(texts: list[dict], constraints: Mapping[str, str]) -> None:
+    for source_id, expected in constraints.items():
+        rows = [
+            row
+            for row in texts
+            if not row.get("removed")
+            and (
+                row.get("id") == source_id
+                or (row.get("source_params") or {}).get("sequence_source_id") == source_id
+            )
+        ]
+        actual = " ".join(row["text"] for row in sorted(rows, key=lambda row: row["start_s"]))
+        if not expected.strip() or _copy_key(actual) != _copy_key(expected):
+            raise CreationTextCompositionError("Text composition changed confirmed copy")
+
+
+def _check_added_text(
+    operations: list[dict], requirements: Sequence[BriefRequirement] | None
+) -> None:
+    if requirements is None or any(
+        req.live and req.kind == "text" and req.scope != "title" for req in requirements
+    ):
+        return
+    if any(op.get("op") == "add_text" for op in operations):
+        raise CreationTextCompositionError("Text composition added unrequested text")
+
+
+def snapshot_copy_constraints(
+    snapshot: EditProposalSnapshot, plan: dict | None = None
+) -> dict[str, str]:
+    """Confirmed snapshot copy only; inferred labels remain composer-owned."""
+    if plan is None:
+        from app.pipeline.guided_story import compile_proposal_execution_plan
+
+        plan = compile_proposal_execution_plan(snapshot)
+    constraints = {}
+    for source_id, value in (
+        ("guided-title", snapshot.opening_title),
+        ("guided-closing-title", snapshot.closing_title),
+    ):
+        if value:
+            constraints[source_id] = value
+    for label in snapshot.clip_labels or []:
+        if label.provenance != "creator":
+            continue
+        for cut in snapshot.fast_cuts or []:
+            if cut.media_id == label.media_id:
+                constraints[f"clip-label-{cut.cut_id}"] = label.text
+    for index, pin in enumerate(snapshot.pinned_texts or []):
+        constraints[f"guided-pinned-{index}"] = pin.text
+    shot_copy = {_copy_key(value) for value in snapshot.shot_labels or []}
+    for row in plan.get("text_elements") or []:
+        if _copy_key(row["text"]) in shot_copy:
+            constraints[row["id"]] = row["text"]
+    ids = {row["id"] for row in plan.get("text_elements") or []}
+    ids.update(
+        source
+        for row in plan.get("text_elements") or []
+        if (source := (row.get("source_params") or {}).get("sequence_source_id"))
+    )
+    return {key: value for key, value in constraints.items() if key in ids}
+
+
 def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict:
     texts, slots = _lanes(plan)
     if program.base_digest != _digest(texts, slots):
@@ -144,6 +234,7 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
     if any(op.get("op") not in _TEXT_OPS for op in program.operations):
         raise CreationTextCompositionError("Text composition contains a non-text operation")
     if not program.operations:
+        _check_copy(texts, program.copy_constraints)
         return plan
     try:
         # add_text uses random IDs in interactive editing. Bind new identities
@@ -219,6 +310,7 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
         raise CreationTextCompositionError(f"Text composition could not compile: {exc}") from exc
     result = copy.deepcopy(plan)
     result["text_elements"] = rows
+    _check_copy(rows, program.copy_constraints)
     # Match the canonical execution schema's serialization, including all defaults.
     from app.pipeline.guided_story import GuidedStoryExecutionPlan
 
@@ -294,11 +386,31 @@ def compose_creation_text(
     *,
     creator_request: str,
     ctx: RunContext | None = None,
+    copy_constraints: Mapping[str, str] | None = None,
+    text_requirements: Sequence[BriefRequirement] | None = None,
 ) -> EditProposalSnapshot:
     from app.pipeline.guided_story import compile_proposal_execution_plan
 
     if snapshot.text_composition is not None:
-        compile_proposal_execution_plan(snapshot)  # also check persisted base identity
+        _check_added_text(snapshot.text_composition.operations, text_requirements)
+        plan = compile_proposal_execution_plan(snapshot)
+        constraints = dict(copy_constraints or {})
+        if text_requirements is not None:
+            constraints = {**snapshot_copy_constraints(snapshot, plan), **constraints}
+        _check_copy(plan["text_elements"], constraints)
+        if constraints:
+            snapshot = snapshot.model_copy(
+                update={
+                    "text_composition": snapshot.text_composition.model_copy(
+                        update={
+                            "copy_constraints": {
+                                **snapshot.text_composition.copy_constraints,
+                                **constraints,
+                            }
+                        }
+                    )
+                }
+            )
         return snapshot
     if not creator_request.strip():
         return snapshot
@@ -306,6 +418,29 @@ def compose_creation_text(
         raise CreationTextCompositionError("Text composition needs the complete creator request")
     plan = compile_proposal_execution_plan(snapshot)
     texts, slots = _lanes(plan)
+    constraints = dict(copy_constraints or {})
+    if text_requirements is not None:
+        constraints = {**snapshot_copy_constraints(snapshot, plan), **constraints}
+    _check_copy(texts, constraints)
+    if text_requirements is not None and constraints:
+        from app.kria.brief_checks import check_requirement, plan_facts_from_editor_payload
+
+        # A bound brief owns the current request, not the historical conversation.
+        # Skip only when every requested text/style behavior is already proven.
+        relevant = [
+            req
+            for req in text_requirements
+            if req.kind in {"text", "style"} or req.scope == "title"
+        ]
+        facts = plan_facts_from_editor_payload({**plan, "title": snapshot.opening_title})
+        if relevant and all(check_requirement(req, facts).status == "met" for req in relevant):
+            return snapshot.model_copy(
+                update={
+                    "text_composition": TextCompositionProgram(
+                        base_digest=_digest(texts, slots), copy_constraints=constraints
+                    )
+                }
+            )
     # Narration/caption cues remain owned by their existing lane.
     model_texts = texts
     caption_lane = _song_caption_lane(snapshot)
@@ -318,11 +453,18 @@ def compose_creation_text(
         "allowed_op_families": ["text", "text_timeline"],
         "editor_ops_version": 2,
         "component_context_version": 1,
+        "copy_constraints": constraints,
         "text_bars": model_texts,
         "slots": slots,
         "total_duration_s": max((float(x.get("output_end_s") or 0) for x in slots), default=0),
         **({"caption_lane": caption_lane} if caption_lane is not None else {}),
     }
+    if text_requirements is not None:
+        model_snapshot["text_requirements"] = [
+            req.model_dump(mode="json")
+            for req in text_requirements
+            if req.live and (req.kind in {"text", "style"} or req.scope == "title")
+        ]
     # The complete request remains data; the composer adds server instructions.
     output = CreationTextComposer(default_client()).run(
         EditCopilotInput(utterance=creator_request, variant_snapshot=model_snapshot),
@@ -336,11 +478,14 @@ def compose_creation_text(
         or (output.intent == "edit" and not output.ops)
     ):
         raise CreationTextCompositionError("Text composition is incomplete: " + output.reply)
-    if not output.ops:
-        return snapshot
     operations = output.ops
+    _check_added_text(operations, text_requirements)
     if caption_lane is not None:
         operations = _to_full_bar_indexes(operations, texts)
-    program = TextCompositionProgram(base_digest=_digest(texts, slots), operations=operations)
+    program = TextCompositionProgram(
+        base_digest=_digest(texts, slots), operations=operations, copy_constraints=constraints
+    )
     replay_text_composition(plan, program)
+    if not operations and not constraints:
+        return snapshot
     return snapshot.model_copy(update={"text_composition": program})

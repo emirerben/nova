@@ -328,6 +328,82 @@ def speech_coverage(path: str) -> float:
     return coverage
 
 
+# --- Audio presence (KRI-653) -------------------------------------------------
+# A recorder bug produced a 192 s talk-to-camera take whose audio track was
+# digitally silent. Whisper and Gemini then hallucinated "Bye! Bye!" / "Hello."
+# over it and silence cut removed 98% of the take. Nothing asked whether the
+# audio had any sound. These thresholds separate "no usable audio" from "quiet
+# room": digital silence reports -inf (clamped to -120 by _rms_envelope), a real
+# phone mic in a quiet room still has 50 ms windows far above -60 dB once
+# someone talks, and normal speech windows sit around -35..-15 dB.
+PRESENCE_SILENT_MAX_DB = -60.0
+PRESENCE_ACTIVE_DB = -45.0
+PRESENCE_MIN_ACTIVE_S = 1.0
+# Below this a clip is too short to judge "inaudible" (a 1 s sting is fine).
+PRESENCE_MIN_JUDGED_S = 3.0
+
+AudioPresenceStatus = Literal["ok", "silent", "inaudible", "unknown"]
+
+
+@dataclass(frozen=True)
+class AudioPresence:
+    status: AudioPresenceStatus
+    max_window_db: float | None
+    active_s: float
+    duration_s: float
+
+
+def classify_audio_presence(
+    windows: list[tuple[float, float]],
+    duration_s: float | None = None,
+) -> AudioPresence:
+    """Classify a ``_rms_envelope`` result. Pure; ``unknown`` fails OPEN.
+
+    ``silent``: the loudest window is below ``PRESENCE_SILENT_MAX_DB`` (a dead mic).
+    ``inaudible``: a clip of at least ``PRESENCE_MIN_JUDGED_S`` with under
+    ``PRESENCE_MIN_ACTIVE_S`` of windows at or above ``PRESENCE_ACTIVE_DB``
+    (a click or bump is not speech).
+    ``unknown``: no windows, so the measurement itself failed. Never block on that.
+    """
+    if not windows:
+        return AudioPresence("unknown", None, 0.0, float(duration_s or 0.0))
+    max_db = max(level for _, level in windows)
+    active_s = sum(1 for _, level in windows if level >= PRESENCE_ACTIVE_DB) * _ENERGY_WINDOW_S
+    measured_s = len(windows) * _ENERGY_WINDOW_S
+    total_s = float(duration_s) if duration_s and duration_s > 0 else measured_s
+    if max_db < PRESENCE_SILENT_MAX_DB:
+        return AudioPresence("silent", max_db, active_s, total_s)
+    if total_s >= PRESENCE_MIN_JUDGED_S and active_s < PRESENCE_MIN_ACTIVE_S:
+        return AudioPresence("inaudible", max_db, active_s, total_s)
+    return AudioPresence("ok", max_db, active_s, total_s)
+
+
+def audio_presence(path: str) -> AudioPresence:
+    """Measure whether ``path`` has audible sound. Never raises.
+
+    A clip with no audio stream, or any ffmpeg/parse failure, is ``unknown`` (fail
+    open, logged): a broken measuring tool must not block a creator's render.
+    """
+    try:
+        windows = _rms_envelope(path)
+    except Exception as exc:  # the envelope helper already swallows ffmpeg errors
+        log.warning("audio_presence_unmeasured", path=path, error=str(exc))
+        return AudioPresence("unknown", None, 0.0, 0.0)
+    result = classify_audio_presence(windows)
+    if result.status == "unknown":
+        log.warning("audio_presence_unmeasured", path=path)
+    else:
+        log.info(
+            "audio_presence_done",
+            path=path,
+            status=result.status,
+            max_window_db=round(result.max_window_db or 0.0, 1),
+            active_s=round(result.active_s, 2),
+            duration_s=round(result.duration_s, 2),
+        )
+    return result
+
+
 def _run_silencedetect(
     path: str, *, noise_db: float, min_silence_s: float
 ) -> tuple[str, float] | None:

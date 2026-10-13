@@ -129,6 +129,8 @@ def _nfc(value: object) -> str:
 
 def _cap_label(text: str, provenance: str) -> str:
     limit = MAX_CREATOR_LABEL_CHARS if provenance == "creator" else MAX_LABEL_CHARS
+    if provenance == "creator" and len(text) > limit:
+        raise ValueError("Confirmed clip text exceeds the supported label length")
     return text[:limit]
 
 
@@ -1127,6 +1129,29 @@ def plan_unified_montage(
     """
     view = view or BriefView()
     strategy = strategy or {}
+    if (
+        view.version is not None
+        and view.title_literal
+        and not view.wants_per_clip_text
+        and not view.global_literal
+        and chapter_list(
+            view.title_literal,
+            [value[0] for value in _intent_labels(strategy, clip_intents_enabled).values()]
+            + list(_described_shot_labels(strategy, clip_intents_enabled).values()),
+        )
+        is None
+    ):
+        # A hook's explanatory context is not a second caption. A bound brief
+        # owns whether clip text was requested; preserve every non-text intent.
+        strategy = {
+            **strategy,
+            "shot_labels": None,
+            "resolved_clip_intents": [
+                row
+                for row in strategy.get("resolved_clip_intents") or []
+                if not isinstance(row, Mapping) or row.get("op") not in {"caption", "label"}
+            ],
+        }
     if song_duration_s is not None and (song_plan_item_id is None or song_generation is None):
         raise ValueError("a song montage needs the song's plan item and generation")
     if not clips:
@@ -1757,11 +1782,13 @@ def _fit_typography(
 ) -> tuple[str | None, str | None, str | None, dict[str, ClipLabel]]:
     """Pick the first bundled font that can draw every string, keeping Unicode.
 
-    Turkish letters are never folded to ASCII. If no candidate covers a string
-    (a symbol no font has), only the uncovered characters are dropped.
+    Missing legacy glyphs never change confirmed wording: the phone compiler
+    uses shaped text, including the system's color emoji face.
     """
     if covers is None:
         return requested, title, closing, labels
+    import regex  # noqa: PLC0415 - Unicode grapheme/emoji properties
+
     texts = [
         text
         for text in (title, closing, *(label.text for label in labels.values()), *extra_texts)
@@ -1784,22 +1811,29 @@ def _fit_typography(
 
             raise _style_decline("The eligible fonts cannot draw all text. Choose another font.")
         return chosen, title, closing, labels
-    else:
-        candidates = list(
-            dict.fromkeys(f for f in (requested, _DEFAULT_FONT, *_FALLBACK_FONTS) if f)
+    # Color emoji are supplied by iOS, not the bundled face. Let the face
+    # selection still choose DM Sans for an ordinary arrow beside an emoji.
+    font_texts = [
+        "".join(
+            grapheme
+            for grapheme in regex.findall(r"\X", text)
+            if not regex.search(r"\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\u20E3", grapheme)
         )
+        for text in texts
+    ]
+    candidates = list(dict.fromkeys(f for f in (requested, _DEFAULT_FONT, *_FALLBACK_FONTS) if f))
     chosen = next(
-        (family for family in candidates if all(covers(family, text) for text in texts)), None
+        (family for family in candidates if all(covers(family, text) for text in font_texts)), None
     )
     if chosen is None:
-        if policy:
-            raise ValueError("The eligible fonts cannot draw all text. Choose another font.")
         chosen = candidates[0]
-        title = _strip_uncovered(title, chosen, covers) or None if title else None
-        closing = _strip_uncovered(closing, chosen, covers) or None if closing else None
         fixed: dict[str, ClipLabel] = {}
         for media_id, label in labels.items():
-            text = _strip_uncovered(label.text, chosen, covers)
+            text = (
+                label.text
+                if label.provenance == "creator"
+                else _strip_uncovered(label.text, chosen, covers)
+            )
             if text:
                 fixed[media_id] = label.model_copy(
                     update={"text": text, "min_display_s": min_display_s(len(text))}
@@ -1817,19 +1851,8 @@ def _pinned_texts(strategy: Mapping[str, Any]) -> list[PinnedText]:
 def _fit_pins(
     pins: list[PinnedText], family: str, covers: Callable[[str, str], bool] | None
 ) -> list[PinnedText]:
-    """Drop only the glyphs the chosen font cannot draw; a pin never vanishes silently."""
-    if covers is None:
-        return pins
-    from app.services.phone_text_styling import current_phone_text_policy
-
-    if current_phone_text_policy():
-        return pins  # the joint text pass checks coverage without rewriting pins
-    fitted: list[PinnedText] = []
-    for pin in pins:
-        text = pin.text if covers(family, pin.text) else _strip_uncovered(pin.text, family, covers)
-        if text:
-            fitted.append(pin.model_copy(update={"text": text}))
-    return fitted
+    """Pins are confirmed copy; the phone's shaped renderer resolves their glyphs."""
+    return pins
 
 
 def _described_shot_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, str]:
@@ -2068,7 +2091,7 @@ def _title(
         return None, "none"
     confirmed = _nfc(strategy.get("opening_title"))
     if confirmed:
-        return confirmed[:280], "creator"
+        return confirmed, "creator"
 
     def titles(literal: str | None) -> bool:
         return bool(literal) and chapter_list(literal, label_texts) is None
@@ -2082,10 +2105,10 @@ def _title(
         pinned = {fold_text(pin.text) for pin in pins}
         literal = _nfc(view.title_literal)
         if titles(literal) and fold_text(literal) not in pinned:
-            return literal[:280], "creator"
+            return literal, "creator"
         return None, "none"
     if titles(view.title_literal):
-        return _nfc(view.title_literal)[:280], "creator"
+        return _nfc(view.title_literal), "creator"
     start = _first(view.facts, _START_KEYS)
     end = _first(view.facts, _END_KEYS)
     if titles(view.global_literal):

@@ -102,6 +102,22 @@ BAILOUT_NO_WORDS = "no_words"
 BAILOUT_CLIP_TOO_SHORT = "clip_too_short"
 BAILOUT_MAX_REMOVAL = "max_removal_exceeded"
 BAILOUT_OUTPUT_TOO_SHORT = "output_too_short"
+# KRI-653: the "speech" is not speech. A dead-mic take (digital silence) gets words
+# hallucinated over it by the transcriber; every one of them sits inside silence.
+BAILOUT_WORDS_IN_SILENCE = "words_in_silence"
+BAILOUT_NO_AUDIBLE_SPEECH = "no_audible_speech"
+NO_SPEECH_BAILOUTS = frozenset({BAILOUT_WORDS_IN_SILENCE, BAILOUT_NO_AUDIBLE_SPEECH})
+
+# -- "the transcript is not speech" thresholds (KRI-653) --------------------------
+# Prod job c283f1dd: a 192.6 s silent take got 11 Whisper words of 20-40 ms
+# ("I've got to go. Bye! Bye!"), silence cut kept 0.6 s around each and shipped 3.35 s.
+# Taste is not the lever here (no removal-fraction cap returns): when the transcript
+# and the audio disagree about whether anyone spoke, the plan is refused, not clamped.
+NO_SPEECH_MIN_WORDS = 3
+NO_SPEECH_WORD_FRAC = 0.8  # share of words that must sit inside silence ...
+NO_SPEECH_WORD_INSIDE_FRAC = 0.8  # ... by at least this share of their own duration
+NO_SPEECH_MIN_CLIP_S = 10.0  # the "nothing audible at all" check only judges real takes
+NO_SPEECH_MIN_AUDIBLE_S = 0.5
 
 # -- detection thresholds (explicit over configurable — plans/010) ----------------
 MAX_PAUSE_S = 0.6  # inter-word gap at/above this is a tightenable pause
@@ -2125,6 +2141,42 @@ def _merge_plain_spans(spans: Sequence[tuple[float, float]]) -> list[tuple[float
     return merged
 
 
+def _no_speech_bailout(
+    cut_words: Sequence[_CutWord],
+    silence_spans: Sequence[tuple[float, float]],
+    duration: float,
+) -> str | None:
+    """A no-speech bailout reason when the transcript contradicts the audio, else ``None``.
+
+    ``words_in_silence``: at least ``NO_SPEECH_MIN_WORDS`` words and
+    ``NO_SPEECH_WORD_FRAC`` of them lie ``NO_SPEECH_WORD_INSIDE_FRAC`` inside detected
+    silence. Whisper only does that on audio with nothing in it. ``no_audible_speech``:
+    a real-length take with under ``NO_SPEECH_MIN_AUDIBLE_S`` outside silence.
+
+    Both only ever REFUSE a cut: a false positive renders the take uncut, which is the
+    safe direction. No silence spans (detection unavailable) never trips either rule.
+    """
+    merged = _merge_plain_spans(silence_spans)
+    if not merged:
+        return None
+    if len(cut_words) >= NO_SPEECH_MIN_WORDS:
+        inside = 0
+        for word in cut_words:
+            span_s = word.end - word.start
+            if span_s <= _EPS:
+                inside += any(lo - _EPS <= word.start <= hi + _EPS for lo, hi in merged)
+                continue
+            overlap_s = sum(max(0.0, min(word.end, hi) - max(word.start, lo)) for lo, hi in merged)
+            inside += overlap_s >= NO_SPEECH_WORD_INSIDE_FRAC * span_s
+        if inside >= NO_SPEECH_WORD_FRAC * len(cut_words):
+            return BAILOUT_WORDS_IN_SILENCE
+    if duration >= NO_SPEECH_MIN_CLIP_S:
+        audible_s = duration - sum(min(hi, duration) - max(lo, 0.0) for lo, hi in merged)
+        if audible_s < NO_SPEECH_MIN_AUDIBLE_S:
+            return BAILOUT_NO_AUDIBLE_SPEECH
+    return None
+
+
 def _raw_v2_proposal(raw: Sequence[Removal], duration_s: float) -> list[Removal]:
     items = [
         _AllocationItem(
@@ -2166,6 +2218,24 @@ def _build_v2_cut_plan_normalized(
         return _v2_no_op_plan(
             duration,
             BAILOUT_CLIP_TOO_SHORT,
+            lexical=[],
+            acoustic=[],
+            decisions=[],
+            groups=[],
+            dispositions={},
+            proposed=[],
+        )
+    # KRI-653: checked BEFORE rule 0, which moves tokens out of silence and would hide
+    # the contradiction. Manual (forced) cuts are the creator's own call, never refused.
+    no_speech = (
+        _no_speech_bailout(cut_words, silence_spans, duration)
+        if include_silence_and_fillers and not forced
+        else None
+    )
+    if no_speech is not None:
+        return _v2_no_op_plan(
+            duration,
+            no_speech,
             lexical=[],
             acoustic=[],
             decisions=[],
@@ -2480,6 +2550,10 @@ def _build_v1_cut_plan_normalized(
         return no_op_plan(duration, bailout_reason=BAILOUT_NO_WORDS)
     if duration < MIN_CLIP_S:
         return no_op_plan(duration, bailout_reason=BAILOUT_CLIP_TOO_SHORT)
+    if include_silence_and_fillers and not forced:
+        no_speech = _no_speech_bailout(cut_words, silence_spans, duration)
+        if no_speech is not None:
+            return no_op_plan(duration, bailout_reason=no_speech)
 
     raw: list[Removal] = []
     if include_silence_and_fillers:

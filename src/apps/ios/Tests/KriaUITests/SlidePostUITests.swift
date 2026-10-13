@@ -276,9 +276,13 @@ import XCTest
         XCTAssertTrue(preset.waitForExistence(timeout: 5))
         preset.tap(); app.buttons["Highlight"].tap()
         XCTAssertTrue(preset.label.contains("Highlight"))
-        let rotation = app.buttons["native-editor-text-rotation-Increment"]
+        // KRI-646: rotation is a slider. Drag it to 3/4 of the range (about 90 degrees).
+        let rotation = app.sliders["native-editor-text-rotation"]
         revealInTextPanel(rotation, app: app)
-        rotation.tap()
+        rotation.adjust(toNormalizedSliderPosition: 0.75)
+        let appliedRotation = rotation.value as? String
+        XCTAssertNotNil(appliedRotation)
+        XCTAssertNotEqual(appliedRotation, "0 degrees", "the slider moved the rotation")
         attach(app, "Text mode: style tab")
         app.buttons["slidepost-done"].tap()
         // Slide 2: add text with the default look.
@@ -301,9 +305,9 @@ import XCTest
         app.buttons["Style"].tap()
         XCTAssertTrue(app.buttons["native-editor-text-preset"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["native-editor-text-preset"].label.contains("Highlight"))
-        let target = app.buttons["native-editor-text-rotation-Increment"]
+        let target = app.sliders["native-editor-text-rotation"]
         revealInTextPanel(target, app: app)
-        XCTAssertEqual(target.value as? String, "5 degrees")
+        XCTAssertEqual(target.value as? String, appliedRotation, "apply-to-all copies the rotation")
         app.buttons["Edit text"].tap()
         XCTAssertEqual(app.textViews["slidepost-text-field"].firstMatch.value as? String, "Your text", "words are never copied")
         attach(app, "Style applied to all slides")

@@ -9,7 +9,6 @@ clearance evidence. No provider calls or account writes occur.
 from __future__ import annotations
 
 # ruff: noqa: E402 -- anchor app imports to this task worktree before loading them
-
 import importlib.util
 import json
 import os
@@ -33,10 +32,10 @@ from app.pipeline.phone_narrated_plan import (
 from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
 from app.pipeline.phone_text_style import animation_box, measure_box, resolve_phone_text_style
 from app.pipeline.phone_voiceover_montage_plan import compile_phone_voiceover_montage_plan
+from app.schemas.edit_proposal import PinnedText
+from app.schemas.phone_text_style import CURATED_PHONE_FONTS
 from app.services.creator_render_contract import CreatorRenderContractError
 from app.services.phone_text_styling import generation_style_fields, phone_text_policy_scope
-from app.schemas.phone_text_style import CURATED_PHONE_FONTS
-from app.schemas.edit_proposal import PinnedText
 
 
 def main():
@@ -290,6 +289,7 @@ def main():
         # Optional installed sample photograph: pan a real face over changing
         # backgrounds and use the actual OpenCV/proxy sampler, not supplied boxes.
         import shutil
+
         from app.config import settings
         from app.services.phone_text_styling import current_phone_text_policy, generation_style_rows
         from app.storage import local_object_path

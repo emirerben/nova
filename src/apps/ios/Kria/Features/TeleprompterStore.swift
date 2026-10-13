@@ -25,6 +25,10 @@ struct TeleprompterTakeManifest: Codable, Equatable, Sendable, Identifiable {
     /// Persisted before handing off to intake. Unknown recovered server state
     /// must be reconciled before another enqueue can be attempted.
     var intakeAttempted: Bool? = false
+    /// Measured level of the recorded audio (KRI-653). Optional so older manifests still decode.
+    var audioCheck: TakeAudioCheck?
+    /// Whether the raw take reached the Photos library. Optional so older manifests still decode.
+    var savedToPhotos: Bool?
 
     init(id: UUID = UUID(), fileName: String? = nil, status: TeleprompterTakeStatus = .capturing,
          interrupted: Bool = false, capturedAt: Date = .now, script: TeleprompterScriptDraft, intakeID: UUID = UUID(),

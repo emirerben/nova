@@ -6,9 +6,9 @@ shared with the portable compiler. Existing recipes never enter this pass.
 
 from __future__ import annotations
 
-from copy import deepcopy
 from contextlib import contextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 from functools import lru_cache
 from typing import Any
 
@@ -79,7 +79,8 @@ def measure_box(row: dict, canvas: Canvas = PORTRAIT) -> tuple[float, float, flo
             if budget:
                 if budget["count"] >= 8192:
                     raise _style_decline(
-                        "This video has too many complex text layouts. Simplify a text lane and retry."
+                        "This video has too many complex text layouts. "
+                        "Simplify a text lane and retry."
                     )
                 budget["count"] += 1
             cached = measure_text_overlay_box(overlay, render_canvas=canvas, resolved_size=True)

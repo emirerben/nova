@@ -222,6 +222,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func playbackURL(jobID: UUID) async throws -> URL
     /// KRI-200: best-effort report of an editor player item that failed on this phone.
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws
+    /// KRI-653: best-effort report that the in-app recorder heard nothing. Log-only on the server.
+    func reportRecorderDiagnostic(_ report: RecorderDiagnosticReport) async throws
     func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation
     func cancelUpload(reservationID: UUID) async throws
@@ -286,6 +288,7 @@ extension KriaAPIClient {
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws { throw APIError.unsupported }
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { throw APIError.unsupported }
+    func reportRecorderDiagnostic(_ report: RecorderDiagnosticReport) async throws { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation {
         try await reserveProjectUpload(threadID: threadID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size)
@@ -1235,6 +1238,9 @@ struct KriaAPI: KriaAPIClient {
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws {
         _ = try await request(path: "me/jobs/\(jobID.uuidString)/playback-diagnostics", method: "POST", bodyData: try JSONEncoder().encode(report), decode: EmptyProjectResponse.self)
     }
+    func reportRecorderDiagnostic(_ report: RecorderDiagnosticReport) async throws {
+        _ = try await request(path: "me/recorder-diagnostics", method: "POST", bodyData: try JSONEncoder().encode(report), decode: EmptyProjectResponse.self)
+    }
     func currentUser() async throws -> MobileUser { try await request(path: "auth/mobile/me", method: "GET", bodyData: nil, decode: MobileUser.self) }
     func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe { try await request(path: "me/jobs/\(jobID.uuidString)/edit-recipe", method: "GET", query: variantID.map { [URLQueryItem(name: "variant_id", value: $0)] } ?? [], bodyData: nil, decode: EditRecipe.self) }
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation { try await request(path: "generative-jobs/upload-url", method: "POST", bodyData: try JSONEncoder().encode(UploadReservationRequest(filename: filename, contentType: contentType, fileSizeBytes: size, purpose: purpose)), decode: UploadReservation.self) }
@@ -1644,6 +1650,29 @@ private struct LibraryPosterRequest: Encodable {
     let jobIDs: [UUID]
     let brokenJobIDs: [UUID]
     enum CodingKeys: String, CodingKey { case jobIDs = "job_ids"; case brokenJobIDs = "broken_job_ids" }
+}
+/// KRI-653: why the in-app recorder produced (or is producing) a silent take. Enumerated labels and
+/// numbers only: no file names, script text, or anything the creator typed or said.
+struct RecorderDiagnosticReport: Encodable, Equatable, Sendable {
+    enum Kind: String, Encodable, Sendable { case takeSilent = "take_silent", liveMicSilent = "live_mic_silent" }
+    let kind: Kind
+    let audioCategory: String?
+    let audioMode: String?
+    let routeInputs: [String]
+    let routeOutputs: [String]
+    let otherAudioPlaying: Bool?
+    /// Last transitions as `label+ms`, e.g. `scene_inactive+812`.
+    let phaseHistory: [String]
+    let channelCount: Int?
+    let maxPowerDb: Double?
+    let takeDurationS: Double?
+    let appBuild: String?
+    enum CodingKeys: String, CodingKey {
+        case kind, audioCategory = "audio_category", audioMode = "audio_mode"
+        case routeInputs = "route_inputs", routeOutputs = "route_outputs", otherAudioPlaying = "other_audio_playing"
+        case phaseHistory = "phase_history", channelCount = "channel_count", maxPowerDb = "max_power_db"
+        case takeDurationS = "take_duration_s", appBuild = "app_build"
+    }
 }
 /// Identity of a failed editor player item: numeric AVFoundation codes and domains only, never URLs or error text.
 struct PlaybackFailureReport: Encodable, Equatable, Sendable {

@@ -169,6 +169,10 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
 
     // MARK: -
 
+    func testApprovedUnicodeHookExportsWithoutContextCaptionOnTheIPhone() async throws {
+        try await assertCase("approved_hook")
+    }
+
     private func assertCase(_ caseID: String, expectedCreationProvenance: String = "authored_model_transport_fixture") async throws {
         let input = try inputDirectory()
         let meta = try XCTUnwrap(
@@ -194,6 +198,9 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
                     XCTAssertTrue(run.blurLayers.isEmpty, caseID)
                 }
             }
+        }
+        if let expected = caseMeta["expected_copy"] as? String {
+            XCTAssertEqual(recipe.textLayers.flatMap(\.runs).map(\.text).joined(separator: " "), expected)
         }
 
         if let expectedWords = caseMeta["expected_words"] as? [String] {
@@ -381,6 +388,16 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
             CGImageDestinationAddImage(destination, image, nil)
             XCTAssertTrue(CGImageDestinationFinalize(destination))
             let observed = pixel(image, x: x, y: y)
+            if caseMeta["expect_color_emoji"] as? Bool == true {
+                var colored = 0
+                for row in stride(from: 80, to: 650, by: 4) {
+                    for column in stride(from: 0, to: image.width, by: 4) {
+                        let rgb = pixel(image, x: column, y: row)
+                        if (rgb.max() ?? 0) - (rgb.min() ?? 0) > 60 { colored += 1 }
+                    }
+                }
+                XCTAssertGreaterThan(colored, 10, "The approved emoji must remain visible in color")
+            }
             XCTAssertTrue(isColor(observed, expected), "\(caseID)/\(name) at \(t)s: \(observed) != \(expected)")
         }
         if let blend = caseMeta["blend_sample"] as? [String: Any] {
