@@ -23,8 +23,9 @@ Run real compiler/export journeys for short/medium/long titles, EN/TR, limited-c
 fonts, required/excluded/favorite fonts, title plus pins plus captions, and changing
 footage. Compare saved rows, preview and MP4 frames. Include preset/font changes,
 restart, account/current-video precedence, stale writes, and preference reset.
-Measure animation bounds throughout each text window. Real-device platform overlays
-are a separate required evidence item; published safe-area guides are provisional.
+Measure animation bounds throughout each text window. Platform-overlay clearance
+requires a real posting interface; Emir explicitly left that claim unverified.
+Published safe-area guides and the attached rectangles remain provisional.
 
 Duration and scrub bounds remain the existing approved timeline. No lane ripples,
 trims, resizes or time remapping are introduced. Existing editor gestures retain their
@@ -39,9 +40,10 @@ No automatic merge/deploy. Record each command, result and HEAD in the autoship 
 ## Evidence notes
 
 Real iPhone 13 Pro exports passed for short/medium/long EN and Turkish titles,
-captions, narrated titles/pins and all 15 palette faces. Sampled caption
+captions, narrated titles/pins, separate label/lyric roles and all 15 palette faces. Sampled caption
 preview/export bounds matched exactly; title bounds differed by at most one pixel. Artifacts live outside git in
-`/private/tmp/nova-kri-648-evidence/device-frames-final` and the physical XCTest bundle.
+`/private/tmp/nova-kri-648-evidence/device-frames-release` and
+`device-final-integrated.xcresult` in the same evidence directory.
 The repeatable kit includes synthetic footage and a panned installed sample portrait.
 The actual proxy/OpenCV path detected its face at five samples and reused those
 proxies for five background observations. Supplied moving-face rectangles separately
@@ -49,12 +51,25 @@ exercise the collision contract. These fixtures do not establish live-camera acc
 
 The all-font device proof caught Pacifico ligature drift between the unshaped
 portable recipe and CoreText preview. Only version-1 rows now request shared shaping;
-legacy rows retain their existing render path. The corrected 24-case proof passed.
+legacy rows retain their existing render path. The integrated 26-case proof passed.
+The repeatable kit now also includes a 27th journey with caption blocks of
+different widths and heights, fitting every block against the same obstacles.
 
-Current-source production-runtime overlay proofs passed 62 legacy and 27 new styled
+Current-source production-runtime overlay proofs passed 62 legacy and 30 new styled
 overlays. Docker disk exhaustion required task-owned RAM mounts with current source;
 no unrelated images or containers were pruned. Reports and reviewed montages are
 in `overlay-proof/legacy` and `overlay-proof/kri648` under the evidence directory.
+These run the production image's Skia/FFmpeg/font runtime with current source
+streamed into task-owned RAM mounts; the complete image was not rebuilt after
+the shared Docker disk filled. Render-only reports do not claim OCR verification.
+
+The focused backend and free replay run passed 1,684 checks with 15 optional/live
+skips. All 593 selected reliability checks passed with no environment skips.
+The final native build ran 1,732 tests: 1,708 passed, 24 opt-in tests skipped,
+and none failed. All 190 selected UI journeys passed on an isolated simulator;
+the existing gallery read/upload journey passed on its third attempt and is
+reported as flaky. A separate final-build run covers the two settings journeys.
+Results, logs, measurement reports and exported media remain outside Git.
 
 New caption geometry requires client protocol 8. The independent settings choices
 include Use defaults, Automatic and a required font, avoiding a misleading inherited
