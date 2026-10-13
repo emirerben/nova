@@ -17,6 +17,7 @@ struct NativeEditorSlider<Label: View, Session: NativeTransactionControlling>: V
     @Binding private var value: Double
     private let bounds: ClosedRange<Double>
     private let step: Double?
+    private let onEditingChanged: ((Bool) -> Void)?
     private let label: () -> Label
 
     init(
@@ -24,12 +25,14 @@ struct NativeEditorSlider<Label: View, Session: NativeTransactionControlling>: V
         value: Binding<Double>,
         in bounds: ClosedRange<Double>,
         step: Double? = nil,
+        onEditingChanged: ((Bool) -> Void)? = nil,
         @ViewBuilder label: @escaping () -> Label
     ) {
         self.session = session
         self._value = value
         self.bounds = bounds
         self.step = step
+        self.onEditingChanged = onEditingChanged
         self.label = label
     }
 
@@ -44,6 +47,7 @@ struct NativeEditorSlider<Label: View, Session: NativeTransactionControlling>: V
     private func editingChanged(_ isEditing: Bool) {
         if isEditing { session.beginTransaction() }
         else { session.endTransaction() }
+        onEditingChanged?(isEditing)
     }
 }
 

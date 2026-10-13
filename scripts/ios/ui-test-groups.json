@@ -189,6 +189,7 @@
       "KriaUITests/NativeQuickAddMenuUITests/testTappingPlusAgainClosesTheMenu",
       "KriaUITests/NativeQuickAddMenuUITests/testTextOptionStartsTextCreation",
       "KriaUITests/DrawingJourneyUITests/testDrawDoneTrimSaveReopenPersists",
+      "KriaUITests/DrawingJourneyUITests/testAnimationTabKeepsItsLayoutWhateverTheEntranceIs",
       "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability"
     ],
     "smoke": [
