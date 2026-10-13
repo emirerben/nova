@@ -47,3 +47,23 @@ the unit/UI result bundles for 14 days, including failures.
 The simulator/offline boundaries remain as described in [the first proof](proof.md).
 This establishes native fixture UI and script persistence, not live backend,
 physical camera, production, or output-media content. Model spend was $0.
+
+## Final integrated-branch rerun
+
+The 18-test automatic path was rerun after integrating the newer main revision.
+Tested HEAD: `d461780365ae7d585e951e835d24304771a156bd`; native fingerprint: `6a9412ceae1b5a725453e38ac90efbd71a64804c8625b3aebcff3d92908b201a`.
+All 18 selected UI tests passed without retries; exact-script persistence and
+cleanup passed again. The local UI phase took 435 seconds. The final portable
+checks passed 54 CI and 101 iOS orchestration/policy cases.
+
+A deliberately failed Test Case result was rejected while exported screenshots
+survived; its retained red-control evidence is under
+`test-results/verify-kria-ios/failed-evidence-control/`. Debug app identity now
+includes the launcher and code dylibs, and its held-out change check passes.
+The earlier broad-input proof is retained under
+`test-results/verify-kria-ios/automatic-ci-proof/archive/`; latest evidence is
+under `test-results/verify-kria-ios/ci/` and `final-ui.log`/`final-evidence.log`.
+
+A separate newer drawing PR landed while this run was finishing. GitHub's PR
+merge-checkout CI supplies the combined validation before merge; the local
+claim above remains tied to its recorded revision.
