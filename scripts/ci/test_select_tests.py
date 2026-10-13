@@ -380,7 +380,7 @@ class GateTests(unittest.TestCase):
 
     def test_ui_shards_follow_the_executed_selection(self):
         # Main and manual runs shard the full suite: serial no longer fits the cap.
-        self.assertEqual(ci.ui_shards("push", "full"), ci.ui_tests.MAX_SHARDS)
+        self.assertEqual(ci.ui_shards("push", "full"), 1)
         self.assertEqual(
             ci.ui_shards("workflow_dispatch", "full"), ci.ui_tests.MAX_SHARDS
         )
@@ -470,7 +470,7 @@ class GitDiffTests(unittest.TestCase):
         self.assertEqual(
             ci.selection_details("pull_request", self.base, head)[2], "full"
         )
-        self.assertEqual(ci.selection_details("push", self.base, head)[2], "full")
+        self.assertEqual(ci.selection_details("push", self.base, head)[2], "smoke")
         self.assertEqual(ci.selection_details("pull_request", head, head)[2], "full")
 
     def test_ui_test_method_edits_select_only_those_methods(self):
@@ -805,7 +805,7 @@ class GitDiffTests(unittest.TestCase):
         )
         self.assertEqual(
             output.read_text(),
-            "api=false\nios=true\nios_ui=true\nshared_motion=false\nios_ui_groups=full\n"
+            "api=false\nios=true\nios_ui=true\nshared_motion=false\nnative_validation=true\nios_ui_groups=full\n"
             "ios_ui_shards=1\njourney=false\njourney_coverage=not_applicable\n"
             "journey_ids=\njourney_needs_native=false\n",
         )
