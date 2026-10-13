@@ -1,11 +1,9 @@
 """KRI-605 failure contracts, written before the workflow implementation."""
 
 import importlib.util
-import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
 
 
 def load(name, filename):
@@ -45,18 +43,14 @@ class ThroughputTests(unittest.TestCase):
             },
             "ios-tests": {"result": "success"},
         }
-        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push"}):
-            ci.gate(needs, "ios", "ios-tests")
-            needs["changes"]["outputs"]["ios_ui_shards"] = "3"
-            with self.assertRaises(ValueError):
-                ci.gate(needs, "ios", "ios-tests")
+        ci.gate(needs, "ios", "ios-tests", event="push")
+        needs["changes"]["outputs"]["ios_ui_shards"] = "3"
+        with self.assertRaises(ValueError):
+            ci.gate(needs, "ios", "ios-tests", event="push")
         needs["changes"]["outputs"]["ios_ui_shards"] = "1"
         for event in ("pull_request", "schedule", "workflow_dispatch"):
-            with (
-                patch.dict(os.environ, {"GITHUB_EVENT_NAME": event}),
-                self.assertRaises(ValueError),
-            ):
-                ci.gate(needs, "ios", "ios-tests")
+            with self.assertRaises(ValueError):
+                ci.gate(needs, "ios", "ios-tests", event=event)
 
     def needs(self, journey="true", native="true", ios="true"):
         return {

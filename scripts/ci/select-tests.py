@@ -422,7 +422,7 @@ def gate_journey(needs, event):
     return "Selected portable and native journey dependencies passed."
 
 
-def gate(needs, suite, job):
+def gate(needs, suite, job, event="pull_request"):
     """A skipped job passes ONLY when a successful selector explicitly opted out."""
     if suite in ("api", "journey"):
         required_needs = {
@@ -443,7 +443,7 @@ def gate(needs, suite, job):
     if suite == "ios":
         ui = outputs.get("ios_ui")
         groups = outputs.get("ios_ui_groups")
-        if os.environ.get("GITHUB_EVENT_NAME") == "push" and groups == "smoke":
+        if event == "push" and groups == "smoke":
             ui_tests.validate_execution(groups)
         else:
             ui_tests.validate_groups(groups)
@@ -512,7 +512,13 @@ def main():
         validate_journey_mapping(os.environ["COVERAGE"], os.environ["JOURNEY_IDS"])
         return
     if len(sys.argv) > 1 and sys.argv[1] == "gate":
-        print(gate(json.loads(os.environ.get("CI_NEEDS", "{}")), *sys.argv[2:]))
+        print(
+            gate(
+                json.loads(os.environ.get("CI_NEEDS", "{}")),
+                *sys.argv[2:],
+                event=os.environ.get("GITHUB_EVENT_NAME", ""),
+            )
+        )
         return
     event = os.environ.get("CI_EVENT")
     suites, reason, groups = selection_details(
