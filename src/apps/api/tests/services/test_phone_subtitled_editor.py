@@ -344,23 +344,32 @@ def test_lanes_from_editor_sections_rejects_an_unpinned_overlay_path():
         )
 
 
-def test_lanes_from_editor_sections_rejects_a_new_fullscreen_display_mode():
+def test_lanes_from_editor_sections_accepts_a_fullscreen_card_and_refuses_a_stack():
+    """KRI-661: a card may be promoted to full screen, but two can't overlap."""
     photo = _photo_visual()
-    committed = [
-        {
-            "id": "card-full",
+
+    def card(card_id: str, start_s: float, end_s: float) -> dict:
+        return {
+            "id": card_id,
             "kind": "image",
             "src_gcs_path": PHOTO_PATH,
             "display_mode": "fullscreen",
-            "start_s": 0.0,
-            "end_s": 2.0,
+            "start_s": start_s,
+            "end_s": end_s,
         }
-    ]
-    with pytest.raises(ValueError, match="full-screen overlay"):
+
+    lanes = lanes_from_editor_sections(
+        previous=None,
+        sound_effects=None,
+        media_overlays=[card("a", 0.0, 2.0), card("b", 2.0, 4.0)],
+        visuals=(photo,),
+    )
+    assert [c.display_mode for c in lanes.overlays] == ["fullscreen", "fullscreen"]
+    with pytest.raises(ValueError, match="same time"):
         lanes_from_editor_sections(
             previous=None,
             sound_effects=None,
-            media_overlays=committed,
+            media_overlays=[card("a", 0.0, 3.0), card("b", 2.0, 4.0)],
             visuals=(photo,),
         )
 

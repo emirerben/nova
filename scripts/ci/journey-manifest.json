@@ -99,6 +99,8 @@
         "src/apps/api/tests/evals/request_following/test_creation_composition.py",
         "src/apps/api/app/pipeline/image_crop.py",
         "src/apps/api/app/pipeline/phone_voiceover_cut.py",
+        "src/apps/api/app/agents/editor_ops_v2/overlays.py",
+        "src/apps/api/prompts/edit_copilot_ops/overlay_cards.txt",
         "src/apps/api/prompts/edit_copilot_ops/timeline.txt",
         "src/apps/api/app/schemas/text_composition.py",
         "src/apps/api/app/tasks/edit_proposal_build.py",

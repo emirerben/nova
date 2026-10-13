@@ -239,6 +239,7 @@ class BeforeState(NamedTuple):
     captions: list[dict[str, Any]]
     camera: list[dict[str, Any]]
     sfx: list[dict[str, Any]]
+    overlays: list[dict[str, Any]] = []  # noqa: RUF012 - NamedTuple default, never mutated
 
 
 def _slot_key(row: dict[str, Any]) -> str:
@@ -264,6 +265,7 @@ def snapshot_before(state: Any) -> BeforeState:
         captions=copy.deepcopy(state.captions),
         camera=copy.deepcopy(state.camera_effects),
         sfx=copy.deepcopy(state.sound_effects),
+        overlays=copy.deepcopy(getattr(state, "media_overlays", [])),
     )
 
 
@@ -583,6 +585,15 @@ def diff_compiled_state(
             ),
         ),
         ("sfx", lambda: _by_id_entries("sfx", "sound effect", before.sfx, state.sound_effects)),
+        (
+            "media_overlays",
+            lambda: _by_id_entries(
+                "media_overlays",
+                "overlay",
+                before.overlays,
+                getattr(state, "media_overlays", []),
+            ),
+        ),
     ]
     for name, build in lanes:
         try:
@@ -967,6 +978,14 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
         return say(
             en=f"{verb[0]} {_plural(len(entry.targets), noun[0], noun[1])}",
             tr=f"{_plural(len(entry.targets), noun[0], noun[1])} {verb[1]}",
+        )
+    if lane == "media_overlays":
+        verb = {"added": ("Added", "eklendi"), "removed": ("Removed", "kaldırıldı")}.get(
+            name, ("Changed", "değişti")
+        )
+        return say(
+            en=f"{verb[0]} {_plural(len(entry.targets), 'picture', 'görsel')}",
+            tr=f"{_plural(len(entry.targets), 'picture', 'görsel')} {verb[1]}",
         )
     if lane == "visual_media":
         return say(en="Removed visual items", tr="Görsel öğeler kaldırıldı")

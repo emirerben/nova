@@ -31,10 +31,14 @@ from pathlib import Path
 from typing import Any
 
 EDITOR_OPS_VERSION = 2
-LANES: tuple[str, ...] = ("text", "timeline", "audio", "slides")
+LANES: tuple[str, ...] = ("text", "timeline", "audio", "slides", "overlays")
 # Lanes whose prompt fragment is appended ONLY on the named surface, so video
 # prompts stay byte-identical (KRI-301).
 SURFACE_ONLY_LANES: dict[str, str] = {"slides": "slide_post"}
+# Lanes whose prompt fragment (`<name>.txt` under prompts/edit_copilot_ops/) is appended only when
+# the snapshot actually offers the lane's op family, so every other prompt stays byte-identical
+# (KRI-661). Keyed by the family in `snapshot["allowed_op_families"]`.
+FAMILY_FRAGMENTS: dict[str, str] = {"overlay": "overlay_cards.txt"}
 _FRAGMENT_DIR = Path(__file__).resolve().parents[3] / "prompts" / "edit_copilot_ops"
 
 # coerce(name, payload, snapshot, state) -> cleaned payload | None. Returning
@@ -127,6 +131,24 @@ def surface_of(snapshot: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def family_fragments(snapshot: object) -> str:
+    """Fragments of the op families this snapshot offers (see ``FAMILY_FRAGMENTS``)."""
+    allowed = snapshot.get("allowed_op_families") if isinstance(snapshot, dict) else None
+    if not isinstance(allowed, list):
+        return ""
+    parts: list[str] = []
+    for family, name in FAMILY_FRAGMENTS.items():
+        if family not in allowed:
+            continue
+        try:
+            text = (_FRAGMENT_DIR / name).read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts)
+
+
 def prompt_fragments(surface: str | None = None) -> str:
     """Concatenated non-empty lane prompt fragments ('' when all are empty).
 
@@ -152,10 +174,12 @@ __all__ = [
     "LANES",
     "REGISTRY",
     "SURFACE_ONLY_LANES",
+    "FAMILY_FRAGMENTS",
     "CoerceFn",
     "MergedRegistry",
     "OpSpec",
     "is_v2_snapshot",
+    "family_fragments",
     "lane_specs",
     "merge_into_parser",
     "prompt_fragments",

@@ -41,7 +41,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-12-v78"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-13-v79"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1779,6 +1779,13 @@ def _format_snapshot(snapshot: dict) -> str:
             else []
         )
         lines.append("\nOVERLAY CARDS (overlay_index values are authoritative for this turn):")
+        counts = overlays.get("counts")
+        if isinstance(counts, dict):
+            lines.append(
+                f"{counts.get('total')} cards in all: {counts.get('images')} photos, "
+                f"{counts.get('videos')} videos; {counts.get('fullscreen')} full screen "
+                f"(the list below shows the first {min(len(cards), 12)})"
+            )
         if cards:
             for card in _component_rows(cards, 12, component_context_enabled):
                 if not isinstance(card, dict):
@@ -3720,6 +3727,8 @@ def _with_v2_fragments(prompt: str, snapshot: object) -> str:
         return prompt
     surface = _v2.surface_of(snapshot)
     fragments = _v2.prompt_fragments(surface) if surface else _v2.prompt_fragments()
+    family = _v2.family_fragments(snapshot)
+    fragments = f"{fragments}\n\n{family}" if fragments and family else fragments or family
     return f"{prompt}\n\n{fragments}" if fragments else prompt
 
 

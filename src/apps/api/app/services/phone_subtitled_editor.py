@@ -476,16 +476,9 @@ def _overlays_from_sections(
         previous_card = previous_by_id.get(card_id) if isinstance(card_id, str) else None
         if display_mode not in ("pip", "fullscreen"):
             raise ValueError(f"unsupported overlay display mode: {display_mode!r}")
-        if display_mode == "fullscreen" and (
-            previous_card is None or previous_card.display_mode != "fullscreen"
-        ):
-            # KRI-297: a full-screen card can only round-trip -- the editor
-            # may move/retime/delete the cards Kria authored as full-screen,
-            # but cannot promote a NEW or picture-in-picture card yet.
-            raise ValueError(
-                "phone Talking edits can't turn a card into a full-screen overlay yet -- "
-                "only Kria's own full-screen overlays can be kept"
-            )
+        # KRI-661: a card may go either way -- full screen <-> on top of the speaker.
+        # Full-screen cards are a sequence (never a stack); that is checked once all
+        # cards are built (`_require_fullscreen_sequence`).
         path = item.get("src_gcs_path")
         binding = next((visual for visual in visuals if visual.gcs_path == path), None)
         if binding is None:
@@ -546,7 +539,23 @@ def _overlays_from_sections(
                 **({"display_mode": "fullscreen"} if display_mode == "fullscreen" else {}),
             )
         )
+    _require_fullscreen_sequence(cards)
     return cards
+
+
+def _require_fullscreen_sequence(cards: list[SubtitledOverlayCard]) -> None:
+    """Two full-screen cutaways can never be on screen at once; say so in plain words."""
+    previous_end = 0.0
+    for card in sorted(
+        (c for c in cards if c.display_mode == "fullscreen"),
+        key=lambda c: (c.start_s, c.end_s, c.id),
+    ):
+        if card.start_s < previous_end - 1e-6:
+            raise ValueError(
+                "two full-screen overlays can't be on screen at the same time -- move or "
+                "shorten one of them, or keep one of them on top of the video"
+            )
+        previous_end = max(previous_end, card.end_s)
 
 
 def _sound_effects_from_sections(

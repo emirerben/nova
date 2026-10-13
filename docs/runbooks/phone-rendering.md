@@ -965,6 +965,19 @@ need the KRI-297 track in `replace_editor_lanes` first. Tests:
 Rollback: `fly secrets set PHONE_VOICEOVER_REACTION_BEATS_ENABLED=false --app
 nova-video` + `fly machine restart <id>` (api + worker + light).
 
+**Chat edits the picture cards (KRI-661).** A phone Talking edit offers the `overlay`
+op family to the copilot once its draft base carries the cards
+(`kria_editor_ops.project_editor_draft` derives `media_overlays` from the pinned recipe for a
+never-Saved edit, like the HTTP read path). Ops (lane `app/agents/editor_ops_v2/overlays.py`):
+`set_overlay_display` (`display_mode` pip|fullscreen, optional `kind` image|video|all or one
+`overlay_index` -- "photos on top, videos full screen" is two ops), `patch_overlay` (timing,
+geometry, display), `remove_overlay`. A card leaving full screen lands in the upper-right
+corner geometry; full-screen cards may not overlap. The prompt fragment
+(`prompts/edit_copilot_ops/overlay_cards.txt`) is appended only when the snapshot offers the
+family, so other prompts stay byte-identical. No `add_overlay` from chat: Save refuses a photo
+Kria did not pin. Guards: `tests/routes/test_phone_chat_overlay_edit.py` (chat op -> parser ->
+compile -> real Save -> recompiled recipe), `tests/kria/test_plan_review.py`.
+
 #### Phase 2c: video Visuals as PiP cards (KRI-183)
 
 Flag `PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED` (default false), gate
@@ -1049,8 +1062,9 @@ applies. The ending clip is carried over unchanged (not editable yet).
 Fail-closed, named: any lane the creator edited that cannot compile, a photo
 that is not pinned for this edit (adding NEW photos to a Talking edit is not
 supported yet), a pinned video used as a NEW card while the KRI-183 video
-gate is off (an existing video card still Saves), a non-overlay
-`display_mode`, or any other section
+gate is off (an existing video card still Saves), two full-screen cards
+whose windows overlap (KRI-661: a card may go on top of the speaker <-> full
+screen in either direction, but full-screen cutaways are a sequence), or any other section
 (`text_elements`, timeline, mix, music, orientation) returns
 `422 unsupported_phone_edit` with a `reason` -- a Save never silently drops a
 lane (unlike generation, where a failing lane is dropped and receipted).
