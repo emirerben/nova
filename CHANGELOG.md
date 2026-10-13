@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.267.0] - 2026-10-13
+
+### Changed
+- feat: image stickers on slide posts and paste a picture onto a slide (KRI-460, KRI-647) (#1590) <!-- release-pr: 1590 -->
+
 ## [0.78.266.0] - 2026-10-13
 
 ### Changed
