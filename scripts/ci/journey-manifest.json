@@ -431,6 +431,16 @@
         "src/apps/api/app/kria/clip_scope.py",
         "src/apps/api/tests/fixtures/kri623_tigre_m2_montage_turn.json"
       ]
+    },
+    {
+      "id": "kri-646-text-bend",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_text_bend.py",
+      "paths": [
+        "src/apps/api/app/kria/portable_text.py",
+        "src/apps/api/app/pipeline/generative_overlays.py",
+        "src/apps/api/tests/kria/test_text_bend.py"
+      ]
     }
   ]
 }

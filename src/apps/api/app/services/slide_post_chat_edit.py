@@ -79,6 +79,7 @@ _UNSUPPORTED_PATCH_FIELDS = frozenset(
         "letter_spacing",
         "line_spacing",
         "rotation_deg",
+        "bend",
         "behind_subject",
         "background_color",
     }

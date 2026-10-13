@@ -78,6 +78,7 @@ from app.services.phone_rollout import (
     phone_subtitled_title_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
+    text_bend_client_supported,
     validate_phone_pilot_recipe,
 )
 from app.services.phone_sources import (
@@ -624,6 +625,12 @@ def prepare_phone_editor_commit(
         UnsupportedPhonePlan,
     ) as exc:
         raise _unsupported_phone_edit(job, variant_id, exc) from exc
+    if not text_bend_client_supported() and any(
+        layer.bend for layer in device_status(staged, variant_id).request.recipe.text_layers
+    ):
+        # KRI-646: the recompiled recipe pins bent text (`textLayers[].bend`) that this app
+        # build cannot decode or draw; nothing is committed.
+        raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
     job.assembly_plan = staged.assembly_plan
     job.status = staged.status
     if "started_at" in vars(staged):

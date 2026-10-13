@@ -24,6 +24,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostDrawing: Bool? = nil
     /// KRI-460: pasted pictures placed on a slide. The server advertises it only to a build that speaks protocol 8. Missing = off (no sticker paste, no `stickers` authored).
     var slidePostStickers: Bool? = nil
+    /// KRI-646: text Bend (curved text). The server advertises it only to a build that speaks protocol 9. Missing = off (no Bend slider).
+    var textBend: Bool? = nil
     /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
     var clipSelectionQuestions: Bool? = nil
     /// Server sends `song_order_question` payloads and accepts `song_order` on a turn (KRI-374). Nil/false = no order card.
@@ -59,6 +61,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostSizesEnabled: Bool { slidePostSizes == true }
     var slidePostDrawingEnabled: Bool { slidePostDrawing == true }
     var slidePostStickersEnabled: Bool { slidePostStickers == true }
+    var textBendEnabled: Bool { textBend == true }
     var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
     var songOrderQuestionsEnabled: Bool { songOrderQuestions == true }
     /// Only meaningful together with `songOrderQuestionsEnabled`.
@@ -88,6 +91,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case slidePostSizes = "slide_post_sizes"
         case slidePostDrawing = "slide_post_drawing"
         case slidePostStickers = "slide_post_stickers"
+        case textBend = "text_bend"
         case clipSelectionQuestions = "clip_selection_questions"
         case songOrderQuestions = "song_order_questions"
         case songOrderPlacements = "song_order_placements"
@@ -119,6 +123,7 @@ extension CreationCapabilities {
         slidePostSizes = try container.decodeIfPresent(Bool.self, forKey: .slidePostSizes)
         slidePostDrawing = try container.decodeIfPresent(Bool.self, forKey: .slidePostDrawing)
         slidePostStickers = try container.decodeIfPresent(Bool.self, forKey: .slidePostStickers)
+        textBend = try container.decodeIfPresent(Bool.self, forKey: .textBend)
         clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
         songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)
         songOrderPlacements = try container.decodeIfPresent(Bool.self, forKey: .songOrderPlacements)

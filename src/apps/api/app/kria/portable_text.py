@@ -295,6 +295,26 @@ class TextBackground(_TextModel):
     radius: float = Field(ge=0, le=1000)
 
 
+# KRI-646 Bend: effects whose text can be drawn along an arc on device. Everything else
+# (ink-reveal, handwriting, typewriter, stream-in, smooth-type, staggered-slice,
+# dissolve-out, karaoke-line, lyric-line) reveals or animates per glyph/line geometry that
+# a bent baseline cannot follow. The Swift twin is ``PortableTextLayer.bendSupported``.
+BEND_SUPPORTED_EFFECTS = frozenset(
+    {
+        "static",
+        "none",
+        "fade-in",
+        "pop-in",
+        "scale-up",
+        "slide-up",
+        "slide-down",
+        "slide-in",
+        "bounce",
+        "caption-pop",
+    }
+)
+
+
 class PortableTextLayer(_TextModel):
     id: str = Field(min_length=1, max_length=160)
     start: float = Field(ge=0, le=1800)
@@ -302,6 +322,9 @@ class PortableTextLayer(_TextModel):
     anchor_x: float = Field(ge=-10000, le=10000)
     anchor_y: float = Field(ge=-10000, le=10000)
     rotation_degrees: float = Field(ge=-3600, le=3600)
+    # KRI-646: curve in [-100, 100] (+ = rainbow). Drawn on device; omitted from the wire
+    # when None/0 so existing recipes stay byte-identical. Needs `textBend`.
+    bend: float | None = Field(default=None, ge=-100, le=100)
     animation_phases: TextAnimationPhases | None = None
     background: TextBackground | None = None
     runs: list[PositionedTextRun] = Field(default_factory=list, max_length=100)
@@ -344,10 +367,32 @@ class PortableTextLayer(_TextModel):
             payload.pop("animation_phases", None)
         if self.background is None:
             payload.pop("background", None)
+        if not self.bend:
+            payload.pop("bend", None)
         return payload
 
     @model_validator(mode="after")
     def valid_window(self):
+        if self.bend and (
+            self.effect not in BEND_SUPPORTED_EFFECTS
+            or (
+                self.animation_phases is not None
+                and "typewriter" in (self.animation_phases.entrance, self.animation_phases.exit)
+            )
+            or any(
+                payload is not None
+                for payload in (
+                    self.discrete_reveal,
+                    self.smooth_reveal,
+                    self.staggered,
+                    self.handwriting,
+                    self.giant_title,
+                    self.karaoke,
+                    self.reveal_bounds,
+                )
+            )
+        ):
+            raise ValueError("bend is unsupported for this text painter")
         if self.giant_title is not None and self.effect not in {
             "static",
             "none",

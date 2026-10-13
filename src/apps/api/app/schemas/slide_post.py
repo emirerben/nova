@@ -80,6 +80,7 @@ _LEGACY_TEXT_SIZE_PX = 86
 # (`edits_cache_digest`) and serializes exactly as it did before they existed.
 _PARITY_STYLE_FIELDS = (
     "rotation_deg",
+    "bend",
     "stroke_color",
     "shadow_color",
     "shadow_opacity",
@@ -135,6 +136,9 @@ class SlideTextElement(BaseModel):
     background: Literal["none", "box"] = "none"
     # --- text-tool parity fields (all optional; None = renderer default) ---
     rotation_deg: float | None = None  # clockwise, clamped to [-360, 360]
+    # KRI-646: curve in [-100, 100] (+ = rainbow). Drawn on device only; the
+    # server stores it and never renders it. Needs the `text_bend` capability.
+    bend: float | None = None
     stroke_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     shadow_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     shadow_opacity: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
@@ -162,6 +166,13 @@ class SlideTextElement(BaseModel):
         from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
 
         return TextElement._clamp_rotation_deg(value)
+
+    @field_validator("bend", mode="before")
+    @classmethod
+    def _clamp_bend(cls, value: object) -> float | None:
+        from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+        return TextElement._clamp_bend(value)
 
     @field_validator("letter_spacing", mode="before")
     @classmethod
