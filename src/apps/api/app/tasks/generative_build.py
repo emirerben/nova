@@ -272,6 +272,11 @@ _SPEECH_FALLBACK_DECLINES = {
         "I couldn't read the speech in your clip.",
         "Try a different clip of you talking, or ask for a montage.",
     ),
+    # KRI-653: the clip HAS an audio track but it carries no sound (a dead mic take).
+    "silent_audio": (
+        "Your video has no sound, so there's nothing to caption or cut.",
+        "Record it again and check that nothing is covering the microphone.",
+    ),
 }
 
 
@@ -291,6 +296,48 @@ def _speech_fallback_decline(reason: str | None) -> BaseException | None:
     return _plan_decline(
         "evidence_missing", detail[0], field_path="edit_format", alternative=detail[1]
     )
+
+
+def _silent_audio_status(local_path: str, *, job_id: str) -> str | None:
+    """``"silent"`` / ``"inaudible"`` when the speaker clip has no usable sound, else ``None``.
+
+    KRI-653: a dead-mic recording is a valid audio stream of zeros. Whisper and Gemini
+    hallucinate words over it ("Bye! Bye!", "Hello." x1000) and the speech cut then removes
+    almost the whole take, so a subtitled / talking-head edit must refuse it up front.
+    ``unknown`` (the measurement itself failed) fails OPEN: a broken probe never blocks a render.
+    """
+    from app.services.clip_speech import audio_presence  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    presence = audio_presence(local_path)
+    if presence.status not in ("silent", "inaudible"):
+        return None
+    record_pipeline_event(
+        "assembly",
+        "silent_audio_declined",
+        {
+            "presence": presence.status,
+            "max_window_db": presence.max_window_db,
+            "active_s": round(presence.active_s, 2),
+            "duration_s": round(presence.duration_s, 2),
+        },
+    )
+    log.warning(
+        "silent_audio_declined",
+        job_id=job_id,
+        presence=presence.status,
+        max_window_db=presence.max_window_db,
+        duration_s=round(presence.duration_s, 2),
+    )
+    return presence.status
+
+
+def _require_audible_speech(local_path: str, *, job_id: str) -> None:
+    """Raise the typed ``evidence_missing`` decline when the speaker clip has no sound."""
+    if _silent_audio_status(local_path, job_id=job_id) is not None:
+        decline = _speech_fallback_decline("silent_audio")
+        assert decline is not None  # the key is registered above
+        raise decline
 
 
 def _flag_decline(kind: str, message: str) -> BaseException:
@@ -6816,6 +6863,9 @@ def _run_phone_subtitled_job(
                 raise UnsupportedPhonePlan(
                     "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
                 )
+            # KRI-653: a silent take must never reach the speech cut (job c283f1dd cut a
+            # 192 s dead-mic take to 3 s over hallucinated words). Declared AND self-narrated.
+            _require_audible_speech(clip_path, job_id=job_id)
             if multi_clip:
                 cutaways = _phone_talking_head_cutaways(
                     speaker_clip_id=clip_id,
@@ -19869,6 +19919,19 @@ def _resolve_archetype(
             if plan_authority:
                 raise _flag_decline("different_format", "The talking-to-camera edit is off.")
             return _fallback("flag_disabled")
+        # KRI-653: "no usable speech still resolves to subtitled" holds for a quiet or
+        # wordless clip, NOT for a dead-mic take whose audio is digital silence --
+        # captions and a speech cut over that only produce hallucinated words.
+        silent_clips = [
+            path
+            for path in clip_id_to_local.values()
+            if _silent_audio_status(path, job_id=job_id) is not None
+        ]
+        if silent_clips and len(silent_clips) == len(clip_id_to_local):
+            decline = _speech_fallback_decline("silent_audio")
+            if plan_authority and decline is not None:
+                raise decline
+            return _fallback("no_speech")
         record_pipeline_event("assembly", "archetype_selected", {"archetype": "subtitled"})
         log.info("generative_archetype_selected", job_id=job_id, archetype="subtitled")
         return "subtitled", None, None

@@ -34,6 +34,7 @@ from app.config import settings
 from app.database import sync_session
 from app.models import ContentPlan, PlanItem, SpeechCleanupAnalysis
 from app.pipeline.caption_language import crosscheck_detected_language
+from app.pipeline.silence_cut import NO_SPEECH_BAILOUTS
 from app.pipeline.speech_cleanup_analysis import (
     SpeechCleanupAnalysisInput,
     SpeechCleanupAnalysisResult,
@@ -42,6 +43,7 @@ from app.pipeline.speech_cleanup_analysis import (
     analyze_speech_cleanup as run_speech_cleanup_engine,
 )
 from app.pipeline.transcribe import TranscribeError
+from app.services.clip_speech import audio_presence
 from app.services.speech_cleanup_preflight import (
     SPEECH_CLEANUP_ENGINE_VERSION,
     SPEECH_CLEANUP_MAX_DURATION_S,
@@ -647,7 +649,35 @@ def _analyze_work(work: _ClaimedWork) -> SpeechCleanupAnalysisResult:
             duration_ms=max(0, int(round(decoded_duration_s * 1000))),
             artifact_bytes=audio_path.stat().st_size,
         )
-        return _run_engine(work, audio_path)
+        # KRI-653: a dead-mic take is a valid audio stream full of zeros. Whisper
+        # hallucinates words over it and the cut plan then removes ~all of the take,
+        # so refuse before spending any transcription on it. ``unknown`` fails open.
+        presence = audio_presence(str(audio_path))
+        if presence.status in ("silent", "inaudible"):
+            log.warning(
+                "speech_cleanup_analysis.no_audible_speech",
+                analysis_id=str(work.claim.analysis_id),
+                presence=presence.status,
+                max_window_db=presence.max_window_db,
+                active_s=round(presence.active_s, 2),
+                duration_s=round(presence.duration_s, 2),
+            )
+            raise SpeechCleanupOperationalError(
+                "no_speech_track", detail=f"audio_{presence.status}"
+            )
+        result = _run_engine(work, audio_path)
+        # Defense in depth for ``presence == unknown``: the transcript itself says the
+        # "words" all sit inside silence (or nothing is audible at all).
+        if result.safety_signals.bailout_reason in NO_SPEECH_BAILOUTS:
+            log.warning(
+                "speech_cleanup_analysis.transcript_contradicts_audio",
+                analysis_id=str(work.claim.analysis_id),
+                bailout_reason=result.safety_signals.bailout_reason,
+            )
+            raise SpeechCleanupOperationalError(
+                "no_speech_track", detail=str(result.safety_signals.bailout_reason)
+            )
+        return result
 
 
 def _persist_success(work: _ClaimedWork, result: SpeechCleanupAnalysisResult) -> bool:

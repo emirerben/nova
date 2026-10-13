@@ -1124,6 +1124,53 @@
         "KRI-610 (#1562) breaks the repeated \"simpler version?\" loop"
       ],
       "red_control": "verified"
+    },
+    {
+      "id": "kri-653-silent-take",
+      "tickets": [
+        "KRI-653"
+      ],
+      "symptom": "A 192.6 s in-app talk-to-camera take recorded digitally silent audio; Whisper/Gemini hallucinated words over it, silence cut removed 98% and the job shipped a 4.9 s video as variants_ready with no error (job c283f1dd, 2026-10-13).",
+      "boundary": "verifier",
+      "status": "open_pr",
+      "owner": "KRI-653",
+      "paths": [
+        "src/apps/api/app/services/clip_speech.py",
+        "src/apps/api/app/services/transcript_quality.py",
+        "src/apps/api/app/pipeline/silence_cut.py",
+        "src/apps/api/app/tasks/speech_cleanup_analysis.py",
+        "src/apps/api/app/tasks/generative_build.py"
+      ],
+      "regression_tests": [
+        "tests/services/test_audio_presence.py",
+        "tests/services/test_transcript_quality.py",
+        "tests/pipeline/test_silence_cut_no_speech.py",
+        "tests/tasks/test_silent_audio_gate.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "real prod proxy (silent) + prod Whisper words + real silencedetect span replayed: presence=silent, gate declines, cut plan words_in_silence on V1 and V2",
+        "live_model": "n/a",
+        "native_output": "incident observed on TestFlight 2026-10-13; recorder fix ships in the iOS PR",
+        "production": "unfixed until this PR deploys"
+      },
+      "neighbours_covered": [
+        "phone subtitled (declared + self-narrated)",
+        "cloud subtitled archetype resolution",
+        "speech-cleanup preflight (before Whisper spend)",
+        "V1 and V2 cut builders",
+        "talking_head cloud already rejects silent spines via the 0.15 speech-coverage floor"
+      ],
+      "neighbours_gap": [
+        "in-app recorder can still produce a silent take until the iOS PR ships",
+        "creator voiceover recordings have no silence check",
+        "iOS speech-check failure screen ignores the no_speech_track code"
+      ],
+      "follow_ups": [
+        "iOS recorder fix (KRI-653 PR 2)"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

@@ -1516,6 +1516,52 @@ def test_playback_diagnostics_rejects_bad_id_and_invalid_body() -> None:
     db.execute.assert_not_awaited()
 
 
+_RECORDER_DIAGNOSTIC = {
+    "kind": "take_silent",
+    "audio_category": "playAndRecord",
+    "audio_mode": "videoRecording",
+    "route_inputs": ["MicrophoneBuiltIn"],
+    "route_outputs": ["Speaker"],
+    "other_audio_playing": False,
+    "phase_history": ["ready+0", "scene_inactive+812", "recording+2400"],
+    "channel_count": 1,
+    "max_power_db": -160.0,
+    "take_duration_s": 192.6,
+    "app_build": "123",
+}
+
+
+def test_recorder_diagnostics_logs_a_silent_take_for_the_caller() -> None:
+    """KRI-653: the app names why its recorder heard nothing; log-only, no DB write."""
+    user = _user()
+    db = _db([])
+    _override(user, db)
+
+    with structlog.testing.capture_logs() as logs:
+        response = client.post("/me/recorder-diagnostics", json=_RECORDER_DIAGNOSTIC)
+
+    assert response.status_code == 204
+    assert response.content == b""
+    events = [entry for entry in logs if entry["event"] == "recorder_audio_silent"]
+    assert len(events) == 1
+    assert events[0]["user_id"] == str(user.id)
+    assert events[0]["kind"] == "take_silent"
+    assert events[0]["phase_history"][1] == "scene_inactive+812"
+    db.execute.assert_not_awaited()
+
+
+def test_recorder_diagnostics_rejects_unbounded_or_unknown_input() -> None:
+    user = _user()
+    _override(user, _db([]))
+
+    unknown_event = {**_RECORDER_DIAGNOSTIC, "kind": "other"}
+    assert client.post("/me/recorder-diagnostics", json=unknown_event).status_code == 422
+    long_label = {**_RECORDER_DIAGNOSTIC, "phase_history": ["x" * 500]}
+    assert client.post("/me/recorder-diagnostics", json=long_label).status_code == 422
+    too_many = {**_RECORDER_DIAGNOSTIC, "phase_history": ["a"] * 40}
+    assert client.post("/me/recorder-diagnostics", json=too_many).status_code == 422
+
+
 def test_edit_recipe_is_owner_fenced_and_projects_only_portable_fields() -> None:
     user = _user()
     job = _job(

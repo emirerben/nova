@@ -645,7 +645,14 @@ def _sanitize_plan(value: object, label: str) -> dict[str, Any] | None:
             safe[key] = _enum(
                 raw,
                 frozenset(
-                    {"no_words", "clip_too_short", "max_removal_exceeded", "output_too_short"}
+                    {
+                        "no_words",
+                        "clip_too_short",
+                        "max_removal_exceeded",
+                        "output_too_short",
+                        "words_in_silence",
+                        "no_audible_speech",
+                    }
                 ),
                 f"{label}.{key}",
                 nullable=True,
