@@ -421,6 +421,8 @@ enum AccountIdentity {
     func openWorkspace(preferredProjectID: UUID? = nil) async {
         selectWorkspaceProject(preferredProjectID: preferredProjectID)
         uploads.recoverInterruptedPreparations()
+        let api = api
+        Task { await api.prefetchCreationCapabilities() }
         async let uploadRecovery: Void = uploads.restorePendingTasks()
         await loadProjects()
         selectWorkspaceProject(preferredProjectID: preferredProjectID)

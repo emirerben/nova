@@ -1140,6 +1140,12 @@ private struct CreationWorkspaceView: View {
     }
 
     private func loadCapabilitiesWithRetry() async {
+        // KRI-640: the New chat tap (or workspace open) just read capabilities;
+        // reuse that read so the format picker is usable on first paint.
+        if let recent = await model.api.recentCreationCapabilities(maxAge: 30) {
+            await refreshCapabilities(preloaded: recent)
+            if capabilitiesAreAuthoritative { return }
+        }
         for delay in [0.0, 1.0, 3.0, 8.0] {
             if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
             if Task.isCancelled { return }
@@ -1825,9 +1831,10 @@ private struct CreationWorkspaceView: View {
         capabilitiesReadAt = Date()
     }
 
-    private func refreshCapabilities() async {
+    private func refreshCapabilities(preloaded: CreationCapabilities? = nil) async {
         do {
-            let response = try await model.api.creationCapabilities()
+            let response: CreationCapabilities
+            if let preloaded { response = preloaded } else { response = try await model.api.creationCapabilities() }
             var limits: [CreationFormat: Int] = [:]
             let formats = response.formats.compactMap { capability -> CreationFormat? in
                 guard let format = CreationFormat(serverValue: capability.id) else { return nil }

@@ -137,6 +137,10 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func projects() async throws -> [ProjectSummary]
     func project(threadID: UUID) async throws -> CreationThread
     func creationCapabilities() async throws -> CreationCapabilities
+    /// KRI-640: the last capabilities read for this session if it is at most `maxAge` seconds old, else nil. Never touches the network.
+    func recentCreationCapabilities(maxAge: TimeInterval) async -> CreationCapabilities?
+    /// KRI-640: reads capabilities ahead of time so opening a chat and its format picker don't wait on them.
+    func prefetchCreationCapabilities() async
     /// KRI-207: the creator's current requirements and how each was handled.
     func creationBrief(threadID: UUID) async throws -> CreativeBrief
     func sendCreationMessage(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
@@ -342,6 +346,8 @@ extension KriaAPIClient {
     }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
+    func recentCreationCapabilities(maxAge: TimeInterval) async -> CreationCapabilities? { nil }
+    func prefetchCreationCapabilities() async {}
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink { throw APIError.unsupported }
     func creationBrief(threadID: UUID) async throws -> CreativeBrief { throw APIError.unsupported }
 
@@ -1025,10 +1031,44 @@ private actor MobileSessionRefreshCoordinator {
     }
 }
 
+/// KRI-640: remembers the last `creation-threads/capabilities` read (per sign-in)
+/// and shares one in-flight read between callers, so tapping New chat doesn't
+/// pay for a capabilities round trip the format picker is about to repeat.
+actor CreationCapabilitiesCache {
+    private var entry: (owner: String, value: CreationCapabilities, readAt: Date)?
+    private var inFlight: (owner: String, task: Task<CreationCapabilities, Error>)?
+
+    func recent(owner: String, maxAge: TimeInterval) -> CreationCapabilities? {
+        guard let entry, entry.owner == owner, Date().timeIntervalSince(entry.readAt) <= maxAge else { return nil }
+        return entry.value
+    }
+
+    func fetch(owner: String, _ load: @escaping @Sendable () async throws -> CreationCapabilities) async throws -> CreationCapabilities {
+        let task: Task<CreationCapabilities, Error>
+        if let inFlight, inFlight.owner == owner {
+            task = inFlight.task
+        } else {
+            task = Task { try await load() }
+            inFlight = (owner, task)
+        }
+        do {
+            let value = try await task.value
+            entry = (owner, value, Date())
+            if inFlight?.owner == owner { inFlight = nil }
+            return value
+        } catch {
+            if inFlight?.owner == owner { inFlight = nil }
+            throw error
+        }
+    }
+}
+
 struct KriaAPI: KriaAPIClient {
     let baseURL: URL
     let tokenStore: TokenStore
     let session: URLSession
+    private let capabilitiesCache = CreationCapabilitiesCache()
+    private var capabilitiesOwner: String { (try? tokenStore.read())?.refreshToken ?? "" }
     /// Compile-time integration seam generated from the server-owned OpenAPI
     /// subset. Handwritten request policy currently wraps it with Keychain
     /// refresh/retry behavior; endpoint DTO drift still fails this target.
@@ -1083,7 +1123,16 @@ struct KriaAPI: KriaAPIClient {
     func mutateTextPreferenceMemory(path: String, method: String, body: [String: JSONValue]) async throws -> TextPreferenceOperation { try await request(path: path, method: method, bodyData: JSONEncoder().encode(body), decode: TextPreferenceOperation.self) }
     func projects() async throws -> [ProjectSummary] { try await request(path: "creation-threads", method: "GET", bodyData: nil, decode: [CreationThread].self).map(\.summary) }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
-    func creationCapabilities() async throws -> CreationCapabilities { try await request(path: "creation-threads/capabilities", method: "GET", bodyData: nil, decode: CreationCapabilities.self) }
+    func creationCapabilities() async throws -> CreationCapabilities {
+        try await capabilitiesCache.fetch(owner: capabilitiesOwner) { try await fetchCreationCapabilities() }
+    }
+    private func fetchCreationCapabilities() async throws -> CreationCapabilities {
+        try await request(path: "creation-threads/capabilities", method: "GET", bodyData: nil, decode: CreationCapabilities.self)
+    }
+    func recentCreationCapabilities(maxAge: TimeInterval) async -> CreationCapabilities? {
+        await capabilitiesCache.recent(owner: capabilitiesOwner, maxAge: maxAge)
+    }
+    func prefetchCreationCapabilities() async { _ = try? await creationCapabilities() }
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink {
         try await request(path: "creation-threads/\(threadID.uuidString)/song-audio", method: "GET",
                           query: generation.map { [URLQueryItem(name: "generation", value: String($0))] } ?? [],
@@ -1121,7 +1170,11 @@ struct KriaAPI: KriaAPIClient {
         }
     }
     func createThread(message: String?) async throws -> CreationThread {
-        let capabilities = try await creationCapabilities()
+        // The runtime version changes only on a server rollout, so a read from the
+        // last few minutes is as good as a fresh one and saves a round trip on tap.
+        let cached = await recentCreationCapabilities(maxAge: 300)
+        let capabilities: CreationCapabilities
+        if let cached { capabilities = cached } else { capabilities = try await creationCapabilities() }
         let runtime = capabilities.preferredRuntimeVersion
         return try await request(path: "creation-threads", method: "POST", bodyData: JSONEncoder().encode(CreateThreadRequest(message: runtime == 1 ? message : nil, clientEventID: UUID().uuidString, runtimeVersion: runtime)), decode: CreationThread.self)
     }
