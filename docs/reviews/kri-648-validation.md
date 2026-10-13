@@ -73,6 +73,16 @@ Results, logs, measurement reports and exported media remain outside Git.
 The final 27-case kit passed native simulator preview/export, including differently
 sized caption blocks. CI maps `kri-648-phone-text` to the same export kit and both
 settings journeys, retaining their results under the existing journey artifact.
+Font registry, web mirror, active-font count and bundled identification data are
+synchronized at 45 active faces. The existing 44 embedding vectors remain within
+0.000001 cosine distance of their previous values. The production artifact loader,
+68 focused font checks, 99 CI regression checks, generated-contract verification
+and web typecheck passed. The final native rebuild also passed all 1,708 enabled
+tests against these artifacts.
+
+The raw-request reader exception is limited to initial dispatch pinning validated
+visual properties. Route, duration, voice, order and required copy retain their
+existing authority; workers and retries use stored rules.
 
 New caption geometry requires client protocol 8. The independent settings choices
 include Use defaults, Automatic and a required font, avoiding a misleading inherited

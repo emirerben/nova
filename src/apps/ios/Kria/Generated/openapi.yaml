@@ -2562,7 +2562,7 @@
           },
           "max_width_frac": {
             "default": null,
-            "maximum": 1.0,
+            "maximum": 1,
             "minimum": 0.2,
             "nullable": true,
             "title": "Max Width Frac",
