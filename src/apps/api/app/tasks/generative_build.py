@@ -60,6 +60,7 @@ from app.agents._schemas.edit_format import (
     SLIDES_DRAWING_RENDERER_VERSION,
     SLIDES_RENDERER_VERSION,
     SLIDES_SIZES_RENDERER_VERSION,
+    SLIDES_STICKER_RENDERER_VERSION,
     coerce_edit_format,
     guided_edit_applicable,
 )
@@ -10031,7 +10032,7 @@ def _resolve_slide_post_draft_and_assets(
     from sqlalchemy import select as _select  # noqa: PLC0415
 
     from app.models import PlanItem, PlanItemAsset  # noqa: PLC0415
-    from app.schemas.slide_post import parse_slide_post  # noqa: PLC0415
+    from app.schemas.slide_post import parse_slide_post, sticker_asset_ids  # noqa: PLC0415
 
     job = db.get(Job, uuid.UUID(job_id))
     if job is None or job.content_plan_item_id is None:
@@ -10043,7 +10044,14 @@ def _resolve_slide_post_draft_and_assets(
     if draft is None or not draft.slides:
         raise SlidePostPolicyError("empty_draft", "No slides to render.")
     asset_ids = [ref.asset_id for ref in draft.slides]
-    rows = db.execute(_select(PlanItemAsset).where(PlanItemAsset.id.in_(asset_ids))).scalars().all()
+    # Pasted image stickers (KRI-647) are pool images that are NEVER slides: resolve them in
+    # the same ownership-checked read, but best effort (below), not as a slide requirement.
+    sticker_ids = sticker_asset_ids(draft)
+    rows = (
+        db.execute(_select(PlanItemAsset).where(PlanItemAsset.id.in_([*asset_ids, *sticker_ids])))
+        .scalars()
+        .all()
+    )
     assets_by_id = {row.id: row for row in rows}
     allowed_prefix = f"users/{job_user_id}/plan/{content_plan_item_id}/"
     # Extract every field we need into plain dicts BEFORE the session
@@ -10067,6 +10075,28 @@ def _resolve_slide_post_draft_and_assets(
             # and could stamp that draft as rendered, so fail before any
             # normalization/upload work instead of silently dropping it.
             continue
+        # Sticker images for this slide, keyed by sticker id. A stale, foreign, unready,
+        # non-image or missing asset is simply absent: the render drops that sticker.
+        stickers: dict[str, dict[str, Any]] = {}
+        for sticker in (ref.edits.stickers or []) if ref.edits is not None else []:
+            try:
+                sticker_row = assets_by_id.get(uuid.UUID(sticker.asset_id))
+            except ValueError:
+                sticker_row = None
+            if (
+                sticker_row is None
+                or sticker_row.plan_item_id != content_plan_item_id
+                or sticker_row.user_id != job_user_id
+                or sticker_row.media_status != "ready"
+                or sticker_row.kind != "image"
+                or not sticker_row.gcs_path.startswith(allowed_prefix)
+            ):
+                continue
+            stickers[sticker.id] = {
+                "gcs_path": sticker_row.gcs_path,
+                "gcs_generation": sticker_row.gcs_generation,
+                "content_fingerprint": sticker_row.content_fingerprint,
+            }
         ordered_assets.append(
             {
                 "id": str(asset.id),
@@ -10077,6 +10107,7 @@ def _resolve_slide_post_draft_and_assets(
                 "duration_s": asset.duration_s,
                 "alt": ref.alt,
                 "edits": ref.edits,
+                "stickers": stickers,
             }
         )
     if len(ordered_assets) != len(draft.slides):
@@ -10084,6 +10115,35 @@ def _resolve_slide_post_draft_and_assets(
             "incomplete_draft_assets", "Every saved slide must be ready and available to render."
         )
     return content_plan_item_id, job_user_id, draft, ordered_assets
+
+
+def _download_slide_sticker_sources(
+    stickers: dict[str, dict[str, Any]], *, tmpdir: str, slide_index: int
+) -> dict[str, str]:
+    """Download one slide's (already ownership-checked) sticker originals; sticker id -> path.
+
+    Best effort, like the slide assets' fallbacks: a failed download only drops that sticker.
+    """
+    from app import storage  # noqa: PLC0415
+
+    sources: dict[str, str] = {}
+    for sticker_id, row in stickers.items():
+        local = os.path.join(
+            tmpdir,
+            f"sticker_{slide_index:02d}_{hashlib.sha1(sticker_id.encode()).hexdigest()[:10]}",
+        )
+        try:
+            if row.get("gcs_generation"):
+                storage.download_generation_to_file(
+                    row["gcs_path"], local, generation=str(row["gcs_generation"])
+                )
+            else:
+                storage.download_to_file(row["gcs_path"], local)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("slide_sticker_download_failed", sticker_id=sticker_id, error=str(exc))
+            continue
+        sources[sticker_id] = local
+    return sources
 
 
 def _build_slide_post_result(
@@ -10130,8 +10190,17 @@ def _build_slide_post_result(
         asset.get("edits") is not None and asset["edits"].drawing is not None
         for asset in ordered_assets
     )
+    # ...and a post with any slide sticker by the sticker compositor (KRI-647), which also
+    # paints drawings, so it outranks the drawing stamp.
+    has_stickers = any(
+        asset.get("edits") is not None and asset["edits"].stickers for asset in ordered_assets
+    )
     export_renderer_version = (
-        SLIDES_DRAWING_RENDERER_VERSION if has_drawing else SLIDES_SIZES_RENDERER_VERSION
+        SLIDES_STICKER_RENDERER_VERSION
+        if has_stickers
+        else SLIDES_DRAWING_RENDERER_VERSION
+        if has_drawing
+        else SLIDES_SIZES_RENDERER_VERSION
     )
     bundle_slides: list[slide_build.BundleSlideFile] = []
     resolved_slides: list[dict[str, Any]] = []
@@ -10163,7 +10232,14 @@ def _build_slide_post_result(
             # edit — the edit would never appear in the export. "noedits" is
             # a plain literal (not a hash) so the unedited path's key is
             # unchanged from before this feature existed.
-            edits_digest = slide_build.edits_cache_digest(edits)
+            stickers = asset.get("stickers") or {}
+            edits_digest = slide_build.edits_cache_digest(
+                edits,
+                {
+                    sid: row["content_fingerprint"] or row["gcs_path"]
+                    for sid, row in stickers.items()
+                },
+            )
             # Image slides carry the decode-recipe version so a normalizer
             # fix rebuilds stale derivatives. Every slide carries the
             # watermark version, so a derivative cached before the watermark
@@ -10174,6 +10250,7 @@ def _build_slide_post_result(
             wm_suffix = f"_wm{slide_build.SLIDE_WATERMARK_VERSION}"
             # Only a drawn slide gets a painter version, so every other key is unchanged.
             wm_suffix += slide_build.drawing_key_suffix(edits)
+            wm_suffix += slide_build.sticker_key_suffix(edits)
             export_canvas = slide_build.slide_canvas(platform_profile, edits, aspect)
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
@@ -10194,13 +10271,24 @@ def _build_slide_post_result(
                     )
                 else:
                     storage.download_to_file(asset["gcs_path"], source_local)
+                sticker_sources = _download_slide_sticker_sources(
+                    stickers, tmpdir=tmpdir, slide_index=index
+                )
                 if kind == "image":
                     slide_build.normalize_image_slide(
-                        source_local, normalized_local, canvas=export_canvas, edits=edits
+                        source_local,
+                        normalized_local,
+                        canvas=export_canvas,
+                        edits=edits,
+                        sticker_sources=sticker_sources,
                     )
                 else:
                     slide_build.normalize_video_slide(
-                        source_local, normalized_local, canvas=export_canvas, edits=edits
+                        source_local,
+                        normalized_local,
+                        canvas=export_canvas,
+                        edits=edits,
+                        sticker_sources=sticker_sources,
                     )
                 storage.upload_local_file(
                     normalized_local,

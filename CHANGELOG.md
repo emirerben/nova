@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.267.0] - 2026-10-13
+
+### Changed
+- feat: image stickers on slide posts and paste a picture onto a slide (KRI-460, KRI-647) (#1590) <!-- release-pr: 1590 -->
+
+## [0.78.266.0] - 2026-10-13
+
+### Changed
+- fix(kria): Turkish chat gets Turkish length question and render-ready line (KRI-630) (#1583) <!-- release-pr: 1583 -->
+
+## [0.78.265.0] - 2026-10-13
+
+### Changed
+- fix(kria): never play clips the creator ruled out by length (KRI-623) (#1575) <!-- release-pr: 1575 -->
+
 ## [0.78.264.0] - 2026-10-13
 
 ### Changed

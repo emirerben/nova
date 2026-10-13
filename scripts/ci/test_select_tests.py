@@ -708,6 +708,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-653-silent-take"),
             ),
             (
+                "src/apps/api/app/kria/clip_scope.py",
+                (True, "covered", "kri-623-ruled-out-clips"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/kri623_tigre_m2_montage_turn.json",
+                (True, "covered", "kri-623-ruled-out-clips"),
+            ),
+            (
                 "src/apps/api/app/kria/opening_cut_ask.py",
                 (True, "covered", "kri-628-opening-cut"),
             ),

@@ -77,6 +77,9 @@ final class CreationChatFixture: @unchecked Sendable {
     /// `KRIA_SLIDE_POST_LATE_ASSET=1`: a fourth photo that is still processing for the first two reads
     /// after a draft exists and then turns ready, like an upload that finishes while the editor is open.
     private var lateAssetPolls: [String: Int] = [:]
+    /// KRI-460: pictures the fixture "uploaded" (reserve -> register), per item. They join the pool as ready photos the
+    /// moment they are registered, exactly like a pasted sticker whose upload finished.
+    private var slideStickerAssets: [String: [[String: Any]]] = [:]
     private var deviceRevisions: [String: Int] = [:]
     /// KRI-443 (`KRIA_CHAT_PLAN_BLOCKS=1`): how far the staged `plan_block` script has advanced, per thread.
     private var planStages: [String: Int] = [:]
@@ -140,6 +143,8 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRIA_SLIDE_POST_SIZES (KRI-606): the Size sheet and per-photo Fit. The server needs framing on too.
             // KRIA_SLIDE_POST_DRAWING (KRI-589): the Draw tool. The server only advertises it to protocol 7 builds.
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_DRAWING"] == "1" { capabilities["slide_post_drawing"] = true }
+            // KRIA_SLIDE_POST_STICKERS (KRI-460): pasted pictures on slides. The server only advertises it to protocol 8 builds.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_STICKERS"] == "1" { capabilities["slide_post_stickers"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_SIZES"] == "1" {
                 capabilities["slide_post_framing"] = true
                 capabilities["slide_post_sizes"] = true
@@ -830,6 +835,8 @@ final class CreationChatFixture: @unchecked Sendable {
             return ["id": "asset-\(index)", "kind": media.2, "status": "ready", "media_status": "available", "source_filename": "\(media.0).\(media.1)", "source_url": url, "display_url": url, "preview_url": poster, "duration_s": 8]
         }
         let slides: [[String: Any]] = assets.enumerated().map { index, asset in ["id": "slide-\(index)", "asset_id": asset["id"]!, "kind": asset["kind"]!] }
+        // Pasted pictures sit in the pool but are never part of the starting slides.
+        assets += slideStickerAssets[itemID] ?? []
         // `KRIA_SLIDE_POST_READY_DRAFT=1`: the READY post (`KRIA_SLIDE_POST_READY_THREAD`) already has a saved,
         // rendered server draft, like a post opened from the gallery in production.
         if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_READY_DRAFT"] == "1",
@@ -837,6 +844,18 @@ final class CreationChatFixture: @unchecked Sendable {
             slideDrafts[itemID] = ["schema_version": 1, "version": 1, "platform_profile": "instagram_carousel", "slides": slides, "cover_index": 0,
                                    "caption": "Three moments, one story.", "user_edited": true, "rendered_version": 1]
             slideRendered.insert(itemID)
+        }
+        // A sticker upload (KRI-460): reserve a slot, then register the picture; both answer like the server.
+        if parts.last == "upload-urls", request.httpMethod == "POST" {
+            return response(["urls": [["reservation_id": UUID().uuidString, "upload_url": "https://fixture.invalid/upload", "gcs_path": "fixture/sticker", "upload_headers": [String: String]()]]])
+        }
+        if parts.last == "assets", request.httpMethod == "POST" {
+            let name = body["source_filename"] as? String ?? "pasted.png"
+            let location = body["gcs_path"] as? String ?? ""
+            let stickerAsset: [String: Any] = ["id": "sticker-asset-\(slideStickerAssets[itemID, default: []].count + 1)", "kind": "image", "status": "ready", "media_status": "available",
+                                              "source_filename": name, "source_url": location, "display_url": location, "preview_url": location, "duration_s": 0, "retryable": false]
+            slideStickerAssets[itemID, default: []].append(stickerAsset)
+            return response(stickerAsset, status: 201)
         }
         func lateAsset(status: String) -> [String: Any] {
             let url = Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")?.absoluteString ?? ""

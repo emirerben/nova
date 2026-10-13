@@ -331,7 +331,7 @@ jobs:
           python3 - <<'PY'
           import os
           selected = os.environ["JOURNEY_IDS"].split(",")
-          allowed = {"kri-384-library-ingest", "kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-577-reliability-gates", "kri-586-hook-copy", "kri-590-voiceover-cues", "kri-598-voiceover-planner", "kri-593-voiceover-clips", "kri-653-silent-take", "kri-589-drawing", "kri-628-opening-cut"}
+          allowed = {"kri-384-library-ingest", "kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-577-reliability-gates", "kri-586-hook-copy", "kri-590-voiceover-cues", "kri-598-voiceover-planner", "kri-593-voiceover-clips", "kri-653-silent-take", "kri-589-drawing", "kri-623-ruled-out-clips", "kri-628-opening-cut"}
           if os.environ["COVERAGE"] != "covered" or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed:
               raise SystemExit("Journey selection has an unmapped or invalid incident")
           PY
@@ -902,6 +902,17 @@ jobs:
             tests/services/test_transcript_quality.py \
             tests/tasks/test_silent_audio_gate.py -q \
             | tee ../../../test-results/kri-559/silent-take-api-tests.log
+      - name: Verify a montage drops the clips the creator ruled out by length
+        if: contains(needs.changes.outputs.journey_ids, 'kri-623-ruled-out-clips')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/kria/test_kri623_ruled_out_clips.py -q \
+            | tee ../../../test-results/kri-559/ruled-out-clips-api-tests.log
       - name: Verify a phone Talking edit starts at the line the creator quotes
         if: contains(needs.changes.outputs.journey_ids, 'kri-628-opening-cut')
         working-directory: src/apps/api

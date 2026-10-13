@@ -65,6 +65,9 @@ SLIDES_SIZES_RENDERER_VERSION = 3
 # paints `SlideEdits.drawing` stamps its variant with the max of this and the above,
 # and a drawn draft rendered by an older worker is stale, never "current".
 SLIDES_DRAWING_RENDERER_VERSION = 4
+# Same for pasted image stickers (KRI-647): a post with any slide sticker is stamped 5 by
+# a worker that composites them, and a stickered draft rendered by an older worker is stale.
+SLIDES_STICKER_RENDERER_VERSION = 5
 
 EDIT_FORMATS: tuple[str, ...] = get_args(EditFormat)
 

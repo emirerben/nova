@@ -2944,3 +2944,17 @@ CI step (the kri-548 pattern) for each of 25 incidents -- the manifest union is 
 step and one source of truth; and blocking merges on the PR-body lines -- Emir's
 review reads them, CI runs the tests.
 
+
+---
+
+## [2026-10-13] Slide stickers: the image stays in the pool but is never a slide; old builds get a 426 (KRI-647 / KRI-460)
+
+**Decision:** A pasted slide sticker (`SlideEdits.stickers`) references an ordinary image `PlanItemAsset`, so upload, dedupe, HEIC handling,
+quota and ownership checks are reused and no migration is needed (the stickers live inside the `slide_post` JSON). Because every route that
+derives slides from the pool (`compose`/`propose` with no ids, the app's "continue with N visuals") would otherwise promote that image to a
+slide, the sticker assets of a draft are subtracted in each of them, and the PUT refuses a slide that is also a sticker. Unlike drawings (an
+old build silently drops the unknown key and the "missing keeps stored" merge protects it), a save that CARRIES stickers from a build below
+protocol 8 is refused with `426 client_update_required`, because such a save can only be forged or replayed.
+**Why:** A render-time trap, not a UI one: a sticker image that became a slide would silently change the exported post. Rendering is best
+effort for a stale sticker asset (dropped, never fatal) so deleting a pool image cannot brick an export.
+**Revisit if:** a pool-wide "role" column on `PlanItemAsset` (sticker vs slide) is ever added; the subtraction can then become one query filter.
