@@ -109,7 +109,10 @@
       "xctests": [
         "KriaTests/ChatTimelineTests/testCompletedThoughtIsPlacedAfterItsUserRequestBeforeReply",
         "KriaTests/SlidePostTests/testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory",
-        "KriaTests/SlidePostChatEditTests/testCompletedChatEditThoughtRemainsWithReplyAfterReopening"
+        "KriaTests/SlidePostChatEditTests/testCompletedChatEditThoughtRemainsWithReplyAfterReopening",
+        "KriaTests/ThoughtHeadlineTests/testLatestCompleteHeadingWins",
+        "KriaUITests/CreationUITests/testLiveThoughtShowsOneLineSummaryAndExpandsOnTap",
+        "KriaUITests/CreationUITests/testFinishedThoughtStaysCollapsedUntilTapped"
       ],
       "paths": [
         "src/apps/api/app/agents/_model_client.py",
@@ -145,11 +148,14 @@
         "src/apps/ios/Kria/Features/ChatTimeline.swift",
         "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
         "src/apps/ios/Kria/Features/SlidePostAISheet.swift",
+        "src/apps/ios/Kria/Features/ChatUITestTransport.swift",
         "src/apps/ios/Kria/Features/ThoughtSummaryDisclosure.swift",
         "src/apps/ios/Kria/Generated/openapi.yaml",
         "src/apps/ios/Tests/KriaTests/ChatTimelineTests.swift",
         "src/apps/ios/Tests/KriaTests/SlidePostChatEditTests.swift",
-        "src/apps/ios/Tests/KriaTests/SlidePostTests.swift"
+        "src/apps/ios/Tests/KriaTests/SlidePostTests.swift",
+        "src/apps/ios/Tests/KriaTests/ThoughtHeadlineTests.swift",
+        "src/apps/ios/Tests/KriaUITests/CreationUITests.swift"
       ]
     },
     {
