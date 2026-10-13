@@ -1773,6 +1773,14 @@ class Settings(BaseSettings):
     # `fly secrets set SLIDE_POST_DRAWING_ENABLED=false --app nova-video` (api + worker) + restart.
     slide_post_drawing_enabled: bool = True
     slide_post_drawing_min_client_protocol: int = 7
+    # KRI-647 / KRI-460: pasted image stickers on slides (SlideEdits.stickers). Code default
+    # ON (kill switch): off, the slide-post PUT keeps each slide's stored `stickers` and
+    # ignores incoming values and capability `slide_post_stickers` is false; stored stickers
+    # still render. A save carrying stickers from a build below the floor gets 426
+    # client_update_required. Apply: `fly secrets set SLIDE_POST_STICKERS_ENABLED=false
+    # --app nova-video` (api + worker) + restart. Never roll the CODE back once stickers exist.
+    slide_post_stickers_enabled: bool = True
+    slide_post_sticker_min_client_protocol: int = 8
     # KRI-557: provider-marked Gemini thought summaries for native creation and
     # slide-post calls. Deploy dark; enable after production canary with
     # THOUGHT_SUMMARIES_ENABLED=true for API and Celery processes after canary.

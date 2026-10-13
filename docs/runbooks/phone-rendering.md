@@ -2979,7 +2979,7 @@ for a variant that has drawings.
 `phone_text_style` version 1 with immutable account/current-video rules. Only
 initial phone writers consume it; old generations and editor saves replay their
 saved rows. Disabling the flag affects new generations, not existing exports.
-New resolved caption geometry requires client protocol 8. Older native builds
+New resolved caption geometry requires client protocol 9. Older native builds
 receive `426 client_update_required` for styled device recipes/editor payloads.
 Distribute the compatible TestFlight build before enabling the flag.
 

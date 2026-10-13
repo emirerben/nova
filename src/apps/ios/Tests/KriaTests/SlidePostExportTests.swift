@@ -51,8 +51,8 @@ import XCTest
         let exporter = SlidePostExporter(
             downloadFile: { _ in XCTFail("Must not download server derivatives"); throw URLError(.badURL) },
             authorizePhotos: { .authorized }, writePhotos: { resources = $0 },
-            onDeviceRender: { _, asset, _, _ in sourceIDs.append(asset.id); return Data("jpeg".utf8) },
-            onDeviceVideoRender: { _, asset, _, _, url in sourceIDs.append(asset.id); try Data("mp4".utf8).write(to: url) }
+            onDeviceRender: { _, asset, _, _, _ in sourceIDs.append(asset.id); return Data("jpeg".utf8) },
+            onDeviceVideoRender: { _, asset, _, _, url, _ in sourceIDs.append(asset.id); try Data("mp4".utf8).write(to: url) }
         )
         NativeEditorURLProtocol.handler = { _ in XCTFail("Must not save, generate or poll"); return (500, Data()) }
         await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID, extendedOnDevice: true)
@@ -72,8 +72,8 @@ import XCTest
         var writes = 0
         var output: URL?
         let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 },
-            onDeviceRender: { _, _, _, _ in Data("jpeg".utf8) },
-            onDeviceVideoRender: { _, _, _, _, url in output = url; try Data("partial".utf8).write(to: url); throw URLError(.cannotDecodeContentData) })
+            onDeviceRender: { _, _, _, _, _ in Data("jpeg".utf8) },
+            onDeviceVideoRender: { _, _, _, _, url, _ in output = url; try Data("partial".utf8).write(to: url); throw URLError(.cannotDecodeContentData) })
         await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID, extendedOnDevice: true)
         XCTAssertEqual(writes, 0)
         if let output { XCTAssertFalse(FileManager.default.fileExists(atPath: output.deletingLastPathComponent().path)) }
@@ -90,8 +90,8 @@ import XCTest
         var writes = 0
         var output: URL?
         let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 },
-            onDeviceRender: { _, _, _, _ in Data("jpeg".utf8) },
-            onDeviceVideoRender: { _, _, _, _, url in
+            onDeviceRender: { _, _, _, _, _ in Data("jpeg".utf8) },
+            onDeviceVideoRender: { _, _, _, _, url, _ in
                 output = url
                 session.draft?.caption = "Edited while rendering"
                 try Data("mp4".utf8).write(to: url)

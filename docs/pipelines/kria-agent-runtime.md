@@ -268,6 +268,18 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   takes but refuses overlapping windows. Moments that don't fit fall back to one
   window per take, with a notice. Incident: cabin kit M2, prod thread 6605cf61.
   Guard: `tests/tasks/test_long_take_moments_montage.py`.
+- *Clips ruled out by length (KRI-623)*: "from the long takes", "skip the short
+  clips", "uzun çekimlerden", "kısa klipleri kullanma" leave clips out whatever the
+  Main Creator picked. `app/kria/clip_scope.py` reads the live brief's `select` asks
+  and the current message on every plan (`_plan_creator_action`, after the KRI-593
+  voiceover rule), splits the own videos at one clear duration gap (2x, no second gap
+  like it), and rewrites an "all"/empty pick into an explicit `selected` list, so
+  dispatch, the length plan and the phone montage all see it. A length word counts
+  only in a selecting phrase about a determined subset ("the long takes"), never a
+  description or a cut-length style; a later "use the short clips too" adds them back.
+  Photos and Visuals are never dropped; "skip the dark ones" stays the model's call
+  (no lighting signal yet). Incident: cabin kit M2 re-send, prod thread 35ccc8ef.
+  Guard: `tests/kria/test_kri623_ruled_out_clips.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
   none of those sources, the visible opening title is omitted; `Montage` remains

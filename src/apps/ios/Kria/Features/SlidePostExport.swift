@@ -11,8 +11,11 @@ import UIKit
     /// Renders one slide's JPEG on the device (draft slide, its asset, platform profile, post size). The size is
     /// the draft's `aspect` (nil = the platform's default): it is passed explicitly, never defaulted, so an export
     /// can't silently come out at the platform's shape.
-    typealias OnDeviceRender = (SlidePostSlide, SlidePostAsset, String, String?) async throws -> Data
-    typealias OnDeviceVideoRender = (SlidePostSlide, SlidePostAsset, String, String?, URL) async throws -> Void
+    /// The last argument is the slide's pasted pictures (KRI-460), already decoded.
+    typealias OnDeviceRender = (SlidePostSlide, SlidePostAsset, String, String?, [SlidePostPreparedSticker]) async throws -> Data
+    typealias OnDeviceVideoRender = (SlidePostSlide, SlidePostAsset, String, String?, URL, [SlidePostPreparedSticker]) async throws -> Void
+    /// Decodes a slide's sticker pictures from the post's pool (the original bytes, so PNG alpha survives).
+    typealias PrepareStickers = (SlidePostSlide, [SlidePostAsset]) async throws -> [SlidePostPreparedSticker]
 
     /// One slide handed to Photos. `creationDate` ascends with slide order so Photos' date sort
     /// (the only order it has; we deliberately create no album) shows the slides in post order.
@@ -57,6 +60,7 @@ import UIKit
     private let now: () -> Date
     private let onDeviceRender: OnDeviceRender
     private let onDeviceVideoRender: OnDeviceVideoRender
+    private let prepareStickers: PrepareStickers
     private var dismissTask: Task<Void, Never>?
 
     /// UI tests (`KRIA_SLIDE_POST_FIXTURE_PHOTOS=1`) save through a stub: no Photos permission prompt,
@@ -87,16 +91,19 @@ import UIKit
             }
         },
         now: @escaping () -> Date = Date.init,
-        onDeviceRender: @escaping OnDeviceRender = { slide, asset, profile, aspect in
-            try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile, aspect: aspect)
+        onDeviceRender: @escaping OnDeviceRender = { slide, asset, profile, aspect, stickers in
+            try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile, aspect: aspect, stickers: stickers)
         },
-        onDeviceVideoRender: @escaping OnDeviceVideoRender = { slide, asset, profile, aspect, url in
-            try await SlidePostVideoRender.renderSlide(slide: slide, asset: asset, profile: profile, aspect: aspect, outputURL: url)
+        onDeviceVideoRender: @escaping OnDeviceVideoRender = { slide, asset, profile, aspect, url, stickers in
+            try await SlidePostVideoRender.renderSlide(slide: slide, asset: asset, profile: profile, aspect: aspect, outputURL: url, stickers: stickers)
+        },
+        prepareStickers: @escaping PrepareStickers = { slide, assets in
+            try await SlidePostStickerStore.shared.prepared(for: slide, assets: assets)
         }
     ) {
         self.downloadFile = downloadFile; self.authorizePhotos = authorizePhotos
         self.writePhotos = writePhotos; self.now = now; self.onDeviceRender = onDeviceRender
-        self.onDeviceVideoRender = onDeviceVideoRender
+        self.onDeviceVideoRender = onDeviceVideoRender; self.prepareStickers = prepareStickers
     }
 
     /// Ascending, one second apart, ending at `now` so nothing is dated in the future.
@@ -212,8 +219,9 @@ import UIKit
 
     private func renderOnDevice(_ slide: SlidePostSlide, session: SlidePostSession, profile: String, aspect: String?, file: URL) async throws {
         guard let asset = session.state?.assets.first(where: { $0.id == slide.assetID }) else { throw SlidePostExportError.downloadFailed }
-        if slide.kind == "video" { try await onDeviceVideoRender(slide, asset, profile, aspect, file) }
-        else { try await onDeviceRender(slide, asset, profile, aspect).write(to: file, options: .atomic) }
+        let stickers = try await prepareStickers(slide, session.state?.assets ?? [])
+        if slide.kind == "video" { try await onDeviceVideoRender(slide, asset, profile, aspect, file, stickers) }
+        else { try await onDeviceRender(slide, asset, profile, aspect, stickers).write(to: file, options: .atomic) }
     }
 
     func saveToPhotos(session: SlidePostSession, revalidate: Revalidate) async {

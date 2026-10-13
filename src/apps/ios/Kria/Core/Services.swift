@@ -946,8 +946,13 @@ private enum KriaClientProtocolContract {
     /// number because a build with only the protocol-5 slide work cannot decode drawings.
     ///
     /// 7 (KRI-589): round-trips a slide's `drawing`; a build below it omits the key and the server keeps the stored one.
-    /// 8 (KRI-648): replays resolved caption corner/width preferences in native preview and Save.
-    static let version = 8
+    ///
+    /// 8 (KRI-460): round-trips a slide's `stickers` (pasted pictures placed on a slide). A build below it would drop the
+    /// key on its next save, so the server advertises `slide_post_stickers` only to 8 and answers 426 `client_update_required`
+    /// to an older build for a post that has stickers.
+    ///
+    /// 9 (KRI-648): replays resolved caption corner/width preferences in native preview and Save.
+    static let version = 9
     static let header = "X-Kria-Client-Protocol"
 }
 

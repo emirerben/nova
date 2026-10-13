@@ -16,7 +16,7 @@ from app.schemas.phone_text_style import (
 )
 
 PHONE_TEXT_STYLE_FIELD = "phone_text_style"
-PHONE_TEXT_STYLE_CLIENT_PROTOCOL = 8
+PHONE_TEXT_STYLE_CLIENT_PROTOCOL = 9
 _POLICY: ContextVar[dict | None] = ContextVar("phone_text_style", default=None)
 
 

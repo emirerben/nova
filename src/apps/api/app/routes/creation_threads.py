@@ -98,6 +98,7 @@ from app.routes.plan_items import (
     _pool_asset_counts_toward_capacity,
 )
 from app.schemas.edit_proposal import EditProposal, parse_edit_proposal
+from app.schemas.slide_post import parse_slide_post, sticker_asset_ids
 from app.services.creation_thread_titles import (
     matches_conversation_revision,
     prepare_message_title,
@@ -365,6 +366,10 @@ class CreationCapabilitiesOut(BaseModel):
     # KRI-589 PR2: static freehand drawings on slides. True only with the flag on AND a
     # build declaring X-Kria-Client-Protocol >= slide_post_drawing_min_client_protocol.
     slide_post_drawing: bool = False
+    # KRI-647: pasted image stickers on slides. True only with the flag on AND a build declaring
+    # X-Kria-Client-Protocol >= slide_post_sticker_min_client_protocol (a save carrying stickers
+    # from an older build gets 426, unlike drawings).
+    slide_post_stickers: bool = False
     slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
@@ -820,8 +825,12 @@ async def _device_ready_visual_count(
     creator_id: uuid.UUID,
     *,
     native_device_only: bool = False,
+    exclude_asset_ids: frozenset[uuid.UUID] = frozenset(),
 ) -> int:
     """Visuals the iPhone can render from right now (KRI-121).
+
+    ``exclude_asset_ids``: pool images a slide uses as a sticker (KRI-647) are decoration,
+    not content a post can be built from, so they do not count as visuals to continue with.
 
     ``visuals.current`` is the upload quota: it also counts failed rows, live
     reservations and kinds the phone can't draw. The app offers "Continue with
@@ -845,6 +854,7 @@ async def _device_ready_visual_count(
                     PlanItemAsset.status == "ready",
                     PlanItemAsset.deduplicated_to_asset_id.is_(None),
                     PlanItemAsset.kind.in_(sorted(drawable_kinds)),
+                    *((PlanItemAsset.id.notin_(exclude_asset_ids),) if exclude_asset_ids else ()),
                 )
             )
         ).scalar_one()
@@ -3233,6 +3243,11 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 item.id,
                 thread.creator_id,
                 native_device_only=bool((thread.state or {}).get("native_device_only") is True),
+                exclude_asset_ids=frozenset(
+                    sticker_asset_ids(parse_slide_post(item.slide_post))
+                    if str(item.edit_format or "") == "slides"
+                    else ()
+                ),
             ),
         )
     public_state = dict(thread.state or {})
@@ -3729,6 +3744,11 @@ async def capabilities(
             settings.slide_post_drawing_enabled
             and client_protocol is not None
             and client_protocol >= settings.slide_post_drawing_min_client_protocol
+        ),
+        "slide_post_stickers": bool(
+            settings.slide_post_stickers_enabled
+            and client_protocol is not None
+            and client_protocol >= settings.slide_post_sticker_min_client_protocol
         ),
         "creation_mode": (
             "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"

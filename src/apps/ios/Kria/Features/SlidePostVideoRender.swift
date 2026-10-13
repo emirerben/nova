@@ -35,6 +35,7 @@ import UIKit
         profile: String,
         aspect: String?,
         outputURL: URL,
+        stickers: [SlidePostPreparedSticker] = [],
         download: Download? = nil
     ) async throws {
         guard supports(slide: slide, asset: asset, profile: profile), outputURL.isFileURL else { throw RenderError.unsupported }
@@ -49,7 +50,7 @@ import UIKit
             if FileManager.default.fileExists(atPath: outputURL.path) { try FileManager.default.removeItem(at: outputURL) }
             let asset = AVURLAsset(url: source.url)
             let prepared = try await prepare(asset: asset, profile: profile, aspect: aspect, lookPreset: slide.edits?.lookPreset ?? "none")
-            let overlay = try staticOverlay(texts: slide.edits?.effectiveTexts ?? [], drawing: slide.edits?.drawing, pixels: prepared.pixels)
+            let overlay = try staticOverlay(texts: slide.edits?.effectiveTexts ?? [], drawing: slide.edits?.drawing, stickers: stickers, pixels: prepared.pixels)
             let composition = videoComposition(prepared: prepared, overlay: overlay)
             guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
                 throw RenderError.exportUnavailable
@@ -152,8 +153,8 @@ import UIKit
             .cropped(to: CGRect(origin: .zero, size: canvas))
     }
 
-    /// Text, then the slide's drawing (KRI-589), then the watermark, rasterized once into the CIImage every frame composites.
-    static func staticOverlay(texts: [SlidePostTextElement], drawing: SlidePostDrawing? = nil, pixels: CGSize) throws -> CIImage {
+    /// Text, then the slide's drawing (KRI-589), then its pasted pictures (KRI-460), then the watermark, rasterized once into the CIImage every frame composites.
+    static func staticOverlay(texts: [SlidePostTextElement], drawing: SlidePostDrawing? = nil, stickers: [SlidePostPreparedSticker] = [], pixels: CGSize) throws -> CIImage {
         let text = texts.isEmpty ? nil : SlidePostOnDeviceRender.textLayer(texts, pixels: pixels)
         // A failed SwiftUI raster must fail export rather than silently omit a
         // caption the user sees in the editor.
@@ -164,6 +165,7 @@ import UIKit
         let image = UIGraphicsImageRenderer(size: pixels, format: format).image { context in
             text?.draw(in: CGRect(origin: .zero, size: pixels))
             drawing?.paint(in: context.cgContext, canvas: pixels)
+            for sticker in stickers { sticker.draw(in: context.cgContext, canvas: pixels) }
             context.cgContext.interpolationQuality = .high
             mark.draw(in: KriaBranding.watermarkTileRect(canvas: pixels, tileSize: mark.size))
         }

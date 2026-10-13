@@ -172,3 +172,20 @@ def test_answer_is_replayed_until_selected_footage_changes_then_reopens():
     assert changed.question is not None
     assert changed.question.kind == CONFLICT_LENGTH_VS_NATURAL
     assert changed.question.effects[OPT_ACCEPT_NATURAL]["strategy"]["target_duration_s"] == 10
+
+
+def test_turkish_chat_gets_no_english_in_the_length_question():
+    """KRI-630: intro and reason were English, glued behind Turkish connectors."""
+    from app.kria.reply_language import reply_language_for
+    from app.services.choice_questions import choice_question_text
+
+    strategy = {"audio_strategy": "original_audio", "edit_format": "talking_head"}
+    snapshot = {"clip_assignments": [{"media_id": "take", "duration_s": 51.6}]}
+    with reply_language_for("tr"):
+        found = choice(strategy, snapshot, 40)
+        text = choice_question_text(found.candidate())
+    assert "Your brief" not in text and "cannot make" not in text
+    assert "konuşma kaydı" in found.intro and "51.6" in found.intro
+    assert "Maalesef kaynağın" in text
+    english = choice(strategy, snapshot, 40)
+    assert english.intro.startswith("Your brief says")

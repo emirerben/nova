@@ -85,15 +85,17 @@ struct SlidePostWorkspaceView: View {
     private var isRendering: Bool { session.isRendering }
     private var uploadProjectID: UUID { ownerThread.flatMap { UUID(uuidString: $0.id) } ?? project.id }
     private var hasPendingAssets: Bool {
-        session.state?.assets.contains { ["pending", "queued", "uploaded", "processing", "analyzing", "uploading"].contains($0.status) } == true
+        session.slideAssets.contains { ["pending", "queued", "uploaded", "processing", "analyzing", "uploading"].contains($0.status) }
             // A record whose upload failed stays for Retry but is not in progress (KRI-211).
             || BackgroundUploadCoordinator.inProgressRecords(pendingUploads).contains { $0.projectID == uploadProjectID }
             || BackgroundUploadCoordinator.reservedCount(projectID: uploadProjectID, role: .visual, inFlight: uploadInFlight, records: pendingUploads, selections: photoSelections) > 0
     }
-    private var hasSkippedFiles: Bool { uploadFailures.contains { $0.projectID == uploadProjectID } }
+    private var hasSkippedFiles: Bool {
+        uploadFailures.contains { $0.projectID == uploadProjectID && !session.stickerUploadNames.contains(BackgroundUploadCoordinator.displayFilename($0.filename)) }
+    }
     /// The server still lists an asset it could not keep. A file that never got that far — one the
     /// picker couldn't read (`hasSkippedFiles`) — is simply left out and never blocks asking Kria (KRI-211).
-    private var hasFailedAssets: Bool { session.state?.assets.contains { $0.status == "failed" || ["missing", "expired"].contains($0.mediaStatus ?? "") } == true }
+    private var hasFailedAssets: Bool { session.slideAssets.contains { $0.status == "failed" || ["missing", "expired"].contains($0.mediaStatus ?? "") } }
     private var hasFailedUploads: Bool { hasSkippedFiles || hasFailedAssets }
     private var canRequestProposal: Bool { !session.isBusy && !hasPendingAssets && !hasFailedAssets && !session.readyAssets.isEmpty }
 
@@ -160,6 +162,7 @@ struct SlidePostWorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
         .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
         .onChange(of: session.selectedID) { _, _ in previewPlayer?.pause() }
+        .onChange(of: mode) { _, next in if next != .browse { session.selectedStickerID = nil } }
         // Media that finishes importing joins the post by itself; it waits out saves and AI edits.
         .onChange(of: autoAppendKey) { _, _ in seedAndAppend() }
         .onAppear { seedAndAppend() }
@@ -255,6 +258,18 @@ struct SlidePostWorkspaceView: View {
     private var framingOn: Bool { effectiveCapabilities?.slidePostFramingEnabled == true }
     private var sizesOn: Bool { effectiveCapabilities?.slidePostSizesEnabled == true }
     private var drawingOn: Bool { effectiveCapabilities?.slidePostDrawingEnabled == true }
+    private var stickersOn: Bool { effectiveCapabilities?.slidePostStickersEnabled == true }
+    /// KRI-460: what a picture paste needs. UI tests swap the storage upload for a fixture one (see `SlidePostFixtureStickerUploader`).
+    private var stickerPaste: SlidePostStickerPaste? {
+        guard let itemID else { return nil }
+        let uploads: any SlidePostStickerUploading = {
+            #if DEBUG
+            if SlidePostFixtureStickerUploader.isActive { return SlidePostFixtureStickerUploader(api: model.api) }
+            #endif
+            return model.uploads
+        }()
+        return SlidePostStickerPaste(isEnabled: stickersOn, api: model.api, uploads: uploads, projectID: uploadProjectID, itemID: itemID)
+    }
     private var extendedDeviceExportOn: Bool { effectiveCapabilities?.slidePostExtendedDeviceExportEnabled == true }
     private func seedAndAppend() {
         session.seedDraftIfNeeded()
@@ -273,8 +288,9 @@ struct SlidePostWorkspaceView: View {
     }
     private func pendingTiles(_ draft: SlidePostDraft?) -> [SlidePostPendingTile] {
         SlidePostPendingMedia.tiles(
-            assets: session.state?.assets ?? [], draftAssetIDs: Set(draft?.slides.map(\.assetID) ?? []), records: pendingUploads,
-            progress: uploadProgress, inFlight: uploadInFlight, failures: uploadFailures, projectID: uploadProjectID
+            assets: session.slideAssets, draftAssetIDs: Set(draft?.slides.map(\.assetID) ?? []), records: pendingUploads,
+            progress: uploadProgress, inFlight: uploadInFlight, failures: uploadFailures, projectID: uploadProjectID,
+            stickerUploadNames: session.stickerUploadNames
         )
     }
     private func tapPending(_ tile: SlidePostPendingTile) {
@@ -529,6 +545,23 @@ struct SlidePostWorkspaceView: View {
             if let drawing = session.selectedSlide?.edits?.drawing {
                 SlidePostDrawingLayerView(drawing: drawing).frame(width: size.width, height: size.height)
             }
+            // KRI-460: pasted pictures go on top of the text and the ink (the watermark stays above them in every export).
+            // Touches reach them only in browse mode, and only over the pictures themselves.
+            SlidePostStickerCanvas(
+                stickers: session.selectedSlide?.edits?.effectiveStickers ?? [], assets: session.state?.assets ?? [], size: size,
+                selectedID: session.selectedStickerID, interactive: mode == .browse,
+                onExpired: { await refresh() },
+                onSelect: { session.selectedStickerID = $0 },
+                onTransform: { id, key, mutate in
+                    guard let slideID = session.selectedSlide?.id else { return }
+                    session.updateSticker(slideID: slideID, stickerID: id, coalescing: key, mutate)
+                },
+                onDelete: { id in
+                    guard let slideID = session.selectedSlide?.id else { return }
+                    session.removeSticker(slideID: slideID, stickerID: id)
+                }
+            )
+            .frame(width: size.width, height: size.height)
             if mode == .draw {
                 // The sketch lies over the region the slide's drawing lives in (its own aspect, letterboxed when the
                 // canvas has changed since), so strokes are authored in the drawing's space and appended unchanged.
@@ -545,7 +578,7 @@ struct SlidePostWorkspaceView: View {
                 .padding(.horizontal, 12).padding(.vertical, 6).background(KriaColor.mutedInk.opacity(0.85), in: Capsule()).padding(12)
                 .allowsHitTesting(false)
         }
-        .excludesDrawerGestureWhen(mode == .text || mode == .draw || (mode == .browse && session.selectedTextID != nil))
+        .excludesDrawerGestureWhen(mode == .text || mode == .draw || (mode == .browse && (session.selectedTextID != nil || session.selectedStickerID != nil)))
     }
 
     private func slideStrip(_ draft: SlidePostDraft) -> some View {
@@ -573,7 +606,7 @@ struct SlidePostWorkspaceView: View {
                 showsSize: sizesOn, onSize: { session.selectedTextID = nil; showsSize = true },
                 showsDraw: drawingOn, onDraw: beginDrawing,
                 canClearDrawing: slide?.edits?.drawing != nil, onClearDrawing: { if let id = slide?.id { session.clearDrawing(slideID: id) } },
-                onPaste: clipboardHasContent ? slide.map { target in { providers in Task { await session.paste(providers: providers, slideID: target.id) } } } : nil,
+                onPaste: clipboardHasContent ? slide.map { target in { providers in Task { await session.paste(providers: providers, slideID: target.id, stickers: stickerPaste) } } } : nil,
                 onText: beginTextEditing,
                 onCover: { if let id = slide?.id { session.setCover(id: id); UINotificationFeedbackGenerator().notificationOccurred(.success) } },
                 onLook: { mode = .look },
