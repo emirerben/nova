@@ -1176,7 +1176,8 @@
       "follow_ups": [
         "iOS recorder fix (KRI-653 PR 2)"
       ],
-      "red_control": "not_applicable"
+      "red_control": "not_applicable",
+      "journey": "kri-653-silent-take"
     }
   ]
 }

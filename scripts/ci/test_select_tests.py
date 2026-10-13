@@ -666,6 +666,10 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-593-voiceover-clips"),
             ),
             (
+                "src/apps/api/app/pipeline/silence_cut.py",
+                (True, "covered", "kri-653-silent-take"),
+            ),
+            (
                 "src/apps/api/app/pipeline/phone_captions.py",
                 (True, "covered", "kri-548-caption-watermark"),
             ),
