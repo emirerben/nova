@@ -62,6 +62,8 @@ Return the normal editor response schema. No operation may change media or audio
 Confirmed copy is server-owned. Preserve punctuation, accents and emoji. Historical
 explanations are context, never substitute copy. Restyle, retime or split confirmed copy
 into consecutive chunks only if their combined wording is unchanged.
+When a current text brief is present, add independent text only when a live non-title
+text requirement requests it. A title styling request never authorizes another caption.
 """
 
 
@@ -77,7 +79,7 @@ class CreationTextComposer(EditCopilotAgent):
     # This is background creation, not the latency-limited interactive route.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v4-confirmed-creation-copy",
+        prompt_version="v5-confirmed-creation-copy-brief",
         timeout_s=90.0,
     )
 
@@ -109,6 +111,17 @@ class CreationTextComposer(EditCopilotAgent):
                 "Confirmed copy: "
                 + json.dumps(
                     (input.variant_snapshot or {}).get("copy_constraints", {}), ensure_ascii=False
+                ),
+                *(
+                    [
+                        "Current text brief: "
+                        + json.dumps(
+                            input.variant_snapshot["text_requirements"], ensure_ascii=False
+                        )
+                    ]
+                    if input.variant_snapshot is not None
+                    and "text_requirements" in input.variant_snapshot
+                    else []
                 ),
                 *(
                     ["Caption lane: " + json.dumps(caption_lane, ensure_ascii=False)]
@@ -165,6 +178,17 @@ def _check_copy(texts: list[dict], constraints: Mapping[str, str]) -> None:
         actual = " ".join(row["text"] for row in sorted(rows, key=lambda row: row["start_s"]))
         if not expected.strip() or _copy_key(actual) != _copy_key(expected):
             raise CreationTextCompositionError("Text composition changed confirmed copy")
+
+
+def _check_added_text(
+    operations: list[dict], requirements: Sequence[BriefRequirement] | None
+) -> None:
+    if requirements is None or any(
+        req.live and req.kind == "text" and req.scope != "title" for req in requirements
+    ):
+        return
+    if any(op.get("op") == "add_text" for op in operations):
+        raise CreationTextCompositionError("Text composition added unrequested text")
 
 
 def snapshot_copy_constraints(
@@ -334,6 +358,7 @@ def compose_creation_text(
     from app.pipeline.guided_story import compile_proposal_execution_plan
 
     if snapshot.text_composition is not None:
+        _check_added_text(snapshot.text_composition.operations, text_requirements)
         plan = compile_proposal_execution_plan(snapshot)
         constraints = dict(copy_constraints or {})
         if text_requirements is not None:
@@ -400,6 +425,12 @@ def compose_creation_text(
         "total_duration_s": max((float(x.get("output_end_s") or 0) for x in slots), default=0),
         **({"caption_lane": caption_lane} if caption_lane is not None else {}),
     }
+    if text_requirements is not None:
+        model_snapshot["text_requirements"] = [
+            req.model_dump(mode="json")
+            for req in text_requirements
+            if req.live and (req.kind in {"text", "style"} or req.scope == "title")
+        ]
     # The complete request remains data; the composer adds server instructions.
     output = CreationTextComposer(default_client()).run(
         EditCopilotInput(utterance=creator_request, variant_snapshot=model_snapshot),
@@ -414,6 +445,7 @@ def compose_creation_text(
     ):
         raise CreationTextCompositionError("Text composition is incomplete: " + output.reply)
     operations = output.ops
+    _check_added_text(operations, text_requirements)
     if caption_lane is not None:
         operations = _to_full_bar_indexes(operations, texts)
     program = TextCompositionProgram(

@@ -202,6 +202,56 @@ def test_legitimate_sequence_preserves_copy_and_constraints_after_reload(monkeyp
         compile_proposal_execution_plan(restored)
 
 
+@pytest.mark.parametrize("requests_caption", [False, True])
+def test_bound_styling_composition_adds_text_only_when_live_brief_requests_it(
+    monkeypatch, requests_caption
+):
+    requirements = [
+        BriefRequirement(id="style", kind="style", scope="title", description="Style the hook")
+    ]
+    if requests_caption:
+        requirements.append(
+            BriefRequirement(
+                id="caption", kind="text", scope="per_clip", description="Add captions"
+            )
+        )
+    plan, brief, _ = approved_plan(extra_requirements=requirements, context_caption=False)
+    client = transport(
+        monkeypatch,
+        {
+            "intent": "edit",
+            "confidence": 1,
+            "reply": "Prepared",
+            "ops": [{"op": "add_text", "text": CASE["context"], "start_s": 0, "end_s": 2}],
+        },
+    )
+    if requests_caption:
+        result = compose_creation_text(
+            plan.snapshot, creator_request=CASE["context"], text_requirements=brief.live(), ctx=CTX
+        )
+        assert any(
+            row["text"] == CASE["context"]
+            for row in compile_proposal_execution_plan(result)["text_elements"]
+        )
+        restored = EditProposalSnapshot.model_validate_json(result.model_dump_json())
+        with pytest.raises(CreationTextCompositionError, match="unrequested text"):
+            compose_creation_text(
+                restored,
+                creator_request="Style the hook",
+                text_requirements=[req for req in brief.live() if req.id != "caption"],
+                ctx=CTX,
+            )
+    else:
+        with pytest.raises(CreationTextCompositionError, match="unrequested text"):
+            compose_creation_text(
+                plan.snapshot,
+                creator_request=CASE["context"],
+                text_requirements=brief.live(),
+                ctx=CTX,
+            )
+    assert len(client.calls) == 1
+
+
 def test_separately_requested_caption_is_kept_and_unicode_is_not_truncated():
     req = BriefRequirement(id="r2", kind="text", scope="clip:clip", literal="Çağrı 😤")
     plan, _, _ = approved_plan(extra_requirements=[req])

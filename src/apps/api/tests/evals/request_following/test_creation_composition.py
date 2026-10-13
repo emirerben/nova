@@ -639,7 +639,7 @@ def test_song_caption_lane_is_summarised_for_the_model_and_survives_composition(
     assert not any(bar["id"].startswith("song-caption-") for bar in snapshot["text_bars"])
     prompt = CreationTextComposer.__new__(CreationTextComposer).render_prompt(input)
     assert "CAPTION LANE" in prompt
-    assert CreationTextComposer.spec.prompt_version == "v4-confirmed-creation-copy"
+    assert CreationTextComposer.spec.prompt_version == "v5-confirmed-creation-copy-brief"
     # The pinned program replays against the FULL lane: the caption rows are all still there.
     after = compile_proposal_execution_plan(composed)["text_elements"]
     assert [row for row in after if row["id"].startswith("song-caption-")] == before

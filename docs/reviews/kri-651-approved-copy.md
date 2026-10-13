@@ -32,9 +32,13 @@ production artifact and receipt are confirmed.
   kri-546-montage-receipts --base 6636cae710d88496343b4609d55d1621e390aa27
   --verbose` fails at the original missing-emoji assertion, with provider transport
   inputs present. The extended gate runs automatically for the affected source paths.
-- Fixed tree: 933 selected reliability checks passed with the worktree's isolated
-  PostgreSQL on port 55451; 1,185 free replay evals passed (15 optional cases skipped).
+- Fixed tree: 935 selected reliability checks passed with the worktree's isolated
+  PostgreSQL on port 55451; 1,187 free replay evals passed (15 optional cases skipped).
   The 119 draft-building checks and EN/TR real-Postgres observer/receipt journey pass.
+- Final review red control: a bound title-styling request accepted an unrequested
+  context caption before the added-text guard. The same replay now rejects it,
+  still permits explicitly requested captions, and rechecks saved programs on retry.
+  The composer receives the live text brief as structured data (prompt version v5).
 - Native export: `kri-651-approved-hook-e2e.py` followed by
   `DeviceMontageRenderE2ETests/testApprovedUnicodeHookExportsWithoutContextCaptionOnTheIPhone`.
   The exported MP4/frame preserves the complete approved Unicode hook, visibly draws
