@@ -441,6 +441,16 @@
         "src/apps/api/app/pipeline/generative_overlays.py",
         "src/apps/api/tests/kria/test_text_bend.py"
       ]
+    },
+    {
+      "id": "kri-628-opening-cut",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_opening_cut.py",
+      "paths": [
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/pipeline/phone_opening_cut.py",
+        "src/apps/api/app/services/spoken_quotes.py"
+      ]
     }
   ]
 }
