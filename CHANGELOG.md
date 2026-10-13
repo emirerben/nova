@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.262.0] - 2026-10-13
+
+### Changed
+- feat(media): add reusable library ingest and analysis (KRI-384) (#1559) <!-- release-pr: 1559 -->
+
 ## [0.78.261.0] - 2026-10-13
 
 ### Changed
