@@ -343,9 +343,14 @@ import XCTest
 
             // The letterbox: nothing outside the fitted authoring canvas.
             let origin = g.expected_fit_origin, size = g.expected_fit_size
-            let margins: [(Double, Double)] = origin[0] > 1
-                ? [(origin[0] / 2, canvas.height / 2), ((origin[0] + size[0] + canvas.width) / 2, canvas.height / 2)]
-                : (origin[1] > 1 ? [(canvas.width / 2, origin[1] / 2), (canvas.width / 2, (origin[1] + size[1] + canvas.height) / 2)] : [])
+            // (Plain Double locals and an if/else: the nested ternary of CGFloat/Double tuples is too much for older Xcodes.)
+            let width = Double(canvas.width), height = Double(canvas.height)
+            var margins: [(Double, Double)] = []
+            if origin[0] > 1 {
+                margins = [(origin[0] / 2, height / 2), ((origin[0] + size[0] + width) / 2, height / 2)]
+            } else if origin[1] > 1 {
+                margins = [(width / 2, origin[1] / 2), (width / 2, (origin[1] + size[1] + height) / 2)]
+            }
             for (x, y) in margins { XCTAssertFalse(out.isInk(x, y), "\(g.name): the margin at (\(x), \(y)) stays clean") }
             XCTAssertEqual(margins.isEmpty, origin[0] <= 1 && origin[1] <= 1, g.name)
         }
