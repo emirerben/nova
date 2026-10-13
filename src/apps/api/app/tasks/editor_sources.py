@@ -6,16 +6,26 @@ import copy
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm.attributes import flag_modified
 
 from app import storage
 from app.database import sync_session
 from app.kria.media_sources import MediaUploadContract
-from app.models import CreationThread, CreationThreadUploadReservation, Job, PlanItem, PlanItemAsset
+from app.models import (
+    CreationThread,
+    CreationThreadUploadReservation,
+    Job,
+    MediaAsset,
+    MediaAssetSource,
+    PlanItem,
+    PlanItemAsset,
+    TemporaryMediaUpload,
+)
 from app.pipeline.probe import ProbeError, probe_video
 from app.schemas.edit_proposal import MAX_EDIT_PROPOSAL_MEDIA
+from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.phone_editor_sources import (
     EDITOR_SOURCES_FIELD,
     attempt_matches,
@@ -26,6 +36,7 @@ from app.services.phone_editor_sources import (
 )
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, PhoneSourceBinding
 from app.services.phone_visuals import bind_phone_visual_assets, phone_composable_video
+from app.services.temporary_uploads import upload_is_available
 from app.worker import celery_app
 
 
@@ -83,26 +94,55 @@ def _fail(
         db.commit()
 
 
+def _library_footage(
+    db: Any, record: dict[str, Any]
+) -> tuple[MediaAssetSource, MediaUploadContract]:
+    source = db.get(
+        MediaAssetSource, record.get("_library_bound_source_id") or record.get("library_source_id")
+    )
+    asset = db.get(MediaAsset, record["library_asset_id"])
+    if (
+        source is None
+        or asset is None
+        or str(source.user_id) != record["user_id"]
+        or source.asset_id != asset.id
+        or str(asset.user_id) != record["user_id"]
+        or source.role != "analysis_proxy"
+        or source.status != "available"
+    ):
+        raise AdmissionError("library_source_unavailable")
+    contract = MediaUploadContract.model_validate(asset.metadata_json.get("upload_contract") or {})
+    return source, contract
+
+
 def _prepare_footage(record: dict[str, Any]) -> tuple[dict[str, Any], PhoneSourceBinding]:
     with sync_session() as db:
-        reservation = db.execute(
-            select(CreationThreadUploadReservation).where(
-                CreationThreadUploadReservation.id == record["reservation_id"]
-            )
-        ).scalar_one_or_none()
-        if reservation is None or str(reservation.creator_id) != record["user_id"]:
-            raise AdmissionError("source_reservation_missing")
-        contract = MediaUploadContract.model_validate(reservation.upload_contract or {})
+        expected_generation = None
+        if record.get("library_asset_id"):
+            source, contract = _library_footage(db, record)
+            path, media_id = source.object_path, record["source_id"]
+            expected_generation = source.object_generation
+        else:
+            reservation = db.execute(
+                select(CreationThreadUploadReservation).where(
+                    CreationThreadUploadReservation.id == record["reservation_id"]
+                )
+            ).scalar_one_or_none()
+            if reservation is None or str(reservation.creator_id) != record["user_id"]:
+                raise AdmissionError("source_reservation_missing")
+            contract = MediaUploadContract.model_validate(reservation.upload_contract or {})
+            path, media_id = reservation.object_path, reservation.media_id
         if (
             contract.purpose != "analysis_proxy"
             or contract.proxy is None
             or contract.proxy.original.kind != "video"
         ):
             raise AdmissionError("source_reservation_invalid")
-        path, media_id = reservation.object_path, reservation.media_id
     try:
         metadata = storage.object_metadata(path)
         generation = str(metadata.generation or "")
+        if expected_generation is not None and generation != expected_generation:
+            raise AdmissionError("library_source_generation_changed")
         if not generation or metadata.size <= 0:
             raise AdmissionError("source_upload_unavailable", retryable=True)
         url = storage.signed_get_url_for_generation(path, generation=generation)
@@ -187,6 +227,17 @@ def _recheck_source(
 ) -> CreationThreadUploadReservation | None:
     """Re-read DB identity under the job lock after slow preparation completed."""
     if record["source_kind"] == "footage":
+        if record.get("library_asset_id"):
+            registered, contract = _library_footage(db, record)
+            if (
+                source["gcs_path"] != registered.object_path
+                or source["generation"] != registered.object_generation
+                or source["media_id"] != record["source_id"]
+                or contract.proxy is None
+                or contract.proxy.original.model_dump(mode="json") != receipt["original"]
+            ):
+                raise AdmissionError("library_source_changed")
+            return None
         try:
             reservation = db.execute(
                 select(CreationThreadUploadReservation)
@@ -201,6 +252,16 @@ def _recheck_source(
             raise AdmissionError("source_reservation_busy", retryable=True) from exc
         if reservation is None:
             raise AdmissionError("source_reservation_missing")
+        cleanup_receipt = db.scalar(
+            select(TemporaryMediaUpload)
+            .where(
+                TemporaryMediaUpload.user_id == job.user_id,
+                TemporaryMediaUpload.object_path == reservation.object_path,
+            )
+            .with_for_update()
+        )
+        if not upload_is_available(cleanup_receipt):
+            raise AdmissionError("source_upload_unavailable")
         thread = db.get(CreationThread, reservation.thread_id)
         if (
             thread is None
@@ -316,6 +377,9 @@ def prepare_phone_editor_source(
         if str(metadata.generation or "") != source["generation"]:
             raise AdmissionError("source_generation_stale")
         with sync_session() as db:
+            db.execute(
+                select(func.pg_advisory_xact_lock(project_media_reference_lock_key(job.user_id)))
+            )
             # Canonical lock order: item, visual asset, then job. The copied
             # import identifies the asset; recheck its identity under the locks.
             item = db.get(
@@ -363,6 +427,16 @@ def prepare_phone_editor_source(
                 # Retain the row for another already-preparing import, but no
                 # longer block project deletion for the 15-minute PUT lease.
                 reservation.expires_at = min(reservation.expires_at, datetime.now(UTC))
+                cleanup_receipt = db.scalar(
+                    select(TemporaryMediaUpload)
+                    .where(
+                        TemporaryMediaUpload.user_id == job.user_id,
+                        TemporaryMediaUpload.object_path == reservation.object_path,
+                    )
+                    .with_for_update()
+                )
+                if cleanup_receipt is not None:
+                    cleanup_receipt.status = "adopted"
             current.update(
                 status="ready",
                 source_index=index,

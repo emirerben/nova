@@ -84,6 +84,10 @@ async def _attach(monkeypatch: pytest.MonkeyPatch, media: MediaInput, *, proxy: 
     monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(10.0, True)))
     db = Mock()
     db.get = AsyncMock(return_value=item)
+    # The route checks for an existing temporary-upload receipt before every
+    # attach; this fixture models the normal absence case with an awaitable DB
+    # scalar lookup while preserving the reservation query below.
+    db.scalar = AsyncMock(return_value=None)
     db.execute = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
