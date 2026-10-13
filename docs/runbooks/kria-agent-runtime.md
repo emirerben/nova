@@ -109,6 +109,19 @@ logs `kria_turn_claims_exhausted`. Look for the kills (`TimeLimitExceeded`,
 
 ## Adding a tool or recovery
 
+`creation_text_failed` (KRI-651) is a text-preparation failure, not a missing iPhone
+capability. The approved copy stays saved; a retry prepares that same copy. Diagnose
+through the composer run and private error detail, never by printing the model's reply
+in creator-facing messages. Plain confirmed hooks need no further text model call when
+the bound brief's text/style requirements already match the compiled lanes.
+
+`TextCompositionProgram.copy_constraints` pins wording by source bar id, including
+word/phrase sequence descendants. Replay checks NFC/whitespace-normalized wording;
+punctuation, accents and emoji remain significant. Legacy programs without constraints
+keep their serialization. Phone typography preserves confirmed Unicode and delegates
+color emoji to its existing shaped renderer. The regression/export recipe is
+`scripts/ios/kri-651-approved-hook-e2e.py`; see `docs/reviews/kri-651-approved-copy.md`.
+
 - Add tools through `app.kria.registry.KRIA_TOOLS`; do not add prompt-only names.
 - Keep route functions to auth, input parsing, service call, and serialization.
 - Do not hold database locks during model, evidence, storage, or broker calls.

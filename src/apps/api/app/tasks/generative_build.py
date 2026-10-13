@@ -272,6 +272,11 @@ _SPEECH_FALLBACK_DECLINES = {
         "I couldn't read the speech in your clip.",
         "Try a different clip of you talking, or ask for a montage.",
     ),
+    # KRI-653: the clip HAS an audio track but it carries no sound (a dead mic take).
+    "silent_audio": (
+        "Your video has no sound, so there's nothing to caption or cut.",
+        "Record it again and check that nothing is covering the microphone.",
+    ),
 }
 
 
@@ -291,6 +296,40 @@ def _speech_fallback_decline(reason: str | None) -> BaseException | None:
     return _plan_decline(
         "evidence_missing", detail[0], field_path="edit_format", alternative=detail[1]
     )
+
+
+def _silent_audio_status(local_path: str, *, job_id: str) -> str | None:
+    """``"silent"`` / ``"inaudible"`` when the speaker clip has no usable sound, else ``None``.
+
+    KRI-653: a dead-mic recording is a valid audio stream of zeros. Whisper and Gemini
+    hallucinate words over it ("Bye! Bye!", "Hello." x1000) and the speech cut then removes
+    almost the whole take, so a subtitled / talking-head edit must refuse it up front.
+    ``unknown`` (the measurement itself failed) fails OPEN: a broken probe never blocks a render.
+    """
+    from app.services.clip_speech import audio_presence  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    presence = audio_presence(local_path)
+    if presence.status not in ("silent", "inaudible"):
+        return None
+    record_pipeline_event(
+        "assembly",
+        "silent_audio_declined",
+        {
+            "presence": presence.status,
+            "max_window_db": presence.max_window_db,
+            "active_s": round(presence.active_s, 2),
+            "duration_s": round(presence.duration_s, 2),
+        },
+    )
+    log.warning(
+        "silent_audio_declined",
+        job_id=job_id,
+        presence=presence.status,
+        max_window_db=presence.max_window_db,
+        duration_s=round(presence.duration_s, 2),
+    )
+    return presence.status
 
 
 def _flag_decline(kind: str, message: str) -> BaseException:
@@ -2654,6 +2693,7 @@ def _run_generative_job_impl(
                 from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
                 from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
+                    SilentAudioPlanDeclined,
                     UnsupportedPhonePlan,
                     UserSongPlanDeclined,
                 )
@@ -2667,15 +2707,23 @@ def _run_generative_job_impl(
                 # fall back to) must persist a failure_reason — without this, the
                 # generic `except Exception` fallback below only set error_detail,
                 # leaving the client with no reason code to render.
+                # KRI-286: a capability the device has not verified yet is a rollout
+                # decision, not a plan defect -- it must stay retryable, so it gets its
+                # own code BEFORE the deterministic `phone_plan_unsupported` branch.
+                from app.services.creation_text_composition import (
+                    CreationTextCompositionError,  # noqa: PLC0415
+                )
                 from app.services.phone_rollout import (  # noqa: PLC0415
                     PhoneCapabilityUnavailable,
                 )
 
-                # KRI-286: a capability the device has not verified yet is a rollout
-                # decision, not a plan defect -- it must stay retryable, so it gets its
-                # own code BEFORE the deterministic `phone_plan_unsupported` branch.
-                if isinstance(exc, PhoneCapabilityUnavailable):
+                if isinstance(exc, CreationTextCompositionError):
+                    failure_reason = "creation_text_failed"
+                elif isinstance(exc, PhoneCapabilityUnavailable):
                     failure_reason = "phone_capability_unavailable"
+                elif isinstance(exc, SilentAudioPlanDeclined):
+                    # KRI-653: error_detail is creator-facing copy, shown verbatim in chat.
+                    failure_reason = "silent_audio_declined"
                 elif isinstance(exc, UserSongPlanDeclined):
                     # KRI-466: error_detail is creator-facing copy; its own code so
                     # chat shows it instead of "your iPhone can't render".
@@ -6206,7 +6254,10 @@ def _run_phone_unified_montage_job(
     # Complete the initial text lane before the canonical generation is pinned.
     # This uses the request already bound to this job, never a newer thread message.
     from app.agents._runtime import RunContext  # noqa: PLC0415
-    from app.services.creation_text_composition import compose_creation_text  # noqa: PLC0415
+    from app.services.creation_text_composition import (  # noqa: PLC0415
+        compose_creation_text,
+        snapshot_copy_constraints,
+    )
 
     request = all_candidates.get("creator_request") or (
         (all_candidates.get("brief") or {}).get("creator_request")
@@ -6217,6 +6268,8 @@ def _run_phone_unified_montage_job(
         plan.snapshot,
         creator_request=str(request or ""),
         ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
+        copy_constraints=snapshot_copy_constraints(plan.snapshot),
+        text_requirements=brief.live() if brief is not None else None,
     )
     record = plan.record()
     # KRI-544: which copies left the edit, readable by a requirement checker. Absent
@@ -6502,7 +6555,10 @@ def _run_phone_subtitled_job(
         resolve_spoken_caption_language,
     )
     from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
-    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
+        SilentAudioPlanDeclined,
+        UnsupportedPhonePlan,
+    )
     from app.pipeline.phone_subtitled_lanes import remap_lanes_for_cut  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
         SFX_DUCK_RECEIPT_FIELD,
@@ -6816,6 +6872,11 @@ def _run_phone_subtitled_job(
                 raise UnsupportedPhonePlan(
                     "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
                 )
+            # KRI-653: a silent take must never reach the speech cut (job c283f1dd cut a
+            # 192 s dead-mic take to 3 s over hallucinated words). Declared AND self-narrated.
+            # Its own decline type so chat shows this message, not "your iPhone can't render".
+            if _silent_audio_status(clip_path, job_id=job_id) is not None:
+                raise SilentAudioPlanDeclined(" ".join(_SPEECH_FALLBACK_DECLINES["silent_audio"]))
             if multi_clip:
                 cutaways = _phone_talking_head_cutaways(
                     speaker_clip_id=clip_id,
@@ -19869,6 +19930,18 @@ def _resolve_archetype(
             if plan_authority:
                 raise _flag_decline("different_format", "The talking-to-camera edit is off.")
             return _fallback("flag_disabled")
+        # KRI-653: "no usable speech still resolves to subtitled" holds for a quiet or
+        # wordless clip, NOT for a dead-mic take whose audio is digital silence --
+        # captions and a speech cut over that only produce hallucinated words.
+        # `all` stops at the first audible clip, so a normal take costs one probe, not N.
+        if clip_id_to_local and all(
+            _silent_audio_status(path, job_id=job_id) is not None
+            for path in clip_id_to_local.values()
+        ):
+            decline = _speech_fallback_decline("silent_audio")
+            if plan_authority and decline is not None:
+                raise decline
+            return _fallback("no_speech")
         record_pipeline_event("assembly", "archetype_selected", {"archetype": "subtitled"})
         log.info("generative_archetype_selected", job_id=job_id, archetype="subtitled")
         return "subtitled", None, None

@@ -2551,7 +2551,10 @@ def _run_draft_attempt(
         # Same composition lane for guided proposals, before they are offered for
         # approval. Fail visibly on incomplete text behavior; never use the base
         # proposal as a silent fallback after the composition step failed.
-        from app.services.creation_text_composition import compose_creation_text  # noqa: PLC0415
+        from app.services.creation_text_composition import (  # noqa: PLC0415
+            compose_creation_text,
+            snapshot_copy_constraints,
+        )
         from app.services.edit_proposals import _validated_scheduled_draft  # noqa: PLC0415
 
         snapshot = _validated_scheduled_draft(snapshot, current)
@@ -2559,7 +2562,17 @@ def _run_draft_attempt(
             snapshot,
             creator_request=brief.creator_request,
             ctx=RunContext(plan_item_id=item_id, request_id=f"creation-text:{attempt_id}"),
+            copy_constraints=snapshot_copy_constraints(snapshot),
         )
+        # Composition can change text treatment after the earlier dry run. Check
+        # the final program before offering it for approval, not on the worker.
+        validate_proposal_compiles(snapshot)
+        if (
+            phone_destination
+            and snapshot.text_composition is not None
+            and snapshot.text_composition.operations
+        ):
+            validate_proposal_phone_compiles(snapshot, analyzed_assignments or assignments)
         with sync_session() as db:
             locked = _locked_item(db, iid, ownership_epoch)
             item = locked[0] if locked else None
@@ -2701,6 +2714,11 @@ def _run_draft_attempt(
                 )
                 db.commit()
     except Exception as exc:  # noqa: BLE001
+        from app.services.creation_text_composition import (
+            CreationTextCompositionError,  # noqa: PLC0415
+        )
+        from app.tasks.content_plan_build import job_failure_message  # noqa: PLC0415
+
         log.exception("edit_proposal.draft_failed", item_id=item_id)
         with sync_session() as db:
             locked = _locked_item(db, iid, ownership_epoch)
@@ -2730,11 +2748,15 @@ def _run_draft_attempt(
                     current,
                     exc.code
                     if isinstance(exc, SemanticPlanningError)
+                    else "creation_text_failed"
+                    if isinstance(exc, CreationTextCompositionError)
                     else "proposal_generation_failed",
                     # The creator-facing sentence; the scheduler's own
                     # reason stays in the admin-only detail below.
                     exc.message
                     if isinstance(exc, SemanticPlanningError)
+                    else job_failure_message("creation_text_failed")
+                    if isinstance(exc, CreationTextCompositionError)
                     else "Kria couldn't plan this edit. Try again.",
                     retryable=exc.retryable if isinstance(exc, SemanticPlanningError) else True,
                     detail=_exc_detail(exc),

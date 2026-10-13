@@ -27,6 +27,7 @@ from app.agents._runtime import (
     SchemaError,
 )
 from app.pipeline.prompt_loader import load_prompt
+from app.services.transcript_quality import is_degenerate_transcript
 
 log = structlog.get_logger()
 
@@ -518,9 +519,15 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         # HARD RULES, defeating downstream matcher variety. Enforce spread in code.
         moments = _enforce_moment_spread(moments)
 
+        transcript = str(data.get("transcript", "") or "")
+        if is_degenerate_transcript(transcript):
+            # KRI-653: "Hello." x1000 over a silent take. Parse-only change (no prompt edit),
+            # so no prompt_version bump. Downstream readers see "no transcript".
+            log.warning("clip_metadata_degenerate_transcript_dropped", chars=len(transcript))
+            transcript = ""
         try:
             return ClipMetadataOutput(
-                transcript=str(data.get("transcript", "") or ""),
+                transcript=transcript,
                 hook_text=str(data.get("hook_text", "") or ""),
                 hook_score=hook_score,
                 best_moments=moments,

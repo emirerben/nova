@@ -613,7 +613,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/tasks/content_plan_build.py",
-                (True, "covered", "kri-492-length-ownership,kri-577-reliability-gates"),
+                (
+                    True,
+                    "covered",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates",
+                ),
             ),
             (
                 "src/apps/api/app/kria/duplicate_uploads.py",
@@ -698,6 +702,10 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/app/kria/voiceover_clips.py",
                 (True, "covered", "kri-593-voiceover-clips"),
+            ),
+            (
+                "src/apps/api/app/pipeline/silence_cut.py",
+                (True, "covered", "kri-653-silent-take"),
             ),
             (
                 "src/apps/api/app/pipeline/phone_captions.py",

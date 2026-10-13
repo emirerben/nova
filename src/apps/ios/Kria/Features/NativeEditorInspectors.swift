@@ -536,11 +536,16 @@ private struct NativeSelectedTextInspector: View {
                 .accessibilityIdentifier("native-editor-selected-text-alignment")
                 // Seeded from where the row burns; only a real step moves it, so
                 // opening the inspector never rewrites a named preset as "custom".
-                Stepper("X \(Int(x * 100))%", value: $x, in: 0...1, step: 0.05)
+                // KRI-646: sliders, like the Text panel's position controls.
+                NativeEditorSlider(session: session, value: $x, in: 0...1, step: 0.01) { Text("X \(Int(x * 100))%") }
                     .onChange(of: x) { _, value in if layer.map({ Double($0.anchor.x) }) != value { session.moveText(id: selection.id, x: value) } }
+                    .accessibilityLabel("Text horizontal position")
+                    .accessibilityValue("\(Int((x * 100).rounded())) percent")
                     .accessibilityIdentifier("native-editor-selected-text-position-x")
-                Stepper("Y \(Int(y * 100))%", value: $y, in: 0...1, step: 0.05)
+                NativeEditorSlider(session: session, value: $y, in: 0...1, step: 0.01) { Text("Y \(Int(y * 100))%") }
                     .onChange(of: y) { _, value in if layer.map({ Double($0.anchor.y) }) != value { session.moveText(id: selection.id, y: value) } }
+                    .accessibilityLabel("Text vertical position")
+                    .accessibilityValue("\(Int((y * 100).rounded())) percent")
                     .accessibilityIdentifier("native-editor-selected-text-position-y")
                 Picker("Animation", selection: $animation) {
                     ForEach(NativeEditorWireContract.textAnimations, id: \.self) { value in
