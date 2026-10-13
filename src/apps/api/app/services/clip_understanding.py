@@ -20,6 +20,7 @@ from app.schemas.clip_understanding import (
     ClipSpeech,
     ClipUnderstanding,
 )
+from app.services.transcript_quality import is_degenerate_transcript
 
 
 def _moment_notes(raw: object) -> list[ClipMomentNote]:
@@ -46,6 +47,10 @@ def understanding_payload(meta: Any, *, best_moments: list[dict] | None = None) 
     ``getattr``-tolerant so a degraded/legacy meta still yields a valid block.
     """
     transcript = str(getattr(meta, "transcript", "") or "")
+    if is_degenerate_transcript(transcript):
+        # KRI-653: a repetition loop ("Hello." x1000) is a model hallucination over silence,
+        # not speech. Never let it claim the clip has any.
+        transcript = ""
     speaks_to_camera = bool(getattr(meta, "speaks_to_camera", False))
     record = ClipUnderstanding(
         kind="video",
@@ -102,6 +107,8 @@ def clip_record(analysis: dict[str, Any] | None, *, kind: str = "video") -> Clip
     transcript = analysis.get("transcript") or (
         analysis.get("on_screen_text") if is_video_analysis else ""
     )
+    if is_degenerate_transcript(transcript):
+        transcript = ""  # KRI-653: stored before the parse-time guard existed
     return ClipUnderstanding(
         kind=media_kind,
         subject=analysis.get("subject") or "",

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import signal
+import struct
 import subprocess
 import uuid
 import wave
@@ -19,6 +21,7 @@ from app.pipeline.speech_cleanup_analysis import (
     SpeechCleanupAnalysisResult,
 )
 from app.pipeline.transcribe import TranscribeError
+from app.services.clip_speech import AudioPresence
 from app.services.speech_cleanup_preflight import (
     SPEECH_CLEANUP_ENGINE_VERSION,
     SPEECH_CLEANUP_PAYLOAD_VERSION,
@@ -112,13 +115,21 @@ def _result(*, candidate_count: int = 1) -> SpeechCleanupAnalysisResult:
     )
 
 
-def _write_pcm_wav(path: Path, duration_s: float) -> None:
-    frame_count = round(duration_s * task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ)
+def _write_pcm_wav(path: Path, duration_s: float, *, audible: bool = False) -> None:
+    """A valid bounded PCM artifact. Zeros by default (a plumbing fixture); ``audible=True``
+    writes a ~-20 dBFS tone, which is what a real take looks like to the KRI-653 presence gate."""
+    rate = task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ
+    frame_count = round(duration_s * rate)
+    if audible:
+        samples = (round(3277 * math.sin(2 * math.pi * 220 * i / rate)) for i in range(frame_count))
+        payload = b"".join(struct.pack("<h", sample) for sample in samples)
+    else:
+        payload = b"\0\0" * frame_count
     with wave.open(str(path), "wb") as output:
         output.setnchannels(task_module.SPEECH_CLEANUP_CHANNELS)
         output.setsampwidth(task_module.SPEECH_CLEANUP_SAMPLE_WIDTH_BYTES)
-        output.setframerate(task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ)
-        output.writeframes(b"\0\0" * frame_count)
+        output.setframerate(rate)
+        output.writeframes(payload)
 
 
 def test_extract_streams_exact_window_to_bounded_16khz_mono_pcm(
@@ -358,7 +369,7 @@ def test_analyze_work_signs_captured_generation_and_cleans_artifact(
 
     def extract(*, signed_url, output_path, work):
         events.append(("extract", signed_url, work.window_start_s, work.window_end_s))
-        _write_pcm_wav(output_path, work.duration_s)
+        _write_pcm_wav(output_path, work.duration_s, audible=True)
         return work.duration_s
 
     def run_engine(_work, local_path):
@@ -381,6 +392,75 @@ def test_analyze_work_signs_captured_generation_and_cleans_artifact(
         ("extract", "https://storage.invalid/generation-pinned", 1.25, 3.25),
     ]
     assert local_paths and not local_paths[0].exists()
+
+
+def _analyze_with_artifact(monkeypatch, *, audible: bool, engine_result=None):
+    """Drive ``_analyze_work`` with a real WAV artifact; return (engine_calls, work)."""
+    work = _work()
+    engine_calls: list[Path] = []
+
+    def extract(*, signed_url, output_path, work):
+        _write_pcm_wav(output_path, work.duration_s, audible=audible)
+        return work.duration_s
+
+    def run_engine(_work, local_path):
+        engine_calls.append(local_path)
+        return engine_result
+
+    monkeypatch.setattr(
+        task_module, "signed_get_url_for_generation", lambda *a, **k: "https://storage.invalid/x"
+    )
+    monkeypatch.setattr(task_module, "_extract_bounded_audio", extract)
+    monkeypatch.setattr(task_module, "_run_engine", run_engine)
+    return engine_calls, work
+
+
+def test_silent_artifact_is_refused_before_any_transcription(monkeypatch) -> None:
+    """KRI-653: a dead-mic take must not reach Whisper (which hallucinates words over it)."""
+    engine_calls, work = _analyze_with_artifact(monkeypatch, audible=False)
+
+    with pytest.raises(task_module.SpeechCleanupOperationalError) as raised:
+        task_module._analyze_work(work)
+
+    assert raised.value.code == "no_speech_track"
+    assert raised.value.retryable is False
+    assert raised.value.private_detail == "audio_silent"
+    assert engine_calls == []
+
+
+def _result_with_bailout(reason: str):
+    base = _result()
+    return base.model_copy(
+        update={"safety_signals": base.safety_signals.model_copy(update={"bailout_reason": reason})}
+    )
+
+
+def test_engine_bailout_maps_to_no_speech_track_when_the_level_was_unmeasurable(
+    monkeypatch,
+) -> None:
+    """Defense in depth: the level gate could not measure, so the transcript is the only witness."""
+    engine_calls, work = _analyze_with_artifact(
+        monkeypatch, audible=True, engine_result=_result_with_bailout("words_in_silence")
+    )
+    monkeypatch.setattr(
+        task_module, "audio_presence", lambda _path: AudioPresence("unknown", None, 0.0, 2.0)
+    )
+
+    with pytest.raises(task_module.SpeechCleanupOperationalError) as raised:
+        task_module._analyze_work(work)
+
+    assert raised.value.code == "no_speech_track"
+    assert raised.value.private_detail == "words_in_silence"
+    assert len(engine_calls) == 1
+
+
+def test_engine_bailout_on_measured_audible_audio_stands_as_an_uncut_plan(monkeypatch) -> None:
+    """A hushed or distant speaker measures audible; calling them "no speech" would be wrong."""
+    expected = _result_with_bailout("words_in_silence")
+    engine_calls, work = _analyze_with_artifact(monkeypatch, audible=True, engine_result=expected)
+
+    assert task_module._analyze_work(work) is expected
+    assert len(engine_calls) == 1
 
 
 def test_task_persists_typed_operational_failure(monkeypatch) -> None:

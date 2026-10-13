@@ -331,7 +331,7 @@ jobs:
           python3 - <<'PY'
           import os
           selected = os.environ["JOURNEY_IDS"].split(",")
-          allowed = {"kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-577-reliability-gates", "kri-586-hook-copy", "kri-590-voiceover-cues", "kri-598-voiceover-planner", "kri-593-voiceover-clips", "kri-589-drawing"}
+          allowed = {"kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-577-reliability-gates", "kri-586-hook-copy", "kri-590-voiceover-cues", "kri-598-voiceover-planner", "kri-593-voiceover-clips", "kri-653-silent-take", "kri-589-drawing"}
           if os.environ["COVERAGE"] != "covered" or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed:
               raise SystemExit("Journey selection has an unmapped or invalid incident")
           PY
@@ -801,6 +801,20 @@ jobs:
           set -o pipefail
           python3 -m pytest tests/kria/test_kri593_voiceover_keeps_every_clip.py -q \
             | tee ../../../test-results/kri-559/voiceover-clips-api-tests.log
+      - name: Verify a silent talking take is refused instead of cut to seconds
+        if: contains(needs.changes.outputs.journey_ids, 'kri-653-silent-take')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/pipeline/test_silence_cut_no_speech.py \
+            tests/services/test_audio_presence.py \
+            tests/services/test_transcript_quality.py \
+            tests/tasks/test_silent_audio_gate.py -q \
+            | tee ../../../test-results/kri-559/silent-take-api-tests.log
       - uses: actions/upload-artifact@v4
         if: always() && needs.changes.outputs.journey == 'true'
         with:
