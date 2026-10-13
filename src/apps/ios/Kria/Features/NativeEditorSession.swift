@@ -3495,7 +3495,14 @@ struct NativeEditorTemporaryVideo {
         case .image:
             if itemID == nil { return "Open a saved edit to paste a picture." }
             if let message = visualImportUnavailableMessage { return message }
-            return canAuthorVisuals ? nil : "Adding pictures isn’t available for this edit."
+            guard canAuthorVisuals else { return "Adding pictures isn’t available for this edit." }
+            // The same limits `addLibraryVisual` / `admitDeviceVisual` enforce after the upload, checked first
+            // so a refused picture is never uploaded.
+            if document.visualBlocks.count >= 20 { return "This edit already has 20 visuals. Remove one to paste another." }
+            if rendersOnDevice, !phoneAllowsVisualKind("image") || editorSourceTarget(kind: .visual) == nil {
+                return "Adding pictures isn’t available for this edit on this iPhone."
+            }
+            return nil
         }
     }
 
@@ -3533,21 +3540,39 @@ struct NativeEditorTemporaryVideo {
     /// (cloud edit: `addLibraryVisual`; phone-rendered edit: `admitDeviceVisual`), so a pasted PNG
     /// keeps whatever transparency handling those paths give a picked one.
     func pasteImage(fileURL: URL) async {
-        guard !isPastingImage, let uploads = mediaUploads, let itemID else {
+        guard !isPastingImage else {
+            try? FileManager.default.removeItem(at: fileURL)
+            pasteError = "Still adding your last picture. Try again in a moment."
+            return
+        }
+        guard let uploads = mediaUploads, let itemID else {
+            try? FileManager.default.removeItem(at: fileURL)
             pasteError = "Adding a picture isn’t available right now."
             return
         }
         isPastingImage = true
         defer { isPastingImage = false }
-        _ = await refreshVisualLibrary()
+        // The picture lands at the playhead when it finishes uploading, so hold the playhead still.
+        player?.pause()
+        isPlaying = false
+        // `refreshVisualLibrary` skips while another refresh runs; the baseline must be a real read.
+        var baselineRead = false
+        for _ in 0..<5 where !baselineRead {
+            baselineRead = await refreshVisualLibrary()
+            if !baselineRead { try? await Task.sleep(for: .milliseconds(400)) }
+        }
+        guard baselineRead else {
+            try? FileManager.default.removeItem(at: fileURL)
+            pasteError = "Kria couldn’t reach your visuals. Check your connection and try again."
+            return
+        }
         let known = Set(visualLibrary.map(\.id))
         let filename = BackgroundUploadCoordinator.displayFilename(fileURL.lastPathComponent)
         let accepted = await uploads.enqueue(fileURL: fileURL, projectID: threadID ?? projectID, source: .files,
             consentGiven: true, purpose: .cloudRenderSource, role: .visual, itemID: itemID)
+        // Not deleted on refusal: a busy server leaves a Retry in the visual failures that re-reads this file.
         guard accepted else {
-            // A refused upload never takes ownership of the temp file.
-            try? FileManager.default.removeItem(at: fileURL)
-            pasteError = uploads.lastError ?? "That picture couldn’t be added. Your edit is unchanged."
+            pasteError = "That picture couldn’t be added. Your edit is unchanged."
             return
         }
         // The background uploader registers the asset with the pool, then analysis marks it ready.

@@ -12,7 +12,7 @@ enum PastedContent: Equatable, Sendable {
 enum PasteboardIntake {
     /// Strava's "Copy" puts a transparent PNG on the pasteboard; other apps paste text or a JPEG/HEIC photo.
     static let supportedTypes: [UTType] = [.png, .image, .plainText]
-    /// The same ceiling the text composer applies to a single text element.
+    /// Generous ceiling for a paste onto a video; a slide cuts further to its own 120-character text limit.
     static let maxTextLength = 500
 
     /// An image wins over text when both are present (Strava also puts the run summary on the pasteboard
