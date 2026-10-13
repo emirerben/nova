@@ -102,6 +102,9 @@ enum SpeechCleanupOffer: Equatable {
     case choice(SpeechCleanupStats)
     /// The speech-check analysis itself failed.
     case failed
+    /// The video has no audible speech (`no_speech_track`, KRI-653). Not retryable, and rendering
+    /// "without cleanup" would only produce captions over silence, so no create action is offered.
+    case noSpeech
 
     /// `analysisID`, when present, rides on every cleanup-related request
     /// (`speech_cleanup_analysis_id`) regardless of which offer it resolves to.
@@ -114,6 +117,9 @@ enum SpeechCleanupOffer: Equatable {
         case nil, "queued", "running":
             return (.checking, analysisID)
         case "failed":
+            if analysis["error"]?.objectValue?["code"]?.stringValue == "no_speech_track" {
+                return (.noSpeech, analysisID)
+            }
             return (.failed, analysisID)
         case "ready", "no_findings":
             if cleanup["requires_choice"]?.booleanValue == true {

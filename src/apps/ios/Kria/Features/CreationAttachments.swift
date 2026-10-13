@@ -212,7 +212,8 @@ struct AttachmentSheet: View {
                     TeleprompterScreen(accountID: accountID, projectID: projectID,
                         admissionMessage: teleprompterAdmission,
                         intake: useCameraTake,
-                        intakeState: cameraTakeState)
+                        intakeState: cameraTakeState,
+                        reportDiagnostic: { report in Task { try? await model.api.reportRecorderDiagnostic(report) } })
                         .environment(\.dynamicTypeSize, dynamicTypeSize)
                 }
             }
