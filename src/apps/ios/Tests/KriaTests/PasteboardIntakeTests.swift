@@ -36,6 +36,18 @@ final class PasteboardIntakeTests: XCTestCase {
         XCTAssertNotEqual(cg.alphaInfo, .noneSkipFirst)
     }
 
+    func testTheSamePictureAlwaysGetsTheSameFilename() async throws {
+        let data = try transparentPNG()
+        var names: [String] = []
+        for _ in 0..<2 {
+            guard case .image(let url) = await PasteboardIntake.load(from: [provider(png: data)]) else { return XCTFail("Expected an image") }
+            names.append(url.lastPathComponent)
+            try? FileManager.default.removeItem(at: url)
+        }
+        XCTAssertEqual(names[0], names[1], "the pool dedupes identical bytes under the first filename, so the paste must find it by name")
+        XCTAssertTrue(names[0].hasPrefix("pasted-") && names[0].hasSuffix(".png"))
+    }
+
     func testImageWinsWhenStravaAlsoPutsTheRunSummaryOnTheClipboard() async throws {
         let text = NSItemProvider(object: "5.2 km in 28:14" as NSString)
         let content = await PasteboardIntake.load(from: [text, provider(png: try transparentPNG())])

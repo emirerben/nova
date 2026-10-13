@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import UniformTypeIdentifiers
 
@@ -47,10 +48,15 @@ enum PasteboardIntake {
                 guard let source else { continuation.resume(returning: nil); return }
                 // The system deletes `source` when this handler returns, so copy it out first.
                 let ext = source.pathExtension.isEmpty ? (type.preferredFilenameExtension ?? "png") : source.pathExtension
-                let destination = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("pasted-\(UUID().uuidString.prefix(8))", isDirectory: false)
-                    .appendingPathExtension(ext)
                 do {
+                    // Named by its own bytes: the pool dedupes identical uploads and hands back the first copy's
+                    // filename, so pasting the same picture twice must produce the same name to be found again.
+                    let digest = SHA256.hash(data: try Data(contentsOf: source, options: .mappedIfSafe))
+                    let name = "pasted-" + digest.prefix(6).map { String(format: "%02x", $0) }.joined()
+                    let destination = FileManager.default.temporaryDirectory
+                        .appendingPathComponent(name, isDirectory: false)
+                        .appendingPathExtension(ext)
+                    if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
                     try FileManager.default.copyItem(at: source, to: destination)
                     continuation.resume(returning: destination)
                 } catch {

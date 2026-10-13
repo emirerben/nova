@@ -3579,9 +3579,11 @@ struct NativeEditorTemporaryVideo {
         for _ in 0..<120 {
             guard !Task.isCancelled, self.itemID == itemID else { return }
             _ = await refreshVisualLibrary()
-            // Match the upload by its own filename so a stale refresh or a second upload can't hand back another asset.
+            // Match the upload by its own filename (named from its bytes, so a repeat paste of the same picture
+            // finds the pool's existing copy) so a stale refresh or another upload can't hand back a different asset.
             let fresh = visualLibrary.filter { !known.contains($0.id) }
-            if let asset = fresh.first(where: { $0.sourceFilename == filename }) ?? fresh.first(where: { $0.sourceFilename == nil }) {
+            if let asset = visualLibrary.first(where: { $0.sourceFilename == filename })
+                ?? fresh.first(where: { $0.sourceFilename == nil }) {
                 if asset.status == "ready" {
                     await addLibraryVisual(asset)
                     if let failure = visualError { pasteError = failure }
@@ -3594,7 +3596,7 @@ struct NativeEditorTemporaryVideo {
             }
             try? await Task.sleep(for: .seconds(1))
         }
-        pasteError = "Adding the picture is taking longer than expected. It will appear in your visuals when ready."
+        pasteError = "Adding the picture is taking longer than expected. If it is already in your visuals, add it from there."
     }
 
     func updatePendingText(_ content: String) { pendingText?.text = content }
