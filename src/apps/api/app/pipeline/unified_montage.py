@@ -1767,11 +1767,33 @@ def _fit_typography(
         for text in (title, closing, *(label.text for label in labels.values()), *extra_texts)
         if text
     ]
-    candidates = list(dict.fromkeys(f for f in (requested, _DEFAULT_FONT, *_FALLBACK_FONTS) if f))
+    from app.schemas.phone_text_style import CURATED_PHONE_FONTS  # noqa: PLC0415
+    from app.services.phone_text_styling import current_phone_text_policy  # noqa: PLC0415
+
+    policy = current_phone_text_policy()
+    if policy:
+        # Coverage is role-scoped in the shared pass. This early planner adapter
+        # must not strip a label because a separately requested title font lacks
+        # its glyphs. Use a drawable provisional face for the compiler dry run.
+        chosen = next(
+            (font for font in CURATED_PHONE_FONTS if all(covers(font, text) for text in texts)),
+            None,
+        )
+        if chosen is None:
+            from app.pipeline.phone_text_style import _style_decline
+
+            raise _style_decline("The eligible fonts cannot draw all text. Choose another font.")
+        return chosen, title, closing, labels
+    else:
+        candidates = list(
+            dict.fromkeys(f for f in (requested, _DEFAULT_FONT, *_FALLBACK_FONTS) if f)
+        )
     chosen = next(
         (family for family in candidates if all(covers(family, text) for text in texts)), None
     )
     if chosen is None:
+        if policy:
+            raise ValueError("The eligible fonts cannot draw all text. Choose another font.")
         chosen = candidates[0]
         title = _strip_uncovered(title, chosen, covers) or None if title else None
         closing = _strip_uncovered(closing, chosen, covers) or None if closing else None
@@ -1798,6 +1820,10 @@ def _fit_pins(
     """Drop only the glyphs the chosen font cannot draw; a pin never vanishes silently."""
     if covers is None:
         return pins
+    from app.services.phone_text_styling import current_phone_text_policy
+
+    if current_phone_text_policy():
+        return pins  # the joint text pass checks coverage without rewriting pins
     fitted: list[PinnedText] = []
     for pin in pins:
         text = pin.text if covers(family, pin.text) else _strip_uncovered(pin.text, family, covers)

@@ -324,7 +324,7 @@ def narrated_title_element(
     )
     if not text or end_s <= 0:
         return None
-    return TextElement(
+    element = TextElement(
         id=NARRATED_TITLE_ELEMENT_ID,
         text=text,
         start_s=0.0,
@@ -336,6 +336,13 @@ def narrated_title_element(
         # whether the title is editable (`_with_phone_narrated_title`), so rows
         # persisted before and after this change read the same way.
         source_params={"narrated_storyboard": "intro"},
+    )
+    from app.services.phone_text_styling import generation_style_rows
+
+    return TextElement.model_validate(
+        generation_style_rows([element.model_dump(mode="json", exclude_none=True)], canvas=canvas)[
+            0
+        ]
     )
 
 
@@ -428,6 +435,27 @@ def with_pinned_text_layers(
         font_family=font_family,
         text_color=text_color,
     )
+    from app.pipeline.canvas import Canvas as PipelineCanvas
+    from app.services.phone_text_styling import generation_resolved_rows, generation_style_rows
+
+    prior_titles = generation_resolved_rows("title")
+    styled = generation_style_rows(
+        [*prior_titles, *rows], canvas=PipelineCanvas(recipe.canvas.width, recipe.canvas.height)
+    )
+    if prior_titles:
+        updated_titles = styled[: len(prior_titles)]
+        recipe = _with_text_layers(
+            recipe,
+            [
+                *_compile_title_layers(
+                    [TextElement.model_validate(row) for row in updated_titles],
+                    canvas=recipe.canvas,
+                    timeline_duration_s=duration,
+                ),
+                *(layer for layer in recipe.text_layers if not _is_title_layer(layer)),
+            ],
+        )
+    rows = styled[len(prior_titles) :]
     if not rows:
         return recipe, []
     existing = list(recipe.text_layers)
@@ -827,6 +855,16 @@ def compile_phone_narrated_plan(
         audio=audio,
         required_capabilities=required_capabilities,
     )
+    from app.services.phone_text_styling import current_phone_text_policy
+    from app.services.phone_text_styling import register_generation_timeline
+
+    register_generation_timeline(clips)
+
+    captions_first = bool(current_phone_text_policy() and caption_cues)
+    if captions_first:
+        recipe = replace_narrated_captions(
+            recipe, caption_cues=caption_cues, caption_style=caption_style, look=caption_look
+        )
     title = narrated_title_element(
         opening_title,
         end_s=opening_title_end_s,
@@ -836,11 +874,14 @@ def compile_phone_narrated_plan(
     if title is not None:
         recipe = _with_text_layers(
             recipe,
-            _compile_title_layers(
-                [title], canvas=story_canvas, timeline_duration_s=timeline_end_s(clips)
-            ),
+            [
+                *_compile_title_layers(
+                    [title], canvas=story_canvas, timeline_duration_s=timeline_end_s(clips)
+                ),
+                *recipe.text_layers,
+            ],
         )
-    if caption_cues:
+    if caption_cues and not captions_first:
         # Captions go through the same swap a phone-editor caption Save uses
         # (KRI-280), so the first render and every later Save compile them alike.
         # An empty-caption narrated render is not an error (see "Captions").

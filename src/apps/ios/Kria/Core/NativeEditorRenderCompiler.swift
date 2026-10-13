@@ -541,13 +541,13 @@ enum NativeEditorRenderError: Error, Equatable {
             let appearance = meta["appearance"]?.objectValue ?? [:]
             let explicitHighlight = appearance["highlight_spoken_word"]?.boolValue
             let captionAlignment = AuthoredTextLayout.Alignment(rawValue: appearance["alignment"]?.stringValue ?? "center") ?? .center
-            let captionX = captionAlignment == .left ? 80.0 / 1080 : captionAlignment == .right ? 1000.0 / 1080 : 0.5
+            let captionX = appearance["position_x_frac"]?.numberValue ?? (captionAlignment == .left ? 80.0 / 1080 : captionAlignment == .right ? 1000.0 / 1080 : 0.5)
             let captionStyle = AuthoredTextLayout.Style(fontAssetID: fontID, size: meta["size_px"]?.numberValue ?? 78,
-                widthFraction: 920.0 / 1080, xFraction: captionX, yFraction: meta["y_frac"]?.numberValue ?? (talkingCaptionFrame ? 0.82 : 1740.0 / 1920),
+                widthFraction: appearance["max_width_frac"]?.numberValue ?? 920.0 / 1080, xFraction: captionX, yFraction: appearance["position_y_frac"]?.numberValue ?? meta["y_frac"]?.numberValue ?? (talkingCaptionFrame ? 0.82 : 1740.0 / 1920),
                 alignment: captionAlignment,
                 color: try ink(meta["color"], fallback: "#FFFFFF"), stroke: try ink(appearance["stroke_color"], fallback: "#000000"), strokeWidth: meta["stroke_width"]?.numberValue ?? 4,
                 shadows: meta["shadow_enabled"] == .bool(false) ? [] : [TextBlurLayer(color: try ink(appearance["shadow_color"], fallback: "#000000", alpha: appearance["shadow_opacity"]?.numberValue ?? 0.5), sigma: 0, dx: 1, dy: 1)],
-                bottomAligned: true, fontVariations: fontInstances[family] ?? [:])
+                bottomAligned: appearance["position_y_frac"] == nil, fontVariations: fontInstances[family] ?? [:])
             var previousWordEnd = 0.0
             // KRI-202: two caption_cues rows can reach the client already
             // overlapping in time (the cloud's own de-overlap guard,
@@ -620,7 +620,7 @@ enum NativeEditorRenderError: Error, Equatable {
                         start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas)
                     text.append(PortableTextLayer(id: layout.id, start: layout.start, end: layout.end,
                         anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs,
-                        effect: talkingCaptionFrame ? .captionPop : .none))
+                        effect: appearance["position_y_frac"] != nil ? .popIn : talkingCaptionFrame ? .captionPop : .none))
                 }
             }
         }

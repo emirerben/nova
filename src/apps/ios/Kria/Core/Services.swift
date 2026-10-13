@@ -116,6 +116,8 @@ protocol SlidePostProposalClient: Sendable {
 }
 
 protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
+    func textPreferenceMemory() async throws -> TextPreferenceMemory
+    func mutateTextPreferenceMemory(path: String, method: String, body: [String: JSONValue]) async throws -> TextPreferenceOperation
     func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
     func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse
     func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse
@@ -250,6 +252,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
 }
 
 extension KriaAPIClient {
+    func textPreferenceMemory() async throws -> TextPreferenceMemory { throw APIError.unsupported }
+    func mutateTextPreferenceMemory(path: String, method: String, body: [String: JSONValue]) async throws -> TextPreferenceOperation { throw APIError.unsupported }
     /// Decisions that carry no video-shape pick (denials, and threads that offered none).
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws {
         try await decideApproval(threadID: threadID, approvalID: approvalID, decision: decision, expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: nil, landscapeFit: nil)
@@ -939,7 +943,8 @@ private enum KriaClientProtocolContract {
     /// number because a build with only the protocol-5 slide work cannot decode drawings.
     ///
     /// 7 (KRI-589): round-trips a slide's `drawing`; a build below it omits the key and the server keeps the stored one.
-    static let version = 7
+    /// 8 (KRI-648): replays resolved caption corner/width preferences in native preview and Save.
+    static let version = 8
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1062,6 +1067,8 @@ struct KriaAPI: KriaAPIClient {
     func deleteProject(_ project: ProjectSummary) async throws {
         let _: EmptyProjectResponse = try await request(path: "creation-threads/\(project.id.uuidString)", method: "DELETE", query: [URLQueryItem(name: "expected_revision", value: String(project.serverRevision))], bodyData: nil, decode: EmptyProjectResponse.self)
     }
+    func textPreferenceMemory() async throws -> TextPreferenceMemory { try await request(path: "me/memory", method: "GET", bodyData: nil, decode: TextPreferenceMemory.self) }
+    func mutateTextPreferenceMemory(path: String, method: String, body: [String: JSONValue]) async throws -> TextPreferenceOperation { try await request(path: path, method: method, bodyData: JSONEncoder().encode(body), decode: TextPreferenceOperation.self) }
     func projects() async throws -> [ProjectSummary] { try await request(path: "creation-threads", method: "GET", bodyData: nil, decode: [CreationThread].self).map(\.summary) }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
     func creationCapabilities() async throws -> CreationCapabilities { try await request(path: "creation-threads/capabilities", method: "GET", bodyData: nil, decode: CreationCapabilities.self) }

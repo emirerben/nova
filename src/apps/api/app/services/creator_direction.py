@@ -162,6 +162,21 @@ def infer_typed_direction(
     """Map narrow, unambiguous durable instructions to renderer-safe keys."""
     instruction = normalize_instruction(instruction)
     lowered = instruction.casefold()
+    if normalized_key is None:
+        from app.schemas.phone_text_style import explicit_text_rule  # noqa: PLC0415
+
+        resolved = explicit_text_rule(instruction)
+        if resolved is not None:
+            role, values = resolved
+            # Preserve existing single-knob contracts. Compound/role-specific
+            # asks commit atomically in one typed ledger row.
+            if (
+                role != "all_text"
+                or len(values) > 1
+                or set(values) not in ({"font_family"}, {"shadow_enabled"})
+            ):
+                key = f"text_style_{role}"
+                return key, {key: values}, "default"
     if normalized_key == "font_family" and structured_value is None:
         mentioned_fonts = [
             font
@@ -611,7 +626,10 @@ class CreatorDirectionService:
             raise DirectionError("unsupported enforcement")
         if initial_state not in {"active", "suggested"}:
             raise DirectionError("unsupported initial state")
-        if category == "other" and normalized_key in {"font_family", "shadow_enabled"}:
+        if category == "other" and (
+            normalized_key in {"font_family", "shadow_enabled"}
+            or str(normalized_key).startswith("text_style_")
+        ):
             category = "video_style"
         user = await self._user(db, user_id, lock=True)
         fingerprint = request_fingerprint(

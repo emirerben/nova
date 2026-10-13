@@ -2609,6 +2609,9 @@ def _dispatch_item_render(
             # Neither path resolves live memory when a render starts later.
             inherited_snapshot=_item_direction_snapshot(session, item, plan),
         )
+        from app.services.phone_text_styling import stamp_phone_text_style  # noqa: PLC0415
+
+        stamp_phone_text_style(job)
     except ValueError as exc:
         log.warning(
             "plan_item_render.invalid_clips",

@@ -14,7 +14,7 @@
       "weight": 500,
       "category": "sans",
       "css_family": "'Inter', sans-serif",
-      "deprecated": true
+      "deprecated": false
     },
     "Playfair Display": {
       "file": "PlayfairDisplay-Bold.ttf",

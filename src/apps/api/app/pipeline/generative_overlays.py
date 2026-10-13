@@ -1016,6 +1016,8 @@ def build_overlays_from_text_elements(
             only for lines inside a movable box, so their y coordinate always
             remains the block center, matching the CSS editor preview.
             """
+            if (elem.source_params or {}).get("phone_text_style_version") == 1:
+                overlay["shape_text"] = True
             if independent_box_alignment and not top_anchored_burn:
                 overlay["vertical_anchor"] = "center"
             if not elem.wrap_lines:
