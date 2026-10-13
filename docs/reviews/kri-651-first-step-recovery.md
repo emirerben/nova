@@ -40,3 +40,45 @@ after 59 passing checks, with real PostgreSQL available (no environment skip).
 No model/thinking settings, approval rules, database schema, renderer, or
 HTTP endpoint changed. Main Creator and brief extraction now share the turn's
 remaining provider budget, preserving 20 seconds for finishing the turn.
+
+## Saved title placement through clip inventory
+
+The same fresh thread later completed a device render on the deployed hook fix,
+before this follow-up PR merged. Between wording approval and plan approval, the
+clip-instruction inventory asked whether the already approved opening hook was a
+title or a chapter caption. Main Creator had the current-media opening-title
+approval and the one-clip manifest; the downstream inventory received neither.
+Its free-form question therefore reopened a decision owned by the saved approval.
+
+Failure shapes specified before implementation: approved opening and closing
+titles; English and Turkish; one versus several clips; title-only versus explicit
+clip captions, labels, grouping and ordering; a fresh change to copy or placement;
+stale media, revised or pending wording; and cancelled copy. The raw request
+inventory remains authoritative even when the earlier planner omitted an operation
+from its brief or candidates. Both runtime and legacy callers pass typed current
+title approval and the real owned-clip count. No title-only or single-clip shortcut
+is introduced. Later explicit caption or placement changes remain instructions
+even when they reuse the approved words.
+
+The regression crosses real PostgreSQL submission, saved choice selection,
+planner parsers, worker completion and public delta reads. The transport returns
+the redundant placement question if inventory lacks the saved placement. Native
+rendering remains unchanged; this is a pre-render approval/context repair.
+
+Validation of the added boundary: 11 real-Postgres approval/inventory journeys and
+4 narrow follow-up extraction/recovery cases pass. The registered red control
+at prior PR revision `be1073184` fails the redundant-question assertion after 76
+passing cases, with no database skips or collection errors. Updated preship passes
+1,361 selected reliability checks; 1,187 free replay evaluations pass with 15
+optional skips. Contracts and the approved-hook phone recipe compile unchanged.
+Both independent agent reviews found no outstanding correctness issues after
+rejecting an inventory shortcut that could hide requests omitted from the brief.
+
+The inventory prompt is now `2026-10-13.1`. On its largest existing replay fixture,
+prompt length grows from 15,025 to 16,182 characters, or 16,812 with both maximum
+280-character confirmed titles. Model, 384-token thinking budget, 20-second
+timeout and at most two attempts are unchanged; approval journeys still make one
+inventory call. Actual live tokens/cost are unknown: no paid model was called.
+This proves context delivery through real parsers and consent boundaries with
+substituted provider transport, not live-provider compliance. The required native
+export stays selected in CI, and merge/deploy approval remains pending.

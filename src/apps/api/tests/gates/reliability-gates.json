@@ -867,7 +867,9 @@
       "symptom": "Phone Montage render-ready reply said 'Doğrulayamadım' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
       "boundary": "publication",
       "fix_prs": [
-        1503
+        1503,
+        1589,
+        1594
       ],
       "fix_commit": "414d8181b",
       "paths": [
@@ -880,14 +882,20 @@
         "src/apps/api/tests/fixtures/prompt_coverage/kri651_approved_hook.json",
         "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift",
         "src/apps/api/app/kria/planner.py",
-        "src/apps/api/app/services/creation_thread_titles.py"
+        "src/apps/api/app/services/creation_thread_titles.py",
+        "src/apps/api/app/agents/clip_intent_planner.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/routes/creator_agent.py",
+        "src/apps/api/prompts/clip_intent_planner.txt"
       ],
       "regression_tests": [
         "tests/kria/test_brief_montage_render_asks.py",
         "tests/tasks/test_montage_render_ready_review.py",
         "tests/evals/request_following/test_approved_hook_journey.py",
         "tests/kria/test_approved_hook_observer_postgres.py",
-        "tests/kria/test_first_step_recovery_postgres.py"
+        "tests/kria/test_first_step_recovery_postgres.py",
+        "tests/kria/test_brief_provider_recovery_postgres.py",
+        "tests/kria/test_confirmed_title_inventory_postgres.py"
       ],
       "harness": "real_reply",
       "kill_switch": null,
@@ -906,7 +914,11 @@
         "EN/TR text preparation failure and real-Postgres publication observer",
         "automatic naming during first hook planning does not repeat provider contact",
         "provider-outcome-unknown is a typed EN/TR failure with saved request",
-        "main and brief extraction providers honor the shared turn deadline"
+        "main and brief extraction providers honor the shared turn deadline",
+        "EN/TR saved opening and closing placement reaches plan approval through real clip inventory",
+        "one-clip caption and raw mixed requests remain inventoried even when absent from the brief or candidates",
+        "later placement changes and stale copy do not inherit prior approval",
+        "narrow follow-up extractor provider failure remains typed with saved footage"
       ],
       "neighbours_gap": [
         "approved/published generation lineage is not a typed invariant at the publication boundary (KRI-577 item 1)",

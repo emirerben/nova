@@ -38,6 +38,7 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
 from app.agents.brief_extractor import BriefExtractionInput, BriefExtractorAgent
+from app.agents.clip_intent_planner import ConfirmedTitleCopy
 from app.agents.main_creator import (
     MAIN_CREATOR_CONVERSATION_MAX,
     CreativeCopyDecision,
@@ -2362,6 +2363,11 @@ async def _plan_creator_action(
                 latest_user_message=user_message,
                 generated_brief=brief_request,
                 candidate_intents=action.strategy.clip_intents,
+                confirmed_titles=[
+                    ConfirmedTitleCopy(target=target, text=state.approved)
+                    for target, state in (inputs.creative_copy_state or {}).items()
+                    if state.approved is not None
+                ],
                 clips=intent_clips,
                 run_context=RunContext(
                     request_id=str(thread_id),
