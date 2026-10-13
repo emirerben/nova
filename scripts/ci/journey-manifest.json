@@ -180,6 +180,12 @@
       ],
       "paths": [
         "src/apps/api/app/pipeline/slide_post/build.py",
+        "src/apps/api/app/pipeline/slide_post/stickers.py",
+        "src/apps/api/tests/pipeline/test_slide_post_stickers.py",
+        "src/apps/api/tests/routes/test_slide_post_sticker_routes.py",
+        "tests/fixtures/slide-sticker-parity/",
+        "src/apps/ios/Kria/Core/SlidePostSticker.swift",
+        "src/apps/ios/Tests/KriaTests/SlidePostStickerTests.swift",
         "src/apps/api/app/routes/plan_items.py",
         "src/apps/api/app/schemas/slide_post.py",
         "src/apps/api/tests/routes/test_slide_post_native_routes.py",
