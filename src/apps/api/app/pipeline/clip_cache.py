@@ -27,7 +27,9 @@ import hashlib
 import json
 import os
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import redis as redis_lib
@@ -370,3 +372,241 @@ def set_cached_meta(
     except Exception as exc:
         log.warning("clip_cache_set_failed", key=key, error=str(exc))
     _set_persistent_payload(clip_hash, filter_hint, encoded, creator_id)
+
+
+# Durable library source facts survive the expiry of the ordinary ClipMeta
+# cache.  They are keyed by verified bytes and can be read through any of the
+# owner's sources with those bytes.
+@dataclass(frozen=True, slots=True)
+class MediaAssetFactKey:
+    owner_id: str
+    source_identity: str
+    analyzer: str
+    model: str
+    prompt_version: str
+    schema_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class MediaAssetFactClaim:
+    status: str
+    analysis_id: str | None = None
+    attempt_token: str | None = None
+    result_json: dict[str, Any] | None = None
+
+
+def _fact_cache_key(key: MediaAssetFactKey) -> str:
+    fingerprint = hashlib.sha256(
+        json.dumps(dataclasses.asdict(key), sort_keys=True).encode()
+    ).hexdigest()
+    return f"media_analysis:{key.owner_id}:{fingerprint}"
+
+
+def get_versioned_media_cache(key: MediaAssetFactKey) -> dict[str, Any] | None:
+    """Generic source-fact access through the existing Redis/PostgreSQL cache."""
+    from sqlalchemy import text
+
+    from app.database import sync_engine
+
+    try:
+        redis = _get_redis()
+        if redis is not None:
+            raw = redis.get(_fact_cache_key(key))
+            if raw is not None:
+                result = json.loads(raw)
+                if isinstance(result, dict):
+                    log.info("media_library_cache_hit", tier="redis", analyzer=key.analyzer)
+                    return result
+        with sync_engine.begin() as conn:
+            row = conn.execute(
+                text("""UPDATE media_analysis_cache
+                SET hit_count=hit_count+1, last_hit_at=now()
+                WHERE creator_id=CAST(:owner_id AS uuid) AND source_identity=:source_identity
+                  AND analyzer=:analyzer AND model=:model AND prompt_version=:prompt_version
+                  AND schema_version=:schema_version AND expires_at>now()
+                RETURNING result_json"""),
+                dataclasses.asdict(key),
+            ).first()
+        if row and isinstance(row.result_json, dict):
+            if redis is not None:
+                redis.setex(_fact_cache_key(key), _redis_cache_ttl_s(), json.dumps(row.result_json))
+            log.info("media_library_cache_hit", tier="postgres", analyzer=key.analyzer)
+            return dict(row.result_json)
+    except Exception as exc:
+        log.warning("media_library_cache_read_failed", error_type=type(exc).__name__)
+    return None
+
+
+def cache_versioned_media_result(key: MediaAssetFactKey, result: dict[str, Any]) -> None:
+    """Use the existing temporal cache; durable library facts remain authoritative."""
+    from sqlalchemy import text
+
+    from app.database import sync_engine
+
+    try:
+        with sync_engine.begin() as conn:
+            conn.execute(
+                text("""INSERT INTO media_analysis_cache
+                (id, creator_id, source_identity, analyzer, model, prompt_version,
+                 schema_version, result_json, expires_at)
+                VALUES (gen_random_uuid(), CAST(:owner_id AS uuid), :source_identity,
+                    :analyzer, :model, :prompt_version, :schema_version,
+                    CAST(:result AS jsonb), now()+make_interval(days => :days))
+                ON CONFLICT ON CONSTRAINT uq_media_analysis_cache_owner_identity DO UPDATE
+                  SET result_json=EXCLUDED.result_json, expires_at=EXCLUDED.expires_at"""),
+                {
+                    **dataclasses.asdict(key),
+                    "result": json.dumps(result),
+                    "days": _persistent_cache_ttl_days(),
+                },
+            )
+        redis = _get_redis()
+        if redis is not None:
+            redis.setex(_fact_cache_key(key), _redis_cache_ttl_s(), json.dumps(result))
+    except Exception as exc:
+        log.warning("media_library_cache_write_failed", error_type=type(exc).__name__)
+
+
+def get_media_asset_fact(key: MediaAssetFactKey) -> dict[str, Any] | None:
+    """Read a ready durable source fact without requiring cloud access."""
+    cached = get_versioned_media_cache(key)
+    if cached is not None:
+        return cached
+    try:
+        from sqlalchemy import text  # noqa: PLC0415
+
+        from app.database import sync_engine  # noqa: PLC0415
+
+        with sync_engine.begin() as conn:
+            row = (
+                conn.execute(
+                    text("""
+                SELECT result_json FROM media_asset_analyses
+                WHERE user_id = CAST(:owner_id AS uuid) AND source_identity = :source_identity
+                  AND analyzer = :analyzer AND model = :model AND prompt_version = :prompt_version
+                  AND schema_version = :schema_version AND status = 'ready'
+                  AND result_json IS NOT NULL
+                ORDER BY created_at, id LIMIT 1
+            """),
+                    dataclasses.asdict(key),
+                )
+                .mappings()
+                .one_or_none()
+            )
+            result = (
+                dict(row["result_json"]) if row and isinstance(row["result_json"], dict) else None
+            )
+        if result is not None:
+            cache_versioned_media_result(key, result)
+            log.info("media_library_cache_hit", tier="durable_fact", analyzer=key.analyzer)
+        return result
+    except Exception as exc:
+        log.warning("media_asset_fact_get_failed", error_type=type(exc).__name__)
+        return None
+
+
+def claim_media_asset_fact(
+    fact: MediaAssetFactKey,
+    *,
+    canonical_asset_id: str,
+    canonical_source_id: str,
+    lease_seconds: int = 900,
+) -> MediaAssetFactClaim:
+    """Claim the canonical fact lease; provider work runs after this commits."""
+    from sqlalchemy import text  # noqa: PLC0415
+
+    from app.database import sync_engine  # noqa: PLC0415
+
+    token = str(uuid.uuid4())
+    params = {
+        **dataclasses.asdict(fact),
+        "canonical_asset_id": canonical_asset_id,
+        "canonical_source_id": canonical_source_id,
+        "attempt_token": token,
+        "lease_seconds": lease_seconds,
+    }
+    try:
+        with sync_engine.begin() as conn:
+            conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:source_identity))"), params)
+            row = (
+                conn.execute(
+                    text("""
+                SELECT id, status, attempt_token, result_json, lease_expires_at
+                FROM media_asset_analyses
+                WHERE user_id = CAST(:owner_id AS uuid) AND source_identity = :source_identity
+                  AND analyzer = :analyzer AND model = :model AND prompt_version = :prompt_version
+                  AND schema_version = :schema_version ORDER BY created_at, id LIMIT 1 FOR UPDATE
+            """),
+                    params,
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row and row["status"] == "ready" and isinstance(row["result_json"], dict):
+                return MediaAssetFactClaim(
+                    "ready", str(row["id"]), result_json=dict(row["result_json"])
+                )
+            if row and row["status"] == "analyzing" and row["lease_expires_at"] is not None:
+                if conn.execute(
+                    text("SELECT :lease_expires_at > now()"),
+                    {"lease_expires_at": row["lease_expires_at"]},
+                ).scalar_one():
+                    return MediaAssetFactClaim("busy", str(row["id"]))
+            if row:
+                conn.execute(
+                    text("""UPDATE media_asset_analyses SET status = 'analyzing',
+                    attempt_token = CAST(:attempt_token AS uuid),
+                    lease_expires_at = now() + make_interval(secs => :lease_seconds),
+                    result_json = NULL
+                    WHERE id = :id"""),
+                    {**params, "id": row["id"]},
+                )
+                return MediaAssetFactClaim("claimed", str(row["id"]), token)
+            inserted = conn.execute(
+                text("""INSERT INTO media_asset_analyses
+                (id, user_id, asset_id, source_id, analyzer, model, prompt_version,
+                 schema_version, source_identity, status, attempt_token, lease_expires_at)
+                VALUES (gen_random_uuid(), CAST(:owner_id AS uuid),
+                    CAST(:canonical_asset_id AS uuid), CAST(:canonical_source_id AS uuid),
+                    :analyzer, :model, :prompt_version, :schema_version, :source_identity,
+                    'analyzing', CAST(:attempt_token AS uuid),
+                    now() + make_interval(secs => :lease_seconds))
+                RETURNING id"""),
+                params,
+            ).scalar_one()
+            return MediaAssetFactClaim("claimed", str(inserted), token)
+    except Exception as exc:
+        log.warning("media_asset_fact_claim_failed", error_type=type(exc).__name__)
+        return MediaAssetFactClaim("unavailable")
+
+
+def complete_media_asset_fact(
+    claim: MediaAssetFactClaim, result_json: dict[str, Any] | None, *, failed: bool = False
+) -> bool:
+    """Fenced completion. A stale attempt cannot overwrite a new lease."""
+    if not claim.analysis_id or not claim.attempt_token:
+        return False
+    lease = claim.attempt_token
+    try:
+        from sqlalchemy import text  # noqa: PLC0415
+
+        from app.database import sync_engine  # noqa: PLC0415
+
+        with sync_engine.begin() as conn:
+            count = conn.execute(
+                text("""UPDATE media_asset_analyses
+                SET status = :status, result_json = CAST(:result_json AS jsonb),
+                    lease_expires_at = NULL, attempt_token = NULL
+                WHERE id = CAST(:id AS uuid) AND status = 'analyzing'
+                  AND attempt_token = CAST(:attempt_token AS uuid)"""),
+                {
+                    "id": claim.analysis_id,
+                    "attempt_token": lease,
+                    "status": "failed" if failed else "ready",
+                    "result_json": json.dumps(result_json) if result_json is not None else None,
+                },
+            ).rowcount
+            return bool(count)
+    except Exception as exc:
+        log.warning("media_asset_fact_complete_failed", error_type=type(exc).__name__)
+        return False

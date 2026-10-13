@@ -57,7 +57,7 @@ jobs:
 
   test-api:
     if: always()
-    needs: [changes, test-api-suite, journey, creator-contract-replay, shared-motion-runtime]
+    needs: [changes, test-api-suite, journey, journey-library, creator-contract-replay, shared-motion-runtime]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -331,10 +331,97 @@ jobs:
           python3 - <<'PY'
           import os
           selected = os.environ["JOURNEY_IDS"].split(",")
-          allowed = {"kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-577-reliability-gates", "kri-586-hook-copy", "kri-590-voiceover-cues", "kri-598-voiceover-planner", "kri-593-voiceover-clips", "kri-653-silent-take", "kri-589-drawing", "kri-623-ruled-out-clips"}
+          allowed = {"kri-384-library-ingest", "kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-577-reliability-gates", "kri-586-hook-copy", "kri-590-voiceover-cues", "kri-598-voiceover-planner", "kri-593-voiceover-clips", "kri-653-silent-take", "kri-589-drawing", "kri-623-ruled-out-clips"}
           if os.environ["COVERAGE"] != "covered" or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed:
               raise SystemExit("Journey selection has an unmapped or invalid incident")
           PY
+
+  journey-library:
+    needs: [changes, journey-mapping]
+    if: contains(needs.changes.outputs.journey_ids, 'kri-384-library-ingest')
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: nova_library_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_library_test
+      REDIS_URL: redis://localhost:6379/0
+      STORAGE_PROVIDER: gcs
+      STORAGE_BUCKET: nova-test
+      OPENAI_API_KEY: sk-test
+      GEMINI_API_KEY: test
+      WHISPER_BACKEND: local
+    steps:
+      - uses: actions/checkout@v4
+      - name: Disable unused Chrome apt source
+        run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
+      - name: Install deterministic media dependencies
+        timeout-minutes: 40
+        run: sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: src/apps/api/pyproject.toml
+      - name: Install API dependencies
+        working-directory: src/apps/api
+        run: pip install -e ".[dev]"
+      - name: Migrate disposable library database
+        working-directory: src/apps/api
+        run: python -m alembic upgrade head
+      - name: Run owned-library ingest and reuse journey
+        working-directory: src/apps/api
+        run: |
+          set -o pipefail
+          mkdir -p ../../../test-results/kri-384-library
+          python3 - <<'PY' | tee ../../../test-results/kri-384-library/tests.log
+          import json
+          import subprocess
+          from pathlib import Path
+          from xml.etree import ElementTree
+          manifest = json.loads(Path("../../../scripts/ci/journey-manifest.json").read_text())
+          journey = next(item for item in manifest["journeys"] if item["id"] == "kri-384-library-ingest")
+          tests = journey["api_tests"].split()
+          if not tests or any(not name.startswith("tests/") or not Path(name).is_file() for name in tests):
+              raise SystemExit("Library journey has missing test inputs")
+          command = ["python3", "-m", "pytest", *tests, "-s", "--junitxml=../../../test-results/kri-384-library/junit.xml"]
+          status = subprocess.call(command)
+          if status:
+              raise SystemExit(status)
+          cases = ElementTree.parse("../../../test-results/kri-384-library/junit.xml").findall(".//testcase")
+          for path in tests:
+              module = path.removesuffix(".py").replace("/", ".")
+              if not any(case.get("classname", "").startswith(module) and case.find("skipped") is None for case in cases):
+                  raise SystemExit(f"Library journey did not execute test module: {path}")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kri-384-library-journey-${{ github.sha }}
+          path: test-results/kri-384-library/
+          if-no-files-found: error
+          retention-days: 14
 
   journey:
     name: ${{ (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true') && 'iPhone validation' || 'Offline journey' }}

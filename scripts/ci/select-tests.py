@@ -368,6 +368,7 @@ def gate(needs, suite, job):
             "changes",
             "test-api-suite",
             "journey",
+            "journey-library",
             "creator-contract-replay",
             "shared-motion-runtime",
         }
@@ -409,6 +410,14 @@ def gate(needs, suite, job):
     expected = "success" if execution_selected else "skipped"
     if result != expected:
         raise ValueError(f"{suite}: expected {expected}, got {result}")
+    if suite == "journey":
+        ids = outputs.get("journey_ids", "").split(",") if outputs.get("journey_ids") else []
+        library_expected = "success" if "kri-384-library-ingest" in ids else "skipped"
+        library_result = needs["journey-library"].get("result")
+        if library_result != library_expected:
+            raise ValueError(
+                f"library journey: expected {library_expected}, got {library_result}"
+            )
     if suite == "ios" and job == "journey":
         contracts_expected = "success" if selected == "true" else "skipped"
         contracts_result = needs["ios-contracts"].get("result")

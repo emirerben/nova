@@ -133,7 +133,7 @@ def _store(item_id: uuid.UUID, entry: dict[str, Any]) -> bool:
         return True
 
 
-def _with_speech_segments(entry: dict[str, Any]) -> dict[str, Any]:
+def _with_speech_segments(entry: dict[str, Any], *, owner_id: str | None = None) -> dict[str, Any]:
     """KRI-282: add timed sentence segments to a clip that has speech. Best effort.
 
     Uses the cached whisper path on the same analysis proxy the vision analyzer
@@ -155,7 +155,14 @@ def _with_speech_segments(entry: dict[str, Any]) -> dict[str, Any]:
             transcribe_stored_clip,
         )
 
-        words, language = transcribe_stored_clip(str(entry["gcs_path"]))
+        words, language = transcribe_stored_clip(
+            str(entry["gcs_path"]),
+            **(
+                {"owner_id": owner_id, "generation": str(entry.get("generation") or "")}
+                if settings.media_library_enabled and owner_id
+                else {}
+            ),
+        )
         return {**entry, "analysis": attach_segments_to_analysis(analysis, words, language)}
     except Exception:  # noqa: BLE001 - segments are an enhancement, never a reason to fail
         log.warning(
@@ -187,7 +194,7 @@ def _analyze_one(raw: dict[str, Any], *, user_id: uuid.UUID, item_id: str) -> di
                 ),
                 require_semantic=True,
             )
-            return _with_speech_segments(entry)
+            return _with_speech_segments(entry, owner_id=str(user_id))
         except (AiBudgetExceededError, ProviderQuotaExceededError, ProviderOutcomeUnknownError):
             raise _Stop from None
         except Exception as exc:  # noqa: BLE001 - one bad clip must not stop the rest

@@ -275,3 +275,10 @@ warns at 83 inactive days, deletes inactive sources/editable bases at 90 days,
 keeps the latest final and poster for 365 days, and removes superseded derivatives
 after seven days. Every delete rechecks both the database reference and exact GCS
 generation immediately before deletion.
+
+Migration `0117` adds creator-owned library assets and immutable source generations.
+`MEDIA_LIBRARY_ENABLED` and `MEDIA_COLLECTION_PROPOSALS_ENABLED` default to `false` independently.
+Library sources have a separate bounded scan: warnings begin at 83 inactive days; deletion waits until day 90 and at least seven days after the current warning. New use resets that window.
+Editable-post references pin shared sources. Catalogue membership alone does not prevent cloud expiry; catalogue records and compatible analysis facts remain after a cloud copy expires.
+Adopted sources are protected from temporary-upload and project cleanup. Deletion uses the owner lock, a durable tombstone, and the exact object generation to fence concurrent attachment.
+Account erasure cascades library records, starts best-effort cleanup immediately, and verifies both `users/<user>/` and `<user>/` object prefixes in the delayed sweep.

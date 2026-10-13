@@ -9,7 +9,6 @@ per-agent model declaration reaches the SDK unchanged.
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -463,13 +462,24 @@ def test_degraded_thinking_level_table(model: str, level: str | None, expected: 
 
 def test_per_agent_timeout_is_enforced(capturing_client, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
 
     from app.agents import _model_client
     from app.agents._runtime import ProviderOutcomeUnknownError
 
+    provider_started = Event()
+    release_provider = Event()
+
     def slow_generate(**kwargs):  # noqa: ARG001
-        time.sleep(0.2)
+        provider_started.set()
+        assert release_provider.wait(timeout=30), "fake provider was not released"
         return SimpleNamespace(text='{"ranked": []}', usage_metadata=None)
+
+    class RunningCallPool(ThreadPoolExecutor):
+        def submit(self, *args, **kwargs):
+            future = super().submit(*args, **kwargs)
+            assert provider_started.wait(timeout=5), "fake provider did not start"
+            return future
 
     monkeypatch.setattr(capturing_client, "generate_content", slow_generate)
     # A running SDK call may still reach and bill the provider after our local
@@ -477,14 +487,19 @@ def test_per_agent_timeout_is_enforced(capturing_client, monkeypatch):
     # it with a retry.
     # Join the fake provider and its late-result callback before pytest changes
     # output capture for the next test. The real client remains nonblocking.
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    # Hold the running call until the deadline assertion finishes. A fixed sleep
+    # can finish before a delayed caller starts waiting on the future.
+    with RunningCallPool(max_workers=1) as pool:
         monkeypatch.setattr(_model_client, "_GEMINI_INVOKE_POOL", pool)
-        with pytest.raises(ProviderOutcomeUnknownError, match="unknown after 0.1s"):
-            GeminiClient().invoke(
-                model="gemini-3.6-flash",
-                prompt="hi",
-                timeout_s=0.1,
-            )
+        try:
+            with pytest.raises(ProviderOutcomeUnknownError, match="unknown after 0.1s"):
+                GeminiClient().invoke(
+                    model="gemini-3.6-flash",
+                    prompt="hi",
+                    timeout_s=0.1,
+                )
+        finally:
+            release_provider.set()
 
 
 def test_matcher_spec_caps_thinking_budget():
