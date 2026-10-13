@@ -433,6 +433,15 @@
       ]
     },
     {
+      "id": "kri-625-moment-quality",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_best_parts.py tests/pipeline/test_clip_meta_dormant_readers.py",
+      "paths": [
+        "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
+        "src/apps/api/prompts/analyze_clip.txt"
+      ]
+    },
+    {
       "id": "kri-646-text-bend",
       "needs_native": false,
       "api_tests": "tests/kria/test_text_bend.py",

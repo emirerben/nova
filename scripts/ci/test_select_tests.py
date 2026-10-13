@@ -716,6 +716,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-623-ruled-out-clips"),
             ),
             (
+                "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
+                (True, "covered", "kri-625-moment-quality"),
+            ),
+            (
+                "src/apps/api/prompts/analyze_clip.txt",
+                (True, "covered", "kri-625-moment-quality"),
+            ),
+            (
                 "src/apps/api/app/kria/opening_cut_ask.py",
                 (True, "covered", "kri-628-opening-cut"),
             ),
