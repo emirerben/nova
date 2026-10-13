@@ -48,6 +48,9 @@ enum NativeEditorRenderError: Error, Equatable {
     /// follows it so a phone Narrated caption shows where the phone burns it
     /// (KRI-280); cloud Narrated keeps its low burn position.
     ///
+    /// `skippedMediaOverlayIDs`: `overlay:<id>` keys of cards whose media failed to load; they are left out of the
+    /// preview recipe only.
+    ///
     /// `songCaptionShift` (KRI-576): re-times the song's lyric caption rows for the live preview only; nil leaves
     /// every row exactly as the document has it.
     func compile(document: EditorDocument, clips: [EditorClip], items: [NativeEditorTimelineItem],
@@ -55,7 +58,8 @@ enum NativeEditorRenderError: Error, Equatable {
                  referenceOnlyMusic: Bool = false, sourceAudioPreserved: Bool = true,
                  songBed: NativeEditorSongBed? = nil,
                  deviceCaptions: Bool = false,
-                 songCaptionShift: NativeSongCaptionShift? = nil) throws -> NativeEditorRenderProgram {
+                 songCaptionShift: NativeSongCaptionShift? = nil,
+                 skippedMediaOverlayIDs: Set<String> = []) throws -> NativeEditorRenderProgram {
         for (name, populated) in [
             ("carousel", document.carouselMoment != nil),
         ] where populated { throw NativeEditorRenderError.unsupportedLane(name) }
@@ -305,6 +309,10 @@ enum NativeEditorRenderError: Error, Equatable {
         var overlays: [TimelineClip] = []
         for overlay in document.mediaOverlays.sorted(by: { ($0.raw["z"]?.numberValue ?? 0) < ($1.raw["z"]?.numberValue ?? 0) }) {
             let id = "overlay:" + overlay.id
+            // A card whose photo or video could not be loaded stays in the document (and the saved edit) but
+            // is not drawn: one bad file must not take the whole live preview down. Only a card the session
+            // explicitly gave up on is skipped; a card that was never offered still throws.
+            if skippedMediaOverlayIDs.contains(id), mediaSources[id] == nil { continue }
             guard let source = mediaSources[id], let fingerprint = source.asset.fingerprint, let size = source.asset.naturalSize,
                   let item = items.first(where: { $0.kind == .mediaOverlay && $0.id == overlay.id }), item.end > item.start else {
                 throw MediaEngineError.missingAsset(id)

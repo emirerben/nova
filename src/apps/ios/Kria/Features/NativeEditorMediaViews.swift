@@ -731,10 +731,40 @@ struct NativeVideoPreview: View {
                     .onAppear { UIAccessibility.post(notification: .announcement, argument: "Edit applied") }
             }
 
+            if session.sourcePreviewState == .ready, session.previewSkippedMediaCount > 0 {
+                // Non-blocking: the preview works; these cards stay in the edit but aren't drawn here.
+                let count = session.previewSkippedMediaCount
+                HStack(spacing: 10) {
+                    Text(count == 1 ? "1 photo or video couldn’t load for this preview. It’s still in your edit."
+                                    : "\(count) photos or videos couldn’t load for this preview. They’re still in your edit.")
+                        .font(KriaFont.body(11))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Retry") { Task { await session.retryPreview() } }
+                        .font(KriaFont.body(11).weight(.semibold))
+                        .accessibilityIdentifier("native-editor-retry-skipped-media")
+                }
+                .foregroundStyle(.white)
+                .padding(10)
+                .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("native-editor-preview-skipped-media")
+            }
+
             if session.sourcePreviewState.isFailure, session.isShowingRenderedFallback {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Showing your last finished video")
-                        .font(KriaFont.body(12).weight(.semibold))
+                    if session.fallbackOffersRetry {
+                        // The live preview is what shows edits; until it rebuilds, nothing the creator
+                        // changes will appear on this video.
+                        Text("Showing the finished video")
+                            .font(KriaFont.body(12).weight(.semibold))
+                        Text("Edits won’t appear here yet.")
+                            .font(KriaFont.body(11))
+                    } else {
+                        Text("Showing your last finished video")
+                            .font(KriaFont.body(12).weight(.semibold))
+                    }
                     if session.hasOnlyChatStagedChanges {
                         // KRI-535: without this the old video reads as "the AI did nothing".
                         Text("This is the version before your AI edit.")
@@ -744,8 +774,8 @@ struct NativeVideoPreview: View {
                         Text(message)
                             .font(KriaFont.body(11))
                             .lineLimit(2)
-                        if !session.sourcePreviewFailureIsPermanent {
-                            Button("Try again") { Task { await session.retryPreview() } }
+                        if session.fallbackOffersRetry {
+                            Button("Retry") { Task { await session.retryPreview() } }
                                 .accessibilityIdentifier("native-editor-retry-source-preview")
                                 .font(KriaFont.body(11).weight(.semibold))
                         }
