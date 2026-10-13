@@ -61,6 +61,10 @@ SLIDES_FRAMING_RENDERER_VERSION = 2
 # worker as stale. Kept separate from SLIDES_RENDERER_VERSION so bumping it can
 # never make a not-yet-updated worker reject queued jobs mid-deploy.
 SLIDES_SIZES_RENDERER_VERSION = 3
+# Same kind of export stamp for static slide drawings (KRI-589 PR2): a worker that
+# paints `SlideEdits.drawing` stamps its variant with the max of this and the above,
+# and a drawn draft rendered by an older worker is stale, never "current".
+SLIDES_DRAWING_RENDERER_VERSION = 4
 
 EDIT_FORMATS: tuple[str, ...] = get_args(EditFormat)
 

@@ -68,7 +68,8 @@ On PRs, a Linux mobile-contract job runs alongside one Mac job for native unit,
 selected UI and native journey scenarios. That Mac job compiles once and reuses
 the build for every selected scenario. The stable `build-and-test` gate requires
 both jobs to pass when iOS is selected. On main and manual runs, the separate
-iOS workflow retains its parallel full-regression shards.
+iOS workflow runs the full regression in parallel shards, and main releases to
+TestFlight as soon as its build, unit and smoke UI tests pass (see `ios-development.md`).
 
 ## Verification and rollback
 

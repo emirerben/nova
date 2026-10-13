@@ -753,7 +753,8 @@ jobs:
         run: |
           set -o pipefail
           python3 -m pytest tests/agents/test_drawing_schema.py \
-            tests/kria/test_drawing_compile.py -q \
+            tests/kria/test_drawing_compile.py \
+            tests/routes/test_slide_post_drawing_routes.py -q \
             | tee ../../../test-results/kri-559/drawing-api-tests.log
       - name: Verify the drawing wire and compile contract on the phone
         if: needs.changes.outputs.journey_needs_native == 'true' && github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-589-drawing')
@@ -765,6 +766,8 @@ jobs:
             -only-testing:KriaTests/DrawingParityTests/testEveryWireElementDecodesAndRoundTripsLosslessly \
             -only-testing:KriaTests/DrawingParityTests/testInvalidWireRowsAreRejectedAndKeptVerbatimAsOpaqueRows \
             -only-testing:KriaTests/DrawingParityTests/testCompileFixtureThroughThePureCompileAndTheRenderCompiler \
+            -only-testing:KriaTests/SlidePostDrawingTests/testEveryFixtureDrawingDecodesAndRoundTripsLosslessly \
+            -only-testing:KriaTests/SlidePostDrawingTests/testPhotoRenderPutsInkWhereTheGeometryFixtureSaysAndLeavesTheMarginsClean \
             -resultBundlePath ../../../test-results/kri-559/drawing-native.xcresult test
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/drawing-native.xcresult \
             > ../../../test-results/kri-559/drawing-native-test-results.json
@@ -775,7 +778,9 @@ jobs:
             --test-results test-results/kri-559/drawing-native-test-results.json \
             --xctest DrawingParityTests/testEveryWireElementDecodesAndRoundTripsLosslessly \
             --xctest DrawingParityTests/testInvalidWireRowsAreRejectedAndKeptVerbatimAsOpaqueRows \
-            --xctest DrawingParityTests/testCompileFixtureThroughThePureCompileAndTheRenderCompiler
+            --xctest DrawingParityTests/testCompileFixtureThroughThePureCompileAndTheRenderCompiler \
+            --xctest SlidePostDrawingTests/testEveryFixtureDrawingDecodesAndRoundTripsLosslessly \
+            --xctest SlidePostDrawingTests/testPhotoRenderPutsInkWhereTheGeometryFixtureSaysAndLeavesTheMarginsClean
       - name: Verify speaker face-fill decision, compile and device fixture
         if: contains(needs.changes.outputs.journey_ids, 'kri-547-speaker-framing')
         working-directory: src/apps/api

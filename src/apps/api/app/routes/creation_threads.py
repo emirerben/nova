@@ -362,6 +362,9 @@ class CreationCapabilitiesOut(BaseModel):
     slide_post_framing: bool = False
     # KRI-606: post-wide size + per-photo Fit (needs framing for the Crop workspace).
     slide_post_sizes: bool = False
+    # KRI-589 PR2: static freehand drawings on slides. True only with the flag on AND a
+    # build declaring X-Kria-Client-Protocol >= slide_post_drawing_min_client_protocol.
+    slide_post_drawing: bool = False
     slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
@@ -3721,6 +3724,11 @@ async def capabilities(
         "slide_post_framing": bool(settings.slide_post_framing_enabled),
         "slide_post_sizes": bool(
             settings.slide_post_sizes_enabled and settings.slide_post_framing_enabled
+        ),
+        "slide_post_drawing": bool(
+            settings.slide_post_drawing_enabled
+            and client_protocol is not None
+            and client_protocol >= settings.slide_post_drawing_min_client_protocol
         ),
         "creation_mode": (
             "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"

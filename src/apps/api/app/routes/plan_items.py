@@ -4634,6 +4634,11 @@ async def put_slide_post_draft(
         body.slides = merge_stored_edit_key(
             current, body.slides, "fit", accept_incoming=settings.slide_post_sizes_enabled
         )
+        # ...and for static freehand drawings (KRI-589): missing key keeps, null clears,
+        # a value sets; ignored while SLIDE_POST_DRAWING_ENABLED is off.
+        body.slides = merge_stored_edit_key(
+            current, body.slides, "drawing", accept_incoming=settings.slide_post_drawing_enabled
+        )
         aspect = (
             body.aspect
             if settings.slide_post_sizes_enabled and "aspect" in body.model_fields_set
@@ -4837,7 +4842,8 @@ async def propose_slide_post(
 
 
 def _backfill_slide_post_sizes(draft: SlidePostDraft, stored: SlidePostDraft) -> SlidePostDraft:
-    """Fill the post-wide size and per-photo Fit a client draft omitted (KRI-606).
+    """Fill the post-wide size, per-photo Fit and slide drawing a client draft omitted
+    (KRI-606, KRI-589).
 
     An older app decodes a draft, drops the keys it doesn't know and sends the
     rest back; omission (checked via ``model_fields_set``) means "unchanged".
@@ -4849,16 +4855,21 @@ def _backfill_slide_post_sizes(draft: SlidePostDraft, stored: SlidePostDraft) ->
     slides: list[SlideRef] = []
     for ref in draft.slides:
         old = stored_by_id.get(ref.id)
-        old_fit = old.edits.fit if old is not None and old.edits is not None else None
-        sent = ref.edits is not None and "fit" in ref.edits.model_fields_set
-        if sent or old_fit is None:
+        old_edits = old.edits if old is not None else None
+        # Omitted keys (older app, web) mean "unchanged": backfill Fit and the
+        # slide drawing (KRI-589) from the stored draft.
+        fill: dict[str, object] = {}
+        for key in ("fit", "drawing"):
+            stored_value = getattr(old_edits, key) if old_edits is not None else None
+            sent = ref.edits is not None and key in ref.edits.model_fields_set
+            if not sent and stored_value is not None:
+                fill[key] = stored_value
+        if not fill:
             slides.append(ref)
         elif ref.edits is None:
-            slides.append(ref.model_copy(update={"edits": SlideEdits(fit=old_fit)}))
+            slides.append(ref.model_copy(update={"edits": SlideEdits(**fill)}))
         else:
-            slides.append(
-                ref.model_copy(update={"edits": ref.edits.model_copy(update={"fit": old_fit})})
-            )
+            slides.append(ref.model_copy(update={"edits": ref.edits.model_copy(update=fill)}))
     aspect = draft.aspect if "aspect" in draft.model_fields_set else stored.aspect
     patched = draft.model_copy(update={"slides": slides, "aspect": aspect})
     return SlidePostDraft.model_validate(patched.model_dump(mode="python"))
@@ -5091,6 +5102,7 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
     if not isinstance(validation, dict) or validation.get("errors"):
         return False
     from app.agents._schemas.edit_format import (  # noqa: PLC0415
+        SLIDES_DRAWING_RENDERER_VERSION,
         SLIDES_FRAMING_RENDERER_VERSION,
         SLIDES_SIZES_RENDERER_VERSION,
     )
@@ -5116,6 +5128,11 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         # profile's default shape with the whole photo cropped (KRI-606).
         stamped = slide_post.get("renderer_version")
         if not isinstance(stamped, int) or stamped < SLIDES_SIZES_RENDERER_VERSION:
+            return False
+    if any(ref.edits is not None and ref.edits.drawing is not None for ref in draft.slides):
+        # A worker older than the drawing renderer silently omits the ink (KRI-589).
+        stamped = slide_post.get("renderer_version")
+        if not isinstance(stamped, int) or stamped < SLIDES_DRAWING_RENDERER_VERSION:
             return False
     expected_ids = [str(ref.asset_id) for ref in draft.slides]
     rendered_ids = [str(row.get("asset_id")) for row in rendered if isinstance(row, dict)]

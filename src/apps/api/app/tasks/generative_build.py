@@ -57,6 +57,7 @@ from app.agents._schemas.edit_format import (
     GUIDED_EDIT_FORMATS,
     NARRATED_EDIT_FORMATS,
     SINGLE_HERO_RENDERER_VERSION,
+    SLIDES_DRAWING_RENDERER_VERSION,
     SLIDES_RENDERER_VERSION,
     SLIDES_SIZES_RENDERER_VERSION,
     coerce_edit_format,
@@ -9984,6 +9985,15 @@ def _build_slide_post_result(
     )
 
     render_generation_id = uuid.uuid4().hex
+    # A drawn post is stamped by the drawing renderer (KRI-589), everything else by
+    # the sizes renderer exactly as before.
+    has_drawing = any(
+        asset.get("edits") is not None and asset["edits"].drawing is not None
+        for asset in ordered_assets
+    )
+    export_renderer_version = (
+        SLIDES_DRAWING_RENDERER_VERSION if has_drawing else SLIDES_SIZES_RENDERER_VERSION
+    )
     bundle_slides: list[slide_build.BundleSlideFile] = []
     resolved_slides: list[dict[str, Any]] = []
     with (
@@ -10023,6 +10033,8 @@ def _build_slide_post_result(
                 f"_n{slide_build.SLIDE_IMAGE_NORMALIZER_VERSION}" if kind == "image" else ""
             )
             wm_suffix = f"_wm{slide_build.SLIDE_WATERMARK_VERSION}"
+            # Only a drawn slide gets a painter version, so every other key is unchanged.
+            wm_suffix += slide_build.drawing_key_suffix(edits)
             export_canvas = slide_build.slide_canvas(platform_profile, edits, aspect)
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
@@ -10149,7 +10161,8 @@ def _build_slide_post_result(
             # v3 = honours the post-wide size and per-photo Fit (KRI-606). The
             # dispatch stamp above stays at 2 so a mixed API/worker deploy never
             # rejects queued jobs; only the export-currency check reads this one.
-            "renderer_version": SLIDES_SIZES_RENDERER_VERSION,
+            # v4 = also paints static slide drawings (KRI-589); stamped only on a drawn post.
+            "renderer_version": export_renderer_version,
             "aspect": slide_profiles.coerce_aspect(platform_profile, aspect),  # type: ignore[arg-type]
             "validation": {
                 "ok": validation.ok,

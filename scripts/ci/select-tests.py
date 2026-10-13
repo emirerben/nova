@@ -348,9 +348,9 @@ def selection(event, base, head):
 
 
 def ui_shards(event, groups):
-    """Keep PR and main to one Mac; manual runs may shard the full suite."""
+    """PRs run one Mac; main and manual runs shard the full suite to fit the cap."""
 
-    if event in ("pull_request", "push"):
+    if event == "pull_request":
         return 1
     if groups == "none":
         return 1
