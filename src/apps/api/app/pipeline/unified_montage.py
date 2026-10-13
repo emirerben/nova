@@ -129,6 +129,8 @@ def _nfc(value: object) -> str:
 
 def _cap_label(text: str, provenance: str) -> str:
     limit = MAX_CREATOR_LABEL_CHARS if provenance == "creator" else MAX_LABEL_CHARS
+    if provenance == "creator" and len(text) > limit:
+        raise ValueError("Confirmed clip text exceeds the supported label length")
     return text[:limit]
 
 
@@ -435,6 +437,8 @@ class UnifiedMontagePlan:
     # lives in the receipt rather than the strict snapshot schema so existing
     # stored proposal payloads stay wire-compatible.
     best_parts_receipt: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-624: each footage clip's own length, so a receipt can tell the long takes apart.
+    clip_durations_s: dict[str, float] = field(default_factory=dict)
     best_parts_conflicts: list[dict[str, Any]] = field(default_factory=list)
     # KRI-569: the song's lyrics placed as captions ({status, style, words, lines}). Empty
     # when no lyric captions were planned, so every earlier record is unchanged.
@@ -467,6 +471,12 @@ class UnifiedMontagePlan:
         quote = {"closing_quote": dict(self.closing_quote)} if self.closing_quote else {}
         best_parts = (
             {"best_parts": list(self.best_parts_receipt)} if self.best_parts_receipt else {}
+        )
+        # Only a plan that picked source windows needs clip lengths to be judged (KRI-624).
+        durations = (
+            {"clip_durations_s": dict(self.clip_durations_s)}
+            if self.best_parts_receipt and self.clip_durations_s
+            else {}
         )
         best_parts_conflicts = (
             {"best_parts_conflicts": list(self.best_parts_conflicts)}
@@ -515,6 +525,7 @@ class UnifiedMontagePlan:
             **speech,
             **quote,
             **best_parts,
+            **durations,
             **best_parts_conflicts,
             **captions,
         }
@@ -1127,6 +1138,29 @@ def plan_unified_montage(
     """
     view = view or BriefView()
     strategy = strategy or {}
+    if (
+        view.version is not None
+        and view.title_literal
+        and not view.wants_per_clip_text
+        and not view.global_literal
+        and chapter_list(
+            view.title_literal,
+            [value[0] for value in _intent_labels(strategy, clip_intents_enabled).values()]
+            + list(_described_shot_labels(strategy, clip_intents_enabled).values()),
+        )
+        is None
+    ):
+        # A hook's explanatory context is not a second caption. A bound brief
+        # owns whether clip text was requested; preserve every non-text intent.
+        strategy = {
+            **strategy,
+            "shot_labels": None,
+            "resolved_clip_intents": [
+                row
+                for row in strategy.get("resolved_clip_intents") or []
+                if not isinstance(row, Mapping) or row.get("op") not in {"caption", "label"}
+            ],
+        }
     if song_duration_s is not None and (song_plan_item_id is None or song_generation is None):
         raise ValueError("a song montage needs the song's plan item and generation")
     if not clips:
@@ -1714,6 +1748,11 @@ def plan_unified_montage(
         closing_speech=closing_speech,
         closing_quote=closing_quote,
         best_parts_receipt=best_parts.receipt() if best_parts is not None else [],
+        clip_durations_s={
+            clip.media_id: round(clip.duration_s, 3)
+            for clip in ordered
+            if clip.lane == "clip" and clip.duration_s > 0
+        },
         best_parts_conflicts=best_parts_conflicts,
     )
 
@@ -1757,27 +1796,41 @@ def _fit_typography(
 ) -> tuple[str | None, str | None, str | None, dict[str, ClipLabel]]:
     """Pick the first bundled font that can draw every string, keeping Unicode.
 
-    Turkish letters are never folded to ASCII. If no candidate covers a string
-    (a symbol no font has), only the uncovered characters are dropped.
+    Missing legacy glyphs never change confirmed wording: the phone compiler
+    uses shaped text, including the system's color emoji face.
     """
     if covers is None:
         return requested, title, closing, labels
+    import regex  # noqa: PLC0415 - Unicode grapheme/emoji properties
+
     texts = [
         text
         for text in (title, closing, *(label.text for label in labels.values()), *extra_texts)
         if text
     ]
+    # Color emoji are supplied by iOS, not the bundled face. Let the face
+    # selection still choose DM Sans for an ordinary arrow beside an emoji.
+    font_texts = [
+        "".join(
+            grapheme
+            for grapheme in regex.findall(r"\X", text)
+            if not regex.search(r"\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\u20E3", grapheme)
+        )
+        for text in texts
+    ]
     candidates = list(dict.fromkeys(f for f in (requested, _DEFAULT_FONT, *_FALLBACK_FONTS) if f))
     chosen = next(
-        (family for family in candidates if all(covers(family, text) for text in texts)), None
+        (family for family in candidates if all(covers(family, text) for text in font_texts)), None
     )
     if chosen is None:
         chosen = candidates[0]
-        title = _strip_uncovered(title, chosen, covers) or None if title else None
-        closing = _strip_uncovered(closing, chosen, covers) or None if closing else None
         fixed: dict[str, ClipLabel] = {}
         for media_id, label in labels.items():
-            text = _strip_uncovered(label.text, chosen, covers)
+            text = (
+                label.text
+                if label.provenance == "creator"
+                else _strip_uncovered(label.text, chosen, covers)
+            )
             if text:
                 fixed[media_id] = label.model_copy(
                     update={"text": text, "min_display_s": min_display_s(len(text))}
@@ -1795,15 +1848,8 @@ def _pinned_texts(strategy: Mapping[str, Any]) -> list[PinnedText]:
 def _fit_pins(
     pins: list[PinnedText], family: str, covers: Callable[[str, str], bool] | None
 ) -> list[PinnedText]:
-    """Drop only the glyphs the chosen font cannot draw; a pin never vanishes silently."""
-    if covers is None:
-        return pins
-    fitted: list[PinnedText] = []
-    for pin in pins:
-        text = pin.text if covers(family, pin.text) else _strip_uncovered(pin.text, family, covers)
-        if text:
-            fitted.append(pin.model_copy(update={"text": text}))
-    return fitted
+    """Pins are confirmed copy; the phone's shaped renderer resolves their glyphs."""
+    return pins
 
 
 def _described_shot_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, str]:
@@ -2042,7 +2088,7 @@ def _title(
         return None, "none"
     confirmed = _nfc(strategy.get("opening_title"))
     if confirmed:
-        return confirmed[:280], "creator"
+        return confirmed, "creator"
 
     def titles(literal: str | None) -> bool:
         return bool(literal) and chapter_list(literal, label_texts) is None
@@ -2056,10 +2102,10 @@ def _title(
         pinned = {fold_text(pin.text) for pin in pins}
         literal = _nfc(view.title_literal)
         if titles(literal) and fold_text(literal) not in pinned:
-            return literal[:280], "creator"
+            return literal, "creator"
         return None, "none"
     if titles(view.title_literal):
-        return _nfc(view.title_literal)[:280], "creator"
+        return _nfc(view.title_literal), "creator"
     start = _first(view.facts, _START_KEYS)
     end = _first(view.facts, _END_KEYS)
     if titles(view.global_literal):

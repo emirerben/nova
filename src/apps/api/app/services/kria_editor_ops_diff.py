@@ -51,6 +51,7 @@ _PLAIN_STYLE_KEYS = (
     "stroke_width",
     "shadow_enabled",
     "rotation_deg",
+    "bend",
     "behind_subject",
 )
 _STYLE_DEFAULTS = {"alignment": "center", "text_case": "none"}
@@ -738,6 +739,7 @@ _PLAIN_LABELS = {
     "stroke_width": ("outline", "kontur"),
     "shadow_enabled": ("shadow", "gölge"),
     "rotation_deg": ("rotation", "dönüş"),
+    "bend": ("Bend", "Kavis"),
     "behind_subject": ("behind-subject look", "özne arkası görünümü"),
     "exit": ("exit animation", "çıkış animasyonu"),
     "loop": ("looping animation", "döngü animasyonu"),

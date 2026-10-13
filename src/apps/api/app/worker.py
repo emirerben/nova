@@ -69,6 +69,7 @@ celery_app = Celery(
         "app.tasks.kria_runtime",
         "app.tasks.kria_clip_understanding",
         "app.tasks.user_song",
+        "app.tasks.media_library",
         "app.tasks.creator_memory",
         "app.tasks.speech_cleanup_analysis",
         "app.tasks.mobile_upload_cleanup",
@@ -126,6 +127,7 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     "tasks.execute_kria_approval",
     "tasks.reconcile_speech_cleanup_analyses",
     "tasks.cleanup_temporary_media_uploads",
+    "tasks.reconcile_media_library_analysis",
     "tasks.sweep_storage_retention",
     "tasks.reconcile_ai_billing",
     "tasks.reconcile_template_upload_promotions",
@@ -252,6 +254,10 @@ celery_app.conf.update(
         },
         "cleanup-temporary-media-uploads-every-5-min": {
             "task": "tasks.cleanup_temporary_media_uploads",
+            "schedule": 300.0,
+        },
+        "reconcile-media-library-analysis-every-5-min": {
+            "task": "tasks.reconcile_media_library_analysis",
             "schedule": 300.0,
         },
         "reconcile-template-upload-promotions-every-2-min": {

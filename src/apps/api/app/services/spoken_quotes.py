@@ -106,6 +106,17 @@ def quoted_phrases(text: str | None) -> list[str]:
     return out
 
 
+def quoted_spans(text: str | None) -> list[tuple[int, int, str]]:
+    """``quoted_phrases`` with each quote's (start, end) offsets in ``text``."""
+    out: list[tuple[int, int, str]] = []
+    raw = str(text or "")
+    for match in _QUOTED_RE.finditer(raw):
+        phrase = next(group for group in match.groups() if group is not None).strip()
+        if len(fold_tokens(phrase)) >= MIN_QUOTE_TOKENS:
+            out.append((match.start(), match.end(), phrase))
+    return out
+
+
 def fold_tokens(text: object) -> list[str]:
     # Imported here: phone_reaction_grounding pulls in skia, and this module is on the
     # import path of routes and CLIs that must load without a GPU stack.
@@ -419,6 +430,7 @@ __all__ = [
     "locate_in_segments",
     "locate_in_words",
     "quoted_phrases",
+    "quoted_spans",
     "regound_quoted_intents",
     "spoken_quote",
     "transcribe_stored_quote",

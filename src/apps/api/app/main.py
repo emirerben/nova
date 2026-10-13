@@ -49,6 +49,7 @@ from app.routes import (
     landing,
     manual_drafts,
     me,
+    media_assets,
     memory,
     music,
     music_jobs,
@@ -423,6 +424,7 @@ app.include_router(creator_agent.router, prefix="/plan-items", tags=["creator-ag
 app.include_router(creator_workspace.router, prefix="/content-plans", tags=["creator-workspace"])
 app.include_router(manual_drafts.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(me.router, prefix="/me", tags=["me"])
+app.include_router(media_assets.router)
 app.include_router(device_render.router, prefix="/me", tags=["phone-rendering"])
 app.include_router(memory.router, prefix="/me", tags=["memory"])
 app.include_router(memory.direction_router, tags=["direction-overrides"])

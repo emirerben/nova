@@ -66,6 +66,7 @@ from app.agents._schemas.creator_policy import (
 )
 from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
+from app.agents.clip_intent_planner import ConfirmedTitleCopy
 from app.agents.main_creator import (
     MAIN_CREATOR_CONVERSATION_MAX,
     MainCreatorAgent,
@@ -3484,6 +3485,11 @@ async def _run_planning_turn(
                                 else {}
                             ),
                             candidate_intents=strategy.clip_intents,
+                            confirmed_titles=[
+                                ConfirmedTitleCopy(target=target, text=text)
+                                for target, text in copy_overrides.items()
+                                if text is not None
+                            ],
                             latest_user_message=user_message,
                             creator_request=(
                                 creator_request

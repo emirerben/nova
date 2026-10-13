@@ -68,10 +68,18 @@ def world(monkeypatch):
             return objects.get(model)
 
         def execute(self, query):
+            sql = str(query.compile(dialect=postgresql.dialect()))
+            if "pg_advisory_xact_lock" in sql:
+                locks.append("owner")
+                return SimpleNamespace(scalar_one_or_none=lambda: None)
             model = query.column_descriptions[0]["entity"]
             if query._for_update_arg is not None:
                 locks.append(model)
             return SimpleNamespace(scalar_one_or_none=lambda: objects.get(model))
+
+        def scalar(self, query):
+            # A missing cleanup receipt is a valid pre-fix fixture state.
+            return None
 
         def commit(self):
             commits()
@@ -132,7 +140,7 @@ def test_admit_once_preserves_approval_and_baseline(world):
     approval = copy.deepcopy(world.job.assembly_plan["guided_edit"])
     run(world)
     assert result(world)["status"] == "ready"
-    assert world.locks == [PlanItem, PlanItemAsset, Job]
+    assert world.locks == ["owner", PlanItem, PlanItemAsset, Job]
     assert result(world)["source_index"] == 1
     assert result(world)["source"] == world.source
     run(world)
@@ -447,6 +455,9 @@ def test_final_reservation_nowait_releases_failed_session_before_recording_busy(
                 execute = db.execute
 
                 def locked_execute(query):
+                    sql = str(query.compile(dialect=postgresql.dialect()))
+                    if "pg_advisory_xact_lock" in sql:
+                        return execute(query)
                     if query.column_descriptions[0]["entity"] is CreationThreadUploadReservation:
                         queries.append(str(query.compile(dialect=postgresql.dialect())))
                         raise error

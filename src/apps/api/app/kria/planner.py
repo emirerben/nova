@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents._model_client import default_client
-from app.agents._runtime import RunContext, TerminalError
+from app.agents._runtime import ProviderOutcomeUnknownError, RunContext, TerminalError
 from app.agents._schemas.brief_extractor import BriefExtractionOutput
 from app.agents._schemas.creator_agent import (
     AskUser,
@@ -38,6 +38,7 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
 from app.agents.brief_extractor import BriefExtractionInput, BriefExtractorAgent
+from app.agents.clip_intent_planner import ConfirmedTitleCopy
 from app.agents.main_creator import (
     MAIN_CREATOR_CONVERSATION_MAX,
     CreativeCopyDecision,
@@ -64,6 +65,7 @@ from app.kria.brief import (
     wants_clip_descriptions,
 )
 from app.kria.brief_route import loose_text
+from app.kria.clip_scope import apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
 from app.kria.reply_language import current_reply_language, say
 from app.kria.strategy_policy import (
@@ -1668,6 +1670,7 @@ async def _call_main_creator(
     from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
 
     def _run_agent():  # noqa: ANN202 - inferred MainCreatorOutput
+        deadline = turn_deadline.get()
         return MainCreatorAgent(default_client()).run(
             inputs.agent_input,
             ctx=RunContext(
@@ -1677,12 +1680,19 @@ async def _call_main_creator(
                 creator_agent_session_id=(
                     str(creator_agent_session_id) if creator_agent_session_id else None
                 ),
+                deadline_monotonic=(
+                    deadline - _POST_UNDERSTANDING_RESERVE_S if deadline is not None else None
+                ),
                 thought_summary_callback=current_thought_publisher(),
             ),
         )
 
     try:
         return await asyncio.to_thread(_run_agent)
+    except ProviderOutcomeUnknownError:
+        # Provider work may still be billable. Never disguise this as a
+        # recoverable planning/schema failure that can re-enter inference.
+        raise
     except TerminalError as exc:
         raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
 
@@ -1708,6 +1718,7 @@ async def _call_brief_extractor(
     )
 
     def _run_agent():  # noqa: ANN202 - inferred BriefExtractionOutput
+        deadline = turn_deadline.get()
         return BriefExtractorAgent(default_client()).run(
             agent_input,
             ctx=RunContext(
@@ -1717,11 +1728,16 @@ async def _call_brief_extractor(
                 creator_agent_session_id=(
                     str(creator_agent_session_id) if creator_agent_session_id else None
                 ),
+                deadline_monotonic=(
+                    deadline - _POST_UNDERSTANDING_RESERVE_S if deadline is not None else None
+                ),
             ),
         )
 
     try:
         return await asyncio.to_thread(_run_agent)
+    except ProviderOutcomeUnknownError:
+        raise
     except TerminalError as exc:
         raise RuntimeError("Kria could not extract the creative brief reliably") from exc
 
@@ -1824,6 +1840,7 @@ async def _plan_from_creator_output(
     brief_request: str | None = None,
     wants_capture_order: bool = False,
     brief_selects_clips: bool = False,
+    clip_scope_texts: Sequence[str] = (),
     requested_media: Mapping[str, str] | None = None,
     describe_clips: bool = False,
 ) -> PlannedKriaTurn:
@@ -1869,6 +1886,7 @@ async def _plan_from_creator_output(
         brief_request=brief_request,
         wants_capture_order=wants_capture_order,
         brief_selects_clips=brief_selects_clips,
+        clip_scope_texts=clip_scope_texts,
         requested_media=requested_media,
         describe_clips=describe_clips,
     )
@@ -2079,6 +2097,7 @@ async def _plan_creator_action(
     brief_request: str | None = None,
     wants_capture_order: bool = False,
     brief_selects_clips: bool = False,
+    clip_scope_texts: Sequence[str] = (),
     requested_media: Mapping[str, str] | None = None,
     describe_clips: bool = False,
 ) -> PlannedKriaTurn:
@@ -2189,6 +2208,21 @@ async def _plan_creator_action(
                 selected=len(kept_clips.selected_media_ids),
             )
             action = action.model_copy(update={"strategy": kept_clips})
+        # KRI-623: "from the long takes" / "skip the short clips" leaves clips out, whatever
+        # the model picked (v56 took every clip on the cabin M2 prompt). Read from the live
+        # brief's `select` asks and this message, on every plan, so it cannot drift back.
+        scoped = apply_clip_scope(
+            manifest, action.strategy, creator_texts=[*clip_scope_texts, user_message]
+        )
+        if scoped is not action.strategy:
+            log.info(
+                "kria_clip_scope_applied",
+                thread_id=str(thread_id),
+                model_selected=len(action.strategy.selected_media_ids),
+                model_scope=action.strategy.media_scope,
+                selected=len(scoped.selected_media_ids),
+            )
+            action = action.model_copy(update={"strategy": scoped})
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
         checked = check_strategy_for_runtime_v2(
@@ -2348,6 +2382,11 @@ async def _plan_creator_action(
                 latest_user_message=user_message,
                 generated_brief=brief_request,
                 candidate_intents=action.strategy.clip_intents,
+                confirmed_titles=[
+                    ConfirmedTitleCopy(target=target, text=state.approved)
+                    for target, state in (inputs.creative_copy_state or {}).items()
+                    if state.approved is not None
+                ],
                 clips=intent_clips,
                 run_context=RunContext(
                     request_id=str(thread_id),
@@ -2639,6 +2678,15 @@ def _brief_selects_clips(brief: CreativeBrief | None) -> bool:
     ago still keeps a Voiceover edit's selection the creator's.
     """
     return brief is not None and any(req.kind == "select" for req in brief.live())
+
+
+def _brief_clip_scope_texts(brief: CreativeBrief | None) -> tuple[str, ...]:
+    """KRI-623: the live brief's which-clips asks, oldest first ("from the long takes")."""
+    if brief is None:
+        return ()
+    return tuple(
+        req.description for req in brief.live() if req.kind == "select" and req.description
+    )
 
 
 def _recovery_cause(stage: str, exc: BaseException) -> dict[str, str]:
@@ -4051,6 +4099,7 @@ async def _plan_live_turn(
         brief_request=effective_request,
         wants_capture_order=_brief_wants_capture_order(effective),
         brief_selects_clips=_brief_selects_clips(effective),
+        clip_scope_texts=_brief_clip_scope_texts(effective),
         requested_media=requested_media(effective, (media.media_id for media in manifest.media)),
         describe_clips=wants_clip_descriptions(effective),
     )

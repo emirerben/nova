@@ -75,7 +75,10 @@ from app.services.guided_speech_cleanup import (
     require_guided_cleanup_binding,
 )
 from app.services.job_storage_paths import project_media_reference_lock_key
-from app.services.phone_rollout import freehand_drawing_client_supported
+from app.services.phone_rollout import (
+    freehand_drawing_client_supported,
+    text_bend_client_supported,
+)
 from app.services.render_library import catalog_path, inspect_library_asset
 from app.services.speech_cleanup import SpeechCleanupFailure
 from app.services.speech_cleanup_outcome import build_preflight_public_outcome
@@ -234,6 +237,11 @@ async def get_device_render(
         # KRI-589: an older build rejects `drawingLayers` as an unknown recipe key and would
         # FAIL the job instead of rendering. Tell it to update; the pinned recipe is untouched.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "drawing"})
+    if not text_bend_client_supported() and any(
+        layer.bend for layer in getattr(status.request.recipe, "text_layers", None) or []
+    ):
+        # KRI-646: same for bent text; an older build cannot decode `bend`.
+        raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
     now = datetime.now(UTC)
     last_polled_raw = record.get("last_polled_at")
     should_touch = True

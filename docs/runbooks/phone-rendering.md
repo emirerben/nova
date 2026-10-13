@@ -2820,6 +2820,13 @@ Troubleshooting:
   (`CREATOR_FACING_DETAIL_CODES`), so keep those strings creator-facing. Before
   KRI-466 these surfaced as `phone_plan_unsupported` with the generic "your iPhone
   can't render yet" copy.
+- **`silent_audio_declined`.** The talking take has no sound at all (KRI-653: a dead-mic
+  in-app recording; Whisper/Gemini hallucinate words over silence and the speech cut then
+  removes ~all of it). Raised by `_run_phone_subtitled_job` via `_silent_audio_status`
+  (`clip_speech.audio_presence`: loudest 50 ms window < -60 dB, or a >= 3 s clip with < 1 s
+  of windows >= -45 dB). Like `user_song_plan_declined` its `error_detail` is creator-facing
+  and in `CREATOR_FACING_DETAIL_CODES`. A measurement failure (`unknown`) fails OPEN. The
+  speech-cleanup preflight refuses the same audio as `no_speech_track` before any Whisper spend.
 - **"Your song was replaced after this edit was approved".** The item's
   `song_generation` or duration no longer matches the approved plan; the creator
   must ask for the edit again.
@@ -2966,3 +2973,14 @@ Prod step before the Draw tool appears: add `freehandDrawing` to
 `PHONE_RENDER_VERIFIED_FEATURES` (fly secret, api + worker, restart). Builds under protocol 6
 get `426 client_update_required` (`feature: "drawing"`) from `device-render` and `editor-commit`
 for a variant that has drawings.
+
+## Text Bend capability (KRI-646)
+
+| Capability | Recipe field | Gate | Detail |
+|---|---|---|---|
+| `textBend` | `EditRecipeV2.text_layers[].bend` (`-100..100`, omitted when 0) | `TEXT_BEND_ENABLED` (default on) + `textBend` in `PHONE_RENDER_VERIFIED_FEATURES` + client protocol >= `TEXT_BEND_MIN_CLIENT_PROTOCOL` (9) | The phone draws the curve; the server only stores and passes `bend` through (`portable_text_layout._bend_supported` decides which layers keep it) |
+
+Prod step before the Bend control appears: add `textBend` to `PHONE_RENDER_VERIFIED_FEATURES`
+(fly secret, api + worker, restart). Builds below protocol 9 get `426 client_update_required`
+(`feature: "text_bend"`) from `device-render` and `editor-commit` for a variant with bent text.
+The app reads `capabilities.text_bend` (creation) and `editor_capabilities.text_bend` (per variant).

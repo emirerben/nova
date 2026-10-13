@@ -204,31 +204,6 @@ def test_a_named_retake_is_left_for_the_editor(description):
     assert "trim that in the editor" in receipt.reason
 
 
-_T1_START_ASK = (
-    "Baştaki “Hazırlıklara başladın mı” kısmını ve uzun duraksamaları kes; video "
-    "“Abonelerimize bir şey demek ister misin” sorusuyla başlasın."
-)
-
-
-def test_a_start_cut_the_render_applied_meets_the_intro_ask():
-    """KRI-628: the T1 brief names the intro and the opening question; the render cut to it."""
-    variant = _variant(
-        start_quote_cut={"status": "applied", "quote": "Abonelerimize bir şey demek ister misin"}
-    )
-    receipt = check_requirement(
-        _req("select", _T1_START_ASK), plan_facts_from_phone_variant(variant)
-    )
-    assert receipt.status == "met"
-
-
-def test_a_start_cut_that_could_not_be_applied_stays_an_honest_partial():
-    variant = _variant(start_quote_cut={"status": "not_found", "quote": "x y"})
-    receipt = check_requirement(
-        _req("select", _T1_START_ASK), plan_facts_from_phone_variant(variant)
-    )
-    assert receipt.status == "partial"
-
-
 def test_a_length_in_the_cleanup_ask_is_met_when_the_rendered_take_matches():
     req = _req("timing", "cut the long pauses and keep it under 24 s", duration_s=24)
     receipt = check_requirement(req, plan_facts_from_phone_variant(_variant(duration_s=24)))

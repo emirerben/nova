@@ -46,6 +46,20 @@ def project_media_reference_lock_key(user_id: uuid.UUID) -> int:
     return int(digest[:15], 16)
 
 
+async def lock_project_media_owner(db, user_id: uuid.UUID) -> None:
+    """Take the shared reference fence before locking a consumer or its source.
+
+    Use the current transaction's connection so acquiring this fence does not
+    participate in ORM row loading or refreshes.
+    """
+    from sqlalchemy import func, select
+
+    connection = await db.connection()
+    await connection.execute(
+        select(func.pg_advisory_xact_lock(project_media_reference_lock_key(user_id)))
+    )
+
+
 def job_input_path_matches_owner(path: object, user_id: uuid.UUID) -> bool:
     """Reject another account's recognizable persistent upload namespaces.
 

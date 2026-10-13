@@ -94,6 +94,34 @@ def analyze_clip_assignment(
         raise ValueError("registered clip generation changed")
 
     kind = source_media_kind(str(metadata.content_type or ""), path)
+    from app.config import settings
+
+    if settings.media_library_enabled and run_context is not None and run_context.creator_id:
+        from app.services.media_library_analysis import ensure_media_asset_analysis, source_for_path
+
+        source = source_for_path(
+            owner_id=str(run_context.creator_id), path=path, generation=current_generation
+        )
+        if source is not None:
+            analysis = ensure_media_asset_analysis(
+                asset_id=source.asset_id,
+                owner_id=source.owner_id,
+                source_id=source.source_id,
+                required_generation=current_generation,
+            )
+            if analysis is None:
+                raise ValueError("Shared source analysis is pending or unavailable; retry")
+            entry.update(
+                {
+                    "analysis": analysis,
+                    "generation": current_generation,
+                    "kind": kind,
+                    "duration_s": analysis.get("duration_s"),
+                    "aspect": analysis.get("aspect"),
+                    "library_asset_id": source.asset_id,
+                    "library_source_id": source.source_id,
+                }
+            )
     pooled = pool_by_path.get(path)
     if (
         pooled is not None

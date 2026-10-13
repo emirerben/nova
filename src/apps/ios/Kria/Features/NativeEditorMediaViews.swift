@@ -1374,6 +1374,14 @@ struct NativeMiniStrip: View {
         } message: {
             Text(session.addClipError ?? "")
         }
+        .alert("Couldn’t paste", isPresented: Binding(
+            get: { session.pasteError != nil },
+            set: { if !$0 { session.pasteError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(session.pasteError ?? "")
+        }
     }
 
     private var controls: some View {
@@ -1419,7 +1427,7 @@ struct NativeMiniStrip: View {
             } label: {
                 // The picker sheet has already closed by the time the upload runs, so this is the
                 // only place the user can see that a clip is still on its way.
-                if session.isAddingClip && !isPresentingAddMenu {
+                if (session.isAddingClip || session.isPastingImage) && !isPresentingAddMenu {
                     ProgressView().frame(width: 44, height: 44)
                 } else {
                     Image(systemName: "plus")
@@ -1527,6 +1535,17 @@ struct NativeMiniStrip: View {
                     onSelectDrawing()
                 }
             }
+            // KRI-647: the system Paste control reads the clipboard without the "Allow Paste" prompt and
+            // disables itself when there is no text or picture to paste.
+            PasteButton(supportedContentTypes: PasteboardIntake.supportedTypes) { providers in
+                closeAddMenu()
+                Task { await session.paste(providers: providers) }
+            }
+            .labelStyle(.titleAndIcon)
+            .buttonBorderShape(.roundedRectangle(radius: 10))
+            .tint(KriaColor.softZinc)
+            .frame(width: 168, height: 44, alignment: .leading)
+            .accessibilityIdentifier("native-editor-add-menu-paste")
         }
         // Accessibility grouping sits on the content INSIDE the glass, never
         // on/above it: `.glassEffect()` collapses the hit-test frame of any

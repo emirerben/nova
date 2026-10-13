@@ -652,6 +652,16 @@ class Settings(BaseSettings):
     # Apply: `fly secrets set FREEHAND_DRAWING_ENABLED=false` (api + worker) + restart.
     freehand_drawing_enabled: bool = True
     freehand_drawing_min_client_protocol: int = 6
+    # KRI-646: text "Bend" (curved/rainbow text, `bend` in [-100, 100]) drawn ON DEVICE.
+    # The server only stores it, passes it into the phone recipe's text layers
+    # (`PortableTextLayer.bend`) and gates old builds; server renderers never draw it.
+    # Default TRUE; needs `textBend` in PHONE_RENDER_VERIFIED_FEATURES (fly secret) and
+    # an app build declaring `X-Kria-Client-Protocol` >= `text_bend_min_client_protocol`.
+    # False: capability `text_bend` is not advertised and newly authored bend is refused
+    # by the app; stored values still round-trip. Apply:
+    # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
+    text_bend_enabled: bool = True
+    text_bend_min_client_protocol: int = 9
     # KRI-561: the song-order question is answered on a horizontal song timeline (play the
     # song, drop clips onto song time) instead of the vertical reorder list. Kill switch:
     # `fly secrets set SONG_ORDER_TIMELINE_ENABLED=false` + restart (api): capabilities drop
@@ -1773,6 +1783,14 @@ class Settings(BaseSettings):
     # `fly secrets set SLIDE_POST_DRAWING_ENABLED=false --app nova-video` (api + worker) + restart.
     slide_post_drawing_enabled: bool = True
     slide_post_drawing_min_client_protocol: int = 7
+    # KRI-647 / KRI-460: pasted image stickers on slides (SlideEdits.stickers). Code default
+    # ON (kill switch): off, the slide-post PUT keeps each slide's stored `stickers` and
+    # ignores incoming values and capability `slide_post_stickers` is false; stored stickers
+    # still render. A save carrying stickers from a build below the floor gets 426
+    # client_update_required. Apply: `fly secrets set SLIDE_POST_STICKERS_ENABLED=false
+    # --app nova-video` (api + worker) + restart. Never roll the CODE back once stickers exist.
+    slide_post_stickers_enabled: bool = True
+    slide_post_sticker_min_client_protocol: int = 8
     # KRI-557: provider-marked Gemini thought summaries for native creation and
     # slide-post calls. Deploy dark; enable after production canary with
     # THOUGHT_SUMMARIES_ENABLED=true for API and Celery processes after canary.

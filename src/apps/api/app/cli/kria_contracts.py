@@ -94,6 +94,14 @@ from app.routes.plan_items import (
     SlidePostProposeBody,
     SlidePostState,
 )
+from app.schemas.media_assets import (
+    MediaAssetAccessOut,
+    MediaAssetFinalizeBody,
+    MediaAssetListOut,
+    MediaAssetOut,
+    MediaAssetUploadBody,
+    MediaAssetUploadOut,
+)
 from app.schemas.slide_post import SlidePostDraft
 from app.services.ios_device_admission import is_legacy_creation_path, is_state_changing_method
 from app.services.slide_post_chat_edit import SlidePostChatEditResponse
@@ -131,7 +139,14 @@ API_MODELS = (
     PlanSectionUndoOut,
 )
 
+
 MOBILE_API_MODELS = (
+    MediaAssetUploadBody,
+    MediaAssetUploadOut,
+    MediaAssetFinalizeBody,
+    MediaAssetOut,
+    MediaAssetListOut,
+    MediaAssetAccessOut,
     PlanSnapshotOut,
     DeviceAssetDownloadBody,
     DeviceAssetDownloadOut,
@@ -407,6 +422,22 @@ def _add_creation_admission_responses(document: dict[str, Any]) -> None:
                 "426",
                 {**problem, "description": "Native client update required"},
             )
+
+
+def _add_media_library_contract(document: dict[str, Any]) -> None:
+    """Generate library operations from their authenticated server route contracts."""
+    from fastapi.openapi.utils import get_openapi
+
+    from app.routes.media_assets import router
+
+    subset = get_openapi(title="Media library", version="1", routes=router.routes)
+    for path, path_item in subset["paths"].items():
+        for operation in path_item.values():
+            if isinstance(operation, dict) and "responses" in operation:
+                operation["security"] = [{"mobileBearer": []}]
+        document["paths"][path] = _openapi30_schema(path_item)
+    for name, schema in _openapi30_schema(subset.get("components", {}).get("schemas", {})).items():
+        document["components"]["schemas"].setdefault(name, schema)
 
 
 def mobile_openapi_json() -> str:
@@ -1022,6 +1053,7 @@ def mobile_openapi_json() -> str:
             "schemas": schemas,
         },
     }
+    _add_media_library_contract(document)
     _add_creation_admission_responses(document)
     return json.dumps(document, indent=2, sort_keys=True) + "\n"
 

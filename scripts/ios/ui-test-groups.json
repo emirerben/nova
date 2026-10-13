@@ -27,7 +27,11 @@
       "KriaUITests/SlidePostUITests/testReEnteringAfterBackAlwaysLandsInTheSlideEditor",
       "KriaUITests/SlidePostUITests/testSlidePreviewLeavesToolbarAndStripVisible",
       "KriaUITests/SlidePostUITests/testAddStyleAndApplyTextToAllSlides",
+      "KriaUITests/SlidePostUITests/testBendSliderCurvesTheTextAndApplyToAllCopiesIt",
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",
+      "KriaUITests/SlidePostUITests/testPasteAddsCopiedTextToTheSelectedSlide",
+      "KriaUITests/SlidePostUITests/testPastedPictureBecomesAStickerOnTheSlideNotANewSlide",
+      "KriaUITests/SlidePostUITests/testPastingAPictureWithoutTheCapabilityExplainsItself",
       "KriaUITests/SlidePostUITests/testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave",
       "KriaUITests/SlidePostUITests/testDrawOnASlideLeavesInkThatSurvivesSaveAndSlideSwitching",
       "KriaUITests/SlidePostUITests/testAIButtonOpensSheetAndChatEditStagesOnThePage",
@@ -118,6 +122,7 @@
     "editor": [
       "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
       "KriaUITests/EditorUITests/testTextTabListsEveryTextBlockAndOpensOneForEditing",
+      "KriaUITests/EditorUITests/testBendSliderCurvesAVideoTextOnlyWhenTheServerOffersIt",
       "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface",
       "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock",
       "KriaUITests/EditorUITests/testNativeEditorPlaysTheRenderedAssetThroughItsRealEndAndReplays",
@@ -190,6 +195,7 @@
       "KriaUITests/NativeQuickAddMenuUITests/testTappingOutsideTheMenuDismissesIt",
       "KriaUITests/NativeQuickAddMenuUITests/testTappingPlusAgainClosesTheMenu",
       "KriaUITests/NativeQuickAddMenuUITests/testTextOptionStartsTextCreation",
+      "KriaUITests/NativeQuickAddMenuUITests/testPasteOptionAddsCopiedTextAsTextElement",
       "KriaUITests/DrawingJourneyUITests/testDrawDoneTrimSaveReopenPersists",
       "KriaUITests/DrawingJourneyUITests/testAnimationTabKeepsItsLayoutWhateverTheEntranceIs",
       "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability"

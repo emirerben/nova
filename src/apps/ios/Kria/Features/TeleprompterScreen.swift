@@ -22,8 +22,10 @@ struct TeleprompterScreen: View {
 
     init(accountID: String, projectID: UUID, admissionMessage: @escaping (TeleprompterTakeManifest?) -> String?,
          intake: @escaping (TeleprompterTakeManifest, URL) async -> TeleprompterIntakeResult,
-         intakeState: @escaping (TeleprompterTakeManifest) async -> TeleprompterIntakeResult?) {
-        _flow = StateObject(wrappedValue: TeleprompterRecordingFlow(accountID: accountID, projectID: projectID))
+         intakeState: @escaping (TeleprompterTakeManifest) async -> TeleprompterIntakeResult?,
+         reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
+        _flow = StateObject(wrappedValue: TeleprompterRecordingFlow(
+            accountID: accountID, projectID: projectID, reportDiagnostic: reportDiagnostic))
         self.admissionMessage = admissionMessage; self.intake = intake; self.intakeState = intakeState
     }
 
@@ -48,6 +50,10 @@ struct TeleprompterScreen: View {
         }
         .onReceive(flow.camera.$phase) { phase in flow.cameraChanged(phase) }
         .onChange(of: scenePhase) { _, phase in
+            // KRI-653: whatever happened to the audio session while we were away (Control Center, a
+            // call, the app switcher), the next prepare() must rebuild the capture graph.
+            if phase == .inactive { flow.camera.sceneBecameInactive() }
+            else if phase == .active { flow.camera.sceneBecameActive() }
             // Privacy prompts briefly make the scene inactive. They must not
             // cancel the prepare operation whose grant they are requesting.
             if phase == .background || (phase == .inactive && flow.captureBusy) { flow.leaveCapture() }
@@ -134,6 +140,13 @@ struct TeleprompterScreen: View {
                     openSettings: { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } })
             }
             if let error = flow.error { errorText(error).padding(.horizontal, 16) }
+            if flow.camera.micSilent {
+                Label("We can’t hear you. Check that nothing is covering the microphone, then stop and record again.",
+                      systemImage: "mic.slash.fill")
+                    .font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.failureText)
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading).kriaGlassPanel(cornerRadius: 16)
+                    .padding(.horizontal, 16).accessibilityIdentifier("teleprompter-mic-silent")
+            }
             if flow.stage == .countdown {
                 VStack(spacing: 12) {
                     Text("\(flow.countdown)").font(KriaFont.display(48).weight(.bold))
@@ -177,16 +190,24 @@ struct TeleprompterScreen: View {
                         if take.interrupted, take.status != .invalid {
                             Text("Recording was interrupted. Review this take before using it.").font(KriaFont.body(14))
                         }
+                        if take.audioCheck?.verdict == .quiet {
+                            Text(TeleprompterRecordingFlow.quietTakeMessage).font(KriaFont.body(14))
+                                .foregroundStyle(KriaColor.mutedInk).accessibilityIdentifier("teleprompter-quiet-take")
+                        }
+                        if let note = flow.photosNote {
+                            Text(note).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                                .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("teleprompter-photos-note")
+                        }
                         if flow.queueAccepted || flow.usingTake { ProgressView("Adding take to your edit…") }
                         if let message = admissionMessage(take), !flow.queueAccepted { Text(message).font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk) }
                         if let error = flow.error { errorText(error).accessibilityIdentifier("teleprompter-review-error") }
-                        if take.status != .invalid {
-                            Button("Use take") { Task { await flow.useTake(intake) } }
+                        if take.status != .invalid, take.audioCheck?.verdict != .silent {
+                            Button(take.audioCheck?.verdict == .quiet ? "Use anyway" : "Use take") { Task { await flow.useTake(intake) } }
                                 .buttonStyle(KriaPrimaryButtonStyle()).frame(maxWidth: .infinity)
                                 .disabled(admissionMessage(take) != nil || flow.usingTake || flow.queueAccepted)
                                 .accessibilityIdentifier("teleprompter-use-take")
                         }
-                        Button("Retake") { Task { await flow.retake() } }.buttonStyle(KriaSecondaryButtonStyle())
+                        Button(take.audioCheck?.verdict == .silent ? "Record again" : "Retake") { Task { await flow.retake() } }.buttonStyle(KriaSecondaryButtonStyle())
                             .disabled(flow.usingTake || flow.queueAccepted).accessibilityIdentifier("teleprompter-retake")
                         if let previous = flow.pendingTake, previous.id != take.id {
                             Button("Previous take") { flow.previousTake() }.buttonStyle(KriaSecondaryButtonStyle())

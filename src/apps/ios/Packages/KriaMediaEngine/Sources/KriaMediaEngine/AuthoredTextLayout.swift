@@ -47,6 +47,9 @@ public enum AuthoredTextLayout {
         public var xFraction: Double
         public var yFraction: Double
         public var rotation: Double
+        /// KRI-646: -100...100, positive bows the lines up like a rainbow. Dropped by the compiler
+        /// for effects that need a straight baseline (`PortableTextLayer.bendSupported`).
+        public var bend: Double
         public var alignment: Alignment
         public var color: TextInk
         public var stroke: TextInk
@@ -58,7 +61,8 @@ public enum AuthoredTextLayout {
                     xFraction: Double = 0.5, yFraction: Double = 0.5, rotation: Double = 0,
                     alignment: Alignment = .center, color: TextInk,
                     stroke: TextInk = .init(red: 0, green: 0, blue: 0, alpha: 1),
-                    strokeWidth: Double = 0, shadows: [TextBlurLayer] = [], background: TextInk? = nil, bottomAligned: Bool = false, fontVariations: [String: Double] = [:], letterSpacing: Double = 0, lineSpacing: Double = 1.15, wrapsLines: Bool = true) {
+                    strokeWidth: Double = 0, shadows: [TextBlurLayer] = [], background: TextInk? = nil, bottomAligned: Bool = false, fontVariations: [String: Double] = [:], letterSpacing: Double = 0, lineSpacing: Double = 1.15, wrapsLines: Bool = true, bend: Double = 0) {
+            self.bend = bend
             self.wrapsLines = wrapsLines
             self.lineSpacing = lineSpacing
             self.letterSpacing = letterSpacing
@@ -184,9 +188,12 @@ public enum AuthoredTextLayout {
             return TextBackground(color: color, left: left - 8, top: top - 4,
                                   width: right - left + 16, height: blockHeight + 8, radius: 4)
         }
+        let layerEffect: PortableTextLayer.Effect = phases == nil ? legacyEffect : (typewriter ? .typewriter : .none)
+        let bend: Double? = !TextBend.isStraight(style.bend) && PortableTextLayer.bendSupported(effect: layerEffect, phasesTypewriter: typewriter)
+            ? min(100, max(-100, style.bend)) : nil
         return PortableTextLayer(id: id, start: start, end: end, anchorX: anchorX, anchorY: anchorY,
-            rotationDegrees: style.rotation, runs: runs, effect: phases == nil ? legacyEffect : (typewriter ? .typewriter : .none), motion: motion, revealBounds: inkBounds,
-            discreteReveal: reveal, smoothReveal: smooth, animationPhases: phases, background: background)
+            rotationDegrees: style.rotation, runs: runs, effect: layerEffect, motion: motion, revealBounds: inkBounds,
+            discreteReveal: reveal, smoothReveal: smooth, animationPhases: phases, background: background, bend: bend)
     }
     /// Keeps full-line shaping and positions while assigning an independently
     /// timed color to each word. No line is reflowed when the highlight changes.

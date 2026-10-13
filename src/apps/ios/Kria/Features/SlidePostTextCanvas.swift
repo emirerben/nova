@@ -328,7 +328,13 @@ struct SlidePostTextLayerView: View {
         // The block rotates about its anchor, which sits at the box's leading edge / centre / trailing edge.
         let pivotX: CGFloat = element.alignment == "left" ? 0 : (element.alignment == "right" ? 1 : 0.5)
         let makeText: (Color) -> Text = { Text(element.text).font(font).foregroundStyle($0) }
-        return styled(makeText, color: Color(slideHex: element.color), alignment: alignment, stroke: stroke, shadow: element.shadowEnabled, scale: scale)
+        let wrapWidth: CGFloat? = element.wrapsLines ? size.width * CGFloat(element.maxWidthFrac ?? SlidePostTextElement.defaultWidthFrac) : nil
+        // KRI-646: a bent text is laid out with CoreText (SwiftUI `Text` cannot follow a curve).
+        let bent: SlidePostBentLayout? = NativeFontCatalog.shared.ctFont(element.fontFamily, size: points).flatMap {
+            SlidePostBentLayout.make(text: element.text, font: $0, maxWidth: wrapWidth, alignment: element.alignment,
+                                     lineSpacing: 1, bend: element.bend, padding: stroke + 2)
+        }
+        return textBlock(bent, makeText: makeText, color: Color(slideHex: element.color), alignment: alignment, stroke: stroke, shadow: element.shadowEnabled, scale: scale)
             .padding(.horizontal, element.background == "box" ? points * 0.45 : 0).padding(.vertical, element.background == "box" ? points * 0.22 : 0)
             .background { if element.background == "box" { RoundedRectangle(cornerRadius: points * 0.25, style: .continuous).fill(.black.opacity(0.55)) } }
             .modifier(SlidePostHuggingWidth(maxWidth: element.wrapsLines ? size.width * CGFloat(element.maxWidthFrac ?? SlidePostTextElement.defaultWidthFrac) : nil))
@@ -339,6 +345,15 @@ struct SlidePostTextLayerView: View {
             .rotationEffect(.degrees(element.rotationDeg), anchor: UnitPoint(x: pivotX, y: 0.5))
             .offset(x: CGFloat(offsetX) * size.width, y: CGFloat(anchor.y - 0.5) * size.height)
             .modifier(SlidePostTextAccessibility(element: element, selected: selected, accessibility: accessibility))
+    }
+
+    @ViewBuilder private func textBlock(_ bent: SlidePostBentLayout?, makeText: @escaping (Color) -> Text, color: Color, alignment: TextAlignment, stroke: CGFloat, shadow: Bool, scale: CGFloat) -> some View {
+        if let bent {
+            let block = SlidePostBentTextBlock(layout: bent, fill: color, stroke: stroke)
+            if shadow { block.shadow(color: .black.opacity(0.55), radius: max(1, 5 * scale), x: 0, y: max(1, 2 * scale)) } else { block }
+        } else {
+            styled(makeText, color: color, alignment: alignment, stroke: stroke, shadow: shadow, scale: scale)
+        }
     }
 
     @ViewBuilder private func styled(_ makeText: @escaping (Color) -> Text, color: Color, alignment: TextAlignment, stroke: CGFloat, shadow: Bool, scale: CGFloat) -> some View {

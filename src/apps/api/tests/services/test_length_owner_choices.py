@@ -198,3 +198,20 @@ def test_a_long_take_does_not_ask_about_length_when_the_brief_cuts_the_pauses():
         _TAKE_STRATEGY, _take_brief("Cut out the long pauses"), _TAKE_SNAPSHOT
     )
     assert not any(item.kind == CONFLICT_LENGTH_VS_NATURAL for item in found)
+
+
+def test_turkish_chat_gets_no_english_in_the_length_question():
+    """KRI-630: intro and reason were English, glued behind Turkish connectors."""
+    from app.kria.reply_language import reply_language_for
+    from app.services.choice_questions import choice_question_text
+
+    strategy = {"audio_strategy": "original_audio", "edit_format": "talking_head"}
+    snapshot = {"clip_assignments": [{"media_id": "take", "duration_s": 51.6}]}
+    with reply_language_for("tr"):
+        found = choice(strategy, snapshot, 40)
+        text = choice_question_text(found.candidate())
+    assert "Your brief" not in text and "cannot make" not in text
+    assert "konuşma kaydı" in found.intro and "51.6" in found.intro
+    assert "Maalesef kaynağın" in text
+    english = choice(strategy, snapshot, 40)
+    assert english.intro.startswith("Your brief says")

@@ -1,3 +1,4 @@
+import UniformTypeIdentifiers
 import XCTest
 
 @MainActor final class SlidePostUITests: XCTestCase {
@@ -121,6 +122,12 @@ import XCTest
         expectation(for: NSPredicate(format: "label != %@", "Unsaved changes"), evaluatedWith: app.staticTexts["slidepost-subtitle"])
         waitForExpectations(timeout: 10)
     }
+    /// Polls a condition on the main run loop (a CGRect key path is not usable in an NSPredicate).
+    private func eventually(timeout: TimeInterval = 6, _ condition: () -> Bool) -> Bool {
+        let end = Date().addingTimeInterval(timeout)
+        while Date() < end { if condition() { return true }; RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
+        return condition()
+    }
     private func attach(_ app: XCUIApplication, _ name: String) {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = name; shot.lifetime = .keepAlways; add(shot)
     }
@@ -175,6 +182,59 @@ import XCTest
         subtitle.tap()
         XCTAssertTrue(app.descendants(matching: .any)["slidepost-size-sheet"].waitForExistence(timeout: 5), "the status line reopens the Size sheet")
         XCTAssertTrue(app.buttons["slidepost-size-fit-fit"].isSelected, "Fit survived the save")
+    }
+
+    /// KRI-646: the Bend slider (curved text) is offered only when the server advertises `text_bend`; dragging it
+    /// curves the slide's text, and "Apply to all slides" carries the bend to the other slides.
+    func testBendSliderCurvesTheTextAndApplyToAllCopiesIt() {
+        func openTextStyle(_ app: XCUIApplication) {
+            app.buttons["slidepost-tool-text"].tap()
+            let field = app.textViews["slidepost-text-field"].firstMatch
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            field.tap(); field.press(forDuration: 1.0)
+            if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
+            field.typeText("Athens")
+            app.buttons["Style"].tap()
+            XCTAssertTrue(app.buttons["native-editor-text-preset"].waitForExistence(timeout: 5))
+        }
+        let off = openRichWorkspace(save: false)
+        openTextStyle(off)
+        revealInTextPanel(off.sliders["native-editor-text-rotation"], app: off)
+        XCTAssertTrue(off.sliders["native-editor-text-rotation"].exists)
+        XCTAssertFalse(off.sliders["native-editor-text-bend"].exists, "no Bend slider without the capability")
+        off.terminate()
+
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_TEXT_BEND": "1"])
+        openTextStyle(app)
+        let bend = app.sliders["native-editor-text-bend"]
+        revealInTextPanel(bend, app: app)
+        XCTAssertTrue(bend.exists, "the Bend slider is offered when the server advertises text_bend")
+        XCTAssertEqual(bend.value as? String, "0", "text starts straight")
+        bend.adjust(toNormalizedSliderPosition: 0.85)
+        let applied = bend.value as? String
+        XCTAssertNotNil(applied)
+        XCTAssertNotEqual(applied, "0", "the slider moved the bend")
+        attach(app, "Bend slider on a slide text")
+        app.buttons["slidepost-done"].tap()
+        // Slide 2 gets the same look from "Apply to all slides", bend included.
+        app.buttons["slidepost-tile-2"].tap()
+        app.buttons["slidepost-tool-text"].tap()
+        XCTAssertTrue(app.textViews["slidepost-text-field"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["slidepost-done"].tap()
+        app.buttons["slidepost-tile-1"].tap()
+        app.buttons["slidepost-tool-text"].tap()
+        app.buttons["Style"].tap()
+        let applyAll = app.buttons["slidepost-apply-all"]
+        XCTAssertTrue(applyAll.waitForExistence(timeout: 5)); applyAll.tap()
+        XCTAssertTrue(app.staticTexts["slidepost-apply-all-result"].waitForExistence(timeout: 3))
+        app.buttons["slidepost-done"].tap()
+        app.buttons["slidepost-tile-2"].tap()
+        app.buttons["slidepost-tool-text"].tap()
+        app.buttons["Style"].tap()
+        let target = app.sliders["native-editor-text-bend"]
+        revealInTextPanel(target, app: app)
+        XCTAssertEqual(target.value as? String, applied, "apply-to-all copies the bend")
+        attach(app, "Bend applied to all slides")
     }
 
     /// KRI-589: the Draw tool is offered only when the server advertises `slide_post_drawing`; a finger stroke + Done
@@ -276,9 +336,13 @@ import XCTest
         XCTAssertTrue(preset.waitForExistence(timeout: 5))
         preset.tap(); app.buttons["Highlight"].tap()
         XCTAssertTrue(preset.label.contains("Highlight"))
-        let rotation = app.buttons["native-editor-text-rotation-Increment"]
+        // KRI-646: rotation is a slider. Drag it to 3/4 of the range (about 90 degrees).
+        let rotation = app.sliders["native-editor-text-rotation"]
         revealInTextPanel(rotation, app: app)
-        rotation.tap()
+        rotation.adjust(toNormalizedSliderPosition: 0.75)
+        let appliedRotation = rotation.value as? String
+        XCTAssertNotNil(appliedRotation)
+        XCTAssertNotEqual(appliedRotation, "0 degrees", "the slider moved the rotation")
         attach(app, "Text mode: style tab")
         app.buttons["slidepost-done"].tap()
         // Slide 2: add text with the default look.
@@ -301,9 +365,9 @@ import XCTest
         app.buttons["Style"].tap()
         XCTAssertTrue(app.buttons["native-editor-text-preset"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["native-editor-text-preset"].label.contains("Highlight"))
-        let target = app.buttons["native-editor-text-rotation-Increment"]
+        let target = app.sliders["native-editor-text-rotation"]
         revealInTextPanel(target, app: app)
-        XCTAssertEqual(target.value as? String, "5 degrees")
+        XCTAssertEqual(target.value as? String, appliedRotation, "apply-to-all copies the rotation")
         app.buttons["Edit text"].tap()
         XCTAssertEqual(app.textViews["slidepost-text-field"].firstMatch.value as? String, "Your text", "words are never copied")
         attach(app, "Style applied to all slides")
@@ -388,6 +452,110 @@ import XCTest
         app.buttons["slidepost-undo"].tap()
         XCTAssertTrue(app.buttons["slidepost-tile-3"].waitForExistence(timeout: 3), "undo restores the removed slide")
         attach(app, "More menu then undo")
+    }
+
+    /// KRI-647: the system Paste control in the tool dock turns copied text into a text on the selected slide.
+    func testPasteAddsCopiedTextToTheSelectedSlide() {
+        UIPasteboard.general.string = "5.2 km in 28:14"
+        let app = openRichWorkspace()
+        XCTAssertFalse(canvasText(app).exists, "a fresh slide has no text")
+        let paste = app.descendants(matching: .any)["slidepost-paste"].firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 5))
+        paste.tap()
+        XCTAssertTrue(canvasText(app).waitForExistence(timeout: 5), "the pasted text appears on the canvas")
+        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes")
+        XCTAssertTrue(app.buttons["slidepost-undo"].isEnabled)
+        attach(app, "Pasted text on a slide")
+    }
+
+    /// KRI-460: copying a transparent PNG (Strava's share image) and tapping Paste puts it on the selected slide as a sticker:
+    /// it is NOT a new slide, it moves with a finger, it survives a save and a slide switch, it is removable (and undoable),
+    /// and the export (which renders on the phone from the original bytes) still saves every slide.
+    func testPastedPictureBecomesAStickerOnTheSlideNotANewSlide() throws {
+        // A transparent PNG: an orange disc with an opaque white bar, and fully clear corners (the photo must show there).
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = false
+        let png = try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 480, height: 300), format: format).image { _ in
+            UIColor(red: 0.99, green: 0.32, blue: 0.0, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 90, y: 0, width: 300, height: 300)).fill()
+            UIColor.white.setFill(); UIRectFill(CGRect(x: 160, y: 130, width: 160, height: 40))
+        }.pngData())
+        UIPasteboard.general.setData(png, forPasteboardType: UTType.png.identifier)
+
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1", "KRIA_SLIDE_POST_STICKERS": "1"])
+        let sticker = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'slidepost-canvas-sticker-'")).firstMatch
+        XCTAssertFalse(sticker.exists, "a fresh slide has no picture")
+        XCTAssertTrue(app.buttons["slidepost-tile-3"].exists)
+        let paste = app.descendants(matching: .any)["slidepost-paste"].firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 8), "Paste is offered when the clipboard holds a picture")
+        paste.tap()
+
+        XCTAssertTrue(sticker.waitForExistence(timeout: 20), "the pasted picture appears on the canvas")
+        // The picture reached the pool as a ready asset; give the workspace time to (wrongly) turn it into a slide.
+        Thread.sleep(forTimeInterval: 4)
+        XCTAssertFalse(app.buttons["slidepost-tile-4"].exists, "a pasted picture is a sticker, never a new slide")
+        XCTAssertTrue(app.staticTexts["slidepost-subtitle"].label == "Unsaved changes")
+        XCTAssertTrue(app.buttons["slidepost-sticker-delete"].exists, "the new sticker is selected")
+        XCTAssertFalse(app.descendants(matching: .any)["slidepost-paste-notice"].exists, "no refusal notice")
+        attach(app, "Pasted picture on slide 1 (selected)")
+
+        // A finger drag moves it.
+        let before = sticker.frame
+        sticker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+            forDuration: 0.1, thenDragTo: sticker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: -70, dy: -110)))
+        XCTAssertTrue(eventually { sticker.frame.minY < before.minY - 60 }, "dragging moved it up")
+        XCTAssertLessThan(sticker.frame.minX, before.minX - 40, "dragging moved it left")
+        XCTAssertEqual(sticker.frame.width, before.width, accuracy: 3, "moving never resizes")
+        attach(app, "Picture dragged up and left")
+        XCTAssertFalse(app.buttons["slidepost-tile-4"].exists)
+
+        // The corner handle's drag resizes it.
+        let widthBefore = sticker.frame.width
+        let handle = app.descendants(matching: .any)["slidepost-sticker-handle"].firstMatch
+        XCTAssertTrue(handle.exists)
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+            forDuration: 0.1, thenDragTo: handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 60, dy: 60)))
+        XCTAssertTrue(eventually { sticker.frame.width > widthBefore + 10 }, "the handle's drag made it bigger")
+        attach(app, "Picture enlarged with the corner handle")
+
+        // It stays on its own slide, through a save.
+        saveDraft(app)
+        XCTAssertTrue(sticker.exists, "the save keeps it")
+        app.buttons["slidepost-tile-2"].tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: sticker); waitForExpectations(timeout: 5)
+        app.buttons["slidepost-tile-1"].tap()
+        XCTAssertTrue(sticker.waitForExistence(timeout: 5), "the picture is back on slide 1")
+        attach(app, "Picture still on slide 1 after a save and a slide switch")
+
+        // Export renders on the phone from the original PNG; every slide is saved and nothing fails.
+        app.buttons["slidepost-export"].tap()
+        app.buttons["slidepost-save-photos"].tap()
+        let banner = app.descendants(matching: .any)["slidepost-export-state"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 10))
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "Saved 3 slides"), evaluatedWith: banner); waitForExpectations(timeout: 30)
+        attach(app, "Exported with the picture")
+
+        // Remove (X) takes it off, and Undo brings it back.
+        if !app.buttons["slidepost-sticker-delete"].exists { sticker.tap() }
+        XCTAssertTrue(app.buttons["slidepost-sticker-delete"].waitForExistence(timeout: 3))
+        app.buttons["slidepost-sticker-delete"].tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: sticker); waitForExpectations(timeout: 5)
+        app.buttons["slidepost-undo"].tap()
+        XCTAssertTrue(sticker.waitForExistence(timeout: 5), "undo brings the picture back")
+        XCTAssertFalse(app.buttons["slidepost-tile-4"].exists)
+    }
+
+    /// Without `slide_post_stickers` a picture paste says so and uploads nothing.
+    func testPastingAPictureWithoutTheCapabilityExplainsItself() throws {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        UIPasteboard.general.setData(try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 40, height: 40), format: format).image { _ in
+            UIColor.red.setFill(); UIRectFill(CGRect(x: 0, y: 0, width: 40, height: 40))
+        }.pngData()), forPasteboardType: UTType.png.identifier)
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1"])
+        let paste = app.descendants(matching: .any)["slidepost-paste"].firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 8)); paste.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-paste-notice"].waitForExistence(timeout: 5), "the refusal is visible, not silent")
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'slidepost-canvas-sticker-'")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["slidepost-tile-4"].exists)
     }
 
     /// The page has ONE AI entry (the editor's sparkles button). It opens a sheet that drives the chat

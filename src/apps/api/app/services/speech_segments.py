@@ -243,12 +243,16 @@ def ground_excerpt(
 
 
 def transcribe_clip(
-    local_path: str, *, language: str | None = None
+    local_path: str, *, language: str | None = None, run_context=None
 ) -> tuple[list[dict[str, Any]], str]:
     """Word-timed transcript of one local media file via the cached whisper path."""
     from app.pipeline.transcribe import transcribe_whisper_cached  # noqa: PLC0415
 
-    transcript = transcribe_whisper_cached(local_path, language=language)
+    transcript = transcribe_whisper_cached(
+        local_path,
+        language=language,
+        **({"run_context": run_context} if run_context is not None else {}),
+    )
     words = [
         {
             "text": w.text,
@@ -266,12 +270,37 @@ def transcribe_stored_clip(
     *,
     download: Callable[[str, str], Any] | None = None,
     transcribe: Callable[[str], tuple[list[dict[str, Any]], str]] | None = None,
+    owner_id: str | None = None,
+    generation: str | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     """Download one stored clip (an analysis proxy) and transcribe it. May raise."""
-    if download is None:
-        from app.storage import download_to_file  # noqa: PLC0415
+    from app.config import settings
 
-        download = download_to_file
+    if settings.media_library_enabled and owner_id and generation:
+        from app.services.media_library_analysis import ensure_media_asset_analysis, source_for_path
+
+        source = source_for_path(owner_id=str(owner_id), path=gcs_path, generation=generation)
+        if source is not None:
+            fact = ensure_media_asset_analysis(
+                owner_id=str(owner_id),
+                asset_id=source.asset_id,
+                source_id=source.source_id,
+                required_generation=generation,
+                analyzer="transcript",
+            )
+            if fact is None:
+                raise RuntimeError("Library transcript is processing or unavailable; retry")
+            return list(fact.get("words") or []), str(fact.get("language") or "")
+        if not gcs_path.startswith((f"users/{owner_id}/", f"{owner_id}/")):
+            raise ValueError("Stored speech source does not belong to this creator")
+    if download is None:
+        from app.storage import download_generation_to_file, download_to_file  # noqa: PLC0415
+
+        download = (
+            (lambda path, local: download_generation_to_file(path, local, generation=generation))
+            if generation
+            else download_to_file
+        )
     run = transcribe or transcribe_clip
     with tempfile.TemporaryDirectory(prefix="speech-seg-") as tmp:
         local = f"{tmp}/clip.mp4"

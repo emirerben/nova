@@ -21,6 +21,12 @@ ALL = {"api", "ios", "ios_ui", "shared_motion"}
 class ClassificationTests(unittest.TestCase):
     def test_manifest_native_routing_is_conservative_and_mixed_safe(self):
         self.assertFalse(ci.journey_native_for_ids(["kri-577-reliability-gates"]))
+        self.assertFalse(ci.journey_native_for_ids(["kri-384-library-ingest"]))
+        self.assertFalse(
+            ci.journey_native_for_ids(
+                ["kri-384-library-ingest", "kri-577-reliability-gates"]
+            )
+        )
         self.assertTrue(
             ci.journey_native_for_ids(["kri-577-reliability-gates", "kri-524-creation"])
         )
@@ -169,6 +175,7 @@ class GateTests(unittest.TestCase):
                     },
                 },
                 "journey": {"result": result},
+                "journey-library": {"result": "skipped"},
                 # test-api has other dependencies; they must not weaken this gate.
                 "test-api-suite": {"result": "success"},
                 "creator-contract-replay": {"result": "success"},
@@ -191,6 +198,32 @@ class GateTests(unittest.TestCase):
             }
             with self.assertRaises(ValueError):
                 ci.gate(needs, "journey", "journey")
+        for ids in (
+            "kri-384-library-ingest",
+            "kri-384-library-ingest,kri-577-reliability-gates",
+            "kri-384-library-ingest,kri-524-creation",
+        ):
+            with self.subTest(ids=ids):
+                library_needs = {
+                    "changes": {
+                        "result": "success",
+                        "outputs": {
+                            "journey": "true",
+                            "ios": "false",
+                            "journey_ids": ids,
+                            "shared_motion": "false",
+                        },
+                    },
+                    "journey": {"result": "success"},
+                    "journey-library": {"result": "success"},
+                    "test-api-suite": {"result": "success"},
+                    "creator-contract-replay": {"result": "success"},
+                    "shared-motion-runtime": {"result": "skipped"},
+                }
+                ci.gate(library_needs, "journey", "journey")
+                library_needs["journey-library"]["result"] = "skipped"
+                with self.assertRaises(ValueError):
+                    ci.gate(library_needs, "journey", "journey")
         ci.gate(
             {
                 "changes": {
@@ -199,6 +232,7 @@ class GateTests(unittest.TestCase):
                 },
                 "test-api-suite": {"result": "success"},
                 "journey": {"result": "skipped"},
+                "journey-library": {"result": "skipped"},
                 "creator-contract-replay": {"result": "success"},
                 "shared-motion-runtime": {"result": "skipped"},
             },
@@ -346,7 +380,7 @@ class GateTests(unittest.TestCase):
 
     def test_ui_shards_follow_the_executed_selection(self):
         # Main and manual runs shard the full suite: serial no longer fits the cap.
-        self.assertEqual(ci.ui_shards("push", "full"), ci.ui_tests.MAX_SHARDS)
+        self.assertEqual(ci.ui_shards("push", "full"), 1)
         self.assertEqual(
             ci.ui_shards("workflow_dispatch", "full"), ci.ui_tests.MAX_SHARDS
         )
@@ -436,7 +470,7 @@ class GitDiffTests(unittest.TestCase):
         self.assertEqual(
             ci.selection_details("pull_request", self.base, head)[2], "full"
         )
-        self.assertEqual(ci.selection_details("push", self.base, head)[2], "full")
+        self.assertEqual(ci.selection_details("push", self.base, head)[2], "smoke")
         self.assertEqual(ci.selection_details("pull_request", head, head)[2], "full")
 
     def test_ui_test_method_edits_select_only_those_methods(self):
@@ -579,7 +613,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/tasks/content_plan_build.py",
-                (True, "covered", "kri-492-length-ownership,kri-577-reliability-gates"),
+                (
+                    True,
+                    "covered",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates",
+                ),
             ),
             (
                 "src/apps/api/app/kria/duplicate_uploads.py",
@@ -664,6 +702,26 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/app/kria/voiceover_clips.py",
                 (True, "covered", "kri-593-voiceover-clips"),
+            ),
+            (
+                "src/apps/api/app/pipeline/silence_cut.py",
+                (True, "covered", "kri-653-silent-take"),
+            ),
+            (
+                "src/apps/api/app/kria/clip_scope.py",
+                (True, "covered", "kri-623-ruled-out-clips"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/kri623_tigre_m2_montage_turn.json",
+                (True, "covered", "kri-623-ruled-out-clips"),
+            ),
+            (
+                "src/apps/api/app/kria/opening_cut_ask.py",
+                (True, "covered", "kri-628-opening-cut"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_opening_cut.py",
+                (True, "covered", "kri-628-opening-cut"),
             ),
             (
                 "src/apps/api/app/pipeline/phone_captions.py",
@@ -755,7 +813,7 @@ class GitDiffTests(unittest.TestCase):
         )
         self.assertEqual(
             output.read_text(),
-            "api=false\nios=true\nios_ui=true\nshared_motion=false\nios_ui_groups=full\n"
+            "api=false\nios=true\nios_ui=true\nshared_motion=false\nnative_validation=true\nios_ui_groups=full\n"
             "ios_ui_shards=1\njourney=false\njourney_coverage=not_applicable\n"
             "journey_ids=\njourney_needs_native=false\n",
         )

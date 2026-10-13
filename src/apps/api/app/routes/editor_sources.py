@@ -8,14 +8,14 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app import storage
-from app.auth import CurrentUser
+from app.auth import CurrentUser, NativeClient
 from app.config import settings
 from app.database import get_db
 from app.kria.media_sources import MediaUploadContract
@@ -27,6 +27,7 @@ from app.routes.generative_jobs import (
 )
 from app.routes.plan_items import _load_owned_item
 from app.schemas.guided_edit_revision import GuidedEditorSource
+from app.services.job_storage_paths import lock_project_media_owner
 from app.services.phone_editor_sources import (
     EDITOR_SOURCES_FIELD,
     MAX_IMPORTS,
@@ -43,6 +44,7 @@ from app.services.phone_sources import (
     PhoneSourceBinding,
     PhoneVisualBinding,
 )
+from app.services.temporary_uploads import require_upload_available
 from app.tasks.editor_sources import prepare_phone_editor_source, reservation_lock_busy
 
 router = APIRouter()
@@ -58,6 +60,14 @@ class EditorSourceRequest(_StrictModel):
     guided_revision_number: int = Field(ge=1)
     source_kind: Literal["footage", "visual"]
     source_id: str = Field(min_length=1, max_length=160)
+    library_asset_id: uuid.UUID | None = None
+    library_source_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_library_selection(self):
+        if self.library_source_id is not None and self.library_asset_id is None:
+            raise ValueError("a library source requires its asset ID")
+        return self
 
 
 class EditorSourceOut(_StrictModel):
@@ -149,6 +159,7 @@ async def _owned_proxy_reservation(
         ) from exc
     if row is None:
         raise HTTPException(status_code=409, detail="source_reservation_missing")
+    await require_upload_available(db, user_id, row.object_path)
     try:
         contract = MediaUploadContract.model_validate(row.upload_contract or {})
     except ValueError as exc:
@@ -195,7 +206,7 @@ def _require_available(job: Job, variant: dict, user_id: uuid.UUID, item_id: uui
 
 def _existing_ready_source(
     job: Job, variant: dict, body: EditorSourceRequest
-) -> tuple[int, dict] | None:
+) -> tuple[int, dict, PhoneSourceBinding | PhoneVisualBinding] | None:
     """Reuse canonical source and immutable receipt without an upload reservation.
 
     Normal project attachment consumes reservations. A source already bound to
@@ -245,7 +256,7 @@ def _existing_ready_source(
             raise ValueError("conflicting receipts")
     except ValueError as exc:
         raise HTTPException(409, detail="editor_source_identity_conflict") from exc
-    return index, source
+    return index, source, candidates[0]
 
 
 @router.post("/{item_id}/variants/{variant_id}/editor-sources", response_model=EditorSourceOut)
@@ -256,9 +267,17 @@ async def create_editor_source(
     user: CurrentUser,
     response: Response,
     db: AsyncSession = Depends(get_db),
+    native_client: NativeClient = False,
 ) -> EditorSourceOut:
     if not getattr(settings, "phone_editor_media_enabled", False):
         raise HTTPException(status_code=404, detail="Phone editor media is unavailable")
+    await lock_project_media_owner(db, user.id)
+    if body.library_asset_id is not None:
+        if not settings.media_library_enabled or not native_client:
+            raise HTTPException(404, "Media library is unavailable")
+        from app.services.media_library_ingest import lock_library_owner
+
+        await lock_library_owner(db, user.id)
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
     if item.current_job_id is None:
         raise HTTPException(status_code=404, detail="No render to edit yet")
@@ -320,7 +339,49 @@ async def create_editor_source(
         "user_id": str(user.id),
     }
     ready = _existing_ready_source(job, variant, body)
-    if body.source_kind == "footage" and ready is None:
+    if body.library_asset_id is not None:
+        from app.services.media_library_ingest import (
+            reference_library_source,
+            resolve_library_source,
+        )
+
+        library, library_source = await resolve_library_source(
+            db,
+            user.id,
+            body.library_asset_id,
+            body.library_source_id,
+            kind="video" if body.source_kind == "footage" else None,
+            allow_archived=ready is not None,
+        )
+        if body.source_kind == "footage":
+            if library_source.role != "analysis_proxy":
+                raise HTTPException(422, "Footage requires its local-original proxy binding")
+            if ready is not None:
+                try:
+                    contract = MediaUploadContract.model_validate(
+                        library.metadata_json.get("upload_contract") or {}
+                    )
+                    binding = ready[2]
+                    if (
+                        not isinstance(binding, PhoneSourceBinding)
+                        or binding.proxy_path != library_source.object_path
+                        or binding.generation != library_source.object_generation
+                        or contract.purpose != "analysis_proxy"
+                        or contract.proxy is None
+                        or binding.original != contract.proxy.original
+                    ):
+                        raise ValueError("library footage differs from the bound source")
+                except ValueError as exc:
+                    raise HTTPException(409, detail="editor_source_identity_conflict") from exc
+            record["_library_bound_source_id"] = str(library_source.id)
+        elif asset is None or getattr(asset, "library_source_id", None) != library_source.id:
+            raise HTTPException(
+                409, "Library visual must first be added to this post's Visuals pool"
+            )
+        await reference_library_source(
+            db, owner_id=user.id, asset_id=library.id, source_id=library_source.id, job_id=job.id
+        )
+    if body.source_kind == "footage" and ready is None and body.library_asset_id is None:
         reservation = await _owned_proxy_reservation(
             db, user_id=user.id, source_id=body.source_id, item_id=item.id
         )
@@ -342,7 +403,7 @@ async def create_editor_source(
         ):
             raise HTTPException(409, detail="editor_source_identity_conflict")
     if ready is not None:
-        index, source = ready
+        index, source, _binding = ready
         record.update(status="ready", source_index=index, source=source)
         imports[key] = record
         variant[EDITOR_SOURCES_FIELD] = registry

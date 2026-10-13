@@ -644,7 +644,6 @@ struct DirectionStage: View {
     private var directionTitle: String {
         approval.consequenceSummary
             .replacingOccurrences(of: "Render this draft:", with: "")
-            .replacingOccurrences(of: "Bu taslağı render et:", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -713,6 +712,12 @@ struct DirectionStage: View {
             Button("Create without cleanup") { decide("approve", "create_without_cleanup", resolution.analysisID) }
                 .buttonStyle(CanonicalSecondaryButtonStyle())
                 .disabled(isBusy)
+        case .noSpeech:
+            Text("We couldn’t hear any speech in this video.")
+                .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.zinc)
+                .accessibilityIdentifier("speech-cleanup-no-speech")
+            Text("Record it again or choose a different video, then try once more.")
+                .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
         case .failed:
             Text("The speech check couldn’t finish.")
                 .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)

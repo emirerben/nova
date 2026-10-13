@@ -2,6 +2,81 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.272.0] - 2026-10-13
+
+### Changed
+- fix(kria): moment receipt checks source clips; keep-original-sound receipt (KRI-624) (#1586) <!-- release-pr: 1586 -->
+
+## [0.78.271.0] - 2026-10-13
+
+### Changed
+- fix(ios): rebuild editor playback after iOS resets media services (KRI-626) (#1585) <!-- release-pr: 1585 -->
+
+## [0.78.270.0] - 2026-10-13
+
+### Changed
+- fix(kria): start phone Talking at the line the creator quotes (KRI-628) (#1584) <!-- release-pr: 1584 -->
+
+## [0.78.269.0] - 2026-10-13
+
+### Changed
+- feat: text Bend (curved / rainbow text) on every phone edit type (KRI-646) (#1593) <!-- release-pr: 1593 -->
+
+## [0.78.268.0] - 2026-10-13
+
+### Changed
+- ci: free Mac capacity and shorten PR queues (KRI-605) (#1595) <!-- release-pr: 1595 -->
+
+## [0.78.267.0] - 2026-10-13
+
+### Changed
+- feat: image stickers on slide posts and paste a picture onto a slide (KRI-460, KRI-647) (#1590) <!-- release-pr: 1590 -->
+
+## [0.78.266.0] - 2026-10-13
+
+### Changed
+- fix(kria): Turkish chat gets Turkish length question and render-ready line (KRI-630) (#1583) <!-- release-pr: 1583 -->
+
+## [0.78.265.0] - 2026-10-13
+
+### Changed
+- fix(kria): never play clips the creator ruled out by length (KRI-623) (#1575) <!-- release-pr: 1575 -->
+
+## [0.78.264.0] - 2026-10-13
+
+### Changed
+- feat(ios): paste text and images onto video edits, text onto slides (KRI-647) (#1581) <!-- release-pr: 1581 -->
+
+## [0.78.263.0] - 2026-10-13
+
+### Changed
+- fix(kria): preserve hook context and first-step recovery (KRI-651) (#1594) <!-- release-pr: 1594 -->
+
+## [0.78.262.0] - 2026-10-13
+
+### Changed
+- feat(media): add reusable library ingest and analysis (KRI-384) (#1559) <!-- release-pr: 1559 -->
+
+## [0.78.261.0] - 2026-10-13
+
+### Changed
+- fix(ios): the recorder never silently records silence, and every take is saved to Photos (KRI-653) (#1592) <!-- release-pr: 1592 -->
+
+## [0.78.260.0] - 2026-10-13
+
+### Changed
+- fix(api): refuse silent talk-to-camera audio instead of shipping a 4 s video (KRI-653) (#1591) <!-- release-pr: 1591 -->
+
+## [0.78.259.0] - 2026-10-13
+
+### Changed
+- fix(kria): preserve approved hooks through generation and retry (KRI-651) (#1589) <!-- release-pr: 1589 -->
+
+## [0.78.258.0] - 2026-10-13
+
+### Changed
+- feat(ios): text position + rotation are sliders (KRI-646) (#1580) <!-- release-pr: 1580 -->
+
 ## [0.78.257.0] - 2026-10-13
 
 ### Changed
