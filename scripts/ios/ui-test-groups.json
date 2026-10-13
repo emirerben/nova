@@ -26,6 +26,8 @@
       "KriaUITests/SlidePostUITests/testRichLayoutFromTheGalleryForEveryCapabilityState",
       "KriaUITests/SlidePostUITests/testReEnteringAfterBackAlwaysLandsInTheSlideEditor",
       "KriaUITests/SlidePostUITests/testSlidePreviewLeavesToolbarAndStripVisible",
+      "KriaUITests/SlidePostUITests/testSelectedVideoSlidePlaysByItselfWithoutPlayerChrome",
+      "KriaUITests/SlidePostUITests/testUnplayableVideoSlideExplainsAndOffersRetry",
       "KriaUITests/SlidePostUITests/testAddStyleAndApplyTextToAllSlides",
       "KriaUITests/SlidePostUITests/testBendSliderCurvesTheTextAndApplyToAllCopiesIt",
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",

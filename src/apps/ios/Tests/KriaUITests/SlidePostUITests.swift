@@ -150,6 +150,66 @@ import XCTest
         attach(app, "Workspace 4:5")
     }
 
+    /// KRI-644: selecting the fixture's video slide (slide 2) plays it at once with no native player chrome over the
+    /// slide, only a small pause/play control. Photo -> video -> photo -> video, pause/resume, and a trip to the
+    /// background all leave exactly the selected video playing.
+    func testSelectedVideoSlidePlaysByItselfWithoutPlayerChrome() {
+        let app = openRichWorkspace(save: false)
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-preview"].firstMatch.waitForExistence(timeout: 8))
+        let toggle = app.buttons["slidepost-video-toggle"]
+        app.buttons["slidepost-tile-1"].tap()
+        XCTAssertFalse(toggle.exists, "a photo slide has no playback control")
+        app.buttons["slidepost-tile-2"].tap()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 8), "the video slide shows its pause control")
+        waitFor(toggle, value: "Playing", "selecting the video starts it without a play tap")
+        XCTAssertEqual(toggle.label, "Pause video")
+        for chrome in ["Play", "Pause", "Skip Forward", "Skip Back", "Full Screen"] {
+            XCTAssertFalse(app.buttons[chrome].exists, "no native \(chrome) control over the slide")
+        }
+        XCTAssertEqual(app.sliders.count, 0, "no native scrubber over the slide")
+        attach(app, "Video slide playing")
+
+        toggle.tap()
+        waitFor(toggle, value: "Paused", "the control pauses it")
+        XCTAssertEqual(toggle.label, "Play video")
+        toggle.tap()
+        waitFor(toggle, value: "Playing", "and plays it again")
+
+        app.buttons["slidepost-tile-3"].tap()
+        XCTAssertTrue(eventually { !toggle.exists }, "another slide stops the video and drops its control")
+        attach(app, "Photo slide after the video")
+        app.buttons["slidepost-tile-2"].tap()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 8))
+        waitFor(toggle, value: "Playing", "coming back to the video starts it again")
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 8))
+        waitFor(toggle, value: "Playing", "returning to the app resumes the selected video")
+    }
+
+    /// KRI-644: a video that cannot play says so over its poster and offers Try again, instead of a dead player.
+    func testUnplayableVideoSlideExplainsAndOffersRetry() {
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_BROKEN_VIDEO": "1"])
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-preview"].firstMatch.waitForExistence(timeout: 8))
+        app.buttons["slidepost-tile-2"].tap()
+        XCTAssertTrue(app.staticTexts["slidepost-video-failed"].waitForExistence(timeout: 10), "the failure is explained")
+        XCTAssertEqual(app.staticTexts["slidepost-video-failed"].label, "Couldn’t play this video")
+        let retry = app.buttons["slidepost-video-retry"]
+        XCTAssertTrue(retry.isHittable)
+        XCTAssertFalse(app.buttons["slidepost-video-toggle"].exists, "no pause control for a video that is not playing")
+        attach(app, "Unplayable video slide")
+        retry.tap()
+        XCTAssertTrue(app.staticTexts["slidepost-video-failed"].waitForExistence(timeout: 10), "Try again loads it again")
+        app.buttons["slidepost-tile-1"].tap()
+        XCTAssertTrue(eventually { !app.staticTexts["slidepost-video-failed"].exists }, "the notice belongs to the video slide only")
+    }
+
+    private func waitFor(_ element: XCUIElement, value: String, _ message: String, timeout: TimeInterval = 10) {
+        XCTAssertTrue(eventually(timeout: timeout) { element.exists && element.value as? String == value },
+                      "\(message) (value: \(String(describing: element.value)))")
+    }
+
     /// KRI-606: the Size tool resizes the whole post at once, "Fit all" shows each photo whole with bars, and
     /// both survive a save (the fixture server echoes exactly what the app sent, `aspect` and `fit` included).
     func testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave() {

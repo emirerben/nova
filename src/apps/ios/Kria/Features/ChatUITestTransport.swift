@@ -828,6 +828,8 @@ final class CreationChatFixture: @unchecked Sendable {
         var assets: [[String: Any]] = media.enumerated().map { index, media in
             var url = Bundle.main.url(forResource: media.0, withExtension: media.1)?.absoluteString ?? ""
             var poster = media.2 == "video" ? Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")!.absoluteString : url
+            // `KRIA_SLIDE_POST_BROKEN_VIDEO=1`: the video's file is a photo, so its preview fails to play (KRI-644).
+            if media.2 == "video", ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_BROKEN_VIDEO"] == "1" { url = poster }
             // `KRIA_SLIDE_POST_REMOTE_MEDIA=1`: photos look remote (slow, re-signed on every response) so the image
             // cache is exercised: same asset, new `sig` each time. Videos keep their local source for AVPlayer.
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_REMOTE_MEDIA"] == "1" {

@@ -1,4 +1,4 @@
-import AVKit
+import AVFoundation
 import KriaMediaEngine
 import SwiftUI
 import UIKit
@@ -19,6 +19,7 @@ struct SlidePostWorkspaceView: View {
 
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var session: SlidePostSession
     @StateObject private var exporter = SlidePostExporter.makeDefault()
     /// The running Save to Photos / Share flow; cancelled when the editor goes away so it cannot keep polling
@@ -34,8 +35,11 @@ struct SlidePostWorkspaceView: View {
     /// and the chat layout drops the strip and shrinks the preview so the thread and composer stay above it.
     @State private var keyboardUp = false
     @State private var photoSelections: [String: ProjectPhotoSelection] = [:]
-    @State private var previewPlayer: AVPlayer?
-    @State private var previewPlayerAssetID: String?
+    /// KRI-644: the selected video slide's player. `@State` (not `@StateObject`) on purpose: only the video views
+    /// observe it, so play/pause and loop ticks never re-render the workspace.
+    @State private var videoPlayback = SlidePostVideoPlayback()
+    /// Bumped by the video's Try again, after the URLs are re-signed, to load it again.
+    @State private var videoRetry = 0
     @State private var previewLookFailed = false
     @State private var resolvedThread: CreationThread?
     @State private var resolvedCapabilities: CreationCapabilities?
@@ -100,6 +104,11 @@ struct SlidePostWorkspaceView: View {
     private var canRequestProposal: Bool { !session.isBusy && !hasPendingAssets && !hasFailedAssets && !session.readyAssets.isEmpty }
 
     private var pollingKey: String { "\(itemID ?? "")-\(session.state?.renderStatus ?? "")-\(hasPendingAssets)-\(session.isBusy)" }
+    /// The selected video plays only while the app is active and nothing covers the preview (a sheet, an export).
+    private var videoPlaybackAllowed: Bool {
+        scenePhase == .active && !showsConversation && !showsAttachments && !showsCaption && !showsSize
+            && !exporter.isSharing && !exporter.isBusy
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -161,7 +170,7 @@ struct SlidePostWorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
         .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
-        .onChange(of: session.selectedID) { _, _ in previewPlayer?.pause() }
+        .onChange(of: videoPlaybackAllowed, initial: true) { _, allowed in videoPlayback.setAllowed(allowed) }
         .onChange(of: mode) { _, next in if next != .browse { session.selectedStickerID = nil } }
         // Media that finishes importing joins the post by itself; it waits out saves and AI edits.
         .onChange(of: autoAppendKey) { _, _ in seedAndAppend() }
@@ -190,14 +199,14 @@ struct SlidePostWorkspaceView: View {
         let slideCanvas = session.selectedSlide.map { SlidePostFraming.canvas(for: $0, profile: profile, aspect: aspect) } ?? postCanvas
         let slideCrop = session.selectedSlide.flatMap { SlidePostFraming.effectiveCrop(for: $0) }
         let slideFit = session.selectedSlide.flatMap { SlidePostFraming.effectiveFit(for: $0) }
-        let playerKey = "\(asset?.id ?? "")|\(profile)|\(aspect ?? "")|\(preset)"
+        let playerKey = "\(session.selectedID ?? "")|\(asset?.id ?? "")|\(profile)|\(aspect ?? "")|\(preset)|\(videoRetry)"
         return ZStack {
             if let asset, let url = previewURL {
                 if asset.kind == "video" {
                     // The poster is the cached thumbnail, so the frame is never blank while the player spins up.
                     SlidePostCachedImage(assetID: asset.id, variant: .preview, url: asset.previewMediaURL, onExpired: { await refresh() }, showsSpinner: false,
                                          lookPreset: preset, lookCanvas: postCanvas)
-                    if previewPlayer != nil, previewPlayerAssetID == asset.id { VideoPlayer(player: previewPlayer) }
+                    SlidePostVideoPicture(playback: videoPlayback, assetID: asset.id)
                     if previewLookFailed {
                         Text("Look preview unavailable").font(KriaFont.body(12)).padding(8).background(KriaColor.paper, in: Capsule())
                     }
@@ -208,17 +217,21 @@ struct SlidePostWorkspaceView: View {
                 }
             } else { Image(systemName: "photo.on.rectangle").font(.largeTitle).foregroundStyle(KriaColor.zinc) }
         }
-        // Look/profile changes rebuild the composition; ordinary URL re-signing does not interrupt playback.
+        // Selection, look and profile changes rebuild the item; ordinary URL re-signing does not interrupt playback.
+        // Selecting a ready video plays it by itself (KRI-644). Another slide, or the screen going away, cancels this
+        // task, which stops exactly this load: never a newer one that already began, whatever order SwiftUI runs them in.
         .task(id: asset?.kind == "video" ? playerKey : "") {
-            guard let asset, asset.kind == "video", let previewURL else { previewPlayer?.pause(); return }
-            previewPlayer?.pause()
+            guard let asset, asset.kind == "video", let previewURL else { videoPlayback.stop(); return }
+            let token = videoPlayback.begin(assetID: asset.id)
+            defer { videoPlayback.stop(token: token) }
             previewLookFailed = false
             let item = AVPlayerItem(url: previewURL)
             do {
                 if liveLook { item.videoComposition = try await SlidePostVideoRender.previewComposition(asset: item.asset, profile: profile, aspect: aspect, lookPreset: preset) }
             } catch { if !Task.isCancelled { previewLookFailed = preset != "none" } }
             guard !Task.isCancelled else { return }
-            previewPlayer = AVPlayer(playerItem: item); previewPlayerAssetID = asset.id
+            videoPlayback.attach(item, token: token)
+            while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
         }
         .task(id: prefetchKey) { prefetchNeighbours() }
         #if DEBUG
@@ -228,7 +241,6 @@ struct SlidePostWorkspaceView: View {
             }
         }
         #endif
-        .onDisappear { previewPlayer?.pause() }
     }
 
     /// Selected slide +/- 2 at preview size and every thumbnail, so selecting a neighbour is instant. Runs when
@@ -563,6 +575,13 @@ struct SlidePostWorkspaceView: View {
                 }
             )
             .frame(width: size.width, height: size.height)
+            if let asset = session.selectedAsset, asset.kind == "video" {
+                SlidePostVideoControls(
+                    playback: videoPlayback, assetID: asset.id, showsToggle: mode == .browse || mode == .look,
+                    onRetry: { Task { await refresh(); videoRetry += 1 } }
+                )
+                .frame(width: size.width, height: size.height)
+            }
             if mode == .draw {
                 // The sketch lies over the region the slide's drawing lives in (its own aspect, letterboxed when the
                 // canvas has changed since), so strokes are authored in the drawing's space and appended unchanged.
