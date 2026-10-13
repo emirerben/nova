@@ -164,6 +164,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run testflight.yml --ref main -f head_sha="${{ github.sha }}"
+      # verify.sh's UI receipt is single-use: the smoke run above consumed it, so
+      # renew it (incremental build, no unit tests) before the full suite.
+      - name: Renew the UI build receipt after smoke
+        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/')) && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          KRIA_IOS_TEST_MODE: prepare-ui
+          KRIA_IOS_UNIT_TESTS: "0"
+          KRIA_RESTORE_INPUT_TIMES: "1"
+        run: bash scripts/ios/verify.sh
       - name: Native UI tests (reuse compiled build)
         # main and workflow_dispatch run the fail-closed full regression. A PR
         # that touches native UI inputs runs a bounded pre-merge subset: smoke

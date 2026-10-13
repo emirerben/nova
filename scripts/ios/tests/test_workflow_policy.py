@@ -177,14 +177,19 @@ if __name__ == "__main__":
         release_name = "- name: Release to TestFlight after build, unit and smoke tests"
         before_smoke, rest = self.workflow.split(smoke_name, 1)
         smoke, rest = rest.split(release_name, 1)
-        release, after = rest.split("- name: Native UI tests", 1)
+        release, rest = rest.split("- name: Renew the UI build receipt after smoke", 1)
+        renew, after = rest.split("- name: Native UI tests", 1)
+        # The UI receipt is single-use: smoke consumes it, so it must be renewed
+        # (without rerunning unit tests) before the full suite needs it.
+        self.assertIn("KRIA_IOS_TEST_MODE: prepare-ui", renew)
+        self.assertIn('KRIA_IOS_UNIT_TESTS: "0"', renew)
         # Compile + unit tests and the cache save come first; the release step
         # follows the smoke tripwire and precedes the long UI suite.
         self.assertIn("- name: Build and unit tests", before_smoke)
         self.assertIn("- name: Save Xcode build data", before_smoke)
         self.assertIn("KRIA_IOS_TEST_MODE: ui", smoke)
         self.assertIn("KRIA_IOS_UI_GROUPS: smoke", smoke)
-        for step in (smoke, release):
+        for step in (smoke, release, renew):
             condition = step.split("\n", 2)[1]
             self.assertIn("matrix.lane == 'native'", condition)
             self.assertIn("(!matrix.shard || startsWith(matrix.shard, '1/'))", condition)
