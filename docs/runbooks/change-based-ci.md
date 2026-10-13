@@ -1,9 +1,9 @@
 # Change-based CI
 
 PRs targeting `main` or `dev` select whole suites from their merge-base diff.
-Every push to `main` runs full API and iOS regression coverage.
+Every push to `main` runs full API coverage and an iOS build/unit/smoke release check.
 PRs run the affected iOS build/unit phase and a focused UI subset when selected;
-the exhaustive iOS UI phase runs on main and manual dispatch. Web application
+the exhaustive iOS UI phase runs nightly and on manual dispatch. Web application
 tests and lint are retired; public web assets bundled into iOS remain covered
 by native checks.
 Other specialized workflows and deployment triggers retain their existing rules.

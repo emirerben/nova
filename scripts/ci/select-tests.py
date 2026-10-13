@@ -442,14 +442,20 @@ def gate(needs, suite, job):
     selected = outputs.get(suite)
     if suite == "ios":
         ui = outputs.get("ios_ui")
-        groups = ui_tests.validate_groups(outputs.get("ios_ui_groups"))
+        groups = outputs.get("ios_ui_groups")
+        if os.environ.get("GITHUB_EVENT_NAME") == "push" and groups == "smoke":
+            ui_tests.validate_execution(groups)
+        else:
+            ui_tests.validate_groups(groups)
         if (groups == "none") != (ui == "false"):
             raise ValueError("Inconsistent iOS UI groups")
         if ui not in ("true", "false") or (ui == "true" and selected != "true"):
             raise ValueError("Missing or inconsistent iOS UI selection")
         shards = outputs.get("ios_ui_shards")
         counts = {str(count) for count in range(1, ui_tests.MAX_SHARDS + 1)}
-        if shards not in counts or (ui == "false" and shards != "1"):
+        if shards not in counts or (
+            (ui == "false" or groups == "smoke") and shards != "1"
+        ):
             raise ValueError("Missing or inconsistent iOS UI shard count")
     if suite == "lint":
         if outputs.get("api") not in ("true", "false"):

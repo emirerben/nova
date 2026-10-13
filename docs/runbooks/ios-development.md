@@ -73,7 +73,7 @@ make ios-verify    # full local build, unit, and UI regression
 
 Set `KRIA_SKIP_SIMULATOR_TESTS=1` only when validating compilation on a host
 without an installed iPhone simulator. PR CI always compiles and runs unit tests.
-The exhaustive native UI suite runs on main and manual dispatch; it is outside
+The exhaustive native UI suite runs nightly and on manual dispatch; it is outside
 the PR shipping gate. Run `make ios-verify` locally when validating native flows.
 
 Verification boots the selected simulator while `build-for-testing` compiles the
@@ -608,8 +608,8 @@ The shared [CI selector](change-based-ci.md) schedules one CI macOS job for PRs
 with selected iOS or native journey coverage. Its stable `build-and-test` gate
 requires selected native checks and Linux mobile contracts to pass. Unrelated
 PRs report an explicit not-applicable result without allocating a Mac. The
-separate iOS workflow runs the full gate on every push to main and manual
-dispatch.
+separate iOS workflow runs build/unit/smoke on main and full regression
+nightly or on manual dispatch.
 
 Mobile contract generation checks and verification-script tests run in a
 parallel Linux job, so their Python dependencies do not delay Xcode.
@@ -677,7 +677,7 @@ zero compile or asset tasks, the same as a no-op build.
 Run cache/phase regression tests with `python3 -m unittest discover -s
 scripts/ios/tests -v`. To disable timestamp restoration, remove
 `KRIA_RESTORE_INPUT_TIMES` from the CI build step. PR UI selection now lives in
-`ci.yml`; the iOS workflow owns full-suite coverage on main and manual runs. A
+`ci.yml`; the iOS workflow owns full-suite coverage nightly and on manual runs. A
 policy change must keep the `build-and-test` gate fail closed.
 
 Local verification of the timestamp restore on 2026-09-10 reset all 126 native
@@ -704,17 +704,17 @@ gallery results; those shared files deliberately had no focused mapping. Project
 implementation lived in shared workspace/state files, so those changes ran full;
 project-test-only edits could select `smoke,projects`.
 
-All main pushes run full coverage. PRs run build and unit tests, and a PR with
+Main pushes run build/unit/smoke. PRs run build and unit tests, and a PR with
 `ios_ui=true` also runs a bounded native UI subset before merge: the selector's
 `smoke,<group>` when exactly one feature group changed, or `smoke` alone when the
-selector reports `full` (the full suite itself stays post-merge, so PR cost is
-bounded by the largest single group, which splits across two native legs; see
-"Sharded UI runs" below). This exists because a PR that was green on
+selector reports `full` (the full suite itself runs nightly/manual; PRs use
+one Mac for the selected group and native journeys). This exists because a PR that was green on
 build and unit tests broke creation-to-ready for every later merge (#1088); the
-smoke group contains that scenario. `smoke` is an execution-only value: the
-selector never emits it and the gate rejects it as a selector output.
+smoke group contains that scenario. `smoke` is emitted only for main pushes;
+the final gate accepts it only on a push with exactly one native leg. PR and
+nightly/manual selector outputs keep their stricter group contract.
 The selector retains `ios` and `ios_ui`, adding `ios_ui_groups` (`none`, `full`,
-`smoke,<group>`, or a method-level value, described below). The required
+`smoke` for main, `smoke,<group>`, or a method-level value, described below). The required
 `build-and-test` gate still rejects missing or inconsistent group outputs on every run.
 
 Method-level focus (KRI-168). When every diff hunk in a changed UI test file
@@ -736,7 +736,7 @@ manifest guard also requires new tests to be explicitly classified before the
 PR can pass.
 
 UI tests remain serial. The preparation builds both test bundles, executes all
-non-UI tests, and writes the existing one-use receipt. Main and manual UI runs
+non-UI tests, and writes the existing one-use receipt. Main smoke and nightly/manual UI runs
 reuse that build and reject changed native inputs. Selection is validated before
 invoking Xcode, and the actual result bundle must contain every expected UI test
 with a passing outcome; a test that fails and then passes on retry still counts

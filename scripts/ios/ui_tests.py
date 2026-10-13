@@ -15,10 +15,10 @@ MANIFEST = Path(__file__).with_name("ui-test-groups.json")
 DURATIONS = Path(__file__).with_name("ui-test-durations.json")
 # Each extra native leg repeats ~7 minutes of setup and compilation, so a
 # selection splits only when one leg would run more than this much recorded UI
-# time: main's full suite gets three legs, an editor-touching PR two.
+# time. Nightly/manual full regression gets three legs; PRs use one Mac.
 SHARD_TARGET_SECONDS = 15 * 60
-# Main (three legs) plus one two-leg PR fit the account's five concurrent
-# macOS runners. ios.yml must define a matrix for every count up to this one.
+# Bound full regression fan-out. ios.yml must define a matrix for every
+# count up to this one; main and PRs explicitly select one native leg.
 MAX_SHARDS = 3
 FEATURES = ("creation", "projects", "editor")
 FOCUSED = tuple(f"smoke,{group}" for group in FEATURES)

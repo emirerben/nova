@@ -1,9 +1,11 @@
 """KRI-605 failure contracts, written before the workflow implementation."""
 
 import importlib.util
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 def load(name, filename):
@@ -29,6 +31,32 @@ class ThroughputTests(unittest.TestCase):
         self.assertEqual(ci.selection_details("push", "", "")[2], "smoke")
         self.assertEqual(ci.ui_shards("push", "full"), 1)
         self.assertEqual(ci.ui_shards("schedule", "full"), 3)
+
+    def test_main_smoke_is_accepted_only_for_one_push_lane(self):
+        needs = {
+            "changes": {
+                "result": "success",
+                "outputs": {
+                    "ios": "true",
+                    "ios_ui": "true",
+                    "ios_ui_groups": "smoke",
+                    "ios_ui_shards": "1",
+                },
+            },
+            "ios-tests": {"result": "success"},
+        }
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push"}):
+            ci.gate(needs, "ios", "ios-tests")
+            needs["changes"]["outputs"]["ios_ui_shards"] = "3"
+            with self.assertRaises(ValueError):
+                ci.gate(needs, "ios", "ios-tests")
+        needs["changes"]["outputs"]["ios_ui_shards"] = "1"
+        for event in ("pull_request", "schedule", "workflow_dispatch"):
+            with (
+                patch.dict(os.environ, {"GITHUB_EVENT_NAME": event}),
+                self.assertRaises(ValueError),
+            ):
+                ci.gate(needs, "ios", "ios-tests")
 
     def needs(self, journey="true", native="true", ios="true"):
         return {
