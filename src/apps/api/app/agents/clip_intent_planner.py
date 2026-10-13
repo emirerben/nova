@@ -6,9 +6,9 @@ import json
 import re
 import unicodedata
 from hashlib import sha256
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
@@ -635,6 +635,15 @@ class PlannedClipIntent(ClipIntent):
         return self
 
 
+class ConfirmedTitleCopy(BaseModel):
+    """Current-media, server-approved title placement; never a candidate hint."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    target: Literal["opening_title", "closing_title"]
+    text: str = Field(min_length=1, max_length=280)
+
+
 class ClipIntentPlannerInput(BaseModel):
     creator_request: str = Field(min_length=1, max_length=CREATOR_REQUEST_MAX_CHARS)
     latest_user_message: str | None = Field(default=None, max_length=CREATOR_REQUEST_MAX_CHARS)
@@ -643,6 +652,10 @@ class ClipIntentPlannerInput(BaseModel):
     generated_brief: str | None = Field(default=None, max_length=CREATOR_REQUEST_MAX_CHARS)
     # Strategy-produced candidates can aid recall, but never authorize output.
     candidate_intents: list[ClipIntent] | None = Field(default=None, max_length=MAX_CLIP_INTENTS)
+    confirmed_titles: list[ConfirmedTitleCopy] = Field(
+        default_factory=list, max_length=2, exclude_if=lambda value: not value
+    )
+    available_clip_count: int | None = Field(default=None, ge=0, exclude_if=lambda v: v is None)
     # KRI-189: CLIP_FACTS is on for this creator, so the prompt also teaches the
     # fact-based `order_by` field. Omitted from dumps when off (byte-identical).
     clip_facts: bool = Field(default=False, exclude_if=lambda value: not value)
@@ -680,7 +693,8 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         # KRI-598: a voiceover cue for a clip is `include`, never a described sequence.
         # KRI-612: "explain / summarise the footage" is one `what is happening in the clip`
         # label, never a caption.
-        prompt_version="2026-10-12.1",
+        # KRI-651: inventory receives saved title placement and the owned clip count.
+        prompt_version="2026-10-13.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -718,6 +732,11 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             "latest_user_message": redact(input_dict.get("latest_user_message")),
             "generated_brief": redact(input_dict.get("generated_brief")),
             "candidate_intents_count": len(candidates) if isinstance(candidates, list) else 0,
+            "confirmed_titles": [
+                {"target": row["target"], "text": redact(row["text"])}
+                for row in input_dict.get("confirmed_titles", [])
+            ],
+            "available_clip_count": input_dict.get("available_clip_count"),
         }
 
     def render_prompt(self, input: ClipIntentPlannerInput) -> str:  # noqa: A002
@@ -728,6 +747,15 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             latest_user_message=_sanitize_text(input.latest_user_message or ""),
             generated_brief=_sanitize_text(input.generated_brief or ""),
             candidate_intents=json.dumps(candidates, ensure_ascii=False),
+            confirmed_titles=json.dumps(
+                [title.model_dump(mode="json") for title in input.confirmed_titles],
+                ensure_ascii=False,
+            ),
+            available_clip_count=(
+                str(input.available_clip_count)
+                if input.available_clip_count is not None
+                else "not supplied"
+            ),
             max_intents=str(MAX_CLIP_INTENTS),
             order_by_note=_ORDER_BY_NOTE if input.clip_facts else "",
             order_by_field=_ORDER_BY_FIELD if input.clip_facts else "",

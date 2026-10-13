@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents._model_client import default_client
-from app.agents._runtime import RunContext, TerminalError
+from app.agents._runtime import ProviderOutcomeUnknownError, RunContext, TerminalError
 from app.agents._schemas.brief_extractor import BriefExtractionOutput
 from app.agents._schemas.creator_agent import (
     AskUser,
@@ -38,6 +38,7 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
 from app.agents.brief_extractor import BriefExtractionInput, BriefExtractorAgent
+from app.agents.clip_intent_planner import ConfirmedTitleCopy
 from app.agents.main_creator import (
     MAIN_CREATOR_CONVERSATION_MAX,
     CreativeCopyDecision,
@@ -1668,6 +1669,7 @@ async def _call_main_creator(
     from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
 
     def _run_agent():  # noqa: ANN202 - inferred MainCreatorOutput
+        deadline = turn_deadline.get()
         return MainCreatorAgent(default_client()).run(
             inputs.agent_input,
             ctx=RunContext(
@@ -1677,12 +1679,19 @@ async def _call_main_creator(
                 creator_agent_session_id=(
                     str(creator_agent_session_id) if creator_agent_session_id else None
                 ),
+                deadline_monotonic=(
+                    deadline - _POST_UNDERSTANDING_RESERVE_S if deadline is not None else None
+                ),
                 thought_summary_callback=current_thought_publisher(),
             ),
         )
 
     try:
         return await asyncio.to_thread(_run_agent)
+    except ProviderOutcomeUnknownError:
+        # Provider work may still be billable. Never disguise this as a
+        # recoverable planning/schema failure that can re-enter inference.
+        raise
     except TerminalError as exc:
         raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
 
@@ -1708,6 +1717,7 @@ async def _call_brief_extractor(
     )
 
     def _run_agent():  # noqa: ANN202 - inferred BriefExtractionOutput
+        deadline = turn_deadline.get()
         return BriefExtractorAgent(default_client()).run(
             agent_input,
             ctx=RunContext(
@@ -1717,11 +1727,16 @@ async def _call_brief_extractor(
                 creator_agent_session_id=(
                     str(creator_agent_session_id) if creator_agent_session_id else None
                 ),
+                deadline_monotonic=(
+                    deadline - _POST_UNDERSTANDING_RESERVE_S if deadline is not None else None
+                ),
             ),
         )
 
     try:
         return await asyncio.to_thread(_run_agent)
+    except ProviderOutcomeUnknownError:
+        raise
     except TerminalError as exc:
         raise RuntimeError("Kria could not extract the creative brief reliably") from exc
 
@@ -2348,6 +2363,11 @@ async def _plan_creator_action(
                 latest_user_message=user_message,
                 generated_brief=brief_request,
                 candidate_intents=action.strategy.clip_intents,
+                confirmed_titles=[
+                    ConfirmedTitleCopy(target=target, text=state.approved)
+                    for target, state in (inputs.creative_copy_state or {}).items()
+                    if state.approved is not None
+                ],
                 clips=intent_clips,
                 run_context=RunContext(
                     request_id=str(thread_id),
