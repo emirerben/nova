@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.271.0] - 2026-10-13
+
+### Changed
+- fix(ios): rebuild editor playback after iOS resets media services (KRI-626) (#1585) <!-- release-pr: 1585 -->
+
 ## [0.78.270.0] - 2026-10-13
 
 ### Changed
