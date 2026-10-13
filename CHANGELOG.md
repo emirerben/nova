@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.253.0] - 2026-10-13
+
+### Changed
+- ci(ios): release to TestFlight after build+unit+smoke; shard and never cancel main (KRI-636) (#1576) <!-- release-pr: 1576 -->
+
 ## [0.78.252.0] - 2026-10-13
 
 ### Changed
