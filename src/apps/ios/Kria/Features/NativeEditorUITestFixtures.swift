@@ -49,7 +49,14 @@ enum NativeEditorUITestFixtures {
             return Fixture(shape: .sourceText, draft: capturedCreation)
         }
         let shape = Shape.allCases.first { arguments.contains("-ui-testing-editor-\($0.rawValue)") } ?? .twoText
-        return Fixture(shape: shape, draft: draft(for: shape))
+        var value = draft(for: shape)
+        if arguments.contains("-ui-testing-editor-text-bend") {
+            // KRI-646: the server advertises `editor_capabilities.text_bend` to a protocol-8 build on a device-rendered variant.
+            var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+            caps["text_bend"] = .bool(true)
+            value.serverSnapshot["editor_capabilities"] = .object(caps)
+        }
+        return Fixture(shape: shape, draft: value)
     }
 
     static func draft(for shape: Shape) -> EditorDraft {

@@ -317,6 +317,15 @@ class TextElement(BaseModel):
         default=None,
         description="Clockwise text rotation in degrees; silently clamped to [-360, 360].",
     )
+    bend: float | None = Field(
+        default=None,
+        description=(
+            "Text bend in [-100, 100] (KRI-646): +100 bows the widest line up over a "
+            "180-degree arc (rainbow), negative is a smile, 0/None is straight. Drawn "
+            "on device only; server renderers ignore it. Silently clamped. NOT in "
+            "PARITY_VERIFIED_FIELDS."
+        ),
+    )
     font_family: str | None = Field(
         default=None,
         description=(
@@ -623,6 +632,18 @@ class TextElement(BaseModel):
         except (TypeError, ValueError):
             return None
 
+    @field_validator("bend", mode="before")
+    @classmethod
+    def _clamp_bend(cls, v: object) -> float | None:
+        """Silently clamp bend to [-100, 100]; non-finite or unparsable is None."""
+        if v is None:
+            return None
+        try:
+            value = float(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        return max(-100.0, min(100.0, value)) if math.isfinite(value) else None
+
     @field_validator("color", "highlight_color", "glow_color", mode="before")
     @classmethod
     def _coerce_color(cls, v: object) -> str | None:
@@ -891,6 +912,7 @@ def _burn_dict_to_text_element(
     )
     rotation_deg_raw = burn_dict.get("rotation_deg")
     rotation_deg: float | None = float(rotation_deg_raw) if rotation_deg_raw is not None else None
+    bend = burn_dict.get("bend")
 
     # alignment from text_anchor
     text_anchor = str(burn_dict.get("text_anchor") or "center")
@@ -935,6 +957,7 @@ def _burn_dict_to_text_element(
             x_frac=x_frac,
             y_frac=y_frac,
             rotation_deg=rotation_deg,
+            bend=bend,
             font_family=font_family,
             size_px=size_px,
             size_class=size_class,  # type: ignore[arg-type]

@@ -1,3 +1,4 @@
+import KriaMediaEngine
 import SwiftUI
 import UIKit
 
@@ -289,7 +290,48 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
             positionControl("Horizontal position", key: "x_frac")
             positionControl("Vertical position", key: "y_frac")
             rotationControl
+            bendControl
         }
+    }
+
+    /// KRI-646: arc ("rainbow") text. Shown only where the phone can draw it (`supportsTextBend`); disabled
+    /// with a reason on animations that need a straight baseline (the compiler would drop it anyway).
+    @ViewBuilder private var bendControl: some View {
+        if session.supportsTextBend {
+            let current: Double = item?.raw["bend"]?.numberValue ?? 0
+            let shown: Int = Int(current.rounded())
+            let reason: String? = bendUnavailableReason
+            let bend: Binding<Double> = Binding<Double>(
+                get: { current },
+                set: { (next: Double) in
+                    // Snap onto "straight" so it is easy to hit; a straight text stores no key at all.
+                    let snapped: Double = abs(next) <= 4 ? 0 : next
+                    if snapped == 0, current != 0 { UISelectionFeedbackGenerator().selectionChanged() }
+                    session.updateTextRaw(id: id, key: "bend", value: snapped == 0 ? nil : .number(snapped))
+                }
+            )
+            VStack(alignment: .leading, spacing: 2) {
+                sliderRow(
+                    "Bend", accessibilityName: "Text bend", value: bend, range: -100...100, step: 1,
+                    valueText: shown > 0 ? "+\(shown)" : "\(shown)", accessibilityValue: "\(shown)",
+                    identifier: "native-editor-text-bend"
+                )
+                .disabled(reason != nil)
+                if let reason {
+                    Text(reason).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                        .accessibilityIdentifier("native-editor-text-bend-unavailable")
+                }
+            }
+        }
+    }
+
+    /// Why Bend is off for this text, or nil. Mirrors `NativeEditorRenderCompiler`: explicit animation phases
+    /// decide on their own (only typewriter breaks the arc); otherwise the legacy effect does.
+    private var bendUnavailableReason: String? {
+        let explicitPhases: Bool = item?.raw["animation_phases"]?.objectValue != nil
+        let typewriter: Bool = phases["entrance"]?.stringValue == "typewriter" || phases["exit"]?.stringValue == "typewriter"
+        let legacy: PortableTextLayer.Effect = explicitPhases ? .none : (PortableTextLayer.Effect(rawValue: string("effect", "none")) ?? .none)
+        return PortableTextLayer.bendSupported(effect: legacy, phasesTypewriter: typewriter) ? nil : "Bend isn't available with this animation."
     }
 
     /// KRI-646: rotation is a slider. The canvas twist gesture can store any angle up to ±360, so

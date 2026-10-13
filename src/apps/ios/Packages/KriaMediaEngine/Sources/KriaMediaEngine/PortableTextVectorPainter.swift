@@ -14,8 +14,13 @@ struct PortableTextVectorPainter: @unchecked Sendable {
     let rotation: CGAffineTransform
     let bounds: CGRect
     let selectionBounds: ResolvedTextSelectionBounds
+    /// KRI-646: one glyph of a bent run, in the same y-up canvas space as `Run.positions`. `font` is the
+    /// glyph's own CTRun font (so a color emoji keeps the OS face). `transform` moves it onto the arc.
+    struct BentGlyph { let font: CTFont; let id: CGGlyph; let position: CGPoint; let transform: CGAffineTransform }
+    private struct RawGlyph { let font: CTFont; let id: CGGlyph; let position: CGPoint; let advance: Double; let box: CGRect }
+    private struct RawRun { let origin: CGPoint; let fontSize: Double; let glyphs: [RawGlyph] }
     struct Run {
-        struct Glyph { let id: CGGlyph; let position: CGPoint; let path: CGPath }
+        struct Glyph { let id: CGGlyph; let position: CGPoint; let path: CGPath; var transform: CGAffineTransform = .identity }
         let outlinedGlyphs: [Glyph]
         let line: CTLine; let stroke: CTLine?; let mask: CTLine; let origin: CGPoint
         let blurs: [TextBlurLayer]; let gradient: TextGradient?
@@ -25,6 +30,8 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         let font: CTFont; let glyphs: [CGGlyph]?; let positions: [CGPoint]
         let fill: CGColor; let strokeColor: CGColor; let strokeWidth: Double
         let outline: CGPath?
+        /// Non-nil when the layer is bent: every glyph is drawn on its own with its arc transform.
+        var bent: [BentGlyph]? = nil
         func draw(_ context: CGContext, mode: CGTextDrawingMode = .fill, isMask: Bool = false, opacity: Double = 1) {
             // Hint ordinary-size glyphs at fractional positions. Above 256px,
             // use outlines to bound the platform glyph cache during a 60× zoom.
@@ -39,6 +46,17 @@ struct PortableTextVectorPainter: @unchecked Sendable {
                 else { context.fillPath() }
                 return
             }
+            if let bent, mode == .clip {
+                // A text clip cannot span several saved/restored draws; clip to the glyph outlines instead.
+                let clipPath = CGMutablePath()
+                for glyph in bent {
+                    guard let path = CTFontCreatePathForGlyph(glyph.font, glyph.id, nil) else { continue }
+                    clipPath.addPath(path, transform: CGAffineTransform(translationX: glyph.position.x, y: glyph.position.y)
+                        .concatenating(glyph.transform))
+                }
+                context.addPath(clipPath); context.clip()
+                return
+            }
             if mode != .clip { context.saveGState() }
             defer { if mode != .clip { context.restoreGState() } }
             if !isMask, opacity < 1 {
@@ -51,7 +69,19 @@ struct PortableTextVectorPainter: @unchecked Sendable {
             }
             context.setTextDrawingMode(mode)
             context.textPosition = origin
-            if let glyphs {
+            if let bent {
+                context.textPosition = .zero
+                context.setFillColor(isMask ? CGColor(gray: 1, alpha: 1) : fill)
+                context.setStrokeColor(strokeColor)
+                context.setLineWidth(strokeWidth)
+                context.setLineJoin(.round)
+                for glyph in bent {
+                    context.saveGState()
+                    context.concatenate(glyph.transform)
+                    CTFontDrawGlyphs(glyph.font, [glyph.id], [glyph.position], 1, context)
+                    context.restoreGState()
+                }
+            } else if let glyphs {
                 context.textPosition = .zero
                 context.setFillColor(isMask ? CGColor(gray: 1, alpha: 1) : fill)
                 context.setStrokeColor(strokeColor)
@@ -75,6 +105,8 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         var fonts: [FontKey: (CGFont, CTFont)] = [:]
         var bounds = CGRect.null
         var inkSelectionBounds = CGRect.null
+        let bend: Double? = TextBend.isStraight(layer.bend) ? nil : layer.bend
+        var rawRuns: [RawRun] = []
         for run in layer.runs {
             guard run.shaped || run.glyphs != nil else { throw NativePreviewFeatureError("PortableTextVectorPainter-76") }
             let key = FontKey(assetID: run.fontAssetID, size: run.fontSize, variations: run.fontVariations.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ";"))
@@ -130,6 +162,38 @@ struct PortableTextVectorPainter: @unchecked Sendable {
                 inkBounds = zip(boxes, positions).reduce(CGRect.null) { $0.union($1.0.offsetBy(dx: $1.1.x, dy: $1.1.y)) }
                 glyphIDs = ids
             }
+            if bend != nil {
+                var raws: [RawGlyph] = []
+                if let ids = glyphIDs {
+                    var advances = [CGSize](repeating: .zero, count: ids.count)
+                    var boxes = [CGRect](repeating: .zero, count: ids.count)
+                    CTFontGetAdvancesForGlyphs(font, .horizontal, ids, &advances, ids.count)
+                    CTFontGetBoundingRectsForGlyphs(font, .default, ids, &boxes, ids.count)
+                    for index in ids.indices {
+                        raws.append(RawGlyph(font: font, id: ids[index], position: positions[index], advance: Double(advances[index].width), box: boxes[index]))
+                    }
+                } else {
+                    for item in CTLineGetGlyphRuns(line) as! [CTRun] {
+                        let count = CTRunGetGlyphCount(item)
+                        guard count > 0 else { continue }
+                        let itemFont = (CTRunGetAttributes(item) as NSDictionary)[kCTFontAttributeName] as! CTFont
+                        var ids = [CGGlyph](repeating: 0, count: count)
+                        var points = [CGPoint](repeating: .zero, count: count)
+                        var advances = [CGSize](repeating: .zero, count: count)
+                        var boxes = [CGRect](repeating: .zero, count: count)
+                        CTRunGetGlyphs(item, CFRange(location: 0, length: 0), &ids)
+                        CTRunGetPositions(item, CFRange(location: 0, length: 0), &points)
+                        CTRunGetAdvances(item, CFRange(location: 0, length: 0), &advances)
+                        CTFontGetBoundingRectsForGlyphs(itemFont, .default, ids, &boxes, count)
+                        for index in 0..<count {
+                            raws.append(RawGlyph(font: itemFont, id: ids[index],
+                                position: CGPoint(x: points[index].x + origin.x, y: points[index].y + origin.y),
+                                advance: Double(advances[index].width), box: boxes[index]))
+                        }
+                    }
+                }
+                rawRuns.append(RawRun(origin: origin, fontSize: run.fontSize, glyphs: raws))
+            }
             inkSelectionBounds = inkSelectionBounds.union(inkBounds.insetBy(dx: -run.strokeWidth / 2, dy: -run.strokeWidth / 2))
             var box = inkBounds
             box = box.insetBy(dx: -run.strokeWidth - 2, dy: -run.strokeWidth - 2).applying(rotation)
@@ -168,6 +232,45 @@ struct PortableTextVectorPainter: @unchecked Sendable {
             runs.append(Run(outlinedGlyphs: outlines, line: line, stroke: stroke, mask: mask, origin: origin, blurs: run.blurLayers, gradient: run.gradient, sourceFont: graphicsFont, font: font, glyphs: glyphIDs, positions: positions,
                             fill: run.fill.cgColor, strokeColor: run.stroke.cgColor, strokeWidth: run.strokeWidth, outline: outline))
         }
+        if let bend, rawRuns.count == runs.count, !runs.isEmpty {
+            // The arc is block-wide (the widest line sets the radius), so it can only be resolved once
+            // every line has been shaped. Redraw each run glyph by glyph and measure the bent ink: the
+            // straight-line bounds above would clip the ends of the arc.
+            let transforms = TextBend.transforms(lines: rawRuns.map { raw in
+                TextBend.Line(baselineY: Double(raw.origin.y), fontSize: raw.fontSize,
+                              glyphs: raw.glyphs.map { TextBend.Glyph(x: Double($0.position.x), advance: $0.advance) })
+            }, bend: bend)
+            bounds = .null
+            inkSelectionBounds = .null
+            let layerRotation = rotation
+            runs = runs.enumerated().map { index, run in
+                let source = layer.runs[index]
+                var ink = CGRect.null
+                var bentGlyphs: [BentGlyph] = []
+                var outlines: [Run.Glyph] = []
+                let outlinePath = CGMutablePath()
+                for (raw, transform) in zip(rawRuns[index].glyphs, transforms[index]) {
+                    bentGlyphs.append(BentGlyph(font: raw.font, id: raw.id, position: raw.position, transform: transform))
+                    ink = ink.union(raw.box.offsetBy(dx: raw.position.x, dy: raw.position.y).applying(transform))
+                    if run.outline != nil, let glyphPath = CTFontCreatePathForGlyph(raw.font, raw.id, nil) {
+                        let placed = CGMutablePath()
+                        placed.addPath(glyphPath, transform: CGAffineTransform(translationX: raw.position.x, y: raw.position.y).concatenating(transform))
+                        outlinePath.addPath(placed)
+                        outlines.append(Run.Glyph(id: raw.id, position: raw.position, path: placed, transform: transform))
+                    }
+                }
+                inkSelectionBounds = inkSelectionBounds.union(ink.insetBy(dx: -source.strokeWidth / 2, dy: -source.strokeWidth / 2))
+                bounds = bounds.union(ink.insetBy(dx: -source.strokeWidth - 2, dy: -source.strokeWidth - 2).applying(layerRotation))
+                for blur in source.blurLayers {
+                    bounds = bounds.union(ink.offsetBy(dx: blur.dx, dy: -blur.dy)
+                        .insetBy(dx: -ceil(3 * blur.sigma) - 2, dy: -ceil(3 * blur.sigma) - 2).applying(layerRotation))
+                }
+                return Run(outlinedGlyphs: outlines, line: run.line, stroke: run.stroke, mask: run.mask, origin: run.origin,
+                           blurs: run.blurs, gradient: run.gradient, sourceFont: run.sourceFont, font: run.font,
+                           glyphs: run.glyphs, positions: run.positions, fill: run.fill, strokeColor: run.strokeColor,
+                           strokeWidth: run.strokeWidth, outline: run.outline == nil ? nil : outlinePath, bent: bentGlyphs)
+            }
+        }
         if let background = layer.background {
             let rectangle = CGRect(x: background.left, y: canvas.height - background.top - background.height,
                                    width: background.width, height: background.height)
@@ -195,7 +298,9 @@ struct PortableTextVectorPainter: @unchecked Sendable {
                     mask.addPath(glyph.path); mask.fillPath()
                 } else {
                     mask.setShouldSubpixelPositionFonts(true); mask.setShouldSubpixelQuantizeFonts(false)
+                    mask.saveGState(); mask.concatenate(glyph.transform)
                     CTFontDrawGlyphs(run.font, [glyph.id], [glyph.position], 1, mask)
+                    mask.restoreGState()
                 }
             }
         }

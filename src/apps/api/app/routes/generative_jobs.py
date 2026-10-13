@@ -7231,11 +7231,27 @@ def _drawing_capabilities(job: Job, variant: dict) -> dict[str, dict[str, Any]]:
     }
 
 
+def _text_bend_capability(variant: dict) -> bool:
+    """KRI-646: may the app author text Bend on this variant (``editor_capabilities.text_bend``)?
+
+    Bend is drawn on the device only, so a cloud-rendered variant is closed. Otherwise
+    `text_bend_supported`: the kill switch (``text_bend_enabled``), ``textBend`` verified,
+    and an app build declaring protocol >= ``text_bend_min_client_protocol``.
+    """
+    from app.services.phone_rollout import text_bend_supported  # noqa: PLC0415
+
+    return bool(
+        variant.get("render_destination") in {"device", "phone"}
+        and text_bend_supported(require_client=True)
+    )
+
+
 def _editor_capabilities(job: Job, variant: dict) -> dict:
     """Editor capability map for one variant, clamped to what its renderer can save."""
     return {
         **_device_clamped_editor_capabilities(job, variant),
         "drawings": _drawing_capabilities(job, variant),
+        "text_bend": _text_bend_capability(variant),
     }
 
 

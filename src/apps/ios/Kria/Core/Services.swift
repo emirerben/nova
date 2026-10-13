@@ -946,7 +946,11 @@ private enum KriaClientProtocolContract {
     /// 8 (KRI-460): round-trips a slide's `stickers` (pasted pictures placed on a slide). A build below it would drop the
     /// key on its next save, so the server advertises `slide_post_stickers` only to 8 and answers 426 `client_update_required`
     /// to an older build for a post that has stickers.
-    static let version = 8
+    ///
+    /// 9 (KRI-646): draws text Bend (curved text) and decodes the recipe's text-layer `bend`. The server
+    /// advertises `text_bend` only to this protocol and answers 426 `client_update_required` to older builds
+    /// for a document that has a bend, since they would draw it straight.
+    static let version = 9
     static let header = "X-Kria-Client-Protocol"
 }
 
