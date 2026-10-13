@@ -380,6 +380,16 @@
         "src/apps/api/app/kria/voiceover_clips.py",
         "src/apps/api/tests/fixtures/kri593_tigre_voiceover_turn.json"
       ]
+    },
+    {
+      "id": "kri-653-silent-take",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_silence_cut_no_speech.py tests/services/test_audio_presence.py tests/services/test_transcript_quality.py tests/tasks/test_silent_audio_gate.py",
+      "paths": [
+        "src/apps/api/app/pipeline/silence_cut.py",
+        "src/apps/api/app/services/clip_speech.py",
+        "src/apps/api/app/services/transcript_quality.py"
+      ]
     }
   ]
 }
