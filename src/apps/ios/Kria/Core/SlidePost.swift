@@ -134,6 +134,8 @@ struct SlidePostTextElement: Codable, Equatable, Identifiable, Sendable {
 
 struct SlidePostEdits: Codable, Equatable, Sendable {
     static let maxTexts = 4
+    /// KRI-460: pictures pasted onto one slide (the server's cap).
+    static let maxStickers = 4
     var text: SlidePostText? = nil
     var lookPreset: String = "none"
     /// The rich model. nil = an older draft that only has the single legacy `text`.
@@ -144,10 +146,12 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
     var fit: SlidePostFit? = nil
     /// KRI-589: freehand ink over the slide (static, no animation). nil = none (and, on save, "clear any stored drawing").
     var drawing: SlidePostDrawing? = nil
-    enum CodingKeys: String, CodingKey { case text, texts, framing, fit, drawing; case lookPreset = "look_preset" }
+    /// KRI-460: pictures pasted onto the slide, bottom to top (the last one is on top). nil = none.
+    var stickers: [SlidePostSticker]? = nil
+    enum CodingKeys: String, CodingKey { case text, texts, framing, fit, drawing, stickers; case lookPreset = "look_preset" }
     init(text: SlidePostText? = nil, lookPreset: String = "none", texts: [SlidePostTextElement]? = nil, framing: SlidePostFraming? = nil, fit: SlidePostFit? = nil,
-         drawing: SlidePostDrawing? = nil) {
-        self.text = text; self.lookPreset = lookPreset; self.texts = texts; self.framing = framing; self.fit = fit; self.drawing = drawing
+         drawing: SlidePostDrawing? = nil, stickers: [SlidePostSticker]? = nil) {
+        self.text = text; self.lookPreset = lookPreset; self.texts = texts; self.framing = framing; self.fit = fit; self.drawing = drawing; self.stickers = stickers
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -160,6 +164,13 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
         // Strict, unlike `fit`: dropping a drawing this build cannot read would make the next save send `null` and
         // erase ink the server still holds. The server validates it, so a failure here means a contract break.
         drawing = try c.decodeIfPresent(SlidePostDrawing.self, forKey: .drawing)
+        // Strict for the same reason: a sticker this build cannot read must not silently vanish from the next save.
+        stickers = try c.decodeIfPresent([SlidePostSticker].self, forKey: .stickers)
+    }
+    /// An empty list means the same as none, so a sticker that was added and removed again is not an unsaved change.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.text == rhs.text && lhs.lookPreset == rhs.lookPreset && lhs.texts == rhs.texts && lhs.framing == rhs.framing
+            && lhs.fit == rhs.fit && lhs.drawing == rhs.drawing && lhs.effectiveStickers == rhs.effectiveStickers
     }
     /// Writes both shapes: `texts`, and the legacy `text` mirroring `texts[0]` (the server's own rule).
     func encode(to encoder: Encoder) throws {
@@ -180,6 +191,10 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
         // And for the drawing (KRI-589, protocol 7): a value sets it, `null` clears it, a missing key (a build below 7)
         // keeps what the server stored.
         if let drawing { try c.encode(drawing, forKey: .drawing) } else { try c.encodeNil(forKey: .drawing) }
+        // And for stickers (KRI-460, protocol 8), except that nothing is ever `null`: a list sets them, an EMPTY list
+        // clears them (the creator removed the last one), and no key at all keeps what the server stored. A draft that
+        // never had a sticker therefore stays byte-identical to before this feature.
+        if let stickers { try c.encode(stickers, forKey: .stickers) }
     }
     /// What the editor shows: `texts`, or the legacy text lifted into one boxed element.
     var effectiveTexts: [SlidePostTextElement] {
@@ -333,6 +348,10 @@ struct SlidePostDraft: Codable, Equatable, Sendable {
             }
             if let look = slide.edits?.lookPreset, !Self.lookPresets.contains(look) { return "Choose a supported look." }
             if let drawing = slide.edits?.drawing, !drawing.isValid { return "A drawing on one slide is too detailed. Clear it or draw less." }
+            if let stickers = slide.edits?.stickers, stickers.count > SlidePostEdits.maxStickers || Set(stickers.map(\.id)).count != stickers.count
+                || stickers.contains(where: { !$0.isValid }) {
+                return "A slide holds up to \(SlidePostEdits.maxStickers) pictures, each one on the slide and no smaller than 5% of its width."
+            }
         }
         if drawingPointCount > SlidePostDrawing.maxPointsPerPost { return "Your drawings are too detailed to save. Clear some of them." }
         return nil
@@ -594,7 +613,7 @@ private struct SlidePostItemResponse: Decodable {
     @Published private(set) var state: SlidePostState?
     @Published var draft: SlidePostDraft? { didSet { persist() } }
     @Published var proposal: SlidePostProposal? { didSet { persist() } }
-    @Published var selectedID: String? { didSet { persist() } }
+    @Published var selectedID: String? { didSet { persist(); if oldValue != selectedID { selectedStickerID = nil } } }
     @Published var instruction = "" { didSet { persist() } }
     @Published private(set) var isBusy = false
     /// The Kria thread for this post (chat-edit turns). Persisted with the rest of the local state.
@@ -606,8 +625,16 @@ private struct SlidePostItemResponse: Decodable {
     @Published var error: String?
     @Published private(set) var operationMessage: String?
     var isProposing: Bool { isBusy && operationMessage == "Kria is arranging your post…" }
-    /// Text being edited on the canvas (not persisted; the text panel owns it).
-    @Published var selectedTextID: String?
+    /// Text being edited on the canvas (not persisted; the text panel owns it). Selecting a text deselects a sticker.
+    @Published var selectedTextID: String? { didSet { if selectedTextID != nil { selectedStickerID = nil } } }
+    /// KRI-460: the pasted picture being moved / resized on the canvas (not persisted). Mutually exclusive with `selectedTextID`.
+    @Published var selectedStickerID: String? { didSet { if selectedStickerID != nil { selectedTextID = nil } } }
+    /// True while a pasted picture uploads and becomes a sticker.
+    @Published private(set) var isPastingSticker = false
+    /// File names of the pictures this device uploaded as stickers. A sticker's asset lives in the same pool as the
+    /// slides' photos, so without this it would be appended to the post as a NEW SLIDE the moment it is ready (and again
+    /// after a relaunch or a refresh). Names are random per paste and never removed.
+    private(set) var stickerUploadNames: Set<String> = []
     /// Why some freshly imported media did not become a slide (limit / photos-only). Cleared by the user.
     @Published var autoAppendNotice: String?
     /// Pool assets the session has already decided about (in the draft, removed, or skipped). Only an
@@ -632,7 +659,16 @@ private struct SlidePostItemResponse: Decodable {
     private let defaults: UserDefaults
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
-    var readyAssets: [SlidePostAsset] { state?.assets.filter { $0.status == "ready" && $0.mediaStatus != "missing" } ?? [] }
+    /// Pool assets that can become slides: everything except the pictures used (or being uploaded) as stickers.
+    var slideAssets: [SlidePostAsset] { state?.assets.filter { !isStickerAsset($0) } ?? [] }
+    var readyAssets: [SlidePostAsset] { slideAssets.filter { $0.status == "ready" && $0.mediaStatus != "missing" } }
+    /// A sticker's picture: referenced by a sticker of any draft we hold, or uploaded by a paste on this device.
+    func isStickerAsset(_ asset: SlidePostAsset) -> Bool {
+        if let name = asset.sourceFilename, stickerUploadNames.contains(BackgroundUploadCoordinator.displayFilename(name)) { return true }
+        return [draft, proposal?.draft, state?.draft, baselineDraft].contains { candidate in
+            candidate?.slides.contains { $0.edits?.stickers?.contains { $0.assetID == asset.id } == true } == true
+        }
+    }
     var selectedSlide: SlidePostSlide? { (draft ?? proposal?.draft)?.slides.first { $0.id == selectedID } ?? (draft ?? proposal?.draft)?.slides.first }
     var selectedAsset: SlidePostAsset? { state?.assets.first { $0.id == selectedSlide?.assetID } }
     var hasUnsavedChanges: Bool {
@@ -998,6 +1034,7 @@ private struct SlidePostItemResponse: Decodable {
         draft = value
         if let selectedID, !value.slides.contains(where: { $0.id == selectedID }) { self.selectedID = value.slides.first?.id }
         if let selectedTextID, selectedSlide?.edits?.effectiveTexts.contains(where: { $0.id == selectedTextID }) != true { self.selectedTextID = nil }
+        if let selectedStickerID, selectedSlide?.edits?.effectiveStickers.contains(where: { $0.id == selectedStickerID }) != true { self.selectedStickerID = nil }
     }
 
     // MARK: Slide edits
@@ -1103,9 +1140,9 @@ private struct SlidePostItemResponse: Decodable {
         selectedTextID = element.id
         return element.id
     }
-    /// KRI-647: the system Paste control on a slide. Text becomes a new text element, cut to the slide text
-    /// limit; a picture waits for slide stickers (KRI-460), and says so rather than doing nothing.
-    func paste(providers: [NSItemProvider], slideID: String) async {
+    /// KRI-647: the system Paste control on a slide. Text becomes a new text element, cut to the slide text limit; a
+    /// picture becomes a sticker on this slide (KRI-460) once the server advertises it. Every refusal says why.
+    func paste(providers: [NSItemProvider], slideID: String, stickers context: SlidePostStickerPaste? = nil) async {
         pasteNotice = nil
         switch await PasteboardIntake.load(from: providers) {
         case .text(let text):
@@ -1116,12 +1153,75 @@ private struct SlidePostItemResponse: Decodable {
                 pasteNotice = "Pasted text was cut to \(SlidePostTextElement.maxLength) characters."
             }
         case .image(let url):
-            try? FileManager.default.removeItem(at: url)
-            pasteNotice = "Pasting a picture onto a slide isn’t available yet."
+            await pasteImage(fileURL: url, slideID: slideID, context: context)
         case nil:
-            pasteNotice = "Kria can’t use what’s on your clipboard. Copy text and try again."
+            pasteNotice = "Kria can’t use what’s on your clipboard. Copy text or a picture and try again."
         }
     }
+
+    /// Why a picture can't go onto `slideID` right now, or nil. Checked BEFORE anything is uploaded.
+    func stickerPasteRefusal(slideID: String, context: SlidePostStickerPaste?) -> String? {
+        guard let context, context.isEnabled else { return "Pasting a picture onto a slide isn’t available yet." }
+        guard let slide = draft?.slides.first(where: { $0.id == slideID }) else { return "Open a slide first, then paste." }
+        guard slide.kind == "image" || slide.kind == "video" else { return "Pictures can’t go on this slide." }
+        if slide.edits?.effectiveStickers.count ?? 0 >= SlidePostEdits.maxStickers {
+            return "A slide can have up to \(SlidePostEdits.maxStickers) pictures. Remove one to paste another."
+        }
+        if isPastingSticker { return "Still adding your last picture. Try again in a moment." }
+        if isBusy || isChatting { return "Wait for the current change to finish, then paste again." }
+        if state == nil { return "Your post is still loading. Try again in a moment." }
+        return nil
+    }
+
+    /// Uploads the picture into the post's pool, waits until it is ready, then places it as a sticker. The upload goes
+    /// through the same background uploader the video editor's Paste uses; the picture's own file name finds its asset
+    /// again (a second upload or a stale read can never hand back another one).
+    func pasteImage(fileURL: URL, slideID: String, context: SlidePostStickerPaste?) async {
+        if let refusal = stickerPasteRefusal(slideID: slideID, context: context) {
+            try? FileManager.default.removeItem(at: fileURL)
+            pasteNotice = refusal
+            return
+        }
+        guard let context else { return }
+        isPastingSticker = true
+        defer { isPastingSticker = false }
+        let known = Set(state?.assets.map(\.id) ?? [])
+        let filename = BackgroundUploadCoordinator.displayFilename(fileURL.lastPathComponent)
+        // Before the upload starts: from this moment the picture's asset must never be offered as a slide.
+        stickerUploadNames.insert(filename)
+        persist()
+        // Not deleted on refusal: a busy server leaves a Retry in the uploader's failures that re-reads this file.
+        guard await context.uploads.uploadSticker(fileURL: fileURL, projectID: context.projectID, itemID: context.itemID) else {
+            pasteNotice = "That picture couldn’t be added. Your slide is unchanged."
+            return
+        }
+        for _ in 0..<Self.stickerPollAttempts {
+            guard !Task.isCancelled, itemID == context.itemID else { return }
+            await refresh(api: context.api, itemID: context.itemID)
+            if let asset = state?.assets.first(where: { !known.contains($0.id) && ($0.sourceFilename.map(BackgroundUploadCoordinator.displayFilename) == filename) }) {
+                // Decided now, so even a relaunch before it is ready cannot turn it into a slide.
+                seenAssetIDs = (seenAssetIDs ?? []).union([asset.id])
+                persist()
+                if asset.status == "ready", asset.mediaStatus != "missing" {
+                    if addSticker(slideID: slideID, assetID: asset.id) == nil {
+                        pasteNotice = draft?.slides.contains(where: { $0.id == slideID }) == true
+                            ? "A slide can have up to \(SlidePostEdits.maxStickers) pictures. Remove one to paste another."
+                            : "That slide is gone, so the picture wasn’t added."
+                    }
+                    return
+                }
+                if asset.status == "failed" || asset.mediaStatus == "missing" {
+                    pasteNotice = "That picture couldn’t be prepared. Your slide is unchanged."
+                    return
+                }
+            }
+            try? await Task.sleep(for: Self.stickerPollInterval)
+        }
+        pasteNotice = "Adding the picture is taking longer than expected. Paste it again in a moment."
+    }
+    static var stickerPollAttempts = 120
+    static var stickerPollInterval = Duration.seconds(1)
+
     /// Shown above every other banner so a paste is never silent, even while an error is up. Tap to dismiss.
     @Published var pasteNotice: String?
 
@@ -1266,6 +1366,51 @@ private struct SlidePostItemResponse: Decodable {
         let value = first.edits?.fit
         return photos.allSatisfy { $0.edits?.fit == value } ? .uniform(value) : .mixed
     }
+    // MARK: Stickers (KRI-460)
+
+    /// Puts a pasted picture on the slide (centre, 40% of its width, upright), on top, and selects it. Nil when the
+    /// slide is gone, it already holds the maximum, or a save is in flight.
+    @discardableResult
+    func addSticker(slideID: String, assetID: String) -> String? {
+        guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return nil }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        var stickers = edits.effectiveStickers
+        guard stickers.count < SlidePostEdits.maxStickers else { return nil }
+        let sticker = SlidePostSticker(assetID: assetID)
+        stickers.append(sticker)
+        edits.stickers = stickers
+        value.slides[index].edits = edits
+        stageDraft(value)
+        guard draft?.slides.first(where: { $0.id == slideID })?.edits?.effectiveStickers.contains(where: { $0.id == sticker.id }) == true else { return nil }
+        selectedStickerID = sticker.id
+        return sticker.id
+    }
+    /// Edits one sticker in place; the result is kept inside the contract. `coalescing` collapses a continuous
+    /// gesture (a drag, a pinch) into one undo step.
+    func updateSticker(slideID: String, stickerID: String, coalescing key: String? = nil, _ mutate: (inout SlidePostSticker) -> Void) {
+        guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        var stickers = edits.effectiveStickers
+        guard let at = stickers.firstIndex(where: { $0.id == stickerID }) else { return }
+        mutate(&stickers[at])
+        stickers[at].clamp()
+        edits.stickers = stickers
+        value.slides[index].edits = edits
+        stageDraft(value, coalescing: key.map { "\($0)-\(stickerID)" })
+    }
+    func removeSticker(slideID: String, stickerID: String) {
+        guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        var stickers = edits.effectiveStickers
+        guard stickers.contains(where: { $0.id == stickerID }) else { return }
+        stickers.removeAll { $0.id == stickerID }
+        // An empty list (not nil) is how a save tells the server to drop the last one.
+        edits.stickers = stickers
+        value.slides[index].edits = edits
+        stageDraft(value)
+        if selectedStickerID == stickerID { selectedStickerID = nil }
+    }
+
     // MARK: Drawing (KRI-589)
 
     /// Why `extraStrokes` / `extraPoints` more ink cannot go on `slideID`, or nil when it can. The server's caps
@@ -1348,15 +1493,17 @@ private struct SlidePostItemResponse: Decodable {
         var proposalThoughtSummaries: [KriaThoughtSummary]? = nil
         var proposalRequestText: String? = nil
         var seenAssets: [String]? = nil
+        var stickerUploadNames: [String]? = nil
     }
     private func persist() {
         guard !restoring, let itemID else { return }
-        let local = LocalState(draft: draft, proposal: proposal, selectedID: selectedID, instruction: instruction, baseVersion: baseVersion, baselineDraft: baselineDraft, chat: Array(chat.suffix(Self.maxPersistedChat)), proposalThoughtSummaries: proposalThoughtSummaries.filter { $0.status == .completed && $0.hasText }, proposalRequestText: proposalRequestText, seenAssets: seenAssetIDs.map { Array($0).sorted() })
+        let local = LocalState(draft: draft, proposal: proposal, selectedID: selectedID, instruction: instruction, baseVersion: baseVersion, baselineDraft: baselineDraft, chat: Array(chat.suffix(Self.maxPersistedChat)), proposalThoughtSummaries: proposalThoughtSummaries.filter { $0.status == .completed && $0.hasText }, proposalRequestText: proposalRequestText, seenAssets: seenAssetIDs.map { Array($0).sorted() }, stickerUploadNames: Array(stickerUploadNames).sorted())
         guard let data = try? JSONEncoder().encode(local) else { return }
         defaults.set(data, forKey: "kria.slide-post.\(itemID)")
     }
     private func restore() {
         guard let itemID, let data = defaults.data(forKey: "kria.slide-post.\(itemID)"), let local = try? JSONDecoder().decode(LocalState.self, from: data) else {
+            stickerUploadNames = []
             draft = nil; proposal = nil; proposalThoughtSummaries = []; proposalRequestText = nil; selectedID = nil; instruction = ""; baseVersion = 0; baselineDraft = nil; chat = []; seenAssetIDs = nil; return
         }
         draft = local.draft; proposal = local.proposal; selectedID = local.selectedID; instruction = local.instruction; baseVersion = local.baseVersion; baselineDraft = local.baselineDraft
@@ -1364,6 +1511,29 @@ private struct SlidePostItemResponse: Decodable {
         proposalThoughtSummaries = (local.proposalThoughtSummaries ?? []).filter { $0.status == .completed && $0.hasText }
         proposalRequestText = local.proposalRequestText
         seenAssetIDs = local.seenAssets.map(Set.init)
+        stickerUploadNames = Set(local.stickerUploadNames ?? [])
+    }
+}
+
+/// What a picture paste needs besides the clipboard: whether the server takes stickers (`slide_post_stickers`), the
+/// uploader, and where the post lives.
+struct SlidePostStickerPaste {
+    let isEnabled: Bool
+    let api: any KriaAPIClient
+    let uploads: any SlidePostStickerUploading
+    let projectID: UUID
+    let itemID: String
+}
+
+/// The one thing a sticker paste needs from the background uploader (a seam so a test, or the UI-test fixture, can stand in).
+@MainActor protocol SlidePostStickerUploading: AnyObject {
+    /// Starts the upload of a picture into the post's pool. False when it was refused (the file is kept for a Retry).
+    func uploadSticker(fileURL: URL, projectID: UUID, itemID: String) async -> Bool
+}
+
+extension BackgroundUploadCoordinator: SlidePostStickerUploading {
+    func uploadSticker(fileURL: URL, projectID: UUID, itemID: String) async -> Bool {
+        await enqueue(fileURL: fileURL, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .visual, itemID: itemID)
     }
 }
 

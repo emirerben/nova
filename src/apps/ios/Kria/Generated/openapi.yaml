@@ -1108,6 +1108,11 @@
             "title": "Slide Post Sizes",
             "type": "boolean"
           },
+          "slide_post_stickers": {
+            "default": false,
+            "title": "Slide Post Stickers",
+            "type": "boolean"
+          },
           "song_filming_range": {
             "default": false,
             "title": "Song Filming Range",
@@ -7975,6 +7980,16 @@
             "title": "Look Preset",
             "type": "string"
           },
+          "stickers": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/SlideSticker"
+            },
+            "maxItems": 4,
+            "nullable": true,
+            "title": "Stickers",
+            "type": "array"
+          },
           "text": {
             "$ref": "#/components/schemas/TextOverlay",
             "default": null,
@@ -8637,6 +8652,58 @@
           "kind"
         ],
         "title": "SlideRef",
+        "type": "object"
+      },
+      "SlideSticker": {
+        "additionalProperties": false,
+        "description": "One pasted image sticker on a slide (KRI-647, KRI-460).\n\n``asset_id`` is a ``PlanItemAsset`` (image) in the item's pool that is NEVER a\nslide. Geometry is relative to the slide's OUTPUT canvas: ``x_frac``/``y_frac``\nare the sticker CENTRE as fractions of canvas width/height, ``width_frac`` the\ndisplayed width as a fraction of canvas width (height follows the image's own\naspect, never distorted) and ``rotation_deg`` is clockwise about the centre.\nStickers are clipped by the canvas edge, never moved. Frozen by\n``tests/fixtures/slide-sticker-parity/v1.json``.",
+        "properties": {
+          "asset_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "rotation_deg": {
+            "default": 0.0,
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Rotation Deg",
+            "type": "number"
+          },
+          "width_frac": {
+            "maximum": 1.0,
+            "minimum": 0.05,
+            "title": "Width Frac",
+            "type": "number"
+          },
+          "x_frac": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "X Frac",
+            "type": "number"
+          },
+          "y_frac": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Y Frac",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "asset_id",
+          "x_frac",
+          "y_frac",
+          "width_frac"
+        ],
+        "title": "SlideSticker",
         "type": "object"
       },
       "SlideTextElement": {

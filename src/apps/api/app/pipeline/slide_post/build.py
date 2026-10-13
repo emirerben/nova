@@ -26,7 +26,7 @@ import os
 import shutil
 import subprocess
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +37,13 @@ import structlog
 from app.config import settings
 from app.kria.framing import LANDSCAPE_CANVAS, ffmpeg_crop_filter
 from app.pipeline.look_presets import look_preset_filter
+from app.pipeline.slide_post.stickers import (
+    StickerGeometry,
+    prepare_sticker_png,
+    sticker_filter_chain,
+    sticker_geometry,
+    sticker_overlay,
+)
 
 if TYPE_CHECKING:
     from app.schemas.slide_post import SlideEdits
@@ -84,6 +91,9 @@ SLIDE_WATERMARK_VERSION = 1
 # Part of the normalized key of a slide that carries a drawing (and only of those,
 # so every existing key is unchanged). Bump it when `drawing_png` paints differently.
 SLIDE_DRAWING_PAINTER_VERSION = 1
+# Part of the normalized key of a slide that carries stickers (and only of those). Bump it
+# when the sticker decode/scale/rotate/overlay recipe changes.
+SLIDE_STICKER_COMPOSITOR_VERSION = 1
 
 
 class SlideBuildError(Exception):
@@ -302,13 +312,20 @@ def rich_text_active(edits: SlideEdits | None) -> bool:
     return edits is not None and edits.texts is not None and settings.slide_post_rich_text_enabled
 
 
-def edits_cache_digest(edits: SlideEdits | None) -> str:
+def edits_cache_digest(
+    edits: SlideEdits | None, sticker_fingerprints: dict[str, str | None] | None = None
+) -> str:
     """Content-address component for a slide's normalized derivative.
 
     Legacy-only edits hash exactly as before `texts` existed (the field is
     excluded when None), so existing cached derivatives stay valid. A slide
     with `texts` gets a path-specific digest so flipping
     `slide_post_rich_text_enabled` never reuses the other path's pixels.
+
+    A slide with stickers also hashes each sticker's asset content fingerprint
+    (``sticker_fingerprints``: sticker id -> fingerprint, ``None`` = the asset could not be
+    resolved and the sticker is dropped), so replacing a sticker's image re-renders; the
+    geometry is already part of the dumped edits. Slides without stickers are unchanged.
     """
     if edits is None:
         return "noedits"
@@ -316,6 +333,11 @@ def edits_cache_digest(edits: SlideEdits | None) -> str:
         payload = edits.model_dump_json(exclude={"texts"})
     else:
         payload = edits.model_dump_json() + ("|rich" if rich_text_active(edits) else "|legacy")
+    if edits.stickers:
+        fingerprints = sticker_fingerprints or {}
+        payload += "|st:" + ",".join(
+            f"{st.id}={fingerprints.get(st.id) or 'missing'}" for st in edits.stickers
+        )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -448,6 +470,58 @@ def _drawing_pngs(
             Path(png).unlink(missing_ok=True)
 
 
+def sticker_key_suffix(edits: SlideEdits | None) -> str:
+    """`_st{N}` for a slide with stickers, "" otherwise (existing keys stay put)."""
+    if edits is None or not edits.stickers:
+        return ""
+    return f"_st{SLIDE_STICKER_COMPOSITOR_VERSION}"
+
+
+@contextmanager
+def _sticker_inputs(
+    edits: SlideEdits | None,
+    sticker_sources: dict[str, str] | None,
+    *,
+    canvas: Canvas,
+    out_path: str,
+) -> Iterator[list[tuple[str, StickerGeometry]]]:
+    """Yield ``[(rgba_png, geometry)]`` for the slide's stickers in z-order; always cleans up.
+
+    ``sticker_sources`` maps a sticker id to the local original the caller downloaded. A
+    sticker with no source, or whose file cannot be decoded, is DROPPED (logged), never
+    fatal: the same best-effort posture as a missing slide asset.
+    """
+    resolved: list[tuple[str, StickerGeometry]] = []
+    try:
+        if edits is not None and edits.stickers:
+            for i, sticker in enumerate(edits.stickers):
+                source = (sticker_sources or {}).get(sticker.id)
+                if not source:
+                    log.warning("slide_sticker_dropped", sticker_id=sticker.id, reason="no_source")
+                    continue
+                png = f"{out_path}.sticker{i}.png"
+                try:
+                    size = prepare_sticker_png(source, png)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "slide_sticker_dropped",
+                        sticker_id=sticker.id,
+                        reason="unreadable",
+                        error=str(exc),
+                    )
+                    Path(png).unlink(missing_ok=True)
+                    continue
+                resolved.append((png, sticker_geometry(canvas, size, sticker)))
+        yield resolved
+    finally:
+        for png, _ in resolved:
+            Path(png).unlink(missing_ok=True)
+        # A decode that raised after writing a partial file.
+        if edits is not None and edits.stickers:
+            for i in range(len(edits.stickers)):
+                Path(f"{out_path}.sticker{i}.png").unlink(missing_ok=True)
+
+
 def _watermark_filter(canvas: Canvas, *, base: str, mark: str, out: str) -> str:
     """Composite the watermark input `mark` over `base` into `out`.
 
@@ -468,19 +542,33 @@ def _watermark_filter(canvas: Canvas, *, base: str, mark: str, out: str) -> str:
     return f"{prefix}[{base}][{sized}]overlay={x}:main_h-overlay_h-{bottom}:format=auto[{out}]"
 
 
-def _overlay_filter_complex(base_vf: str, n_overlays: int, *, canvas: Canvas) -> str:
+def _overlay_filter_complex(
+    base_vf: str,
+    n_overlays: int,
+    *,
+    canvas: Canvas,
+    stickers: Sequence[StickerGeometry] = (),
+) -> str:
     """`[0:v]<base>[b0]; [b0][1:v]overlay[b1]; ...` then the watermark, ending on `[vout]`.
 
     Inputs 1..n are the canvas-sized overlay PNGs (the text PNGs, then the slide's
-    drawing when it has one) and input n+1 is the watermark. The watermark goes on
-    last so no text or ink can bury it, the same stacking the iOS engine uses.
+    drawing when it has one), inputs n+1..n+m are the sticker rasters (each scaled and
+    rotated here, z-order = input order) and the last input is the watermark. The
+    watermark goes on last so no text, ink or sticker can bury it, the same stacking the
+    iOS engine uses.
     """
     parts = [f"[0:v]{base_vf}[b0]"]
     for i in range(n_overlays):
         parts.append(f"[b{i}][{i + 1}:v]overlay=0:0:format=auto[b{i + 1}]")
-    parts.append(
-        _watermark_filter(canvas, base=f"b{n_overlays}", mark=f"{n_overlays + 1}:v", out="vout")
-    )
+    top = f"b{n_overlays}"
+    for j, geometry in enumerate(stickers):
+        index = n_overlays + 1 + j
+        parts.append(sticker_filter_chain(geometry, src=f"{index}:v", out=f"st{j}"))
+        out = f"bs{j}"
+        parts.append(sticker_overlay(geometry, base=top, sticker=f"st{j}", out=out))
+        top = out
+    mark = f"{n_overlays + len(stickers) + 1}:v"
+    parts.append(_watermark_filter(canvas, base=top, mark=mark, out="vout"))
     return ";".join(parts)
 
 
@@ -533,9 +621,18 @@ def _decode_image_for_ffmpeg(src_path: str) -> str:
 
 
 def normalize_image_slide(
-    src_path: str, out_path: str, *, canvas: Canvas, edits: SlideEdits | None = None
+    src_path: str,
+    out_path: str,
+    *,
+    canvas: Canvas,
+    edits: SlideEdits | None = None,
+    sticker_sources: dict[str, str] | None = None,
 ) -> None:
-    """Normalize any image format (incl. HEIC/WebP) to a cover-fit JPEG."""
+    """Normalize any image format (incl. HEIC/WebP) to a cover-fit JPEG.
+
+    ``sticker_sources`` (sticker id -> local original) feeds ``edits.stickers``; see
+    ``_sticker_inputs``.
+    """
     if not Path(src_path).exists():
         raise SlideBuildError(f"image slide not found: {src_path}")
     rich = rich_text_active(edits)
@@ -546,17 +643,23 @@ def normalize_image_slide(
         ) as edit_fragment,
         _text_pngs(edits, canvas=canvas, out_path=out_path) as text_pngs,
         _drawing_pngs(edits, canvas=canvas, out_path=out_path) as ink_pngs,
+        _sticker_inputs(edits, sticker_sources, canvas=canvas, out_path=out_path) as sticker_inputs,
     ):
         pngs = [*text_pngs, *ink_pngs]
         vf = _frame_filter(canvas, _framing_crop(edits), edits.fit if edits is not None else None)
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
         cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", decoded_path]
-        for png in [*pngs, _WATERMARK_PNG]:
+        for png in [*pngs, *(path for path, _ in sticker_inputs), _WATERMARK_PNG]:
             cmd += ["-i", png]
         cmd += [
             "-filter_complex",
-            _overlay_filter_complex(vf, len(pngs), canvas=canvas),
+            _overlay_filter_complex(
+                vf,
+                len(pngs),
+                canvas=canvas,
+                stickers=[geometry for _, geometry in sticker_inputs],
+            ),
             "-map",
             "[vout]",
             "-frames:v",
@@ -569,7 +672,12 @@ def normalize_image_slide(
 
 
 def normalize_video_slide(
-    src_path: str, out_path: str, *, canvas: Canvas, edits: SlideEdits | None = None
+    src_path: str,
+    out_path: str,
+    *,
+    canvas: Canvas,
+    edits: SlideEdits | None = None,
+    sticker_sources: dict[str, str] | None = None,
 ) -> None:
     """Normalize a video slide to the platform canvas, keeping its own audio.
 
@@ -585,17 +693,23 @@ def normalize_video_slide(
         ) as edit_fragment,
         _text_pngs(edits, canvas=canvas, out_path=out_path) as text_pngs,
         _drawing_pngs(edits, canvas=canvas, out_path=out_path) as ink_pngs,
+        _sticker_inputs(edits, sticker_sources, canvas=canvas, out_path=out_path) as sticker_inputs,
     ):
         pngs = [*text_pngs, *ink_pngs]
         vf = f"{_scale_crop_filter(canvas)},fps=30"  # video slides are never cropped (KRI-44)
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
         cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", src_path]
-        for png in [*pngs, _WATERMARK_PNG]:
+        for png in [*pngs, *(path for path, _ in sticker_inputs), _WATERMARK_PNG]:
             cmd += ["-i", png]
         cmd += [
             "-filter_complex",
-            _overlay_filter_complex(vf, len(pngs), canvas=canvas),
+            _overlay_filter_complex(
+                vf,
+                len(pngs),
+                canvas=canvas,
+                stickers=[geometry for _, geometry in sticker_inputs],
+            ),
             "-map",
             "[vout]",
             # One audio track, as ffmpeg's own stream selection kept before

@@ -264,6 +264,31 @@ class SlideDrawing(BaseModel):
         return sum(len(stroke.points) for stroke in self.strokes)
 
 
+MAX_SLIDE_STICKERS = 4
+
+
+class SlideSticker(BaseModel):
+    """One pasted image sticker on a slide (KRI-647, KRI-460).
+
+    ``asset_id`` is a ``PlanItemAsset`` (image) in the item's pool that is NEVER a
+    slide. Geometry is relative to the slide's OUTPUT canvas: ``x_frac``/``y_frac``
+    are the sticker CENTRE as fractions of canvas width/height, ``width_frac`` the
+    displayed width as a fraction of canvas width (height follows the image's own
+    aspect, never distorted) and ``rotation_deg`` is clockwise about the centre.
+    Stickers are clipped by the canvas edge, never moved. Frozen by
+    ``tests/fixtures/slide-sticker-parity/v1.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    id: str = Field(min_length=1, max_length=64)
+    asset_id: str = Field(min_length=1, max_length=64)
+    x_frac: float = Field(ge=0.0, le=1.0)
+    y_frac: float = Field(ge=0.0, le=1.0)
+    width_frac: float = Field(ge=0.05, le=1.0)
+    rotation_deg: float = Field(default=0.0, ge=-180.0, le=180.0)
+
+
 class SlideEdits(BaseModel):
     """Per-slide edit state, applied at render time in `pipeline/slide_post/build.py`.
 
@@ -290,6 +315,9 @@ class SlideEdits(BaseModel):
     # digest/binding-stability reason as `framing`/`fit`; a sibling key so an
     # older build that drops it on re-encode is protected by the PUT merge.
     drawing: SlideDrawing | None = None
+    # Pasted image stickers (KRI-647), list order = z-order (last on top). Omitted while
+    # None or empty so a slide without stickers serializes and hashes exactly as before.
+    stickers: list[SlideSticker] | None = Field(default=None, max_length=MAX_SLIDE_STICKERS)
 
     @model_serializer(mode="wrap")
     def _omit_unset_framing(self, handler: Any) -> dict[str, Any]:
@@ -298,7 +326,24 @@ class SlideEdits(BaseModel):
             for key in ("framing", "fit", "drawing"):
                 if data.get(key) is None:
                     data.pop(key, None)
+            if not data.get("stickers"):
+                data.pop("stickers", None)
         return data
+
+    @field_validator("stickers", mode="before")
+    @classmethod
+    def _sticker_count(cls, value: object) -> object:
+        if isinstance(value, list) and len(value) > MAX_SLIDE_STICKERS:
+            raise ValueError(f"too many stickers on one slide (at most {MAX_SLIDE_STICKERS})")
+        return value
+
+    @model_validator(mode="after")
+    def _unique_sticker_ids(self) -> SlideEdits:
+        if self.stickers:
+            ids = [s.id for s in self.stickers]
+            if len(set(ids)) != len(ids):
+                raise ValueError("sticker ids must be unique within a slide (duplicate id)")
+        return self
 
     @model_validator(mode="after")
     def _mirror_texts_into_legacy_text(self) -> SlideEdits:
@@ -372,6 +417,24 @@ def drawing_point_total(slides: list[SlideRef]) -> int:
     return sum(
         s.edits.drawing.point_count() for s in slides if s.edits is not None and s.edits.drawing
     )
+
+
+def sticker_asset_ids(draft: SlidePostDraft | None) -> set[uuid.UUID]:
+    """Every pool asset id any slide of ``draft`` uses as a sticker (never a slide).
+
+    A malformed id (stored by nothing we wrote, but the field is a plain string on the
+    wire) is skipped rather than raising, so a bad value can never break a read path.
+    """
+    ids: set[uuid.UUID] = set()
+    if draft is None:
+        return ids
+    for slide in draft.slides:
+        for sticker in (slide.edits.stickers or []) if slide.edits is not None else []:
+            try:
+                ids.add(uuid.UUID(sticker.asset_id))
+            except ValueError:
+                continue
+    return ids
 
 
 class SlidePostDraft(BaseModel):
@@ -587,6 +650,16 @@ def merge_legacy_text_edits(
                     if "drawing" in incoming.model_fields_set
                     else {}
                 ),
+                # ...and for stickers (KRI-647): only when sent.
+                **(
+                    {
+                        "stickers": [s.model_dump(mode="python") for s in incoming.stickers]
+                        if incoming.stickers is not None
+                        else None
+                    }
+                    if "stickers" in incoming.model_fields_set
+                    else {}
+                ),
             }
         )
         merged.append(ref.model_copy(update={"edits": new_edits}))
@@ -596,7 +669,7 @@ def merge_legacy_text_edits(
 def merge_stored_edit_key(
     stored: SlidePostDraft | None,
     slides: list[SlideRef],
-    key: Literal["framing", "fit", "drawing"],
+    key: Literal["framing", "fit", "drawing", "stickers"],
     *,
     accept_incoming: bool,
 ) -> list[SlideRef]:
