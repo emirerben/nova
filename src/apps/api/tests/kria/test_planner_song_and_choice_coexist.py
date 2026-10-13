@@ -118,6 +118,8 @@ async def _turn(monkeypatch: pytest.MonkeyPatch, events: list, *, song_sync: str
     )
     monkeypatch.setattr(settings, "user_song_montage_enabled", True)
     monkeypatch.setattr(settings, "song_alignment_turn_deadline_s", 0.0)
+    # KRI-588: this fixture is a verse repeat; the range question has its own tests.
+    monkeypatch.setattr(settings, "song_filming_range_enabled", False)
     monkeypatch.setattr(settings, "clip_intents_enabled", True)
     monkeypatch.setattr(settings, "kria_choice_questions_enabled", True)
     monkeypatch.setattr(planner, "plan_and_resolve_clip_intents", resolver)

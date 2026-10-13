@@ -15,13 +15,22 @@ Pure: no I/O.
 from __future__ import annotations
 
 import math
+import uuid
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import ValidationError
+
+from app.kria.reply_language import say
 from app.schemas.user_song import (
+    SONG_RANGE_ANSWER_KEY,
+    SONG_RANGE_QUESTION_KEY,
     AlignmentAlternate,
     PlacementCandidate,
     SongAlignment,
+    SongRangeAnswerIn,
+    SongRangeQuestion,
     TakeAlignment,
 )
 
@@ -142,3 +151,173 @@ def restrict_alignment_to_range(
     if all(rows[m] is alignment.takes[m] for m in rows):
         return alignment
     return alignment.model_copy(update={"takes": rows})
+
+
+# -- Validating and applying a range (PUT /song-range and the chat answer share it) ---------
+
+# Shortest stretch worth matching inside: below this the creator filmed one line, not a part.
+MIN_SONG_RANGE_S = 5.0
+
+
+class SongRangeError(ValueError):
+    """A range that cannot be applied. ``code`` is the wire error code."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+STALE_CODE = "song_range_stale"
+INVALID_CODE = "song_range_invalid"
+
+
+def normalized_range(
+    start_s: float | None, end_s: float | None, song_duration_s: float | None
+) -> tuple[float, float] | None:
+    """``(start, end)`` to store, or ``None`` for "the whole song". Raises ``SongRangeError``.
+
+    An end past the song is not an error (a creator rounding up): it is clamped to the song.
+    """
+    if start_s is None and end_s is None:
+        return None
+    if start_s is None or end_s is None:
+        raise SongRangeError(INVALID_CODE, "Set both ends of the part you filmed, or neither.")
+    song_s = float(song_duration_s or 0.0)
+    if song_s and start_s >= song_s:
+        raise SongRangeError(INVALID_CODE, "That starts after your song ends.")
+    end = min(float(end_s), song_s) if song_s else float(end_s)
+    if end - float(start_s) < MIN_SONG_RANGE_S:
+        raise SongRangeError(INVALID_CODE, "Pick at least five seconds of your song.")
+    return float(start_s), end
+
+
+def apply_song_range(thread: Any, item: Any, value: tuple[float, float] | None) -> None:
+    """Store ``value`` on the plan item and mirror it onto the thread's song media entry.
+
+    The PlanItem is authoritative (the planner and the render worker read it); the thread entry is
+    the projection the app shows. Both are cleared when ``value`` is ``None``.
+    """
+    item.song_range_start_s, item.song_range_end_s = value if value is not None else (None, None)
+    state = dict(getattr(thread, "state", None) or {})
+    media = [dict(entry) for entry in (state.get("media") or []) if isinstance(entry, dict)]
+    for entry in media:
+        if entry.get("role") != "song":
+            continue
+        if value is None:
+            entry.pop("song_range", None)
+        else:
+            entry["song_range"] = {"start_s": value[0], "end_s": value[1]}
+    state["media"] = media
+    thread.state = state
+
+
+# -- The question: "which part of the song did you film?" (KRI-588) -------------------------
+
+# A take is "ambiguous between repeats" when it has two plausible places this far apart.
+# Verses and choruses repeat tens of seconds apart; two candidates a few seconds apart are the
+# same line.
+REPEAT_APART_S = 15.0
+# A candidate below this is noise, not a second place the take could really be.
+REPEAT_MIN_LIKELIHOOD = 0.2
+
+Events = Iterable[tuple[str, "dict[str, Any] | None"]]
+
+
+def takes_ambiguous_between_repeats(alignment: SongAlignment, take_ids: Sequence[str]) -> list[str]:
+    """Takes with two plausible placements far apart (a repeated verse), in the given order."""
+    found: list[str] = []
+    for media_id in take_ids:
+        row = alignment.takes.get(media_id)
+        if row is None:
+            continue
+        places = sorted(
+            c.delta_s for c in row.candidates_or_legacy() if c.likelihood >= REPEAT_MIN_LIKELIHOOD
+        )
+        if len(places) >= 2 and places[-1] - places[0] >= REPEAT_APART_S:
+            found.append(media_id)
+    return found
+
+
+def build_song_range_question(
+    song_generation: int | None, song_duration_s: float | None
+) -> SongRangeQuestion:
+    return SongRangeQuestion(
+        question_id=str(uuid.uuid4()),
+        song_generation=song_generation,
+        song_duration_s=(
+            float(song_duration_s)
+            if isinstance(song_duration_s, (int, float)) and song_duration_s > 0
+            else None
+        ),
+    )
+
+
+def song_range_question_text(question: SongRangeQuestion) -> str:
+    """Self-sufficient copy (the app also renders the card)."""
+    return say(
+        en=(
+            "Your song repeats its verses, and some of your clips could fit more than one place. "
+            "Which part of the song did you film? Pick it below, or use the whole song."
+        ),
+        tr=(
+            "Şarkın bölümlerini tekrar ediyor ve bazı klipler birden fazla yere uyabiliyor. "
+            "Şarkının hangi kısmında çektin? Aşağıdan seç ya da tüm şarkıyı kullan."
+        ),
+    )
+
+
+def parse_song_range_question(raw: Any) -> SongRangeQuestion | None:
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        return SongRangeQuestion.model_validate(dict(raw))
+    except ValidationError:
+        return None
+
+
+@dataclass(frozen=True)
+class SongRangeFold:
+    """What the thread already did about the range question."""
+
+    # Song generations a question was asked about. Asked once per song: whether the creator
+    # answered, skipped or ignored it, the planner does not ask again (it would loop on a client
+    # that cannot answer).
+    asked_generations: frozenset[int | None] = frozenset()
+
+
+def fold_song_range_events(events: Events) -> SongRangeFold:
+    asked: set[int | None] = set()
+    for role, payload in events:
+        if role == "assistant" and isinstance(payload, Mapping):
+            question = parse_song_range_question(payload.get(SONG_RANGE_QUESTION_KEY))
+            if question is not None:
+                asked.add(question.song_generation)
+    return SongRangeFold(frozenset(asked))
+
+
+def latest_open_song_range_question(events: Events) -> SongRangeQuestion | None:
+    """The latest ``song_range_question`` not yet answered by a ``song_range`` answer."""
+    latest: SongRangeQuestion | None = None
+    for role, payload in events:
+        if not isinstance(payload, Mapping):
+            continue
+        if role == "assistant":
+            question = parse_song_range_question(payload.get(SONG_RANGE_QUESTION_KEY))
+            if question is not None:
+                latest = question
+        elif role == "user" and isinstance(payload.get(SONG_RANGE_ANSWER_KEY), Mapping):
+            answer = payload[SONG_RANGE_ANSWER_KEY]
+            if latest is not None and answer.get("question_id") == latest.question_id:
+                latest = None
+    return latest
+
+
+def validate_song_range_answer(
+    answer: SongRangeAnswerIn, open_question: SongRangeQuestion | None
+) -> tuple[float, float] | None:
+    """The range to store (``None`` = whole song). Raises ``SongRangeError``."""
+    if open_question is None or open_question.question_id != answer.question_id:
+        raise SongRangeError(
+            STALE_CODE, "That question is no longer open. Refresh and answer the latest one."
+        )
+    return normalized_range(answer.start_s, answer.end_s, open_question.song_duration_s)
