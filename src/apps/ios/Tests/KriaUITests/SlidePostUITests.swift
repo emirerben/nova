@@ -177,6 +177,72 @@ import XCTest
         XCTAssertTrue(app.buttons["slidepost-size-fit-fit"].isSelected, "Fit survived the save")
     }
 
+    /// KRI-589: the Draw tool is offered only when the server advertises `slide_post_drawing`; a finger stroke + Done
+    /// leaves static ink on the slide, Cancel leaves nothing, "Draw more" appends, and a save (the fixture server echoes
+    /// exactly what the app sent) keeps the ink on that slide only.
+    func testDrawOnASlideLeavesInkThatSurvivesSaveAndSlideSwitching() {
+        let off = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1"])
+        XCTAssertTrue(off.buttons["slidepost-tool-text"].exists)
+        XCTAssertFalse(off.buttons["slidepost-tool-draw"].exists, "no Draw tool without the capability")
+        off.terminate()
+
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1", "KRIA_SLIDE_POST_DRAWING": "1"])
+        let ink = app.descendants(matching: .any)["slidepost-drawing-ink"].firstMatch
+        XCTAssertFalse(ink.exists, "a fresh slide has no ink")
+        let draw = app.buttons["slidepost-tool-draw"]
+        XCTAssertTrue(draw.waitForExistence(timeout: 8), "the Draw tool is offered when the server advertises slide_post_drawing")
+
+        func stroke(_ canvas: XCUIElement, _ a: CGVector, _ b: CGVector) {
+            canvas.coordinate(withNormalizedOffset: a).press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: b))
+        }
+        // Cancel leaves no residue.
+        draw.tap()
+        let canvas = app.descendants(matching: .any)["native-editor-draw-canvas"].firstMatch
+        XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["native-editor-draw-done"].isEnabled, "nothing drawn yet")
+        stroke(canvas, CGVector(dx: 0.2, dy: 0.3), CGVector(dx: 0.8, dy: 0.4))
+        attach(app, "Slide draw mode with one stroke")
+        app.buttons["native-editor-draw-cancel"].tap()
+        XCTAssertFalse(ink.waitForExistence(timeout: 1.5), "Cancel leaves no ink")
+        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "the fresh draft is unsaved anyway")
+
+        // Done keeps the stroke as static ink.
+        draw.tap()
+        XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+        app.buttons["native-editor-draw-swatch-32ADE6"].tap()
+        stroke(canvas, CGVector(dx: 0.2, dy: 0.3), CGVector(dx: 0.8, dy: 0.4))
+        XCTAssertTrue(app.buttons["native-editor-draw-done"].isEnabled)
+        app.buttons["native-editor-draw-done"].tap()
+        XCTAssertTrue(ink.waitForExistence(timeout: 5), "Done leaves the ink on the slide")
+        XCTAssertEqual(ink.value as? String, "1 stroke")
+        XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 3), "back to the browse dock")
+        attach(app, "Slide with a saved stroke")
+
+        // Draw more appends to what is already there.
+        draw.tap()
+        XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+        stroke(canvas, CGVector(dx: 0.3, dy: 0.7), CGVector(dx: 0.7, dy: 0.6))
+        app.buttons["native-editor-draw-done"].tap()
+        expectation(for: NSPredicate(format: "value == %@", "2 strokes"), evaluatedWith: ink); waitForExpectations(timeout: 5)
+
+        // The save keeps it, on this slide only.
+        saveDraft(app)
+        app.buttons["slidepost-tile-2"].tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: ink); waitForExpectations(timeout: 5)
+        app.buttons["slidepost-tile-1"].tap()
+        XCTAssertTrue(ink.waitForExistence(timeout: 5), "the saved ink is back on slide 1")
+        XCTAssertEqual(ink.value as? String, "2 strokes")
+        attach(app, "Saved ink after switching slides")
+
+        // Remove drawing (More menu) removes it, and undo brings it back.
+        app.buttons["slidepost-tool-more"].tap()
+        let clear = app.buttons["slidepost-clear-drawing"]
+        XCTAssertTrue(clear.waitForExistence(timeout: 3)); clear.tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: ink); waitForExpectations(timeout: 5)
+        app.buttons["slidepost-undo"].tap()
+        XCTAssertTrue(ink.waitForExistence(timeout: 5), "undo restores the cleared drawing")
+    }
+
     /// True once the preview element is square (polls; `frame` is not predicate-addressable).
     private func waitForSquare(_ element: XCUIElement, timeout: TimeInterval = 8) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)

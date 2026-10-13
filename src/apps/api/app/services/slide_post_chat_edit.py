@@ -145,24 +145,27 @@ def _label_bar_id(slide_id: str) -> str:
 def _slide_rows(draft: SlidePostDraft) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for index, slide in enumerate(draft.slides):
-        rows.append(
-            {
-                "slot_id": slide.id,
-                "media_id": slide.id,
-                "media_kind": slide.kind,
-                "clip_index": index,
-                "in_s": 0.0,
-                "duration_s": 1.0,
-                "output_start_s": float(index),
-                "output_end_s": float(index + 1),
-                "removed": False,
-                "transition_after": "cut",
-                "look_preset": slide.edits.look_preset if slide.edits else "none",
-                "orientation": _framing_of(slide)[0],
-                "source_crop": _framing_of(slide)[1],
-                "fit": slide.edits.fit if slide.edits else None,
-            }
-        )
+        row: dict[str, Any] = {
+            "slot_id": slide.id,
+            "media_id": slide.id,
+            "media_kind": slide.kind,
+            "clip_index": index,
+            "in_s": 0.0,
+            "duration_s": 1.0,
+            "output_start_s": float(index),
+            "output_end_s": float(index + 1),
+            "removed": False,
+            "transition_after": "cut",
+            "look_preset": slide.edits.look_preset if slide.edits else "none",
+            "orientation": _framing_of(slide)[0],
+            "source_crop": _framing_of(slide)[1],
+            "fit": slide.edits.fit if slide.edits else None,
+        }
+        if slide.edits is not None and slide.edits.drawing is not None:
+            # Read-only hint (KRI-589): the creator drew on this slide. Present only
+            # when true so a draft without drawings builds a byte-identical snapshot.
+            row["has_drawing"] = True
+        rows.append(row)
     return rows
 
 
@@ -261,6 +264,8 @@ def build_slide_post_snapshot(
         facts = _slide_facts(assets_by_id.get(slide.asset_id)) if facts_on else []
         slot = _safe_slot(row, index, facts=facts or None)
         slot["is_cover"] = index == draft.cover_index
+        if row.get("has_drawing"):
+            slot["has_drawing"] = True
         if settings.slide_post_framing_enabled:
             orientation, crop = _framing_of(slide)
             slot["orientation"] = orientation
@@ -608,6 +613,10 @@ def compile_slide_post_ops(
             payload["framing"] = {"orientation": orientation, "source_crop": crop}
         if fit is not None:
             payload["fit"] = fit
+        if slide.edits is not None and slide.edits.drawing is not None:
+            # Rebuilt from scratch above: copy the creator's ink through, or a text/look
+            # change on a drawn slide would silently erase it (KRI-589).
+            payload["drawing"] = slide.edits.drawing.model_dump(mode="python")
         try:
             new_slides.append(
                 slide.model_copy(update={"edits": SlideEdits.model_validate(payload)})

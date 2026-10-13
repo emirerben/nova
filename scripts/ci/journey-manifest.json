@@ -296,11 +296,13 @@
     {
       "id": "kri-589-drawing",
       "needs_native": true,
-      "api_tests": "tests/agents/test_drawing_schema.py tests/kria/test_drawing_compile.py",
+      "api_tests": "tests/agents/test_drawing_schema.py tests/kria/test_drawing_compile.py tests/routes/test_slide_post_drawing_routes.py",
       "xctests": [
         "KriaTests/DrawingParityTests/testEveryWireElementDecodesAndRoundTripsLosslessly",
         "KriaTests/DrawingParityTests/testInvalidWireRowsAreRejectedAndKeptVerbatimAsOpaqueRows",
-        "KriaTests/DrawingParityTests/testCompileFixtureThroughThePureCompileAndTheRenderCompiler"
+        "KriaTests/DrawingParityTests/testCompileFixtureThroughThePureCompileAndTheRenderCompiler",
+        "KriaTests/SlidePostDrawingTests/testEveryFixtureDrawingDecodesAndRoundTripsLosslessly",
+        "KriaTests/SlidePostDrawingTests/testPhotoRenderPutsInkWhereTheGeometryFixtureSaysAndLeavesTheMarginsClean"
       ],
       "paths": [
         "src/apps/api/app/agents/_schemas/drawing.py",
@@ -319,7 +321,12 @@
         "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/NativeDrawingStore.swift",
         "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DrawingRenderTests.swift",
         "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DrawingExportTests.swift",
-        "src/apps/ios/Tests/KriaTests/DrawingParityTests.swift"
+        "src/apps/ios/Tests/KriaTests/DrawingParityTests.swift",
+        "src/apps/api/app/pipeline/slide_post/drawing_png.py",
+        "src/apps/api/tests/routes/test_slide_post_drawing_routes.py",
+        "tests/fixtures/slide-drawing-parity/",
+        "src/apps/ios/Kria/Core/SlidePostDrawingGeometry.swift",
+        "src/apps/ios/Tests/KriaTests/SlidePostDrawingTests.swift"
       ]
     },
     {

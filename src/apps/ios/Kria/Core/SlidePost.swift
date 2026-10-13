@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import KriaMediaEngine
 import OSLog
 
 struct SlidePostText: Codable, Equatable, Sendable {
@@ -141,9 +142,12 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
     var framing: SlidePostFraming? = nil
     /// KRI-606: show the whole photo with bars instead of cropping it. nil = fill. A sibling of `framing` (see `SlidePostFit`).
     var fit: SlidePostFit? = nil
-    enum CodingKeys: String, CodingKey { case text, texts, framing, fit; case lookPreset = "look_preset" }
-    init(text: SlidePostText? = nil, lookPreset: String = "none", texts: [SlidePostTextElement]? = nil, framing: SlidePostFraming? = nil, fit: SlidePostFit? = nil) {
-        self.text = text; self.lookPreset = lookPreset; self.texts = texts; self.framing = framing; self.fit = fit
+    /// KRI-589: freehand ink over the slide (static, no animation). nil = none (and, on save, "clear any stored drawing").
+    var drawing: SlidePostDrawing? = nil
+    enum CodingKeys: String, CodingKey { case text, texts, framing, fit, drawing; case lookPreset = "look_preset" }
+    init(text: SlidePostText? = nil, lookPreset: String = "none", texts: [SlidePostTextElement]? = nil, framing: SlidePostFraming? = nil, fit: SlidePostFit? = nil,
+         drawing: SlidePostDrawing? = nil) {
+        self.text = text; self.lookPreset = lookPreset; self.texts = texts; self.framing = framing; self.fit = fit; self.drawing = drawing
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -153,6 +157,9 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
         framing = try c.decodeIfPresent(SlidePostFraming.self, forKey: .framing)
         // Tolerant: a treatment this build does not know shows as fill rather than failing the whole post.
         fit = (try? c.decodeIfPresent(SlidePostFit.self, forKey: .fit)) ?? nil
+        // Strict, unlike `fit`: dropping a drawing this build cannot read would make the next save send `null` and
+        // erase ink the server still holds. The server validates it, so a failure here means a contract break.
+        drawing = try c.decodeIfPresent(SlidePostDrawing.self, forKey: .drawing)
     }
     /// Writes both shapes: `texts`, and the legacy `text` mirroring `texts[0]` (the server's own rule).
     func encode(to encoder: Encoder) throws {
@@ -170,6 +177,9 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
         // Same three-state contract for Fit (KRI-606): a value sets it, `null` clears it, and a missing key (a
         // build that predates it) keeps what the server stored.
         if let fit { try c.encode(fit, forKey: .fit) } else { try c.encodeNil(forKey: .fit) }
+        // And for the drawing (KRI-589, protocol 7): a value sets it, `null` clears it, a missing key (a build below 7)
+        // keeps what the server stored.
+        if let drawing { try c.encode(drawing, forKey: .drawing) } else { try c.encodeNil(forKey: .drawing) }
     }
     /// What the editor shows: `texts`, or the legacy text lifted into one boxed element.
     var effectiveTexts: [SlidePostTextElement] {
@@ -185,6 +195,57 @@ struct SlidePostEdits: Codable, Equatable, Sendable {
         text = new.first.map { SlidePostText(content: $0.text, position: $0.legacyPositionBucket) }
     }
 }
+/// KRI-589: a slide's freehand ink. Mirrors the server's `SlideDrawing` (`{canvas_aspect, strokes}`) and reuses its
+/// `DrawingStroke`; `tests/fixtures/slide-drawing-parity/v1.json` pins the wire. Strokes only, never a PNG: every
+/// renderer paints them (`NativeDrawingPainter` here), and the identity-transform geometry is aspect-fit of
+/// `canvasAspect` into the output canvas (stroke width = `width_frac * min(W, H)`).
+///
+/// The slide API's decoder has no `convertFromSnakeCase`, so the wire is spelled out here and the stroke parse is
+/// the strict one the editor's `drawings` lane uses (`DrawingStrokeWire`): an unknown key or an out-of-range value
+/// fails to decode, exactly like the fixture's `invalid` entries.
+struct SlidePostDrawing: Codable, Equatable, Sendable {
+    static let maxStrokes = DrawingLimits.maxStrokesPerDrawing
+    static let maxPointsPerSlide = DrawingLimits.maxPointsPerDrawing
+    static let maxPointsPerPost = DrawingLimits.maxPointsPerVariant
+    private static let keys: Set<String> = ["canvas_aspect", "strokes"]
+
+    /// Width / height of the canvas the strokes were drawn on (4 decimals, like the points).
+    var canvasAspect: Double
+    var strokes: [DrawingStroke]
+
+    init(canvasAspect: Double, strokes: [DrawingStroke]) { self.canvasAspect = canvasAspect; self.strokes = strokes }
+
+    init?(json: JSONValue) {
+        guard case .object(let object) = json, Set(object.keys).isSubset(of: Self.keys),
+              let aspect = object["canvas_aspect"]?.numberValue, let rows = object["strokes"]?.arrayValue else { return nil }
+        var strokes: [DrawingStroke] = []
+        for row in rows {
+            guard case .object(let stroke) = row, let parsed = DrawingStrokeWire.parse(stroke) else { return nil }
+            strokes.append(parsed)
+        }
+        self.init(canvasAspect: aspect, strokes: strokes)
+        guard isValid else { return nil }
+    }
+    init(from decoder: Decoder) throws {
+        guard let value = SlidePostDrawing(json: try JSONValue(from: decoder)) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid slide drawing"))
+        }
+        self = value
+    }
+    func encode(to encoder: Encoder) throws { try json.encode(to: encoder) }
+
+    var json: JSONValue {
+        .object(["canvas_aspect": .number(canvasAspect), "strokes": .array(strokes.map(DrawingStrokeWire.json))])
+    }
+    var pointCount: Int { strokes.reduce(0) { $0 + $1.points.count } }
+    /// The server's `SlideDrawing` rules (the post-wide point cap is the draft's: `SlidePostDraft.validationMessage`).
+    var isValid: Bool {
+        canvasAspect.isFinite && canvasAspect > 0.2 && canvasAspect < 5
+            && (1...Self.maxStrokes).contains(strokes.count) && pointCount <= Self.maxPointsPerSlide
+            && strokes.allSatisfy { (try? $0.validate()) != nil }
+    }
+}
+
 struct SlidePostSlide: Codable, Equatable, Identifiable, Sendable {
     var id: String
     var assetID: String
@@ -250,6 +311,8 @@ struct SlidePostDraft: Codable, Equatable, Sendable {
         }
         return copy
     }
+    /// Every stroke point in the post; the server caps it (KRI-589).
+    var drawingPointCount: Int { slides.reduce(0) { $0 + ($1.edits?.drawing?.pointCount ?? 0) } }
     var validationMessage: String? {
         guard ["tiktok_photo", "instagram_carousel"].contains(platformProfile) else { return "Choose a supported post format." }
         let minCount = platformProfile == "instagram_carousel" ? 2 : 1
@@ -269,7 +332,9 @@ struct SlidePostDraft: Codable, Equatable, Sendable {
                 return "Slide text needs 1–120 characters and a top, center, or bottom position."
             }
             if let look = slide.edits?.lookPreset, !Self.lookPresets.contains(look) { return "Choose a supported look." }
+            if let drawing = slide.edits?.drawing, !drawing.isValid { return "A drawing on one slide is too detailed. Clear it or draw less." }
         }
+        if drawingPointCount > SlidePostDrawing.maxPointsPerPost { return "Your drawings are too detailed to save. Clear some of them." }
         return nil
     }
     static let lookPresets = ["none", "stadium_diffusion", "olive_film", "smoky_split_tone", "golden_hour", "faded_analog"]
@@ -1179,6 +1244,55 @@ private struct SlidePostItemResponse: Decodable {
         let value = first.edits?.fit
         return photos.allSatisfy { $0.edits?.fit == value } ? .uniform(value) : .mixed
     }
+    // MARK: Drawing (KRI-589)
+
+    /// Why `extraStrokes` / `extraPoints` more ink cannot go on `slideID`, or nil when it can. The server's caps
+    /// (60 strokes and 3,000 points per slide, 8,000 points per post), checked before Done so a scribble is
+    /// never lost to a 422 on Save. `extra*` count what the sketch holds, on top of what the slide already has.
+    func drawingCapMessage(slideID: String, extraPoints: Int = 0, extraStrokes: Int = 0) -> String? {
+        guard let value = draft else { return nil }
+        let current = value.slides.first { $0.id == slideID }?.edits?.drawing
+        if (current?.strokes.count ?? 0) + extraStrokes > SlidePostDrawing.maxStrokes { return "That’s as many strokes as one slide holds." }
+        if (current?.pointCount ?? 0) + extraPoints > SlidePostDrawing.maxPointsPerSlide { return "This slide is as detailed as it can get." }
+        if value.drawingPointCount + extraPoints > SlidePostDrawing.maxPointsPerPost { return "This post has as many drawings as it can hold." }
+        return nil
+    }
+    /// Sets the slide's drawing outright (no strokes = clears it). One undo step. False when it was refused: no such
+    /// slide, ink the caps or the server's rules would reject, or a save in flight.
+    @discardableResult
+    func setDrawing(slideID: String, strokes: [DrawingStroke], canvasAspect: Double) -> Bool {
+        guard !isBusy, var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return false }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        if strokes.isEmpty {
+            guard edits.drawing != nil else { return true }
+            edits.drawing = nil
+        } else {
+            let next = SlidePostDrawing(canvasAspect: canvasAspect, strokes: strokes)
+            guard next.isValid else { return false }
+            let others = value.drawingPointCount - (edits.drawing?.pointCount ?? 0)
+            guard others + next.pointCount <= SlidePostDrawing.maxPointsPerPost else { return false }
+            guard edits.drawing != next else { return true }
+            edits.drawing = next
+        }
+        value.slides[index].edits = edits
+        stageDraft(value)
+        return true
+    }
+    /// "Draw more": appends strokes drawn on the current canvas to what the slide already has. Done in the drawing's
+    /// OWN authoring space: when the slide's size or shape changed after it was drawn, its ink stays letterboxed
+    /// in the old aspect (by contract: no re-projection), and Draw mode lays the sketch over that same region
+    /// (`SlidePostDrawing.authoringAspect`), so the new strokes' points are already in the drawing's space and are
+    /// appended unchanged. A first drawing takes the current canvas's aspect.
+    @discardableResult
+    func addDrawingStrokes(slideID: String, strokes new: [DrawingStroke], canvas: CGSize) -> Bool {
+        guard !new.isEmpty, let slide = draft?.slides.first(where: { $0.id == slideID }) else { return false }
+        let existing = slide.edits?.drawing
+        guard drawingCapMessage(slideID: slideID, extraPoints: new.reduce(0) { $0 + $1.points.count }, extraStrokes: new.count) == nil else { return false }
+        return setDrawing(slideID: slideID, strokes: (existing?.strokes ?? []) + new,
+                          canvasAspect: SlidePostDrawing.authoringAspect(existing: existing, canvas: canvas))
+    }
+    func clearDrawing(slideID: String) { setDrawing(slideID: slideID, strokes: [], canvasAspect: 1) }
+
     func setLook(slideID: String, preset: String) {
         guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return }
         var edits = value.slides[index].edits ?? SlidePostEdits()

@@ -1,4 +1,5 @@
 import AVKit
+import KriaMediaEngine
 import SwiftUI
 import UIKit
 
@@ -47,6 +48,9 @@ struct SlidePostWorkspaceView: View {
     @State private var focusToken = 0
     @State private var uploadProgress: [UUID: Double] = [:]
     @State private var rootSize = CGSize.zero
+    /// KRI-589: the strokes being drawn in Draw mode, before Done merges them into the slide's drawing.
+    /// `@State` (not `@StateObject`) on purpose: only the canvas and toolbar observe it, so a touch sample never re-renders the workspace.
+    @State private var sketch = NativeDrawingSketch()
 
     /// `session` is injectable so a parent (the chat workspace) can own the draft and stage edits
     /// into it; by default the workspace creates its own.
@@ -244,6 +248,7 @@ struct SlidePostWorkspaceView: View {
     private var chatEditOn: Bool { effectiveCapabilities?.slidePostChatEditEnabled == true }
     private var framingOn: Bool { effectiveCapabilities?.slidePostFramingEnabled == true }
     private var sizesOn: Bool { effectiveCapabilities?.slidePostSizesEnabled == true }
+    private var drawingOn: Bool { effectiveCapabilities?.slidePostDrawingEnabled == true }
     private var extendedDeviceExportOn: Bool { effectiveCapabilities?.slidePostExtendedDeviceExportEnabled == true }
     private func seedAndAppend() {
         session.seedDraftIfNeeded()
@@ -311,6 +316,7 @@ struct SlidePostWorkspaceView: View {
         if mode == .text { subtitle = "Slide \(slideNumber) · Text" }
         else if mode == .look { subtitle = "Slide \(slideNumber) · Look" }
         else if mode == .crop { subtitle = "Slide \(slideNumber) · Crop" }
+        else if mode == .draw { subtitle = "Slide \(slideNumber) · Draw" }
         else if session.hasUnsavedChanges { subtitle = "Unsaved changes" }
         else { subtitle = "\(platformName(draft)) · \(draft.size.rawValue) · \(draft.slides.count) slide\(draft.slides.count == 1 ? "" : "s")" }
         return SlidePostTransportRow(
@@ -359,6 +365,7 @@ struct SlidePostWorkspaceView: View {
 
     @ViewBuilder private func richWorkspace(_ draft: SlidePostDraft) -> some View {
         let slide = session.selectedSlide
+        // Draw mode is not a panel: its toolbar is a fixed height and the stage takes the rest, so the canvas stays as big as it can.
         let panelOpen = mode == .text || mode == .look
         let height = max(rootSize.height, 640)
         if mode == .crop, let slide {
@@ -386,8 +393,14 @@ struct SlidePostWorkspaceView: View {
                 .frame(maxHeight: typing ? typingHeight + 8 : (panelOpen ? max(150, 0.33 * height) : .infinity))
                 .overlay(alignment: .bottomTrailing) { if typing { typingAddTextPill(slide) } }
                 .animation(.easeOut(duration: 0.2), value: keyboardUp)
-            if !(keyboardUp && mode == .text) { transportRow(draft) }
-            if mode == .text, let slide {
+            // Draw mode owns the screen's lower half like the video editor's: no undo/redo to pop a stroke from under the finger.
+            if !(keyboardUp && mode == .text), mode != .draw { transportRow(draft) }
+            if mode == .draw, let slide {
+                NativeDrawingToolbar(sketch: sketch, onCancel: { leaveDrawMode(save: false) }, onDone: { leaveDrawMode(save: true, slideID: slide.id) })
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
+                    .excludesDrawerGesture()
+            } else if mode == .text, let slide {
                 SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab, compact: keyboardUp, focusToken: focusToken, onDone: finishEditing)
                     .id(slide.id)
                     .frame(maxHeight: .infinity)
@@ -487,7 +500,7 @@ struct SlidePostWorkspaceView: View {
             previewMediaView(rich: true).frame(width: size.width, height: size.height).clipped()
             SlidePostTextCanvas(
                 texts: texts, size: size, selectedID: session.selectedTextID, interactive: mode == .text,
-                directSelected: mode == .browse && session.selectedTextID != nil, tapsToEdit: mode != .text,
+                directSelected: mode == .browse && session.selectedTextID != nil, tapsToEdit: mode != .text && mode != .draw,
                 onSelect: { id in session.selectedTextID = id; if id != nil { textTab = .style } },
                 // Hold / plain drag on a text while browsing: select for transform only (no panel, tab or keyboard).
                 onDirectSelect: { id in session.selectedTextID = id },
@@ -497,6 +510,20 @@ struct SlidePostWorkspaceView: View {
                     session.updateText(slideID: slideID, textID: id, coalescing: key, mutate)
                 }
             )
+            .allowsHitTesting(mode != .draw)
+            // The ink sits ABOVE the text, the order every export stacks them (photo, video and server: text, ink, watermark).
+            // It never takes a touch, so a text under a stroke is still selectable.
+            if let drawing = session.selectedSlide?.edits?.drawing {
+                SlidePostDrawingLayerView(drawing: drawing).frame(width: size.width, height: size.height)
+            }
+            if mode == .draw {
+                // The sketch lies over the region the slide's drawing lives in (its own aspect, letterboxed when the
+                // canvas has changed since), so strokes are authored in the drawing's space and appended unchanged.
+                let area = SlidePostDrawing.fitRect(aspect: sketch.canvasAspect, in: size)
+                NativeDrawingCanvas(sketch: sketch)
+                    .frame(width: area.width, height: area.height)
+                    .offset(x: area.minX, y: area.minY)
+            }
         }
         .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -505,7 +532,7 @@ struct SlidePostWorkspaceView: View {
                 .padding(.horizontal, 12).padding(.vertical, 6).background(KriaColor.mutedInk.opacity(0.85), in: Capsule()).padding(12)
                 .allowsHitTesting(false)
         }
-        .excludesDrawerGestureWhen(mode == .text || (mode == .browse && session.selectedTextID != nil))
+        .excludesDrawerGestureWhen(mode == .text || mode == .draw || (mode == .browse && session.selectedTextID != nil))
     }
 
     private func slideStrip(_ draft: SlidePostDraft) -> some View {
@@ -531,6 +558,8 @@ struct SlidePostWorkspaceView: View {
                 canDuplicateText: hasTexts && (slide?.edits?.effectiveTexts.count ?? 0) < SlidePostEdits.maxTexts,
                 showsCrop: framingOn && slide?.kind == "image", onCrop: { session.selectedTextID = nil; mode = .crop },
                 showsSize: sizesOn, onSize: { session.selectedTextID = nil; showsSize = true },
+                showsDraw: drawingOn, onDraw: beginDrawing,
+                canClearDrawing: slide?.edits?.drawing != nil, onClearDrawing: { if let id = slide?.id { session.clearDrawing(slideID: id) } },
                 onText: beginTextEditing,
                 onCover: { if let id = slide?.id { session.setCover(id: id); UINotificationFeedbackGenerator().notificationOccurred(.success) } },
                 onLook: { mode = .look },
@@ -569,6 +598,28 @@ struct SlidePostWorkspaceView: View {
             textTab = .style
         }
         mode = .text
+    }
+    /// KRI-589: opens Draw mode on the selected slide. The sketch starts empty (what is already drawn stays visible
+    /// beneath it) in the drawing's own aspect, so new strokes line up with the old ink even after a resize.
+    private func beginDrawing() {
+        guard let draft = session.draft, let slide = session.selectedSlide, !session.isBusy else { return }
+        let canvas = SlidePostFraming.canvas(for: slide, profile: draft.platformProfile, aspect: draft.aspect)
+        session.selectedTextID = nil
+        sketch.reset(canvasAspect: SlidePostDrawing.authoringAspect(existing: slide.edits?.drawing, canvas: canvas)) { [session] points, strokes in
+            session.drawingCapMessage(slideID: slide.id, extraPoints: points, extraStrokes: strokes)
+        }
+        mode = .draw
+    }
+    /// Done merges the new strokes into the slide's drawing (one undo step); Cancel throws them away.
+    private func leaveDrawMode(save: Bool, slideID: String? = nil) {
+        let strokes = save ? sketch.finishedStrokes() : []
+        if !strokes.isEmpty, let slideID, let draft = session.draft, let slide = draft.slides.first(where: { $0.id == slideID }) {
+            let canvas = SlidePostFraming.canvas(for: slide, profile: draft.platformProfile, aspect: draft.aspect)
+            // Refused (a save is in flight, or the caps): stay in Draw mode with the ink intact instead of losing it silently.
+            guard session.addDrawingStrokes(slideID: slideID, strokes: strokes, canvas: canvas) else { return }
+        }
+        sketch.reset(canvasAspect: sketch.canvasAspect) { _, _ in nil }
+        mode = .browse
     }
     private func finishEditing() {
         if let id = session.selectedSlide?.id { session.removeEmptyTexts(slideID: id) }
