@@ -207,7 +207,6 @@ struct NativeDrawingPanel: View {
     let onDone: () -> Void
     enum Tab: String, CaseIterable { case edit = "Edit", animation = "Animation" }
     @State private var tab = Tab.edit
-    @State private var drawSeconds = 1.2
 
     private var drawing: EditorDrawing? { session.drawing(id: id) }
 
@@ -221,7 +220,7 @@ struct NativeDrawingPanel: View {
                 VStack(alignment: .leading, spacing: 14) {
                     switch tab {
                     case .edit: edit(drawing)
-                    case .animation: animation(drawing)
+                    case .animation: NativeDrawingAnimationControls(session: session, id: id, drawing: drawing)
                     }
                     if !session.canEditDrawings {
                         Text("This drawing can’t be edited right now.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
@@ -231,7 +230,6 @@ struct NativeDrawingPanel: View {
             }
         }
         .onChange(of: drawing == nil) { _, gone in if gone { onDone() } }
-        .onAppear { drawSeconds = drawing?.drawDurationS ?? 1.2 }
     }
 
     @ViewBuilder private func edit(_ drawing: EditorDrawing) -> some View {
@@ -254,59 +252,235 @@ struct NativeDrawingPanel: View {
         }
     }
 
-    @ViewBuilder private func animation(_ drawing: EditorDrawing) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Entrance").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
-            chips([("Draw", DrawingEntrance.draw), ("Fade", .fade), ("None", .none)], selected: drawing.entrance, prefix: "entrance") {
-                session.setDrawingEntrance(id: id, entrance: $0)
-            }
-        }
-        if drawing.entrance == .draw {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text("Draw speed").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
-                    Spacer()
-                    Text(String(format: "%.1f s", drawSeconds)).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc).monospacedDigit()
-                }
-                NativeEditorSlider(session: session, value: $drawSeconds, in: 0.2...max(0.3, min(DrawingLimits.maxDrawDuration, drawing.endS - drawing.startS)), step: 0.05) {
-                    Text("Draw speed")
-                }
-                .onChange(of: drawSeconds) { _, value in session.setDrawingDrawDuration(id: id, seconds: value) }
-                .accessibilityIdentifier("native-editor-drawing-draw-speed")
-                Text("A shorter time draws faster.").font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk)
-            }
-        }
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Exit").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
-            chips([("None", DrawingExit.none), ("Fade", .fade)], selected: drawing.exit, prefix: "exit") {
-                session.setDrawingExit(id: id, exit: $0)
-            }
-        }
-    }
-
-    private func chips<Value: Equatable>(_ options: [(String, Value)], selected: Value, prefix: String, pick: @escaping (Value) -> Void) -> some View {
-        HStack(spacing: 6) {
-            ForEach(options.indices, id: \.self) { index in
-                let option = options[index]
-                Button { pick(option.1) } label: {
-                    Text(option.0)
-                        .font(KriaFont.body(13).weight(selected == option.1 ? .semibold : .medium))
-                        .foregroundStyle(KriaColor.ink)
-                        .padding(.horizontal, 16)
-                        .frame(minHeight: 44)
-                        .background(selected == option.1 ? KriaColor.butter : KriaColor.fill, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(selected == option.1 ? .isSelected : [])
-                .accessibilityIdentifier("native-editor-drawing-\(prefix)-\(option.0.lowercased())")
-            }
-        }
-    }
-
     /// The colour every stroke shares, if they share one.
     private func commonColor(_ drawing: EditorDrawing) -> String? {
         let colors = Set(drawing.strokes.map { $0.color.uppercased() })
         return colors.count == 1 ? colors.first : nil
+    }
+}
+
+// MARK: - Animation tab: speed + previews (KRI-637, device-test feedback)
+
+/// The Animation tab's speed control. The slider position is the natural log of a speed multiplier, so sliding RIGHT is
+/// FASTER (a shorter draw time) and 1x is the default 1.2 s. The stored value stays `draw_duration_s`: no wire change.
+enum NativeDrawingSpeed {
+    static let baseSeconds = 1.2
+    static let fastestMultiplier = 6.0
+
+    /// Slider bounds for a drawing whose window lasts `window` seconds (the draw cannot outlast its window).
+    static func bounds(window: Double) -> ClosedRange<Double> {
+        let longest = max(0.3, min(DrawingLimits.maxDrawDuration, window))
+        return log(baseSeconds / longest)...log(fastestMultiplier)
+    }
+    static func position(seconds: Double, window: Double) -> Double {
+        let range = bounds(window: window)
+        guard seconds.isFinite, seconds > 0 else { return 0 }
+        return min(range.upperBound, max(range.lowerBound, log(baseSeconds / seconds)))
+    }
+    static func seconds(position: Double) -> Double { baseSeconds / exp(position) }
+    static func multiplier(position: Double) -> Double { exp(position) }
+
+    /// The system slider only buzzes at its two ends, so the thumb crosses a notch every `notchSize` (a ~20% change of
+    /// speed) and each crossing ticks. Notch 0 is centred on 1x: the default gets a firmer tap.
+    static let notchSize = 0.2
+    struct Tick: Equatable {
+        var notch: Int
+        var isDefault: Bool { notch == 0 }
+    }
+    static func tick(position: Double) -> Tick { Tick(notch: Int((position / notchSize).rounded())) }
+}
+
+/// What one preview tile shows at a moment of the shared preview clock: how much of the sample stroke is drawn and
+/// how opaque it is. Pure, so the motion each tile promises is testable.
+enum NativeDrawingAnimationPreviewMath {
+    struct Sample: Equatable { var progress: Double; var alpha: Double }
+    static let stable = Sample(progress: 1, alpha: 1)
+    static let hold = 0.9, resetGap = 0.5, fadeSeconds = 0.4
+
+    /// The Draw tile plays the drawing's real draw time (kept watchable), so sliding the speed changes the tile.
+    static func edgeSeconds(_ entrance: DrawingEntrance, drawSeconds: Double) -> Double {
+        entrance == .draw ? min(2.5, max(0.3, drawSeconds)) : fadeSeconds
+    }
+
+    static func entrance(_ entrance: DrawingEntrance, drawSeconds: Double, clock: Double) -> Sample {
+        guard entrance != .none else { return stable }
+        let edge = edgeSeconds(entrance, drawSeconds: drawSeconds)
+        let t = clock.truncatingRemainder(dividingBy: edge + hold + resetGap)
+        let into = t < edge ? t / edge : (t < edge + hold ? 1 : 0)
+        return entrance == .draw ? Sample(progress: into, alpha: 1) : Sample(progress: 1, alpha: into)
+    }
+
+    static func exit(_ exit: DrawingExit, clock: Double) -> Sample {
+        guard exit != .none else { return stable }
+        let t = clock.truncatingRemainder(dividingBy: hold + fadeSeconds + resetGap)
+        let alpha = t < hold ? 1 : (t < hold + fadeSeconds ? 1 - (t - hold) / fadeSeconds : 0)
+        return Sample(progress: 1, alpha: alpha)
+    }
+}
+
+/// The Animation tab. Entrance and Exit are tiles that PLAY what they do (like the text animation tiles), the speed
+/// slider is continuous (no tick dots) and right is faster, and the layout never changes with the selection: the speed
+/// row stays (dimmed unless the entrance is Draw) and the content is pinned to the leading edge, so nothing re-centres.
+struct NativeDrawingAnimationControls: View {
+    @ObservedObject var session: NativeEditorSession
+    let id: String
+    let drawing: EditorDrawing
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// A reference held by `@State`: the tiles observe it, this view does not re-render every frame.
+    @State private var clock = NativeTextAnimationPreviewClock()
+    @State private var speedPosition = 0.0
+    /// True only while a finger is on the slider: opening the tab or an undo moves the thumb silently.
+    @State private var dragging = false
+    @State private var tick = NativeDrawingSpeed.Tick(notch: 0)
+
+    private var window: Double { drawing.endS - drawing.startS }
+    private var drawsOn: Bool { drawing.entrance == .draw }
+    private var grid: [GridItem] { [GridItem(.adaptive(minimum: 92), spacing: 8, alignment: .top)] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                heading("Entrance")
+                LazyVGrid(columns: grid, alignment: .leading, spacing: 10) {
+                    entranceTile("Draw", .draw)
+                    entranceTile("Fade", .fade)
+                    entranceTile("None", .none)
+                }
+            }
+            speedSection
+            VStack(alignment: .leading, spacing: 6) {
+                heading("Exit")
+                LazyVGrid(columns: grid, alignment: .leading, spacing: 10) {
+                    exitTile("None", .none)
+                    exitTile("Fade", .fade)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear {
+            speedPosition = NativeDrawingSpeed.position(seconds: drawing.drawDurationS, window: window)
+            startPreviewIfAllowed()
+        }
+        .onDisappear { clock.pauseForLifecycle() }
+        .onChange(of: scenePhase) { _, next in if next == .active { startPreviewIfAllowed() } else { clock.pauseForLifecycle() } }
+        .onChange(of: reduceMotion) { _, reduced in if reduced { clock.pauseForLifecycle() } else { startPreviewIfAllowed() } }
+        // An undo or a redo changes the stored time under us: follow it.
+        .onChange(of: drawing.drawDurationS) { _, seconds in
+            let next = NativeDrawingSpeed.position(seconds: seconds, window: window)
+            if abs(next - speedPosition) > 0.01 { speedPosition = next }
+        }
+    }
+
+    private var speedSection: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                heading("Draw speed")
+                Spacer()
+                // One line for every entrance, so the section never changes height when the entrance does.
+                Text(drawsOn ? String(format: "%.1f×", NativeDrawingSpeed.multiplier(position: speedPosition)) : "Draw only")
+                    .font(KriaFont.body(13)).foregroundStyle(drawsOn ? KriaColor.zinc : KriaColor.mutedInk).monospacedDigit()
+            }
+            // Continuous on purpose: a `step` makes iOS draw a tick dot per step.
+            NativeEditorSlider(session: session, value: $speedPosition, in: NativeDrawingSpeed.bounds(window: window),
+                               onEditingChanged: { dragging = $0 }) {
+                Text("Draw speed")
+            }
+            .onChange(of: speedPosition) { _, position in
+                let seconds = NativeDrawingSpeed.seconds(position: position)
+                if abs(seconds - drawing.drawDurationS) > 0.02 { session.setDrawingDrawDuration(id: id, seconds: seconds) }
+                if dragging { tick = NativeDrawingSpeed.tick(position: position) }
+            }
+            // A tick per notch under the finger (the system slider gives one only at the ends), firmer on 1x.
+            .sensoryFeedback(trigger: tick) { old, new in
+                guard old != new else { return nil }
+                return new.isDefault ? .impact(weight: .medium) : .selection
+            }
+            .accessibilityValue(String(format: "%.1f times", NativeDrawingSpeed.multiplier(position: speedPosition)))
+            .accessibilityIdentifier("native-editor-drawing-draw-speed")
+            HStack {
+                Text("Slower"); Spacer(); Text("Faster")
+            }
+            .font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk)
+        }
+        .opacity(drawsOn ? 1 : 0.4)
+        .disabled(!drawsOn)
+    }
+
+    private func heading(_ title: String) -> some View {
+        Text(title).font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
+    }
+
+    private func entranceTile(_ title: String, _ value: DrawingEntrance) -> some View {
+        NativeDrawingAnimationTile(title: title, selected: drawing.entrance == value, clock: clock,
+                                   identifier: "native-editor-drawing-entrance-\(title.lowercased())") { time in
+            NativeDrawingAnimationPreviewMath.entrance(value, drawSeconds: NativeDrawingSpeed.seconds(position: speedPosition), clock: time)
+        } pick: { session.setDrawingEntrance(id: id, entrance: value) }
+    }
+
+    private func exitTile(_ title: String, _ value: DrawingExit) -> some View {
+        NativeDrawingAnimationTile(title: title, selected: drawing.exit == value, clock: clock,
+                                   identifier: "native-editor-drawing-exit-\(title.lowercased())") { time in
+            NativeDrawingAnimationPreviewMath.exit(value, clock: time)
+        } pick: { session.setDrawingExit(id: id, exit: value) }
+    }
+
+    private func startPreviewIfAllowed() {
+        guard NativeTextAnimationPreviewAutoplay.allows(reduceMotion: reduceMotion, environment: ProcessInfo.processInfo.environment) else { return }
+        clock.startAutoplay()
+    }
+}
+
+/// One choice with a live sample of its animation. Selection is a fill (no border), like the rest of Kria's controls.
+private struct NativeDrawingAnimationTile: View {
+    let title: String
+    let selected: Bool
+    @ObservedObject var clock: NativeTextAnimationPreviewClock
+    let identifier: String
+    let sample: (Double) -> NativeDrawingAnimationPreviewMath.Sample
+    let pick: () -> Void
+
+    init(title: String, selected: Bool, clock: NativeTextAnimationPreviewClock, identifier: String,
+         sample: @escaping (Double) -> NativeDrawingAnimationPreviewMath.Sample, pick: @escaping () -> Void) {
+        self.title = title; self.selected = selected; self.clock = clock; self.identifier = identifier
+        self.sample = sample; self.pick = pick
+    }
+
+    var body: some View {
+        // Until the clock has run (and with Reduce Motion) the tile shows the finished state, like the text tiles.
+        let shown = clock.hasEverPlayed ? sample(clock.elapsed) : NativeDrawingAnimationPreviewMath.stable
+        Button(action: pick) {
+            VStack(spacing: 6) {
+                NativeDrawingPreviewSquiggle().trim(from: 0, to: shown.progress)
+                    .stroke(KriaColor.ink, style: StrokeStyle(lineWidth: 3.5, lineCap: .round, lineJoin: .round))
+                    .opacity(shown.alpha)
+                    .padding(.horizontal, 14).padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .background(selected ? KriaColor.butter : KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .accessibilityHidden(true)
+                Text(title).font(KriaFont.body(11).weight(selected ? .semibold : .medium)).lineLimit(1).minimumScaleFactor(0.8)
+                    .foregroundStyle(KriaColor.ink)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// The little stroke every tile animates: a loose wave, drawn left to right.
+private struct NativeDrawingPreviewSquiggle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let steps = 40
+        for step in 0...steps {
+            let t = Double(step) / Double(steps)
+            let point = CGPoint(x: rect.minX + rect.width * t, y: rect.midY + sin(t * .pi * 3) * rect.height * 0.32)
+            if step == 0 { path.move(to: point) } else { path.addLine(to: point) }
+        }
+        return path
     }
 }
 
