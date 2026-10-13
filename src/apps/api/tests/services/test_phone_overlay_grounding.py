@@ -658,6 +658,7 @@ def test_load_ready_pool_assets_queries_ready_rows(monkeypatch):
             "aspect": 1.5,
             "user_context": "ctx",
             "analysis": {"subject": "s"},
+            "capture": None,
         }
     ]
 
@@ -753,6 +754,79 @@ def test_fullscreen_video_window_is_capped_to_its_footage_and_gated(monkeypatch)
     off = _fs_ground(monkeypatch, assets, words=[], duration_s=60.0, video_supported=False)
     assert [c.media_id for c in off.cards] == ["p1"]
     assert off.receipt["unplaced"][0]["reason"] == "video_not_supported"
+
+
+def _captured(id_: str, taken: str | None, **kwargs) -> dict:
+    asset = _asset(id_, **kwargs)
+    asset["capture"] = {"capture_time": taken} if taken else None
+    return asset
+
+
+def _mixed_ground(monkeypatch, assets, *, layout, chronological=False, duration_s=190.0):
+    _patch_assets(monkeypatch, assets)
+    monkeypatch.setattr(
+        pg, "_match_placements", Mock(side_effect=AssertionError("matcher must not run"))
+    )
+    return pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=_talk_words(duration_s),
+        duration_s=duration_s,
+        clip_path=None,
+        video_supported=True,
+        layout=layout,
+        chronological=chronological,
+    )
+
+
+def test_kri661_images_stay_cards_while_videos_play_full_screen_in_filming_order(monkeypatch):
+    """The 2026-10-13 incident shape: 33 gallery photos uploaded out of order, plus
+    race videos. "Images as overlays, videos full screen, in the order I filmed."
+    """
+    photos = [
+        # upload order a0..a32, but filmed in reverse; a7 has no metadata at all
+        _captured(
+            f"a{i}",
+            None if i == 7 else f"2026-10-10T{(40 - i) // 2:02d}:{(40 - i) % 2 * 30:02d}:00Z",
+        )
+        for i in range(33)
+    ]
+    videos = [
+        _captured("v0", "2026-10-10T09:00:00Z", kind="video", duration_s=6.0),
+        _captured("v1", "2026-10-10T10:00:00Z", kind="video", duration_s=6.0),
+    ]
+    grounded = _mixed_ground(
+        monkeypatch, [*photos, *videos], layout="fullscreen_videos", chronological=True
+    )
+
+    assert grounded.receipt["layout"] == "mixed"
+    assert grounded.receipt["order"] == "capture_time"
+    by_media = {c.media_id: c for c in grounded.cards}
+    assert all(by_media[v].display_mode == "fullscreen" for v in ("v0", "v1"))
+    photo_cards = [c for c in grounded.cards if c.kind == "image"]
+    assert photo_cards and all(c.display_mode == "pip" for c in photo_cards)
+    assert all(c.id.startswith("pip-") for c in photo_cards)
+    # Filming order: dated media sorted oldest-first; the undated a7 keeps its slot.
+    ordered = [c.media_id for c in sorted(grounded.cards, key=lambda c: c.start_s)]
+    dated = [m for m in ordered if m != "a7"]
+    times = {a["id"]: a["capture"]["capture_time"] for a in [*photos, *videos] if a["capture"]}
+    assert [times[m] for m in dated] == sorted(times[m] for m in dated)
+    # One shared timeline: no card overlaps another, full-frame or not.
+    spans = sorted((c.start_s, c.end_s) for c in grounded.cards)
+    assert all(a_end <= b_start + 1e-6 for (_, a_end), (b_start, _) in zip(spans, spans[1:]))
+    displays = {p["media_id"]: p["display"] for p in grounded.receipt["placed"]}
+    assert displays["v0"] == "fullscreen" and displays["a0"] == "pip"
+
+
+def test_kri661_upload_order_is_kept_when_chronological_was_not_asked(monkeypatch):
+    assets = [
+        _captured("late", "2026-10-10T12:00:00Z"),
+        _captured("early", "2026-10-10T08:00:00Z"),
+    ]
+    grounded = _mixed_ground(monkeypatch, assets, layout="fullscreen_images", duration_s=40.0)
+    assert [c.media_id for c in grounded.cards] == ["late", "early"]
+    assert "order" not in grounded.receipt
+    assert all(c.display_mode == "fullscreen" for c in grounded.cards)
 
 
 def test_pip_receipt_has_no_layout_key(monkeypatch):

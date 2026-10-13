@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from app.agents._schemas.creator_agent import (
+    FULLSCREEN_OVERLAY_DISPLAYS,
     CapabilityAvailability,
     CreativeStrategy,
     CreatorCatalogRef,
@@ -1257,7 +1258,7 @@ def compile_strategy_to_plan(
         # The phone Talking title holds for exactly the confirmed seconds.
         strategy = strategy.model_copy(update={"opening_title_duration_s": None})
     strategy_format = coerce_edit_format(strategy.edit_format)
-    if strategy.overlay_display == "fullscreen":
+    if strategy.overlay_display in FULLSCREEN_OVERLAY_DISPLAYS:
         fullscreen_cap = manifest.capabilities.get(CAPABILITY_MEDIA_OVERLAY_FULLSCREEN)
         if fullscreen_cap is None or not fullscreen_cap.available:
             phone_cap = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)

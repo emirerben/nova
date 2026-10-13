@@ -294,6 +294,12 @@ ExecutionContract = Literal["guided_voiceover_v1"]
 MediaScope = Literal["all", "selected"]
 CaptionStyle = Literal["none", "clean", "kinetic", "karaoke", "editorial", "auto"]
 OptionalTreatment = Literal["overlays", "sfx", "transitions", "looks"]
+# KRI-297 / KRI-661: how Visuals show over the speaker. The two `fullscreen_*`
+# values play ONE media kind full-frame and keep the other as a small card.
+OverlayDisplay = Literal["pip", "fullscreen", "fullscreen_videos", "fullscreen_images"]
+FULLSCREEN_OVERLAY_DISPLAYS: frozenset[str] = frozenset(
+    {"fullscreen", "fullscreen_videos", "fullscreen_images"}
+)
 
 
 class ChoiceAnswer(_CreatorModel):
@@ -618,8 +624,11 @@ class CreativeStrategy(_CreatorModel):
     # KRI-297: how Visuals overlays are shown. "fullscreen" = a full-frame
     # cutaway sequence (phone Talking edits only; gated by the
     # `media_overlays:fullscreen` capability). None/"pip" = the default card.
+    # KRI-661: "fullscreen_videos" / "fullscreen_images" split the pool by kind --
+    # that kind plays full-frame, the other stays a small card on top of the
+    # speaker ("my photos as overlays, my videos full screen"). Same capability.
     # Omitted from stored strategies when None (byte-identical to pre-KRI-297).
-    overlay_display: Literal["pip", "fullscreen"] | None = Field(
+    overlay_display: OverlayDisplay | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     # A named licensed effect is an explicit, required treatment. It is kept

@@ -6515,6 +6515,21 @@ def _demote_beat_receipt(
     }
 
 
+def _approved_capture_order(snapshot: dict, all_candidates: dict) -> bool:
+    """True when the approved render contract asks for capture-time (filming) order, or
+    the strategy's stored ordering choice is chronological (KRI-661). Never raises."""
+    from app.services.creator_render_contract import read_render_contract  # noqa: PLC0415
+
+    strategy = all_candidates.get("creator_strategy")
+    if isinstance(strategy, dict) and strategy.get("ordering_choice") == "chronological":
+        return True
+    try:
+        contract = read_render_contract(snapshot)
+    except Exception:  # noqa: BLE001 - a malformed contract is "no ordering ask"
+        return False
+    return bool(contract and contract.order_required and contract.order_basis == "capture_time")
+
+
 def _run_phone_subtitled_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
@@ -6727,12 +6742,18 @@ def _run_phone_subtitled_job(
     # KRI-297: "fullscreen" => every Visual becomes a full-screen cutaway
     # (deterministic even-spread sequence). Anything else (absent/None/"pip"/
     # unknown) or the kill switch off => today's PiP grounding, unchanged.
+    # KRI-661: "fullscreen_videos" / "fullscreen_images" play that kind full-frame and
+    # keep the other as a card; they ride the same sequence and the same kill switch.
     overlay_layout: str = (
-        "fullscreen"
-        if all_candidates.get("overlay_display") == "fullscreen"
+        all_candidates["overlay_display"]
+        if all_candidates.get("overlay_display")
+        in ("fullscreen", "fullscreen_videos", "fullscreen_images")
         and getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", True)
         else "pip"
     )
+    # KRI-661: the creator asked for their Visuals in the order they were taken (the
+    # approved contract pinned capture-time order). Only the sequence layouts read it.
+    overlay_chronological: bool = _approved_capture_order(snapshot, all_candidates)
     language: str = all_candidates.get("language") or "en"
     # KRI-177: same explicit override contract as the cloud subtitled render —
     # re-validated here since a stray/legacy value must never silently win.
@@ -7388,8 +7409,11 @@ def _run_phone_subtitled_job(
                                 | beat_media_ids,
                                 video_supported=video_overlays_enabled,
                                 **(
-                                    {"layout": "fullscreen"}
-                                    if overlay_layout == "fullscreen"
+                                    {
+                                        "layout": overlay_layout,
+                                        "chronological": overlay_chronological,
+                                    }
+                                    if overlay_layout != "pip"
                                     else {}
                                 ),
                                 **framed_grounding,

@@ -965,6 +965,20 @@ need the KRI-297 track in `replace_editor_lanes` first. Tests:
 Rollback: `fly secrets set PHONE_VOICEOVER_REACTION_BEATS_ENABLED=false --app
 nova-video` + `fly machine restart <id>` (api + worker + light).
 
+**Mixed Visuals and filming order on Talking (KRI-661).** `CreativeStrategy.overlay_display`
+also takes `fullscreen_videos` (videos full-frame, photos stay cards on top of the speaker) and
+`fullscreen_images`; same `media_overlays:fullscreen` capability and the same
+`phone_subtitled_fullscreen_overlays_enabled` kill switch as `fullscreen`. The worker copies the
+value to `all_candidates["overlay_display"]` and `ground_phone_subtitled_overlays(layout=...)`
+slots every Visual into ONE shared sequence (`_ground_fullscreen_sequence`), so a card and a
+cutaway never share a moment; the receipt carries `layout: "mixed"` and a per-entry `display`.
+When the approved contract pins capture-time order (`_approved_capture_order`), the pool is
+ordered by `PlanItemAsset.capture` first (`_order_by_capture`: dated Visuals oldest-first,
+undated ones keep their upload position) and the receipt records `order: "capture_time"`. A
+single clip has no order to promise, so `order_basis` no longer asks about one talking
+clip's missing filming time. Guards: `test_kri661_*` in `tests/services/test_phone_overlay_grounding.py`
+and the `kri661-talking-clip-photos-order-asks-nothing` incident record.
+
 #### Phase 2c: video Visuals as PiP cards (KRI-183)
 
 Flag `PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED` (default false), gate
