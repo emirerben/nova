@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.264.0] - 2026-10-13
+
+### Changed
+- feat(ios): paste text and images onto video edits, text onto slides (KRI-647) (#1581) <!-- release-pr: 1581 -->
+
 ## [0.78.263.0] - 2026-10-13
 
 ### Changed
