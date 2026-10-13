@@ -56,7 +56,11 @@ final class EditorUITests: XCTestCase {
         let exported = app.descendants(matching: .any)["native-editor-export-state"].firstMatch
         XCTAssertTrue(exported.waitForExistence(timeout: 30))
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let deadline = Date().addingTimeInterval(45)
+        // The export itself finishes in seconds, but the first Photos permission
+        // prompt on a fresh CI simulator arrives ~50 s after the save tap (run
+        // 38412011433 passed with 2 s to spare; 38389552217 missed it 3 of 3). The
+        // budget covers that latency; a healthy run still exits as soon as it saves.
+        let deadline = Date().addingTimeInterval(150)
         var saved = false
         while Date() < deadline {
             let alert = springboard.alerts.firstMatch
