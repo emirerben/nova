@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.251.0] - 2026-10-12
+
+### Changed
+- feat(lipsync): ask which part of the song you filmed, in the chat (KRI-588) (#1546) <!-- release-pr: 1546 -->
+
 ## [0.78.250.0] - 2026-10-12
 
 ### Changed

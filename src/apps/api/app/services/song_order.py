@@ -38,6 +38,8 @@ from app.schemas.user_song import (
     SONG_ALIGNMENT_VERSION,
     SONG_ORDER_ANSWER_KEY,
     SONG_ORDER_QUESTION_KEY,
+    SONG_RANGE_ANSWER_KEY,
+    SONG_RANGE_QUESTION_KEY,
     AlignmentAlternate,
     SongAlignment,
     SongOrderAnswerIn,
@@ -46,6 +48,7 @@ from app.schemas.user_song import (
     SongOrderQuestion,
     TakeAlignment,
 )
+from app.services.song_range import latest_open_song_range_question, parse_song_range_question
 
 MAX_ALTERNATES_PER_ITEM = 4
 # KRI-561: a timeline drop within this of one of a take's own candidates snaps to it, so the
@@ -75,11 +78,17 @@ CLIP_ANSWER_MESSAGE = "I tapped the clips you asked about."
 CLIP_SKIP_MESSAGE = "I skipped your clip question, so pick those clips for me."
 
 
+# KRI-588: the same for the answer to "which part of the song did you film?".
+SONG_RANGE_ANSWER_MESSAGE = "I told you which part of the song I filmed."
+
+
 def model_text(payload: Any, content: Any) -> str:
     """A user event's text as a model should read it (structured song/clip answers are neutral)."""
     if isinstance(payload, Mapping):
         if isinstance(payload.get(SONG_ORDER_ANSWER_KEY), Mapping):
             return SONG_ORDER_ANSWER_MESSAGE
+        if isinstance(payload.get(SONG_RANGE_ANSWER_KEY), Mapping):
+            return SONG_RANGE_ANSWER_MESSAGE
         selection = payload.get("clip_selection")
         if isinstance(selection, Mapping):
             return CLIP_SKIP_MESSAGE if selection.get("skipped") is True else CLIP_ANSWER_MESSAGE
@@ -513,9 +522,23 @@ def thread_keeps_lipsync(events: Iterable[Event], song_generation: int | None) -
     open_question = latest_open_song_order_question(rows)
     if open_question is not None and _same_generation(open_question, song_generation):
         return True
+    # KRI-588: the same exchange rule for "which part of the song did you film?".
+    range_questions = {}
+    for role, payload in rows:
+        if role == "assistant" and isinstance(payload, dict):
+            asked = parse_song_range_question(payload.get(SONG_RANGE_QUESTION_KEY))
+            if asked is not None:
+                range_questions[asked.question_id] = asked
+    open_range = latest_open_song_range_question(rows)
+    if open_range is not None and _same_generation(open_range, song_generation):
+        return True
     for role, payload in reversed(rows):
         if role != "user":
             continue
+        range_answer = payload.get(SONG_RANGE_ANSWER_KEY) if isinstance(payload, dict) else None
+        if isinstance(range_answer, dict):
+            asked = range_questions.get(str(range_answer.get("question_id")))
+            return asked is not None and _same_generation(asked, song_generation)
         answer = payload.get(SONG_ORDER_ANSWER_KEY) if isinstance(payload, dict) else None
         if not isinstance(answer, dict):
             if isinstance(payload, dict) and any(k in payload for k in _STRUCTURED_ANSWER_KEYS):

@@ -42,6 +42,9 @@ USER_SONG_ASSET_KIND = "song"
 USER_SONG_TRACK_ID = "song"
 SONG_ORDER_QUESTION_KEY = "song_order_question"
 SONG_ORDER_ANSWER_KEY = "song_order"
+# KRI-588: "which part of the song did you film?" asked in the chat when verses repeat.
+SONG_RANGE_QUESTION_KEY = "song_range_question"
+SONG_RANGE_ANSWER_KEY = "song_range"
 
 # KRI-457: the least song a background start point may leave playable. The editor clamps
 # its start slider to `duration - MIN_PLAYABLE_SONG_S` (shared concept with iOS); a
@@ -376,3 +379,33 @@ class SongOrderAnswerIn(BaseModel):
     placements: list[SongOrderPlacementIn] | None = Field(
         default=None, exclude_if=lambda v: v is None
     )
+
+
+class SongRangeQuestion(BaseModel):
+    """ "Which part of the song did you film?", asked in chat when a take could belong to more than
+    one repeat of a verse (KRI-588). The answer is a stretch of the song, or "the whole song"."""
+
+    model_config = _STRICT
+
+    question_id: str
+    # The song generation it was asked about (a replaced song is a new song: ask again).
+    song_generation: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    song_duration_s: float | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class SongRangeAnswerIn(BaseModel):
+    """The creator's answer: a stretch of the song, or both null for "the whole song" / skip."""
+
+    model_config = _STRICT
+
+    question_id: str
+    start_s: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    end_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _both_or_neither(self) -> SongRangeAnswerIn:
+        if (self.start_s is None) != (self.end_s is None):
+            raise ValueError("start_s and end_s are set together, or both left empty")
+        if self.start_s is not None and self.end_s is not None and self.end_s <= self.start_s:
+            raise ValueError("end_s must be after start_s")
+        return self

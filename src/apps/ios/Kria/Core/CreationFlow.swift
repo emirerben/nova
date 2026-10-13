@@ -30,6 +30,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// Server accepts `PUT creation-threads/{id}/song-range` (KRI-580): the creator tells us which part of the
     /// song they filmed in. Nil/false (older server) = no such control.
     var songFilmingRange: Bool? = nil
+    /// Server asks "which part of the song did you film?" in the chat (`song_range_question` payloads) and accepts
+    /// `song_range` on a turn (KRI-588). Nil/false (older server) = the plain text message only, no card.
+    var songRangeQuestions: Bool? = nil
     /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
     /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
     var choiceQuestions: Bool? = nil
@@ -56,6 +59,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var songOrderPlacementsEnabled: Bool { songOrderPlacements == true }
     /// The "Where in the song did you film?" control needs the flag AND the song affordance itself.
     var songFilmingRangeEnabled: Bool { songFilmingRange == true && songUploadEnabled }
+    /// The chat card needs the flag AND the song affordance itself; without either, the question reads as text.
+    var songRangeQuestionsEnabled: Bool { songRangeQuestions == true && songUploadEnabled }
     /// The server's limits for a creator-uploaded song (KRI-374). Nil hides every "Add your song" surface:
     /// the server only advertises it when the feature is on for this account and this app's protocol.
     var songLimit: CreationMediaLimit? { media?[CreationMediaRole.song.capabilityKey] }
@@ -79,6 +84,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case songOrderQuestions = "song_order_questions"
         case songOrderPlacements = "song_order_placements"
         case songFilmingRange = "song_filming_range"
+        case songRangeQuestions = "song_range_questions"
         case choiceQuestions = "choice_questions"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
         case livePlanReviewEnabled = "live_plan_review_enabled", livePlanReviewVersion = "live_plan_review_version"
@@ -107,6 +113,7 @@ extension CreationCapabilities {
         songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)
         songOrderPlacements = try container.decodeIfPresent(Bool.self, forKey: .songOrderPlacements)
         songFilmingRange = try container.decodeIfPresent(Bool.self, forKey: .songFilmingRange)
+        songRangeQuestions = try container.decodeIfPresent(Bool.self, forKey: .songRangeQuestions)
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
         creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)
         minimumClientProtocol = try container.decodeIfPresent(Int.self, forKey: .minimumClientProtocol)
