@@ -10,12 +10,13 @@ the task's isolated Nova worktree. Default: offline Debug app, disposable iPhone
 13 Pro simulator, iOS 26.5, fixture API/authentication, $0 model spend. Web/API
 and physical iPhone checks have separate recipes in the repo's runbooks.
 
-PRs targeting `main` or `dev` run the mapped journeys automatically through CI.
-The changed files select features from [ci.json](features/ci.json); shared or
-unknown UI inputs select all five. CI reuses its existing build/simulator,
-checks the persisted teleprompter draft when selected, and retains evidence in
-the `kria-ios-verification-<SHA>` artifact for 14 days. Failures propagate through
-`test-api`, which is required on `main`. The commands below are for local reproduction.
+Local hooks run affected journeys in the background on each developer's Mac.
+Normal agent startup/worktree setup installs them; pull/rebase, pushes of PR
+commits, and agent completion enqueue checks. [journeys.json](features/journeys.json)
+selects bounded tests; shared UI inputs select all five areas plus smoke (18
+tests), without changing CI selection. Results are remembered by commit and
+coverage. See [local automation](../../../docs/runbooks/local-ios-verification.md)
+for setup, status, retry, and limitations. The commands below reproduce a run.
 
 ## Launch
 
@@ -113,7 +114,8 @@ worktree before removing it; do not commit media, credentials or raw user histor
 commands to its own worktree. `--help` lists its four commands. See
 [acceptance checks](references/acceptance.md) for ownership/staleness/failure
 controls, [the first executed proof](references/proof.md), and
-[the automatic CI proof](references/automatic-proof.md) for results and limits.
-`scripts/ios/verify-feature-map.py` supplies CI's selection/evidence
-steps; update its machine-readable map alongside the feature recipes.
+[the local hook proof](references/local-hook-proof.md) for results and limits.
+`python3 scripts/ios/auto-verify.py status` reports background results;
+`python3 scripts/ios/auto-verify.py enqueue --reason pr` queues PR verification.
+Update `features/journeys.json` alongside the feature recipes.
 Use `/maintain-verification-skill` when keeping this map current.

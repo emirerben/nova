@@ -10,6 +10,15 @@ set -u
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 cd "$repo_root" || exit 0
 
+# Install the local verification hooks before an automatic fast-forward can
+# trigger post-merge. Keep simulator work in the detached background worker.
+if [ -f scripts/hooks/verify-kria-ios.sh ]; then
+  if [ "$(uname -s)" = Darwin ]; then
+    python3 scripts/ios/auto-verify.py install >/dev/null || true
+    trap 'bash scripts/hooks/verify-kria-ios.sh session' EXIT
+  fi
+fi
+
 # Skip if no origin/main ref exists yet (fresh clone, weird remote setup).
 git rev-parse --verify --quiet origin/main >/dev/null 2>&1 || exit 0
 

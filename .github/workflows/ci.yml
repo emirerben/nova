@@ -452,31 +452,7 @@ jobs:
         env:
           KRIA_IOS_TEST_MODE: ui
           KRIA_IOS_UI_GROUPS: ${{ needs.changes.outputs.ios_ui_groups == 'full' && 'smoke' || needs.changes.outputs.ios_ui_groups }}
-          KRIA_VERIFY_FEATURES: ${{ needs.changes.outputs.ios_verify_features }}
-        run: |
-          KRIA_IOS_UI_GROUPS="$(python3 scripts/ios/verify-feature-map.py groups "$KRIA_IOS_UI_GROUPS" "$KRIA_VERIFY_FEATURES")"
-          export KRIA_IOS_UI_GROUPS
-          mkdir -p test-results/verify-kria-ios/ci
-          printf '%s\n' "$KRIA_IOS_UI_GROUPS" > test-results/verify-kria-ios/ci/selection.txt
-          python3 scripts/ios/verify-feature-map.py snapshot-build
-          bash scripts/ios/verify.sh
-      - name: Require mapped iPhone journey evidence
-        if: always() && github.event_name == 'pull_request' && needs.changes.outputs.ios_ui == 'true'
-        env:
-          KRIA_VERIFY_FEATURES: ${{ needs.changes.outputs.ios_verify_features }}
-        run: |
-          python3 scripts/ios/verify-feature-map.py capture "$KRIA_VERIFY_FEATURES" \
-            "$(cat test-results/verify-kria-ios/ci/selection.txt)"
-      - name: Upload iPhone verification evidence
-        if: always() && github.event_name == 'pull_request' && needs.changes.outputs.ios_ui == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: kria-ios-verification-${{ github.sha }}
-          path: |
-            test-results/verify-kria-ios/
-            test-results/ios/
-          if-no-files-found: error
-          retention-days: 14
+        run: bash scripts/ios/verify.sh
       - name: Reuse the same simulator for selected native journeys
         if: needs.changes.outputs.journey_needs_native == 'true'
         run: cp test-results/ios/simulator-id.txt test-results/kri-559/simulator-id.txt

@@ -4,10 +4,11 @@ Read this index and the affected feature before selecting tests. These recipes
 describe user-visible behavior; the existing XCUITest bodies contain the exact
 taps and assertions. All five features are mapped, not automatically verified.
 
-[ci.json](ci.json) lists the regression journeys CI executes automatically on
-affected PRs, independent of author. Update paths/tests there when updating these
-recipes. Shared or unmapped UI files run all five areas. The existing affected
-UI group and smoke coverage are retained, with duplicate test IDs removed.
+[journeys.json](journeys.json) lists the regression journeys local background
+hooks select for committed native changes. Update paths/tests there with these
+recipes. Shared or unmapped UI files run all five areas, plus required smoke,
+with duplicate test IDs removed. The broad selection contains 18 UI tests;
+the full creation/editor regression suites remain separate existing CI policy.
 Hardware, live backend/model, and output-media inspection retain the limits
 documented in each recipe.
 

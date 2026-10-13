@@ -15,8 +15,6 @@ on:
         value: ${{ jobs.select.outputs.ios_ui }}
       ios_ui_shards:
         value: ${{ jobs.select.outputs.ios_ui_shards }}
-      ios_verify_features:
-        value: ${{ jobs.select.outputs.ios_verify_features }}
       journey:
         value: ${{ jobs.select.outputs.journey }}
       journey_coverage:
@@ -38,7 +36,6 @@ jobs:
       ios_ui: ${{ steps.select.outputs.ios_ui }}
       ios_ui_groups: ${{ steps.select.outputs.ios_ui_groups }}
       ios_ui_shards: ${{ steps.select.outputs.ios_ui_shards }}
-      ios_verify_features: ${{ steps.select.outputs.ios_verify_features }}
       journey: ${{ steps.select.outputs.journey }}
       journey_coverage: ${{ steps.select.outputs.journey_coverage }}
       journey_ids: ${{ steps.select.outputs.journey_ids }}

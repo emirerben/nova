@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Conservative suite selection and fail-closed required checks (stdlib only)."""
 
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,13 +10,6 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ios"))
 import ui_tests
-
-_verification_spec = importlib.util.spec_from_file_location(
-    "feature_verification",
-    Path(__file__).resolve().parents[1] / "ios/verify-feature-map.py",
-)
-feature_verification = importlib.util.module_from_spec(_verification_spec)
-_verification_spec.loader.exec_module(feature_verification)
 
 SUITES = ("api", "ios", "ios_ui", "shared_motion")
 SHARED_MOTION_PATHS = (
@@ -213,8 +205,6 @@ SWIFT_SERVER_MIRRORS = (
 
 
 def affected(path):
-    if path.startswith(".cursor/skills/verify-kria-ios/"):
-        return set() if path.endswith(".md") else {"ios", "ios_ui"}
     if path.startswith("src/packages/motion-runtime/"):
         return set(SUITES)
     if path in SHARED_MOTION_PATHS:
@@ -357,31 +347,6 @@ def selection(event, base, head):
     return selection_details(event, base, head)[:2]
 
 
-def verification_features(event, base, head):
-    """Every PR author gets mapped UI proof; broad UI inputs cover all features."""
-    if event != "pull_request":
-        return "none"
-    try:
-        ancestor = git("merge-base", base, head).decode().strip()
-        paths = [
-            p.decode("utf-8")
-            for p in git(
-                "diff", "--no-renames", "--name-only", "-z", ancestor, head
-            ).split(b"\0")
-            if p
-        ]
-        relevant = [
-            path
-            for path in paths
-            if "ios_ui" in affected(path) and not release_only(path, ancestor, head)
-        ]
-    except (subprocess.CalledProcessError, UnicodeError, OSError):
-        return ",".join(entry["id"] for entry in feature_verification.load_map())
-    if not paths:
-        return ",".join(entry["id"] for entry in feature_verification.load_map())
-    return ",".join(feature_verification.features_for_paths(relevant)) or "none"
-
-
 def ui_shards(event, groups):
     """PRs run one Mac; main and manual runs shard the full suite to fit the cap."""
 
@@ -485,10 +450,6 @@ def main():
     )
     native = journey_native_for_ids(journey_ids.split(",") if journey_ids else ())
     output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\njourney={str(journey).lower()}\njourney_coverage={coverage}\njourney_ids={journey_ids}\njourney_needs_native={str(native).lower()}\n"
-    features = verification_features(
-        event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
-    )
-    output += f"ios_verify_features={features}\n"
     print(reason + "\n" + output)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
@@ -498,7 +459,6 @@ def main():
             stream.write(
                 f"## CI selection\n\n{reason}\n\niOS UI groups: {groups}"
                 f" ({shards} native leg{'s' if shards > 1 else ''})\n\n"
-                f"Mapped iPhone verification features: {features}\n\n"
                 + "\n".join(
                     f"- {s}: {'run' if s in suites else 'not applicable'}"
                     for s in SUITES

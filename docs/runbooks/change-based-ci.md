@@ -29,23 +29,6 @@ When selection is broad, PRs run the smoke tripwire. Every main push still runs
 the complete UI suite. See the
 [iOS runbook](ios-development.md#change-based-ci) for phase commands and cache reuse.
 
-PR UI execution also includes the affected regression journeys from
-[the native verification feature map](../../.cursor/skills/verify-kria-ios/features/ci.json).
-Shared/unmapped UI inputs add all five feature areas to the smoke tripwire.
-The selection has no author filter: Emir's and Yasin's PRs use the same checks.
-`ios_verify_features` carries this selection to the existing Mac job; the app is
-compiled once, and mapped tests are deduplicated against its existing UI group.
-Shared chat view/transport/components also select the full creation group,
-including song-order regressions; they no longer fall back to smoke alone.
-The evidence step checks selected XCTest coverage, exports screenshots and,
-when the script journey runs, requires the exact script in a saved local draft.
-Missing evidence fails the shared job and therefore the required `test-api` gate.
-The `kria-ios-verification-<SHA>` artifact retains reports, screenshots, drafts,
-logs and XCTest bundles for 14 days, including failed attempts. These are
-offline fixture UI checks; physical-device/live-backend claims need their own
-evidence. Markdown-only edits to the skill do not select heavyweight suites;
-its executable or machine-readable map edits do.
-
 Mixed changes select the union. Runtime-tree Markdown (including prompts) is
 classified as code before documentation rules. New/unrecognized paths select
 all suites. Dependency versions inside a lockfile are not release metadata.

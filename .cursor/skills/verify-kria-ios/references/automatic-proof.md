@@ -1,5 +1,10 @@
 # Automatic CI path proof
 
+Historical experiment, superseded by the local hooks at the user's request.
+The CI integration and its reproduction commands below were removed from the
+final implementation; retained artifacts document the earlier native proof.
+See [the current local hook proof](local-hook-proof.md).
+
 Executed locally on 2026-10-13 against base
 `792ee6ab78d10506bd177bd1cb955ce8c481069e` with this branch's working-tree changes.
 Native fingerprint: `30cc276aeb4e49eeef9692b6e56e987d7f725b39d78ac4aab1c90b3db38dfadd`.

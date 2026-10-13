@@ -1,18 +1,14 @@
-"""Guard automatic feature coverage before implementing the CI integration."""
+"""Guard the offline feature map and Debug build identity."""
 
-import importlib.util
-import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = ROOT / "scripts/ios/verify-feature-map.py"
-sys.path.insert(0, str(SCRIPT.parent))
-spec = importlib.util.spec_from_file_location("feature_verification", SCRIPT)
-verification = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(verification)
+sys.path.insert(0, str(ROOT / "scripts/ios"))
+import feature_map as verification  # noqa: E402
+from app_identity import app_code_sha256  # noqa: E402
 
 
 class FeatureVerificationTests(unittest.TestCase):
@@ -22,9 +18,9 @@ class FeatureVerificationTests(unittest.TestCase):
             (app / "Kria").write_bytes(b"unchanged launcher")
             code = app / "Kria.debug.dylib"
             code.write_bytes(b"first build")
-            first = verification.app_code_sha256(app)
+            first = app_code_sha256(app)
             code.write_bytes(b"second build")
-            self.assertNotEqual(first, verification.app_code_sha256(app))
+            self.assertNotEqual(first, app_code_sha256(app))
 
     def test_feature_paths_select_their_user_journeys(self):
         cases = {
@@ -43,7 +39,7 @@ class FeatureVerificationTests(unittest.TestCase):
         for path in [
             "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
             "src/apps/ios/Kria/Core/Services.swift",
-            "new-native/unknown.swift",
+            "src/apps/ios/NewNative/unknown.swift",
         ]:
             self.assertEqual(verification.features_for_paths([path]), all_features)
         self.assertEqual(
@@ -56,66 +52,27 @@ class FeatureVerificationTests(unittest.TestCase):
             ["teleprompter", "editor"],
         )
 
-    def test_existing_selected_group_and_smoke_are_preserved_without_duplicate_tests(
-        self,
-    ):
-        merged = verification.merge_groups("smoke,creation", "teleprompter,editor")
-        self.assertTrue(merged.startswith("smoke,creation,"))
-        tests = verification.ui_tests.expected_tests(merged)
-        self.assertIn(
-            "KriaUITests/TeleprompterUITests/testScriptIsSavedAndCameraFailureKeepsItEditable",
-            tests,
+    def test_selection_remains_bounded_and_docs_or_unit_only_changes_skip_ui(self):
+        entries = verification.load_map()
+        tests = verification.tests_for_features([entry["id"] for entry in entries])
+        self.assertEqual(len(tests), 16)
+        self.assertEqual(verification.features_for_paths(["docs/new.md"]), [])
+        self.assertEqual(
+            verification.features_for_paths(
+                ["src/apps/ios/Tests/KriaTests/NewTests.swift"]
+            ),
+            [],
         )
-        self.assertIn(
-            "KriaUITests/EditorUITests/testCapturedCreationWordsPlayReopenAndExport",
-            tests,
-        )
-        self.assertEqual(len(merged.split(",")), len(set(merged.split(","))))
-
-    def test_missing_or_renamed_tests_and_unknown_feature_ids_fail_closed(self):
         with self.assertRaises(ValueError):
-            verification.merge_groups("smoke", "typo")
-        data = {
-            "version": 1,
-            "features": [
-                {
-                    "id": "projects",
-                    "paths": ["x"],
-                    "tests": ["ProjectsUITests/testRemoved"],
-                }
-            ],
-        }
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "map.json"
-            path.write_text(json.dumps(data))
-            with self.assertRaises(ValueError):
-                verification.load_map(path)
-
-    def test_persistence_requires_the_complete_script_and_copies_the_evidence(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            container = root / "container"
-            output = root / "evidence"
-            draft = (
-                container
-                / "Library/Application Support/KriaTeleprompter/account/project/draft.json"
-            )
-            draft.parent.mkdir(parents=True)
-            output.mkdir()
-            draft.write_text(json.dumps({"text": "Today I want"}))
-            with self.assertRaises(ValueError):
-                verification.copy_script_draft(container, output)
-            draft.write_text(json.dumps({"text": verification.SCRIPT_TEXT}))
-            self.assertEqual(verification.copy_script_draft(container, output), 1)
-            draft.unlink()
-            self.assertEqual(
-                json.loads((output / "persistence/0-draft.json").read_text())["text"],
-                verification.SCRIPT_TEXT,
-            )
+            verification.tests_for_features(["typo"])
 
     def test_feature_docs_and_executable_map_agree_on_test_ids(self):
         for feature in verification.load_map():
-            text = (verification.MAP_PATH.parent / f"{feature['id']}.md").read_text()
+            text = (
+                (ROOT / verification.MAP)
+                .parent.joinpath(f"{feature['id']}.md")
+                .read_text()
+            )
             for test in feature["tests"]:
                 self.assertIn(test, text)
 

@@ -26,7 +26,8 @@
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash scripts/hooks/agent-runs.sh finish claude" }
+          { "type": "command", "command": "bash scripts/hooks/agent-runs.sh finish claude" },
+          { "type": "command", "command": "bash scripts/hooks/verify-kria-ios.sh finish" }
         ]
       }
     ]

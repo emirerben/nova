@@ -79,6 +79,9 @@ the PR shipping gate. Run `make ios-verify` locally when validating native flows
 Verification boots the selected simulator while `build-for-testing` compiles the
 app and test bundles, then runs `test-without-building` on that same destination.
 UI tests run serially for deterministic navigation checks.
+The [local verification hooks](local-ios-verification.md) automatically run
+affected fixture journeys in the background after pulls and for PR commits,
+using an isolated snapshot and owned simulator; existing CI selection is unchanged.
 CI caches the actual `src/apps/ios/.derived-data` directory, including Swift
 packages, with keys scoped to the Xcode version, architecture and package/project
 configuration. Source changes still go through Xcode's incremental build checks.

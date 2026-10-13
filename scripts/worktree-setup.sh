@@ -18,6 +18,11 @@ REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   exit 2
 }
 
+# Each clone installs once; all its worktrees share the queue and commit results.
+if [ -f "$REPO/scripts/hooks/verify-kria-ios.sh" ]; then
+  (cd "$REPO" && bash scripts/hooks/verify-kria-ios.sh session)
+fi
+
 log()  { printf '[worktree-setup] %s\n' "$*"; }
 warn() { printf '[worktree-setup] WARN: %s\n' "$*"; }
 
