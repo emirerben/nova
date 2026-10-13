@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.266.0] - 2026-10-13
+
+### Changed
+- fix(kria): Turkish chat gets Turkish length question and render-ready line (KRI-630) (#1583) <!-- release-pr: 1583 -->
+
 ## [0.78.265.0] - 2026-10-13
 
 ### Changed
