@@ -69,6 +69,30 @@ final class NativeQuickAddMenuUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-new-text-input"].waitForExistence(timeout: 3))
     }
 
+    /// KRI-647: the system Paste control in the "+" menu turns copied text into a selected text element.
+    func testPasteOptionAddsCopiedTextAsTextElement() {
+        UIPasteboard.general.string = "5.2 km in 28:14"
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor"]
+        app.launch()
+
+        app.buttons["native-editor-add-clip"].tap()
+        let paste = app.descendants(matching: .any)["native-editor-add-menu-paste"]
+        XCTAssertTrue(paste.waitForExistence(timeout: 3))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Quick-add menu with Paste"
+        shot.lifetime = .keepAlways
+        add(shot)
+        paste.tap()
+
+        // The new text is selected, which opens the Text actions strip.
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-context"].waitForExistence(timeout: 5))
+        let after = XCTAttachment(screenshot: app.screenshot())
+        after.name = "Pasted text selected"
+        after.lifetime = .keepAlways
+        add(after)
+    }
+
     /// Video routes to the add-clip sheet; Visual opens the same panel the tool rail opens.
     func testVideoAndVisualOptionsRouteToTheirSurfaces() {
         let app = XCUIApplication()
