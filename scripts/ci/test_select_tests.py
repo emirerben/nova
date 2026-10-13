@@ -708,6 +708,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-653-silent-take"),
             ),
             (
+                "src/apps/api/app/kria/opening_cut_ask.py",
+                (True, "covered", "kri-628-opening-cut"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_opening_cut.py",
+                (True, "covered", "kri-628-opening-cut"),
+            ),
+            (
                 "src/apps/api/app/pipeline/phone_captions.py",
                 (True, "covered", "kri-548-caption-watermark"),
             ),
