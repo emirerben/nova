@@ -388,7 +388,14 @@ def test_run_slide_post_job_edits_bust_the_normalized_cache_key(monkeypatch) -> 
     assert normalize_calls[0] == edits, "the render must receive this slide's actual edits"
 
 
-def _sized_job(monkeypatch, *, profile: str, aspect: str | None, fit: str | None):
+def _sized_job(
+    monkeypatch,
+    *,
+    profile: str,
+    aspect: str | None,
+    fit: str | None,
+    drawing: dict | None = None,
+):
     """Run one sized slide through `_run_slide_post_job` with storage/ffmpeg stubbed.
     Returns (variant result, normalize canvases, preview canvases, normalized keys)."""
     job_id = str(uuid.uuid4())
@@ -403,7 +410,7 @@ def _sized_job(monkeypatch, *, profile: str, aspect: str | None, fit: str | None
                 id="s0",
                 asset_id=asset_id,
                 kind="image",
-                edits=SlideEdits(fit=fit) if fit else None,
+                edits=SlideEdits(fit=fit, drawing=drawing) if (fit or drawing) else None,
             ),
             SlideRef(id="s1", asset_id=asset_id, kind="image"),
         ],
@@ -481,3 +488,47 @@ def test_variant_is_stamped_with_the_sizes_renderer_but_dispatch_stays_at_2(monk
     assert result["slide_post"]["renderer_version"] == SLIDES_SIZES_RENDERER_VERSION == 3
     # The job-dispatch stamp is what a not-yet-updated worker checks at entry.
     assert result["slides_renderer_version"] == SLIDES_RENDERER_VERSION == 2
+
+
+_DRAWING = {
+    "canvas_aspect": 0.5625,
+    "strokes": [
+        {
+            "color": "#FF3B30",
+            "width_frac": 0.02,
+            "points": [[0.2, 0.3], [0.8, 0.6]],
+        }
+    ],
+}
+
+
+def test_a_drawn_post_is_stamped_by_the_drawing_renderer_and_dispatch_stays_at_2(
+    monkeypatch,
+) -> None:
+    from app.agents._schemas.edit_format import (  # noqa: PLC0415
+        SLIDES_DRAWING_RENDERER_VERSION,
+        SLIDES_RENDERER_VERSION,
+    )
+
+    result, *_ = _sized_job(
+        monkeypatch, profile="tiktok_photo", aspect=None, fit=None, drawing=_DRAWING
+    )
+    assert result["slide_post"]["renderer_version"] == SLIDES_DRAWING_RENDERER_VERSION == 4
+    assert result["slides_renderer_version"] == SLIDES_RENDERER_VERSION == 2
+
+
+def test_a_drawing_busts_the_normalized_key_of_that_slide_only(monkeypatch) -> None:
+    _, _, _, drawn = _sized_job(
+        monkeypatch, profile="tiktok_photo", aspect=None, fit=None, drawing=_DRAWING
+    )
+    _, _, _, plain = _sized_job(monkeypatch, profile="tiktok_photo", aspect=None, fit=None)
+    version = slide_build_module.SLIDE_DRAWING_PAINTER_VERSION
+
+    def name(key):  # the job id and the asset fingerprint are random per run
+        return key.split("/slides/normalized/")[1].split("_", 1)[1]
+
+    drawn, plain = [name(k) for k in drawn], [name(k) for k in plain]
+    assert "noedits" not in drawn[0] and f"_wm1_dr{version}." in drawn[0]
+    # The undrawn slide beside it, and every key of an undrawn post, are unchanged.
+    assert drawn[1] == plain[1] and "_dr" not in drawn[1]
+    assert plain[0] == plain[1] and "_dr" not in plain[0]

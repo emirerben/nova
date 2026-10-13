@@ -121,9 +121,15 @@ def test_block_falls_back_to_top_level_subject_and_description():
     assert record.activity == "sitting and talking"
 
 
+def _long_transcript() -> str:
+    """Long enough to exercise the cap, varied enough not to be a KRI-653 repetition loop."""
+    syllables = ["ka", "lo", "mi", "ru", "te", "so", "ve", "na", "pi", "du"]
+    return " ".join(a + b + c for a in syllables for b in syllables for c in syllables[:4])
+
+
 def test_prompt_view_drops_empty_fields_and_caps_transcript():
     record = clip_record(
-        {UNDERSTANDING_KEY: understanding_payload(_meta(transcript="word " * 400))}
+        {UNDERSTANDING_KEY: understanding_payload(_meta(transcript=_long_transcript()))}
     )
 
     view = record.prompt_view(transcript_chars=50)

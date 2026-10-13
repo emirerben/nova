@@ -172,6 +172,32 @@ def test_subtitled_compiles_and_pins_device_request(monkeypatch):
     assert "phone_deferred_variants" not in job.assembly_plan
 
 
+def test_subtitled_silent_take_is_declined_with_its_own_creator_facing_failure(monkeypatch):
+    """KRI-653 (prod job c283f1dd): a dead-mic 192 s take shipped a 4.9 s video.
+
+    The phone fork must stop it and say so in the creator's words under its own code, not as
+    "your iPhone can't render this"."""
+    import app.services.clip_speech as clip_speech_mod
+    from app.services.clip_speech import AudioPresence
+
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(
+        clip_speech_mod, "audio_presence", lambda _path: AudioPresence("silent", -120.0, 0.0, 10.0)
+    )
+    fail = Mock(return_value=True)
+    monkeypatch.setattr(gb, "_fail_job", fail)
+    monkeypatch.setattr(gb, "mark_failed_phase", Mock())
+
+    gb._run_generative_job(str(job.id))
+
+    fail.assert_called_once()
+    args, kwargs = fail.call_args
+    assert kwargs["failure_reason"] == "silent_audio_declined"
+    assert "no sound" in args[1]
+    assert "microphone" in args[1]
+    assert job.status != "awaiting_device", "nothing may be pinned for the phone to render"
+
+
 def _setup_landscape_subtitled(monkeypatch, *, landscape_fit):
     job, snapshot, session, _binding_ = _setup_subtitled(monkeypatch)
     landscape = _wide_binding("c0", duration_s=10.0, width=1920, height=1080)

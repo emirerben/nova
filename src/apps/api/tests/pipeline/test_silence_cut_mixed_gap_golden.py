@@ -23,6 +23,7 @@ from app.pipeline.silence_cut import (
     MAX_REMOVALS,
     MIN_CUT_S,
     MIN_OUTPUT_S,
+    NO_SPEECH_BAILOUTS,
     TOKEN_PIECE_MIN_S,
     TOKEN_SILENCE_MIN_OVERLAP_S,
     TOKEN_SILENCE_MIN_S,
@@ -1215,6 +1216,13 @@ def test_seeded_silence_inside_token_layouts_hold_rule0_invariants():
         candidate = comparison.candidate
         assert candidate is not None
         assert candidate.version == 2
+        if candidate.bailout_reason in NO_SPEECH_BAILOUTS:
+            # KRI-653: this generator deliberately buries tokens in silence, and on a few
+            # seeds the random silences cover nearly every word. That IS the no-speech shape
+            # (the transcript contradicts the audio), so the plan is refused, not carved.
+            # Capped below so the rail can never quietly swallow the corpus.
+            coverage["no_speech_refused"] += 1
+            continue
         try:
             coverage.update(
                 _assert_rule0_candidate_invariants(
@@ -1226,6 +1234,7 @@ def test_seeded_silence_inside_token_layouts_hold_rule0_invariants():
 
     # The corpus must actually exercise rule 0, or the invariants are vacuous.
     assert statuses["ready"] >= _RULE0_SEEDS // 2, statuses
+    assert coverage["no_speech_refused"] <= _RULE0_SEEDS // 10, coverage
     # Rule 0 performs a dominated interior carve ("split" and its single-sliver
     # variants) or the sentence-final tail carve (KRI-236), nothing else.
     # "trim_both" would mean two carves in one token, which is refused.

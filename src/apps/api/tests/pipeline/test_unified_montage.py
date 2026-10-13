@@ -504,7 +504,7 @@ def test_glyphs_no_bundled_font_has_are_dropped_but_turkish_letters_stay():
     assert label.min_display_s == min_display_s(len(label.text))
 
 
-def test_an_unrenderable_title_becomes_internal_only():
+def test_confirmed_symbol_is_preserved_for_the_phone_shaped_renderer():
     def covers(_family: str, text: str) -> bool:
         return "☃" not in text
 
@@ -514,11 +514,16 @@ def test_an_unrenderable_title_becomes_internal_only():
         font_covers=covers,
     )
 
-    assert plan.title is None and plan.title_source == "none"
-    assert plan.snapshot.title == "Montage"
-    assert plan.snapshot.opening_title is None
+    assert plan.title == "☃" and plan.title_source == "creator"
+    assert plan.snapshot.title == "☃"
+    assert plan.snapshot.opening_title == "☃"
     compiled = compile_execution_plan(plan.guided_edit(), track=None)
-    assert all(element["id"] != "guided-title" for element in compiled["text_elements"])
+    assert (
+        next(element for element in compiled["text_elements"] if element["id"] == "guided-title")[
+            "text"
+        ]
+        == "☃"
+    )
 
 
 def test_the_bundled_fonts_really_lack_the_arrow_and_have_turkish():

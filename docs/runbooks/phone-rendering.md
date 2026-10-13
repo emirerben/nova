@@ -2530,7 +2530,9 @@ Flow:
    app can show it. It is applied where alignment is READ, never where it is written
    (`services/song_range.restrict_alignment_to_range`, called by the planner gate and by
    `ensure_song_alignment`): every take's stored candidates are cut to
-   `[start - 3 s, end + 3 s]` (a take's position is where it STARTS; the slack covers run-ups), a take
+   `[start - 3 s, end + 3 s]` (KRI-650: the WHOLE take must fit, `delta + duration <= end + 3 s`,
+   when its length is known; "I filmed seconds 1-50" rules out a 30 s take starting at 49 s. A take
+   longer than the stretch is judged by its start; the slack covers run-ups), a take
    left with none is `unmatched` (no evidence: it goes to the tray, never snapped to a far repeat),
    and a take left with several is re-ranked and its margin/status/alternates re-derived. So
    changing or clearing the range takes effect immediately and needs no re-alignment. Capability
@@ -2541,8 +2543,10 @@ Flow:
    `tests/kria/test_planner_song_order.py`, `tests/routes/test_creation_threads_user_song.py`.
    **Asked in the chat (KRI-588).** The row above was buried in Add media > Song, so nobody found
    it. The planner gate (`_song_order_gate`) now ASKS once per song generation: when no range is set
-   and some take has two plausible places at least 15 s apart (`takes_ambiguous_between_repeats`:
-   second candidate likelihood >= 0.2), the turn is a `song_range_question`
+   and (`should_ask_song_range`) some take has two plausible places at least 15 s apart
+   (`takes_ambiguous_between_repeats`: second candidate likelihood >= 0.08; real chorus repeats score
+   0.08-0.17 next to a 0.9 placement, so the original 0.2 never fired, KRI-650) or at least 2 takes
+   are not `confident` (a tie, a weak match or no evidence), the turn is a `song_range_question`
    (`{question_id, song_generation, song_duration_s}` on the assistant event payload and the turn
    plan), asked BEFORE any order question. The answer rides on the next turn as
    `song_range: {question_id, start_s, end_s}` (both null = "the whole song"/skip); submit
@@ -2816,6 +2820,13 @@ Troubleshooting:
   (`CREATOR_FACING_DETAIL_CODES`), so keep those strings creator-facing. Before
   KRI-466 these surfaced as `phone_plan_unsupported` with the generic "your iPhone
   can't render yet" copy.
+- **`silent_audio_declined`.** The talking take has no sound at all (KRI-653: a dead-mic
+  in-app recording; Whisper/Gemini hallucinate words over silence and the speech cut then
+  removes ~all of it). Raised by `_run_phone_subtitled_job` via `_silent_audio_status`
+  (`clip_speech.audio_presence`: loudest 50 ms window < -60 dB, or a >= 3 s clip with < 1 s
+  of windows >= -45 dB). Like `user_song_plan_declined` its `error_detail` is creator-facing
+  and in `CREATOR_FACING_DETAIL_CODES`. A measurement failure (`unknown`) fails OPEN. The
+  speech-cleanup preflight refuses the same audio as `no_speech_track` before any Whisper spend.
 - **"Your song was replaced after this edit was approved".** The item's
   `song_generation` or duration no longer matches the approved plan; the creator
   must ask for the edit again.

@@ -81,6 +81,9 @@ _WATERMARK_TILE_BOTTOM_INSET = 415
 # changes, so cached derivatives rebuild and older exports are re-rendered
 # before they can be downloaded.
 SLIDE_WATERMARK_VERSION = 1
+# Part of the normalized key of a slide that carries a drawing (and only of those,
+# so every existing key is unchanged). Bump it when `drawing_png` paints differently.
+SLIDE_DRAWING_PAINTER_VERSION = 1
 
 
 class SlideBuildError(Exception):
@@ -415,6 +418,36 @@ def _text_pngs(edits: SlideEdits | None, *, canvas: Canvas, out_path: str) -> It
             Path(png).unlink(missing_ok=True)
 
 
+def drawing_key_suffix(edits: SlideEdits | None) -> str:
+    """`_dr{N}` for a slide with a drawing, "" otherwise (existing keys stay put)."""
+    if edits is None or edits.drawing is None:
+        return ""
+    return f"_dr{SLIDE_DRAWING_PAINTER_VERSION}"
+
+
+@contextmanager
+def _drawing_pngs(
+    edits: SlideEdits | None, *, canvas: Canvas, out_path: str
+) -> Iterator[list[str]]:
+    """Yield ``[png]`` for a slide with a drawing, ``[]`` otherwise; always cleans up.
+
+    Independent of `rich_text_active`: ink is painted from strokes whatever path the
+    text takes. Skia is imported only here, so drawing-free renders never need it.
+    """
+    paths: list[str] = []
+    try:
+        if edits is not None and edits.drawing is not None:
+            from app.pipeline.slide_post.drawing_png import render_drawing_png  # noqa: PLC0415
+
+            png = f"{out_path}.drawing.png"
+            paths.append(png)
+            render_drawing_png(edits.drawing, png, canvas=canvas)
+        yield paths
+    finally:
+        for png in paths:
+            Path(png).unlink(missing_ok=True)
+
+
 def _watermark_filter(canvas: Canvas, *, base: str, mark: str, out: str) -> str:
     """Composite the watermark input `mark` over `base` into `out`.
 
@@ -438,9 +471,9 @@ def _watermark_filter(canvas: Canvas, *, base: str, mark: str, out: str) -> str:
 def _overlay_filter_complex(base_vf: str, n_overlays: int, *, canvas: Canvas) -> str:
     """`[0:v]<base>[b0]; [b0][1:v]overlay[b1]; ...` then the watermark, ending on `[vout]`.
 
-    Inputs 1..n are the canvas-sized text PNGs and input n+1 is the watermark.
-    The watermark goes on last so no text can bury it, the same stacking the
-    iOS engine uses.
+    Inputs 1..n are the canvas-sized overlay PNGs (the text PNGs, then the slide's
+    drawing when it has one) and input n+1 is the watermark. The watermark goes on
+    last so no text or ink can bury it, the same stacking the iOS engine uses.
     """
     parts = [f"[0:v]{base_vf}[b0]"]
     for i in range(n_overlays):
@@ -511,8 +544,10 @@ def normalize_image_slide(
         _edits_filter_fragment(
             edits, canvas=canvas, out_path=out_path, include_text=not rich
         ) as edit_fragment,
-        _text_pngs(edits, canvas=canvas, out_path=out_path) as pngs,
+        _text_pngs(edits, canvas=canvas, out_path=out_path) as text_pngs,
+        _drawing_pngs(edits, canvas=canvas, out_path=out_path) as ink_pngs,
     ):
+        pngs = [*text_pngs, *ink_pngs]
         vf = _frame_filter(canvas, _framing_crop(edits), edits.fit if edits is not None else None)
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
@@ -548,8 +583,10 @@ def normalize_video_slide(
         _edits_filter_fragment(
             edits, canvas=canvas, out_path=out_path, include_text=not rich
         ) as edit_fragment,
-        _text_pngs(edits, canvas=canvas, out_path=out_path) as pngs,
+        _text_pngs(edits, canvas=canvas, out_path=out_path) as text_pngs,
+        _drawing_pngs(edits, canvas=canvas, out_path=out_path) as ink_pngs,
     ):
+        pngs = [*text_pngs, *ink_pngs]
         vf = f"{_scale_crop_filter(canvas)},fps=30"  # video slides are never cropped (KRI-44)
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"

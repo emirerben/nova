@@ -34,7 +34,6 @@ struct EditorDrawing: Equatable, Sendable {
 
     private static let elementKeys: Set<String> = ["id", "start_s", "end_s", "canvas_aspect", "center_x", "center_y", "scale", "rotation_deg", "animation", "strokes"]
     private static let animationKeys: Set<String> = ["entrance", "draw_duration_s", "exit"]
-    private static let strokeKeys: Set<String> = ["color", "opacity", "width_frac", "texture", "seed", "points"]
 
     init?(json: [String: JSONValue]) {
         guard Set(json.keys).isSubset(of: Self.elementKeys),
@@ -65,36 +64,14 @@ struct EditorDrawing: Equatable, Sendable {
         guard isValid else { return nil }
     }
 
-    private static func stroke(_ object: [String: JSONValue]) -> DrawingStroke? {
-        guard Set(object.keys).isSubset(of: strokeKeys),
-              let color = object["color"]?.stringValue, let width = object["width_frac"]?.numberValue,
-              let rows = object["points"]?.arrayValue else { return nil }
-        var opacity = 1.0, texture = DrawingTexture.pen, seed = 0
-        if let value = object["opacity"] { guard let parsed = value.numberValue else { return nil }; opacity = parsed }
-        if let value = object["texture"] { guard let parsed = value.stringValue.flatMap(DrawingTexture.init(rawValue:)) else { return nil }; texture = parsed }
-        if let value = object["seed"] { guard let parsed = value.numberValue, parsed.rounded() == parsed, abs(parsed) <= Double(Int32.max) else { return nil }; seed = Int(parsed) }
-        var points: [[Double]] = []
-        for row in rows {
-            guard let pair = row.arrayValue, pair.count == 2, let x = pair[0].numberValue, let y = pair[1].numberValue else { return nil }
-            points.append([Self.rounded(x), Self.rounded(y)])
-        }
-        let stroke = DrawingStroke(color: color.uppercased(), opacity: opacity, widthFrac: width, texture: texture, seed: seed, points: points)
-        return (try? stroke.validate()) == nil ? nil : stroke
-    }
-
-    /// The API stores 4 decimals.
-    private static func rounded(_ value: Double) -> Double { (value * 10_000).rounded() / 10_000 }
+    private static func stroke(_ object: [String: JSONValue]) -> DrawingStroke? { DrawingStrokeWire.parse(object) }
 
     var json: JSONValue {
         .object([
             "id": .string(id), "start_s": .number(startS), "end_s": .number(endS), "canvas_aspect": .number(canvasAspect),
             "center_x": .number(centerX), "center_y": .number(centerY), "scale": .number(scale), "rotation_deg": .number(rotationDeg),
             "animation": .object(["entrance": .string(entrance.rawValue), "draw_duration_s": .number(drawDurationS), "exit": .string(exit.rawValue)]),
-            "strokes": .array(strokes.map { stroke in
-                .object(["color": .string(stroke.color), "opacity": .number(stroke.opacity), "width_frac": .number(stroke.widthFrac),
-                         "texture": .string(stroke.texture.rawValue), "seed": .number(Double(stroke.seed)),
-                         "points": .array(stroke.points.map { .array($0.map { .number($0) }) })])
-            }),
+            "strokes": .array(strokes.map(DrawingStrokeWire.json)),
         ])
     }
 
@@ -237,5 +214,41 @@ enum DrawingStrokeTools {
 
     static func polylineLength(_ points: [[Double]]) -> Double {
         zip(points, points.dropFirst()).reduce(0) { $0 + hypot($1.0[0] - $1.1[0], $1.0[1] - $1.1[1]) }
+    }
+}
+
+// MARK: - Stroke wire
+
+/// The snake_case JSON of one `DrawingStroke`, shared by the editor's `drawings` lane and a slide's `drawing`
+/// (`SlidePostDrawing`). Both pin it with the fixtures in `tests/fixtures/{drawing,slide-drawing}-parity/`.
+/// The parse is strict (unknown key, bad value => nil) because the server's `DrawingStroke` is `extra="forbid"`.
+enum DrawingStrokeWire {
+    private static let strokeKeys: Set<String> = ["color", "opacity", "width_frac", "texture", "seed", "points"]
+
+    static func parse(_ object: [String: JSONValue]) -> DrawingStroke? {
+        guard Set(object.keys).isSubset(of: strokeKeys),
+              let color = object["color"]?.stringValue, let width = object["width_frac"]?.numberValue,
+              let rows = object["points"]?.arrayValue else { return nil }
+        var opacity = 1.0, texture = DrawingTexture.pen, seed = 0
+        if let value = object["opacity"] { guard let parsed = value.numberValue else { return nil }; opacity = parsed }
+        if let value = object["texture"] { guard let parsed = value.stringValue.flatMap(DrawingTexture.init(rawValue:)) else { return nil }; texture = parsed }
+        if let value = object["seed"] { guard let parsed = value.numberValue, parsed.rounded() == parsed, abs(parsed) <= Double(Int32.max) else { return nil }; seed = Int(parsed) }
+        var points: [[Double]] = []
+        for row in rows {
+            guard let pair = row.arrayValue, pair.count == 2, let x = pair[0].numberValue, let y = pair[1].numberValue else { return nil }
+            points.append([rounded(x), rounded(y)])
+        }
+        let stroke = DrawingStroke(color: color.uppercased(), opacity: opacity, widthFrac: width, texture: texture, seed: seed, points: points)
+        return (try? stroke.validate()) == nil ? nil : stroke
+    }
+
+    /// The API stores 4 decimals.
+    private static func rounded(_ value: Double) -> Double { (value * 10_000).rounded() / 10_000 }
+
+
+    static func json(_ stroke: DrawingStroke) -> JSONValue {
+        .object(["color": .string(stroke.color), "opacity": .number(stroke.opacity), "width_frac": .number(stroke.widthFrac),
+                 "texture": .string(stroke.texture.rawValue), "seed": .number(Double(stroke.seed)),
+                 "points": .array(stroke.points.map { .array($0.map { .number($0) }) })])
     }
 }

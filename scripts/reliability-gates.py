@@ -226,12 +226,21 @@ def cmd_red_control(args, gates):
         if gate.get("status", "merged") != "merged" or not gate.get("fix_commit"):
             print(f"{gate['id']}: not applicable (no merged fix commit)")
             continue
-        parent = f"{gate['fix_commit']}^"
+        parent = args.base or f"{gate['fix_commit']}^"
         tests = gate.get("regression_tests", [])
         with tempfile.TemporaryDirectory(prefix="nova-red-control-") as tmp:
             wt = Path(tmp) / "wt"
             git("worktree", "add", "--detach", str(wt), parent)
             try:
+                # Incident transport fixtures are inputs, not implementation. A
+                # new fixture must reach the old tree or the red control only
+                # proves that collection cannot find a file.
+                for rel in gate.get("paths", []):
+                    if rel.startswith("src/apps/api/tests/fixtures/"):
+                        src = REPO / rel
+                        dst = wt / rel
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, dst)
                 for test in tests:
                     rel = test.split("::")[0]
                     src = API / rel
@@ -281,6 +290,10 @@ def main() -> int:
         p.add_argument("--log")
     sub.add_parser("journey")
     p = sub.add_parser("red-control")
+    p.add_argument(
+        "--base",
+        help="Explicit pre-fix revision for a new incident added to an existing gate",
+    )
     p.add_argument("ids", nargs="+")
     p.add_argument("--python")
     p.add_argument("-v", "--verbose", action="store_true")

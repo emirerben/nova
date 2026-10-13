@@ -108,4 +108,43 @@ final class DrawingJourneyUITests: XCTestCase {
         XCTAssertTrue(plain.descendants(matching: .any)["native-editor-add-menu-text"].waitForExistence(timeout: 3))
         XCTAssertFalse(plain.descendants(matching: .any)["native-editor-add-menu-drawing"].exists)
     }
+
+    /// KRI-637 (device-test feedback): choosing Fade used to drop the "Draw speed" row, and the panel's scroll view
+    /// re-centred the narrower content (the Entrance/Exit blocks jumped to the right). Nothing may move now, whatever
+    /// the entrance is.
+    func testAnimationTabKeepsItsLayoutWhateverTheEntranceIs() throws {
+        let app = launch(reset: true)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 20))
+        app.buttons["native-editor-tool-draw"].tap()
+        let canvas = app.descendants(matching: .any)["native-editor-draw-canvas"].firstMatch
+        XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.4))
+            .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
+        app.buttons["native-editor-draw-done"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-drawing-panel"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["native-editor-drawing-tab-Animation"].tap()
+
+        func tile(_ name: String) -> XCUIElement { app.buttons["native-editor-drawing-\(name)"] }
+        let watched = ["entrance-draw", "entrance-fade", "entrance-none", "exit-none", "exit-fade"]
+        XCTAssertTrue(tile("entrance-draw").waitForExistence(timeout: 5))
+        let speed = app.descendants(matching: .any)["native-editor-drawing-draw-speed"].firstMatch
+        XCTAssertTrue(speed.exists, "the speed control is part of the tab")
+        XCTAssertTrue(speed.isEnabled, "and live while the entrance is Draw")
+        XCTAssertFalse(app.staticTexts["Slide right to draw faster."].exists, "the instruction line is gone")
+        attach(app, "Animation tab, entrance Draw")
+        let rest = watched.map { tile($0).frame }
+        let speedFrame = speed.frame
+
+        for entrance in ["entrance-fade", "entrance-none", "entrance-draw"] {
+            tile(entrance).tap()
+            XCTAssertEqual(watched.map { tile($0).frame }, rest, "picking \(entrance) must not move any tile")
+            XCTAssertEqual(speed.frame, speedFrame, "nor the speed row (picking \(entrance))")
+            XCTAssertEqual(speed.isEnabled, entrance == "entrance-draw", "the speed only applies to the Draw entrance")
+            XCTAssertEqual(app.staticTexts["Draw only"].exists, entrance != "entrance-draw", "the readout says so in the same row")
+            if entrance == "entrance-fade" { attach(app, "Animation tab, entrance Fade (nothing moved)") }
+        }
+        tile("exit-fade").tap()
+        XCTAssertEqual(watched.map { tile($0).frame }, rest, "picking an exit must not move anything either")
+        attach(app, "Animation tab, exit Fade")
+    }
 }

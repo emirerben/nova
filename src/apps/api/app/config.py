@@ -1764,6 +1764,15 @@ class Settings(BaseSettings):
     slide_post_sizes_enabled: bool = False
     # Chat ops that write the size/Fit need an app that round-trips them (protocol 5).
     slide_post_sizes_min_client_protocol: int = 5
+    # KRI-589 PR2: static freehand drawings on slides. Code default ON (kill switch):
+    # off, the slide-post PUT keeps each slide's stored `drawing` and ignores incoming
+    # values, and capability `slide_post_drawing` is false; stored drawings still render.
+    # The capability additionally needs a build declaring protocol >= the floor below
+    # (older builds cannot decode or paint `drawing`). Never roll the CODE back once
+    # drawings exist (draft models drop unknown keys); flip the flag instead. Apply:
+    # `fly secrets set SLIDE_POST_DRAWING_ENABLED=false --app nova-video` (api + worker) + restart.
+    slide_post_drawing_enabled: bool = True
+    slide_post_drawing_min_client_protocol: int = 7
     # KRI-557: provider-marked Gemini thought summaries for native creation and
     # slide-post calls. Deploy dark; enable after production canary with
     # THOUGHT_SUMMARIES_ENABLED=true for API and Celery processes after canary.

@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.261.0] - 2026-10-13
+
+### Changed
+- fix(ios): the recorder never silently records silence, and every take is saved to Photos (KRI-653) (#1592) <!-- release-pr: 1592 -->
+
+## [0.78.260.0] - 2026-10-13
+
+### Changed
+- fix(api): refuse silent talk-to-camera audio instead of shipping a 4 s video (KRI-653) (#1591) <!-- release-pr: 1591 -->
+
+## [0.78.259.0] - 2026-10-13
+
+### Changed
+- fix(kria): preserve approved hooks through generation and retry (KRI-651) (#1589) <!-- release-pr: 1589 -->
+
+## [0.78.258.0] - 2026-10-13
+
+### Changed
+- feat(ios): text position + rotation are sliders (KRI-646) (#1580) <!-- release-pr: 1580 -->
+
+## [0.78.257.0] - 2026-10-13
+
+### Changed
+- fix(kria): ask which part of the song you filmed on real clips, and keep every take inside the answer (KRI-650) (#1582) <!-- release-pr: 1582 -->
+
+## [0.78.256.0] - 2026-10-13
+
+### Changed
+- ci(ios): renew the UI receipt after the pre-release smoke run (KRI-636) (#1578) <!-- release-pr: 1578 -->
+
+## [0.78.255.0] - 2026-10-13
+
+### Changed
+- fix(ios): drawing Animation tab polish - speed direction, previews, layout, haptics (KRI-637) (#1577) <!-- release-pr: 1577 -->
+
+## [0.78.254.0] - 2026-10-13
+
+### Changed
+- fix(ios): Kria thinking shows a one-line summary, full text on tap (KRI-627) (#1574) <!-- release-pr: 1574 -->
+
+## [0.78.253.0] - 2026-10-13
+
+### Changed
+- ci(ios): release to TestFlight after build+unit+smoke; shard and never cancel main (KRI-636) (#1576) <!-- release-pr: 1576 -->
+
+## [0.78.252.0] - 2026-10-13
+
+### Changed
+- feat: draw on slide posts (KRI-589 PR 2) (#1573) <!-- release-pr: 1573 -->
+
 ## [0.78.251.0] - 2026-10-12
 
 ### Changed

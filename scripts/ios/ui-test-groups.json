@@ -29,6 +29,7 @@
       "KriaUITests/SlidePostUITests/testAddStyleAndApplyTextToAllSlides",
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",
       "KriaUITests/SlidePostUITests/testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave",
+      "KriaUITests/SlidePostUITests/testDrawOnASlideLeavesInkThatSurvivesSaveAndSlideSwitching",
       "KriaUITests/SlidePostUITests/testAIButtonOpensSheetAndChatEditStagesOnThePage",
       "KriaUITests/SlidePostUITests/testLongPressDragReordersAndKeepsTheCover",
       "KriaUITests/SlidePostUITests/testDraggingToTheEdgeAutoScrollsTheStrip",
@@ -79,6 +80,8 @@
       "KriaUITests/CreationUITests/testChoiceQuestionShowsRecommendedOptionAndSendsStructuredAnswerOnce",
       "KriaUITests/CreationUITests/testLivePlanFeedFullSequence",
       "KriaUITests/CreationUITests/testReadyVideoFollowupWaitsWithoutReplayingPriorPlan",
+      "KriaUITests/CreationUITests/testLiveThoughtShowsOneLineSummaryAndExpandsOnTap",
+      "KriaUITests/CreationUITests/testFinishedThoughtStaysCollapsedUntilTapped",
       "KriaUITests/CreationUITests/testLivePlanFeedStaysLiveAcrossTheDeviceBuild",
       "KriaUITests/CreationUITests/testLivePlanFeedStopCancelsTheDeviceRender",
       "KriaUITests/CreationUITests/testLivePlanFeedStopCancelsTheRender",
@@ -188,6 +191,7 @@
       "KriaUITests/NativeQuickAddMenuUITests/testTappingPlusAgainClosesTheMenu",
       "KriaUITests/NativeQuickAddMenuUITests/testTextOptionStartsTextCreation",
       "KriaUITests/DrawingJourneyUITests/testDrawDoneTrimSaveReopenPersists",
+      "KriaUITests/DrawingJourneyUITests/testAnimationTabKeepsItsLayoutWhateverTheEntranceIs",
       "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability"
     ],
     "smoke": [
