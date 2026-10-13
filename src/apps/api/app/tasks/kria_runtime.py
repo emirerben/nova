@@ -4278,6 +4278,10 @@ def _approved_generation_review(
 # English table lives in `content_plan_build.JOB_FAILURE_MESSAGES`; a test pins that every
 # code there has a Turkish line here, so the two cannot drift apart.
 _JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
+    "creation_text_failed": (
+        "Onayladığın yazıyı koruyarak metni hazırlayamadım. "
+        "Taslağın ve çekimlerin kayıtlı. Bu videoyu yeniden oluşturmayı dene."
+    ),
     "user_song_plan_declined": (
         "Çekimlerini şarkınla hizalayamadım. Şarkı yüksek sesle çalarken çekim yap ya da "
         "sözleri net söyleyerek eşlik et, sonra tekrar dene."
@@ -4815,6 +4819,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             failure_content = _capability_refusal_copy(typed_decline)
         elif deterministic or failure_code in {
             "phone_capability_unavailable",
+            "creation_text_failed",
             *CREATOR_FACING_DETAIL_CODES,
         }:
             # Retryable, but the generic "didn't finish" copy would hide WHY (KRI-286).

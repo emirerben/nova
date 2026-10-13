@@ -808,6 +808,10 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
 # `guided_story_*` from `_classify_error`) still gets a real sentence instead
 # of silently falling through to nothing.
 JOB_FAILURE_MESSAGES: dict[str, str] = {
+    "creation_text_failed": (
+        "I couldn't prepare the text while keeping your approved wording. "
+        "Your draft and footage are saved. Try generating this edit again."
+    ),
     # KRI-466: the creator's song could not be lined up; `error_detail` carries the
     # specific, actionable copy (see CREATOR_FACING_DETAIL_CODES).
     "user_song_plan_declined": (

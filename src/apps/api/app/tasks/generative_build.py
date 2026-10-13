@@ -2667,14 +2667,19 @@ def _run_generative_job_impl(
                 # fall back to) must persist a failure_reason — without this, the
                 # generic `except Exception` fallback below only set error_detail,
                 # leaving the client with no reason code to render.
+                # KRI-286: a capability the device has not verified yet is a rollout
+                # decision, not a plan defect -- it must stay retryable, so it gets its
+                # own code BEFORE the deterministic `phone_plan_unsupported` branch.
+                from app.services.creation_text_composition import (
+                    CreationTextCompositionError,  # noqa: PLC0415
+                )
                 from app.services.phone_rollout import (  # noqa: PLC0415
                     PhoneCapabilityUnavailable,
                 )
 
-                # KRI-286: a capability the device has not verified yet is a rollout
-                # decision, not a plan defect -- it must stay retryable, so it gets its
-                # own code BEFORE the deterministic `phone_plan_unsupported` branch.
-                if isinstance(exc, PhoneCapabilityUnavailable):
+                if isinstance(exc, CreationTextCompositionError):
+                    failure_reason = "creation_text_failed"
+                elif isinstance(exc, PhoneCapabilityUnavailable):
                     failure_reason = "phone_capability_unavailable"
                 elif isinstance(exc, UserSongPlanDeclined):
                     # KRI-466: error_detail is creator-facing copy; its own code so
@@ -6206,7 +6211,10 @@ def _run_phone_unified_montage_job(
     # Complete the initial text lane before the canonical generation is pinned.
     # This uses the request already bound to this job, never a newer thread message.
     from app.agents._runtime import RunContext  # noqa: PLC0415
-    from app.services.creation_text_composition import compose_creation_text  # noqa: PLC0415
+    from app.services.creation_text_composition import (  # noqa: PLC0415
+        compose_creation_text,
+        snapshot_copy_constraints,
+    )
 
     request = all_candidates.get("creator_request") or (
         (all_candidates.get("brief") or {}).get("creator_request")
@@ -6217,6 +6225,8 @@ def _run_phone_unified_montage_job(
         plan.snapshot,
         creator_request=str(request or ""),
         ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
+        copy_constraints=snapshot_copy_constraints(plan.snapshot),
+        text_requirements=brief.live() if brief is not None else None,
     )
     record = plan.record()
     # KRI-544: which copies left the edit, readable by a requirement checker. Absent
