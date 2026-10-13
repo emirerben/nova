@@ -666,9 +666,14 @@ def _analyze_work(work: _ClaimedWork) -> SpeechCleanupAnalysisResult:
                 "no_speech_track", detail=f"audio_{presence.status}"
             )
         result = _run_engine(work, audio_path)
-        # Defense in depth for ``presence == unknown``: the transcript itself says the
-        # "words" all sit inside silence (or nothing is audible at all).
-        if result.safety_signals.bailout_reason in NO_SPEECH_BAILOUTS:
+        # Defense in depth for ``presence == unknown`` only (the level could not be measured):
+        # the transcript itself says the "words" all sit inside silence. When the level WAS
+        # measured and is audible (a hushed or distant speaker), the bailout stands as an
+        # uncut no-op plan instead of mislabelling a real speaker as "no speech track".
+        if (
+            presence.status == "unknown"
+            and result.safety_signals.bailout_reason in NO_SPEECH_BAILOUTS
+        ):
             log.warning(
                 "speech_cleanup_analysis.transcript_contradicts_audio",
                 analysis_id=str(work.claim.analysis_id),

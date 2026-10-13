@@ -332,14 +332,6 @@ def _silent_audio_status(local_path: str, *, job_id: str) -> str | None:
     return presence.status
 
 
-def _require_audible_speech(local_path: str, *, job_id: str) -> None:
-    """Raise the typed ``evidence_missing`` decline when the speaker clip has no sound."""
-    if _silent_audio_status(local_path, job_id=job_id) is not None:
-        decline = _speech_fallback_decline("silent_audio")
-        assert decline is not None  # the key is registered above
-        raise decline
-
-
 def _flag_decline(kind: str, message: str) -> BaseException:
     """The resolver's typed refusal for a rollout flag that forbids the approved format.
 
@@ -2701,6 +2693,7 @@ def _run_generative_job_impl(
                 from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
                 from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
+                    SilentAudioPlanDeclined,
                     UnsupportedPhonePlan,
                     UserSongPlanDeclined,
                 )
@@ -2723,6 +2716,9 @@ def _run_generative_job_impl(
                 # own code BEFORE the deterministic `phone_plan_unsupported` branch.
                 if isinstance(exc, PhoneCapabilityUnavailable):
                     failure_reason = "phone_capability_unavailable"
+                elif isinstance(exc, SilentAudioPlanDeclined):
+                    # KRI-653: error_detail is creator-facing copy, shown verbatim in chat.
+                    failure_reason = "silent_audio_declined"
                 elif isinstance(exc, UserSongPlanDeclined):
                     # KRI-466: error_detail is creator-facing copy; its own code so
                     # chat shows it instead of "your iPhone can't render".
@@ -6549,7 +6545,10 @@ def _run_phone_subtitled_job(
         resolve_spoken_caption_language,
     )
     from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
-    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
+        SilentAudioPlanDeclined,
+        UnsupportedPhonePlan,
+    )
     from app.pipeline.phone_subtitled_lanes import remap_lanes_for_cut  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
         SFX_DUCK_RECEIPT_FIELD,
@@ -6865,7 +6864,9 @@ def _run_phone_subtitled_job(
                 )
             # KRI-653: a silent take must never reach the speech cut (job c283f1dd cut a
             # 192 s dead-mic take to 3 s over hallucinated words). Declared AND self-narrated.
-            _require_audible_speech(clip_path, job_id=job_id)
+            # Its own decline type so chat shows this message, not "your iPhone can't render".
+            if _silent_audio_status(clip_path, job_id=job_id) is not None:
+                raise SilentAudioPlanDeclined(" ".join(_SPEECH_FALLBACK_DECLINES["silent_audio"]))
             if multi_clip:
                 cutaways = _phone_talking_head_cutaways(
                     speaker_clip_id=clip_id,
@@ -19922,12 +19923,11 @@ def _resolve_archetype(
         # KRI-653: "no usable speech still resolves to subtitled" holds for a quiet or
         # wordless clip, NOT for a dead-mic take whose audio is digital silence --
         # captions and a speech cut over that only produce hallucinated words.
-        silent_clips = [
-            path
+        # `all` stops at the first audible clip, so a normal take costs one probe, not N.
+        if clip_id_to_local and all(
+            _silent_audio_status(path, job_id=job_id) is not None
             for path in clip_id_to_local.values()
-            if _silent_audio_status(path, job_id=job_id) is not None
-        ]
-        if silent_clips and len(silent_clips) == len(clip_id_to_local):
+        ):
             decline = _speech_fallback_decline("silent_audio")
             if plan_authority and decline is not None:
                 raise decline

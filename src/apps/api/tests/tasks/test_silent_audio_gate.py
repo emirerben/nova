@@ -56,30 +56,52 @@ def spoken_clip(tmp_path: Path) -> str:
 
 
 @requires_ffmpeg
-class TestRequireAudibleSpeech:
-    def test_dead_mic_take_is_declined_with_the_typed_creator_message(
-        self, silent_clip: str
-    ) -> None:
-        from app.services.cloud_render_contract import CloudRenderContractError
-        from app.tasks.generative_build import _creator_decline_payload, _require_audible_speech
+class TestSilentAudioStatus:
+    def test_dead_mic_take_is_silent(self, silent_clip: str) -> None:
+        from app.tasks.generative_build import _silent_audio_status
 
-        with patch("app.services.pipeline_trace.record_pipeline_event"):
-            with pytest.raises(CloudRenderContractError) as raised:
-                _require_audible_speech(silent_clip, job_id="job-1")
-        decline = _creator_decline_payload(raised.value)
-        assert decline["decline_reason"] == "evidence_missing"
-        assert "no sound" in str(raised.value)
-        assert "microphone" in decline["alternative"]
+        with patch("app.services.pipeline_trace.record_pipeline_event") as record:
+            assert _silent_audio_status(silent_clip, job_id="job-1") == "silent"
+        record.assert_called_once()
+        assert record.call_args.args[:2] == ("assembly", "silent_audio_declined")
 
     def test_a_spoken_take_passes(self, spoken_clip: str) -> None:
-        from app.tasks.generative_build import _require_audible_speech
+        from app.tasks.generative_build import _silent_audio_status
 
-        _require_audible_speech(spoken_clip, job_id="job-1")
+        assert _silent_audio_status(spoken_clip, job_id="job-1") is None
 
     def test_an_unmeasurable_file_fails_open(self, tmp_path: Path) -> None:
-        from app.tasks.generative_build import _require_audible_speech
+        from app.tasks.generative_build import _silent_audio_status
 
-        _require_audible_speech(str(tmp_path / "missing.mp4"), job_id="job-1")
+        assert _silent_audio_status(str(tmp_path / "missing.mp4"), job_id="job-1") is None
+
+
+class TestSilentAudioFailureCopy:
+    """The creator must read THIS message, not "your iPhone can't render this yet"."""
+
+    def test_decline_is_creator_facing_and_deterministic(self) -> None:
+        from app.pipeline.phone_guided_plan import (
+            SilentAudioPlanDeclined,
+            UnsupportedPhonePlan,
+        )
+        from app.tasks.content_plan_build import (
+            CREATOR_FACING_DETAIL_CODES,
+            job_failure_message,
+        )
+        from app.tasks.kria_runtime import _DETERMINISTIC_JOB_FAILURE_CODES
+
+        assert issubclass(SilentAudioPlanDeclined, UnsupportedPhonePlan)
+        assert "silent_audio_declined" in CREATOR_FACING_DETAIL_CODES
+        assert "silent_audio_declined" in _DETERMINISTIC_JOB_FAILURE_CODES
+        detail = "Your video has no sound, so there's nothing to caption or cut. Record it again."
+        assert job_failure_message("silent_audio_declined", detail) == detail
+        # With no stored detail it still reads as this problem, never the generic iPhone line.
+        assert "no sound" in (job_failure_message("silent_audio_declined", None) or "")
+
+    def test_turkish_copy_exists(self) -> None:
+        from app.tasks.kria_runtime import _JOB_FAILURE_MESSAGES_TR
+
+        assert "ses yok" in _JOB_FAILURE_MESSAGES_TR["silent_audio_declined"]
 
 
 @requires_ffmpeg

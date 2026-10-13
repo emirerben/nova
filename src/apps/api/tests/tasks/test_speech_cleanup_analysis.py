@@ -21,6 +21,7 @@ from app.pipeline.speech_cleanup_analysis import (
     SpeechCleanupAnalysisResult,
 )
 from app.pipeline.transcribe import TranscribeError
+from app.services.clip_speech import AudioPresence
 from app.services.speech_cleanup_preflight import (
     SPEECH_CLEANUP_ENGINE_VERSION,
     SPEECH_CLEANUP_PAYLOAD_VERSION,
@@ -427,23 +428,38 @@ def test_silent_artifact_is_refused_before_any_transcription(monkeypatch) -> Non
     assert engine_calls == []
 
 
-def test_engine_bailout_for_words_in_silence_maps_to_no_speech_track(monkeypatch) -> None:
-    """Defense in depth when the level gate cannot measure: the transcript contradicts the audio."""
+def _result_with_bailout(reason: str):
     base = _result()
-    result = base.model_copy(
-        update={
-            "safety_signals": base.safety_signals.model_copy(
-                update={"bailout_reason": "words_in_silence"}
-            )
-        }
+    return base.model_copy(
+        update={"safety_signals": base.safety_signals.model_copy(update={"bailout_reason": reason})}
     )
-    engine_calls, work = _analyze_with_artifact(monkeypatch, audible=True, engine_result=result)
+
+
+def test_engine_bailout_maps_to_no_speech_track_when_the_level_was_unmeasurable(
+    monkeypatch,
+) -> None:
+    """Defense in depth: the level gate could not measure, so the transcript is the only witness."""
+    engine_calls, work = _analyze_with_artifact(
+        monkeypatch, audible=True, engine_result=_result_with_bailout("words_in_silence")
+    )
+    monkeypatch.setattr(
+        task_module, "audio_presence", lambda _path: AudioPresence("unknown", None, 0.0, 2.0)
+    )
 
     with pytest.raises(task_module.SpeechCleanupOperationalError) as raised:
         task_module._analyze_work(work)
 
     assert raised.value.code == "no_speech_track"
     assert raised.value.private_detail == "words_in_silence"
+    assert len(engine_calls) == 1
+
+
+def test_engine_bailout_on_measured_audible_audio_stands_as_an_uncut_plan(monkeypatch) -> None:
+    """A hushed or distant speaker measures audible; calling them "no speech" would be wrong."""
+    expected = _result_with_bailout("words_in_silence")
+    engine_calls, work = _analyze_with_artifact(monkeypatch, audible=True, engine_result=expected)
+
+    assert task_module._analyze_work(work) is expected
     assert len(engine_calls) == 1
 
 

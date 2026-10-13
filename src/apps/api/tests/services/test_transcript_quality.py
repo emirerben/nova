@@ -40,6 +40,12 @@ class TestIsDegenerateTranscript:
     def test_real_turkish_talk_is_not_degenerate(self) -> None:
         assert not is_degenerate_transcript(_REAL_TR)
 
+    def test_turkish_dotted_capital_i_is_one_token(self) -> None:
+        # casefold() turns İ into "i" + U+0307; it must not split "İstanbul" in two.
+        from app.services.transcript_quality import _TOKEN_RE, _fold
+
+        assert _TOKEN_RE.findall(_fold("İstanbul'da")) == ["istanbul'da"]
+
     def test_short_repetition_is_below_the_bar(self) -> None:
         assert not is_degenerate_transcript("no no no no no")  # 5 tokens: could be a real shout
 

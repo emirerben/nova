@@ -85,8 +85,11 @@ class TestIncidentGeometryIsRefused:
             mixed_gap_enabled=mixed_gap_enabled,
             **_REQUIRED_CLAMP,
         )
-        # Words are in audible islands here -> not a no-speech clip; the cut proceeds.
+        # Words are in audible islands here -> not a no-speech clip; the cut proceeds and still
+        # removes the dead air between them (it does not silently do nothing).
         assert plan.bailout_reason not in NO_SPEECH_BAILOUTS
+        assert plan.removed
+        assert plan.time_saved_s > 0
 
 
 @pytest.mark.parametrize("mixed_gap_enabled", [False, True], ids=["v1", "v2"])

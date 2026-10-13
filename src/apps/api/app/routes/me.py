@@ -935,7 +935,8 @@ class RecorderDiagnostic(BaseModel):
     A talk-to-camera take recorded in-app came back with a digitally silent audio
     track and nothing on the phone said why. The app reports its audio-session state
     and the last few camera/scene transitions so the trigger can be named from logs.
-    Enumerated labels and numbers only: no free text, file names, or user content.
+    Short bounded labels (each capped at 40 characters, lists capped) and numbers only: no
+    file names, script text, or anything the creator typed or said.
     """
 
     # Not named ``event``: structlog reserves that keyword for the log message itself.

@@ -2688,12 +2688,21 @@ def _analyze_clips_parallel_indexed(
                     # also omitted the transcript (best-effort — silent b-roll
                     # is common and Whisper returns fast on it).
                     from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
+                    from app.services.transcript_quality import (  # noqa: PLC0415
+                        is_degenerate_transcript,
+                    )
 
                     try:
                         transcript = transcribe_whisper(path)
-                        meta.transcript = transcript.full_text
-                        if not meta.hook_text and transcript.full_text:
-                            meta.hook_text = transcript.full_text[:100]
+                        # KRI-653: Whisper loops ("Bye! Bye!") over a silent take; that is not
+                        # a transcript, and it must not re-poison the transcript/hook we just
+                        # cleaned out of the Gemini result.
+                        spoken = transcript.full_text
+                        if is_degenerate_transcript(spoken):
+                            spoken = ""
+                        meta.transcript = spoken
+                        if not meta.hook_text and spoken:
+                            meta.hook_text = spoken[:100]
                     except Exception as whisper_exc:  # noqa: BLE001
                         log.warning(
                             "whisper_transcript_backstop_failed",
