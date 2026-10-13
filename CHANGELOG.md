@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.265.0] - 2026-10-13
+
+### Changed
+- fix(kria): never play clips the creator ruled out by length (KRI-623) (#1575) <!-- release-pr: 1575 -->
+
 ## [0.78.264.0] - 2026-10-13
 
 ### Changed
