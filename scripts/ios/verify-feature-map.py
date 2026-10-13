@@ -174,10 +174,6 @@ def capture(features, groups):
             raise ValueError(
                 "Selected UI execution omitted required mapped feature tests"
             )
-        report["coverage"] = ui_tests.verify_results(results, expected)
-        report["flaky_tests"] = json.loads(
-            (bundle.parent / "flaky-tests.json").read_text()
-        )
         subprocess.run(
             [
                 "xcrun",
@@ -190,6 +186,11 @@ def capture(features, groups):
                 str(OUTPUT / "attachments"),
             ],
             check=True,
+        )
+        # Export failure screenshots before coverage validation can reject a red run.
+        report["coverage"] = ui_tests.verify_results(results, expected)
+        report["flaky_tests"] = json.loads(
+            (bundle.parent / "flaky-tests.json").read_text()
         )
         if not any((OUTPUT / "attachments").glob("*.png")):
             raise ValueError("Selected UI execution produced no screenshots")
