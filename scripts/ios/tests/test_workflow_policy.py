@@ -56,6 +56,14 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
                     "if: needs.changes.outputs.journey_needs_native == 'true'", step
                 )
 
+    def test_superseded_pr_native_work_can_be_cancelled(self):
+        native_job = CI_WORKFLOW.read_text().split("\n  journey-native:\n", 1)[1]
+        native_job = native_job.split("\n    runs-on:", 1)[0]
+        # Optional preparation jobs can be skipped, but workflow cancellation
+        # must stop heavy native work instead of retaining its concurrency slot.
+        self.assertIn("!cancelled()", native_job)
+        self.assertNotIn("always()", native_job)
+
     def matrices(self):
         """{leg count: legs} from the matrix fromJSON expression, keyed on the
         selector's ios_ui_shards output; the final fallback literal is count 1."""

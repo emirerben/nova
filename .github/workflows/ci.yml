@@ -636,7 +636,7 @@ jobs:
     name: iPhone validation
     needs: [changes, journey-mapping, journey-offline, journey-library]
     if: >-
-      always() && needs.changes.result == 'success' && needs.changes.outputs.native_validation == 'true' &&
+      !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.native_validation == 'true' &&
       ((contains(needs.changes.outputs.journey_ids, 'kri-384-library-ingest') && needs.journey-library.result == 'success') ||
        (!contains(needs.changes.outputs.journey_ids, 'kri-384-library-ingest') && needs.journey-library.result == 'skipped')) &&
       ((needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success' && needs.journey-offline.result == 'success') ||

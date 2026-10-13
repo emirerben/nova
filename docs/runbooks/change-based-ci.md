@@ -79,6 +79,9 @@ selector's `native_validation` output is
 false on main pushes, and otherwise follows selected iOS/native journeys. The
 aggregate independently checks that decision against the event and manifest,
 then requires success or an explicit skip for each dependency.
+The heavy native job uses `!cancelled()` so optional skipped preparation does
+not block it, while superseding a PR commit stops its obsolete native execution.
+Only the small aggregate checks use `always()` to report failed dependencies.
 
 Portable checks and synthetic fixture generation finish before a Mac queues.
 API-only journeys keep Linux evidence without requiring a native fixture bundle.
