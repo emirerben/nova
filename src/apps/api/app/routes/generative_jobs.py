@@ -7248,11 +7248,15 @@ def _text_bend_capability(variant: dict) -> bool:
 
 def _editor_capabilities(job: Job, variant: dict) -> dict:
     """Editor capability map for one variant, clamped to what its renderer can save."""
-    return {
+    capabilities = {
         **_device_clamped_editor_capabilities(job, variant),
         "drawings": _drawing_capabilities(job, variant),
-        "text_bend": _text_bend_capability(variant),
     }
+    # Present only when ON: a builds/flag-off payload stays byte-identical to what it was before
+    # Bend (recorded editor snapshots and replays), and the app reads a missing key as off.
+    if _text_bend_capability(variant):
+        capabilities["text_bend"] = True
+    return capabilities
 
 
 def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:

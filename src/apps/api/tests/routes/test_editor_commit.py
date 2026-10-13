@@ -1564,8 +1564,6 @@ def test_cloud_variant_capabilities_are_never_clamped(
     capabilities = gj._editor_capabilities(job, variant)
 
     drawings = capabilities.pop("drawings")
-    # KRI-646: Bend is drawn on device only, so a cloud variant never advertises it.
-    assert capabilities.pop("text_bend") is False
     assert capabilities == gj._base_editor_capabilities(job, variant)
     assert "phone_edit_unsupported" not in json.dumps(capabilities)
     # KRI-589: drawings are phone-only, so a cloud variant carries the lane closed.
@@ -6025,7 +6023,6 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
             operation: {"editable": False, "reason": "drawing_requires_phone_render"}
             for operation in ("add", "edit", "trim", "delete")
         },
-        "text_bend": False,
         "background_music": False,
         "automatic_cut": False,
         "automatic_cut_reason": "no_reviewable_speech_timing",

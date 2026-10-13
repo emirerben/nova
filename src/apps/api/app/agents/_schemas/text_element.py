@@ -370,6 +370,10 @@ class TextElement(BaseModel):
         payload = handler(self)
         if self.wrap_lines:
             payload.pop("wrap_lines", None)
+        # KRI-646: an unset bend adds no key, so every plan, snapshot and replay hash recorded
+        # before Bend stays byte-identical.
+        if self.bend is None:
+            payload.pop("bend", None)
         return payload
 
     shadow_enabled: bool | None = Field(
