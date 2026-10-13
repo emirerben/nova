@@ -29,4 +29,120 @@ import XCTest
         flow.cameraChanged(.failed)
         XCTAssertEqual(flow.stage, .camera)
     }
+
+    // MARK: KRI-653 — silent takes and the Photos copy
+    //
+    // Failure modes written before the code:
+    // 1. a silent take is never attached, however it got to review;
+    // 2. a silent take is still the creator's footage, so it is still copied to Photos;
+    // 3. the Photos copy is read during performChanges, so deleting the movie before it finishes
+    //    would lose the copy: removal must wait for the save and must not wait forever on a denial;
+    // 4. a denied Photos permission is a note, never a blocker.
+
+    private func makeFlow(saver: PhotoLibrarySaving) throws -> (TeleprompterRecordingFlow, URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return (TeleprompterRecordingFlow(accountID: "test", projectID: UUID(), root: root, photoSaver: saver), root)
+    }
+
+    private func seedFinalizedTake(_ flow: TeleprompterRecordingFlow, check: TakeAudioCheck?) throws -> TeleprompterTakeManifest {
+        let take = TeleprompterTakeManifest(script: flow.script.draft, slot: .pending)
+        try flow.store.save(manifest: take)
+        try FileManager.default.createDirectory(at: flow.store.takesDirectory, withIntermediateDirectories: true)
+        try Data("movie".utf8).write(to: flow.store.fileURL(for: take))
+        flow.seedActiveTakeForTesting(take)
+        flow.camera.seedFinalizedAudioCheckForTesting(check)
+        flow.camera.onFinalized?(flow.store.fileURL(for: take), nil)
+        return take
+    }
+
+    func testSilentTakeIsNeverAttachedAndExplainsWhy() async throws {
+        let (flow, _) = try makeFlow(saver: RecordingSaver())
+        let silent = TakeAudioCheck(verdict: .silent, peakDb: -120, activeFraction: 0)
+        _ = try seedFinalizedTake(flow, check: silent)
+        XCTAssertEqual(flow.selectedTake?.audioCheck?.verdict, .silent)
+        XCTAssertEqual(flow.error, TeleprompterRecordingFlow.silentTakeMessage)
+
+        var intakeCalls = 0
+        await flow.useTake { _, _ in intakeCalls += 1; return .queued }
+        XCTAssertEqual(intakeCalls, 0, "a silent take must not reach intake")
+        XCTAssertFalse(flow.usingTake)
+        XCTAssertEqual(flow.selectedTake?.status, .review)
+    }
+
+    func testAudibleTakeIsStillUsable() async throws {
+        let (flow, _) = try makeFlow(saver: RecordingSaver())
+        _ = try seedFinalizedTake(flow, check: TakeAudioCheck(verdict: .ok, peakDb: -12, activeFraction: 0.8))
+        XCTAssertNil(flow.error)
+        var intakeCalls = 0
+        await flow.useTake { _, _ in intakeCalls += 1; return .queued }
+        XCTAssertEqual(intakeCalls, 1)
+    }
+
+    func testEveryPlayableTakeIsCopiedToPhotosEvenWhenSilent() async throws {
+        let saver = RecordingSaver()
+        let (flow, _) = try makeFlow(saver: saver)
+        let take = try seedFinalizedTake(flow, check: TakeAudioCheck(verdict: .silent, peakDb: -120, activeFraction: 0))
+        await saver.waitForSaves(1)
+        XCTAssertEqual(saver.savedFileNames, [flow.store.fileURL(for: take).lastPathComponent])
+    }
+
+    func testMovieOutlivesAPendingPhotosSave() async throws {
+        let saver = RecordingSaver(gated: true)
+        let (flow, _) = try makeFlow(saver: saver)
+        let take = try seedFinalizedTake(flow, check: TakeAudioCheck(verdict: .ok, peakDb: -12, activeFraction: 0.8))
+        let movie = flow.store.fileURL(for: take)
+        await saver.waitForSaves(1)
+
+        flow.discardSelected()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: movie.path), "Photos is still reading this movie")
+
+        saver.open()
+        for _ in 0..<50 where FileManager.default.fileExists(atPath: movie.path) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: movie.path), "removed once the save finished")
+    }
+
+    func testDeniedPhotosPermissionIsANoteNotABlocker() async throws {
+        let saver = RecordingSaver(failure: PhotoLibraryError.notAuthorized)
+        let (flow, _) = try makeFlow(saver: saver)
+        _ = try seedFinalizedTake(flow, check: TakeAudioCheck(verdict: .ok, peakDb: -12, activeFraction: 0.8))
+        for _ in 0..<50 where flow.photosNote == nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(flow.photosNote, TeleprompterRecordingFlow.photosNoteMessage)
+        XCTAssertEqual(flow.selectedTake?.status, .review, "the take is still reviewable and usable")
+    }
+}
+
+/// Stands in for `PhotoLibrarySaver`: records what it was asked to save, can hold a save open, can fail.
+private final class RecordingSaver: PhotoLibrarySaving, @unchecked Sendable {
+    private let lock = NSLock()
+    private var names: [String] = []
+    private var gate: CheckedContinuation<Void, Never>?
+    private var opened: Bool
+    private let failure: Error?
+    init(gated: Bool = false, failure: Error? = nil) { opened = !gated; self.failure = failure }
+
+    var savedFileNames: [String] { lock.lock(); defer { lock.unlock() }; return names }
+
+    /// Synchronous so the lock is never held across a suspension point.
+    private func record(_ name: String) -> Bool { lock.lock(); defer { lock.unlock() }; names.append(name); return !opened }
+    private func park(_ continuation: CheckedContinuation<Void, Never>) {
+        lock.lock()
+        if opened { lock.unlock(); continuation.resume() } else { gate = continuation; lock.unlock() }
+    }
+
+    func saveVideo(at url: URL) async throws {
+        if record(url.lastPathComponent) { await withCheckedContinuation { park($0) } }
+        if let failure { throw failure }
+    }
+
+    func open() {
+        lock.lock(); opened = true; let pending = gate; gate = nil; lock.unlock()
+        pending?.resume()
+    }
+
+    func waitForSaves(_ count: Int) async {
+        for _ in 0..<100 where savedFileNames.count < count { try? await Task.sleep(for: .milliseconds(20)) }
+    }
 }

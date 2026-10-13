@@ -43,6 +43,9 @@ struct SlidePostWorkspaceView: View {
     @State private var mode: SlidePostMode = .browse
     @State private var textTab: SlidePostTextPanel.Tab = .edit
     @State private var showsCaption = false
+    /// KRI-647: the Paste tool only takes dock room while there is something to paste. Asking whether the
+    /// pasteboard holds text or a picture does not trigger the "Allow Paste" prompt; reading it would.
+    @State private var clipboardHasContent = false
     @State private var showsSize = false
     /// Bumped to put the keyboard back on the Edit field when the same text is tapped again.
     @State private var focusToken = 0
@@ -150,6 +153,9 @@ struct SlidePostWorkspaceView: View {
         .onReceive(model.uploads.$progress) { uploadProgress = $0 }
         .onReceive(model.uploads.$photoSelections) { photoSelections = $0 }
         .onReceive(model.uploads.$failures) { uploadFailures = $0 }
+        .onAppear { clipboardHasContent = Self.pasteboardHasContent }
+        .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in clipboardHasContent = Self.pasteboardHasContent }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in clipboardHasContent = Self.pasteboardHasContent }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
         .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
@@ -439,6 +445,8 @@ struct SlidePostWorkspaceView: View {
         }
     }
 
+    private static var pasteboardHasContent: Bool { UIPasteboard.general.hasStrings || UIPasteboard.general.hasImages }
+
     private var richBanner: some View {
         VStack(spacing: 0) {
             SlidePostExportBanner(exporter: exporter)
@@ -447,7 +455,12 @@ struct SlidePostWorkspaceView: View {
     }
 
     @ViewBuilder private var statusBanner: some View {
-        if let error = session.error {
+        if let notice = session.pasteNotice {
+            Button { session.pasteNotice = nil } label: {
+                NativeEditorBannerRow(title: "Paste", detail: notice, systemImage: "doc.on.clipboard", tint: KriaColor.ink, identifier: "slidepost-paste-notice")
+            }
+            .buttonStyle(.plain).accessibilityHint("Dismiss")
+        } else if let error = session.error {
             Button { session.error = nil } label: {
                 NativeEditorBannerRow(title: "Something went wrong", detail: error, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-error")
             }
@@ -560,6 +573,7 @@ struct SlidePostWorkspaceView: View {
                 showsSize: sizesOn, onSize: { session.selectedTextID = nil; showsSize = true },
                 showsDraw: drawingOn, onDraw: beginDrawing,
                 canClearDrawing: slide?.edits?.drawing != nil, onClearDrawing: { if let id = slide?.id { session.clearDrawing(slideID: id) } },
+                onPaste: clipboardHasContent ? slide.map { target in { providers in Task { await session.paste(providers: providers, slideID: target.id) } } } : nil,
                 onText: beginTextEditing,
                 onCover: { if let id = slide?.id { session.setCover(id: id); UINotificationFeedbackGenerator().notificationOccurred(.success) } },
                 onLook: { mode = .look },

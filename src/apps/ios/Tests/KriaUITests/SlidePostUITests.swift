@@ -276,9 +276,13 @@ import XCTest
         XCTAssertTrue(preset.waitForExistence(timeout: 5))
         preset.tap(); app.buttons["Highlight"].tap()
         XCTAssertTrue(preset.label.contains("Highlight"))
-        let rotation = app.buttons["native-editor-text-rotation-Increment"]
+        // KRI-646: rotation is a slider. Drag it to 3/4 of the range (about 90 degrees).
+        let rotation = app.sliders["native-editor-text-rotation"]
         revealInTextPanel(rotation, app: app)
-        rotation.tap()
+        rotation.adjust(toNormalizedSliderPosition: 0.75)
+        let appliedRotation = rotation.value as? String
+        XCTAssertNotNil(appliedRotation)
+        XCTAssertNotEqual(appliedRotation, "0 degrees", "the slider moved the rotation")
         attach(app, "Text mode: style tab")
         app.buttons["slidepost-done"].tap()
         // Slide 2: add text with the default look.
@@ -301,9 +305,9 @@ import XCTest
         app.buttons["Style"].tap()
         XCTAssertTrue(app.buttons["native-editor-text-preset"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["native-editor-text-preset"].label.contains("Highlight"))
-        let target = app.buttons["native-editor-text-rotation-Increment"]
+        let target = app.sliders["native-editor-text-rotation"]
         revealInTextPanel(target, app: app)
-        XCTAssertEqual(target.value as? String, "5 degrees")
+        XCTAssertEqual(target.value as? String, appliedRotation, "apply-to-all copies the rotation")
         app.buttons["Edit text"].tap()
         XCTAssertEqual(app.textViews["slidepost-text-field"].firstMatch.value as? String, "Your text", "words are never copied")
         attach(app, "Style applied to all slides")
@@ -388,6 +392,20 @@ import XCTest
         app.buttons["slidepost-undo"].tap()
         XCTAssertTrue(app.buttons["slidepost-tile-3"].waitForExistence(timeout: 3), "undo restores the removed slide")
         attach(app, "More menu then undo")
+    }
+
+    /// KRI-647: the system Paste control in the tool dock turns copied text into a text on the selected slide.
+    func testPasteAddsCopiedTextToTheSelectedSlide() {
+        UIPasteboard.general.string = "5.2 km in 28:14"
+        let app = openRichWorkspace()
+        XCTAssertFalse(canvasText(app).exists, "a fresh slide has no text")
+        let paste = app.descendants(matching: .any)["slidepost-paste"].firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 5))
+        paste.tap()
+        XCTAssertTrue(canvasText(app).waitForExistence(timeout: 5), "the pasted text appears on the canvas")
+        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes")
+        XCTAssertTrue(app.buttons["slidepost-undo"].isEnabled)
+        attach(app, "Pasted text on a slide")
     }
 
     /// The page has ONE AI entry (the editor's sparkles button). It opens a sheet that drives the chat

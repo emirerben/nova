@@ -861,38 +861,72 @@
     {
       "id": "kri-546-montage-receipts",
       "tickets": [
-        "KRI-546"
+        "KRI-546",
+        "KRI-651"
       ],
-      "symptom": "Phone Montage render-ready reply said 'Doğrulayamadım' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped.",
+      "symptom": "Phone Montage render-ready reply said 'Doğrulayamadım' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
       "boundary": "publication",
       "fix_prs": [
-        1503
+        1503,
+        1589,
+        1594
       ],
       "fix_commit": "414d8181b",
       "paths": [
         "src/apps/api/app/kria/brief_checks.py",
-        "src/apps/api/app/tasks/kria_runtime.py"
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/services/creation_text_composition.py",
+        "src/apps/api/app/schemas/text_composition.py",
+        "src/apps/api/app/tasks/edit_proposal_build.py",
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/tests/fixtures/prompt_coverage/kri651_approved_hook.json",
+        "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/creation_thread_titles.py",
+        "src/apps/api/app/agents/clip_intent_planner.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/routes/creator_agent.py",
+        "src/apps/api/prompts/clip_intent_planner.txt"
       ],
       "regression_tests": [
         "tests/kria/test_brief_montage_render_asks.py",
-        "tests/tasks/test_montage_render_ready_review.py"
+        "tests/tasks/test_montage_render_ready_review.py",
+        "tests/evals/request_following/test_approved_hook_journey.py",
+        "tests/kria/test_approved_hook_observer_postgres.py",
+        "tests/kria/test_first_step_recovery_postgres.py",
+        "tests/kria/test_brief_provider_recovery_postgres.py",
+        "tests/kria/test_confirmed_title_inventory_postgres.py"
       ],
       "harness": "real_reply",
       "kill_switch": null,
       "evidence": {
-        "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id",
+        "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read",
         "live_model": "n/a",
-        "native_output": "Berlin re-run job a7d69a5b (2026-10-08) was the incident; post-fix phone re-send pending",
+        "native_output": "Berlin re-run job a7d69a5b (2026-10-08) was the incident; post-fix phone re-send pending; KRI-651: native simulator export and pixel checks passed 2026-10-13 (exact hook, color emoji, no context caption)",
         "production": "merged 2026-10-08"
       },
       "neighbours_covered": [
-        "generation looked up through the device record of the published attempt"
+        "generation looked up through the device record of the published attempt",
+        "approved Unicode hook without another model call",
+        "closing copy plus emoji and ordinary symbols",
+        "explicit caption versus explanatory context",
+        "saved composition constraints",
+        "EN/TR text preparation failure and real-Postgres publication observer",
+        "automatic naming during first hook planning does not repeat provider contact",
+        "provider-outcome-unknown is a typed EN/TR failure with saved request",
+        "main and brief extraction providers honor the shared turn deadline",
+        "EN/TR saved opening and closing placement reaches plan approval through real clip inventory",
+        "one-clip caption and raw mixed requests remain inventoried even when absent from the brief or candidates",
+        "later placement changes and stale copy do not inherit prior approval",
+        "narrow follow-up extractor provider failure remains typed with saved footage"
       ],
       "neighbours_gap": [
         "approved/published generation lineage is not a typed invariant at the publication boundary (KRI-577 item 1)",
         "red control 2026-10-11: the gate only fails at import on the pre-fix tree (it imports helpers the fix added), so it does not prove the behaviour change by itself"
       ],
-      "follow_ups": [],
+      "follow_ups": [
+        "KRI-651: paired approved-hook native export; exact TestFlight resend pending release approval"
+      ],
       "red_control": "weak"
     },
     {
@@ -1124,6 +1158,60 @@
         "KRI-610 (#1562) breaks the repeated \"simpler version?\" loop"
       ],
       "red_control": "verified"
+    },
+    {
+      "id": "kri-653-silent-take",
+      "tickets": [
+        "KRI-653"
+      ],
+      "symptom": "A 192.6 s in-app talk-to-camera take recorded digitally silent audio; Whisper/Gemini hallucinated words over it, silence cut removed 98% and the job shipped a 4.9 s video as variants_ready with no error (job c283f1dd, 2026-10-13).",
+      "boundary": "verifier",
+      "status": "open_pr",
+      "owner": "KRI-653",
+      "paths": [
+        "src/apps/api/app/services/clip_speech.py",
+        "src/apps/api/app/services/transcript_quality.py",
+        "src/apps/api/app/pipeline/silence_cut.py",
+        "src/apps/api/app/tasks/speech_cleanup_analysis.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/pipeline/phone_guided_plan.py",
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/services/test_audio_presence.py",
+        "tests/services/test_transcript_quality.py",
+        "tests/pipeline/test_silence_cut_no_speech.py",
+        "tests/tasks/test_silent_audio_gate.py",
+        "tests/tasks/test_phone_subtitled_narrated_dispatch.py::test_subtitled_silent_take_is_declined_with_its_own_creator_facing_failure",
+        "tests/tasks/test_speech_cleanup_analysis.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "real prod proxy (silent) + prod Whisper words + real silencedetect span replayed: presence=silent, gate declines, cut plan words_in_silence on V1 and V2",
+        "live_model": "n/a",
+        "native_output": "incident observed on TestFlight 2026-10-13; recorder fix ships in the iOS PR",
+        "production": "unfixed until this PR deploys"
+      },
+      "neighbours_covered": [
+        "phone subtitled (declared + self-narrated)",
+        "cloud subtitled archetype resolution",
+        "speech-cleanup preflight (before Whisper spend)",
+        "V1 and V2 cut builders",
+        "talking_head cloud already rejects silent spines via the 0.15 speech-coverage floor",
+        "creator sees the silent-audio message, not the generic iPhone line (own failure code)"
+      ],
+      "neighbours_gap": [
+        "in-app recorder can still produce a silent take until the iOS PR ships",
+        "creator voiceover recordings have no silence check",
+        "iOS speech-check failure screen ignores the no_speech_track code"
+      ],
+      "follow_ups": [
+        "iOS recorder fix (KRI-653 PR 2)"
+      ],
+      "red_control": "not_applicable",
+      "journey": "kri-653-silent-take"
     }
   ]
 }

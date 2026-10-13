@@ -2754,6 +2754,57 @@ class MediaAssetAnalysis(Base):
     )
 
 
+class MediaAssetUploadReservation(Base):
+    """Durable create-only upload target and post-commit analysis outbox."""
+
+    __tablename__ = "media_asset_upload_reservations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    client_upload_id: Mapped[str] = mapped_column(Text, nullable=False)
+    request_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    object_path: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="reserved")
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    client_event_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analysis_dispatch_pending: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "client_upload_id", name="uq_media_upload_owner_client"),
+        ForeignKeyConstraint(
+            ["asset_id", "user_id"],
+            ["media_assets.id", "media_assets.user_id"],
+            name="fk_media_upload_asset_owner",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["source_id", "user_id", "asset_id"],
+            [
+                "media_asset_sources.id",
+                "media_asset_sources.user_id",
+                "media_asset_sources.asset_id",
+            ],
+            name="fk_media_upload_source_owner",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("status IN ('reserved','finalized')", name="ck_media_upload_status"),
+        CheckConstraint(
+            "(status = 'reserved' AND asset_id IS NULL AND source_id IS NULL) OR "
+            "(status = 'finalized' AND asset_id IS NOT NULL AND source_id IS NOT NULL)",
+            name="ck_media_upload_finalization",
+        ),
+        Index("idx_media_upload_owner_expiry", "user_id", "status", "expires_at"),
+        Index("idx_media_upload_analysis_outbox", "analysis_dispatch_pending", "created_at"),
+    )
+
+
 class MediaCollection(Base):
     __tablename__ = "media_collections"
 
@@ -3338,6 +3389,26 @@ class PlanItemAsset(Base):
 
     __tablename__ = "plan_item_assets"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["library_asset_id", "user_id"],
+            ["media_assets.id", "media_assets.user_id"],
+            name="fk_plan_item_asset_library_owner",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["library_source_id", "user_id", "library_asset_id"],
+            [
+                "media_asset_sources.id",
+                "media_asset_sources.user_id",
+                "media_asset_sources.asset_id",
+            ],
+            name="fk_plan_item_asset_library_source",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "(library_asset_id IS NULL) = (library_source_id IS NULL)",
+            name="ck_plan_item_asset_library_pair",
+        ),
         UniqueConstraint(
             "plan_item_id",
             "client_upload_id",
@@ -3364,6 +3435,8 @@ class PlanItemAsset(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     gcs_path: Mapped[str] = mapped_column(Text, nullable=False)
+    library_asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    library_source_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     # "image" | "video" — derived from the upload content type in the route layer.
     # Plain Text (no DB CHECK) so the vocabulary can grow without a migration.
     kind: Mapped[str] = mapped_column(Text, nullable=False)

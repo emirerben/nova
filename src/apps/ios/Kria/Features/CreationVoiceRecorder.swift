@@ -31,6 +31,7 @@ extension Notification.Name {
     private var permissionRequestInFlight = false
     private var operationGeneration = 0
     private var importTask: Task<Void, Never>?
+    private var ownsPlaybackSession = false
 
     var recordingURL: URL? { fileURL }
     var displayName: String {
@@ -101,12 +102,17 @@ extension Notification.Name {
         isRecording = false
         hasRecording = fileURL != nil
         stopMetering()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        AudioSessionArbiter.shared.deactivate(requester: "voice-recorder.stop")
         return fileURL
     }
 
     func stopForInterruption() {
-        guard isRecording else { pausePlayback(); return }
+        guard isRecording else {
+            // KRI-653: with nothing playing there is no session of ours to tear down. This used to
+            // call setActive(false) on every scene change, under a live teleprompter capture graph.
+            if isPlaying { pausePlayback() }
+            return
+        }
         _ = stop()
         error = "Recording stopped because audio was interrupted. You can listen and use it, record again, or choose a file."
     }
@@ -148,6 +154,7 @@ extension Notification.Name {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .spokenAudio)
             try session.setActive(true)
+            ownsPlaybackSession = true
             let player = try AVAudioPlayer(contentsOf: fileURL)
             player.delegate = self
             player.currentTime = min(playbackTime, max(0, player.duration - 0.01))
@@ -166,7 +173,14 @@ extension Notification.Name {
         isPlaying = false
         playbackTask?.cancel()
         playbackTask = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        releasePlaybackSession(requester: "voice-recorder.pause")
+    }
+
+    /// Deactivates the shared session only if THIS object activated it for playback (KRI-653).
+    private func releasePlaybackSession(requester: String) {
+        guard ownsPlaybackSession else { return }
+        ownsPlaybackSession = false
+        AudioSessionArbiter.shared.deactivate(requester: requester)
     }
 
     func discard() {
@@ -236,7 +250,13 @@ extension Notification.Name {
         meter = max(0.03, min(1, CGFloat((audioRecorder.averagePower(forChannel: 0) + 60) / 60)))
     }
 
-    @objc private func audioInterrupted(_ notification: Notification) { stopForInterruption() }
+    @objc private func audioInterrupted(_ notification: Notification) {
+        // Only the START of an interruption means audio was taken from us. An `.ended` used to run
+        // the same teardown and could deactivate a session that something else had just reacquired.
+        let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+        if let raw, AVAudioSession.InterruptionType(rawValue: raw) == .ended { return }
+        stopForInterruption()
+    }
 
     enum RecorderError: LocalizedError { case couldNotStart, couldNotPlay, invalidFile
         var errorDescription: String? {
@@ -253,7 +273,7 @@ extension CreationVoiceRecorder: AVAudioPlayerDelegate {
             playbackTask?.cancel()
             playbackTask = nil
             audioPlayer = nil
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            releasePlaybackSession(requester: "voice-recorder.finished")
         }
     }
 }

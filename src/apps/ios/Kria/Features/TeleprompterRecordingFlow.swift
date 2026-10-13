@@ -7,6 +7,9 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
 
 @MainActor final class TeleprompterRecordingFlow: ObservableObject {
     enum Stage: Equatable { case script, camera, countdown, starting, recording, finalizing, review }
+    static let silentTakeMessage = "This take has no sound. Your microphone didn’t record anything, so it can’t be used for a talking video."
+    static let quietTakeMessage = "We could barely hear you in this take."
+    static let photosNoteMessage = "Couldn’t save this take to Photos. Allow access in Settings to keep a copy."
     let store: TeleprompterStore
     let script: TeleprompterScript
     let camera = TeleprompterCamera()
@@ -18,15 +21,24 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
     @Published var usingTake = false
     @Published var queueAccepted = false
     @Published var attachmentFinished = false
+    /// A non-blocking note when the raw take could not be copied to Photos (KRI-653).
+    @Published var photosNote: String?
     private var countdownTask: Task<Void, Never>?
     private var activeTake: TeleprompterTakeManifest?
     private var finalizedTake: TeleprompterTakeManifest?
     private var loaded = false
     private var generation = UUID()
+    private let photoSaver: PhotoLibrarySaving
+    /// Photos copies the file during `performChanges`, so a take's movie must outlive its save.
+    private var photoSaves: [UUID: Task<Bool, Never>] = [:]
 
-    init(accountID: String, projectID: UUID, root: URL? = nil) {
+    init(accountID: String, projectID: UUID, root: URL? = nil,
+         photoSaver: PhotoLibrarySaving = PhotoLibrarySaver(),
+         reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
         store = TeleprompterStore(accountID: accountID, projectID: projectID, root: root)
         script = TeleprompterScript()
+        self.photoSaver = photoSaver
+        camera.reportDiagnostic = reportDiagnostic
         camera.onFinalized = { [weak self] url, message in self?.finalized(url: url, message: message) }
     }
 
@@ -51,6 +63,7 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
                 let valid = await Self.playable(store.fileURL(for: takes[index]))
                 takes[index].status = valid ? .review : .invalid
                 takes[index].interrupted = true
+                if valid { takes[index].audioCheck = await TakeAudioMeasurement.measure(url: store.fileURL(for: takes[index])) }
                 do { try store.save(manifest: takes[index]) }
                 catch {
                     // A storage problem with one recovered candidate must not
@@ -141,14 +154,22 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
         camera.stopSession()
     }
 
+    #if DEBUG
+    /// Test seam: the real path sets this when the countdown ends and the file output starts.
+    func seedActiveTakeForTesting(_ take: TeleprompterTakeManifest) { activeTake = take }
+    #endif
+
     private func finalized(url: URL?, message: String?) {
         guard var take = activeTake else { return }
         activeTake = nil
         take.status = url == nil ? .invalid : .review
         take.interrupted = camera.interrupted
+        take.audioCheck = url == nil ? nil : camera.finalizedAudioCheck
         finalizedTake = take
         script.pause(); stage = .review
         error = message
+        // KRI-653: a silent take is never attached. Say why before the creator reaches for "Use take".
+        if take.audioCheck?.verdict == .silent { error = Self.silentTakeMessage }
         do {
             try store.save(manifest: take)
             selectedTake = take
@@ -161,6 +182,50 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
             self.error = "Your recording is kept, but its details couldn’t be saved. Retry saving before using it."
         }
         camera.stopSession()
+        // Every playable take is copied to Photos (silent ones too: the footage is still the creator's),
+        // after the session is stopped so a first-run permission prompt cannot interrupt a recording.
+        if take.status == .review { savePhotoCopy(of: take) }
+    }
+
+    // MARK: Photos copy of the raw take (KRI-653)
+
+    private func savePhotoCopy(of take: TeleprompterTakeManifest) {
+        let url = store.fileURL(for: take), id = take.id, saver = photoSaver
+        photosNote = nil
+        let save = Task<Bool, Never> { (try? await saver.saveVideo(at: url)) != nil }
+        photoSaves[id] = save
+        Task { [weak self] in
+            let saved = await save.value
+            guard let self else { return }
+            self.photoSaves[id] = nil
+            self.recordPhotoSave(id: id, saved: saved)
+        }
+    }
+
+    private func recordPhotoSave(id: UUID, saved: Bool) {
+        if !saved { photosNote = Self.photosNoteMessage }
+        for candidate in [selectedTake, pendingTake] {
+            guard var take = candidate, take.id == id else { continue }
+            take.savedToPhotos = saved
+            if (try? store.save(manifest: take)) != nil {
+                if selectedTake?.id == id { selectedTake = take }
+                if pendingTake?.id == id { pendingTake = take }
+            }
+        }
+    }
+
+    /// Deletes a take's movie, but never while Photos is still reading it.
+    private func deleteMovie(of take: TeleprompterTakeManifest) {
+        let url = store.fileURL(for: take)
+        guard let pending = photoSaves[take.id] else { try? FileManager.default.removeItem(at: url); return }
+        Task { _ = await pending.value; try? FileManager.default.removeItem(at: url) }
+    }
+
+    /// `store.remove(manifest:removingFile: true)`, with the movie removal deferred past a pending Photos save.
+    private func removeTake(_ take: TeleprompterTakeManifest) throws {
+        guard photoSaves[take.id] != nil else { try store.remove(manifest: take, removingFile: true); return }
+        try store.remove(manifest: take, removingFile: false)
+        deleteMovie(of: take)
     }
 
     var needsMetadataRetry: Bool { finalizedTake != nil }
@@ -177,9 +242,9 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
     func retake() async {
         guard !usingTake, !queueAccepted, selectedTake?.status != .attaching else { return }
         do {
-            if let take = selectedTake, take.slot == .candidate { try store.remove(manifest: take, removingFile: true) }
+            if let take = selectedTake, take.slot == .candidate { try removeTake(take) }
             else if let take = selectedTake, take.status == .invalid {
-                try store.remove(manifest: take, removingFile: true); pendingTake = nil
+                try removeTake(take); pendingTake = nil
             }
             selectedTake = nil; error = nil; script.reset()
             await openCamera()
@@ -190,7 +255,7 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
         guard !usingTake, !queueAccepted, let previous = pendingTake,
               let current = selectedTake, current.id != previous.id else { return }
         do {
-            try store.remove(manifest: current, removingFile: true)
+            try removeTake(current)
             selectedTake = previous; error = nil; attachmentFinished = false
         } catch { self.error = "Couldn’t discard this candidate. Both takes are still kept." }
     }
@@ -198,7 +263,7 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
     func discardSelected() {
         guard !usingTake, !queueAccepted, let take = selectedTake else { return }
         do {
-            try store.remove(manifest: take, removingFile: true)
+            try removeTake(take)
             if pendingTake?.id == take.id { pendingTake = nil }
             selectedTake = pendingTake; stage = selectedTake == nil ? .script : .review
             error = nil
@@ -206,7 +271,8 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
     }
 
     func useTake(_ intake: (TeleprompterTakeManifest, URL) async -> TeleprompterIntakeResult) async {
-        guard !usingTake, !queueAccepted, var take = selectedTake, take.status == .review else { return }
+        guard !usingTake, !queueAccepted, var take = selectedTake, take.status == .review,
+              take.audioCheck?.verdict != .silent else { return }
         usingTake = true; defer { usingTake = false }
         do {
             let request = take
@@ -215,7 +281,7 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
             try store.save(manifest: take) // Preserve the stable ID BEFORE enqueue.
             pendingTake = take; selectedTake = take
             if let previous, previous.id != take.id, previous.status != .accepted {
-                try store.remove(manifest: previous, removingFile: true)
+                try removeTake(previous)
             }
             apply(await intake(request, store.fileURL(for: take)))
         } catch { self.error = "Your video is kept, but its details couldn’t be saved. Try again." }
@@ -232,7 +298,7 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
                 selectedTake = take; pendingTake = nil; queueAccepted = false; attachmentFinished = true; error = nil
                 // Intake owns a separate durable project original now. Keep the
                 // immutable script manifest, release this duplicate movie.
-                try? FileManager.default.removeItem(at: store.fileURL(for: take))
+                deleteMovie(of: take)
             } catch { self.error = "The take was added. Couldn’t save that receipt yet; retry checking its status." }
         case .failed(let message):
             take.status = .review

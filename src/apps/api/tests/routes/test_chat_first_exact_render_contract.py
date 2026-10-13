@@ -339,6 +339,10 @@ async def test_chat_first_can_attach_four_owned_clips_before_exact_request(
     )
     db = Mock()
     db.get = AsyncMock(return_value=item)
+    # The route checks for an existing temporary-upload receipt before every
+    # attach; this fixture models the normal absence case with an awaitable DB
+    # scalar lookup.
+    db.scalar = AsyncMock(return_value=None)
     db.execute = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
@@ -355,6 +359,9 @@ async def test_chat_first_can_attach_four_owned_clips_before_exact_request(
         lambda _path: SimpleNamespace(size=100, content_type="video/mp4", generation="1"),
     )
     monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(10.0, True)))
+    monkeypatch.setattr(
+        "app.tasks.kria_clip_understanding.enqueue_clip_understanding", lambda _item_id: None
+    )
 
     for index in range(1, 5):
         media_id = f"clip-{index}.mp4"

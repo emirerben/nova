@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -16,6 +16,7 @@ from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
 from app.agents.clip_intent_planner import (
     ClipIntentPlannerAgent,
     ClipIntentPlannerInput,
+    ConfirmedTitleCopy,
     salvage_question,
 )
 from app.config import settings
@@ -381,6 +382,7 @@ async def plan_and_resolve_clip_intents(
     candidate_intents: list[ClipIntent] | None,
     clips: list[IntentClip],
     run_context: RunContext,
+    confirmed_titles: Sequence[ConfirmedTitleCopy] | None = None,
     generated_brief: str | None = None,
     background: bool = False,
     checkpoint: Any = None,
@@ -423,6 +425,8 @@ async def plan_and_resolve_clip_intents(
                 latest_user_message=latest_user_message,
                 generated_brief=generated_brief,
                 candidate_intents=candidate_intents,
+                confirmed_titles=list(confirmed_titles or ()),
+                available_clip_count=len(clips),
                 **({"clip_facts": True} if clip_facts_on else {}),
                 reply_language=current_reply_language(),
             ),
