@@ -350,6 +350,11 @@ jobs:
           python-version: '3.11'
           cache: pip
           cache-dependency-path: src/apps/api/pyproject.toml
+      # Match API CI's native Python-library dependencies (Skia imports GL).
+      - name: Install portable journey runtime libraries
+        run: |
+          sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
+          sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1
       - name: Install offline journey dependencies
         if: needs.changes.outputs.journey == 'true'
         working-directory: src/apps/api
@@ -373,7 +378,6 @@ jobs:
       - name: Require FFmpeg for deterministic fixture media
         if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation') || contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
         run: |
-          command -v ffmpeg >/dev/null || sudo bash scripts/ci/apt-install.sh ffmpeg
           ffmpeg -version | head -n 1
       - name: Generate and verify offline server journey fixture
         if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
