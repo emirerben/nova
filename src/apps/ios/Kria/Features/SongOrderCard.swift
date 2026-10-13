@@ -336,7 +336,9 @@ struct SongOrderPreview: View {
         halt()
         guard isSessionActive else { return }
         isSessionActive = false
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        // KRI-653: the teleprompter posts `.kriaAudioCaptureWillStart` while its capture graph owns
+        // the session; the arbiter skips this deactivation then.
+        AudioSessionArbiter.shared.deactivate(requester: "song-order-preview")
     }
 
     private func halt() {
