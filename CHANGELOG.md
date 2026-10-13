@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.272.0] - 2026-10-13
+
+### Changed
+- fix(kria): moment receipt checks source clips; keep-original-sound receipt (KRI-624) (#1586) <!-- release-pr: 1586 -->
+
 ## [0.78.271.0] - 2026-10-13
 
 ### Changed
