@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.254.0] - 2026-10-13
+
+### Changed
+- fix(ios): Kria thinking shows a one-line summary, full text on tap (KRI-627) (#1574) <!-- release-pr: 1574 -->
+
 ## [0.78.253.0] - 2026-10-13
 
 ### Changed
