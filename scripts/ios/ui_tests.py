@@ -12,13 +12,14 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path(__file__).with_name("ui-test-groups.json")
 # Median seconds per UI test on GitHub's macos-15 runners; sizes and balances shards.
-DURATIONS = Path(__file__).with_name("ui-test-durations.json")
+DURATIONS = Path(__file__).with_name("ui-test-measured-durations.json")
+LEGACY_DURATIONS = Path(__file__).with_name("ui-test-durations.json")
 # Each extra native leg repeats ~7 minutes of setup and compilation, so a
 # selection splits only when one leg would run more than this much recorded UI
-# time: main's full suite gets three legs, an editor-touching PR two.
+# time. Nightly/manual full regression gets three legs; PRs use one Mac.
 SHARD_TARGET_SECONDS = 15 * 60
-# Main (three legs) plus one two-leg PR fit the account's five concurrent
-# macOS runners. ios.yml must define a matrix for every count up to this one.
+# Bound full regression fan-out. ios.yml must define a matrix for every
+# count up to this one; main and PRs explicitly select one native leg.
 MAX_SHARDS = 3
 FEATURES = ("creation", "projects", "editor")
 FOCUSED = tuple(f"smoke,{group}" for group in FEATURES)
@@ -339,10 +340,19 @@ def parse_shard(spec):
     return int(match.group(1)), int(match.group(2))
 
 
+def load_durations():
+    """Keep new feature timings while applying the bulk measured baseline."""
+    durations = {}
+    for path in (LEGACY_DURATIONS, DURATIONS):
+        if path.exists():
+            durations.update(json.loads(path.read_text()))
+    return durations
+
+
 def weights(tests, durations=None):
     """Recorded seconds per test; tests without a recorded duration weigh the median."""
     if durations is None:
-        durations = json.loads(DURATIONS.read_text()) if DURATIONS.exists() else {}
+        durations = load_durations()
     known = sorted(float(value) for value in durations.values())
     default = known[len(known) // 2] if known else 30.0
     return {test: float(durations.get(test, default)) for test in tests}
@@ -353,7 +363,9 @@ def shard_count(value, root=ROOT, durations=None):
     recorded UI time, at most MAX_SHARDS and never more legs than tests."""
     tests = expected_tests(value, root)
     estimate = sum(weights(tests, durations).values())
-    return max(1, min(MAX_SHARDS, len(tests), math.ceil(estimate / SHARD_TARGET_SECONDS)))
+    return max(
+        1, min(MAX_SHARDS, len(tests), math.ceil(estimate / SHARD_TARGET_SECONDS))
+    )
 
 
 def shard_tests(tests, spec, durations=None):
@@ -367,11 +379,15 @@ def shard_tests(tests, spec, durations=None):
     index, count = parse_shard(spec)
     weight = weights(tests, durations)
     loads, members = [0.0] * count, [[] for _ in range(count)]
+    # Shard 1 runs the unit suite. Small focused selections keep their old
+    # partition: the overhead alone would otherwise consume their UI budget.
+    if count > 1 and sum(weight.values()) > count * 7 * 60:
+        loads[0] = 7 * 60
     for test in sorted(tests, key=lambda test: (-weight[test], test)):
         target = min(range(count), key=lambda shard: (loads[shard], shard))
         loads[target] += weight[test]
         members[target].append(test)
-    if not members[index - 1]:
+    if any(not part for part in members):
         raise ValueError(f"UI shard {spec} selects no tests")
     return set(members[index - 1])
 

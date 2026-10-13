@@ -295,7 +295,12 @@ def affected(path):
 
 def selection_details(event, base, head):
     if event != "pull_request":
-        return set(SUITES), "Full regression run (non-PR event).", "full"
+        groups = "smoke" if event == "push" else "full"
+        return (
+            set(SUITES),
+            "Main release tripwire." if event == "push" else "Full regression run.",
+            groups,
+        )
     try:
         # No rename detection: both old and new paths must influence selection.
         ancestor = git("merge-base", base, head).decode().strip()
@@ -348,9 +353,9 @@ def selection(event, base, head):
 
 
 def ui_shards(event, groups):
-    """PRs run one Mac; main and manual runs shard the full suite to fit the cap."""
+    """PR/main use one Mac; nightly/manual shard the full suite to fit the cap."""
 
-    if event == "pull_request":
+    if event in ("pull_request", "push"):
         return 1
     if groups == "none":
         return 1
@@ -361,7 +366,71 @@ def ui_shards(event, groups):
         return 1
 
 
-def gate(needs, suite, job):
+def native_validation(event, suites, journey_native):
+    """PR/manual/nightly native proof; main's release workflow owns its Mac."""
+    return event != "push" and ("ios" in suites or journey_native)
+
+
+def validate_journey_mapping(coverage, ids):
+    selected = ids.split(",") if ids else []
+    if coverage != "covered" or not selected or len(selected) != len(set(selected)):
+        raise ValueError("Journey selection has an unmapped or invalid incident")
+    journey_native_for_ids(selected)
+    return selected
+
+
+def gate_journey(needs, event):
+    required = {
+        "changes",
+        "journey-mapping",
+        "journey-offline",
+        "journey-library",
+        "journey-native",
+    }
+    if set(needs) != required or needs["changes"].get("result") != "success":
+        raise ValueError("Journey selection failed or dependencies are missing")
+    outputs = needs["changes"].get("outputs", {})
+    for key in ("journey", "ios", "journey_needs_native", "native_validation"):
+        if outputs.get(key) not in ("true", "false"):
+            raise ValueError(f"Missing or invalid {key}")
+    journey = outputs["journey"] == "true"
+    selected = []
+    if journey:
+        selected = validate_journey_mapping(
+            outputs.get("journey_coverage"), outputs.get("journey_ids")
+        )
+        if journey_native_for_ids(selected) != (
+            outputs["journey_needs_native"] == "true"
+        ):
+            raise ValueError("Inconsistent manifest native selection")
+    elif (
+        outputs.get("journey_coverage") != "not_applicable"
+        or outputs.get("journey_ids") != ""
+        or outputs["journey_needs_native"] != "false"
+    ):
+        raise ValueError("Inconsistent unselected journey")
+    native = native_validation(
+        event,
+        {"ios"} if outputs["ios"] == "true" else set(),
+        outputs["journey_needs_native"] == "true",
+    )
+    if outputs["native_validation"] != str(native).lower():
+        raise ValueError("Native execution does not match event and selection")
+    for job, selected in (
+        ("journey-mapping", journey),
+        ("journey-offline", journey),
+        ("journey-library", "kri-384-library-ingest" in selected),
+        ("journey-native", native),
+    ):
+        expected = "success" if selected else "skipped"
+        if needs[job].get("result") != expected:
+            raise ValueError(
+                f"{job}: expected {expected}, got {needs[job].get('result')}"
+            )
+    return "Selected portable and native journey dependencies passed."
+
+
+def gate(needs, suite, job, event="pull_request"):
     """A skipped job passes ONLY when a successful selector explicitly opted out."""
     if suite in ("api", "journey"):
         required_needs = {
@@ -382,14 +451,20 @@ def gate(needs, suite, job):
     selected = outputs.get(suite)
     if suite == "ios":
         ui = outputs.get("ios_ui")
-        groups = ui_tests.validate_groups(outputs.get("ios_ui_groups"))
+        groups = outputs.get("ios_ui_groups")
+        if event == "push" and groups == "smoke":
+            ui_tests.validate_execution(groups)
+        else:
+            ui_tests.validate_groups(groups)
         if (groups == "none") != (ui == "false"):
             raise ValueError("Inconsistent iOS UI groups")
         if ui not in ("true", "false") or (ui == "true" and selected != "true"):
             raise ValueError("Missing or inconsistent iOS UI selection")
         shards = outputs.get("ios_ui_shards")
         counts = {str(count) for count in range(1, ui_tests.MAX_SHARDS + 1)}
-        if shards not in counts or (ui == "false" and shards != "1"):
+        if shards not in counts or (
+            (ui == "false" or groups == "smoke") and shards != "1"
+        ):
             raise ValueError("Missing or inconsistent iOS UI shard count")
     if suite == "lint":
         if outputs.get("api") not in ("true", "false"):
@@ -411,7 +486,11 @@ def gate(needs, suite, job):
     if result != expected:
         raise ValueError(f"{suite}: expected {expected}, got {result}")
     if suite == "journey":
-        ids = outputs.get("journey_ids", "").split(",") if outputs.get("journey_ids") else []
+        ids = (
+            outputs.get("journey_ids", "").split(",")
+            if outputs.get("journey_ids")
+            else []
+        )
         library_expected = "success" if "kri-384-library-ingest" in ids else "skipped"
         library_result = needs["journey-library"].get("result")
         if library_result != library_expected:
@@ -443,8 +522,24 @@ def gate(needs, suite, job):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "gate-journey":
+        print(
+            gate_journey(
+                json.loads(os.environ["CI_NEEDS"]), os.environ["GITHUB_EVENT_NAME"]
+            )
+        )
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "validate-mapping":
+        validate_journey_mapping(os.environ["COVERAGE"], os.environ["JOURNEY_IDS"])
+        return
     if len(sys.argv) > 1 and sys.argv[1] == "gate":
-        print(gate(json.loads(os.environ.get("CI_NEEDS", "{}")), *sys.argv[2:]))
+        print(
+            gate(
+                json.loads(os.environ.get("CI_NEEDS", "{}")),
+                *sys.argv[2:],
+                event=os.environ.get("GITHUB_EVENT_NAME", ""),
+            )
+        )
         return
     event = os.environ.get("CI_EVENT")
     suites, reason, groups = selection_details(
@@ -458,6 +553,9 @@ def main():
         event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
     )
     native = journey_native_for_ids(journey_ids.split(",") if journey_ids else ())
+    output += (
+        f"native_validation={str(native_validation(event, suites, native)).lower()}\n"
+    )
     output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\njourney={str(journey).lower()}\njourney_coverage={coverage}\njourney_ids={journey_ids}\njourney_needs_native={str(native).lower()}\n"
     print(reason + "\n" + output)
     if os.environ.get("GITHUB_OUTPUT"):

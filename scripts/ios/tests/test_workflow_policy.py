@@ -34,6 +34,35 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("  ios-contracts:", ci)
         self.assertIn("- name: Verify mobile OpenAPI and shared contracts", ci)
         self.assertIn("needs: [changes, journey, ios-contracts]", ci)
+        self.assertIn("  journey-offline:", ci)
+        self.assertIn("  journey-native:", ci)
+        self.assertIn("gate-journey", ci)
+        self.assertIn(
+            "fixture-bundle-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}",
+            ci,
+        )
+
+    def test_portable_only_journeys_do_not_require_a_native_fixture_artifact(self):
+        ci = CI_WORKFLOW.read_text()
+        for name in (
+            "Seal portable fixture inputs for this exact workflow attempt",
+            "Transfer fixture inputs and offline evidence",
+            "Download this attempt's portable fixture inputs",
+            "Check fixture provenance and transferred bytes",
+        ):
+            step = ci.split(f"- name: {name}", 1)[1].split("- name:", 1)[0]
+            with self.subTest(step=name):
+                self.assertIn(
+                    "if: needs.changes.outputs.journey_needs_native == 'true'", step
+                )
+
+    def test_superseded_pr_native_work_can_be_cancelled(self):
+        native_job = CI_WORKFLOW.read_text().split("\n  journey-native:\n", 1)[1]
+        native_job = native_job.split("\n    runs-on:", 1)[0]
+        # Optional preparation jobs can be skipped, but workflow cancellation
+        # must stop heavy native work instead of retaining its concurrency slot.
+        self.assertIn("!cancelled()", native_job)
+        self.assertNotIn("always()", native_job)
 
     def matrices(self):
         """{leg count: legs} from the matrix fromJSON expression, keyed on the
@@ -144,7 +173,7 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         main_ui = self.workflow.split(
             "- name: Native UI tests (reuse compiled build)", 1
         )[1]
-        self.assertIn("github.event_name != 'pull_request' && 'full'", main_ui)
+        self.assertIn("KRIA_IOS_UI_GROUPS: full", main_ui)
 
     def test_smoke_tripwire_covers_creation_to_ready_and_the_editor(self):
         import json
@@ -162,44 +191,36 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         # The PR subset must stay bounded.
         self.assertLessEqual(len(smoke), 6)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     def test_main_never_cancels_a_running_ios_build(self):
         # A cancel-on-push policy starved main of finished runs, so TestFlight
         # never received a release.
         self.assertIn("cancel-in-progress: false", self.workflow)
         self.assertNotIn("cancel-in-progress: ${{", self.workflow)
 
-    def test_testflight_releases_after_build_unit_and_smoke_on_the_first_native_leg(self):
+    def test_main_release_and_full_regression_are_separate(self):
         smoke_name = "- name: Smoke UI tests before release"
         release_name = "- name: Release to TestFlight after build, unit and smoke tests"
         before_smoke, rest = self.workflow.split(smoke_name, 1)
         smoke, rest = rest.split(release_name, 1)
-        release, rest = rest.split("- name: Renew the UI build receipt after smoke", 1)
-        renew, after = rest.split("- name: Native UI tests", 1)
-        # The UI receipt is single-use: smoke consumes it, so it must be renewed
-        # (without rerunning unit tests) before the full suite needs it.
-        self.assertIn("KRIA_IOS_TEST_MODE: prepare-ui", renew)
-        self.assertIn('KRIA_IOS_UNIT_TESTS: "0"', renew)
-        # Compile + unit tests and the cache save come first; the release step
-        # follows the smoke tripwire and precedes the long UI suite.
+        release, full = rest.split("- name: Native UI tests", 1)
         self.assertIn("- name: Build and unit tests", before_smoke)
-        self.assertIn("- name: Save Xcode build data", before_smoke)
-        self.assertIn("KRIA_IOS_TEST_MODE: ui", smoke)
+        self.assertIn("- name: Require named native unit journey tests", before_smoke)
         self.assertIn("KRIA_IOS_UI_GROUPS: smoke", smoke)
-        for step in (smoke, release, renew):
-            condition = step.split("\n", 2)[1]
-            self.assertIn("matrix.lane == 'native'", condition)
-            self.assertIn("(!matrix.shard || startsWith(matrix.shard, '1/'))", condition)
-            self.assertIn("github.event_name != 'pull_request'", condition)
-            self.assertIn("github.ref == 'refs/heads/main'", condition)
+        self.assertIn("github.event_name == 'push'", smoke)
+        self.assertIn("github.event_name == 'push'", release)
+        self.assertIn("github.ref == 'refs/heads/main'", release)
+        self.assertIn("github.event_name != 'push'", full)
+        self.assertIn("KRIA_IOS_UI_GROUPS: full", full)
+        self.assertIn('cron: "23 3 * * *"', self.workflow)
+        self.assertNotIn("Renew the UI build receipt", self.workflow)
         self.assertEqual(self.workflow.count("gh workflow run testflight.yml"), 1)
-        self.assertIn("actions: write", self.workflow)
 
     def test_testflight_skips_a_commit_an_earlier_upload_already_contains(self):
         testflight = TESTFLIGHT_WORKFLOW.read_text()
         # An out-of-order or duplicate dispatch must not downgrade the upload.
         self.assertIn('git merge-base --is-ancestor "$HEAD_SHA" "$sha"', testflight)
         self.assertIn("superseded", testflight)
+
+
+if __name__ == "__main__":
+    unittest.main()
