@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.256.0] - 2026-10-13
+
+### Changed
+- ci(ios): renew the UI receipt after the pre-release smoke run (KRI-636) (#1578) <!-- release-pr: 1578 -->
+
 ## [0.78.255.0] - 2026-10-13
 
 ### Changed
