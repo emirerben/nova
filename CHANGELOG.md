@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.258.0] - 2026-10-13
+
+### Changed
+- feat(ios): text position + rotation are sliders (KRI-646) (#1580) <!-- release-pr: 1580 -->
+
 ## [0.78.257.0] - 2026-10-13
 
 ### Changed
