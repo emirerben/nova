@@ -42,7 +42,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database import sync_session
-from app.models import PlanItem
+from app.models import ContentPlan, PlanItem
 from app.pipeline.music_beats import detect_music_beats_strict
 from app.schemas.user_song import (
     SONG_ALIGNMENT_VERSION,
@@ -120,11 +120,13 @@ def _song_words(raw: list[dict[str, Any]]) -> list[SongWord]:
     return words
 
 
-def _transcribe_words(local_path: str) -> list[dict[str, Any]]:
+def _transcribe_words(local_path: str, *, run_context=None) -> list[dict[str, Any]]:
     """Cached whisper word timings for one local media file. May raise."""
     from app.services.speech_segments import transcribe_clip  # noqa: PLC0415
 
-    words, _language = transcribe_clip(local_path)
+    words, _language = transcribe_clip(
+        local_path, **({"run_context": run_context} if run_context is not None else {})
+    )
     return words
 
 
@@ -198,6 +200,9 @@ def _read_song(item_id: uuid.UUID) -> dict[str, Any] | None:
         if item is None or not item.song_gcs_path or item.song_generation is None:
             return None
         return {
+            "owner_id": str(
+                db.scalar(select(ContentPlan.user_id).where(ContentPlan.id == item.content_plan_id))
+            ),
             "path": str(item.song_gcs_path),
             "generation": int(item.song_generation),
             "duration_s": float(item.song_duration_s or 0.0),
@@ -277,19 +282,31 @@ def _download_song(path: str, generation: int, local: str) -> None:
     download_generation_to_file(path, local, generation=str(generation))
 
 
-def _analyze(song: dict[str, Any], generation: int) -> SongAnalysis:
+def _analyze(
+    song: dict[str, Any],
+    generation: int,
+    *,
+    local_path: str | None = None,
+    run_context=None,
+    strict_source_facts: bool = False,
+) -> SongAnalysis:
     with tempfile.TemporaryDirectory(prefix="user-song-") as tmp:
-        local = os.path.join(tmp, "song")
-        _download_song(song["path"], generation, local)
+        local = local_path or os.path.join(tmp, "song")
+        if local_path is None:
+            _download_song(song["path"], generation, local)
         # Raises ``BeatDetectionError`` when ffmpeg broke, so a failed detector is a
         # failed analysis (retried), never a "ready" song with zero beats.
         beats = detect_music_beats_strict(local)
         try:
-            words = _song_words(_transcribe_words(local))
+            words = _song_words(
+                _transcribe_words(
+                    local, **({"run_context": run_context} if run_context is not None else {})
+                )
+            )
         except SoftTimeLimitExceeded:
             raise
         except Exception as exc:  # noqa: BLE001 - lyrics are optional; instrumentals are valid
-            if _is_transient(exc):
+            if strict_source_facts or _is_transient(exc):
                 # A timeout is not "this song has no lyrics": fail the analysis so
                 # it is retried instead of freezing a lyric-less song.
                 raise
@@ -329,7 +346,30 @@ def _run_analysis(identifier: uuid.UUID, generation: int, *, item_id: str) -> di
         enqueue_user_song_alignment(identifier)
         return {"item_id": item_id, "status": "cached"}
     try:
-        analysis = _analyze(song, generation)
+        analysis = None
+        if settings.media_library_enabled and song.get("owner_id"):
+            from app.services.media_library_analysis import (
+                ensure_media_asset_analysis,
+                source_for_path,
+            )
+
+            source = source_for_path(
+                owner_id=song["owner_id"], path=song["path"], generation=str(generation)
+            )
+            if source is not None:
+                reusable = ensure_media_asset_analysis(
+                    asset_id=source.asset_id,
+                    owner_id=source.owner_id,
+                    source_id=source.source_id,
+                    required_generation=str(generation),
+                )
+                if reusable is None:
+                    raise RuntimeError("Shared song analysis is pending or unavailable; retry")
+                analysis = SongAnalysis.model_validate(
+                    {**reusable, "generation": generation, "duration_s": song["duration_s"]}
+                )
+        if analysis is None:
+            analysis = _analyze(song, generation)
     except SoftTimeLimitExceeded:
         raise
     except Exception as exc:  # noqa: BLE001 - recorded on the row, never raised

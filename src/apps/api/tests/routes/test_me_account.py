@@ -80,6 +80,8 @@ def _db(execute_results: list) -> AsyncMock:
         sql = str(statement)
         if "pg_advisory_xact_lock" in sql:
             return MagicMock()
+        if "plan_item_assets" in sql:
+            return _scalars([])
         if "count(mobile_identities.id)" in sql:
             result = MagicMock()
             result.scalar_one.return_value = 0
@@ -206,6 +208,8 @@ async def test_apple_missing_or_foreign_proofs_do_not_consume_codes(monkeypatch)
         sql = str(statement)
         if "pg_advisory_xact_lock" in sql:
             return MagicMock()
+        if "plan_item_assets" in sql:
+            return _scalars([])
         if "SELECT users.id" in sql:
             result = MagicMock()
             result.scalar_one_or_none.return_value = object()
@@ -383,11 +387,12 @@ def test_delete_confirm_deletes_in_fk_safe_order_and_dispatches_purge() -> None:
         resp = client.post("/me/account/delete-confirm", json={"token": token})
 
     assert resp.status_code == 204
-    assert db.execute.await_count == 16
-    lock_sql = [str(call.args[0]) for call in db.execute.await_args_list[3:6]]
+    assert db.execute.await_count == 19
+    lock_sql = [str(call.args[0]) for call in db.execute.await_args_list[4:8]]
     assert "content_plans" in lock_sql[0]
     assert "personas" in lock_sql[1]
-    assert "jobs" in lock_sql[2]
+    assert "plan_item_assets" in lock_sql[2]
+    assert "jobs" in lock_sql[3]
     db.commit.assert_awaited_once()
     added_rows = [call.args[0] for call in db.add.call_args_list]
     outbox = next(row for row in added_rows if getattr(row, "job_id", None) == job.id)

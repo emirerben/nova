@@ -181,7 +181,15 @@ def run_phone_speech_montage_job(
         from app.services.speech_segments import transcribe_stored_clip  # noqa: PLC0415
 
         def load_words(candidate: SpeechCandidate):  # noqa: ANN202
-            return transcribe_stored_clip(path_by_media[candidate.media_id])
+            path = path_by_media[candidate.media_id]
+            return transcribe_stored_clip(
+                path,
+                **(
+                    {"owner_id": str(user_id), "generation": binding_by_path[path].generation}
+                    if settings.media_library_enabled
+                    else {}
+                ),
+            )
 
     if run_planner is None:
         from app.agents._model_client import default_client  # noqa: PLC0415
@@ -607,11 +615,19 @@ def run_phone_voice_behind_footage_job(
     picture = tuple(binding_by_media[m] for m in ordered_ids)
     tie_note = _capture_tie_note(snapshot, ordered_ids) if ordering_basis == "capture_time" else ""
 
+    _user_id, _assignments, brief = gb._load_unified_montage_inputs(job_id)
     if load_words is None:
         from app.services.speech_segments import transcribe_stored_clip  # noqa: PLC0415
 
         def load_words(binding):  # noqa: ANN202
-            return transcribe_stored_clip(binding.proxy_path)
+            return transcribe_stored_clip(
+                binding.proxy_path,
+                **(
+                    {"owner_id": str(_user_id), "generation": binding.generation}
+                    if settings.media_library_enabled
+                    else {}
+                ),
+            )
 
     strategy = all_candidates.get("creator_strategy")
     margin = EXPORT_SAFETY_MARGIN_S
@@ -713,7 +729,6 @@ def run_phone_voice_behind_footage_job(
         ],
         **({"pinned_texts": pins_drawn} if pins_drawn else {}),
     }
-    _user_id, _assignments, brief = gb._load_unified_montage_inputs(job_id)
     if brief is not None and brief.live():
         from app.kria.brief_checks import (  # noqa: PLC0415
             build_receipts,
