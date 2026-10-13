@@ -1273,6 +1273,17 @@ def compile_strategy_to_plan(
                 )
             # Cloud/web renders have their own per-overlay full-screen toggle.
             strategy = strategy.model_copy(update={"overlay_display": None})
+        elif strategy.overlay_display == "fullscreen_videos":
+            # KRI-661: videos only play as cards/cutaways while the video-card gate is open;
+            # without it every video would land in the receipt as unplaced.
+            video_cap = manifest.capabilities.get(CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS)
+            if video_cap is None or not video_cap.available:
+                raise CreatorStrategyError(
+                    "Videos can't be shown as overlays on this edit yet, so I can't play them "
+                    "full screen. I can use your photos as overlays instead if you'd like.",
+                    code="unsupported_treatment",
+                    edit_format=strategy.edit_format,
+                )
     effective_program = strategy.render_program
     selected_media_ids = list(strategy.selected_media_ids)
     treatment_capabilities = {

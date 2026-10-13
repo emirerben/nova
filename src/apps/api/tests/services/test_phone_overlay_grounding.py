@@ -829,6 +829,69 @@ def test_kri661_upload_order_is_kept_when_chronological_was_not_asked(monkeypatc
     assert all(c.display_mode == "fullscreen" for c in grounded.cards)
 
 
+def test_kri661_cards_keep_off_a_reaction_beat_but_full_screen_cutaways_do_not(monkeypatch):
+    assets = [_asset(f"p{i}") for i in range(4)] + [_asset("v0", kind="video", duration_s=6.0)]
+    _patch_assets(monkeypatch, assets)
+    grounded = pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=_talk_words(60.0),
+        duration_s=60.0,
+        clip_path=None,
+        video_supported=True,
+        layout="fullscreen_videos",
+        occupied=[(0.0, 60.0)],  # a closing line / beat card holds the whole talk
+    )
+    # The video still plays full screen (those cards sit above the cutaways); every photo
+    # card that would stack on the beat is reported, never silently placed on top of it.
+    assert [c.media_id for c in grounded.cards] == ["v0"]
+    reasons = {u["media_id"]: u["reason"] for u in grounded.receipt["unplaced"]}
+    assert reasons == {f"p{i}": "overlap" for i in range(4)}
+
+
+def test_kri661_every_card_in_a_long_sequence_gets_a_face_sample(monkeypatch):
+    """33 photos used to spend all 12 face samples on the first three cards."""
+    assets = [_asset(f"a{i}") for i in range(33)]
+    _patch_assets(monkeypatch, assets)
+    sampled: list[float] = []
+
+    def fake_sampler(clip_path, anchors, **_kwargs):
+        sampled.extend(anchors)
+        return [], {}
+
+    monkeypatch.setattr(pg, "sample_face_regions", fake_sampler)
+    grounded = pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=_talk_words(190.0),
+        duration_s=190.0,
+        clip_path="/tmp/does-not-matter.mp4",
+        layout="fullscreen_videos",
+    )
+    assert len(grounded.cards) == 33 and all(c.display_mode == "pip" for c in grounded.cards)
+    windows = sorted((c.start_s, c.end_s) for c in grounded.cards)
+    assert all(any(s <= a <= e for a in sampled) for s, e in windows)
+    assert grounded.receipt["face_sampling"] == "ok"
+
+
+def test_kri661_receipt_only_claims_capture_order_when_something_was_reordered(monkeypatch):
+    none_dated = _mixed_ground(
+        monkeypatch,
+        [_captured("a", None), _captured("b", None)],
+        layout="fullscreen_images",
+        chronological=True,
+        duration_s=40.0,
+    )
+    one_dated = _mixed_ground(
+        monkeypatch,
+        [_captured("a", "2026-10-10T08:00:00Z"), _captured("b", None)],
+        layout="fullscreen_images",
+        chronological=True,
+        duration_s=40.0,
+    )
+    assert "order" not in none_dated.receipt and "order" not in one_dated.receipt
+
+
 def test_pip_receipt_has_no_layout_key(monkeypatch):
     _patch_assets(monkeypatch, [_asset("a1")])
     grounded = pg.ground_phone_subtitled_overlays(
@@ -985,3 +1048,23 @@ def test_a_face_core_that_fills_the_frame_still_leaves_no_safe_spot(monkeypatch)
     resolved, reasons, _sampling, _calls = _t3_card_geometry(monkeypatch, huge)
     assert resolved == {}
     assert reasons == {"ilk-durak-video": "no_safe_spot"}
+
+
+def test_kri661_the_creators_own_order_answer_beats_the_stored_strategy_choice(monkeypatch):
+    """ "Continue without a fixed order" turns the contract's order off; chronology must follow."""
+    from types import SimpleNamespace
+
+    from app.services import creator_render_contract as contract_mod
+    from app.tasks.generative_build import _approved_capture_order
+
+    strategy = {"creator_strategy": {"ordering_choice": "chronological"}}
+    monkeypatch.setattr(contract_mod, "read_render_contract", lambda _plan: None)
+    assert _approved_capture_order({}, strategy) is True  # no contract: the stored choice
+    for required, basis, want in (
+        (False, None, False),
+        (True, "attachment_order", False),
+        (True, "capture_time", True),
+    ):
+        pinned = SimpleNamespace(order_required=required, order_basis=basis)
+        monkeypatch.setattr(contract_mod, "read_render_contract", lambda _plan, _c=pinned: _c)
+        assert _approved_capture_order({}, strategy) is want

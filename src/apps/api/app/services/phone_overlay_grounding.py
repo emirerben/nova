@@ -191,6 +191,8 @@ def resolve_phone_card_geometry(
     job_id: str,
     footprints_by_id: dict[str, MediaFootprint],
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
+    anchors_per_card: int = _MAX_FACE_ANCHORS_PER_CARD,
+    max_anchors: int = _MAX_FACE_ANCHORS_TOTAL,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, str], str]:
     """Face-aware, caption-safe geometry arbitration shared by every phone
     card-placement grounding module (KRI-176 overlay grounding, KRI-178
@@ -220,6 +222,10 @@ def resolve_phone_card_geometry(
     - ``reason_by_id``: omitted card id -> ``"no_safe_spot"`` or ``"duplicate"``.
     - ``face_sampling``: ``"ok"`` | ``"failed"`` | ``"skipped"``.
 
+    ``anchors_per_card`` / ``max_anchors`` (KRI-661, defaults = the original 4 per card, 12 in
+    all): a long sequence of cards (33 photos) would otherwise spend every sample on the first
+    three, leave the rest unchecked and still report ``ok``.
+
     ``face_box_to_canvas`` (KRI-547, default ``None`` = unchanged): when the
     speaker clip is drawn through a face-filled crop, the sampled faces are
     taken RAW and mapped onto the canvas with it
@@ -235,8 +241,8 @@ def resolve_phone_card_geometry(
     for overlay in overlays:
         start_s = float(overlay.get("start_s") or 0.0)
         end_s = float(overlay.get("end_s") or start_s)
-        anchors.extend(_evenly_spaced_anchors(start_s, end_s, _MAX_FACE_ANCHORS_PER_CARD))
-    anchors = anchors[:_MAX_FACE_ANCHORS_TOTAL]
+        anchors.extend(_evenly_spaced_anchors(start_s, end_s, anchors_per_card))
+    anchors = anchors[:max_anchors]
 
     face_regions: list[ProtectedRegion] = []
     face_sampling = "skipped"
@@ -411,6 +417,7 @@ def _ground_fullscreen_sequence(
     job_id: str = "",
     clip_path: str | None = None,
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
+    occupied: Iterable[tuple[float, float]] = (),
 ) -> GroundedOverlayCards:
     """KRI-297: "use all my Visuals full screen" -- deterministic, no LLM.
 
@@ -426,10 +433,18 @@ def _ground_fullscreen_sequence(
     ``fullscreen_images``): the full-frame kind covers the speaker, the other
     stays a face-aware picture-in-picture card, both in the SAME slot sequence
     so they never share a moment. ``chronological`` orders the pool by when each
-    Visual was captured (undated ones keep their upload position).
+    Visual was captured (undated ones keep their upload position). A card that
+    would land on a creator-named reaction beat or the closing text (``occupied``)
+    is reported ``overlap`` instead of stacking on it; full-frame cutaways sit
+    below those cards, so they ignore ``occupied`` as before.
     """
+    from app.services.clip_facts import visual_capture_time  # noqa: PLC0415
+
+    dated = sum(1 for a in candidate_assets if visual_capture_time(a.get("capture")) is not None)
+    reordered = chronological and dated >= 2
     if chronological:
         candidate_assets = _order_by_capture(candidate_assets)
+    occupied_windows = [(float(a), float(b)) for a, b in occupied]
     lo = min(_FS_HOOK_FREE_S, max(duration_s, 0.0))
     hi = max(duration_s - _FS_TAIL_FREE_S, lo)
     span = hi - lo
@@ -488,7 +503,23 @@ def _ground_fullscreen_sequence(
     pip_geometry: dict[str, dict[str, Any]] = {}
     pip_omitted: dict[str, str] = {}
     face_sampling = "skipped"
-    pip_windows = [w for w in windows if not w[3]]
+    pip_windows = []
+    for window in windows:
+        asset, start, end, fullscreen, _snapped = window
+        if fullscreen:
+            continue
+        if any(start < o_end and o_start < end for o_start, o_end in occupied_windows):
+            unplaced.append(
+                {
+                    "media_id": str(asset["id"]),
+                    "label": _label_for_asset(asset),
+                    "reason": "overlap",
+                    "kind": _kind_for_asset(asset),
+                }
+            )
+            continue
+        pip_windows.append(window)
+    windows = [w for w in windows if w[3] or w in pip_windows]
     if pip_windows:
         overlays_for_arbitration: list[dict[str, Any]] = []
         footprints_by_id: dict[str, MediaFootprint] = {}
@@ -514,6 +545,9 @@ def _ground_fullscreen_sequence(
             clip_path=clip_path,
             job_id=job_id,
             footprints_by_id=footprints_by_id,
+            # One sample per card once the sequence is long: every card gets looked at.
+            anchors_per_card=1 if len(pip_windows) > 3 else _MAX_FACE_ANCHORS_PER_CARD,
+            max_anchors=max(_MAX_FACE_ANCHORS_TOTAL, min(len(pip_windows), 60)),
             **(
                 {"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}
             ),
@@ -590,7 +624,7 @@ def _ground_fullscreen_sequence(
         "unplaced": unplaced,
         "wishlist": [],
     }
-    if chronological:
+    if reordered:
         receipt["order"] = "capture_time"
     return GroundedOverlayCards(cards=cards, receipt=receipt)
 
@@ -692,6 +726,7 @@ def ground_phone_subtitled_overlays(
             job_id=job_id,
             clip_path=clip_path,
             face_box_to_canvas=face_box_to_canvas,
+            occupied=occupied_list,
         )
 
     if not candidate_assets or not words:

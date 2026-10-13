@@ -600,12 +600,13 @@ def render_notes_from_overlay_receipt(receipt: dict[str, Any] | None) -> list[st
         card_n = placed_n - full_n
         parts = [f"{full_n} full screen"] if full_n else []
         if card_n:
-            parts.append(f"{card_n} as cards")
+            parts.append(f"{card_n} as {'a card' if card_n == 1 else 'cards'}")
         total = placed_n + len(unplaced_entries)
+        noun = "Visual" if (total if unplaced_entries else placed_n) == 1 else "Visuals"
         lead = (
-            f"Showed {placed_n} of {total} Visuals"
+            f"Showed {placed_n} of {total} {noun}"
             if unplaced_entries
-            else f"{placed_n} Visuals shown"
+            else f"{placed_n} {noun} shown"
         )
         notes.append(f"{lead}: {', '.join(parts)}" if parts else lead)
     elif unplaced_entries:

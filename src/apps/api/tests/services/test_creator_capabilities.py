@@ -2707,6 +2707,31 @@ def test_fullscreen_capability_absent_when_kill_switch_off_and_refusal_is_honest
     assert exc_info.value.code == "unsupported_treatment"
 
 
+def test_kri661_videos_full_screen_needs_the_video_card_gate_photos_do_not(monkeypatch) -> None:
+    """ "My videos full screen" must not plan fine and then drop every video at render."""
+    manifest = _fullscreen_phone_manifest(monkeypatch)
+    videos = _fullscreen_strategy().model_copy(update={"overlay_display": "fullscreen_videos"})
+    images = _fullscreen_strategy().model_copy(update={"overlay_display": "fullscreen_images"})
+    assert capabilities.CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS not in manifest.capabilities
+    assert capabilities.compile_strategy_to_plan(manifest, images).strategy.overlay_display == (
+        "fullscreen_images"
+    )
+    with pytest.raises(CreatorStrategyError, match="Videos can't be shown as overlays") as exc_info:
+        capabilities.compile_strategy_to_plan(manifest, videos)
+    assert exc_info.value.code == "unsupported_treatment"
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_video_overlays_enabled", True)
+    monkeypatch.setattr(
+        capabilities.settings,
+        "phone_render_verified_features",
+        [*capabilities.settings.phone_render_verified_features, "visualVideos"],
+    )
+    ready = _phone_manifest(monkeypatch, "subtitled", [{"media_id": "phone-a", "kind": "video"}])
+    assert ready.capabilities[capabilities.CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS].available
+    assert capabilities.compile_strategy_to_plan(ready, videos).strategy.overlay_display == (
+        "fullscreen_videos"
+    )
+
+
 def test_fullscreen_capability_absent_on_non_subtitled_phone_format(monkeypatch) -> None:
     manifest = _fullscreen_phone_manifest(monkeypatch, edit_format="montage")
     assert capabilities.CAPABILITY_MEDIA_OVERLAY_FULLSCREEN not in manifest.capabilities

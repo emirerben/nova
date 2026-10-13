@@ -6516,18 +6516,22 @@ def _demote_beat_receipt(
 
 
 def _approved_capture_order(snapshot: dict, all_candidates: dict) -> bool:
-    """True when the approved render contract asks for capture-time (filming) order, or
-    the strategy's stored ordering choice is chronological (KRI-661). Never raises."""
+    """True when the approved render contract asks for capture-time (filming) order (KRI-661).
+
+    The contract already folds in the creator's own answer to the order question ("continue
+    without a fixed order" turns it off), so it wins; the strategy's stored ordering choice
+    is only the fallback for a job with no contract. Never raises.
+    """
     from app.services.creator_render_contract import read_render_contract  # noqa: PLC0415
 
-    strategy = all_candidates.get("creator_strategy")
-    if isinstance(strategy, dict) and strategy.get("ordering_choice") == "chronological":
-        return True
     try:
         contract = read_render_contract(snapshot)
     except Exception:  # noqa: BLE001 - a malformed contract is "no ordering ask"
         return False
-    return bool(contract and contract.order_required and contract.order_basis == "capture_time")
+    if contract is not None:
+        return bool(contract.order_required and contract.order_basis == "capture_time")
+    strategy = all_candidates.get("creator_strategy")
+    return isinstance(strategy, dict) and strategy.get("ordering_choice") == "chronological"
 
 
 def _run_phone_subtitled_job(
