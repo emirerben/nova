@@ -82,6 +82,7 @@ class PaidCallRequest:
     ctx: RunContext
     provider: str = "google"
     cached_behavior_available: bool = False
+    price_version: str = PRICE_VERSION
 
 
 def _month_start(now: datetime) -> datetime:
@@ -744,7 +745,7 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 "test_run_id": test_run_id,
                 "canary_id": request.ctx.release_canary_id,
                 "estimate": estimate,
-                "price_version": PRICE_VERSION,
+                "price_version": request.price_version,
                 "period_start": period_start,
                 "expires_at": now + timedelta(seconds=settings.ai_reservation_ttl_seconds),
             }
@@ -798,6 +799,7 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 feature=request.feature,
                 requested_model=request.model,
                 estimated_cost_usd=estimate,
+                price_version=request.price_version,
             )
     except (AiBudgetExceededError, AiCostControlPolicyError, ProviderOutcomeUnknownError):
         raise

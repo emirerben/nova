@@ -128,7 +128,7 @@ jobs:
         env:
           # PRs that touch native UI inputs also build the UI bundle for the
           # bounded pre-merge subset below. Other PRs stop at build/unit. Full
-          # native UI coverage runs after merge and on manual regressions.
+          # native UI coverage runs nightly and on manual regressions.
           KRIA_IOS_TEST_MODE: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.ios_ui == 'true') && 'prepare-ui' || 'unit' }}
           KRIA_RESTORE_INPUT_TIMES: "1"
           # Later UI shards compile every bundle but leave unit tests to shard 1.

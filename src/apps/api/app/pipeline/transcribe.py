@@ -10,11 +10,16 @@ import os
 import re
 import subprocess
 import tempfile
+import wave
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import structlog
 
 from app.config import settings
+
+if TYPE_CHECKING:
+    from app.agents._runtime import RunContext
 
 log = structlog.get_logger()
 
@@ -197,6 +202,7 @@ def transcribe_whisper_cached(
     *,
     language: str | None = None,
     verbatim_prompt: str | None = None,
+    run_context: "RunContext | None" = None,
 ) -> Transcript:
     """Content-addressed transcript cache (plan 012 P1-4).
 
@@ -217,7 +223,10 @@ def transcribe_whisper_cached(
 
     if not getattr(settings, "smart_caption_transcript_cache_enabled", True):
         transcript = transcribe_whisper(
-            clip_path, language=language, verbatim_prompt=verbatim_prompt
+            clip_path,
+            language=language,
+            verbatim_prompt=verbatim_prompt,
+            **({"run_context": run_context} if run_context is not None else {}),
         )
         setattr(transcript, "cache_status", "disabled")
         return transcript
@@ -225,7 +234,10 @@ def transcribe_whisper_cached(
         digest = _sha256_file(clip_path)
     except OSError:
         transcript = transcribe_whisper(
-            clip_path, language=language, verbatim_prompt=verbatim_prompt
+            clip_path,
+            language=language,
+            verbatim_prompt=verbatim_prompt,
+            **({"run_context": run_context} if run_context is not None else {}),
         )
         setattr(transcript, "cache_status", "hash_failed")
         return transcript
@@ -241,6 +253,16 @@ def transcribe_whisper_cached(
     prompt_key = "noprompt"
     if verbatim_prompt:
         prompt_key = hashlib.sha256(verbatim_prompt.encode()).hexdigest()[:12]
+    # Library facts reuse this cache while isolating creator and analyzer changes.
+    # Legacy callers retain their existing cache identity and request shape.
+    if run_context is not None:
+        model_key = (
+            "whisper-1" if settings.whisper_backend == "openai-api" else settings.whisper_model
+        )
+        scope = hashlib.sha256(
+            f"{run_context.creator_id}:{settings.whisper_backend}:{model_key}".encode()
+        ).hexdigest()
+        prompt_key = f"{prompt_key}_{scope}"
     object_path = (
         f"transcript-cache/{_TRANSCRIPT_CACHE_VERSION}/{digest}_{lang_key}_{prompt_key}.json"
     )
@@ -257,7 +279,12 @@ def transcribe_whisper_cached(
     except Exception as exc:  # noqa: BLE001 — cache read is best-effort
         log.warning("transcript_cache_read_failed", error=str(exc))
 
-    transcript = transcribe_whisper(clip_path, language=language, verbatim_prompt=verbatim_prompt)
+    transcript = transcribe_whisper(
+        clip_path,
+        language=language,
+        verbatim_prompt=verbatim_prompt,
+        **({"run_context": run_context} if run_context is not None else {}),
+    )
     setattr(transcript, "cache_status", "miss")
     try:
         from app.storage import upload_bytes_public_read  # noqa: PLC0415
@@ -277,6 +304,7 @@ def transcribe_whisper(
     model: str | None = None,
     language: str | None = None,
     verbatim_prompt: str | None = None,
+    run_context: "RunContext | None" = None,
 ) -> Transcript:
     """Transcribe via Whisper (OpenAI API or local). Always returns a Transcript.
 
@@ -301,7 +329,10 @@ def transcribe_whisper(
 
         if settings.whisper_backend == "openai-api":
             return _transcribe_openai(
-                audio_path, language=language, verbatim_prompt=verbatim_prompt
+                audio_path,
+                language=language,
+                verbatim_prompt=verbatim_prompt,
+                **({"run_context": run_context} if run_context is not None else {}),
             )
         else:
             return _transcribe_local(
@@ -526,11 +557,44 @@ def align_punctuated_text(full_text: str, words: list[Word]) -> list[Word]:
 
 
 def _transcribe_openai(
-    audio_path: str, *, language: str | None = None, verbatim_prompt: str | None = None
+    audio_path: str,
+    *,
+    language: str | None = None,
+    verbatim_prompt: str | None = None,
+    run_context: "RunContext | None" = None,
 ) -> Transcript:
     import openai
 
-    client = openai.OpenAI(api_key=settings.openai_api_key)
+    from app.services import ai_cost_control as ledger
+
+    receipt = None
+    duration_s = 0.0
+    if run_context is not None:
+        with wave.open(audio_path, "rb") as audio:
+            duration_s = audio.getnframes() / audio.getframerate()
+        # Official Whisper pricing: $0.006/minute, verified 2026-10-11.
+        # https://developers.openai.com/api/docs/models/whisper-1
+        cost_usd = duration_s * 0.006 / 60
+        receipt = ledger.reserve_paid_call(
+            ledger.PaidCallRequest(
+                idempotency_key=ledger.logical_call_id(
+                    feature="media_library_transcription",
+                    model="whisper-1",
+                    prompt=f"{language or 'auto'}:{verbatim_prompt or ''}",
+                    ctx=run_context,
+                    attempt=0,
+                    media_identity=_sha256_file(audio_path),
+                ),
+                feature="media_library_transcription",
+                model="whisper-1",
+                estimated_cost_usd=cost_usd,
+                ctx=run_context,
+                provider="openai",
+                price_version="openai-whisper-2026-10-11.v1",
+            )
+        )
+    client_options = {"max_retries": 0} if run_context is not None else {}
+    client = openai.OpenAI(api_key=settings.openai_api_key, **client_options)
 
     # Only pass `language` when the caller knows it — omitting it lets whisper-1
     # auto-detect. Passing an explicit hint (e.g. "tr") is what makes Turkish
@@ -547,13 +611,35 @@ def _transcribe_openai(
 
     log.info("whisper_api_start", path=audio_path, language=lang or "auto")
     with open(audio_path, "rb") as f:
-        # verbose_json gives us word-level timestamps
-        response = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=f,
-            response_format="verbose_json",
-            timestamp_granularities=["word"],
-            **extra,
+        ledger.mark_paid_call_started(receipt)
+        try:
+            response = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=f,
+                response_format="verbose_json",
+                timestamp_granularities=["word"],
+                **extra,
+            )
+        except openai.APIStatusError as exc:
+            if 400 <= exc.status_code < 500:
+                ledger.release_paid_call(receipt)
+            else:
+                ledger.mark_paid_call_unknown(receipt)
+            raise
+        except BaseException:
+            ledger.mark_paid_call_unknown(receipt)
+            raise
+    if run_context is not None:
+        ledger.settle_paid_call_cost(
+            receipt,
+            cost_usd=cost_usd,
+            resolved_model="whisper-1",
+            provider_request_id=getattr(response, "_request_id", None),
+            usage_json={
+                "duration_s": duration_s,
+                "usd_per_minute": 0.006,
+                "price_source": "https://developers.openai.com/api/docs/models/whisper-1",
+            },
         )
 
     words = [

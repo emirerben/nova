@@ -134,9 +134,10 @@ python scripts/admin.py --prod POST templates/abc/publish                     # 
 - Read agents/DECISIONS.md for why key choices were made
 
 ## Storage retention
-- Bucket lifecycle is limited to transient/unowned prefixes: 24h for `dev-user/*`, `staging/*`, upload/preview/cache prefixes and 30d for anonymous-user and TikTok-delivery prefixes. Exact table + drift check: `infra/README.md`.
-- Current/published job media is outside unconditional bucket-age rules. The approval-gated DB manifest warns at day 83, deletes inactive source/editable media at 90d, keeps the latest final/poster for 365d, and rechecks references + GCS generation. Rollout: `docs/runbooks/gcp-cost-controls.md`.
-- Signed URLs remain short-lived; ready generative URLs are refreshed by `_variants_for_response`. New authenticated generative uploads carry 24h DB cleanup receipts until a Job atomically attaches them; account deletion runs immediate and delayed verified sweeps.
+- Bucket lifecycle: transient/unowned prefixes only; drift check: `infra/README.md`.
+- Owned media uses approval-gated manifests: warn at 83 inactive days, sources/editable bases expire at 90d, latest final/poster at 365d. Recheck references and exact GCS generation; library deletion also requires seven days after the current warning.
+- Library post references pin shared sources; catalogue membership does not. Catalogue and facts persist. Account erasure verifies both owner prefixes in the delayed sweep. Retention: `docs/runbooks/gcp-cost-controls.md`; ingest: `docs/pipelines/media-library.md`.
+- Signed URLs stay short-lived (`_variants_for_response` refreshes ready generative URLs); authenticated generative uploads have 24h cleanup receipts until atomic Job attachment.
 
 ## ⚠️ Anti-pattern: do NOT use MoviePy / VideoFileClip
 VideoFileClip(path) buffers the entire video into RAM. On a 2GB source file this crashes.

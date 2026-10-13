@@ -188,6 +188,8 @@ def _asset_row(
     a.user_context = None
     a.status = "uploaded"
     a.gcs_generation = None
+    a.library_asset_id = None
+    a.library_source_id = None
     a.correlation_id = None
     # Explicit (not MagicMock auto-attr, which is always truthy) — preview_gcs_path
     # is read via `getattr(asset, "preview_gcs_path", None)` and MUST be able to

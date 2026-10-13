@@ -73,8 +73,9 @@ pass. Full iOS regression runs at 03:23 UTC nightly or on manual dispatch; full
 native journeys run at 02:23 UTC nightly or on manual CI dispatch. Neither
 regression path dispatches TestFlight.
 
-The stable `journey` job now aggregates `journey-mapping`, `journey-offline`
-(Linux), and `journey-native` (Mac). The selector's `native_validation` output is
+The stable `journey` job now aggregates `journey-mapping`, `journey-offline`,
+the database-backed `journey-library` (Linux), and `journey-native` (Mac). The
+selector's `native_validation` output is
 false on main pushes, and otherwise follows selected iOS/native journeys. The
 aggregate independently checks that decision against the event and manifest,
 then requires success or an explicit skip for each dependency.

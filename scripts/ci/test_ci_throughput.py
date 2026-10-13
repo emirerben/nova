@@ -73,8 +73,37 @@ class ThroughputTests(unittest.TestCase):
             "journey-offline": {
                 "result": "success" if journey == "true" else "skipped"
             },
+            "journey-library": {"result": "skipped"},
             "journey-native": {"result": "success" if native == "true" else "skipped"},
         }
+
+    def test_selected_library_preparation_is_required_for_each_cadence(self):
+        for event in ("pull_request", "push", "schedule", "workflow_dispatch"):
+            needs = self.needs(native="false", ios="false")
+            needs["changes"]["outputs"].update(
+                journey_ids="kri-384-library-ingest",
+                journey_needs_native="false",
+            )
+            needs["journey-library"]["result"] = "success"
+            ci.gate_journey(needs, event)
+            for result in ("failure", "cancelled", "skipped", None):
+                needs["journey-library"]["result"] = result
+                with (
+                    self.subTest(event=event, result=result),
+                    self.assertRaises(ValueError),
+                ):
+                    ci.gate_journey(needs, event)
+        mixed = self.needs()
+        mixed["changes"]["outputs"]["journey_ids"] += ",kri-384-library-ingest"
+        mixed["journey-library"]["result"] = "success"
+        ci.gate_journey(mixed, "pull_request")
+        mixed["journey-library"]["result"] = "skipped"
+        with self.assertRaises(ValueError):
+            ci.gate_journey(mixed, "pull_request")
+        unselected = self.needs()
+        unselected["journey-library"]["result"] = "success"
+        with self.assertRaises(ValueError):
+            ci.gate_journey(unselected, "pull_request")
 
     def test_each_selected_dependency_is_required(self):
         ci.gate_journey(self.needs(), "pull_request")

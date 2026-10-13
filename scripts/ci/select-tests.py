@@ -380,7 +380,13 @@ def validate_journey_mapping(coverage, ids):
 
 
 def gate_journey(needs, event):
-    required = {"changes", "journey-mapping", "journey-offline", "journey-native"}
+    required = {
+        "changes",
+        "journey-mapping",
+        "journey-offline",
+        "journey-library",
+        "journey-native",
+    }
     if set(needs) != required or needs["changes"].get("result") != "success":
         raise ValueError("Journey selection failed or dependencies are missing")
     outputs = needs["changes"].get("outputs", {})
@@ -388,6 +394,7 @@ def gate_journey(needs, event):
         if outputs.get(key) not in ("true", "false"):
             raise ValueError(f"Missing or invalid {key}")
     journey = outputs["journey"] == "true"
+    selected = []
     if journey:
         selected = validate_journey_mapping(
             outputs.get("journey_coverage"), outputs.get("journey_ids")
@@ -412,6 +419,7 @@ def gate_journey(needs, event):
     for job, selected in (
         ("journey-mapping", journey),
         ("journey-offline", journey),
+        ("journey-library", "kri-384-library-ingest" in selected),
         ("journey-native", native),
     ):
         expected = "success" if selected else "skipped"
@@ -429,6 +437,7 @@ def gate(needs, suite, job, event="pull_request"):
             "changes",
             "test-api-suite",
             "journey",
+            "journey-library",
             "creator-contract-replay",
             "shared-motion-runtime",
         }
@@ -476,6 +485,18 @@ def gate(needs, suite, job, event="pull_request"):
     expected = "success" if execution_selected else "skipped"
     if result != expected:
         raise ValueError(f"{suite}: expected {expected}, got {result}")
+    if suite == "journey":
+        ids = (
+            outputs.get("journey_ids", "").split(",")
+            if outputs.get("journey_ids")
+            else []
+        )
+        library_expected = "success" if "kri-384-library-ingest" in ids else "skipped"
+        library_result = needs["journey-library"].get("result")
+        if library_result != library_expected:
+            raise ValueError(
+                f"library journey: expected {library_expected}, got {library_result}"
+            )
     if suite == "ios" and job == "journey":
         contracts_expected = "success" if selected == "true" else "skipped"
         contracts_result = needs["ios-contracts"].get("result")

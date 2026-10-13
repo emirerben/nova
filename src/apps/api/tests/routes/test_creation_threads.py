@@ -901,6 +901,7 @@ async def test_load_can_use_preserved_owner_id_after_user_orm_expiry() -> None:
     owner_id = uuid.uuid4()
     thread = SimpleNamespace(id=uuid.uuid4(), creator_id=owner_id)
     db = _db_for_scalar(thread)
+    db.connection = AsyncMock(return_value=SimpleNamespace(execute=AsyncMock()))
 
     class _ExpiredUser:
         @property
@@ -2421,6 +2422,7 @@ async def test_upload_reservation_is_signed_for_opaque_media_id(
     reservations = Mock()
     reservations.scalars.return_value.all.return_value = []
     db = Mock()
+    db.scalar = AsyncMock(return_value=None)
     db.execute = AsyncMock(return_value=reservations)
     db.commit = AsyncMock()
     result = await upload_urls(
@@ -2550,6 +2552,7 @@ async def test_upload_reservation_preserves_canonical_render_suffix(
     reservations = Mock()
     reservations.scalars.return_value.all.return_value = []
     db = Mock()
+    db.scalar = AsyncMock(return_value=None)
     db.execute = AsyncMock(return_value=reservations)
     db.commit = AsyncMock()
     result = await upload_urls(
@@ -2591,6 +2594,7 @@ async def test_upload_urls_rate_limit_is_scoped_per_real_client_not_shared_machi
     reservations = Mock()
     reservations.scalars.return_value.all.return_value = []
     db = Mock()
+    db.scalar = AsyncMock(return_value=None)
     db.execute = AsyncMock(return_value=reservations)
     db.commit = AsyncMock()
 
@@ -2842,6 +2846,7 @@ async def test_attach_persists_stable_mixed_media_manifest(
     )
     monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(10.0, True)))
     db = Mock()
+    db.scalar = AsyncMock(return_value=None)
     db.get = AsyncMock(return_value=item)
     db.execute = AsyncMock()
     db.commit = AsyncMock()
@@ -2933,6 +2938,7 @@ async def test_attach_rejects_a_proxy_contract_whose_kind_does_not_match_the_med
     # the proxy descriptor below is (default) kind="video" regardless.
     monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(10.0, True)))
     db = Mock()
+    db.scalar = AsyncMock(return_value=None)
     db.get = AsyncMock(return_value=item)
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
@@ -3016,6 +3022,7 @@ async def test_attach_proxy_duration_mismatch_logs_descriptor_vs_probed(
     # reserved" case this ticket is about.
     monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(4.0, True)))
     db = Mock()
+    db.scalar = AsyncMock(return_value=None)
     db.get = AsyncMock(return_value=item)
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
@@ -3116,6 +3123,7 @@ async def test_attach_consumes_the_matching_upload_reservation(
     )
     monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(10.0, True)))
     db = Mock()
+    db.scalar = AsyncMock(return_value=None)
     db.get = AsyncMock(return_value=item)
     db.execute = AsyncMock()
     db.commit = AsyncMock()
@@ -3175,6 +3183,7 @@ async def test_attach_persists_one_valid_voiceover(monkeypatch: pytest.MonkeyPat
     )
     monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(10.0, True)))
     db = Mock()
+    db.scalar = AsyncMock(return_value=None)
     db.get = AsyncMock(return_value=item)
     db.execute = AsyncMock()
     db.commit = AsyncMock()
@@ -6123,6 +6132,7 @@ async def test_proxy_reservation_pins_original_and_rejects_changed_binding(monke
     reservations = Mock()
     reservations.scalars.return_value.all.return_value = []
     db = Mock()
+    db.scalar = AsyncMock(return_value=None)
     db.execute = AsyncMock(return_value=reservations)
     db.commit = AsyncMock()
     document = {

@@ -39,9 +39,11 @@ def admission(monkeypatch):
         gcs_path="users/u/photo.jpg",
         gcs_generation="42",
     )
+    owner_connection = SimpleNamespace(execute=AsyncMock())
     db = SimpleNamespace(
         execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: job)),
         get=AsyncMock(side_effect=lambda model, *a, **kw: job if model is Job else asset),
+        connection=AsyncMock(return_value=owner_connection),
         commit=AsyncMock(),
         refresh=AsyncMock(),
     )
@@ -74,10 +76,10 @@ def admission(monkeypatch):
     )
 
 
-async def post(a, body=None):
+async def post(a, body=None, *, native_client=False):
     response = Response()
     out = await routes.create_editor_source(
-        str(a.item.id), "v", body or a.body, a.user, response, a.db
+        str(a.item.id), "v", body or a.body, a.user, response, a.db, native_client=native_client
     )
     return out, response
 
@@ -118,10 +120,12 @@ async def test_visual_admission_locks_asset_before_job(admission, monkeypatch):
         return SimpleNamespace(scalar_one_or_none=lambda: a.job)
 
     monkeypatch.setattr(routes, "_load_owned_item", load_item)
+    a.db.connection.return_value.execute.side_effect = lambda query: locks.append("owner")
     a.db.get = AsyncMock(side_effect=load_asset)
     a.db.execute = AsyncMock(side_effect=load_job)
     await post(a)
-    assert locks == [PlanItem, PlanItemAsset, Job]
+    assert locks == ["owner", PlanItem, PlanItemAsset, Job]
+    a.db.connection.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -293,6 +297,10 @@ async def test_save_visual_checks_kind_and_generation(admission):
 
 
 @pytest.mark.asyncio
+# Value card: protects=ready-footage identity and receipt reuse for native library sources;
+# fails_when=requested library asset/path/generation/original descriptor differs from the bound
+# source; why_new=checks the real route before reference, commit, or publish side effects;
+# seam=none; no_claim=does not cover worker probing after a new upload.
 async def test_existing_bound_footage_reuses_index_without_consumed_reservation(
     admission, monkeypatch
 ):
@@ -317,6 +325,95 @@ async def test_existing_bound_footage_reuses_index_without_consumed_reservation(
     assert a.variant[EDITOR_SOURCES_FIELD]["sources"] == []
     a.publish.assert_not_called()
     assert a.db.execute.call_count == 1  # Job only, no reservation needed.
+
+    from app.services import media_library_ingest as ingest
+
+    monkeypatch.setattr(routes.settings, "media_library_enabled", True)
+    library_asset_id = uuid.uuid4()
+    library_source_id = uuid.uuid4()
+    library_asset = SimpleNamespace(
+        id=library_asset_id,
+        user_id=a.user.id,
+        metadata_json={"upload_contract": raw["upload_contract"]},
+    )
+    library_source = SimpleNamespace(
+        id=library_source_id,
+        asset_id=library_asset_id,
+        user_id=a.user.id,
+        role="analysis_proxy",
+        status="available",
+        object_path=binding.proxy_path,
+        object_generation=binding.generation,
+    )
+    monkeypatch.setattr(ingest, "lock_library_owner", AsyncMock())
+    resolve = AsyncMock(return_value=(library_asset, library_source))
+    reference = AsyncMock()
+    monkeypatch.setattr(ingest, "resolve_library_source", resolve)
+    monkeypatch.setattr(ingest, "reference_library_source", reference)
+
+    ready_body = a.body.model_copy(
+        update={
+            "client_import_id": uuid.uuid4(),
+            "source_kind": "footage",
+            "source_id": "approved",
+            "library_asset_id": library_asset_id,
+            "library_source_id": library_source_id,
+        }
+    )
+    a.db.commit.reset_mock()
+    out, response = await post(a, ready_body, native_client=True)
+    assert out.status == "ready" and response.status_code == 200
+    assert out.source_index == 0
+    assert a.db.commit.await_count == 1
+    assert reference.await_count == 1
+    a.db.commit.reset_mock()
+    reference.reset_mock()
+    a.publish.reset_mock()
+
+    mismatches = (
+        (
+            "path",
+            SimpleNamespace(**{**library_source.__dict__, "object_path": "other/proxy.mp4"}),
+            library_asset,
+            {},
+        ),
+        (
+            "generation",
+            SimpleNamespace(**{**library_source.__dict__, "object_generation": "999"}),
+            library_asset,
+            {},
+        ),
+        (
+            "original",
+            library_source,
+            SimpleNamespace(
+                **{
+                    **library_asset.__dict__,
+                    "metadata_json": {
+                        "upload_contract": {
+                            **raw["upload_contract"],
+                            "proxy": {
+                                **raw["upload_contract"]["proxy"],
+                                "original": {
+                                    **raw["upload_contract"]["proxy"]["original"],
+                                    "sha256": "b" * 64,
+                                },
+                            },
+                        }
+                    },
+                }
+            ),
+            {},
+        ),
+    )
+    for label, candidate_source, candidate_asset, body_update in mismatches:
+        resolve.return_value = (candidate_asset, candidate_source)
+        body = ready_body.model_copy(update={"client_import_id": uuid.uuid4(), **body_update})
+        with pytest.raises(HTTPException, match="editor_source_identity_conflict"):
+            await post(a, body, native_client=True)
+        assert a.db.commit.await_count == 0, label
+        reference.assert_not_called()
+        a.publish.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -346,6 +443,7 @@ async def test_footage_admission_runs_post_prepare_get_and_save_validation(admis
             SimpleNamespace(scalar_one_or_none=lambda: reservation),
         ]
     )
+    a.db.scalar = AsyncMock(return_value=None)
     a.db.get = AsyncMock(return_value=a.job)
     body = a.body.model_copy(update={"source_kind": "footage", "source_id": "new-footage"})
     out, response = await post(a, body)
@@ -365,8 +463,15 @@ async def test_footage_admission_runs_post_prepare_get_and_save_validation(admis
             return objects.get(model)
 
         def execute(self, query):
+            if "pg_advisory_xact_lock" in str(query.compile(dialect=postgresql.dialect())):
+                return SimpleNamespace(scalar_one_or_none=lambda: None)
             model = query.column_descriptions[0]["entity"]
             return SimpleNamespace(scalar_one_or_none=lambda: objects.get(model))
+
+        def scalar(self, query):
+            # This fixture intentionally models a reservation without a
+            # persisted cleanup receipt; the task must still admit it.
+            return None
 
         def commit(self):
             return None
