@@ -757,7 +757,8 @@ class GitDiffTests(unittest.TestCase):
             output.read_text(),
             "api=false\nios=true\nios_ui=true\nshared_motion=false\nios_ui_groups=full\n"
             "ios_ui_shards=1\njourney=false\njourney_coverage=not_applicable\n"
-            "journey_ids=\njourney_needs_native=false\n",
+            "journey_ids=\njourney_needs_native=false\n"
+            "ios_verify_features=projects,creation,teleprompter,editor,slides\n",
         )
         self.assertIn("ios: run", summary.read_text())
         self.assertIn("iOS UI groups: full (1 native leg)", summary.read_text())

@@ -70,9 +70,6 @@ class UISelectionTests(unittest.TestCase):
             [],
             [editor, creation],
             [editor, "src/apps/ios/Kria/Core/AppState.swift"],
-            ["src/apps/ios/Kria/Features/ChatWorkspaceView.swift"],
-            ["src/apps/ios/Kria/Features/CanonicalChatComponents.swift"],
-            ["src/apps/ios/Kria/Features/ChatUITestTransport.swift"],
             ["src/apps/ios/Kria/Features/EditorViews.swift"],
             ["src/apps/ios/Kria/Core/Services.swift"],
             ["src/apps/ios/Kria/Core/Models.swift"],
@@ -209,7 +206,8 @@ class UISelectionTests(unittest.TestCase):
             expected = ui.expected_tests(value)
             for count in range(1, ui.MAX_SHARDS + 1):
                 parts = [
-                    ui.shard_tests(expected, f"{i}/{count}") for i in range(1, count + 1)
+                    ui.shard_tests(expected, f"{i}/{count}")
+                    for i in range(1, count + 1)
                 ]
                 with self.subTest(value=value, count=count):
                     self.assertEqual(set().union(*parts), expected)

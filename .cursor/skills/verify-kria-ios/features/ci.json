@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "features": [
+    {
+      "id": "projects",
+      "paths": [
+        "src/apps/ios/Kria/Features/Project*.swift",
+        "src/apps/ios/Kria/Features/Library*.swift",
+        "src/apps/ios/Tests/KriaUITests/ProjectsUITests.swift"
+      ],
+      "tests": [
+        "CreationUITests/testLaunchEntersChatFirstWorkspace",
+        "ProjectsUITests/testProjectActionsCanBeCancelledWithoutChangingProject",
+        "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+      ]
+    },
+    {
+      "id": "creation",
+      "paths": [
+        "src/apps/ios/Kria/Core/Creation*.swift",
+        "src/apps/ios/Kria/Features/Creation*.swift",
+        "src/apps/ios/Kria/Features/Upload*.swift",
+        "src/apps/ios/Kria/Features/Song*.swift",
+        "src/apps/ios/Tests/KriaUITests/CreationUITests.swift",
+        "src/apps/ios/Tests/KriaUITests/AttachmentFlowUITests.swift"
+      ],
+      "tests": [
+        "CreationUITests/testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",
+        "CreationUITests/testGalleryPickIsReadFromPhotosAndReachesUpload",
+        "CreationUITests/testLibraryPickerReturnsToChatByDoneAndBySinglePick",
+        "AttachmentFlowUITests/testNarratedAttachmentsSwipeAndRequireExplicitAudioChoice"
+      ]
+    },
+    {
+      "id": "teleprompter",
+      "paths": [
+        "src/apps/ios/Kria/Features/Teleprompter*.swift",
+        "src/apps/ios/Tests/KriaUITests/TeleprompterUITests.swift"
+      ],
+      "tests": [
+        "TeleprompterUITests/testScriptIsSavedAndCameraFailureKeepsItEditable"
+      ]
+    },
+    {
+      "id": "editor",
+      "paths": [
+        "src/apps/ios/Kria/Features/NativeEditor*.swift",
+        "src/apps/ios/Kria/Features/NativeDrawing*.swift",
+        "src/apps/ios/Kria/Core/NativeEditor*.swift",
+        "src/apps/ios/Kria/Core/Editor*.swift",
+        "src/apps/ios/Tests/KriaUITests/EditorUITests.swift",
+        "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift",
+        "src/apps/ios/Tests/KriaUITests/DrawingJourneyUITests.swift"
+      ],
+      "tests": [
+        "EditorUITests/testNativeEditorTrimHandleShortensExtendsAndUndoesAsOneGesture",
+        "EditorUITests/testNativeEditorLongTextEditPreservesDurationAndClipGeometry",
+        "DrawingJourneyUITests/testDrawDoneTrimSaveReopenPersists",
+        "EditorUITests/testCapturedCreationWordsPlayReopenAndExport"
+      ]
+    },
+    {
+      "id": "slides",
+      "paths": [
+        "src/apps/ios/Kria/Core/SlidePost*.swift",
+        "src/apps/ios/Kria/Features/SlidePost*.swift",
+        "src/apps/ios/Tests/KriaUITests/SlidePostUITests.swift"
+      ],
+      "tests": [
+        "SlidePostUITests/testSlidePostCreationIsTheRichLayoutThenCreateThenKriaPropose",
+        "SlidePostUITests/testRichLayoutFromTheDrawerWhenCapabilitiesFailToLoad",
+        "SlidePostUITests/testRichLayoutFromTheGalleryForEveryCapabilityState",
+        "SlidePostUITests/testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave"
+      ]
+    }
+  ]
+}

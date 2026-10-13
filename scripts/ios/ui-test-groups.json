@@ -294,6 +294,9 @@
     "src/apps/ios/Kria/Features/TeleprompterWindow.swift": "creation",
     "src/apps/ios/Kria/Features/TeleprompterStore.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/TeleprompterUITests.swift": "creation",
-    "src/apps/ios/Kria/Features/TeleprompterReviewFixture.swift": "creation"
+    "src/apps/ios/Kria/Features/TeleprompterReviewFixture.swift": "creation",
+    "src/apps/ios/Kria/Features/ChatWorkspaceView.swift": "creation",
+    "src/apps/ios/Kria/Features/ChatUITestTransport.swift": "creation",
+    "src/apps/ios/Kria/Features/CanonicalChatComponents.swift": "creation"
   }
 }

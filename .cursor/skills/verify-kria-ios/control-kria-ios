@@ -1,0 +1,514 @@
+#!/usr/bin/env python3
+"""Owned, offline simulator lifecycle around Nova's existing XCTest harness."""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import plistlib
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import uuid
+
+ROOT = Path(__file__).resolve().parents[3]
+RESULTS = ROOT / "test-results/verify-kria-ios"
+LOCK = ROOT / ".dev/verify-kria-ios.lock"
+IOS = ROOT / "src/apps/ios"
+RECEIPT = IOS / ".derived-data/.ci-ui-build"
+APP = IOS / ".derived-data/Build/Products/Debug-iphonesimulator/Kria.app"
+BUNDLE = "com.kria.app.dev"
+DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-13-Pro"
+RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+FIXTURE_ENV = {"KRIA_CHAT_CREATION_FLOW": "v1"}
+SCRIPT_TEST = "TeleprompterUITests/testScriptIsSavedAndCameraFailureKeepsItEditable"
+SCRIPT_TEXT = (
+    "Today I want to share a simple idea.\nTake your time and enjoy the story."
+)
+
+
+def read_json(path):
+    return json.loads(path.read_text())
+
+
+def write_json(path, value):
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value, indent=2) + "\n")
+    temporary.replace(path)
+
+
+def save(state):
+    write_json(RESULTS / state["run"] / "run.json", state)
+
+
+def query(*args):
+    return subprocess.check_output(
+        args, cwd=ROOT, text=True, stderr=subprocess.PIPE
+    ).strip()
+
+
+def fingerprint():
+    return query("python3", str(ROOT / "scripts/ios/cache-inputs.py"), "fingerprint")
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def devices():
+    return json.loads(query("xcrun", "simctl", "list", "devices", "-j"))["devices"]
+
+
+def find_device(udid):
+    return next(
+        (d for group in devices().values() for d in group if d["udid"] == udid), None
+    )
+
+
+def environment(state, mode=None):
+    # Opt-in live/native fixtures and CI sharding must not leak into this run.
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("KRIA_", "TEST_RUNNER_", "SIMCTL_CHILD_"))
+    }
+    env["KRIA_SIMULATOR_ID"] = state["simulator_id"]
+    env["KRIA_IOS_UNIT_TESTS"] = "1"
+    if mode:
+        env["KRIA_IOS_TEST_MODE"] = mode
+    return env
+
+
+def command(state, label, args, env=None, timeout=1800):
+    directory = RESULTS / state["run"]
+    index = len(state["commands"])
+    relative = f"commands/{index:02d}-{label}.log"
+    log = directory / relative
+    log.parent.mkdir(exist_ok=True)
+    entry = {"argv": [str(a) for a in args], "cwd": str(ROOT), "log": relative}
+    state["commands"].append(entry)
+    save(state)
+    print(f"{label}: {log}", flush=True)
+    with log.open("w") as output:
+        process = subprocess.Popen(
+            args,
+            cwd=ROOT,
+            env=env,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        state["active_process"] = {"pid": process.pid, "argv": entry["argv"]}
+        save(state)
+        try:
+            status = process.wait(timeout=timeout)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+            state.pop("active_process", None)
+            entry["exit_code"] = process.returncode
+            save(state)
+    if status:
+        raise RuntimeError(f"{label} exited {status}; read {log}")
+    return log.read_text().strip()
+
+
+def ownership(state):
+    if state["root"] != str(ROOT) or state["fixture_env"] != FIXTURE_ENV:
+        raise RuntimeError("Wrong worktree or fixture mode")
+    expected = {
+        k: state[k] for k in ("run", "root", "owner", "simulator_id", "simulator_name")
+    }
+    if (
+        not LOCK.is_dir()
+        or LOCK.is_symlink()
+        or read_json(LOCK / "owner.json") != expected
+    ):
+        raise RuntimeError("Ownership record mismatch; refusing to touch a simulator")
+    device = find_device(state["simulator_id"]) if state["simulator_id"] else None
+    if device and (
+        device["name"] != state["simulator_name"]
+        or device.get("deviceTypeIdentifier") != DEVICE_TYPE
+    ):
+        raise RuntimeError("Simulator identity mismatch; refusing to touch it")
+    return device
+
+
+def owner_record(state):
+    write_json(
+        LOCK / "owner.json",
+        {
+            k: state[k]
+            for k in ("run", "root", "owner", "simulator_id", "simulator_name")
+        },
+    )
+
+
+def prepare(state):
+    result_root = ROOT / "test-results/ios"
+    before = set(result_root.glob("prepare-ui.*"))
+    try:
+        command(
+            state,
+            "prepare-ui",
+            ["bash", str(ROOT / "scripts/ios/verify.sh")],
+            env=environment(state, "prepare-ui"),
+        )
+    finally:
+        for path in set(result_root.glob("prepare-ui.*")) - before:
+            destination = RESULTS / state["run"] / path.name
+            shutil.move(str(path), str(destination))
+    receipt = RECEIPT.read_text().splitlines()
+    if receipt != [state["simulator_id"], fingerprint()]:
+        raise RuntimeError("Preparation produced an invalid simulator/build receipt")
+    state["fingerprint"] = receipt[1]
+    state["binary_sha256"] = sha(APP / "Kria")
+    state["head"] = query("git", "rev-parse", "HEAD")
+    shutil.copy2(RECEIPT, RESULTS / state["run"] / "preparation-receipt.txt")
+    save(state)
+
+
+def install_launch(state):
+    command(
+        state,
+        "install",
+        ["xcrun", "simctl", "install", state["simulator_id"], str(APP)],
+    )
+    env = environment(state)
+    env.update({"SIMCTL_CHILD_" + key: value for key, value in FIXTURE_ENV.items()})
+    output = command(
+        state,
+        "launch",
+        [
+            "xcrun",
+            "simctl",
+            "launch",
+            state["simulator_id"],
+            BUNDLE,
+            "-ui-testing-chat",
+        ],
+        env=env,
+    )
+    match = re.search(r":\s*(\d+)\s*$", output)
+    if not match:
+        raise RuntimeError(f"Could not identify the launched app PID: {output}")
+    state["app_pid"] = int(match.group(1))
+    save(state)
+
+
+def doctor(state):
+    # Do not use command(): Doctor must never write logs, receipts, or run state.
+    device = ownership(state)
+    if not device or device["state"] != "Booted":
+        raise RuntimeError("Owned simulator is missing or not booted")
+    if state.get("fingerprint") != fingerprint() or state.get("head") != query(
+        "git", "rev-parse", "HEAD"
+    ):
+        raise RuntimeError("Native inputs or HEAD changed; build a new run")
+    if not RECEIPT.exists() or RECEIPT.read_text().splitlines() != [
+        state["simulator_id"],
+        state["fingerprint"],
+    ]:
+        raise RuntimeError(
+            "Missing, consumed, or mismatched preparation receipt; launch a new run"
+        )
+    installed = Path(
+        query(
+            "xcrun", "simctl", "get_app_container", state["simulator_id"], BUNDLE, "app"
+        )
+    )
+    with (installed / "Info.plist").open("rb") as handle:
+        info = plistlib.load(handle)
+    if (
+        info["CFBundleIdentifier"] != BUNDLE
+        or sha(installed / info["CFBundleExecutable"]) != state["binary_sha256"]
+    ):
+        raise RuntimeError("Installed app does not match this run's build")
+    process = query("ps", "-p", str(state["app_pid"]), "-o", "command=")
+    if "Kria.app/Kria" not in process or "-ui-testing-chat" not in process:
+        raise RuntimeError("Owned fixture app is not running")
+    return {
+        "healthy": True,
+        "simulator_id": state["simulator_id"],
+        "bundle": BUNDLE,
+        "fingerprint": state["fingerprint"],
+        "auth": "offline fixture; no live session",
+        "ready_screen": "What are we making? (asserted by the required smoke journey)",
+    }
+
+
+def capture(state, ui_directory, tests):
+    directory = RESULTS / state["run"]
+    bundle = ui_directory / "ui.xcresult"
+    if not bundle.exists():
+        raise RuntimeError("Missing UI result bundle")
+    command(
+        state,
+        "attachments",
+        [
+            "xcrun",
+            "xcresulttool",
+            "export",
+            "attachments",
+            "--path",
+            str(bundle),
+            "--output-path",
+            str(directory / "attachments"),
+        ],
+    )
+    if SCRIPT_TEST in tests:
+        container = Path(
+            query(
+                "xcrun",
+                "simctl",
+                "get_app_container",
+                state["simulator_id"],
+                BUNDLE,
+                "data",
+            )
+        )
+        drafts = list(
+            (container / "Library/Application Support/KriaTeleprompter").glob(
+                "*/*/draft.json"
+            )
+        )
+        matches = [
+            path for path in drafts if read_json(path).get("text") == SCRIPT_TEXT
+        ]
+        if not matches:
+            raise RuntimeError(
+                "UI script did not persist the exact typed text in draft.json"
+            )
+        persistence = directory / "persistence"
+        persistence.mkdir()
+        for index, path in enumerate(matches):
+            shutil.copy2(path, persistence / f"{index}-draft.json")
+        state["persistence"] = {"exact_script_text": True, "drafts": len(matches)}
+    attachments = directory / "attachments"
+    if not any(attachments.rglob("*.png")):
+        raise RuntimeError("No action/result screenshots were exported")
+    save(state)
+
+
+def drive(state, feature, tests):
+    if state.get("driven"):
+        raise RuntimeError(
+            "One selection per run; cleanup and launch a new run for another baseline"
+        )
+    doctor(state)
+    selection = "smoke," + ",".join(sorted(set(tests)))
+    command(
+        state,
+        "selection",
+        ["python3", str(ROOT / "scripts/ios/ui_tests.py"), "args", selection],
+    )
+    state.update(feature=feature, tests=tests, driven=True)
+    save(state)
+    result_root = ROOT / "test-results/ios"
+    before = set(result_root.glob("ui.*"))
+    error = None
+    try:
+        env = environment(state, "ui")
+        env["KRIA_IOS_UI_GROUPS"] = selection
+        command(state, "ui", ["bash", str(ROOT / "scripts/ios/verify.sh")], env=env)
+    except Exception as failure:
+        error = failure
+    finally:
+        generated = set(result_root.glob("ui.*")) - before
+        for path in generated:
+            destination = RESULTS / state["run"] / path.name
+            shutil.move(str(path), str(destination))
+            if (destination / "ui.xcresult").exists():
+                capture(state, destination, tests)
+    if error:
+        raise error
+    if len(generated) != 1:
+        raise RuntimeError("Expected exactly one UI execution result directory")
+    flakes = read_json(destination / "flaky-tests.json")
+    proof = {
+        "feature": feature,
+        "tests": tests,
+        "selection": selection,
+        "head": state["head"],
+        "fingerprint": state["fingerprint"],
+        "status": "passed_with_retries" if flakes else "passed",
+        "flaky_tests": flakes,
+        "evidence_level": "offline native UI",
+        "persistence": state.get("persistence"),
+        "model_spend_usd": 0,
+        "unverified": [
+            "authenticated backend",
+            "live models",
+            "production",
+            "physical iPhone",
+        ],
+        "stand_in_setup": [
+            "unsigned Debug simulator install",
+            "fixture API/authentication",
+        ]
+        + (
+            ["camera deliberately unavailable for teleprompter script test"]
+            if SCRIPT_TEST in tests
+            else []
+        ),
+    }
+    write_json(RESULTS / state["run"] / "proof.json", proof)
+    state["status"] = proof["status"]
+    save(state)
+    print(json.dumps(proof, indent=2))
+
+
+def cleanup(state):
+    if state.get("cleaned"):
+        print(f"Already cleaned; evidence retained at {RESULTS / state['run']}")
+        return
+    device = ownership(state)
+    active = state.get("active_process")
+    if active:
+        # Only an abandoned child whose command and process group still match.
+        try:
+            pid = active["pid"]
+            actual = query("ps", "-p", str(pid), "-o", "command=")
+            if os.getpgid(pid) == pid and str(ROOT / "scripts/ios/verify.sh") in actual:
+                os.killpg(pid, signal.SIGTERM)
+        except (ProcessLookupError, subprocess.CalledProcessError):
+            pass
+    if device:
+        if device["state"] != "Shutdown":
+            command(
+                state,
+                "shutdown",
+                ["xcrun", "simctl", "shutdown", state["simulator_id"]],
+            )
+        command(state, "delete", ["xcrun", "simctl", "delete", state["simulator_id"]])
+    if state["simulator_id"] and find_device(state["simulator_id"]):
+        raise RuntimeError("Owned simulator still exists after cleanup")
+    if RECEIPT.exists() and RECEIPT.read_text().splitlines()[:1] == [
+        state["simulator_id"]
+    ]:
+        RECEIPT.unlink()
+    (LOCK / "owner.json").unlink()
+    LOCK.rmdir()
+    state["cleaned"] = True
+    save(state)
+    write_json(RESULTS / state["run"] / "after-cleanup-devices.json", devices())
+    print(f"Cleaned owned simulator; evidence retained at {RESULTS / state['run']}")
+
+
+def launch(run):
+    for tool in ("xcrun", "xcodebuild", "xcodegen", "python3"):
+        if not shutil.which(tool):
+            raise RuntimeError(f"Missing prerequisite: {tool}")
+    if (RESULTS / run).exists():
+        raise RuntimeError("Run directory already exists; use a fresh --run name")
+    LOCK.parent.mkdir(exist_ok=True)
+    try:
+        LOCK.mkdir()
+    except FileExistsError:
+        raise RuntimeError(
+            "Another run owns this worktree; use its cleanup or another worktree"
+        ) from None
+    directory = RESULTS / run
+    directory.mkdir(parents=True)
+    owner = uuid.uuid4().hex
+    state = {
+        "run": run,
+        "root": str(ROOT),
+        "owner": owner,
+        "simulator_id": None,
+        "simulator_name": f"iPhone Kria Verify {run} {owner[:8]}",
+        "fixture_env": FIXTURE_ENV,
+        "commands": [],
+        "status": "launching",
+    }
+    owner_record(state)
+    save(state)
+    try:
+        write_json(directory / "before-devices.json", devices())
+        state["simulator_id"] = command(
+            state,
+            "create",
+            [
+                "xcrun",
+                "simctl",
+                "create",
+                state["simulator_name"],
+                DEVICE_TYPE,
+                RUNTIME,
+            ],
+        )
+        owner_record(state)
+        save(state)
+        prepare(state)
+        install_launch(state)
+        doctor(state)
+        state["status"] = "ready_for_ui"
+        save(state)
+        print(f"Ready for XCUITest: {directory}")
+        return state
+    except BaseException as error:
+        state["status"] = "failed"
+        state["error"] = str(error)
+        save(state)
+        cleanup(state)
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("launch", "doctor", "drive", "cleanup"):
+        child = commands.add_parser(name)
+        child.add_argument(
+            "--run", required=True, help="Unique evidence directory name"
+        )
+        if name == "drive":
+            child.add_argument(
+                "--feature", required=True, help="Feature-map ID for the proof"
+            )
+            child.add_argument(
+                "tests", nargs="+", help="XCTest Class/testMethod IDs; smoke is added"
+            )
+    args = parser.parse_args()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", args.run):
+        parser.error("--run must be 1–64 lowercase letters, digits, or hyphens")
+    state = None
+    try:
+        if args.command == "launch":
+            launch(args.run)
+            return
+        state = read_json(RESULTS / args.run / "run.json")
+        if state["run"] != args.run:
+            raise RuntimeError("Run identity mismatch")
+        if args.command == "doctor":
+            print(json.dumps(doctor(state), indent=2))
+        elif args.command == "drive":
+            drive(state, args.feature, args.tests)
+        else:
+            cleanup(state)
+    except (Exception, KeyboardInterrupt) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        if state is not None and args.command == "drive":
+            state["status"] = "failed"
+            state["error"] = str(error)
+            save(state)
+            try:
+                cleanup(state)
+            except Exception as failure:
+                print(
+                    f"Cleanup refused/failed: {failure}; inspect run.json",
+                    file=sys.stderr,
+                )
+        raise SystemExit(1) from None
+
+
+if __name__ == "__main__":
+    main()
