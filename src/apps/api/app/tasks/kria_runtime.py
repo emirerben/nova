@@ -21,6 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.agents._runtime import ProviderOutcomeUnknownError
 from app.config import settings
 from app.database import sync_session
 from app.db_locks import CONTENT_PLAN_LOCK
@@ -106,6 +107,7 @@ from app.services.choice_questions import (
     open_conflicts,
     tag_event,
 )
+from app.services.creation_thread_titles import matches_conversation_revision
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
@@ -258,7 +260,7 @@ def _complete_response_turn(
         thread = db.execute(
             select(CreationThread).where(CreationThread.id == turn.thread_id).with_for_update()
         ).scalar_one()
-        if int(thread.revision) != claimed_thread_revision:
+        if not matches_conversation_revision(thread, claimed_thread_revision):
             turn.status = "pending"
             turn.lease_owner = None
             turn.lease_expires_at = None
@@ -754,7 +756,7 @@ def _complete_draft_turn(
         thread = db.execute(
             select(CreationThread).where(CreationThread.id == turn.thread_id).with_for_update()
         ).scalar_one()
-        if int(thread.revision) != claimed_thread_revision:
+        if not matches_conversation_revision(thread, claimed_thread_revision):
             turn.status = "pending"
             turn.lease_owner = None
             turn.lease_expires_at = None
@@ -1830,7 +1832,7 @@ def _complete_read_turn(
         thread = db.execute(
             select(CreationThread).where(CreationThread.id == turn.thread_id).with_for_update()
         ).scalar_one()
-        if int(thread.revision) != claimed_thread_revision:
+        if not matches_conversation_revision(thread, claimed_thread_revision):
             # The receipt describes a superseded snapshot. Remove its
             # uncommitted row, release the lease, and republish this durable
             # turn so the next claim observes the new project revision.
@@ -1929,15 +1931,28 @@ def _project_retryable_failure(
     # KRI-520: also reached from `_claim` (claims exhausted) before any turn binding, so
     # the copy follows the chat's language from the thread row itself.
     with reply_language_for(thread_reply_language(thread)):
-        failure_copy = say(
-            en=(
-                "I couldn't finish that step, but your project and saved draft are safe. "
-                "Try the request again."
-            ),
-            tr=(
-                "Bu adımı tamamlayamadım ama projen ve kayıtlı taslağın güvende. "
-                "İsteği tekrar dene."
-            ),
+        failure_copy = (
+            say(
+                en=(
+                    "I couldn't get a completed response from the AI service. Your request and "
+                    "footage are saved. Please try again in a moment."
+                ),
+                tr=(
+                    "Yapay zekâ hizmetinden tamamlanmış bir yanıt alamadım. İsteğin ve çekimlerin "
+                    "kayıtlı. Lütfen biraz sonra tekrar dene."
+                ),
+            )
+            if code == "runtime_provider_outcome_unknown"
+            else say(
+                en=(
+                    "I couldn't finish that step, but your project and saved draft are safe. "
+                    "Try the request again."
+                ),
+                tr=(
+                    "Bu adımı tamamlayamadım ama projen ve kayıtlı taslağın güvende. "
+                    "İsteği tekrar dene."
+                ),
+            )
         )
     event = _append_sync_event(
         db,
@@ -2379,7 +2394,11 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         )
         successor_turn_id = _fail_turn(
             identifier,
-            code="runtime_turn_failed",
+            code=(
+                "runtime_provider_outcome_unknown"
+                if isinstance(exc, ProviderOutcomeUnknownError)
+                else "runtime_turn_failed"
+            ),
             lease_owner=lease_owner,
             lease_epoch=lease_epoch,
             detail=_failure_detail(exc),
