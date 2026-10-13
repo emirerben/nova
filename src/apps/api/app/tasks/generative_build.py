@@ -46,7 +46,7 @@ from datetime import UTC, datetime, timedelta
 from functools import wraps
 from itertools import cycle
 from types import SimpleNamespace
-from typing import Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
@@ -60,6 +60,7 @@ from app.agents._schemas.edit_format import (
     SLIDES_DRAWING_RENDERER_VERSION,
     SLIDES_RENDERER_VERSION,
     SLIDES_SIZES_RENDERER_VERSION,
+    SLIDES_STICKER_RENDERER_VERSION,
     coerce_edit_format,
     guided_edit_applicable,
 )
@@ -238,6 +239,9 @@ def _classic_cloud_evidence(
     )
 
 
+if TYPE_CHECKING:
+    from app.pipeline.silence_cut import CutPlan
+
 log = structlog.get_logger()
 
 MAX_ERROR_DETAIL_LEN = 2000
@@ -272,6 +276,11 @@ _SPEECH_FALLBACK_DECLINES = {
         "I couldn't read the speech in your clip.",
         "Try a different clip of you talking, or ask for a montage.",
     ),
+    # KRI-653: the clip HAS an audio track but it carries no sound (a dead mic take).
+    "silent_audio": (
+        "Your video has no sound, so there's nothing to caption or cut.",
+        "Record it again and check that nothing is covering the microphone.",
+    ),
 }
 
 
@@ -291,6 +300,40 @@ def _speech_fallback_decline(reason: str | None) -> BaseException | None:
     return _plan_decline(
         "evidence_missing", detail[0], field_path="edit_format", alternative=detail[1]
     )
+
+
+def _silent_audio_status(local_path: str, *, job_id: str) -> str | None:
+    """``"silent"`` / ``"inaudible"`` when the speaker clip has no usable sound, else ``None``.
+
+    KRI-653: a dead-mic recording is a valid audio stream of zeros. Whisper and Gemini
+    hallucinate words over it ("Bye! Bye!", "Hello." x1000) and the speech cut then removes
+    almost the whole take, so a subtitled / talking-head edit must refuse it up front.
+    ``unknown`` (the measurement itself failed) fails OPEN: a broken probe never blocks a render.
+    """
+    from app.services.clip_speech import audio_presence  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    presence = audio_presence(local_path)
+    if presence.status not in ("silent", "inaudible"):
+        return None
+    record_pipeline_event(
+        "assembly",
+        "silent_audio_declined",
+        {
+            "presence": presence.status,
+            "max_window_db": presence.max_window_db,
+            "active_s": round(presence.active_s, 2),
+            "duration_s": round(presence.duration_s, 2),
+        },
+    )
+    log.warning(
+        "silent_audio_declined",
+        job_id=job_id,
+        presence=presence.status,
+        max_window_db=presence.max_window_db,
+        duration_s=round(presence.duration_s, 2),
+    )
+    return presence.status
 
 
 def _flag_decline(kind: str, message: str) -> BaseException:
@@ -2654,6 +2697,7 @@ def _run_generative_job_impl(
                 from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
                 from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
+                    SilentAudioPlanDeclined,
                     UnsupportedPhonePlan,
                     UserSongPlanDeclined,
                 )
@@ -2667,15 +2711,23 @@ def _run_generative_job_impl(
                 # fall back to) must persist a failure_reason — without this, the
                 # generic `except Exception` fallback below only set error_detail,
                 # leaving the client with no reason code to render.
+                # KRI-286: a capability the device has not verified yet is a rollout
+                # decision, not a plan defect -- it must stay retryable, so it gets its
+                # own code BEFORE the deterministic `phone_plan_unsupported` branch.
+                from app.services.creation_text_composition import (
+                    CreationTextCompositionError,  # noqa: PLC0415
+                )
                 from app.services.phone_rollout import (  # noqa: PLC0415
                     PhoneCapabilityUnavailable,
                 )
 
-                # KRI-286: a capability the device has not verified yet is a rollout
-                # decision, not a plan defect -- it must stay retryable, so it gets its
-                # own code BEFORE the deterministic `phone_plan_unsupported` branch.
-                if isinstance(exc, PhoneCapabilityUnavailable):
+                if isinstance(exc, CreationTextCompositionError):
+                    failure_reason = "creation_text_failed"
+                elif isinstance(exc, PhoneCapabilityUnavailable):
                     failure_reason = "phone_capability_unavailable"
+                elif isinstance(exc, SilentAudioPlanDeclined):
+                    # KRI-653: error_detail is creator-facing copy, shown verbatim in chat.
+                    failure_reason = "silent_audio_declined"
                 elif isinstance(exc, UserSongPlanDeclined):
                     # KRI-466: error_detail is creator-facing copy; its own code so
                     # chat shows it instead of "your iPhone can't render".
@@ -6206,7 +6258,10 @@ def _run_phone_unified_montage_job(
     # Complete the initial text lane before the canonical generation is pinned.
     # This uses the request already bound to this job, never a newer thread message.
     from app.agents._runtime import RunContext  # noqa: PLC0415
-    from app.services.creation_text_composition import compose_creation_text  # noqa: PLC0415
+    from app.services.creation_text_composition import (  # noqa: PLC0415
+        compose_creation_text,
+        snapshot_copy_constraints,
+    )
 
     request = all_candidates.get("creator_request") or (
         (all_candidates.get("brief") or {}).get("creator_request")
@@ -6217,6 +6272,8 @@ def _run_phone_unified_montage_job(
         plan.snapshot,
         creator_request=str(request or ""),
         ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
+        copy_constraints=snapshot_copy_constraints(plan.snapshot),
+        text_requirements=brief.live() if brief is not None else None,
     )
     record = plan.record()
     # KRI-544: which copies left the edit, readable by a requirement checker. Absent
@@ -6502,7 +6559,10 @@ def _run_phone_subtitled_job(
         resolve_spoken_caption_language,
     )
     from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
-    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
+        SilentAudioPlanDeclined,
+        UnsupportedPhonePlan,
+    )
     from app.pipeline.phone_subtitled_lanes import remap_lanes_for_cut  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
         SFX_DUCK_RECEIPT_FIELD,
@@ -6512,7 +6572,6 @@ def _run_phone_subtitled_job(
     from app.pipeline.phone_subtitled_title import talking_closing_window  # noqa: PLC0415
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.silence_cut import (  # noqa: PLC0415
-        CutPlan,
         is_filler_token,
         plan_summary,
         remap_words,
@@ -6816,6 +6875,11 @@ def _run_phone_subtitled_job(
                 raise UnsupportedPhonePlan(
                     "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
                 )
+            # KRI-653: a silent take must never reach the speech cut (job c283f1dd cut a
+            # 192 s dead-mic take to 3 s over hallucinated words). Declared AND self-narrated.
+            # Its own decline type so chat shows this message, not "your iPhone can't render".
+            if _silent_audio_status(clip_path, job_id=job_id) is not None:
+                raise SilentAudioPlanDeclined(" ".join(_SPEECH_FALLBACK_DECLINES["silent_audio"]))
             if multi_clip:
                 cutaways = _phone_talking_head_cutaways(
                     speaker_clip_id=clip_id,
@@ -6860,6 +6924,14 @@ def _run_phone_subtitled_job(
                 speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
                     analysis_view="full_clip"
                 )
+            # KRI-628: "start the video at '...'" cuts the speech before that line out of
+            # the cleanup plan (the plan's keep segments are the only trim this render has).
+            cut_plan, opening_cut_receipt = _phone_opening_cut(
+                snapshot,
+                cut_plan,
+                speech_cleanup_snapshot.source_words() if speech_cleanup_snapshot else (),
+                duration_s=float(probe.duration_s),
+            )
 
             # KRI-547: the creator asked for a vertical / full-screen / face-in-frame
             # video. A sideways speaker clip is then face-filled -- the engine's
@@ -7764,6 +7836,10 @@ def _run_phone_subtitled_job(
             new_entry["phone_lane_receipt"] = lane_receipt
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
+        if opening_cut_receipt is not None:
+            # KRI-628: whether the video starts at the line the creator quoted; the
+            # brief receipt's evidence at render-ready.
+            new_entry["opening_cut"] = opening_cut_receipt
         if speaker_framing is not None:
             # KRI-547: how the speaker was framed and why -- the brief receipt's
             # evidence at render-ready, and what an editor Save keeps or resets.
@@ -7849,6 +7925,70 @@ def _run_phone_subtitled_job(
             ),
         },
     )
+
+
+def _phone_opening_cut(
+    snapshot: dict,
+    cut_plan: CutPlan | None,
+    words: Any,
+    *,
+    duration_s: float,
+) -> tuple[CutPlan | None, dict[str, Any] | None]:
+    """KRI-628: cut the phone Talking take down to start at a line the creator quoted.
+
+    The ask is read deterministically off the approved brief pinned on the job
+    (``creator_brief_binding``), never a prompt field. ``(cut_plan, None)`` without such
+    an ask (or a readable binding), so the render runs exactly as before. Otherwise the
+    plan with everything before the line cut (when the take says it, and the speech
+    cleanup plan exists to carry the cut) and a receipt that never raises."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.opening_cut_ask import brief_opening_cut  # noqa: PLC0415
+    from app.pipeline.phone_opening_cut import apply_opening_cut  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return cut_plan, None
+    try:
+        ask = brief_opening_cut(BriefBinding.model_validate(raw_binding).resolve())
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_opening_cut.binding_unreadable", error=str(exc)[:200])
+        return cut_plan, None
+    if ask is None:
+        return cut_plan, None
+    receipt: dict[str, Any]
+    if cut_plan is None:
+        # Cleanup was declined: no word timings to ground the line in.
+        receipt = {
+            "version": 1,
+            "quote": ask.quote,
+            "requirement_ids": list(ask.requirement_ids),
+            "status": "not_applied",
+            "reason": "cleanup_off",
+        }
+    else:
+        try:
+            cut_plan, receipt = apply_opening_cut(
+                cut_plan,
+                list(words),
+                ask.quote,
+                duration_s=duration_s,
+                requirement_ids=ask.requirement_ids,
+            )
+        except Exception as exc:  # noqa: BLE001 - a missed cut is reported, never fatal
+            log.warning("phone_opening_cut.failed", error=str(exc)[:200])
+            receipt = {
+                "version": 1,
+                "quote": ask.quote,
+                "requirement_ids": list(ask.requirement_ids),
+                "status": "not_applied",
+                "reason": "not_found",
+            }
+    try:
+        record_pipeline_event("phone", "opening_cut", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return cut_plan, receipt
 
 
 def _phone_speaker_framing(
@@ -9892,7 +10032,7 @@ def _resolve_slide_post_draft_and_assets(
     from sqlalchemy import select as _select  # noqa: PLC0415
 
     from app.models import PlanItem, PlanItemAsset  # noqa: PLC0415
-    from app.schemas.slide_post import parse_slide_post  # noqa: PLC0415
+    from app.schemas.slide_post import parse_slide_post, sticker_asset_ids  # noqa: PLC0415
 
     job = db.get(Job, uuid.UUID(job_id))
     if job is None or job.content_plan_item_id is None:
@@ -9904,7 +10044,14 @@ def _resolve_slide_post_draft_and_assets(
     if draft is None or not draft.slides:
         raise SlidePostPolicyError("empty_draft", "No slides to render.")
     asset_ids = [ref.asset_id for ref in draft.slides]
-    rows = db.execute(_select(PlanItemAsset).where(PlanItemAsset.id.in_(asset_ids))).scalars().all()
+    # Pasted image stickers (KRI-647) are pool images that are NEVER slides: resolve them in
+    # the same ownership-checked read, but best effort (below), not as a slide requirement.
+    sticker_ids = sticker_asset_ids(draft)
+    rows = (
+        db.execute(_select(PlanItemAsset).where(PlanItemAsset.id.in_([*asset_ids, *sticker_ids])))
+        .scalars()
+        .all()
+    )
     assets_by_id = {row.id: row for row in rows}
     allowed_prefix = f"users/{job_user_id}/plan/{content_plan_item_id}/"
     # Extract every field we need into plain dicts BEFORE the session
@@ -9928,6 +10075,28 @@ def _resolve_slide_post_draft_and_assets(
             # and could stamp that draft as rendered, so fail before any
             # normalization/upload work instead of silently dropping it.
             continue
+        # Sticker images for this slide, keyed by sticker id. A stale, foreign, unready,
+        # non-image or missing asset is simply absent: the render drops that sticker.
+        stickers: dict[str, dict[str, Any]] = {}
+        for sticker in (ref.edits.stickers or []) if ref.edits is not None else []:
+            try:
+                sticker_row = assets_by_id.get(uuid.UUID(sticker.asset_id))
+            except ValueError:
+                sticker_row = None
+            if (
+                sticker_row is None
+                or sticker_row.plan_item_id != content_plan_item_id
+                or sticker_row.user_id != job_user_id
+                or sticker_row.media_status != "ready"
+                or sticker_row.kind != "image"
+                or not sticker_row.gcs_path.startswith(allowed_prefix)
+            ):
+                continue
+            stickers[sticker.id] = {
+                "gcs_path": sticker_row.gcs_path,
+                "gcs_generation": sticker_row.gcs_generation,
+                "content_fingerprint": sticker_row.content_fingerprint,
+            }
         ordered_assets.append(
             {
                 "id": str(asset.id),
@@ -9938,6 +10107,7 @@ def _resolve_slide_post_draft_and_assets(
                 "duration_s": asset.duration_s,
                 "alt": ref.alt,
                 "edits": ref.edits,
+                "stickers": stickers,
             }
         )
     if len(ordered_assets) != len(draft.slides):
@@ -9945,6 +10115,35 @@ def _resolve_slide_post_draft_and_assets(
             "incomplete_draft_assets", "Every saved slide must be ready and available to render."
         )
     return content_plan_item_id, job_user_id, draft, ordered_assets
+
+
+def _download_slide_sticker_sources(
+    stickers: dict[str, dict[str, Any]], *, tmpdir: str, slide_index: int
+) -> dict[str, str]:
+    """Download one slide's (already ownership-checked) sticker originals; sticker id -> path.
+
+    Best effort, like the slide assets' fallbacks: a failed download only drops that sticker.
+    """
+    from app import storage  # noqa: PLC0415
+
+    sources: dict[str, str] = {}
+    for sticker_id, row in stickers.items():
+        local = os.path.join(
+            tmpdir,
+            f"sticker_{slide_index:02d}_{hashlib.sha1(sticker_id.encode()).hexdigest()[:10]}",
+        )
+        try:
+            if row.get("gcs_generation"):
+                storage.download_generation_to_file(
+                    row["gcs_path"], local, generation=str(row["gcs_generation"])
+                )
+            else:
+                storage.download_to_file(row["gcs_path"], local)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("slide_sticker_download_failed", sticker_id=sticker_id, error=str(exc))
+            continue
+        sources[sticker_id] = local
+    return sources
 
 
 def _build_slide_post_result(
@@ -9991,8 +10190,17 @@ def _build_slide_post_result(
         asset.get("edits") is not None and asset["edits"].drawing is not None
         for asset in ordered_assets
     )
+    # ...and a post with any slide sticker by the sticker compositor (KRI-647), which also
+    # paints drawings, so it outranks the drawing stamp.
+    has_stickers = any(
+        asset.get("edits") is not None and asset["edits"].stickers for asset in ordered_assets
+    )
     export_renderer_version = (
-        SLIDES_DRAWING_RENDERER_VERSION if has_drawing else SLIDES_SIZES_RENDERER_VERSION
+        SLIDES_STICKER_RENDERER_VERSION
+        if has_stickers
+        else SLIDES_DRAWING_RENDERER_VERSION
+        if has_drawing
+        else SLIDES_SIZES_RENDERER_VERSION
     )
     bundle_slides: list[slide_build.BundleSlideFile] = []
     resolved_slides: list[dict[str, Any]] = []
@@ -10024,7 +10232,14 @@ def _build_slide_post_result(
             # edit — the edit would never appear in the export. "noedits" is
             # a plain literal (not a hash) so the unedited path's key is
             # unchanged from before this feature existed.
-            edits_digest = slide_build.edits_cache_digest(edits)
+            stickers = asset.get("stickers") or {}
+            edits_digest = slide_build.edits_cache_digest(
+                edits,
+                {
+                    sid: row["content_fingerprint"] or row["gcs_path"]
+                    for sid, row in stickers.items()
+                },
+            )
             # Image slides carry the decode-recipe version so a normalizer
             # fix rebuilds stale derivatives. Every slide carries the
             # watermark version, so a derivative cached before the watermark
@@ -10035,6 +10250,7 @@ def _build_slide_post_result(
             wm_suffix = f"_wm{slide_build.SLIDE_WATERMARK_VERSION}"
             # Only a drawn slide gets a painter version, so every other key is unchanged.
             wm_suffix += slide_build.drawing_key_suffix(edits)
+            wm_suffix += slide_build.sticker_key_suffix(edits)
             export_canvas = slide_build.slide_canvas(platform_profile, edits, aspect)
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
@@ -10055,13 +10271,24 @@ def _build_slide_post_result(
                     )
                 else:
                     storage.download_to_file(asset["gcs_path"], source_local)
+                sticker_sources = _download_slide_sticker_sources(
+                    stickers, tmpdir=tmpdir, slide_index=index
+                )
                 if kind == "image":
                     slide_build.normalize_image_slide(
-                        source_local, normalized_local, canvas=export_canvas, edits=edits
+                        source_local,
+                        normalized_local,
+                        canvas=export_canvas,
+                        edits=edits,
+                        sticker_sources=sticker_sources,
                     )
                 else:
                     slide_build.normalize_video_slide(
-                        source_local, normalized_local, canvas=export_canvas, edits=edits
+                        source_local,
+                        normalized_local,
+                        canvas=export_canvas,
+                        edits=edits,
+                        sticker_sources=sticker_sources,
                     )
                 storage.upload_local_file(
                     normalized_local,
@@ -19869,6 +20096,18 @@ def _resolve_archetype(
             if plan_authority:
                 raise _flag_decline("different_format", "The talking-to-camera edit is off.")
             return _fallback("flag_disabled")
+        # KRI-653: "no usable speech still resolves to subtitled" holds for a quiet or
+        # wordless clip, NOT for a dead-mic take whose audio is digital silence --
+        # captions and a speech cut over that only produce hallucinated words.
+        # `all` stops at the first audible clip, so a normal take costs one probe, not N.
+        if clip_id_to_local and all(
+            _silent_audio_status(path, job_id=job_id) is not None
+            for path in clip_id_to_local.values()
+        ):
+            decline = _speech_fallback_decline("silent_audio")
+            if plan_authority and decline is not None:
+                raise decline
+            return _fallback("no_speech")
         record_pipeline_event("assembly", "archetype_selected", {"archetype": "subtitled"})
         log.info("generative_archetype_selected", job_id=job_id, archetype="subtitled")
         return "subtitled", None, None

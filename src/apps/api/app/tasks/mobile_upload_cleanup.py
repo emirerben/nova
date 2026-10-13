@@ -12,6 +12,7 @@ from app.database import sync_session
 from app.models import TemporaryMediaUpload
 from app.services import media_library_retention
 from app.services.job_storage_paths import project_media_reference_lock_key
+from app.services.temporary_uploads import owner_path_has_reference
 from app.storage import delete_object_best_effort
 from app.worker import celery_app
 
@@ -92,6 +93,13 @@ def cleanup_expired_temporary_uploads(
             .all()
         )
         for row in rows:
+            if getattr(row, "purpose", None) == "library_duplicate" and owner_path_has_reference(
+                db, row.user_id, row.object_path
+            ):
+                row.status = "adopted"
+                row.cleanup_claimed_at = None
+                row.last_error = None
+                continue
             # A future ingest flow may transfer a reservation to a durable
             # source between discovery and this locked recheck.  Cleanup never
             # owns adopted bytes; retention handles those source generations.

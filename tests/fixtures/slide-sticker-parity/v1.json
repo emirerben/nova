@@ -1,0 +1,578 @@
+{
+  "contract": "KRI-647 slide stickers v1. Canvas = the slide OUTPUT canvas in px (origin top-left, y down). x_frac/y_frac = sticker CENTRE as a fraction of canvas width/height; width_frac = displayed width as a fraction of canvas width; height follows the image's own aspect (height_px = width_px*image.h/image.w), never distorted. rotation_deg is clockwise-positive about the centre. Stickers are clipped by the canvas edge, never moved. expected.* are in canvas pixels. Tolerance 1e-6. 'validation' lists sticker arrays for ONE slide with the expected verdict; for invalid cases 'reason' is a keyword the server error message contains (bounds | duplicate id | too many). Stickers per slide: max 4; list order = z-order, last on top. Stack: photo, look, text, drawing ink, stickers, watermark (stickers sit above both text and ink; the watermark stays last). An empty stickers list is valid and means 'clear'; a missing key means 'keep stored'.",
+  "version": 1,
+  "caps": {
+    "max_stickers_per_slide": 4,
+    "width_frac_min": 0.05,
+    "width_frac_max": 1.0,
+    "rotation_deg_min": -180,
+    "rotation_deg_max": 180,
+    "id_max_length": 64
+  },
+  "cases": [
+    {
+      "name": "portrait_centered_square_image",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 400,
+        "h": 400
+      },
+      "sticker": {
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "width_frac": 0.4,
+        "rotation_deg": 0
+      },
+      "expected": {
+        "center_x": 540.0,
+        "center_y": 960.0,
+        "width_px": 432.0,
+        "height_px": 432.0,
+        "rotation_deg": 0
+      }
+    },
+    {
+      "name": "portrait_4x5_centered",
+      "canvas": {
+        "w": 1080,
+        "h": 1350
+      },
+      "image": {
+        "w": 600,
+        "h": 300
+      },
+      "sticker": {
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "width_frac": 0.5,
+        "rotation_deg": 0
+      },
+      "expected": {
+        "center_x": 540.0,
+        "center_y": 675.0,
+        "width_px": 540.0,
+        "height_px": 270.0,
+        "rotation_deg": 0
+      }
+    },
+    {
+      "name": "landscape_centered",
+      "canvas": {
+        "w": 1920,
+        "h": 1080
+      },
+      "image": {
+        "w": 300,
+        "h": 600
+      },
+      "sticker": {
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "width_frac": 0.25,
+        "rotation_deg": 0
+      },
+      "expected": {
+        "center_x": 960.0,
+        "center_y": 540.0,
+        "width_px": 480.0,
+        "height_px": 960.0,
+        "rotation_deg": 0
+      }
+    },
+    {
+      "name": "rotated_30",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 400,
+        "h": 200
+      },
+      "sticker": {
+        "x_frac": 0.3,
+        "y_frac": 0.7,
+        "width_frac": 0.5,
+        "rotation_deg": 30
+      },
+      "expected": {
+        "center_x": 324.0,
+        "center_y": 1344.0,
+        "width_px": 540.0,
+        "height_px": 270.0,
+        "rotation_deg": 30
+      }
+    },
+    {
+      "name": "rotated_minus_90",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 400,
+        "h": 200
+      },
+      "sticker": {
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "width_frac": 0.5,
+        "rotation_deg": -90
+      },
+      "expected": {
+        "center_x": 540.0,
+        "center_y": 960.0,
+        "width_px": 540.0,
+        "height_px": 270.0,
+        "rotation_deg": -90
+      }
+    },
+    {
+      "name": "rotated_180",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 400,
+        "h": 200
+      },
+      "sticker": {
+        "x_frac": 0.5,
+        "y_frac": 0.25,
+        "width_frac": 0.5,
+        "rotation_deg": 180
+      },
+      "expected": {
+        "center_x": 540.0,
+        "center_y": 480.0,
+        "width_px": 540.0,
+        "height_px": 270.0,
+        "rotation_deg": 180
+      }
+    },
+    {
+      "name": "near_edge_top_left_clipped",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 400,
+        "h": 400
+      },
+      "sticker": {
+        "x_frac": 0.02,
+        "y_frac": 0.01,
+        "width_frac": 0.4,
+        "rotation_deg": 0
+      },
+      "expected": {
+        "center_x": 21.6,
+        "center_y": 19.2,
+        "width_px": 432.0,
+        "height_px": 432.0,
+        "rotation_deg": 0
+      }
+    },
+    {
+      "name": "near_edge_bottom_right_rotated",
+      "canvas": {
+        "w": 1080,
+        "h": 1350
+      },
+      "image": {
+        "w": 512,
+        "h": 256
+      },
+      "sticker": {
+        "x_frac": 0.98,
+        "y_frac": 0.99,
+        "width_frac": 0.3,
+        "rotation_deg": 45
+      },
+      "expected": {
+        "center_x": 1058.4,
+        "center_y": 1336.5,
+        "width_px": 324.0,
+        "height_px": 162.0,
+        "rotation_deg": 45
+      }
+    },
+    {
+      "name": "tall_image",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 100,
+        "h": 800
+      },
+      "sticker": {
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "width_frac": 0.2,
+        "rotation_deg": 0
+      },
+      "expected": {
+        "center_x": 540.0,
+        "center_y": 960.0,
+        "width_px": 216.0,
+        "height_px": 1728.0,
+        "rotation_deg": 0
+      }
+    },
+    {
+      "name": "wide_image",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 1200,
+        "h": 150
+      },
+      "sticker": {
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "width_frac": 0.9,
+        "rotation_deg": 0
+      },
+      "expected": {
+        "center_x": 540.0,
+        "center_y": 960.0,
+        "width_px": 972.0,
+        "height_px": 121.5,
+        "rotation_deg": 0
+      }
+    },
+    {
+      "name": "min_width_frac",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 400,
+        "h": 400
+      },
+      "sticker": {
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "width_frac": 0.05,
+        "rotation_deg": 0
+      },
+      "expected": {
+        "center_x": 540.0,
+        "center_y": 960.0,
+        "width_px": 54.0,
+        "height_px": 54.0,
+        "rotation_deg": 0
+      }
+    },
+    {
+      "name": "max_width_frac",
+      "canvas": {
+        "w": 1080,
+        "h": 1920
+      },
+      "image": {
+        "w": 400,
+        "h": 300
+      },
+      "sticker": {
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "width_frac": 1.0,
+        "rotation_deg": 0
+      },
+      "expected": {
+        "center_x": 540.0,
+        "center_y": 960.0,
+        "width_px": 1080.0,
+        "height_px": 810.0,
+        "rotation_deg": 0
+      }
+    }
+  ],
+  "validation": [
+    {
+      "name": "minimal_valid",
+      "valid": true,
+      "stickers": [
+        {
+          "id": "s1",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        }
+      ]
+    },
+    {
+      "name": "rotation_defaults_to_zero",
+      "valid": true,
+      "stickers": [
+        {
+          "id": "s1",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4
+        }
+      ]
+    },
+    {
+      "name": "max_four_stickers_valid",
+      "valid": true,
+      "stickers": [
+        {
+          "id": "s0",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        },
+        {
+          "id": "s1",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        },
+        {
+          "id": "s2",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        },
+        {
+          "id": "s3",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        }
+      ]
+    },
+    {
+      "name": "edges_inclusive",
+      "valid": true,
+      "stickers": [
+        {
+          "id": "s1",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.0,
+          "y_frac": 1.0,
+          "width_frac": 0.05,
+          "rotation_deg": -180
+        }
+      ]
+    },
+    {
+      "name": "empty_list_clears",
+      "valid": true,
+      "stickers": []
+    },
+    {
+      "name": "x_out_of_range",
+      "valid": false,
+      "stickers": [
+        {
+          "id": "s1",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 1.01,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        }
+      ],
+      "reason": "bounds"
+    },
+    {
+      "name": "y_negative",
+      "valid": false,
+      "stickers": [
+        {
+          "id": "s1",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": -0.01,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        }
+      ],
+      "reason": "bounds"
+    },
+    {
+      "name": "width_below_min",
+      "valid": false,
+      "stickers": [
+        {
+          "id": "s1",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.04,
+          "rotation_deg": 0
+        }
+      ],
+      "reason": "bounds"
+    },
+    {
+      "name": "width_above_max",
+      "valid": false,
+      "stickers": [
+        {
+          "id": "s1",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 1.01,
+          "rotation_deg": 0
+        }
+      ],
+      "reason": "bounds"
+    },
+    {
+      "name": "rotation_above_180",
+      "valid": false,
+      "stickers": [
+        {
+          "id": "s1",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 181
+        }
+      ],
+      "reason": "bounds"
+    },
+    {
+      "name": "rotation_below_minus_180",
+      "valid": false,
+      "stickers": [
+        {
+          "id": "s1",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": -181
+        }
+      ],
+      "reason": "bounds"
+    },
+    {
+      "name": "empty_id",
+      "valid": false,
+      "stickers": [
+        {
+          "id": "",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        }
+      ],
+      "reason": "bounds"
+    },
+    {
+      "name": "id_too_long",
+      "valid": false,
+      "stickers": [
+        {
+          "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        }
+      ],
+      "reason": "bounds"
+    },
+    {
+      "name": "duplicate_id",
+      "valid": false,
+      "stickers": [
+        {
+          "id": "a",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        },
+        {
+          "id": "a",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        }
+      ],
+      "reason": "duplicate id"
+    },
+    {
+      "name": "five_stickers",
+      "valid": false,
+      "stickers": [
+        {
+          "id": "s0",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        },
+        {
+          "id": "s1",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        },
+        {
+          "id": "s2",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        },
+        {
+          "id": "s3",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        },
+        {
+          "id": "s4",
+          "asset_id": "11111111-1111-1111-1111-111111111111",
+          "x_frac": 0.5,
+          "y_frac": 0.5,
+          "width_frac": 0.4,
+          "rotation_deg": 0
+        }
+      ],
+      "reason": "too many"
+    }
+  ]
+}

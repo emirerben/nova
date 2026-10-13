@@ -233,15 +233,21 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
     public let effect: Effect
     public let animationPhases: TextAnimationPhases?
     public let background: TextBackground?
-    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed, karaoke, fade, giantTitle, animationPhases, background }
+    /// KRI-646: curve the lines along an arc, -100...100 (positive bows up like a rainbow, 0/nil is
+    /// straight). Resolved at paint time (`TextBend`), so it only exists on effects that keep a
+    /// straight baseline (`bendSupported`).
+    public let bend: Double?
+    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed, karaoke, fade, giantTitle, animationPhases, background, bend }
     public init(id: String, start: Double, end: Double, anchorX: Double, anchorY: Double,
-                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil, karaoke: KaraokeContent? = nil, fade: TextFadeEnvelope? = nil, giantTitle: GiantTitleTransition? = nil, animationPhases: TextAnimationPhases? = nil, background: TextBackground? = nil) {
+                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil, karaoke: KaraokeContent? = nil, fade: TextFadeEnvelope? = nil, giantTitle: GiantTitleTransition? = nil, animationPhases: TextAnimationPhases? = nil, background: TextBackground? = nil, bend: Double? = nil) {
+        self.bend = bend
         self.id = id; self.start = start; self.end = end; self.anchorX = anchorX; self.anchorY = anchorY
         self.rotationDegrees = rotationDegrees; self.runs = runs; self.effect = effect; self.motion = motion; self.revealBounds = revealBounds; self.handwriting = handwriting; self.discreteReveal = discreteReveal; self.smoothReveal = smoothReveal; self.staggered = staggered; self.dissolveSeed = dissolveSeed; self.karaoke = karaoke; self.fade = fade; self.giantTitle = giantTitle; self.animationPhases = animationPhases; self.background = background
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed", "karaoke", "fade", "giantTitle", "animationPhases", "background"])
+        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed", "karaoke", "fade", "giantTitle", "animationPhases", "background", "bend"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        bend = try c.decodeIfPresent(Double.self, forKey: .bend)
         id = try c.decode(String.self, forKey: .id); start = try c.decode(Double.self, forKey: .start)
         end = try c.decode(Double.self, forKey: .end); anchorX = try c.decode(Double.self, forKey: .anchorX)
         anchorY = try c.decode(Double.self, forKey: .anchorY); rotationDegrees = try c.decode(Double.self, forKey: .rotationDegrees)
@@ -258,6 +264,16 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
         karaoke = try c.decodeIfPresent(KaraokeContent.self, forKey: .karaoke)
         dissolveSeed = try c.decodeIfPresent(UInt32.self, forKey: .dissolveSeed)
         runs = try c.decode([PositionedTextRun].self, forKey: .runs); effect = try c.decode(Effect.self, forKey: .effect)
+    }
+    /// Whether `effect` keeps the straight baseline that a bend curves. Python twin:
+    /// `portable_text_layout._bend_supported`. Typed phases other than typewriter are fine: they
+    /// transform the whole bitmap. A typewriter phase (cursor/line reveal) is not.
+    public static func bendSupported(effect: Effect, phasesTypewriter: Bool = false) -> Bool {
+        if phasesTypewriter { return false }
+        switch effect {
+        case .static, .none, .fadeIn, .scaleUp, .slideUp, .slideDown, .slideIn, .popIn, .bounce, .captionPop: return true
+        case .inkReveal, .handwriting, .typewriter, .streamIn, .smoothType, .staggeredSlice, .dissolveOut, .karaokeLine, .lyricLine: return false
+        }
     }
     public func validate(duration: Double, manifest: RenderAssetManifest?) throws {
         guard !id.isEmpty, id.count <= 160, [start, end, anchorX, anchorY, rotationDegrees].allSatisfy(\.isFinite),
@@ -290,6 +306,12 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
         try motion?.validate()
         try animationPhases?.validate()
         try background?.validate()
+        if let bend {
+            // Bend is a paint-time arc over straight lines. Effects that reveal, stagger or trace glyphs
+            // assume a straight baseline, so the compiler never emits the pair (see `bendSupported`).
+            guard bend.isFinite, abs(bend) <= 100, handwriting == nil, discreteReveal == nil, smoothReveal == nil,
+                  staggered == nil, giantTitle == nil, karaoke == nil, revealBounds == nil else { throw RecipeError.invalidTimeline }
+        }
         for run in runs + (discreteReveal?.lines.map(\.cursorRun) ?? []) + (staggered?.glyphs.map(\.run) ?? []) {
             try run.validate()
             guard let font = manifest?.assets.first(where: { $0.id == run.fontAssetID }),

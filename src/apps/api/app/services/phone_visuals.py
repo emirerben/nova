@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import storage
-from app.models import Job, PlanItemAsset
+from app.models import Job, MediaAssetSource, PlanItemAsset
 from app.pipeline.probe import ProbeError, probe_video
 from app.services.phone_sources import PhoneVisualBinding
 
@@ -175,6 +175,29 @@ def bind_phone_visual_assets(
         if job is None or job.content_plan_item_id is None:
             raise ValueError("phone visuals require the job's plan item")
         plan_item_id, user_id = job.content_plan_item_id, job.user_id
+        asset_rows = (
+            db.execute(select(PlanItemAsset).where(PlanItemAsset.id.in_(ids.values())))
+            .scalars()
+            .all()
+        )
+        library_pins = set()
+        library_identities = {}
+        library_rows = set()
+        for row in asset_rows:
+            source_id = getattr(row, "library_source_id", None)
+            if source_id is None:
+                continue
+            library_rows.add(str(row.id))
+            source = db.get(MediaAssetSource, source_id)
+            if (
+                source is not None
+                and source.user_id == user_id
+                and source.asset_id == row.library_asset_id
+                and source.role == "original"
+                and source.status == "available"
+            ):
+                library_pins.add((str(row.id), source.object_path, source.object_generation))
+                library_identities[str(row.id)] = (source.uploaded_sha256, source.byte_count)
         rows = {
             str(row.id): (
                 row.plan_item_id,
@@ -184,14 +207,17 @@ def bind_phone_visual_assets(
                 row.gcs_path,
                 str(row.gcs_generation or ""),
             )
-            for row in db.execute(select(PlanItemAsset).where(PlanItemAsset.id.in_(ids.values())))
-            .scalars()
-            .all()
+            for row in asset_rows
         }
     prefix = f"users/{user_id}/plan/{plan_item_id}/pool/"
     for media_id, (kind, path, generation) in pins.items():
-        if rows.get(media_id) != (plan_item_id, user_id, "ready", kind, path, generation) or (
-            not _owned_pool_path(path, prefix)
+        approved_path = (
+            (media_id, path, generation) in library_pins
+            if media_id in library_rows
+            else _owned_pool_path(path, prefix)
+        )
+        if rows.get(media_id) != (plan_item_id, user_id, "ready", kind, path, generation) or not (
+            approved_path
         ):
             raise ValueError(f"approved {_NOUNS[kind]} is no longer this story's ready visual")
     visuals = []
@@ -210,6 +236,10 @@ def bind_phone_visual_assets(
             # Streamed: a pool video can be half a gigabyte.
             with local.open("rb") as source:
                 digest = hashlib.file_digest(source, "sha256").hexdigest()
+            if media_id in library_identities:
+                expected_hash, expected_bytes = library_identities[media_id]
+                if not expected_hash or digest != expected_hash.lower() or size != expected_bytes:
+                    raise ValueError("library original bytes do not match their verified identity")
             probed = _probed_video(local) if kind == "video" else {}
             # One visual on disk at a time keeps worker temp space bounded.
             local.unlink()

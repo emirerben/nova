@@ -93,6 +93,7 @@ async def _attach(monkeypatch: pytest.MonkeyPatch, uploads: list[tuple[str, str]
     )
     monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(4.0, True)))
     db = Mock()
+    db.scalar = AsyncMock(return_value=None)
     db.get = AsyncMock(return_value=item)
     db.execute = AsyncMock()
     db.commit = AsyncMock()

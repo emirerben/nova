@@ -21,6 +21,8 @@ on:
         value: ${{ jobs.select.outputs.journey_coverage }}
       journey_ids:
         value: ${{ jobs.select.outputs.journey_ids }}
+      native_validation:
+        value: ${{ jobs.select.outputs.native_validation }}
       journey_needs_native:
         value: ${{ jobs.select.outputs.journey_needs_native }}
 
@@ -39,6 +41,7 @@ jobs:
       journey: ${{ steps.select.outputs.journey }}
       journey_coverage: ${{ steps.select.outputs.journey_coverage }}
       journey_ids: ${{ steps.select.outputs.journey_ids }}
+      native_validation: ${{ steps.select.outputs.native_validation }}
       journey_needs_native: ${{ steps.select.outputs.journey_needs_native }}
     steps:
       - uses: actions/checkout@v4

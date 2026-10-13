@@ -337,6 +337,15 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "Freehand drawings await native parity and device qualification",
             capability="freehandDrawing",
         )
+    # KRI-646: same explicit gate for bent text (the capability set is not recomputed
+    # when a caller mutates a recipe after compile).
+    if any(layer.bend for layer in recipe.text_layers) and "textBend" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Bent text awaits native parity and device qualification",
+            capability="textBend",
+        )
     if _has_unqualified_font_instance(recipe):
         font_files, font_effects = unqualified_font_causes(recipe)
         raise PhoneFontUnqualified(
@@ -453,6 +462,56 @@ def freehand_drawing_supported(*, require_client: bool | None = None) -> bool:
         and "freehandDrawing" in set(settings.phone_render_verified_features)
         and freehand_drawing_client_supported(require_client=require_client)
     )
+
+
+def text_bend_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build understand text ``bend`` (KRI-646)?
+
+    The build declares ``X-Kria-Client-Protocol``; at least
+    ``text_bend_min_client_protocol`` decodes ``bend`` on a recipe text layer and
+    draws it. ``require_client`` ``None`` applies the gate only inside an HTTP request
+    (workers and chat edits have no app build to qualify); pass ``True``/``False`` to
+    force it. Mirrors `freehand_drawing_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.text_bend_min_client_protocol
+
+
+def text_bend_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a creator author Bend right now" (KRI-646).
+
+    True iff the kill switch (``text_bend_enabled``) is on, ``textBend`` is in
+    ``phone_render_verified_features`` (the device-parity gate) and the app-build gate
+    holds (`text_bend_client_supported`). Stored bend keeps compiling and playing when
+    this is False; only authoring is closed.
+    """
+    return bool(
+        settings.text_bend_enabled
+        and "textBend" in set(settings.phone_render_verified_features)
+        and text_bend_client_supported(require_client=require_client)
+    )
+
+
+def text_elements_have_bend(elements: object) -> bool:
+    """Does a stored ``text_elements`` lane carry any non-zero ``bend``?"""
+    if not isinstance(elements, list):
+        return False
+    return any(
+        isinstance(element, dict) and _is_nonzero_bend(element.get("bend")) for element in elements
+    )
+
+
+def _is_nonzero_bend(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value != 0
 
 
 def phone_user_song_supported() -> bool:

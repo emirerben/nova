@@ -1,0 +1,18 @@
+{
+  "provenance": "Redacted KRI-651 incident shape, 2026-10-13. Media identities and background context substituted; exact approved Unicode hook retained.",
+  "candidate": "POV: 38k in and the free açaí was a lie 😤",
+  "context": "I was running a marathon and expected a free snack at a sign, but there was nothing there.",
+  "duration_s": 4.1,
+  "rewrite_response": {
+    "intent": "edit",
+    "confidence": 1,
+    "reply": "Updated your wording.",
+    "ops": [{"op": "rewrite_text", "selector": {"group": "title"}, "text": "I was running a marathon and expected a free snack at a sign, but there was nothing there."}]
+  },
+  "invalid_response": {
+    "intent": "edit",
+    "confidence": 1,
+    "reply": "Split the hook.",
+    "ops": [{"op": "replace_text_sequence", "selector": {"group": "title"}, "segments": []}]
+  }
+}

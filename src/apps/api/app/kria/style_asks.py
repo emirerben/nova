@@ -526,12 +526,28 @@ _SHORT_MOMENTS = re.compile(
 )
 
 
+# KRI-624: the rest of a moment ask. "from the long takes" names which clips the moments
+# come from; "skip the dark ones" rules some out.
+_LONG_TAKES = re.compile(
+    r"\bfrom (?:only )?(?:the |my )?(?:very |really )?long (?:takes?|clips?|videos?|shots?"
+    r"|footage|ones)\b|\buzun (?:cekim|klip|video)\w*"
+)
+_MOMENT_EXCLUSION = re.compile(
+    r"\b(?:skip|avoid|exclude|ignore|leave out|without|except)\b(?: (?:the|any|all))?"
+    r" \w+(?: \w+)? (?:ones|clips|shots|takes|parts|moments)\b|\batla\b|\batlayarak\b"
+)
+
+
 @dataclass(frozen=True)
 class MomentAsk:
     """How many moments the creator wants, and whether each must be short."""
 
     count: int | None = None
     short: bool = False
+    # KRI-624: the moments must come from the long takes only.
+    long_takes_only: bool = False
+    # KRI-624: the ask also rules some clips out ("skip the dark ones").
+    excludes: bool = False
 
 
 def moment_ask(req: BriefRequirement) -> MomentAsk | None:
@@ -555,7 +571,13 @@ def moment_ask(req: BriefRequirement) -> MomentAsk | None:
     short = bool(_SHORT_MOMENTS.search(kept))
     if count is None and not short:
         return None
-    return MomentAsk(count=count, short=short)
+    whole = " ".join(tokens)
+    return MomentAsk(
+        count=count,
+        short=short,
+        long_takes_only=bool(_LONG_TAKES.search(whole)),
+        excludes=bool(_MOMENT_EXCLUSION.search(whole)),
+    )
 
 
 def brief_moment_ask(brief: CreativeBrief | None) -> MomentAsk | None:
@@ -568,4 +590,9 @@ def brief_moment_ask(brief: CreativeBrief | None) -> MomentAsk | None:
     if not asks:
         return None
     counts = [ask.count for ask in asks if ask.count is not None]
-    return MomentAsk(count=counts[-1] if counts else None, short=any(ask.short for ask in asks))
+    return MomentAsk(
+        count=counts[-1] if counts else None,
+        short=any(ask.short for ask in asks),
+        long_takes_only=any(ask.long_takes_only for ask in asks),
+        excludes=any(ask.excludes for ask in asks),
+    )

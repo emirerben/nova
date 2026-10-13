@@ -1681,7 +1681,40 @@ def analyze_pool_asset(
                 # provider_outcome_unknown. The first invocation keeps the exact
                 # key it always had, so broker redelivery stays idempotent.
                 retry_key_suffix = f":retry{retry_attempt}" if retry_attempt else ""
-                if kind == "video":
+                reusable = None
+                from app.config import settings
+
+                if settings.media_library_enabled:
+                    from app.services.media_library_analysis import (
+                        ensure_media_asset_analysis,
+                        source_for_path,
+                    )
+
+                    library_source = source_for_path(
+                        owner_id=str(plan.user_id), path=gcs_path, generation=str(gcs_generation)
+                    )
+                    if library_source is not None:
+                        reusable = ensure_media_asset_analysis(
+                            asset_id=library_source.asset_id,
+                            owner_id=library_source.owner_id,
+                            source_id=library_source.source_id,
+                            required_generation=str(gcs_generation),
+                            snapshot_local_path=local,
+                        )
+                        if reusable is None:
+                            raise AnalysisTemporarilyUnavailableError(
+                                "shared source analysis is pending or unavailable"
+                            )
+                if reusable is not None:
+                    analysis = reusable
+                    aspect, duration = analysis.get("aspect"), analysis.get("duration_s")
+                    dims = (
+                        (analysis["width"], analysis["height"])
+                        if analysis.get("width") and analysis.get("height")
+                        else None
+                    )
+                    has_alpha = analysis.get("has_alpha")
+                elif kind == "video":
                     analysis, aspect, duration, dims = _analyze_video(
                         local,
                         job_scope=scope,

@@ -225,8 +225,9 @@ list (max 4) of `SlideTextElement`: `id`, `text` (1-120), `role`
 **Text-tool parity (video-editor vocabulary).** The text style vocabulary is
 shared with the video editor's Text tool (`agents/_schemas/text_element.TextElement`;
 validators are reused, not copied). Slides still have NO timing, animation,
-captions, sounds or overlays, and `behind_subject`/`highlight_color` are not
-carried. Extra optional fields, all omitted from the serialized element while
+captions, sounds or video-editor media overlays (the only pasted-image overlay
+is a sticker, see "Slide stickers" below), and `behind_subject`/`highlight_color`
+are not carried. Extra optional fields, all omitted from the serialized element while
 unset (so pre-parity elements serialize and hash identically): `rotation_deg`
 (-360..360, clockwise), `stroke_color`, `shadow_color` (#RRGGBB),
 `shadow_opacity` (0..1), `background_color` (#RRGGBB; wins over the legacy
@@ -479,6 +480,57 @@ overlay on one slide, saved as strokes, never as a raster.
 - Tests: `tests/pipeline/test_slide_post_drawing.py` (fixture, geometry against the real painter, determinism,
   real ffmpeg composite), `tests/routes/test_slide_post_drawing_routes.py` (merge, gating, freshness, chat-edit
   copy-through, propose), `tests/tasks/test_slide_post_render.py` (stamp and key).
+
+## Slide stickers (KRI-647 / KRI-460, flag `slide_post_stickers_enabled`, default on)
+
+A creator pastes an image (usually a transparent PNG, e.g. a Strava run sticker) onto one slide. It is composited
+over the slide's photo in the server render exactly like text and ink.
+
+- **Wire.** `SlideEdits.stickers: list[SlideSticker] | None` (max `MAX_SLIDE_STICKERS = 4`, list order = z-order, last
+  on top). `SlideSticker{id (<=64, unique per slide), asset_id (a PlanItemAsset IMAGE id on the same item),
+  x_frac/y_frac in [0,1] (the sticker CENTRE as a fraction of the slide OUTPUT canvas), width_frac in [0.05,1]
+  (displayed width / canvas width; height follows the image's own aspect, never distorted), rotation_deg in
+  [-180,180] (clockwise about the centre, default 0)}` (`extra="forbid"`). Omitted from the serialized edits while
+  None or empty, so slides without stickers keep byte-identical drafts, cache digests and binding snapshots.
+  Frozen by `tests/fixtures/slide-sticker-parity/v1.json` (geometry cases + a `validation` section), asserted by
+  `tests/pipeline/test_slide_post_stickers.py` through `sticker_geometry()` (`app/pipeline/slide_post/stickers.py`)
+  and by the iOS tests against the same file.
+- **Stacking.** photo -> look -> text -> drawing ink -> stickers -> Kria watermark (stickers sit above both text and ink; the mark stays last). Stickers are
+  clipped by the canvas edge, never moved; alpha is never flattened.
+- **Save contract (three states, like `drawing`).** `stickers` key missing keeps the stored value, explicit `null`
+  clears, a value sets (`merge_stored_edit_key(..., "stickers", accept_incoming=slide_post_stickers_enabled)` in the
+  PUT; `merge_legacy_text_edits`, `_backfill_slide_post_sizes` and `compile_slide_post_ops` carry it; the copilot
+  sees a read-only `has_stickers` slot hint). Flag off: the stored value always wins and stored stickers still render.
+- **Gating.** Capability `slide_post_stickers` = flag AND `X-Kria-Client-Protocol >= slide_post_sticker_min_client_protocol`
+  (8). Unlike drawings, a PUT carrying stickers from a build below 8 (or with no protocol header) is refused with
+  `426 {"code": "client_update_required", "feature": "slide_stickers"}`. A NEW or CHANGED sticker must point at a ready
+  image `PlanItemAsset` of this item and user (422 `slide_sticker_invalid` otherwise); stickers already stored are not
+  re-checked, so a deleted pool image never makes the slide un-saveable.
+- **A sticker's asset is never a slide.** It lives in the item's pool (`PlanItemAsset`) but: the PUT 422s a draft whose
+  slide uses an asset any slide uses as a sticker; `compose`/`propose` drop sticker assets from the default pool and
+  422 an explicit request for one (`_without_sticker_assets`); the creation-thread `visuals.device_ready` count (the
+  app's "continue with N visuals") excludes them for slide items (`visuals.current` stays the upload QUOTA and still
+  counts them: they take a pool slot). A client building a draft from the pool must skip assets referenced by stickers.
+- **Render** (`stickers.py`, `build.py`). The dispatch task resolves each slide's sticker assets in the same
+  ownership-checked read as the slides (best effort: a stale, foreign, unready, non-image or missing asset, a failed
+  download, or an undecodable file DROPS that sticker, never the render) and downloads the originals; `build.py` stays
+  pure filesystem. Each original is decoded by Pillow (EXIF-upright, HEIC via `pillow_heif`, ICC to sRGB, capped at
+  2048 px) to an RGBA PNG, then ffmpeg `format=rgba,scale -> rotate (c=none, ow/oh from rotw/roth) -> overlay` places
+  its centre. The sticker inputs sit after the text/ink PNGs and BEFORE the watermark input; encoder settings are the
+  unchanged final-output ones.
+- **Cache and freshness.** A slide with stickers gets `_st{SLIDE_STICKER_COMPOSITOR_VERSION}` appended to its
+  normalized key (only then; existing keys are unchanged), and `edits_cache_digest` hashes each sticker's asset
+  content fingerprint (`missing` for a dropped one) beside the geometry already in the dumped edits, so moving or
+  replacing a sticker re-renders and an unchanged slide reuses its derivative. `SLIDES_STICKER_RENDERER_VERSION = 5` is
+  stamped on `slide_post.renderer_version` when any slide has stickers, and `_slide_post_export_is_current` treats a
+  stickered draft as stale below 5. The dispatch fence stays 2.
+- **Deploy order.** API and worker FIRST, then the protocol-8 app: an older worker that re-dumps a stickered draft
+  through its older `SlideEdits` drops the stickers.
+- **Rollback.** `SLIDE_POST_STICKERS_ENABLED=false` (api + worker) + restart; stored stickers still render. Never roll
+  the CODE back once stickers exist (draft models drop unknown keys).
+- Tests: `tests/pipeline/test_slide_post_stickers.py` (fixture parity, digest, real ffmpeg composite pixel asserts),
+  `tests/routes/test_slide_post_sticker_routes.py` (merge, 426, validation, never-a-slide, freshness, chat-edit),
+  `tests/tasks/test_slide_post_render.py` (dispatch download/drop, key, stamp).
 
 ## Known v1 gaps (tracked, not silently shipped)
 

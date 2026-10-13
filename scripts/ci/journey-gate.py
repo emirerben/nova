@@ -7,6 +7,11 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ios"))
+import ui_tests
 
 
 REQUIRED_STAGES = {
@@ -250,6 +255,121 @@ def validate(path: Path, head: str) -> None:
     )
 
 
+BUNDLE_MANIFEST = "fixture-bundle.json"
+
+
+def bundle_files(root: Path) -> dict:
+    files = {}
+    for path in sorted(root.rglob("*")):
+        require(not path.is_symlink(), f"fixture bundle contains symlink: {path.name}")
+        if path.is_file() and path != root / BUNDLE_MANIFEST:
+            files[path.relative_to(root).as_posix()] = digest(path)
+    require(files, "fixture bundle is empty")
+    return files
+
+
+def seal_bundle(root: Path, head: str, run: str, attempt: str) -> None:
+    manifest = {
+        "head_sha": head,
+        "run_id": run,
+        "run_attempt": attempt,
+        "files": bundle_files(root),
+    }
+    (root / BUNDLE_MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n")
+
+
+def verify_bundle(root: Path, head: str, run: str, attempt: str) -> None:
+    manifest = load(root / BUNDLE_MANIFEST)
+    for key, expected in (
+        ("head_sha", head),
+        ("run_id", run),
+        ("run_attempt", attempt),
+    ):
+        require(manifest.get(key) == expected, f"fixture bundle {key} is stale")
+    require(
+        manifest.get("files") == bundle_files(root),
+        "fixture bundle files are missing or changed",
+    )
+
+
+def verify_named_tests(report: dict, expected: set) -> None:
+    actual = ui_tests.result_tests(report)
+    missing = {test for test in expected if actual.get(test) != "Passed"}
+    require(
+        not missing, f"required named tests missing or not passed: {sorted(missing)}"
+    )
+
+
+def native_units(ids: str, require_unit: bool) -> None:
+    """Reuse this job's unit receipt, otherwise execute selected cases once."""
+    repo = Path(__file__).resolve().parents[2]
+    journeys = load(Path(__file__).with_name("journey-manifest.json"))["journeys"]
+    selected = {row["id"] for row in journeys} if ids == "all" else set(ids.split(","))
+    require(selected <= {row["id"] for row in journeys}, "unknown native journey ids")
+    tests = {
+        test
+        for row in journeys
+        if row["id"] in selected
+        for test in row.get("xctests", [])
+        if test.startswith("KriaTests/")
+        and not test.startswith("KriaTests/DeviceMontageRenderE2ETests/")
+    }
+    if not tests:
+        print("No plain unit journey tests selected; fixture exports run separately.")
+        return
+    result_root = repo / "test-results/ios"
+    bundles = list(result_root.glob("*/unit.xcresult"))
+    require(len(bundles) <= 1, "ambiguous unit result bundles")
+    if bundles:
+        bundle = bundles[0]
+        print(f"Reusing unit evidence for {len(tests)} named journey tests.")
+    else:
+        require(not require_unit, "expected unit evidence is missing")
+        bundle = repo / "test-results/kri-559/selected-units.xcresult"
+        simulator = (result_root / "simulator-id.txt").read_text().strip()
+        require(simulator, "native simulator receipt is empty")
+        subprocess.run(
+            [
+                "xcodebuild",
+                "-project",
+                "Kria.xcodeproj",
+                "-scheme",
+                "Kria",
+                "-skipPackagePluginValidation",
+                "-derivedDataPath",
+                ".derived-data",
+                "CODE_SIGNING_ALLOWED=NO",
+                "-destination",
+                f"platform=iOS Simulator,id={simulator}",
+                "-parallel-testing-enabled",
+                "NO",
+                *[f"-only-testing:{test}" for test in sorted(tests)],
+                "-resultBundlePath",
+                str(bundle),
+                "test-without-building",
+            ],
+            cwd=repo / "src/apps/ios",
+            check=True,
+        )
+    report = json.loads(
+        subprocess.check_output(
+            [
+                "xcrun",
+                "xcresulttool",
+                "get",
+                "test-results",
+                "tests",
+                "--path",
+                str(bundle),
+            ]
+        )
+    )
+    verify_named_tests(report, tests)
+    destination = result_root / "named-journey-test-results.json"
+    destination.write_text(json.dumps(report, indent=2) + "\n")
+    print(f"Verified {len(tests)} named native journey unit tests passed.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -269,8 +389,23 @@ def main() -> None:
     tests_parser = commands.add_parser("verify-tests")
     tests_parser.add_argument("--test-results", type=Path, required=True)
     tests_parser.add_argument("--xctest", action="append", required=True)
+    for name in ("seal-bundle", "verify-bundle"):
+        command = commands.add_parser(name)
+        command.add_argument("--root", type=Path, required=True)
+        command.add_argument("--head", required=True)
+        command.add_argument("--run", required=True)
+        command.add_argument("--attempt", required=True)
+    unit_parser = commands.add_parser("native-units")
+    unit_parser.add_argument("--ids", required=True)
+    unit_parser.add_argument("--require-unit", action="store_true")
     args = parser.parse_args()
-    if args.command == "verify-input":
+    if args.command == "seal-bundle":
+        seal_bundle(args.root, args.head, args.run, args.attempt)
+    elif args.command == "verify-bundle":
+        verify_bundle(args.root, args.head, args.run, args.attempt)
+    elif args.command == "native-units":
+        native_units(args.ids, args.require_unit)
+    elif args.command == "verify-input":
         verify_input(args.fixture, args.head)
     elif args.command == "record-native":
         record_native(

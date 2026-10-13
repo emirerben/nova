@@ -13,6 +13,8 @@ struct SlidePostTextPanel: View {
     var compact = false
     /// Changes whenever the canvas asks for the keyboard (a tap on the text already being edited).
     var focusToken = 0
+    /// KRI-646: the `text_bend` capability. Off = the Text panel shows no Bend slider.
+    var bendAvailable = false
     let onDone: () -> Void
     @StateObject private var editor: SlidePostTextEditor
     @State private var appliedMessage: String?
@@ -21,8 +23,9 @@ struct SlidePostTextPanel: View {
     @State private var reportedTab: Tab
     @State private var reloadToken = 0
 
-    init(session: SlidePostSession, slideID: String, tab: Binding<Tab>, compact: Bool = false, focusToken: Int = 0, onDone: @escaping () -> Void) {
-        self.session = session; self.slideID = slideID; self._tab = tab; self.compact = compact; self.focusToken = focusToken; self.onDone = onDone
+    init(session: SlidePostSession, slideID: String, tab: Binding<Tab>, compact: Bool = false, focusToken: Int = 0, bendAvailable: Bool = false, onDone: @escaping () -> Void) {
+        self.session = session; self.slideID = slideID; self._tab = tab; self.compact = compact; self.focusToken = focusToken
+        self.bendAvailable = bendAvailable; self.onDone = onDone
         _editor = StateObject(wrappedValue: SlidePostTextEditor(session: session, slideID: slideID))
         _reportedTab = State(initialValue: tab.wrappedValue)
     }
@@ -58,6 +61,8 @@ struct SlidePostTextPanel: View {
                         configuration: configuration, onDone: onDone
                     )
                     .id("\(selected.id)-\(reloadToken)")
+                    .onAppear { editor.supportsTextBend = bendAvailable }
+                    .onChange(of: bendAvailable) { _, next in editor.supportsTextBend = next }
                     // Scrolled content ends clear of the pinned action row below it.
                     .contentMargins(.bottom, 16, for: .scrollContent)
                     .environment(\.nativeEditorConnectedPanel, true)

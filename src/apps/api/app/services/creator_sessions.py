@@ -973,6 +973,41 @@ async def _failure_settled_by_observer(
     return row is not None
 
 
+async def _render_ready_message(db: AsyncSession, session: CreatorAgentSession) -> str:
+    """The "edit is ready" line, in the language of the chat that asked for the render."""
+    from app.kria.reply_language import (  # noqa: PLC0415
+        reply_language_for,
+        say,
+        thread_reply_language,
+    )
+
+    thread = (
+        (
+            await db.execute(
+                select(CreationThread)
+                .where(
+                    CreationThread.creator_id == session.creator_id,
+                    CreationThread.active_plan_item_id == session.plan_item_id,
+                )
+                .order_by(CreationThread.updated_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    with reply_language_for(thread_reply_language(thread)):
+        return say(
+            en=(
+                "The confirmed edit is ready. Watch it and tell me what feels "
+                "right or what you want changed."
+            ),
+            tr=(
+                "Onayladığın video hazır. İzle ve nasıl hissettirdiğini ya da "
+                "neyi değiştirmek istediğini söyle."
+            ),
+        )
+
+
 async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession) -> bool:
     """Advance a rendering session against its exact target Job generation."""
 
@@ -1341,10 +1376,7 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             session,
             event_type="assistant_review" if review_enabled else "assistant_execution",
             payload={
-                "message": (
-                    "The confirmed edit is ready. Watch it and tell me what feels "
-                    "right or what you want changed."
-                ),
+                "message": await _render_ready_message(db, session),
                 **({"decision": "approve"} if review_enabled else {}),
             },
         )

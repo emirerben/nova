@@ -24,7 +24,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
 import structlog
@@ -58,6 +58,7 @@ from app.models import (
     OAuthToken,
     Persona,
     PlanItem,
+    PlanItemAsset,
     StorageRetentionEntry,
     TikTokPublication,
     TrainingConsentEvent,
@@ -926,6 +927,37 @@ class LibraryPlaybackDiagnostic(BaseModel):
     underlying_domain: str | None = Field(default=None, max_length=120)
     underlying_code: int | None = None
     source_state: str = Field(max_length=32)
+    app_build: str | None = Field(default=None, max_length=32)
+
+
+class RecorderDiagnostic(BaseModel):
+    """The in-app teleprompter recorder heard nothing (KRI-653).
+
+    A talk-to-camera take recorded in-app came back with a digitally silent audio
+    track and nothing on the phone said why. The app reports its audio-session state
+    and the last few camera/scene transitions so the trigger can be named from logs.
+    Short bounded labels (each capped at 40 characters, lists capped) and numbers only: no
+    file names, script text, or anything the creator typed or said.
+    """
+
+    # Not named ``event``: structlog reserves that keyword for the log message itself.
+    kind: Literal["take_silent", "live_mic_silent"]
+    audio_category: str | None = Field(default=None, max_length=40)
+    audio_mode: str | None = Field(default=None, max_length=40)
+    route_inputs: list[Annotated[str, Field(max_length=40)]] = Field(
+        default_factory=list, max_length=6
+    )
+    route_outputs: list[Annotated[str, Field(max_length=40)]] = Field(
+        default_factory=list, max_length=6
+    )
+    other_audio_playing: bool | None = None
+    # e.g. "ready+0", "scene_inactive+812", "recording+2400": label + ms offset.
+    phase_history: list[Annotated[str, Field(max_length=40)]] = Field(
+        default_factory=list, max_length=16
+    )
+    channel_count: int | None = Field(default=None, ge=0, le=16)
+    max_power_db: float | None = Field(default=None, ge=-200, le=20)
+    take_duration_s: float | None = Field(default=None, ge=0, le=7200)
     app_build: str | None = Field(default=None, max_length=32)
 
 
@@ -1994,6 +2026,17 @@ async def report_library_playback_failure(
         user_id=str(user.id),
         **body.model_dump(),
     )
+
+
+@router.post("/recorder-diagnostics", status_code=status.HTTP_204_NO_CONTENT)
+async def report_recorder_audio_silent(body: RecorderDiagnostic, user: CurrentUser) -> None:
+    """Log that the in-app recorder produced (or is producing) a silent take (KRI-653).
+
+    Log-only (no DB write) and best-effort for the client: the app fires it once per
+    silent take so the next occurrence names its own trigger in the Fly logs
+    (`recorder_audio_silent`).
+    """
+    log.warning("recorder_audio_silent", user_id=str(user.id), **body.model_dump())
 
 
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -3255,6 +3298,11 @@ async def confirm_account_deletion(
     # the existing plan/persona/job lock order, then recheck the row because a
     # prior erasure could have committed while this request waited.
     await acquire_auth_locks(db, account_lifecycle_lock_key(user.id))
+    from app.services.job_storage_paths import project_media_reference_lock_key
+
+    # Library admission and retention take this before consumer row locks.
+    # Keep the same order even when capabilities are disabled after a rollback.
+    await db.execute(select(func.pg_advisory_xact_lock(project_media_reference_lock_key(user.id))))
     if (await db.execute(select(User.id).where(User.id == user.id))).scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Account not found")
     apple_identities = (
@@ -3345,6 +3393,17 @@ async def confirm_account_deletion(
             .order_by(PlanItem.id)
             .with_for_update()
         )
+
+    captured_pool_asset_ids = (
+        (
+            await db.execute(
+                select(PlanItemAsset.id)
+                .where(PlanItemAsset.user_id == user.id)
+                .order_by(PlanItemAsset.id)
+                .with_for_update()
+            )
+        ).scalars()
+    ).all()
 
     jobs = (
         (await db.execute(select(Job).where(Job.user_id == user.id).with_for_update()))
@@ -3523,6 +3582,10 @@ async def confirm_account_deletion(
     await db.execute(delete(OAuthToken).where(OAuthToken.id.in_([row.id for row in oauth_tokens])))
     # 4. Jobs — cascades AgentRun + VideoFeedback automatically.
     await db.execute(delete(Job).where(Job.id.in_(job_uuid_ids)))
+    # The direct pool owner FK is NO ACTION. Explicitly remove the captured
+    # projections before owner/source cascades, which also avoids FK ordering
+    # failures for a source shared by several posts. Prefix outboxes own bytes.
+    await db.execute(delete(PlanItemAsset).where(PlanItemAsset.id.in_(captured_pool_asset_ids)))
     # Invalidate memory extraction leases before erasing the owner. A worker
     # that wakes after this transaction can only observe a missing User and
     # safely no-op; it must never recreate memory state.

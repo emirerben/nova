@@ -46,6 +46,18 @@ final class SpeechCleanupOfferTests: XCTestCase {
         XCTAssertEqual(analysisID, "a1")
     }
 
+    func testNoSpeechTrackFailureIsNotRetryableAndOffersNoCreate() {
+        // KRI-653: a silent video must not be offered "Create without cleanup" (captions over silence).
+        let (offer, analysisID) = SpeechCleanupOffer.resolve(cleanup(#"{"applicable": true, "analysis": {"id": "a1", "status": "failed", "error": {"code": "no_speech_track", "retryable": false}}}"#))
+        XCTAssertEqual(offer, .noSpeech)
+        XCTAssertEqual(analysisID, "a1")
+    }
+
+    func testOtherFailureCodesStayRetryable() {
+        let (offer, _) = SpeechCleanupOffer.resolve(cleanup(#"{"applicable": true, "analysis": {"id": "a1", "status": "failed", "error": {"code": "transcription_unavailable", "retryable": true}}}"#))
+        XCTAssertEqual(offer, .failed)
+    }
+
     func testReadyWithoutRequiresChoiceIsPlain() {
         for status in ["ready", "no_findings"] {
             let (offer, _) = SpeechCleanupOffer.resolve(cleanup(#"{"applicable": true, "requires_choice": false, "analysis": {"id": "a1", "status": "\#(status)"}}"#))

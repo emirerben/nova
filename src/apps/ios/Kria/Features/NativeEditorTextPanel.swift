@@ -1,3 +1,4 @@
+import KriaMediaEngine
 import SwiftUI
 import UIKit
 
@@ -288,17 +289,109 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
             propertyRow("Shadow", key: "shadow_opacity", range: 0...1, unit: "%", colorKey: "shadow_color")
             positionControl("Horizontal position", key: "x_frac")
             positionControl("Vertical position", key: "y_frac")
-            Stepper(value: Binding(
-                get: { item?.raw["rotation_deg"]?.numberValue ?? 0 },
-                set: { session.updateTextRaw(id: id, key: "rotation_deg", value: .number($0)) }
-            ), in: -360...360, step: 5) {
-                Text("Rotation \(Int(item?.raw["rotation_deg"]?.numberValue ?? 0))°")
-            }
-            .frame(minHeight: 44)
-            .accessibilityLabel("Text rotation")
-            .accessibilityValue("\(Int(item?.raw["rotation_deg"]?.numberValue ?? 0)) degrees")
-            .accessibilityIdentifier("native-editor-text-rotation")
+            rotationControl
+            bendControl
         }
+    }
+
+    /// KRI-646: arc ("rainbow") text. Shown only where the phone can draw it (`supportsTextBend`); disabled
+    /// with a reason on animations that need a straight baseline (the compiler would drop it anyway).
+    @ViewBuilder private var bendControl: some View {
+        if session.supportsTextBend {
+            let current: Double = item?.raw["bend"]?.numberValue ?? 0
+            let shown: Int = Int(current.rounded())
+            let reason: String? = bendUnavailableReason
+            let bend: Binding<Double> = Binding<Double>(
+                get: { current },
+                set: { (next: Double) in
+                    // Snap onto "straight" so it is easy to hit; a straight text stores no key at all.
+                    let snapped: Double = abs(next) <= 4 ? 0 : next
+                    if snapped == 0, current != 0 { UISelectionFeedbackGenerator().selectionChanged() }
+                    session.updateTextRaw(id: id, key: "bend", value: snapped == 0 ? nil : .number(snapped))
+                }
+            )
+            VStack(alignment: .leading, spacing: 2) {
+                sliderRow(
+                    "Bend", accessibilityName: "Text bend", value: bend, range: -100...100, step: 1,
+                    valueText: shown > 0 ? "+\(shown)" : "\(shown)", accessibilityValue: "\(shown)",
+                    identifier: "native-editor-text-bend"
+                )
+                .disabled(reason != nil)
+                if let reason {
+                    Text(reason).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                        .accessibilityIdentifier("native-editor-text-bend-unavailable")
+                }
+            }
+        }
+    }
+
+    /// Why Bend is off for this text, or nil. Mirrors `NativeEditorRenderCompiler`: explicit animation phases
+    /// decide on their own (only typewriter breaks the arc); otherwise the legacy effect does.
+    private var bendUnavailableReason: String? {
+        let explicitPhases: Bool = item?.raw["animation_phases"]?.objectValue != nil
+        let typewriter: Bool = phases["entrance"]?.stringValue == "typewriter" || phases["exit"]?.stringValue == "typewriter"
+        let legacy: PortableTextLayer.Effect = explicitPhases ? .none : (PortableTextLayer.Effect(rawValue: string("effect", "none")) ?? .none)
+        return PortableTextLayer.bendSupported(effect: legacy, phasesTypewriter: typewriter) ? nil : "Bend isn't available with this animation."
+    }
+
+    /// KRI-646: rotation is a slider. The canvas twist gesture can store any angle up to ±360, so
+    /// the slider shows the equivalent angle in -180...180 and snaps to the upright / quarter-turn
+    /// angles people aim for.
+    private var rotationControl: some View {
+        let degrees: Int = Int(Self.normalizedRotation(item?.raw["rotation_deg"]?.numberValue ?? 0).rounded())
+        let rotation: Binding<Double> = Binding<Double>(
+            get: { Self.normalizedRotation(item?.raw["rotation_deg"]?.numberValue ?? 0) },
+            set: { (next: Double) in
+                session.updateTextRaw(id: id, key: "rotation_deg", value: .number(Self.snappedRotation(next)))
+            }
+        )
+        return sliderRow(
+            "Rotation", accessibilityName: "Text rotation", value: rotation, range: -180...180, step: 1,
+            valueText: "\(degrees)°", accessibilityValue: "\(degrees) degrees",
+            identifier: "native-editor-text-rotation"
+        )
+    }
+
+    /// The equivalent angle in -180...180.
+    static func normalizedRotation(_ degrees: Double) -> Double {
+        let wrapped: Double = (degrees + 180).truncatingRemainder(dividingBy: 360)
+        return (wrapped < 0 ? wrapped + 360 : wrapped) - 180
+    }
+
+    /// Pulls an angle within 2° of upright or a quarter turn onto it.
+    static func snappedRotation(_ degrees: Double) -> Double {
+        for target in [-180.0, -90.0, 0.0, 90.0, 180.0] where abs(degrees - target) <= 2 { return target }
+        return degrees
+    }
+
+    /// One labelled slider row: title, slider, monospaced value. Reflows to two lines at
+    /// accessibility sizes, like `propertyRow`. The slider keeps the 44pt hit target.
+    private func sliderRow(
+        _ title: String, accessibilityName: String, value: Binding<Double>, range: ClosedRange<Double>,
+        step: Double, valueText: String, accessibilityValue: String, identifier: String
+    ) -> some View {
+        let slider = NativeEditorSlider(session: session, value: value, in: range, step: step) { Text(title) }
+            .frame(minHeight: 44)
+            .accessibilityLabel(accessibilityName)
+            .accessibilityValue(accessibilityValue)
+            .accessibilityIdentifier(identifier)
+        let readout = Text(valueText).font(KriaFont.body(14)).monospacedDigit().frame(minWidth: 52, alignment: .trailing)
+            .accessibilityHidden(true)
+        return Group {
+            if usesAccessibilityLayout {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                    HStack(spacing: 12) { slider; readout }
+                }
+            } else {
+                HStack(spacing: 12) {
+                    Text(title).frame(width: 78, alignment: .leading)
+                    slider
+                    readout
+                }
+            }
+        }
+        .frame(minHeight: 44)
     }
 
     private func fontMenu(expanded: Bool) -> some View {
@@ -395,7 +488,6 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
     private func positionControl(_ title: String, key: String) -> some View {
         let value: Double = key == "x_frac" ? anchor.x : anchor.y
         let percent: Int = Int((value * 100).rounded())
-        let label: String = "\(title) \(percent)%"
         let axis: String = key == "x_frac" ? "x" : "y"
         let position: Binding<Double> = Binding<Double>(
             get: { key == "x_frac" ? anchor.x : anchor.y },
@@ -403,13 +495,11 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
                 session.moveText(id: id, x: key == "x_frac" ? next : nil, y: key == "y_frac" ? next : nil)
             }
         )
-        return Stepper(value: position, in: 0.0...1.0, step: 0.05) {
-            Text(label)
-        }
-        .frame(minHeight: 44)
-        .accessibilityLabel("Text \(title.lowercased())")
-        .accessibilityValue("\(percent) percent")
-        .accessibilityIdentifier("native-editor-text-position-" + axis)
+        return sliderRow(
+            key == "x_frac" ? "Horizontal" : "Vertical", accessibilityName: "Text \(title.lowercased())",
+            value: position, range: 0...1, step: 0.01, valueText: "\(percent)%",
+            accessibilityValue: "\(percent) percent", identifier: "native-editor-text-position-" + axis
+        )
     }
 
     private var animationControls: some View {
