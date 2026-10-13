@@ -151,17 +151,17 @@ class WorkflowTests(unittest.TestCase):
     def setUp(self):
         self.text = WORKFLOW.read_text()
 
-    def test_only_successful_main_ios_workflow_run_can_release(self):
-        self.assertRegex(self.text, r"(?m)^\s*workflow_run\s*:")
-        self.assertRegex(self.text, r"(?i)workflows?\s*:[^\n]*ios")
-        self.assertRegex(self.text, r"(?i)types?\s*:\s*[^\n]*completed")
-        self.assertRegex(self.text, r"workflow_run[^\n]*(?:conclusion|head_branch)|conclusion[^\n]*success")
-        self.assertRegex(self.text, r"github\.event\.workflow_run\.conclusion\s*==\s*['\"]success['\"]")
-        self.assertRegex(self.text, r"github\.event\.workflow_run\.head_branch\s*==\s*['\"]main['\"]")
+    def test_only_a_dispatched_main_commit_can_release(self):
+        # ios.yml dispatches this after a main commit's build and unit tests
+        # pass; nothing else (PR, push, workflow_run) may start a release.
+        self.assertRegex(self.text, r"(?m)^\s*workflow_dispatch\s*:")
+        self.assertRegex(self.text, r"(?m)^\s*head_sha\s*:")
+        self.assertNotRegex(self.text, r"(?m)^\s*(workflow_run|pull_request|push)\s*:")
+        self.assertRegex(self.text, r"if:\s*github\.ref\s*==\s*['\"]refs/heads/main['\"]")
 
     def test_checks_out_exact_successful_sha_and_rejects_conflicting_stale_ref(self):
-        self.assertIn("github.event.workflow_run.head_sha", self.text)
-        self.assertRegex(self.text, r"(?s)checkout@[^\n]+.*?ref:\s*\$\{\{\s*github\.event\.workflow_run\.head_sha")
+        self.assertIn("inputs.head_sha", self.text)
+        self.assertRegex(self.text, r"(?s)checkout@[^\n]+.*?ref:\s*\$\{\{\s*inputs\.head_sha")
         self.assertRegex(self.text, r"(?is)(stale|head_sha|rev-parse|merge-base|ancestor).*(?:exit|fail|error)|(?:exit|fail|error).*(?:stale|head_sha|rev-parse|merge-base|ancestor)")
         # Serialized, in-order releases: refuse only a SHA that left main, and diff
         # release inputs from the last uploaded commit (not just HEAD^).
