@@ -1103,6 +1103,28 @@ private struct SlidePostItemResponse: Decodable {
         selectedTextID = element.id
         return element.id
     }
+    /// KRI-647: the system Paste control on a slide. Text becomes a new text element, cut to the slide text
+    /// limit; a picture waits for slide stickers (KRI-460), and says so rather than doing nothing.
+    func paste(providers: [NSItemProvider], slideID: String) async {
+        pasteNotice = nil
+        switch await PasteboardIntake.load(from: providers) {
+        case .text(let text):
+            let fitted = String(String.UnicodeScalarView(text.unicodeScalars.prefix(SlidePostTextElement.maxLength)))
+            if addText(slideID: slideID, text: fitted) == nil {
+                pasteNotice = "A slide can have up to \(SlidePostEdits.maxTexts) texts. Remove one to paste another."
+            } else if fitted != text {
+                pasteNotice = "Pasted text was cut to \(SlidePostTextElement.maxLength) characters."
+            }
+        case .image(let url):
+            try? FileManager.default.removeItem(at: url)
+            pasteNotice = "Pasting a picture onto a slide isn’t available yet."
+        case nil:
+            pasteNotice = "Kria can’t use what’s on your clipboard. Copy text and try again."
+        }
+    }
+    /// Shown above every other banner so a paste is never silent, even while an error is up. Tap to dismiss.
+    @Published var pasteNotice: String?
+
     /// Edits one text in place. `coalescing` collapses a continuous gesture into one undo step.
     func updateText(slideID: String, textID: String, coalescing key: String? = nil, _ mutate: (inout SlidePostTextElement) -> Void) {
         guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return }
