@@ -42,8 +42,8 @@ No automatic merge/deploy. Record each command, result and HEAD in the autoship 
 Real iPhone 13 Pro exports passed for short/medium/long EN and Turkish titles,
 captions, narrated titles/pins, separate label/lyric roles and all 15 palette faces. Sampled caption
 preview/export bounds matched exactly; title bounds differed by at most one pixel. Artifacts live outside git in
-`/private/tmp/nova-kri-648-evidence/device-frames-release` and
-`device-final-integrated.xcresult` in the same evidence directory.
+`/private/tmp/nova-kri-648-evidence/device-frames-ship` and
+`device-ship-final.xcresult` in the same evidence directory.
 The repeatable kit includes synthetic footage and a panned installed sample portrait.
 The actual proxy/OpenCV path detected its face at five samples and reused those
 proxies for five background observations. Supplied moving-face rectangles separately
@@ -51,9 +51,9 @@ exercise the collision contract. These fixtures do not establish live-camera acc
 
 The all-font device proof caught Pacifico ligature drift between the unshaped
 portable recipe and CoreText preview. Only version-1 rows now request shared shaping;
-legacy rows retain their existing render path. The integrated 26-case proof passed.
-The repeatable kit now also includes a 27th journey with caption blocks of
-different widths and heights, fitting every block against the same obstacles.
+legacy rows retain their existing render path. The final 27-case iPhone proof passed,
+including caption blocks of different widths and heights fitted against the same
+obstacles.
 
 Current-source production-runtime overlay proofs passed 62 legacy and 30 new styled
 overlays. Docker disk exhaustion required task-owned RAM mounts with current source;
@@ -91,6 +91,14 @@ specified properties before atomically replacing the row. Settings PATCH remains
 a complete rule replacement for individual resets. The journey passes through
 revision-checked storage, duplicate replay, actual text compilation and Undo;
 all 65 focused memory/extractor/typography checks passed.
+
+Main's KRI-651 recovery and KRI-647 paste changes integrated cleanly. The combined
+free replay/memory/recovery run passed 1,273 checks with 15 optional/live skips;
+all 54 CI contract checks and 621 mapped reliability checks passed. The integrated
+native build ran 1,737 tests: 1,713 passed and 24 opt-in tests skipped. Its 27-case
+typography export, two settings journeys and two new paste journeys passed without
+retries in `native-main-integrated.xcresult`. The physical proof's compiler, render
+engine, font assets and fixture generator were unchanged by that main integration.
 
 New caption geometry requires client protocol 8. The independent settings choices
 include Use defaults, Automatic and a required font, avoiding a misleading inherited
