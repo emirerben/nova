@@ -1024,6 +1024,8 @@ struct NativeEditorTemporaryVideo {
     private var playbackStateObserver: NSKeyValueObservation?
     private var itemStatusObserver: NSKeyValueObservation?
     nonisolated(unsafe) private var itemFailureObserver: NSObjectProtocol?
+    /// KRI-626: iOS restarted its media services, so every player, audio session and composition is dead.
+    nonisolated(unsafe) private var mediaServicesResetObserver: NSObjectProtocol?
     /// The item whose failure was already reported, so status + failed-to-end (which can both fire for one
     /// failure) produce one diagnostic and one recovery.
     private weak var failureHandledItem: AVPlayerItem?
@@ -1343,9 +1345,15 @@ struct NativeEditorTemporaryVideo {
         canEditCaptions = false
         canEditMix = false
         loadState = .idle
+        mediaServicesResetObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.handleMediaServicesReset() }
+        }
     }
 
     deinit {
+        if let mediaServicesResetObserver { NotificationCenter.default.removeObserver(mediaServicesResetObserver) }
         previewRefreshTask?.cancel()
         sourcePreviewTask?.cancel()
         durationLoadTask?.cancel()
@@ -6206,6 +6214,40 @@ struct NativeEditorTemporaryVideo {
         return (error as NSError).domain == AVFoundationErrorDomain
     }
 
+    /// KRI-626: Apple's recovery after `mediaServicesWereReset` is to reconfigure the audio session and
+    /// rebuild every player and composition. The old ones never play again, so recovery budgets that
+    /// were spent on failures from before the reset start over.
+    func handleMediaServicesReset() {
+        NativePreviewDiagnostics.record("media-services-reset", fields: ["state": sourcePreviewStateLabel])
+        startPlaybackRecoveryEpisode()
+        finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
+        sourcePreviewQuietRetryTask?.cancel()
+        let wantsPlayback = isPlaying || pendingPlayRequest
+        player?.pause()
+        isPlaying = false
+        failureHandledItem = nil
+        activatePreviewAudio()
+        if player != nil, player === finishedRenderPlayer, let url = playableDeviceOutputURL ?? finishedRenderURL {
+            reinstallFinishedRender(url: url, preferredDuration: finishedRenderDuration)
+        }
+        pendingPlayRequest = wantsPlayback
+        guard api != nil, jobID != nil, variantKey != nil, sourcePreviewState != .idle else {
+            startPendingPlaybackIfPossible()
+            return
+        }
+        Task { @MainActor [weak self] in await self?.prepareSourcePreview() }
+    }
+
+    /// `AVErrorMediaServicesWereReset`, or the expired-audio-session error (`'!ses'`) the dead session
+    /// leaves behind on the next item. Both clear once the session is set up again.
+    static func isMediaServicesResetFailure(_ error: Error?) -> Bool {
+        guard let error = error as NSError? else { return false }
+        let expiredSession = 561210739 // '!ses'
+        if error.domain == AVFoundationErrorDomain, error.code == AVError.mediaServicesWereReset.rawValue { return true }
+        let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError
+        return error.code == expiredSession || underlying?.code == expiredSession
+    }
+
     /// A new render, or the creator's Retry, is a fresh start for every automatic recovery.
     private func startPlaybackRecoveryEpisode() {
         finishedRenderRetryCount = 0
@@ -6256,6 +6298,8 @@ struct NativeEditorTemporaryVideo {
         let wantsPlayback = isPlaying || pendingPlayRequest
         failedPlayer.pause()
         isPlaying = false
+        // KRI-626: a media-services reset leaves the audio session expired; retrying on it fails again.
+        if Self.isMediaServicesResetFailure(error) { activatePreviewAudio() }
         switch kind {
         case .live:
             pendingPlayRequest = wantsPlayback
