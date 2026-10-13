@@ -188,7 +188,11 @@ class UISelectionTests(unittest.TestCase):
             with self.subTest(count=count):
                 self.assertEqual(set().union(*parts), inventory)
                 self.assertEqual(sum(len(part) for part in parts), len(inventory))
-                loads = [sum(durations.get(test, 0) for test in part) for part in parts]
+                loads = [
+                    sum(ui.weights(part, durations).values())
+                    + (420 if i == 0 and count > 1 else 0)
+                    for i, part in enumerate(parts)
+                ]
                 self.assertLessEqual(max(loads) - min(loads), max(durations.values()))
         # Unknown (new) tests still land in exactly one shard.
         extra = inventory | {"KriaUITests/NewUITests/testBrandNew"}
@@ -209,7 +213,8 @@ class UISelectionTests(unittest.TestCase):
             expected = ui.expected_tests(value)
             for count in range(1, ui.MAX_SHARDS + 1):
                 parts = [
-                    ui.shard_tests(expected, f"{i}/{count}") for i in range(1, count + 1)
+                    ui.shard_tests(expected, f"{i}/{count}")
+                    for i in range(1, count + 1)
                 ]
                 with self.subTest(value=value, count=count):
                     self.assertEqual(set().union(*parts), expected)
@@ -332,6 +337,21 @@ class UISelectionTests(unittest.TestCase):
         for path, group in ui.manifest()["sources"].items():
             value = ui.select_groups([path], focused=focused)[0]
             self.assertEqual(value, ui.validate_groups(value))
+
+
+class ShardOverheadTests(unittest.TestCase):
+    def test_unit_overhead_reduces_first_shard_without_changing_coverage(self):
+        tests = {f"test{i}" for i in range(24)}
+        durations = dict.fromkeys(tests, 120)
+        parts = [ui.shard_tests(tests, f"{i}/3", durations) for i in range(1, 4)]
+        self.assertEqual(set.union(*parts), tests)
+        self.assertEqual(sum(map(len, parts)), len(tests))
+        loads = [
+            len(part) * 120 + (420 if i == 0 else 0) for i, part in enumerate(parts)
+        ]
+        self.assertLessEqual(max(loads) - min(loads), 120)
+        self.assertLess(len(parts[0]), len(parts[1]))
+        self.assertEqual(ui.shard_tests(tests, "1/1", durations), tests)
 
 
 class ResultCoverageTests(unittest.TestCase):

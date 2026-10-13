@@ -957,45 +957,44 @@ The other `VideoPlayer` screens (result, slide post, device render, diagnostics)
 are outside the editor tests. If an idle stall shows up there, check the same log
 line.
 
-#### Sharded UI runs (KRI-168)
+#### Release and regression cadence (KRI-605)
 
-On main and manual regressions, `ios-tests` uses `ios_ui_shards` to split the
-full UI suite across three native legs; run serially it outlasts the job's
-75-minute cap (build+unit ~19 min, UI >56 min). PRs use one CI Mac job so their selected UI and journey scenarios can
-share a single compiled build. The September 24, 2026 durations show the UI
-work before build and journey time:
+Main pushes allocate one Mac for build, unit tests, named unit-journey assertions,
+and the smoke UI tripwire. Only a successful main push dispatches TestFlight.
+Running release lanes are never cancelled by a newer merge; the latest pending
+commit follows. A release no longer retains three Macs for a full regression.
 
-| Execution | Estimated UI time | Native legs |
-|---|---|---|
-| `full` (main, manual) | 39.7 min | 3 (`shard: 1/3` … `3/3`) |
-| `smoke,editor` (PR) | 26.3 min | 1 |
-| `smoke,creation` (PR) | 9.6 min | 1 |
-| `smoke,projects` (PR) | 7.1 min | 1 |
-| `smoke` (PR tripwire) | 1.7 min | 1 |
+The complete UI suite runs at 03:23 UTC nightly and on manual iOS dispatch. Full
+fixture-backed native journeys run at 02:23 UTC nightly and on manual CI
+dispatch. Both are reportable regression checks and never dispatch TestFlight.
+PRs retain affected unit/UI/journey coverage in one compiled Mac build.
 
-The PR Mac job appears in CI as `journey`; main's native legs appear in iOS.
+Nightly/manual `ios-tests` uses three duration-balanced shards. Every leg
+computes the same partition; its coverage check requires exactly that part, and
+the aggregate requires every leg to pass. Empty shards fail. Shard 1 executes
+the unit suite and saves the build cache. Its partition starts with a seven-minute
+load allowance for the measured unit overhead; the other shards build the
+bundles without rerunning unit tests. Unknown tests retain the median weight.
 
-- `ui_tests.shard_tests` places tests longest-first into the least-loaded shard,
-  using median CI durations from `scripts/ios/ui-test-durations.json`. Unknown
-  tests weigh the median.
-- On main and manual runs, every leg computes the same partition from the checkout, so
-  shards are disjoint and cover the full suite. Each leg's `verify` requires
-  exactly its part; an empty part fails. The `ios-tests` aggregate fails unless
-  every leg passes.
-- Shard 1 of main and manual runs runs unit tests, saves the build cache, runs
-  the smoke tests, dispatches the TestFlight release and renews `verify.sh`'s
-  single-use UI receipt for the full suite (`KRIA_IOS_UNIT_TESTS=0`
-  on the other legs). PRs save their build after compilation and unit tests,
-  before selected UI or journey scenarios finish.
-- Refresh the durations with `python3 scripts/ios/refresh-ui-durations.py`. It
-  takes the median passing attempt from the native legs of the last 120 `iOS`
-  runs (about 8 minutes through `gh`). Refresh after adding or reshaping UI
-  tests. Stale values only unbalance sharded legs; they never drop coverage.
-- PRs now trade parallel UI execution for one Mac allocation and one compiled
-  build across native checks. Compare hosted CI runs before claiming a wall
-  clock improvement, especially for long editor UI selections.
-- Parallel testing on one runner stays off: cloned simulators missed drawer
-  controls in #1004.
+`journey-offline` generates fixtures and executes Python checks on Linux before
+`journey-native` can queue for a Mac. Downloaded inputs must match the current
+workflow run, attempt, commit and file hashes. Native unit journey assertions
+reuse the completed unit result; when no full unit execution was selected, one
+batch executes all selected plain unit cases. Export scenarios that need generated
+fixtures retain their separate invocations and evidence.
+
+Refresh timings with `python3 scripts/ios/refresh-ui-durations.py --runs 30` after
+adding or reshaping tests. Durations change scheduling, never coverage. Record
+queue time, execution time, retry cost and summed Mac minutes separately when
+comparing hosted runs. KRI-605's baseline included 35–49 minutes of PR Mac queue
+wait and about 144 Mac minutes in one main full regression. The main native gate
+has a target of less than 25 minutes after runner allocation; queue improvements
+must be measured under comparable load.
+
+Photos picker permission-alert coverage and the unique inspector/undo-all tests
+remain intact. Diagnose picker failures from CI xcresult/logs before changing the
+suspected authorization race. Parallel execution on one simulator remains off:
+cloned simulators missed drawer controls in #1004.
 
 ## Native editor source assets
 

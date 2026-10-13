@@ -1,8 +1,12 @@
 name: CI
 
-# PRs select affected suites; main always runs full regression coverage.
+# PRs select affected suites; main keeps portable regression checks.
+# Full native journeys run nightly/manual, away from the release lane.
 # Required check names stay stable and validate intentional skips explicitly.
 on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
   pull_request:
     branches: [main, dev]
   push:
@@ -11,8 +15,8 @@ on:
 # The newest main commit covers earlier ones, so stale runs must not occupy
 # runners while PR checks wait. PR commits also supersede earlier attempts.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
   changes:
@@ -323,42 +327,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
       - name: Require a mapped incident-corpus journey
         env:
           COVERAGE: ${{ needs.changes.outputs.journey_coverage }}
           JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
-        run: |
-          python3 - <<'PY'
-          import os
-          selected = os.environ["JOURNEY_IDS"].split(",")
-          allowed = {"kri-492-length-ownership", "kri-524-creation", "kri-557-thinking", "slide-post-binding-recovery", "kri-561-song-order", "kri-548-caption-watermark", "kri-547-speaker-framing", "kri-577-reliability-gates", "kri-586-hook-copy", "kri-590-voiceover-cues", "kri-598-voiceover-planner", "kri-593-voiceover-clips", "kri-589-drawing"}
-          if os.environ["COVERAGE"] != "covered" or not selected or len(selected) != len(set(selected)) or not set(selected) <= allowed:
-              raise SystemExit("Journey selection has an unmapped or invalid incident")
-          PY
+        run: python3 scripts/ci/select-tests.py validate-mapping
 
-  journey:
-    name: ${{ (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true') && 'iPhone validation' || 'Offline journey' }}
+  # Python checks and synthetic fixtures fail before allocating a Mac.
+  journey-offline:
     needs: [changes, journey-mapping]
-    # A skipped mapping job must not skip an iOS-only PR. An affected journey
-    # still requires its mapping to pass before it can occupy a Mac runner.
-    if: >-
-      always() && needs.changes.result == 'success' &&
-      ((needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success') ||
-       (github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true' && needs.changes.outputs.journey == 'false'))
-    runs-on: ${{ (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true') && 'macos-15' || 'ubuntu-latest' }}
-    timeout-minutes: 90
+    if: needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Prepare journey result directory
         run: mkdir -p test-results/kri-559
-      - name: Set up Xcode
-        if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
-      - name: Install XcodeGen
-        if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
-        run: brew install xcodegen
       - uses: actions/setup-python@v5
         if: needs.changes.outputs.journey == 'true'
         with:
@@ -388,7 +373,7 @@ jobs:
       - name: Require FFmpeg for deterministic fixture media
         if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation') || contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
         run: |
-          command -v ffmpeg >/dev/null || brew install ffmpeg
+          command -v ffmpeg >/dev/null || sudo bash scripts/ci/apt-install.sh ffmpeg
           ffmpeg -version | head -n 1
       - name: Generate and verify offline server journey fixture
         if: contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
@@ -403,9 +388,178 @@ jobs:
       - name: Generate KRI-492 approved-length fixture through server approval and compiler
         if: contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
         run: python3 scripts/ios/kri-492-length-e2e.py test-results/kri-559/kri-492
-      # One PR Mac job now builds the iPhone app once for its selected unit,
-      # UI and native journey scenarios. Main's separate iOS workflow still
-      # owns the full UI regression and the shared warm cache.
+      - name: Verify Gemini thought streaming journey
+        if: contains(needs.changes.outputs.journey_ids, 'kri-557-thinking')
+        working-directory: src/apps/api
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/agents/test_thinking_budget.py -q | tee ../../../test-results/kri-559/thought-api-tests.log
+      - name: Verify slide-post binding and save validation
+        if: contains(needs.changes.outputs.journey_ids, 'slide-post-binding-recovery')
+        working-directory: src/apps/api
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/routes/test_slide_post_native_routes.py -q \
+            | tee ../../../test-results/kri-559/slide-post-binding-api-tests.log
+      - name: Verify song-timeline answer through the lip-sync planner
+        if: contains(needs.changes.outputs.journey_ids, 'kri-561-song-order')
+        working-directory: src/apps/api
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/pipeline/test_song_order_placements.py \
+            tests/routes/test_phone_song_editor_commit.py -q \
+            | tee ../../../test-results/kri-559/song-order-api-tests.log
+      - name: Run the KRI-577 reliability gates for the changed incident paths
+        if: contains(needs.changes.outputs.journey_ids, 'kri-577-reliability-gates')
+        run: |
+          set -o pipefail
+          python3 scripts/reliability-gates.py run --all --python python3 \
+            --log test-results/kri-559/reliability-gates.log
+      - name: Verify watermark-aware caption compile and its device fixture
+        if: contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
+        working-directory: src/apps/api
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/pipeline/test_phone_captions.py \
+            tests/pipeline/test_phone_caption_watermark_fixture.py \
+            tests/kria/test_portable_text_layout.py -q \
+            | tee ../../../test-results/kri-559/caption-watermark-api-tests.log
+      - name: Verify the drawing wire and compile contract on the server
+        if: contains(needs.changes.outputs.journey_ids, 'kri-589-drawing')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/agents/test_drawing_schema.py \
+            tests/kria/test_drawing_compile.py \
+            tests/routes/test_slide_post_drawing_routes.py -q \
+            | tee ../../../test-results/kri-559/drawing-api-tests.log
+      - name: Verify speaker face-fill decision, compile and device fixture
+        if: contains(needs.changes.outputs.journey_ids, 'kri-547-speaker-framing')
+        working-directory: src/apps/api
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/pipeline/test_kri547_face_fill_device_fixture.py \
+            tests/pipeline/test_phone_speaker_framing.py \
+            tests/pipeline/test_phone_subtitled_plan.py \
+            tests/pipeline/test_phone_subtitled_title.py \
+            tests/pipeline/test_render_geometry.py \
+            tests/kria/test_speaker_framing_ask.py \
+            tests/kria/test_brief_speaker_framing.py \
+            tests/tasks/test_phone_subtitled_speaker_framing_worker.py -q \
+            | tee ../../../test-results/kri-559/speaker-framing-api-tests.log
+      - name: Verify hook-copy decision contract and replay fixtures
+        if: contains(needs.changes.outputs.journey_ids, 'kri-586-hook-copy')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/agents/test_main_creator_agent.py \
+            tests/agents/test_main_creator_user_song.py \
+            tests/agents/test_runtime.py \
+            tests/kria/test_creative_copy_planner.py \
+            tests/evals/test_main_creator_evals.py -q \
+            | tee ../../../test-results/kri-559/hook-copy-api-tests.log
+      - name: Verify spoken voiceover cues follow the narration and replay fixtures
+        if: contains(needs.changes.outputs.journey_ids, 'kri-590-voiceover-cues')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/agents/test_narrated_clip_alignment.py \
+            tests/evals/test_narrated_clip_alignment_evals.py \
+            tests/kria/test_brief_checks_narrated_alignment.py \
+            tests/kria/test_kri520_block_recovery.py \
+            tests/tasks/test_phone_subtitled_narrated_dispatch.py -q \
+            | tee ../../../test-results/kri-559/voiceover-cues-api-tests.log
+      - name: Verify voiceover planner contract and replay fixtures
+        if: contains(needs.changes.outputs.journey_ids, 'kri-598-voiceover-planner')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/kria/test_kri598_voiceover_planner.py \
+            tests/kria/test_voiceover_downgrade_losses.py \
+            tests/evals/test_clip_intent_planner_evals.py \
+            tests/evals/test_main_creator_evals.py -q \
+            | tee ../../../test-results/kri-559/voiceover-planner-api-tests.log
+      - name: Verify a voiceover edit keeps every clip through the planner and dispatch
+        if: contains(needs.changes.outputs.journey_ids, 'kri-593-voiceover-clips')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/kria/test_kri593_voiceover_keeps_every_clip.py -q \
+            | tee ../../../test-results/kri-559/voiceover-clips-api-tests.log
+      - name: Seal portable fixture inputs for this exact workflow attempt
+        run: python3 scripts/ci/journey-gate.py seal-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+      - name: Transfer fixture inputs and offline evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixture-bundle-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          path: test-results/kri-559/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Upload failed portable diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kri-559-offline-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/kri-559/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  journey-native:
+    name: iPhone validation
+    needs: [changes, journey-mapping, journey-offline]
+    if: >-
+      always() && needs.changes.result == 'success' && needs.changes.outputs.native_validation == 'true' &&
+      ((needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success' && needs.journey-offline.result == 'success') ||
+       (needs.changes.outputs.journey == 'false' && needs.journey-mapping.result == 'skipped' && needs.journey-offline.result == 'skipped'))
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare native result directories
+        run: mkdir -p test-results/kri-559 test-results/ios
+      - name: Download this attempt's portable fixture inputs
+        if: needs.changes.outputs.journey == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: fixture-bundle-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          path: test-results/kri-559/
+      - name: Check fixture provenance and transferred bytes
+        if: needs.changes.outputs.journey == 'true'
+        env:
+          JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
+        run: |
+          python3 scripts/ci/journey-gate.py verify-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+          if [[ ",$JOURNEY_IDS," == *",kri-524-creation,"* ]]; then
+            python3 scripts/ci/journey-gate.py verify-input --fixture test-results/kri-559/fixture --head "${{ github.sha }}"
+          fi
+      - name: Set up Xcode
+        if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Install XcodeGen
+        if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
+        run: brew install xcodegen
       - name: Identify Xcode cache
         if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         id: xcode-cache
@@ -457,13 +611,6 @@ jobs:
       - name: Reuse the same simulator for selected native journeys
         if: needs.changes.outputs.journey_needs_native == 'true'
         run: cp test-results/ios/simulator-id.txt test-results/kri-559/simulator-id.txt
-      - uses: actions/upload-artifact@v4
-        if: always() && github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true'
-        with:
-          name: ios-native-test-diagnostics
-          path: test-results/ios/
-          retention-days: 7
-          if-no-files-found: ignore
       - name: Render captured creation journey on iPhone simulator
         if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
@@ -553,258 +700,42 @@ jobs:
         run: |
           python3 scripts/ci/journey-gate.py record-native --fixture test-results/kri-559/fixture --head "$KRIA_JOURNEY_HEAD_SHA" --xcresult test-results/kri-559/native.xcresult --test-results test-results/kri-559/native-test-results.json --render test-results/kri-559/fixture/frames/creation_words_retimed.mp4 --app-build test-results/kri-559/app-build.txt --output test-results/kri-559/journey-evidence.json
           python3 scripts/ci/journey-gate.py validate --evidence test-results/kri-559/journey-evidence.json --head "$KRIA_JOURNEY_HEAD_SHA"
-      - name: Verify Gemini thought streaming journey
-        if: contains(needs.changes.outputs.journey_ids, 'kri-557-thinking')
-        working-directory: src/apps/api
-        run: |
-          set -o pipefail
-          python3 -m pytest tests/agents/test_thinking_budget.py -q | tee ../../../test-results/kri-559/thought-api-tests.log
-      # KRI-604: the native steps from here to the speaker face-fill journey run plain
-      # KriaTests unit tests. On a push to main the iOS workflow (ios.yml)
-      # already executes every KriaTests case (scripts/ios/verify.sh skips only
-      # KriaUITests), so they run on pull requests only, where they are the named
-      # incident evidence. The DeviceMontageRenderE2ETests journeys above need the
-      # server fixture and stay on every event.
-      - name: Verify native thought disclosure, live updates, and reopened history
-        if: needs.changes.outputs.journey_needs_native == 'true' && github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-557-thinking')
-        working-directory: src/apps/ios
-        run: |
-          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
-            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
-            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
-            -only-testing:KriaTests/ChatTimelineTests/testCompletedThoughtIsPlacedAfterItsUserRequestBeforeReply \
-            -only-testing:KriaTests/SlidePostTests/testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory \
-            -only-testing:KriaTests/SlidePostChatEditTests/testCompletedChatEditThoughtRemainsWithReplyAfterReopening \
-            -resultBundlePath ../../../test-results/kri-559/thought-native.xcresult test-without-building
-          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/thought-native.xcresult \
-            > ../../../test-results/kri-559/thought-native-test-results.json
-      - name: Require each native thought journey test to pass
-        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-557-thinking')
-        run: |
-          python3 scripts/ci/journey-gate.py verify-tests \
-            --test-results test-results/kri-559/thought-native-test-results.json \
-            --xctest ChatTimelineTests/testCompletedThoughtIsPlacedAfterItsUserRequestBeforeReply \
-            --xctest SlidePostTests/testProposalShowsStreamingSummaryBeforeReplyAndCompletesHistory \
-            --xctest SlidePostChatEditTests/testCompletedChatEditThoughtRemainsWithReplyAfterReopening
-      - name: Verify slide-post binding and save validation
-        if: contains(needs.changes.outputs.journey_ids, 'slide-post-binding-recovery')
-        working-directory: src/apps/api
-        run: |
-          set -o pipefail
-          python3 -m pytest tests/routes/test_slide_post_native_routes.py -q \
-            | tee ../../../test-results/kri-559/slide-post-binding-api-tests.log
-      - name: Verify iOS binding round trip through chat and save requests
-        if: needs.changes.outputs.journey_needs_native == 'true' && github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'slide-post-binding-recovery')
-        working-directory: src/apps/ios
-        run: |
-          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
-            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
-            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
-            -only-testing:KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave \
-            -resultBundlePath ../../../test-results/kri-559/slide-post-binding-native.xcresult test-without-building
-          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/slide-post-binding-native.xcresult \
-            > ../../../test-results/kri-559/slide-post-binding-native-test-results.json
-      - name: Require native slide-post binding journey to pass
-        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'slide-post-binding-recovery')
-        run: |
-          python3 scripts/ci/journey-gate.py verify-tests \
-            --test-results test-results/kri-559/slide-post-binding-native-test-results.json \
-            --xctest SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave
-      - name: Verify song-timeline answer through the lip-sync planner
-        if: contains(needs.changes.outputs.journey_ids, 'kri-561-song-order')
-        working-directory: src/apps/api
-        run: |
-          set -o pipefail
-          python3 -m pytest tests/pipeline/test_song_order_placements.py \
-            tests/routes/test_phone_song_editor_commit.py -q \
-            | tee ../../../test-results/kri-559/song-order-api-tests.log
-      - name: Verify native song-timeline submission, parsing and tiling
-        if: needs.changes.outputs.journey_needs_native == 'true' && github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-561-song-order')
-        working-directory: src/apps/ios
-        run: |
-          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
-            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
-            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
-            -only-testing:KriaTests/SongOrderTests/testSubmissionListsPlacedTakesByTimeThenTheTrayInCaptureOrderAndEveryTakeOnce \
-            -only-testing:KriaTests/SongOrderTests/testOldServerPayloadWithNoNewFieldsStillParsesAndGivesATimelineWithDefaults \
-            -only-testing:KriaTests/SongOrderTests/testExactlyAdjacentDoesNotPushButAnOverlapOfEvenUnderASecondDoes \
-            -resultBundlePath ../../../test-results/kri-559/song-order-native.xcresult test-without-building
-          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/song-order-native.xcresult \
-            > ../../../test-results/kri-559/song-order-native-test-results.json
-      - name: Require native song-order journey tests to pass
-        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-561-song-order')
-        run: |
-          python3 scripts/ci/journey-gate.py verify-tests \
-            --test-results test-results/kri-559/song-order-native-test-results.json \
-            --xctest SongOrderTests/testSubmissionListsPlacedTakesByTimeThenTheTrayInCaptureOrderAndEveryTakeOnce \
-            --xctest SongOrderTests/testOldServerPayloadWithNoNewFieldsStillParsesAndGivesATimelineWithDefaults \
-            --xctest SongOrderTests/testExactlyAdjacentDoesNotPushButAnOverlapOfEvenUnderASecondDoes
-      - name: Run the KRI-577 reliability gates for the changed incident paths
-        if: contains(needs.changes.outputs.journey_ids, 'kri-577-reliability-gates')
-        run: |
-          set -o pipefail
-          python3 scripts/reliability-gates.py run --all --python python3 \
-            --log test-results/kri-559/reliability-gates.log
-      - name: Verify watermark-aware caption compile and its device fixture
-        if: contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
-        working-directory: src/apps/api
-        run: |
-          set -o pipefail
-          python3 -m pytest tests/pipeline/test_phone_captions.py \
-            tests/pipeline/test_phone_caption_watermark_fixture.py \
-            tests/kria/test_portable_text_layout.py -q \
-            | tee ../../../test-results/kri-559/caption-watermark-api-tests.log
-      - name: Export server-compiled captions under the watermark on the iPhone simulator
-        if: needs.changes.outputs.journey_needs_native == 'true' && github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
-        working-directory: src/apps/ios
-        run: |
-          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
-            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
-            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
-            -only-testing:KriaTests/CaptionWatermarkClearanceTests/testServerRebrokenKadikoyCaptionsExportClearOfTheWatermark \
-            -only-testing:KriaTests/CaptionWatermarkClearanceTests/testProdUnbrokenKadikoyCaptionsInkTheWatermarkCorner \
-            -resultBundlePath ../../../test-results/kri-559/caption-watermark-native.xcresult test-without-building
-          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/caption-watermark-native.xcresult \
-            > ../../../test-results/kri-559/caption-watermark-native-test-results.json
-      - name: Require native caption-watermark journey tests to pass
-        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
-        run: |
-          python3 scripts/ci/journey-gate.py verify-tests \
-            --test-results test-results/kri-559/caption-watermark-native-test-results.json \
-            --xctest CaptionWatermarkClearanceTests/testServerRebrokenKadikoyCaptionsExportClearOfTheWatermark \
-            --xctest CaptionWatermarkClearanceTests/testProdUnbrokenKadikoyCaptionsInkTheWatermarkCorner
-      - name: Verify the drawing wire and compile contract on the server
-        if: contains(needs.changes.outputs.journey_ids, 'kri-589-drawing')
-        working-directory: src/apps/api
+      - name: Verify selected named native unit journeys
+        if: needs.changes.outputs.journey_needs_native == 'true'
         env:
-          PYTHONPATH: ${{ github.workspace }}/src/apps/api
-          STORAGE_BUCKET: replay
-          DATABASE_URL: postgresql://replay@localhost/replay
+          JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
+          UNIT_EXECUTED: ${{ github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true' }}
         run: |
-          set -o pipefail
-          python3 -m pytest tests/agents/test_drawing_schema.py \
-            tests/kria/test_drawing_compile.py \
-            tests/routes/test_slide_post_drawing_routes.py -q \
-            | tee ../../../test-results/kri-559/drawing-api-tests.log
-      - name: Verify the drawing wire and compile contract on the phone
-        if: needs.changes.outputs.journey_needs_native == 'true' && github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-589-drawing')
-        working-directory: src/apps/ios
-        run: |
-          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
-            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
-            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
-            -only-testing:KriaTests/DrawingParityTests/testEveryWireElementDecodesAndRoundTripsLosslessly \
-            -only-testing:KriaTests/DrawingParityTests/testInvalidWireRowsAreRejectedAndKeptVerbatimAsOpaqueRows \
-            -only-testing:KriaTests/DrawingParityTests/testCompileFixtureThroughThePureCompileAndTheRenderCompiler \
-            -only-testing:KriaTests/SlidePostDrawingTests/testEveryFixtureDrawingDecodesAndRoundTripsLosslessly \
-            -only-testing:KriaTests/SlidePostDrawingTests/testPhotoRenderPutsInkWhereTheGeometryFixtureSaysAndLeavesTheMarginsClean \
-            -resultBundlePath ../../../test-results/kri-559/drawing-native.xcresult test
-          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/drawing-native.xcresult \
-            > ../../../test-results/kri-559/drawing-native-test-results.json
-      - name: Require native drawing journey tests to pass
-        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-589-drawing')
-        run: |
-          python3 scripts/ci/journey-gate.py verify-tests \
-            --test-results test-results/kri-559/drawing-native-test-results.json \
-            --xctest DrawingParityTests/testEveryWireElementDecodesAndRoundTripsLosslessly \
-            --xctest DrawingParityTests/testInvalidWireRowsAreRejectedAndKeptVerbatimAsOpaqueRows \
-            --xctest DrawingParityTests/testCompileFixtureThroughThePureCompileAndTheRenderCompiler \
-            --xctest SlidePostDrawingTests/testEveryFixtureDrawingDecodesAndRoundTripsLosslessly \
-            --xctest SlidePostDrawingTests/testPhotoRenderPutsInkWhereTheGeometryFixtureSaysAndLeavesTheMarginsClean
-      - name: Verify speaker face-fill decision, compile and device fixture
-        if: contains(needs.changes.outputs.journey_ids, 'kri-547-speaker-framing')
-        working-directory: src/apps/api
-        run: |
-          set -o pipefail
-          python3 -m pytest tests/pipeline/test_kri547_face_fill_device_fixture.py \
-            tests/pipeline/test_phone_speaker_framing.py \
-            tests/pipeline/test_phone_subtitled_plan.py \
-            tests/pipeline/test_phone_subtitled_title.py \
-            tests/pipeline/test_render_geometry.py \
-            tests/kria/test_speaker_framing_ask.py \
-            tests/kria/test_brief_speaker_framing.py \
-            tests/tasks/test_phone_subtitled_speaker_framing_worker.py -q \
-            | tee ../../../test-results/kri-559/speaker-framing-api-tests.log
-      - name: Render the server face-fill crop and measure it on the iPhone simulator
-        if: needs.changes.outputs.journey_needs_native == 'true' && github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-547-speaker-framing')
-        working-directory: src/apps/ios
-        run: |
-          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
-            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
-            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
-            -only-testing:KriaTests/DeviceSpeakerFaceFillE2ETests/testFaceInTheLeftThirdShowsTheServerWindowOnTheIPhone \
-            -only-testing:KriaTests/DeviceSpeakerFaceFillE2ETests/testFaceAtTheRightEdgeClampsWithNoBlackEdgeOnTheIPhone \
-            -only-testing:KriaTests/DeviceSpeakerFaceFillE2ETests/testCentredFaceIsTheUnshiftedCentreCropOnTheIPhone \
-            -resultBundlePath ../../../test-results/kri-559/speaker-framing-native.xcresult test-without-building
-          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/speaker-framing-native.xcresult \
-            > ../../../test-results/kri-559/speaker-framing-native-test-results.json
-      - name: Require native speaker face-fill journey tests to pass
-        if: github.event_name == 'pull_request' && contains(needs.changes.outputs.journey_ids, 'kri-547-speaker-framing')
-        run: |
-          python3 scripts/ci/journey-gate.py verify-tests \
-            --test-results test-results/kri-559/speaker-framing-native-test-results.json \
-            --xctest DeviceSpeakerFaceFillE2ETests/testFaceInTheLeftThirdShowsTheServerWindowOnTheIPhone \
-            --xctest DeviceSpeakerFaceFillE2ETests/testFaceAtTheRightEdgeClampsWithNoBlackEdgeOnTheIPhone \
-            --xctest DeviceSpeakerFaceFillE2ETests/testCentredFaceIsTheUnshiftedCentreCropOnTheIPhone
-      - name: Verify hook-copy decision contract and replay fixtures
-        if: contains(needs.changes.outputs.journey_ids, 'kri-586-hook-copy')
-        working-directory: src/apps/api
-        env:
-          PYTHONPATH: ${{ github.workspace }}/src/apps/api
-          STORAGE_BUCKET: replay
-          DATABASE_URL: postgresql://replay@localhost/replay
-        run: |
-          set -o pipefail
-          python3 -m pytest tests/agents/test_main_creator_agent.py \
-            tests/agents/test_main_creator_user_song.py \
-            tests/agents/test_runtime.py \
-            tests/kria/test_creative_copy_planner.py \
-            tests/evals/test_main_creator_evals.py -q \
-            | tee ../../../test-results/kri-559/hook-copy-api-tests.log
-      - name: Verify spoken voiceover cues follow the narration and replay fixtures
-        if: contains(needs.changes.outputs.journey_ids, 'kri-590-voiceover-cues')
-        working-directory: src/apps/api
-        env:
-          PYTHONPATH: ${{ github.workspace }}/src/apps/api
-          STORAGE_BUCKET: replay
-          DATABASE_URL: postgresql://replay@localhost/replay
-        run: |
-          set -o pipefail
-          python3 -m pytest tests/agents/test_narrated_clip_alignment.py \
-            tests/evals/test_narrated_clip_alignment_evals.py \
-            tests/kria/test_brief_checks_narrated_alignment.py \
-            tests/kria/test_kri520_block_recovery.py \
-            tests/tasks/test_phone_subtitled_narrated_dispatch.py -q \
-            | tee ../../../test-results/kri-559/voiceover-cues-api-tests.log
-      - name: Verify voiceover planner contract and replay fixtures
-        if: contains(needs.changes.outputs.journey_ids, 'kri-598-voiceover-planner')
-        working-directory: src/apps/api
-        env:
-          PYTHONPATH: ${{ github.workspace }}/src/apps/api
-          STORAGE_BUCKET: replay
-          DATABASE_URL: postgresql://replay@localhost/replay
-        run: |
-          set -o pipefail
-          python3 -m pytest tests/kria/test_kri598_voiceover_planner.py \
-            tests/kria/test_voiceover_downgrade_losses.py \
-            tests/evals/test_clip_intent_planner_evals.py \
-            tests/evals/test_main_creator_evals.py -q \
-            | tee ../../../test-results/kri-559/voiceover-planner-api-tests.log
-      - name: Verify a voiceover edit keeps every clip through the planner and dispatch
-        if: contains(needs.changes.outputs.journey_ids, 'kri-593-voiceover-clips')
-        working-directory: src/apps/api
-        env:
-          PYTHONPATH: ${{ github.workspace }}/src/apps/api
-          STORAGE_BUCKET: replay
-          DATABASE_URL: postgresql://replay@localhost/replay
-        run: |
-          set -o pipefail
-          python3 -m pytest tests/kria/test_kri593_voiceover_keeps_every_clip.py -q \
-            | tee ../../../test-results/kri-559/voiceover-clips-api-tests.log
+          extra=()
+          if [[ "$UNIT_EXECUTED" == "true" ]]; then extra+=(--require-unit); fi
+          python3 scripts/ci/journey-gate.py native-units --ids "$JOURNEY_IDS" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: always() && needs.changes.outputs.journey == 'true'
+        if: always()
         with:
-          name: kri-559-journey-${{ github.sha }}
+          name: ios-native-test-diagnostics
+          path: test-results/ios/
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Upload native journey evidence
+        if: always() && needs.changes.outputs.journey_needs_native == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kri-559-native-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
           path: test-results/kri-559/
-          if-no-files-found: warn
           retention-days: 14
+          if-no-files-found: error
+
+  # Stable required dependency: unexpected skips and failed selection stay red.
+  journey:
+    if: >-
+      always() && (needs.changes.result != 'success' ||
+      needs.changes.outputs.journey == 'true' || needs.changes.outputs.ios == 'true')
+    needs: [changes, journey-mapping, journey-offline, journey-native]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require every selected journey dependency to pass
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select-tests.py gate-journey

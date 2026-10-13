@@ -1,8 +1,10 @@
 name: iOS
 
-# Full native regression on main and manual runs. PR coverage shares one build
-# with selected journey checks in CI's journey job.
+# Main uses one build/unit/smoke release lane. Full regression is nightly/manual.
+# PR coverage shares one build with selected native journeys in CI.
 on:
+  schedule:
+    - cron: "23 3 * * *"
   workflow_dispatch:
     inputs:
       benchmark_ui_group:
@@ -33,10 +35,10 @@ jobs:
     # stable, fail-closed required check. Contracts are portable, so running
     # them on Ubuntu leaves the macOS runner for the native build sooner.
     #
-    # Main and manual regressions use the duration-balanced shards: the full
+    # Nightly and manual regressions use the duration-balanced shards: the full
     # suite run serially outlasts timeout-minutes (build+unit ~19 min, UI >56).
-    # Each leg builds from the warm cache, and shard 1 also runs unit tests,
-    # saves the cache and releases to TestFlight once those pass.
+    # Each regression leg builds from the warm cache; shard 1 runs unit tests
+    # and saves the cache. Main's one-leg smoke lane owns TestFlight dispatch.
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.ios_ui_shards == '3' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/3"},{"lane":"native","runner":"macos-15","shard":"2/3"},{"lane":"native","runner":"macos-15","shard":"3/3"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '2' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/2"},{"lane":"native","runner":"macos-15","shard":"2/2"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || '{"include":[{"lane":"native","runner":"macos-15"},{"lane":"contracts","runner":"ubuntu-latest"}]}') }}
@@ -132,6 +134,9 @@ jobs:
           # Later UI shards compile every bundle but leave unit tests to shard 1.
           KRIA_IOS_UNIT_TESTS: ${{ (!matrix.shard || startsWith(matrix.shard, '1/')) && '1' || '0' }}
         run: bash scripts/ios/verify.sh
+      - name: Require named native unit journey tests
+        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/'))
+        run: python3 scripts/ci/journey-gate.py native-units --ids all --require-unit
       # Save a usable build as soon as compilation/unit tests pass. In particular,
       # main's shared cache need not wait for the slower UI suite to finish.
       # Only one leg per run saves: the shards would race for the same key.
@@ -150,43 +155,26 @@ jobs:
             src/apps/ios/.derived-data/SDKStatCaches.noindex
             src/apps/ios/.derived-data/CompilationCache.noindex
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
-      # Release as soon as build, unit tests and the smoke tripwire pass (~2 min:
-      # creation to a ready cut, plus the editor). The full UI suite below still
-      # gates main's status, but no longer delays the TestFlight upload.
+      # Release after build/unit/named checks and smoke. Full UI regression
+      # has its own nightly/manual cadence and never dispatches a release.
       - name: Smoke UI tests before release
-        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/')) && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/')) && github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           KRIA_IOS_TEST_MODE: ui
           KRIA_IOS_UI_GROUPS: smoke
         run: bash scripts/ios/verify.sh
       - name: Release to TestFlight after build, unit and smoke tests
-        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/')) && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/')) && github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run testflight.yml --ref main -f head_sha="${{ github.sha }}"
-      # verify.sh's UI receipt is single-use: the smoke run above consumed it, so
-      # renew it (incremental build, no unit tests) before the full suite.
-      - name: Renew the UI build receipt after smoke
-        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/')) && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        env:
-          KRIA_IOS_TEST_MODE: prepare-ui
-          KRIA_IOS_UNIT_TESTS: "0"
-          KRIA_RESTORE_INPUT_TIMES: "1"
-        run: bash scripts/ios/verify.sh
       - name: Native UI tests (reuse compiled build)
-        # main and workflow_dispatch run the fail-closed full regression. A PR
-        # that touches native UI inputs runs a bounded pre-merge subset: smoke
-        # plus the affected feature group and/or the changed test methods, or
-        # smoke alone when the selector wants full coverage (shared, unmapped,
-        # or multi-group changes). The smoke group walks creation to a ready
-        # cut, which a green build/unit PR once broke for every later merge
-        # (#1088). On a sharded run each leg runs one duration-balanced part of
-        # that selection and verifies exactly it; the job fails unless every
-        # leg passes.
-        if: matrix.lane == 'native' && (github.event_name != 'pull_request' || needs.changes.outputs.ios_ui == 'true')
+        # Full coverage runs nightly/manual. Main's smoke consumed its receipt
+        # and completed the release tripwire; it never starts the long suite.
+        if: matrix.lane == 'native' && github.event_name != 'push'
         env:
           KRIA_IOS_TEST_MODE: ui
-          KRIA_IOS_UI_GROUPS: ${{ github.event_name != 'pull_request' && 'full' || (needs.changes.outputs.ios_ui_groups == 'full' && 'smoke' || needs.changes.outputs.ios_ui_groups) }}
+          KRIA_IOS_UI_GROUPS: full
           KRIA_IOS_UI_SHARD: ${{ matrix.shard }}
         run: bash scripts/ios/verify.sh
       - name: Compare focused UI coverage (manual only)

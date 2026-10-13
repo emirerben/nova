@@ -353,7 +353,9 @@ def shard_count(value, root=ROOT, durations=None):
     recorded UI time, at most MAX_SHARDS and never more legs than tests."""
     tests = expected_tests(value, root)
     estimate = sum(weights(tests, durations).values())
-    return max(1, min(MAX_SHARDS, len(tests), math.ceil(estimate / SHARD_TARGET_SECONDS)))
+    return max(
+        1, min(MAX_SHARDS, len(tests), math.ceil(estimate / SHARD_TARGET_SECONDS))
+    )
 
 
 def shard_tests(tests, spec, durations=None):
@@ -367,11 +369,15 @@ def shard_tests(tests, spec, durations=None):
     index, count = parse_shard(spec)
     weight = weights(tests, durations)
     loads, members = [0.0] * count, [[] for _ in range(count)]
+    # Shard 1 runs the unit suite. Small focused selections keep their old
+    # partition: the overhead alone would otherwise consume their UI budget.
+    if count > 1 and sum(weight.values()) > count * 7 * 60:
+        loads[0] = 7 * 60
     for test in sorted(tests, key=lambda test: (-weight[test], test)):
         target = min(range(count), key=lambda shard: (loads[shard], shard))
         loads[target] += weight[test]
         members[target].append(test)
-    if not members[index - 1]:
+    if any(not part for part in members):
         raise ValueError(f"UI shard {spec} selects no tests")
     return set(members[index - 1])
 
