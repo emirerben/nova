@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.270.0] - 2026-10-13
+
+### Changed
+- fix(kria): start phone Talking at the line the creator quotes (KRI-628) (#1584) <!-- release-pr: 1584 -->
+
 ## [0.78.269.0] - 2026-10-13
 
 ### Changed
