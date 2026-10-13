@@ -184,6 +184,59 @@ import XCTest
         XCTAssertTrue(app.buttons["slidepost-size-fit-fit"].isSelected, "Fit survived the save")
     }
 
+    /// KRI-646: the Bend slider (curved text) is offered only when the server advertises `text_bend`; dragging it
+    /// curves the slide's text, and "Apply to all slides" carries the bend to the other slides.
+    func testBendSliderCurvesTheTextAndApplyToAllCopiesIt() {
+        func openTextStyle(_ app: XCUIApplication) {
+            app.buttons["slidepost-tool-text"].tap()
+            let field = app.textViews["slidepost-text-field"].firstMatch
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            field.tap(); field.press(forDuration: 1.0)
+            if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
+            field.typeText("Athens")
+            app.buttons["Style"].tap()
+            XCTAssertTrue(app.buttons["native-editor-text-preset"].waitForExistence(timeout: 5))
+        }
+        let off = openRichWorkspace(save: false)
+        openTextStyle(off)
+        revealInTextPanel(off.sliders["native-editor-text-rotation"], app: off)
+        XCTAssertTrue(off.sliders["native-editor-text-rotation"].exists)
+        XCTAssertFalse(off.sliders["native-editor-text-bend"].exists, "no Bend slider without the capability")
+        off.terminate()
+
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_TEXT_BEND": "1"])
+        openTextStyle(app)
+        let bend = app.sliders["native-editor-text-bend"]
+        revealInTextPanel(bend, app: app)
+        XCTAssertTrue(bend.exists, "the Bend slider is offered when the server advertises text_bend")
+        XCTAssertEqual(bend.value as? String, "0", "text starts straight")
+        bend.adjust(toNormalizedSliderPosition: 0.85)
+        let applied = bend.value as? String
+        XCTAssertNotNil(applied)
+        XCTAssertNotEqual(applied, "0", "the slider moved the bend")
+        attach(app, "Bend slider on a slide text")
+        app.buttons["slidepost-done"].tap()
+        // Slide 2 gets the same look from "Apply to all slides", bend included.
+        app.buttons["slidepost-tile-2"].tap()
+        app.buttons["slidepost-tool-text"].tap()
+        XCTAssertTrue(app.textViews["slidepost-text-field"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["slidepost-done"].tap()
+        app.buttons["slidepost-tile-1"].tap()
+        app.buttons["slidepost-tool-text"].tap()
+        app.buttons["Style"].tap()
+        let applyAll = app.buttons["slidepost-apply-all"]
+        XCTAssertTrue(applyAll.waitForExistence(timeout: 5)); applyAll.tap()
+        XCTAssertTrue(app.staticTexts["slidepost-apply-all-result"].waitForExistence(timeout: 3))
+        app.buttons["slidepost-done"].tap()
+        app.buttons["slidepost-tile-2"].tap()
+        app.buttons["slidepost-tool-text"].tap()
+        app.buttons["Style"].tap()
+        let target = app.sliders["native-editor-text-bend"]
+        revealInTextPanel(target, app: app)
+        XCTAssertEqual(target.value as? String, applied, "apply-to-all copies the bend")
+        attach(app, "Bend applied to all slides")
+    }
+
     /// KRI-589: the Draw tool is offered only when the server advertises `slide_post_drawing`; a finger stroke + Done
     /// leaves static ink on the slide, Cancel leaves nothing, "Draw more" appends, and a save (the fixture server echoes
     /// exactly what the app sent) keeps the ink on that slide only.

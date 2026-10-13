@@ -370,6 +370,10 @@ class CreationCapabilitiesOut(BaseModel):
     # X-Kria-Client-Protocol >= slide_post_sticker_min_client_protocol (a save carrying stickers
     # from an older build gets 426, unlike drawings).
     slide_post_stickers: bool = False
+    # KRI-646: text Bend on device-drawn text AND slide-post text. True only with the flag
+    # on, `textBend` verified, and a build declaring X-Kria-Client-Protocol >=
+    # text_bend_min_client_protocol.
+    text_bend: bool = False
     slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
@@ -3749,6 +3753,12 @@ async def capabilities(
             settings.slide_post_stickers_enabled
             and client_protocol is not None
             and client_protocol >= settings.slide_post_sticker_min_client_protocol
+        ),
+        "text_bend": bool(
+            settings.text_bend_enabled
+            and "textBend" in set(settings.phone_render_verified_features)
+            and client_protocol is not None
+            and client_protocol >= settings.text_bend_min_client_protocol
         ),
         "creation_mode": (
             "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"

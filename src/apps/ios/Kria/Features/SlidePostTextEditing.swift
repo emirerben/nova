@@ -1,4 +1,5 @@
 import Combine
+import KriaMediaEngine
 import SwiftUI
 
 /// The wire/UI vocabulary shared by the slide Text panel, its tests and (later) on-preview editing.
@@ -7,6 +8,7 @@ import SwiftUI
 extension SlidePostTextElement {
     static let strokeRange = 0...20
     static let rotationRange = -360.0...360.0
+    static let bendRange = -100.0...100.0
     static let widthRange = 0.2...1.0
     /// What the server draws when a shadow is on but no opacity is stored (alpha 160/255).
     static let defaultShadowOpacity = 0.63
@@ -14,7 +16,7 @@ extension SlidePostTextElement {
     /// Style keys that live in `extra` until the server model types them. "Apply style to all" replaces these
     /// as a set (a reset to default on the source clears the target too).
     static let styleExtraKeys: [String] = [
-        "rotation_deg", "stroke_color", "shadow_color", "shadow_opacity", "background_color", "editor_preset",
+        "rotation_deg", "bend", "stroke_color", "shadow_color", "shadow_opacity", "background_color", "editor_preset",
         "text_case", "letter_spacing", "line_spacing",
     ]
     private static let hexColorKeys: Set<String> = ["stroke_color", "shadow_color", "background_color"]
@@ -76,6 +78,10 @@ extension SlidePostTextElement {
         case "rotation_deg":
             guard let number = Self.clamped(value?.numberValue, Self.rotationRange), number != 0 else { extra["rotation_deg"] = nil; return }
             extra["rotation_deg"] = .number(number)
+        case "bend":
+            // KRI-646: -100...100, 0 removes the key so an untouched text round-trips byte-identically.
+            guard let number = Self.clamped(value?.numberValue, Self.bendRange), !TextBend.isStraight(number) else { extra["bend"] = nil; return }
+            extra["bend"] = .number(number)
         case "shadow_opacity":
             guard let number = Self.clamped(value?.numberValue, 0...1) else { extra[key] = nil; return }
             extra[key] = .number(number)
@@ -126,6 +132,8 @@ extension SlidePostTextElement {
 @MainActor final class SlidePostTextEditor: NativeTextEditing {
     let session: SlidePostSession
     var slideID: String
+    /// KRI-646: set by the host from the `text_bend` creation capability.
+    @Published var supportsTextBend = false
     private var group: String?
     private var forwarding: AnyCancellable?
 

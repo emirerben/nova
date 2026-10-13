@@ -500,7 +500,8 @@ enum NativeEditorRenderError: Error, Equatable {
                 stroke: try ink(raw["stroke_color"], fallback: "#000000"),
                 strokeWidth: raw["stroke_width"]?.numberValue ?? 0, shadows: shadows,
                 background: try raw["background_color"]?.stringValue.map { try ink(.string($0), fallback: "#FFFFFF") },
-                fontVariations: fontInstances[family] ?? [:], letterSpacing: raw["letter_spacing"]?.numberValue ?? 0, lineSpacing: raw["line_spacing"]?.numberValue ?? 1.15, wrapsLines: raw["wrap_lines"] != .bool(false))
+                fontVariations: fontInstances[family] ?? [:], letterSpacing: raw["letter_spacing"]?.numberValue ?? 0, lineSpacing: raw["line_spacing"]?.numberValue ?? 1.15, wrapsLines: raw["wrap_lines"] != .bool(false),
+                bend: raw["bend"]?.numberValue ?? 0)
             let displayText: String = switch raw["text_case"]?.stringValue {
             case "upper": element.text.uppercased()
             case "lower": element.text.lowercased()
@@ -522,12 +523,15 @@ enum NativeEditorRenderError: Error, Equatable {
             if explicitPhases || ["typewriter", "stream-in", "smooth-type", "ink-reveal"].contains(legacy) {
                 text.append(layout)
             } else {
+                let legacyEffect = PortableTextLayer.Effect(rawValue: legacy) ?? .none
                 text.append(PortableTextLayer(id: layout.id, start: layout.start, end: layout.end,
                     anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: layout.rotationDegrees,
-                    runs: layout.runs, effect: PortableTextLayer.Effect(rawValue: legacy) ?? .none,
+                    runs: layout.runs, effect: legacyEffect,
                     motion: try Self.normalizedMotion(effect: legacy, raw: raw["motion"]),
                     dissolveSeed: legacy == "dissolve-out" ? UInt32(101 + (document.textElements.firstIndex(where: { $0.id == element.id }) ?? 0) * 37) : nil,
-                    background: layout.background))
+                    background: layout.background,
+                    // `layout` was compiled as a plain effect; the real effect decides whether the arc survives.
+                    bend: PortableTextLayer.bendSupported(effect: legacyEffect) ? layout.bend : nil))
             }
         }
         if !document.captionCues.isEmpty && document.captionMeta["enabled"] != .bool(false) {

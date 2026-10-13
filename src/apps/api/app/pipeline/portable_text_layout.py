@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import skia
 
 from app.kria.portable_text import PositionedGlyph
@@ -135,7 +137,65 @@ def _resolve_paints(overlay: dict, *, width: float, height: float, left: float, 
     return fill, blurs, gradient
 
 
+def _bend_supported(effect: str, animation_phases: object = None, *, giant_title: bool = False):
+    """Can this text layer be bent (KRI-646)? ONE rule; the Swift twin is ``bendSupported``.
+
+    Supported: the effects in ``portable_text.BEND_SUPPORTED_EFFECTS`` -- static/none,
+    fade-in, pop-in, scale-up, slide-up, slide-down, slide-in, bounce, caption-pop -- whose
+    ``animation_phases`` neither enter nor exit with ``typewriter``, and that carry no
+    giant-title transition.
+
+    NOT supported (bend is dropped, never half-applied): ink-reveal, handwriting,
+    typewriter, stream-in, smooth-type, staggered-slice, dissolve-out, karaoke-line,
+    lyric-line, any ``animation_phases`` using typewriter, and giant-title text.
+    """
+    from app.kria.portable_text import BEND_SUPPORTED_EFFECTS
+
+    if giant_title or effect not in BEND_SUPPORTED_EFFECTS:
+        return False
+    if animation_phases is None:
+        return True
+    if isinstance(animation_phases, dict):
+        phases = (animation_phases.get("entrance"), animation_phases.get("exit"))
+    else:
+        phases = (
+            getattr(animation_phases, "entrance", None),
+            getattr(animation_phases, "exit", None),
+        )
+    return "typewriter" not in phases
+
+
+def _overlay_bend(overlay: dict) -> float | None:
+    """The overlay's finite, non-zero ``bend`` clamped to [-100, 100], else None."""
+    raw = overlay.get("bend")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    value = float(raw)
+    if not math.isfinite(value) or value == 0:
+        return None
+    return max(-100.0, min(100.0, value))
+
+
 def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed: int | None = None):
+    """Compile one cloud overlay dict to ``(PortableTextLayer, font_asset)``.
+
+    KRI-646: stamps ``bend`` on the layer only when the overlay carries a non-zero bend
+    AND `_bend_supported` holds for the produced layer; otherwise the layer is straight.
+    """
+    layer, font = _compile_text_overlay_unbent(
+        overlay, layer_id=layer_id, canvas=canvas, dissolve_seed=dissolve_seed
+    )
+    bend = _overlay_bend(overlay)
+    if bend is not None and _bend_supported(
+        layer.effect, layer.animation_phases, giant_title=layer.giant_title is not None
+    ):
+        layer = layer.model_copy(update={"bend": bend})
+    return layer, font
+
+
+def _compile_text_overlay_unbent(
+    overlay: dict, *, layer_id: str, canvas, dissolve_seed: int | None = None
+):
     from app.kria.portable_text import GiantTitleTransition
     from app.pipeline import text_overlay_skia as cloud
 

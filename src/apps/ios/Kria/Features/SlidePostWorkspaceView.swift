@@ -270,6 +270,7 @@ struct SlidePostWorkspaceView: View {
         }()
         return SlidePostStickerPaste(isEnabled: stickersOn, api: model.api, uploads: uploads, projectID: uploadProjectID, itemID: itemID)
     }
+    private var bendOn: Bool { effectiveCapabilities?.textBendEnabled == true }
     private var extendedDeviceExportOn: Bool { effectiveCapabilities?.slidePostExtendedDeviceExportEnabled == true }
     private func seedAndAppend() {
         session.seedDraftIfNeeded()
@@ -423,7 +424,7 @@ struct SlidePostWorkspaceView: View {
                     .padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
                     .excludesDrawerGesture()
             } else if mode == .text, let slide {
-                SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab, compact: keyboardUp, focusToken: focusToken, onDone: finishEditing)
+                SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab, compact: keyboardUp, focusToken: focusToken, bendAvailable: bendOn, onDone: finishEditing)
                     .id(slide.id)
                     .frame(maxHeight: .infinity)
                     .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)

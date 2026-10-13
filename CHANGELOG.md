@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.269.0] - 2026-10-13
+
+### Changed
+- feat: text Bend (curved / rainbow text) on every phone edit type (KRI-646) (#1593) <!-- release-pr: 1593 -->
+
 ## [0.78.268.0] - 2026-10-13
 
 ### Changed

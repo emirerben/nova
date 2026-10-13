@@ -69,6 +69,8 @@ class EditRecipeV2(EditRecipeV1):
             raise ValueError("drawing layers must be unique and within the timeline")
         if self.drawing_layers:
             self.required_capabilities |= {"freehandDrawing"}
+        if any(layer.bend for layer in self.text_layers):
+            self.required_capabilities |= {"textBend"}
         manifest = {asset.id: asset for asset in self.asset_manifest.assets}
         if set(manifest) != {asset.id for asset in self.assets}:
             raise ValueError("recipe and manifest must name exactly the same assets")

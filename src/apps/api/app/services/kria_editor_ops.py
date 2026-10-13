@@ -120,6 +120,7 @@ _TEXT_STYLE_FIELDS = {
     "y_frac",
     "shadow_enabled",
     "rotation_deg",
+    "bend",
 }
 
 
@@ -808,6 +809,7 @@ def build_editor_snapshot(
                     "x_frac",
                     "y_frac",
                     "rotation_deg",
+                    "bend",
                     # The visible "effect" a creator means is usually the entrance
                     # animation (typewriter/fade/pop), which lives here, not in `effect`.
                     "animation_phases",
