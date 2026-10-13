@@ -579,7 +579,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/tasks/content_plan_build.py",
-                (True, "covered", "kri-492-length-ownership,kri-577-reliability-gates"),
+                (
+                    True,
+                    "covered",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates",
+                ),
             ),
             (
                 "src/apps/api/app/kria/duplicate_uploads.py",
