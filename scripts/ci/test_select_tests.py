@@ -716,12 +716,32 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-623-ruled-out-clips"),
             ),
             (
+                "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
+                (True, "covered", "kri-625-moment-quality"),
+            ),
+            (
+                "src/apps/api/prompts/analyze_clip.txt",
+                (True, "covered", "kri-625-moment-quality"),
+            ),
+            (
                 "src/apps/api/app/kria/opening_cut_ask.py",
                 (True, "covered", "kri-628-opening-cut"),
             ),
             (
                 "src/apps/api/app/pipeline/phone_opening_cut.py",
                 (True, "covered", "kri-628-opening-cut"),
+            ),
+            (
+                "src/apps/api/app/pipeline/captions.py",
+                (True, "covered", "kri-632-phone-captions"),
+            ),
+            (
+                "src/apps/api/app/pipeline/caption_spelling.py",
+                (True, "covered", "kri-632-phone-captions"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/kri632_t1_talking_words.json",
+                (True, "covered", "kri-632-phone-captions"),
             ),
             (
                 "src/apps/api/app/pipeline/phone_captions.py",

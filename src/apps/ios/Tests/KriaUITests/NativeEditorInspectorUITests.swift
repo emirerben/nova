@@ -1073,7 +1073,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Showing your last finished video"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Showing the finished video"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].exists)
         XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].isHittable, "Retry must not sit under the canvas")
         XCTAssertFalse(app.staticTexts["Preview unavailable"].exists)

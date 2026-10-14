@@ -96,6 +96,18 @@ def capture_from_assignment(assignment: Mapping[str, Any]) -> ClipCapture | None
     return None
 
 
+def visual_capture_time(raw: Any) -> datetime | None:
+    """When a Visuals-pool photo/video was taken, from its stored ``capture`` blob
+    (``PlanItemAsset.capture``), or None. Never raises: a malformed value is "undated"."""
+    if not isinstance(raw, dict) or not raw:
+        return None
+    try:
+        capture = ClipCapture.model_validate(raw)
+    except ValidationError:
+        return None
+    return capture.capture_time
+
+
 def _iso_utc(value: datetime) -> str:
     return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 

@@ -6515,6 +6515,25 @@ def _demote_beat_receipt(
     }
 
 
+def _approved_capture_order(snapshot: dict, all_candidates: dict) -> bool:
+    """True when the approved render contract asks for capture-time (filming) order (KRI-661).
+
+    The contract already folds in the creator's own answer to the order question ("continue
+    without a fixed order" turns it off), so it wins; the strategy's stored ordering choice
+    is only the fallback for a job with no contract. Never raises.
+    """
+    from app.services.creator_render_contract import read_render_contract  # noqa: PLC0415
+
+    try:
+        contract = read_render_contract(snapshot)
+    except Exception:  # noqa: BLE001 - a malformed contract is "no ordering ask"
+        return False
+    if contract is not None:
+        return bool(contract.order_required and contract.order_basis == "capture_time")
+    strategy = all_candidates.get("creator_strategy")
+    return isinstance(strategy, dict) and strategy.get("ordering_choice") == "chronological"
+
+
 def _run_phone_subtitled_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
@@ -6558,7 +6577,15 @@ def _run_phone_subtitled_job(
         crosscheck_detected_language,
         resolve_spoken_caption_language,
     )
-    from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
+    from app.pipeline.caption_spelling import (  # noqa: PLC0415
+        apply_spelling_to_cues,
+        extract_spelling_asks,
+    )
+    from app.pipeline.captions import (  # noqa: PLC0415
+        PHONE_CUE_BUDGET,
+        build_plain_cues,
+        resplit_cues_into_sentences,
+    )
     from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
         SilentAudioPlanDeclined,
         UnsupportedPhonePlan,
@@ -6727,12 +6754,18 @@ def _run_phone_subtitled_job(
     # KRI-297: "fullscreen" => every Visual becomes a full-screen cutaway
     # (deterministic even-spread sequence). Anything else (absent/None/"pip"/
     # unknown) or the kill switch off => today's PiP grounding, unchanged.
+    # KRI-661: "fullscreen_videos" / "fullscreen_images" play that kind full-frame and
+    # keep the other as a card; they ride the same sequence and the same kill switch.
     overlay_layout: str = (
-        "fullscreen"
-        if all_candidates.get("overlay_display") == "fullscreen"
+        all_candidates["overlay_display"]
+        if all_candidates.get("overlay_display")
+        in ("fullscreen", "fullscreen_videos", "fullscreen_images")
         and getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", True)
         else "pip"
     )
+    # KRI-661: the creator asked for their Visuals in the order they were taken (the
+    # approved contract pinned capture-time order). Only the sequence layouts read it.
+    overlay_chronological: bool = _approved_capture_order(snapshot, all_candidates)
     language: str = all_candidates.get("language") or "en"
     # KRI-177: same explicit override contract as the cloud subtitled render —
     # re-validated here since a stray/legacy value must never silently win.
@@ -7103,7 +7136,7 @@ def _run_phone_subtitled_job(
                     for item in remap_words(caption_words, cut_plan)
                     if not is_filler_token(item["text"])
                 ]
-                cues = build_plain_cues(cut_words, attach_words=True)
+                cues = build_plain_cues(cut_words, attach_words=True, budget=PHONE_CUE_BUDGET)
             else:
                 transcript = transcribe_whisper_cached(
                     clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
@@ -7186,7 +7219,9 @@ def _run_phone_subtitled_job(
                         }
                         for word in transcript.words
                     ]
-                cues = build_plain_cues(transcript.words, attach_words=True)
+                cues = build_plain_cues(
+                    transcript.words, attach_words=True, budget=PHONE_CUE_BUDGET
+                )
             cues = correct_caption_cues(
                 cues,
                 detected_lang,
@@ -7195,6 +7230,10 @@ def _run_phone_subtitled_job(
                 trusted_aliases=None,
             )
             cues = resplit_cues_into_sentences(cues)
+            # KRI-631: the creator's quoted spelling asks ("write 'community' in English").
+            cues = apply_spelling_to_cues(
+                cues, extract_spelling_asks(_creator_request_text(all_candidates))
+            )
 
             # The speaker's span exactly as the compiler plays it: the cleanup
             # cut, else the phone-measured clip (which can run a hair shorter
@@ -7388,8 +7427,11 @@ def _run_phone_subtitled_job(
                                 | beat_media_ids,
                                 video_supported=video_overlays_enabled,
                                 **(
-                                    {"layout": "fullscreen"}
-                                    if overlay_layout == "fullscreen"
+                                    {
+                                        "layout": overlay_layout,
+                                        "chronological": overlay_chronological,
+                                    }
+                                    if overlay_layout != "pip"
                                     else {}
                                 ),
                                 **framed_grounding,

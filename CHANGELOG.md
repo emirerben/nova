@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.275.0] - 2026-10-14
+
+### Changed
+- fix(ios): keep the live editor preview when a card fails to load, and report why it fell back (KRI-661) (#1599) <!-- release-pr: 1599 -->
+
+## [0.78.274.0] - 2026-10-14
+
+### Changed
+- fix(kria): moment picker avoids covered-lens / ground / blur stretches (KRI-625) (#1588) <!-- release-pr: 1588 -->
+
+## [0.78.273.0] - 2026-10-14
+
+### Changed
+- fix(kria): Tigre T1 Talking findings (KRI-628, 629, 630, 631, 632) (#1587) <!-- release-pr: 1587 -->
+
 ## [0.78.272.0] - 2026-10-13
 
 ### Changed
