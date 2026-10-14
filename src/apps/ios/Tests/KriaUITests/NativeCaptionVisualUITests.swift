@@ -48,6 +48,25 @@ final class NativeCaptionVisualUITests: XCTestCase {
         let visual = app.descendants(matching: .any)["native-editor-timeline-visual_block-paper-media"].firstMatch
         XCTAssertTrue(visual.waitForExistence(timeout: 20))
         visual.tap()
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 15))
+        for (edge, destination) in [("right", CGVector(dx: 0.9, dy: 0.5)),
+                                    ("left", CGVector(dx: 0.06, dy: 0.5)),
+                                    ("top", CGVector(dx: 0.5, dy: 0.08)),
+                                    ("bottom", CGVector(dx: 0.5, dy: 0.78))] {
+            let mediaStart = preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let mediaEnd = preview.coordinate(withNormalizedOffset: destination)
+            mediaStart.press(forDuration: 0.1, thenDragTo: mediaEnd, withVelocity: 100, thenHoldForDuration: 0.1)
+            XCTAssertTrue((preview.value as? String ?? "").components(separatedBy: "dangerGuideLast:").last?
+                .components(separatedBy: ",").contains(edge) == true,
+                          "The live media footprint must warn at the \(edge) boundary")
+            XCTAssertFalse(app.descendants(matching: .any)["native-editor-danger-guide"].firstMatch.exists)
+            mediaEnd.press(forDuration: 0.1, thenDragTo: mediaStart, withVelocity: 100, thenHoldForDuration: 0.1)
+            XCTAssertTrue((preview.value as? String ?? "").hasSuffix("dangerGuideLast:"),
+                          "Moving the media back inside clears the warning")
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "media-danger-guide-cleared"; shot.lifetime = .keepAlways; add(shot)
         // KRI-170: only the panel handle grows the panel now (the timeline
         // handle resizes just the preview).
         let handle = app.descendants(matching: .any)["native-editor-panel-resize"].firstMatch

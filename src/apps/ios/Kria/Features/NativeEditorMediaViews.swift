@@ -115,6 +115,10 @@ struct NativeVideoPreview: View {
     @State private var liveMediaTranslation = CGPoint.zero
     @GestureState private var directMoveGestureActive = false
     @GestureState private var directResizeGestureActive = false
+    @Environment(\.scenePhase) private var previewScenePhase
+    @State private var dangerBaseline: NativePreviewFootprint?
+    @State private var dangerGuideSamples = 0
+    @State private var dangerGuideLast = ""
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
 
@@ -219,7 +223,7 @@ struct NativeVideoPreview: View {
         let target = min(clock.currentTime, max(0, session.playbackDuration - 1.0 / 600))
         let stillReady = !session.isPlaying && session.scrubPreviewFrame != nil
             && session.scrubPreviewTime.map { abs($0 - target) < 0.05 } == true
-        return "liveTextSamples:\(liveTextSampleCount);liveTextReady:\(textReady);stillFrameReady:\(stillReady)"
+        return "liveTextSamples:\(liveTextSampleCount);liveTextReady:\(textReady);stillFrameReady:\(stillReady);dangerGuideSamples:\(dangerGuideSamples);dangerGuideLast:\(dangerGuideLast)"
     }
 
     private func refreshObjects() {
@@ -339,12 +343,41 @@ struct NativeVideoPreview: View {
         }
     }
 
+    private func beginDangerGuide(for object: NativeEditorPreviewObject, in canvas: CGSize) {
+        guard dangerBaseline == nil else { return }
+        dangerBaseline = NativePreviewFootprint(frame: frame(for: object, in: canvas),
+                                                rotation: object.rotation, canvas: canvas)
+    }
+
+    private func dangerFootprint(in canvas: CGSize) -> NativePreviewFootprint? {
+        guard let baseline = dangerBaseline,
+              directMoveObjectID != nil || directResizeObjectID != nil,
+              !session.isPlaying, previewScenePhase == .active else { return nil }
+        if let text = liveTextBaseline {
+            if let frame = liveText.frame(in: canvas) {
+                return NativePreviewFootprint(frame: frame,
+                    rotation: (text.raw["rotation_deg"]?.numberValue ?? 0) + liveText.rotation, canvas: canvas)
+            }
+            return baseline.transformed(scale: liveText.scale, rotation: liveText.rotation, translation: liveText.translation)
+        }
+        return baseline.transformed(scale: liveMediaScale, rotation: liveMediaRotation, translation: liveMediaTranslation)
+    }
+
+    private func recordDangerGuideSample(in canvas: CGSize) {
+        guard ProcessInfo.processInfo.arguments.contains("-ui-testing-editor"),
+              let footprint = dangerFootprint(in: canvas) else { return }
+        dangerGuideSamples += 1
+        dangerGuideLast = NativePreviewDangerZones.overlaps(frame: footprint.frame(in: canvas), rotation: footprint.rotation, canvas: canvas)
+            .map(\.rawValue).sorted().joined(separator: ",")
+    }
+
     private func directMoveGesture(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .local)
             .updating($directMoveGestureActive) { _, active, _ in active = true }
             .onChanged { (value: DragGesture.Value) in
                 dragClock.lastChange = Date()
                 handleDirectMoveChanged(value, in: size)
+                recordDangerGuideSample(in: size)
             }
             .onEnded { (_: DragGesture.Value) in
                 if !directResizeGestureActive { settleDirectManipulation() }
@@ -363,6 +396,7 @@ struct NativeVideoPreview: View {
                 let bounds = frame(for: selected, in: size)
                 let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: text.raw["rotation_deg"]?.numberValue ?? 0)
                 if NativeTextTransformMath.grabsCorner(at: value.startLocation, corner: corner, bounds: bounds) {
+                    beginDangerGuide(for: selected, in: size)
                     directMoveObjectID = selected.id
                     transformBaseline = text
                     let anchor = nativeTextPosition(text)
@@ -379,7 +413,8 @@ struct NativeVideoPreview: View {
            selected.item.kind != .text, canDirectlyPosition(selected), session.canEdit("visual_editor_style") {
             let bounds = frame(for: selected, in: size)
             let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: selected.rotation)
-            if hypot(value.startLocation.x - corner.x, value.startLocation.y - corner.y) <= NativeTextTransformMath.cornerGrabRadius {
+            if NativeTextTransformMath.grabsCorner(at: value.startLocation, corner: corner, bounds: bounds) {
+                beginDangerGuide(for: selected, in: size)
                 directMoveObjectID = selected.id
                 visualTransformBaseline = selected
                 if let prepared = session.mediaInteractionFrame,
@@ -412,6 +447,7 @@ struct NativeVideoPreview: View {
         if directMoveObjectID == nil {
             guard let object = directMoveCandidate(at: value.startLocation, in: size),
                   let position = object.position else { return }
+            beginDangerGuide(for: object, in: size)
             directMoveObjectID = object.id
             directMoveBaseline = position
             session.select(object.item, seekToStart: false)
@@ -441,6 +477,7 @@ struct NativeVideoPreview: View {
         let hasActiveManipulation = directMoveObjectID != nil || directResizeObjectID != nil || session.isDirectManipulating
         guard hasActiveManipulation else { return }
         commitLiveText()
+        dangerBaseline = nil
         directMoveObjectID = nil
         directMoveBaseline = nil
         directResizeObjectID = nil
@@ -469,6 +506,7 @@ struct NativeVideoPreview: View {
         MagnificationGesture()
             .updating($directResizeGestureActive) { _, active, _ in active = true }
             .onChanged { value in
+                defer { recordDangerGuideSample(in: size) }
                 dragClock.lastChange = Date()
                 if directResizeObjectID == nil {
                     guard let selection = session.selection,
@@ -480,6 +518,7 @@ struct NativeVideoPreview: View {
                     // interpret its first finger as a corner drag.
                     directMoveObjectID = nil; directMoveBaseline = nil
                     transformBaseline = nil; visualTransformBaseline = nil; transformCenter = nil; transformStartVector = nil
+                    beginDangerGuide(for: object, in: size)
                     directResizeObjectID = object.id
                     directResizeBaseline = object.scale
                     if object.item.kind == .text {
@@ -683,6 +722,11 @@ struct NativeVideoPreview: View {
                     NativeEditorInteraction.visible(session.document.editorState != "empty" && (session.hasSourcePreview || session.sourcePreviewState == .idle) ? objects.map(\.item) : [], at: clock.currentTime)
                 )
                 ZStack(alignment: .topLeading) {
+                    if let footprint = dangerFootprint(in: proxy.size) {
+                        NativePreviewDangerGuide(canvas: proxy.size,
+                            edges: NativePreviewDangerZones.overlaps(frame: footprint.frame(in: proxy.size),
+                                rotation: footprint.rotation, canvas: proxy.size))
+                    }
                     ForEach(visible.compactMap { item in objects.first(where: { $0.item == item }) }) { object in
                         NativePreviewObjectView(
                             object: object,
@@ -806,6 +850,9 @@ struct NativeVideoPreview: View {
             if !active && !directMoveGestureActive { settleDirectManipulation() }
         }
         .onDisappear(perform: settleDirectManipulation)
+        .onChange(of: previewScenePhase) { _, phase in
+            if phase != .active { settleDirectManipulation() }
+        }
         .onChange(of: session.document) { _, _ in refreshObjects() }
         .onChange(of: session.scrubPreviewFrame) { _, _ in
             if !session.isDirectManipulating {
