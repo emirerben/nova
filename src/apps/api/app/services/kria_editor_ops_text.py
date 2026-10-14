@@ -132,11 +132,32 @@ def normalize_text_relations(state: _DraftState) -> None:
                 source_y = _resolve_placement({"position": source_position}).get("y_frac")
             if not isinstance(source_y, (int, float)):
                 source_y = {"top": 0.12, "middle": 0.5, "bottom": 0.85}.get(source_position, 0.5)
-            target_y = float(source_y) + 0.1
-            if target_y > 0.94:
+            from app.pipeline.canvas import canvas_for_orientation  # noqa: PLC0415
+            from app.pipeline.text_stack_layout import (  # noqa: PLC0415
+                HEADING_GAP_PX,
+                measure_text_block,
+                row_canvas,
+            )
+
+            assembly = getattr(state.job, "assembly_plan", None) or {}
+            orientation = (
+                state.variant.get("output_orientation")
+                or (state.variant.get("guided_edit_revision") or {}).get("orientation")
+                or (assembly.get("guided_story_execution_plan") or {}).get("output_orientation")
+            )
+            canvas = (
+                canvas_for_orientation(orientation) if orientation else row_canvas(below_source)
+            )
+            source_height = measure_text_block(below_source, width=canvas.width)["height"]
+            target_height = measure_text_block(row, width=canvas.width)["height"]
+            target_y = (
+                float(source_y)
+                + (source_height / 2 + HEADING_GAP_PX + target_height / 2) / canvas.height
+            )
+            if target_y + target_height / canvas.height / 2 > 0.90:
                 raise KriaEditorOpError("That text would fall outside the phone-safe area")
             row["position"] = "custom"
-            row["y_frac"] = round(target_y, 3)
+            row["y_frac"] = round(target_y, 6)
         if relation or below:
             start = float(row.get("start_s") or 0.0)
             end = float(row.get("end_s") or 0.0)

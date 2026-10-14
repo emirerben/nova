@@ -781,6 +781,7 @@ def compile_phone_voice_behind_footage_plan(
     allow_silent_tail: bool = False,
     target_lufs: float | None = None,
     pinned_texts: Sequence[Any] | None = None,
+    pinned_font_family: str | None = None,
 ) -> tuple[EditRecipeV2, VoiceBehindFootageReceipt]:
     """One clip's voice plays under the whole edit; the other clips are the silent picture.
 
@@ -982,10 +983,23 @@ def compile_phone_voice_behind_footage_plan(
             )
             moved = title_y_clear_of_pins(
                 float(title.y_frac or 0.15),
-                top_pin_edge(windows, float(title.start_s), float(title.end_s)),
+                top_pin_edge(
+                    windows,
+                    float(title.start_s),
+                    float(title.end_s),
+                    font_family=pinned_font_family,
+                ),
                 text=title.text,
                 size_px=float(title.size_px or 120),
                 max_width_frac=float(title.max_width_frac or 0.9),
+                measure_row=title.model_dump(mode="json", exclude_none=True)
+                if any(
+                    pin.heading_level is not None
+                    or pin.stack_id is not None
+                    or pin.size_px is not None
+                    for pin in pinned_texts
+                )
+                else None,
             )
             title = title.model_copy(update={"y_frac": moved})
         if title is not None:

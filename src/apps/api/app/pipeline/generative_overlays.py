@@ -1023,6 +1023,10 @@ def build_overlays_from_text_elements(
             """
             if independent_box_alignment and not top_anchored_burn:
                 overlay["vertical_anchor"] = "center"
+            # Measured stacks were fitted as a unit. Independently shrinking
+            # their bars here would erase the approved size relationships.
+            if isinstance(elem.source_params, dict) and elem.source_params.get("text_stack_v1"):
+                overlay["preserve_font_size"] = True
             if not elem.wrap_lines:
                 overlay["wrap_lines"] = False
                 overlay["text"] = elem_text

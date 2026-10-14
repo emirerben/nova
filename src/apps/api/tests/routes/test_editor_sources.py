@@ -425,6 +425,29 @@ async def test_footage_admission_runs_post_prepare_get_and_save_validation(admis
     and the subsequent save-time receipt validation all remain real.
     """
     a = admission
+    from app.routes import generative_jobs
+    from tests.routes.test_phone_guided_timeline_commit import _guided_phone_job
+
+    # Keep the actual approval projection: a mocked source helper previously
+    # hid the gap between a ready admission and the public timeline read.
+    a.job, a.variant, _ = _guided_phone_job(monkeypatch, count=1, clip_s=3)
+    a.job.user_id = a.user.id
+    a.job.content_plan_item_id = a.item.id
+    a.item.current_job_id = a.job.id
+    monkeypatch.setattr(routes, "_guided_v2_revision", generative_jobs._guided_v2_revision)
+    monkeypatch.setattr(generative_jobs.settings, "phone_editor_media_enabled", True)
+    monkeypatch.setattr(generative_jobs.settings, "visual_blocks_enabled", True)
+    monkeypatch.setattr(
+        generative_jobs.settings,
+        "phone_render_verified_features",
+        [
+            *generative_jobs.settings.phone_render_verified_features,
+            "stillImages",
+            "visualVideos",
+            "visualBlocks",
+            "alphaOverlay",
+        ],
+    )
     raw = receipt("new-footage")
     thread = SimpleNamespace(id=uuid.uuid4(), creator_id=a.user.id, active_plan_item_id=a.item.id)
     reservation = SimpleNamespace(
@@ -446,7 +469,10 @@ async def test_footage_admission_runs_post_prepare_get_and_save_validation(admis
     a.db.scalar = AsyncMock(return_value=None)
     a.db.get = AsyncMock(return_value=a.job)
     body = a.body.model_copy(update={"source_kind": "footage", "source_id": "new-footage"})
-    out, response = await post(a, body)
+    response = Response()
+    out = await routes.create_editor_source(
+        str(a.item.id), "guided_story", body, a.user, response, a.db
+    )
     assert (out.status, response.status_code) == ("preparing", 202)
     record = a.variant[EDITOR_SOURCES_FIELD]["imports"][str(body.client_import_id)]
     assert record["reservation_id"] == str(reservation.id)
@@ -503,24 +529,12 @@ async def test_footage_admission_runs_post_prepare_get_and_save_validation(admis
     monkeypatch.setattr(task.storage, "object_metadata", metadata)
     monkeypatch.setattr(routes.storage, "object_metadata", metadata)
     monkeypatch.setattr(task, "probe_video", lambda url: probe)
-    from app.routes import generative_jobs
-    from app.services.phone_editor_sources import merge_editor_sources
-
-    monkeypatch.setattr(
-        generative_jobs,
-        "_guided_v2_revision",
-        lambda job, variant: {
-            "revision_number": 1,
-            "sources": merge_editor_sources([source()], variant),
-        },
-    )
-    monkeypatch.setattr(generative_jobs, "_phone_editor_media_available", lambda *args: True)
     task.prepare_phone_editor_source.run(
-        str(a.job.id), "v", str(body.client_import_id), record["attempt_id"]
+        str(a.job.id), "guided_story", str(body.client_import_id), record["attempt_id"]
     )
 
     readback = await routes.get_editor_source(
-        str(a.item.id), "v", body.client_import_id, a.user, a.db
+        str(a.item.id), "guided_story", body.client_import_id, a.user, a.db
     )
     assert readback.status == "ready", readback.reason_code
     assert readback.source_index == 1
@@ -530,6 +544,43 @@ async def test_footage_admission_runs_post_prepare_get_and_save_validation(admis
     await routes.validate_editor_sources(
         a.db, job=a.job, variant=a.variant, used_media_ids={"new-footage"}
     )
+    opened = generative_jobs.dispatch_get_timeline(
+        a.job, "guided_story", sign_url=lambda path, ttl: "signed"
+    )
+    imported = opened["clips"][readback.source_index]
+    assert imported["media_id"] == readback.source.media_id
+    from app.kria.media_sources import OriginalMediaDescriptor
+
+    assert imported["native_source"]["original"] == OriginalMediaDescriptor.model_validate(
+        raw["upload_contract"]["proxy"]["original"]
+    ).model_dump(mode="json")
+    registry = copy.deepcopy(a.variant[EDITOR_SOURCES_FIELD])
+    generative_jobs.prepare_editor_commit(
+        a.job,
+        "guided_story",
+        generative_jobs.EditorCommitRequest(
+            base_generation=opened["base_generation"],
+            guided_revision_number=opened["revision_number"],
+            timeline_slots=[
+                generative_jobs.TimelineSlotEdit(
+                    slot_id=opened["slots"][0]["slot_id"], clip_index=0, in_s=0, duration_s=3
+                ),
+                generative_jobs.TimelineSlotEdit(
+                    slot_id=str(uuid.uuid4()),
+                    clip_index=readback.source_index,
+                    in_s=0,
+                    duration_s=2,
+                ),
+            ],
+        ),
+    )
+    a.job.assembly_plan = copy.deepcopy(a.job.assembly_plan)
+    reopened = generative_jobs.dispatch_get_timeline(
+        a.job, "guided_story", sign_url=lambda path, ttl: "signed"
+    )
+    assert reopened["slots"][-1]["clip_index"] == readback.source_index
+    assert reopened["clips"][readback.source_index]["used"] is True
+    assert a.job.assembly_plan["variants"][0][EDITOR_SOURCES_FIELD] == registry
 
 
 @pytest.mark.asyncio

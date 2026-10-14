@@ -1539,6 +1539,12 @@ struct NativeMiniStrip: View {
         VStack(alignment: .leading, spacing: 2) {
             quickAddRow("Video", icon: "film", enabled: canAddClip) {
                 closeAddMenu()
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-gameday-add") {
+                    Task { await session.addGamedayFixtureClip() }
+                    return
+                }
+                #endif
                 isPresentingAddClip = true
             }
             if !canAddClip, let reason = session.addClipUnavailableReason {

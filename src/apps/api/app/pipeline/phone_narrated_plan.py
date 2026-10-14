@@ -427,6 +427,7 @@ def with_pinned_text_layers(
         resolve_pin_windows(pins, duration, clip_windows),
         font_family=font_family,
         text_color=text_color,
+        canvas=recipe.canvas,
     )
     if not rows:
         return recipe, []

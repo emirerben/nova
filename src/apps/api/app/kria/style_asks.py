@@ -270,14 +270,34 @@ def value_matches(field: str, wanted: str, have: str | None) -> bool | None:
 
 # ------------------------------------------------------------------- text look (KRI-522)
 
-_LOOK_FACTS = ("animation", "position", "font_family", "text_color")
+_LOOK_FACTS = (
+    "animation",
+    "position",
+    "font_family",
+    "text_color",
+    "size_px",
+    "heading_level",
+    "stack_id",
+    "below_text",
+    "smaller_than",
+)
 
 
 def text_look_facts(req: BriefRequirement) -> dict[str, Any]:
     """The look facts a TEXT requirement carries (title animation, label corner, font, colour)."""
     if req.kind != "text":
         return {}
-    return {key: req.facts[key] for key in _LOOK_FACTS if req.facts.get(key) not in (None, "")}
+    look = {key: req.facts[key] for key in _LOOK_FACTS if req.facts.get(key) not in (None, "")}
+    # A modifier left only in prose is still a requirement, never proof of completion.
+    if not any(
+        key in look for key in ("heading_level", "size_px", "smaller_than", "below_text")
+    ) and re.search(
+        r"\b(smaller|larger|underneath|below|under it|under the (?:title|text)"
+        r"|daha kucuk|altina)\b",
+        words(req.description),
+    ):
+        look["unverified_relationship"] = True
+    return look
 
 
 # ------------------------------------------------------------------------ clip lengths

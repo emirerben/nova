@@ -166,6 +166,11 @@ class TextStyleRow:
     y_frac: float | None = None
     clip_id: str | None = None
     text: str = ""
+    heading_level: int | None = None
+    stack_id: str | None = None
+    layout_row: dict | None = None
+    canvas_width: int = 1080
+    canvas_height: int = 1920
 
 
 @dataclass(frozen=True)
@@ -916,8 +921,12 @@ def _row_clip_id(row: Mapping[str, Any]) -> str | None:
     return row_id[len(prefix) :] or None if row_id.startswith(prefix) else None
 
 
-def _text_style_rows(rows: Iterable[Any]) -> tuple[TextStyleRow, ...]:
+def _text_style_rows(
+    rows: Iterable[Any], *, orientation: str | None = None
+) -> tuple[TextStyleRow, ...]:
     """Style of the editor's live, non-caption text rows, typed by the editor's own classifier."""
+    from app.pipeline.canvas import canvas_for_orientation  # noqa: PLC0415
+    from app.pipeline.text_stack_layout import row_canvas  # noqa: PLC0415
     from app.services.kria_editor_ops import is_caption_text_bar  # noqa: PLC0415
     from app.services.kria_editor_ops_text import classify  # noqa: PLC0415
 
@@ -958,6 +967,7 @@ def _text_style_rows(rows: Iterable[Any]) -> tuple[TextStyleRow, ...]:
     kinds = classify(bars)
     out = []
     for row in live:
+        canvas = canvas_for_orientation(orientation) if orientation else row_canvas(row)
         color = row.get("color")
         font = row.get("font_family")
         out.append(
@@ -975,6 +985,15 @@ def _text_style_rows(rows: Iterable[Any]) -> tuple[TextStyleRow, ...]:
                 y_frac=_finite_number(row.get("y_frac")),
                 clip_id=_row_clip_id(row),
                 text=str(row.get("text") or ""),
+                heading_level=((row.get("source_params") or {}).get("text_stack_v1") or {}).get(
+                    "heading_level"
+                ),
+                stack_id=((row.get("source_params") or {}).get("text_stack_v1") or {}).get(
+                    "stack_id"
+                ),
+                layout_row=row,
+                canvas_width=canvas.width,
+                canvas_height=canvas.height,
             )
         )
     return tuple(out)
@@ -1078,7 +1097,10 @@ def plan_facts_from_editor_payload(
         text_spans=tuple(text_spans),
         text_timing_incomplete=text_timing_incomplete,
         text_styles=(
-            _text_style_rows(payload["text_elements"])
+            _text_style_rows(
+                payload["text_elements"],
+                orientation=payload.get("output_orientation") or payload.get("orientation"),
+            )
             if isinstance(payload, Mapping) and isinstance(payload.get("text_elements"), list)
             else None
         ),
@@ -3414,7 +3436,57 @@ def check_text_look(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
     judged = 0
     undecided = False  # a fact we cannot read never hides a miss we already found
     for key, value in look.items():
-        if key == "animation":
+        if key == "unverified_relationship":
+            return _receipt(req, "partial", _NO_CHECKER)
+        if key in ("size_px", "heading_level", "stack_id"):
+            haves = [getattr(row, key) for row in rows]
+            label = ("text hierarchy", "yazı hiyerarşisi")
+            fails = [h != value for h in haves]
+        elif key in ("smaller_than", "below_text"):
+            sources = [row for row in facts.text_styles if _fold(row.text) == _fold(str(value))]
+            if len(sources) != 1 or len(rows) != 1:
+                return _receipt(req, "partial", _NO_CHECKER)
+            source, target = sources[0], rows[0]
+            if key == "smaller_than":
+                if source.size_px is None or target.size_px is None:
+                    return _receipt(req, "partial", _NO_CHECKER)
+                haves = [target.size_px < source.size_px]
+                label = ("smaller text", "daha küçük yazı")
+            else:
+                if (
+                    source.y_frac is None
+                    or target.y_frac is None
+                    or source.layout_row is None
+                    or target.layout_row is None
+                ):
+                    return _receipt(req, "partial", _NO_CHECKER)
+                from app.pipeline.text_stack_layout import (  # noqa: PLC0415
+                    measure_text_block,
+                    stack_gap,
+                )
+
+                source_height = measure_text_block(source.layout_row, width=source.canvas_width)[
+                    "height"
+                ]
+                target_height = measure_text_block(target.layout_row, width=target.canvas_width)[
+                    "height"
+                ]
+                if source.canvas_height != target.canvas_height:
+                    return _receipt(req, "partial", _NO_CHECKER)
+                gap = (target.y_frac - source.y_frac) * source.canvas_height - (
+                    source_height + target_height
+                ) / 2
+                expected = stack_gap(source.layout_row, target.layout_row)
+                same_axis = (
+                    source.alignment == target.alignment
+                    and source.x_frac is not None
+                    and target.x_frac is not None
+                    and abs(source.x_frac - target.x_frac) <= 0.005
+                )
+                haves = [same_axis and abs(gap - expected) <= 1]
+                label = ("text grouping", "yazı grubu")
+            fails = [not h for h in haves]
+        elif key == "animation":
             wanted = normalize_title_animation(value)
             haves = [row.entrance for row in rows]
             label = ("animation", "animasyon")
@@ -3424,7 +3496,17 @@ def check_text_look(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
             if spot is None:
                 continue
             x, y, _align = LABEL_ANCHORS[spot]
-            haves = [_row_at(row, x, y) for row in rows]
+            anchors = []
+            for row in rows:
+                group = [
+                    candidate
+                    for candidate in facts.text_styles
+                    if row.stack_id is not None and candidate.stack_id == row.stack_id
+                ]
+                if group and all(candidate.y_frac is not None for candidate in group):
+                    row = (min if y < 0.5 else max)(group, key=lambda candidate: candidate.y_frac)
+                anchors.append(row)
+            haves = [_row_at(row, x, y) for row in anchors]
             label = ("position", "konum")
             fails = [h is False for h in haves]
         elif key in ("font_family", "text_color"):

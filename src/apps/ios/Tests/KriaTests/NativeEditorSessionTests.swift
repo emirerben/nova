@@ -1607,26 +1607,10 @@ final class NativeEditorSessionTests: XCTestCase {
     }
 
     func testAdmittedTimelinePhotoAppendsThreeSecondPlacementAndUndoRedo() async throws {
-        let threadID = UUID()
-        var authoritative = Self.variant(duration: 2, generation: "generation-1")
-        authoritative["render_destination"] = .string("device")
-        authoritative["editor_revision_number"] = .number(7)
-        authoritative["editor_capabilities"] = .object([
-            "timeline": .bool(true), "text_elements": .bool(true),
-            "phone_editor_media": .object([
-                "enabled": .bool(true), "source_registration": .bool(true),
-                "visual_kinds": .array([.string("image")]),
-            ]),
-        ])
-        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant",
-            draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: UUID().uuidString, baseGenerationID: "generation-1",
-            snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: authoritative)
-        let session = NativeEditorSession()
-        await session.load(api: fake, threadID: threadID)
-        let target = EditorSourceRegistrationTarget(itemID: "item", variantID: "variant", clientImportID: UUID(),
-            baseGeneration: "generation-1", guidedRevisionNumber: 7, sourceKind: .visual)
+        let (session, uploads, footageTarget) = try await Self.devicePlacementSession()
+        let target = EditorSourceRegistrationTarget(itemID: footageTarget.itemID, variantID: footageTarget.variantID,
+            clientImportID: UUID(), baseGeneration: footageTarget.baseGeneration, guidedRevisionNumber: 7, sourceKind: .visual)
         let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: nil)
-        let uploads = BackgroundUploadCoordinator(api: fake, defaultsKey: "timeline-placement-\(UUID().uuidString)", sessionConfiguration: .ephemeral)
         uploads.beginEditorPlacement(placement)
         session.useMediaUploads(uploads)
         let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "photo",
@@ -1642,7 +1626,7 @@ final class NativeEditorSessionTests: XCTestCase {
     }
 
     func testAdmittedFootageUsesShorterOriginalWithEOFMarginAndDeduplicatesReadyCallback() async throws {
-        let (session, uploads, target) = await Self.devicePlacementSession()
+        let (session, uploads, target) = try await Self.devicePlacementSession()
         let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 1)
         uploads.beginEditorPlacement(placement)
         let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "proxy",
@@ -1651,14 +1635,141 @@ final class NativeEditorSessionTests: XCTestCase {
         try await session.placeEditorSource(placement, response: response)
         XCTAssertEqual(session.document.clips.count, before + 1)
         XCTAssertEqual(try XCTUnwrap(session.document.clips.last?.durationS), 0.95, accuracy: 0.0001)
+        XCTAssertEqual(session.document.clips.last?.id, placement.id.uuidString)
+        XCTAssertEqual(session.selection?.id, placement.id.uuidString)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        let appended = try XCTUnwrap(session.timelineClips.last)
+        session.addText(content: "Keep my gameday edits")
+        XCTAssertEqual(session.timelineClips.last?.id, appended.id, "Unrelated edits must not replace the imported clip identity")
+        session.undo()
+        session.undo()
+        XCTAssertEqual(session.document.clips.count, before, "A successful placement is one undo step")
+        session.redo()
+        XCTAssertEqual(session.document.clips.last?.id, placement.id.uuidString)
+        let reopened = EditorDocument(snapshot: session.document.encodeSnapshot())
+        XCTAssertEqual(reopened.clips.last?.id, placement.id.uuidString)
+        for _ in 0..<200 where session.displayedSourcePreviewRecipe?.tracks.filter({ $0.kind == .video }).flatMap(\.clips).count != before + 1 {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let recipe = try XCTUnwrap(session.displayedSourcePreviewRecipe)
+        XCTAssertEqual(recipe.tracks.filter { $0.kind == .video }.flatMap(\.clips).count, before + 1)
+        XCTAssertEqual(recipe.tracks.filter { $0.kind == .video }.flatMap(\.clips).last?.sourceAssetID, "source-9")
         // The acknowledgement removes the ledger intent; a duplicated ready
         // callback must not resurrect a user-visible slot.
         try await session.placeEditorSource(placement, response: response)
         XCTAssertEqual(session.document.clips.count, before + 1)
     }
 
+    // KRI-669 failures: a ready server admission is not a placed clip until its
+    // refreshed catalog and original resolve. Async cancellation must preserve
+    // both the document and durable placement, and a missing import is terminal.
+    func testReadyIndexAbsentFromFreshPoolPreservesDocumentAndPlacement() async throws {
+        let (session, uploads, target, fake) = try await Self.devicePlacementSessionWithSpy()
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")
+        session.addText(content: "Unsaved gameday title")
+        let before = session.document
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
+        uploads.beginEditorPlacement(placement)
+        do {
+            try await session.placeEditorSource(placement, response: .init(importID: target.clientImportID, status: "ready", sourceID: "proxy",
+                sourceIndex: 9, source: ["duration_s": .number(2)], error: nil, reasonCode: nil, retryable: false))
+            XCTFail("A ready index without an original must not extend the timeline")
+        } catch {}
+        XCTAssertEqual(session.document, before)
+        XCTAssertTrue(uploads.containsEditorPlacement(placement.id))
+    }
+
+    func testUnboundAdmittedOriginalPreservesEditsAndPendingPlacement() async throws {
+        let (session, uploads, target, fake) = try await Self.devicePlacementSessionWithSpy()
+        let original = try XCTUnwrap(fake.sourcePoolResult?.clips.last?.nativeSource?.original)
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [.init(clipIndex: 9, nativeSource: .init(mediaID: "unbound-original",
+            sourceURL: nil, original: original, localRequired: true))], baseGeneration: "generation-1")
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
+        uploads.beginEditorPlacement(placement)
+        // Isolate the added source from the already-resolved source pool.
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [try XCTUnwrap(session.document.clips.first).clipIndex].map { index in
+            .init(clipIndex: index, nativeSource: .init(mediaID: "source", sourceURL: nil, original: original, localRequired: true))
+        } + fake.sourcePoolResult!.clips, baseGeneration: "generation-1")
+        session.addText(content: "Still my title")
+        let before = session.document
+        do {
+            try await session.placeEditorSource(placement, response: .init(importID: target.clientImportID, status: "ready", sourceID: "unbound-original",
+                sourceIndex: 9, source: ["duration_s": .number(2)], error: nil, reasonCode: nil, retryable: false))
+            XCTFail("An unavailable local original is not a successful insertion")
+        } catch {}
+        XCTAssertEqual(session.document, before)
+        XCTAssertTrue(uploads.containsEditorPlacement(placement.id))
+    }
+
+    func testCancelWhileFreshPoolLoadsNeverPlacesClip() async throws {
+        let (session, uploads, target, fake) = try await Self.devicePlacementSessionWithSpy()
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
+        uploads.beginEditorPlacement(placement)
+        fake.suspendNextSourcePool = true
+        let before = session.document
+        let task = Task { try await session.placeEditorSource(placement, response: .init(importID: target.clientImportID,
+            status: "ready", sourceID: "proxy", sourceIndex: 9, source: ["duration_s": .number(2)], error: nil, reasonCode: nil, retryable: false)) }
+        for _ in 0..<100 where !fake.sourcePoolIsSuspended { await Task.yield() }
+        XCTAssertTrue(fake.sourcePoolIsSuspended)
+        await uploads.discardEditorPlacement(placement.id)
+        fake.resumeSourcePool()
+        try await task.value
+        XCTAssertEqual(session.document, before)
+    }
+
+    func testGenerationChangeWhilePoolLoadsCannotPlaceOldSource() async throws {
+        let (session, uploads, target, fake) = try await Self.devicePlacementSessionWithSpy()
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
+        uploads.beginEditorPlacement(placement)
+        fake.suspendNextSourcePool = true
+        let task = Task { try await session.placeEditorSource(placement, response: .init(importID: target.clientImportID,
+            status: "ready", sourceID: "proxy", sourceIndex: 9, source: ["duration_s": .number(2)], error: nil, reasonCode: nil, retryable: false)) }
+        for _ in 0..<100 where !fake.sourcePoolIsSuspended { await Task.yield() }
+        XCTAssertTrue(fake.sourcePoolIsSuspended)
+        session.transactDocument(section: .text) { $0.revision.baseGeneration = "generation-2" }
+        let latest = session.document
+        fake.resumeSourcePool()
+        try await task.value
+        XCTAssertEqual(session.document, latest)
+        XCTAssertTrue(uploads.containsEditorPlacement(placement.id))
+    }
+
+    func testUploadDoesNotPollMissingImportBeforeAdmissionAcknowledgement() async throws {
+        let (session, _, target, fake) = try await Self.devicePlacementSessionWithSpy()
+        let key = "pre-admission-\(UUID().uuidString)"
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
+        let record = UploadRecoveryRecord(id: placement.id, projectID: UUID(), localFilePath: "/tmp/not-uploaded-yet.mp4",
+            filename: "clip.mp4", source: .files, purpose: .analysisProxy, taskIdentifier: 999, retryCount: 0, editorSourceTarget: target)
+        UserDefaults.standard.set(try JSONEncoder().encode([record]), forKey: key)
+        addTeardownBlock { UserDefaults.standard.removeObject(forKey: key) }
+        let uploads = BackgroundUploadCoordinator(api: fake, defaultsKey: key, sessionConfiguration: .ephemeral)
+        uploads.beginEditorPlacement(placement); session.useMediaUploads(uploads)
+        fake.editorSourceError = .requestFailed(status: 404)
+        await session.resumeEditorImports()
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(fake.editorSourceCalls, 0, "The server cannot know this import until its upload registers")
+        XCTAssertEqual(session.pendingEditorImports.first?.status, "preparing")
+        uploads.recordEditorSourceResult(placementID: placement.id, response: .init(importID: target.clientImportID,
+            status: "preparing", sourceID: "proxy", sourceIndex: nil, source: nil, error: nil, reasonCode: nil, retryable: false))
+        for _ in 0..<100 where session.pendingEditorImports.first?.status != "failed" { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertEqual(session.pendingEditorImports.first?.status, "failed", "A missing acknowledged import must stop promptly")
+        XCTAssertTrue(uploads.containsEditorPlacement(placement.id))
+    }
+
+    func testMissingImportStopsWaiterAndRetainsPlacementForRecovery() async throws {
+        let (session, uploads, target, fake) = try await Self.devicePlacementSessionWithSpy()
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
+        uploads.beginEditorPlacement(placement)
+        fake.editorSourceError = .requestFailed(status: 404)
+        await session.resumeEditorImports()
+        for _ in 0..<100 where session.pendingEditorImports.first?.status != "failed" { await Task.yield() }
+        XCTAssertEqual(session.pendingEditorImports.first?.status, "failed")
+        XCTAssertTrue(uploads.containsEditorPlacement(placement.id))
+        XCTAssertEqual(fake.editorSourceCalls, 1, "404 is not a seven-minute preparation state")
+    }
+
     func testCanceledOrStalePlacementNeverAppends() async throws {
-        let (session, uploads, target) = await Self.devicePlacementSession()
+        let (session, uploads, target) = try await Self.devicePlacementSession()
         let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "proxy",
             sourceIndex: 9, source: ["duration_s": .number(2)], error: nil, reasonCode: nil, retryable: false)
         let canceled = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
@@ -1680,7 +1791,7 @@ final class NativeEditorSessionTests: XCTestCase {
     // suspended/relaunched mid-import) must be picked up as soon as the editor
     // re-arms imports — the server finished long ago, only the polling died.
     func testResumeEditorImportsRearmsAnOrphanedPreparingImportAndPlacesIt() async throws {
-        let (session, uploads, target, fake) = await Self.devicePlacementSessionWithSpy()
+        let (session, uploads, target, fake) = try await Self.devicePlacementSessionWithSpy()
         let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
         uploads.beginEditorPlacement(placement)
         XCTAssertEqual(uploads.editorPlacements(itemID: target.itemID, variantID: target.variantID, baseGeneration: nil).first?.status, "preparing")
@@ -1697,7 +1808,7 @@ final class NativeEditorSessionTests: XCTestCase {
     }
 
     func testLeavingEditorKeepsReadyImportPendingWithoutAppendingToHiddenDocument() async throws {
-        let (session, uploads, target) = await Self.devicePlacementSession()
+        let (session, uploads, target) = try await Self.devicePlacementSession()
         let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
         uploads.beginEditorPlacement(placement)
         session.suspendEditorImports()
@@ -1709,7 +1820,7 @@ final class NativeEditorSessionTests: XCTestCase {
     }
 
     func testReadyImportRechecksCapacityAfterOtherPlacementsFillTimeline() async throws {
-        let (session, uploads, target) = await Self.devicePlacementSession()
+        let (session, uploads, target) = try await Self.devicePlacementSession()
         let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "proxy",
             sourceIndex: 9, source: ["duration_s": .number(1)], error: nil, reasonCode: nil, retryable: false)
         while session.document.clips.count < NativeEditorSession.maxTimelineClips {
@@ -2233,6 +2344,24 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(try session.videoDownloadRoute(deviceLocalFile: olderDeviceFile), .sourcePreview)
     }
 
+    func testHiddenStaleFallbackCannotBeExportedAfterSourcePreviewFailure() async throws {
+        let jobID = UUID()
+        var variant = Self.variant(duration: 2, generation: "g1")
+        variant["render_status"] = .string("rendering")
+        variant["output_url"] = .string(try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")).absoluteString)
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial",
+            draftRevision: 0, snapshotHash: "", etag: "", baseJobID: jobID.uuidString, baseGenerationID: "g1",
+            snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: variant)
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+        XCTAssertTrue(session.sourcePreviewState.isFailure)
+        XCTAssertFalse(session.hasUnsavedChanges, "The server's latest saved document is clean locally")
+        XCTAssertNotNil(session.player, "Retaining an older finished item does not make it current")
+        XCTAssertNotNil(session.videoDownloadTarget)
+        XCTAssertFalse(session.canDisplayCurrentPlayer)
+        XCTAssertFalse(session.canDownloadCurrentVideo, "A hidden stale output cannot be exported as the current edit")
+    }
+
     func testDownloadRejectsStaleFinishedRenderWhileCurrentPreviewPrepares() async throws {
         let olderRender = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         let session = NativeEditorSession(
@@ -2572,7 +2701,7 @@ final class NativeEditorSessionTests: XCTestCase {
     }
 
     private static func preparingSession() async throws -> (session: NativeEditorSession, spy: EditorCommitSpy, loading: Task<Void, Never>) {
-        let jobID = UUID()
+        let jobID = UUID(), threadID = UUID()
         let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         var stale = variant(duration: 2, generation: "g1")
         stale["output_url"] = .string(good.absoluteString)
@@ -2582,9 +2711,19 @@ final class NativeEditorSessionTests: XCTestCase {
             snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString,
             baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
             authoritativeVariant: stale)
+        stale["resolved_archetype"] = .string("guided_story")
+        spy.authoritativeVariant = stale
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+        let asset = try await AssetImportCoordinator(project: project).importAsset(from: good)
+        try SourceAssetStore(project: project).bind(mediaID: "source", original: asset)
+        let fingerprint = try XCTUnwrap(asset.fingerprint)
+        let descriptor = OriginalMediaDescriptor(sha256: fingerprint.hex, byteCount: fingerprint.byteCount,
+            durationS: 4, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true)
+        spy.sourcePoolResult = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: .init(mediaID: "source",
+            sourceURL: nil, original: descriptor, localRequired: true))], baseGeneration: "g1")
         spy.suspendNextSourcePool = true
         let session = NativeEditorSession()
-        let loading = Task { @MainActor in await session.load(api: spy, threadID: UUID()) }
+        let loading = Task { @MainActor in await session.load(api: spy, threadID: threadID) }
         for _ in 0..<200 where !spy.sourcePoolIsSuspended { try await Task.sleep(for: .milliseconds(25)) }
         XCTAssertTrue(spy.sourcePoolIsSuspended)
         return (session, spy, loading)
@@ -5198,10 +5337,12 @@ final class NativeEditorSessionTests: XCTestCase {
         // Over the layout's 500-character ceiling: the one text-element input
         // that still hard-fails a compile.
         session.updateCaptionCue(id: "narration-caption-1", text: String(repeating: "x", count: 600))
-        for _ in 0..<200 where !session.isShowingRenderedFallback {
+        for _ in 0..<200 where !session.sourcePreviewState.isFailure {
             try await Task.sleep(for: .milliseconds(25))
         }
-        XCTAssertTrue(session.isShowingRenderedFallback, "precondition: the failure fell back to the finished render")
+        XCTAssertTrue(session.sourcePreviewState.isFailure)
+        XCTAssertFalse(session.isShowingRenderedFallback, "The finished render predates the dirty text and must remain hidden")
+        XCTAssertFalse(session.canDisplayCurrentPlayer)
         XCTAssertNil(session.displayedSourcePreviewRecipe)
 
         session.updateCaptionCue(id: "narration-caption-1", text: "Edited words")
@@ -5380,12 +5521,12 @@ final class NativeEditorSessionTests: XCTestCase {
         ]
     }
 
-    private static func devicePlacementSession() async -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget) {
-        let (session, uploads, target, _) = await devicePlacementSessionWithSpy()
+    private static func devicePlacementSession() async throws -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget) {
+        let (session, uploads, target, _) = try await devicePlacementSessionWithSpy()
         return (session, uploads, target)
     }
 
-    private static func devicePlacementSessionWithSpy() async -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget, EditorCommitSpy) {
+    private static func devicePlacementSessionWithSpy() async throws -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget, EditorCommitSpy) {
         let threadID = UUID()
         var authoritative = variant(duration: 2, generation: "generation-1")
         authoritative["render_destination"] = .string("device")
@@ -5398,6 +5539,19 @@ final class NativeEditorSessionTests: XCTestCase {
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant",
             draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: UUID().uuidString, baseGenerationID: "generation-1",
             snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: authoritative)
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+        let input = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let asset = try await AssetImportCoordinator(project: project).importAsset(from: input)
+        for mediaID in ["source", "proxy", "photo"] { try SourceAssetStore(project: project).bind(mediaID: mediaID, original: asset) }
+        let fingerprint = try XCTUnwrap(asset.fingerprint)
+        let descriptor = OriginalMediaDescriptor(sha256: fingerprint.hex, byteCount: fingerprint.byteCount,
+            durationS: 4, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true)
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [(0, "source"), (9, "proxy"), (4, "photo")].map { index, mediaID in
+            .init(clipIndex: index, nativeSource: .init(mediaID: mediaID, sourceURL: nil, original: descriptor, localRequired: true))
+        }, baseGeneration: "generation-1")
+        let recipeJobID = try XCTUnwrap(fake.draftSnapshot.baseJobID.flatMap(UUID.init(uuidString:)))
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(phase: "published",
+            request: deviceRenderRequest(jobID: recipeJobID, revision: 1, digest: "a"), publishedGeneration: "generation-1")
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: threadID)
         let uploads = BackgroundUploadCoordinator(api: fake, defaultsKey: "placement-\(UUID().uuidString)", sessionConfiguration: .ephemeral)
@@ -5487,6 +5641,8 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     var phoneDestination = false
     var creationMode: CreationMode?
     /// What `editorSource` polls return (nil ⇒ the default unsupported error).
+    var editorSourceError: APIError?
+    var editorSourceCalls = 0
     var editorSourceResponse: EditorSourceRegistrationResponse?
     var deviceFetchCount = 0
     var commitCount = 0
@@ -5577,6 +5733,8 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
         }
     }
     func editorSource(itemID: String, variantID: String, importID: UUID) async throws -> EditorSourceRegistrationResponse {
+        editorSourceCalls += 1
+        if let editorSourceError { throw editorSourceError }
         guard let editorSourceResponse else { throw APIError.unsupported }
         return editorSourceResponse
     }

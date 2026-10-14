@@ -24,6 +24,7 @@ import structlog
 from pydantic import ValidationError
 
 from app.agents._schemas.text_element import TextElement
+from app.pipeline.canvas import PORTRAIT, Canvas
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PinnedText
 
 log = structlog.get_logger()
@@ -212,6 +213,8 @@ def title_y_clear_of_pins(
     text: str,
     size_px: float,
     max_width_frac: float,
+    measure_row: dict | None = None,
+    canvas: Canvas = PORTRAIT,
 ) -> float:
     """The title's centre y: ``default_y`` unless a top pin's lower edge reaches its block.
 
@@ -222,15 +225,41 @@ def title_y_clear_of_pins(
 
     if pin_edge is None:
         return default_y
+    if measure_row is not None:
+        from app.pipeline.text_stack_layout import measure_text_block  # noqa: PLC0415
+
+        half_block = (
+            measure_text_block(measure_row, width=canvas.width)["height"] / canvas.height / 2
+        )
+        center = max(default_y, pin_edge + TITLE_PIN_GAP + half_block)
+        if center + half_block > 0.90:
+            raise ValueError("The opening title does not fit clear of the requested text stack")
+        return round(center, 6)
     per_line = max(1.0, max_width_frac * 1080 / (_TITLE_GLYPH_WIDTH * size_px))
     lines = max(1, math.ceil(len(text) / per_line))
     half_block = lines * size_px * _TITLE_LINE_HEIGHT / 1920 / 2
     return round(min(TITLE_MAX_Y, max(default_y, pin_edge + TITLE_PIN_GAP + half_block)), 4)
 
 
-def top_pin_edge(windows: Sequence[PinWindow], start_s: float, end_s: float) -> float | None:
+def top_pin_edge(
+    windows: Sequence[PinWindow],
+    start_s: float,
+    end_s: float,
+    *,
+    font_family: str | None = None,
+    canvas: Canvas = PORTRAIT,
+) -> float | None:
     """Lower edge of the lowest top-corner pin on screen at any point of ``[start_s, end_s)``."""
 
+    if any(
+        w.pin.heading_level is not None or w.pin.stack_id is not None or w.pin.size_px is not None
+        for w in windows
+    ):
+        return top_pin_edge_from_rows(
+            pinned_text_elements(windows, font_family=font_family, text_color=None, canvas=canvas),
+            start_s,
+            end_s,
+        )
     ranks = _stack_ranks(windows)
     edges = [
         PIN_TOP_Y + ranks[w.index] * PIN_LINE_STEP + PIN_LINE_STEP / 2
@@ -243,8 +272,19 @@ def top_pin_edge(windows: Sequence[PinWindow], start_s: float, end_s: float) -> 
 def top_pin_edge_from_rows(rows: Sequence[dict], start_s: float, end_s: float) -> float | None:
     """`top_pin_edge` for already-compiled text rows (`guided-pinned-*`), used by face placement."""
 
+    from app.pipeline.text_stack_layout import (  # noqa: PLC0415
+        STACK_LAYOUT_PARAM,
+        measure_text_block,
+        row_canvas,
+    )
+
     edges = [
-        float(row["y_frac"]) + PIN_LINE_STEP / 2
+        float(row["y_frac"])
+        + (
+            measure_text_block(row)["height"] / row_canvas(row).height / 2
+            if (row.get("source_params") or {}).get(STACK_LAYOUT_PARAM)
+            else PIN_LINE_STEP / 2
+        )
         for row in rows
         if str(row.get("id", "")).startswith("guided-pinned-")
         and row.get("y_frac") is not None
@@ -285,7 +325,11 @@ def _stack_ranks(windows: Sequence[PinWindow]) -> dict[int, int]:
 
 
 def pinned_text_elements(
-    windows: Sequence[PinWindow], *, font_family: str | None, text_color: str | None
+    windows: Sequence[PinWindow],
+    *,
+    font_family: str | None,
+    text_color: str | None,
+    canvas: Canvas = PORTRAIT,
 ) -> list[dict]:
     if not windows:
         return []
@@ -333,4 +377,36 @@ def pinned_text_elements(
                 max_width_frac=0.42 if shared else 1 - 2 * PIN_MARGIN_X,
             ).model_dump(mode="json", exclude_none=True)
         )
+    from app.pipeline.text_stack_layout import (  # noqa: PLC0415
+        HEADING_SIZES,
+        STACK_LAYOUT_PARAM,
+        layout_corner_stack,
+    )
+
+    semantic_corners = {
+        w.pin.corner
+        for w in windows
+        if w.pin.heading_level is not None
+        or w.pin.stack_id is not None
+        or w.pin.size_px is not None
+    }
+    for corner in semantic_corners:
+        members = []
+        for window, row in zip(windows, elements, strict=True):
+            if window.pin.corner != corner:
+                continue
+            level = window.pin.heading_level
+            if level is not None:
+                row["size_px"] = HEADING_SIZES[level]
+            if window.pin.size_px is not None:
+                row["size_px"] = window.pin.size_px
+            row["source_params"] = {
+                STACK_LAYOUT_PARAM: {
+                    "heading_level": level,
+                    "stack_id": window.pin.stack_id or f"pin-{window.index}",
+                    "explicit_size": window.pin.size_px is not None,
+                }
+            }
+            members.append(row)
+        layout_corner_stack(members, bottom=corner.startswith("bottom"), canvas=canvas)
     return elements

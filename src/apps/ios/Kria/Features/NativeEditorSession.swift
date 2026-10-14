@@ -125,19 +125,16 @@ struct NativeEditorTemporaryVideo {
         if isPlayingBrandedSourcePreview, let sourcePreview {
             return sourcePreview.preview.description.duration
         }
+        if player != nil, player === finishedRenderPlayer {
+            return finishedRenderDuration ?? mediaDuration ?? duration
+        }
         return duration
     }
-    /// The scrub/seek boundary while a preview rebuild is pending or in
-    /// flight. `playbackDuration` is the *composition's* duration, which is
-    /// stale until the rebuild lands — sometimes for seconds after a timing
-    /// gesture ends on a heavy document. Auto-scroll (and any seek) must be
-    /// allowed to reach the timeline's true projected end during that window,
-    /// not just the last-compiled composition's end. Gated on preview
-    /// staleness rather than gesture activity so the bound stays widened for
-    /// as long as the async rebuild is actually pending, not just while a
-    /// finger is on screen.
+    /// Editor geometry/scrubbing always reaches the projected document end;
+    /// preview failures do not hide newly appended clips. Playback and frame
+    /// requests remain bounded by the actual composition's playbackDuration.
     var timelineScrubDuration: TimeInterval {
-        sourcePreviewSettled ? playbackDuration : max(playbackDuration, timelineProjection.totalDuration)
+        max(playbackDuration, timelineProjection.totalDuration)
     }
     /// The source preview reflects the latest document edit. False while a
     /// rebuild is pending, which for audio edits is a full one (KRI-241).
@@ -736,7 +733,8 @@ struct NativeEditorTemporaryVideo {
         // KRI-587: a finished render that could not be loaded is a black box,
         // not a fallback. Claiming "Showing your last finished video" over it
         // was the confusing screen; the plain failure view shows instead.
-        guard sourcePreviewState.isFailure, !finishedRenderFailed else { return false }
+        guard sourcePreviewState.isFailure, !finishedRenderFailed, finishedRenderIsCurrent,
+              !hasUnsavedChanges, chatStagedDocument == nil else { return false }
         return player != nil && player === finishedRenderPlayer
     }
 
@@ -764,12 +762,11 @@ struct NativeEditorTemporaryVideo {
             // for the few seconds this preparation takes — the loading
             // surface is the honest state until the source preview, built
             // straight from the current document, is ready.
-            return player === finishedRenderPlayer && finishedRenderIsCurrent
+            return player === finishedRenderPlayer && finishedRenderIsCurrent && !hasUnsavedChanges && chatStagedDocument == nil
         case .failed, .originalsUnavailable:
-            // Once source-preview construction has genuinely failed (not
-            // merely still preparing), a stale finished render is still
-            // strictly better than nothing — the user can at least see and
-            // download *a* video while a retry is pending.
+            // A failed preview may use only a finished render that still
+            // represents this document. Dirty or staged edits need the retry
+            // surface so the canvas cannot silently revert their changes.
             return isShowingRenderedFallback
         }
     }
@@ -1090,7 +1087,7 @@ struct NativeEditorTemporaryVideo {
             // before the rebuild lands; never export the composition it replaces.
             displayedVideoIsCurrent = sourcePreviewSettled && (sourcePreview.map { player?.currentItem === $0.preview.playerItem } ?? false)
         case .failed, .originalsUnavailable:
-            displayedVideoIsCurrent = player != nil && player === finishedRenderPlayer
+            displayedVideoIsCurrent = isShowingRenderedFallback
         case .idle, .preparing:
             displayedVideoIsCurrent = false
         }
@@ -1185,6 +1182,14 @@ struct NativeEditorTemporaryVideo {
             guard checkpoint.status == .completed, checkpoint.outputURL == output else {
                 throw NativeEditorVideoDownloadError.unavailable
             }
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-gameday-add"),
+               let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                let evidence = documents.appendingPathComponent("kri-669-current-preview.mp4")
+                try? FileManager.default.removeItem(at: evidence)
+                try FileManager.default.copyItem(at: output, to: evidence)
+            }
+            #endif
             return NativeEditorTemporaryVideo(fileURL: output, cleanupURL: directory)
         } catch {
             try? FileManager.default.removeItem(at: directory)
@@ -2139,6 +2144,96 @@ struct NativeEditorTemporaryVideo {
     }
 
     #if DEBUG
+    /// KRI-669: deterministic provider/HTTP fixtures, real original resolution,
+    /// placement, compiler, undo and local export. No account or network.
+    @Published private(set) var gamedayFixtureSaved = false
+
+    func prepareGamedayFixture(url: URL) async {
+        do {
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-gameday-item"; variantKey = "guided_story"; jobID = projectID
+            rendersOnDevice = true; guidedRevisionNumber = 3
+            previewVariant = ["resolved_archetype": .string("guided_story"), "editor_capabilities": .object([
+                "phone_editor_media": .object(["enabled": .bool(true), "source_registration": .bool(true)])])]
+            let project = BackgroundUploadCoordinator.projectDirectory(projectID)
+            let store = SourceAssetStore(project: project)
+            func original(_ resource: URL, mediaID: String) async throws -> (MediaAsset, JSONValue) {
+                let fingerprint = try SHA256Fingerprinter().fingerprint(file: resource)
+                let asset: MediaAsset
+                if let existing = try store.bindings().first(where: { $0.mediaID == mediaID }) {
+                    guard existing.original.fingerprint == fingerprint else { throw SourceAssetError.changedOriginal(mediaID) }
+                    _ = try store.resolve(mediaIDs: [mediaID])
+                    asset = existing.original
+                } else {
+                    asset = try await AssetImportCoordinator(project: project).importAsset(from: resource)
+                }
+                let video = AVURLAsset(url: resource)
+                guard let track = try await video.loadTracks(withMediaType: .video).first else { throw NativeEditorRenderError.missingVideoTrack }
+                let size = try await track.load(.naturalSize)
+                let transform = try await track.load(.preferredTransform)
+                let orientation = (Int((atan2(transform.b, transform.a) * 180 / .pi).rounded()) % 360 + 360) % 360
+                let descriptor = OriginalMediaDescriptor(sha256: fingerprint.hex, byteCount: fingerprint.byteCount,
+                    durationS: try await video.load(.duration).seconds, width: Int(size.width), height: Int(size.height),
+                    orientationDegrees: orientation, hasAudio: !(try await video.loadTracks(withMediaType: .audio)).isEmpty)
+                return (asset, try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(descriptor)))
+            }
+            let (asset, originalValue) = try await original(url, mediaID: "gameday-source-0")
+            guard let fifthURL = Bundle.main.url(forResource: "istanbul", withExtension: "mp4") else { throw APIError.invalidResponse }
+            let (fifthAsset, fifthOriginal) = try await original(fifthURL, mediaID: "gameday-istanbul-source-4")
+            var clips: [JSONValue] = []
+            for index in 0...4 {
+                let mediaID = index == 4 ? "gameday-istanbul-source-4" : "gameday-source-\(index)"
+                try store.bind(mediaID: mediaID, original: index == 4 ? fifthAsset : asset)
+                clips.append(.object(["clip_index": .number(Double(index)), "native_source": .object([
+                    "media_id": .string(mediaID), "original": index == 4 ? fifthOriginal : originalValue, "local_required": .bool(true)])]))
+            }
+            let pool: [String: JSONValue] = ["base_generation": .string(document.revision.baseGeneration), "clips": .array(clips)]
+            UserDefaults.standard.set(try JSONEncoder().encode(pool), forKey: NativeEditorUITestFixtures.gamedayPoolKey)
+            let request = DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: projectID, variantID: "guided_story",
+                recipeRevision: 3, recipeDigest: String(repeating: "a", count: 64)),
+                recipe: KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "source", relativePath: "source")],
+                    tracks: [TimelineTrack(id: "video", kind: .video, clips: [TimelineClip(id: "clip", sourceAssetID: "source", sourceDuration: 4)])]))
+            let requestValue = try JSONDecoder().decode(JSONValue.self, from: RecipeJSON.encoder().encode(request))
+            let recipeStatus: [String: JSONValue] = ["phase": .string("published"), "request": requestValue,
+                "published_generation": .string(document.revision.baseGeneration)]
+            UserDefaults.standard.set(try JSONEncoder().encode(recipeStatus), forKey: NativeEditorUITestFixtures.gamedayRecipeKey)
+            cleanDocument = document
+            gamedayFixtureSaved = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedaySavedKey) != nil
+            mediaUploads = BackgroundUploadCoordinator(api: api!, defaultsKey: "gameday-fixture-placement", sessionConfiguration: .ephemeral)
+            await prepareSourcePreview()
+            NSLog("KRI669 fixture prepared %@", gamedayFixtureSummary)
+        } catch {
+            NSLog("KRI669 fixture setup failed %@", String(describing: error))
+            failSourcePreview(error)
+        }
+    }
+
+    func addGamedayFixtureClip() async {
+        guard let api, let itemID, let variantKey, let mediaUploads else { return }
+        let target = EditorSourceRegistrationTarget(itemID: itemID, variantID: variantKey, clientImportID: UUID(),
+            baseGeneration: document.revision.baseGeneration, guidedRevisionNumber: 3, sourceKind: .footage)
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 4)
+        mediaUploads.beginEditorPlacement(placement)
+        do {
+            let response = try await api.registerEditorSource(target, sourceID: "gameday-istanbul-source-4")
+            try await placeEditorSource(placement, response: response)
+        } catch { addClipError = error.localizedDescription }
+    }
+
+    var gamedayFixtureSummary: String {
+        let texts = displayedSourcePreviewRecipe?.textLayers.map { $0.runs.map(\.text).joined(separator: " ") }.joined(separator: ";") ?? "unavailable"
+        let count = displayedSourcePreviewRecipe?.tracks.filter { $0.kind == .video }.flatMap(\.clips).count ?? 0
+        return "clips=\(document.clips.count);previewClips=\(count);text=\(texts);current=\(hasSourcePreview);saved=\(gamedayFixtureSaved);state=\(String(describing: sourcePreviewState));generation=\(document.revision.baseGeneration);saveState=\(String(describing: saveState));dirty=\(hasUnsavedChanges)"
+    }
+
+    func saveGamedayFixture() async {
+        await save()
+        NSLog("KRI669 fixture after save %@", gamedayFixtureSummary)
+        guard !hasUnsavedChanges else { return }
+        do { UserDefaults.standard.set(try JSONEncoder().encode(draft), forKey: NativeEditorUITestFixtures.gamedaySavedKey); gamedayFixtureSaved = true }
+        catch { saveState = .failed(error.localizedDescription) }
+    }
+
     /// Account-free verification still uses the production compiler and compositor.
     func prepareFixtureSourcePreview(url: URL, delayedLoad: Bool = false, mediaSources: [String: ResolvedEditorSource] = [:], forceFailure: Bool = false,
                                       failure: Error = NativeEditorRenderError.missingVideoTrack) async {
@@ -3999,14 +4094,41 @@ struct NativeEditorTemporaryVideo {
                 uploads.recordEditorSourceResult(placementID: recordID, response: result)
                 if result.isTerminal { return result }
             }
-            if let api, let result = try? await api.editorSource(itemID: target.itemID, variantID: target.variantID, importID: target.clientImportID) {
-                uploads.recordEditorSourceResult(placementID: recordID, response: result)
-                if result.isTerminal { return result }
+            if uploads.editorPlacements(itemID: target.itemID, variantID: target.variantID, baseGeneration: target.baseGeneration)
+                .first(where: { $0.id == recordID })?.status == "failed" { throw APIError.invalidResponse }
+            if uploads.shouldWaitForEditorSourceRegistration(recordID) {
+                try await Task.sleep(for: .seconds(1))
+                continue
+            }
+            if let api {
+                do {
+                    let result = try await api.editorSource(itemID: target.itemID, variantID: target.variantID, importID: target.clientImportID)
+                    uploads.recordEditorSourceResult(placementID: recordID, response: result)
+                    if result.isTerminal { return result }
+                } catch {
+                    guard Self.isRetryableEditorSourcePoll(error) else { throw error }
+                }
             }
             try await Task.sleep(for: .seconds(1))
         }
         uploads.failEditorPlacement(recordID, error: "Preparation is taking longer than expected. Try again.")
         throw APIError.offline
+    }
+
+    /// A missing/retired admission is not a preparation state. Keep the upload
+    /// for an explicit retry, but don't hide terminal errors behind the lease.
+    static func isRetryableEditorSourcePoll(_ error: Error) -> Bool {
+        if let error = error as? APIError {
+            switch error {
+            case .offline: return true
+            case .requestFailed(let status, _): return status == 408 || status == 429 || status >= 500
+            default: return false
+            }
+        }
+        if let error = error as? URLError {
+            return [.networkConnectionLost, .notConnectedToInternet, .timedOut, .cannotConnectToHost, .cannotFindHost].contains(error.code)
+        }
+        return false
     }
 
     func placeEditorSource(_ placement: PendingEditorSourcePlacement, response: EditorSourceRegistrationResponse) async throws {
@@ -4032,12 +4154,44 @@ struct NativeEditorTemporaryVideo {
                                                                minimum: minimumClipDuration) else { throw APIError.invalidResponse }
                 duration = usable
             }
+            guard let api, let jobID, let variantKey else { throw APIError.invalidResponse }
+            // Admission and preview must use the same source index/original.
+            // Resolve before adding an undo step or changing local duration.
+            let pool = try await api.editorSourcePool(jobID: jobID, variantID: variantKey)
+            guard editorImportsActive, mediaUploads?.containsEditorPlacement(placement.id) == true,
+                  !Task.isCancelled, document.revision.baseGeneration == placement.target.baseGeneration else { return }
+            guard pool.baseGeneration == placement.target.baseGeneration,
+                  let admitted = pool.clips.first(where: { $0.clipIndex == index })?.nativeSource,
+                  admitted.mediaID == (response.source?["media_id"]?.stringValue ?? response.sourceID) else {
+                throw APIError.invalidResponse
+            }
+            let resolver = sourceResolver ?? NativeEditorSourceResolver(project: BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID), jobID: jobID)
+            let needed = Set(timelineClips.compactMap(\.sourceClipIndex) + document.clipAudio.map(\.sourceClipIndex)).union([index])
+            let sources = try await resolver.resolve(pool, generation: placement.target.baseGeneration, requiredIndices: needed)
+            guard editorImportsActive, mediaUploads?.containsEditorPlacement(placement.id) == true,
+                  !Task.isCancelled, document.revision.baseGeneration == placement.target.baseGeneration else { return }
+            guard !document.clips.contains(where: { $0.raw["editor_source_placement_id"] == .string(placementID) }) else {
+                mediaUploads?.acknowledgeEditorPlacement(placement.id); return
+            }
+            guard canAddTimelineMedia else { throw APIError.unsupported }
+            let latestNeeded = Set(timelineClips.compactMap(\.sourceClipIndex) + document.clipAudio.map(\.sourceClipIndex)).union([index])
+            guard latestNeeded.isSubset(of: Set(sources.keys)),
+                  let fonts = Bundle.main.url(forResource: "fonts", withExtension: nil) else { throw APIError.invalidResponse }
+            let compiler = try NativeEditorRenderCompiler(fontDirectory: fonts)
+            sourceResolver = resolver; sourcePool = pool; originalsRecoveryPool = pool
+            resolvedSources = sources; sourceCompiler = compiler
+            sourcePreviewGeneration = placement.target.baseGeneration
+            sourcePreviewState = .preparing
             transactDocument(section: .timeline) {
-                $0.clips.append(EditorTimelineSlot(clipIndex: index, inS: 0, durationS: min(Self.addedClipDurationS, duration), raw: [
+                $0.clips.append(EditorTimelineSlot(id: placementID, clipIndex: index, inS: 0, durationS: min(Self.addedClipDurationS, duration), raw: [
                     "source_duration_s": .number(sourceDuration(response) ?? placement.localDurationS ?? duration + 0.05),
                     "editor_source_placement_id": .string(placementID),
                 ]))
             }
+            select(.init(kind: .clip, id: placementID))
+            mediaUploads?.acknowledgeEditorPlacement(placement.id)
+            await sourcePreviewTask?.value
+            return
         case .visual:
             guard canImportVisuals, document.visualBlocks.count < 20,
                   let storedAsset = placement.visual, phoneAllowsVisualKind(storedAsset.kind),

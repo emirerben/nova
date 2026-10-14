@@ -21,7 +21,7 @@ from app.kria.brief import (
 )
 from app.pipeline.prompt_loader import load_prompt
 
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-08-v7"
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-14-v8"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

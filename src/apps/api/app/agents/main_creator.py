@@ -80,7 +80,7 @@ log = structlog.get_logger()
 # Voiceover edit a cue for an own clip is `include`, never `order`, and beats persist (v55).
 # KRI-614: a clip's `filename` (the name the app shows) identifies it when the creator writes it
 # (v56).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-13-v57"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-14-v58"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -372,6 +372,13 @@ requirement, only what the creator said: `animation` ("typewriter", "fade", "pop
 "animated with typewriter"; `position` ("top_left", "top", "top_right", "middle", "bottom_left",
 "bottom", "bottom_right") for "bottom left"; `placeholder` true when they ask for placeholder
 text to fill in later ("placeholder location").
+For requested heading stacks, preserve `heading_level` (1 title, 2 smaller subtitle,
+3 subordinate detail), `stack_id` (shared only by explicitly connected lines), `below_text`
+(exact predecessor words) and `smaller_than` (exact larger text words when smaller is asked)
+in each line's facts. Never reduce "smaller" or "under it" to position alone. For "Gameday",
+"Aston Villa v Fenerbahçe", "6 am" top left, emit levels 1/2/3 and stack_id "match";
+the subtitle facts include below_text "Gameday" and smaller_than "Gameday", and the detail
+facts include below_text "Aston Villa v Fenerbahçe". Keep the modifier in description too.
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
 ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", "facts": {"duration_s":

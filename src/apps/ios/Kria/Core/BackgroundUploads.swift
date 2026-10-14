@@ -333,6 +333,14 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         }
     }
 
+    /// The editor starts waiting while the file is still preparing/uploading.
+    /// Until POST admission returns, GET import would legitimately be 404.
+    func shouldWaitForEditorSourceRegistration(_ id: UUID) -> Bool {
+        guard editorSourceResults[id] == nil else { return false }
+        return records.contains { $0.id == id && $0.editorSourceTarget != nil }
+            || Self.restorePreparingUploads(key: defaultsKey).contains { $0.id == id && $0.editorSourceTarget != nil }
+    }
+
     func containsEditorPlacement(_ id: UUID) -> Bool {
         pendingEditorPlacements.contains { $0.id == id }
     }
@@ -1574,9 +1582,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// relaunch.  This is intentionally separate from `attachProjectMedia`.
     private func finishEditorSource(_ record: UploadRecoveryRecord, target: EditorSourceRegistrationTarget, sourceID: String) async throws -> Bool {
         var response = try await api.registerEditorSource(target, sourceID: sourceID)
+        recordEditorSourceResult(placementID: record.id, response: response)
         for _ in 0..<15 where response.status == "preparing" {
             try await Task.sleep(for: .seconds(1))
             response = try await api.editorSource(itemID: target.itemID, variantID: target.variantID, importID: target.clientImportID)
+            recordEditorSourceResult(placementID: record.id, response: response)
         }
         recordEditorSourceResult(placementID: record.id, response: response)
         // The editor owns the final local placement. Retain this upload until
