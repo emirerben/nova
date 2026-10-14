@@ -542,14 +542,16 @@ import XCTest
         UIPasteboard.general.setData(png, forPasteboardType: UTType.png.identifier)
     }
 
-    /// KRI-668: on a VIDEO slide the player's play button sits at the centre. A picture covering it must leave that spot to
-    /// the player (a touch there neither deselects nor drags the picture), while every other part still selects and drags.
-    func testStickerOnAVideoSlideLeavesTheCentrePlayButtonToThePlayer() throws {
+    /// KRI-668 / KRI-644: on a VIDEO slide a pasted picture behaves exactly as on a photo (its centre is the picture's,
+    /// with no dead zone), and the video's pause control stays tappable even under a picture, because it is drawn above them.
+    func testStickerOnAVideoSlideLeavesThePauseControlTappable() throws {
         try putTransparentPictureOnThePasteboard()
         let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1", "KRIA_SLIDE_POST_STICKERS": "1"])
         XCTAssertTrue(app.buttons["slidepost-tile-2"].waitForExistence(timeout: 8)); app.buttons["slidepost-tile-2"].tap()
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 8))
+        let toggle = app.buttons["slidepost-video-toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 8), "slide 2 is the fixture video")
         let paste = app.descendants(matching: .any)["slidepost-paste"].firstMatch
         XCTAssertTrue(paste.waitForExistence(timeout: 8))
         // The simulator shares the Mac's clipboard; put the picture back right before pasting so a copy made meanwhile can't win.
@@ -558,21 +560,22 @@ import XCTest
         let sticker = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'slidepost-canvas-sticker-'")).firstMatch
         XCTAssertTrue(sticker.waitForExistence(timeout: 20), "the pasted picture appears on the video slide")
         XCTAssertTrue(app.buttons["slidepost-sticker-delete"].exists, "a new sticker is selected")
-        XCTAssertTrue(sticker.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY)), "the centred picture covers the play button")
 
-        // The play button's spot belongs to the player: this touch used to deselect the picture.
+        // The centre is the picture's, as on a photo: touching the selected picture there lets go of it.
         preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        XCTAssertTrue(app.buttons["slidepost-sticker-delete"].exists, "a touch on the play button is not a touch on the picture")
-        attach(app, "Centre tap goes to the player, picture stays selected")
+        XCTAssertTrue(eventually { !app.buttons["slidepost-sticker-delete"].exists }, "a centre touch is a touch on the picture")
 
-        // Everywhere else on it the picture still takes the touch: a drag from its right side (outside the 88pt play-button
-        // square, which spans about 66% of this picture's width) moves it.
-        let before = sticker.frame
-        let grab = sticker.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5))
-        grab.press(forDuration: 0.1, thenDragTo: grab.withOffset(CGVector(dx: -60, dy: -90)))
-        XCTAssertTrue(eventually { sticker.frame.minY < before.minY - 50 }, "dragging from another part still moves the picture")
-        XCTAssertEqual(sticker.frame.width, before.width, accuracy: 3, "moving never resizes")
-        attach(app, "Picture dragged from beside the play button")
+        // Drag the picture from its centre over the pause control, then use the control through it.
+        let grab = sticker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        grab.press(forDuration: 0.1, thenDragTo: toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+        XCTAssertTrue(eventually { sticker.frame.contains(CGPoint(x: toggle.frame.midX, y: toggle.frame.midY)) }, "the picture now covers the control")
+        let covered = sticker.frame
+        waitFor(toggle, value: "Playing", "the video plays under the picture")
+        toggle.tap()
+        waitFor(toggle, value: "Paused", "the control still pauses it")
+        XCTAssertEqual(sticker.frame.midX, covered.midX, accuracy: 2, "the tap went to the control, not the picture")
+        XCTAssertEqual(sticker.frame.midY, covered.midY, accuracy: 2)
+        attach(app, "Pause control above a picture on a video slide")
     }
 
     func testPastedPictureBecomesAStickerOnTheSlideNotANewSlide() throws {

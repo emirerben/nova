@@ -563,8 +563,6 @@ struct SlidePostWorkspaceView: View {
             SlidePostStickerCanvas(
                 stickers: session.selectedSlide?.edits?.effectiveStickers ?? [], assets: session.state?.assets ?? [], size: size,
                 selectedID: session.selectedStickerID, interactive: mode == .browse,
-                // On a video slide the player's play button sits at the centre; a big picture must leave it tappable.
-                reservedCentre: session.selectedAsset?.kind == "video" ? 88 : nil,
                 onExpired: { await refresh() },
                 onSelect: { session.selectedStickerID = $0 },
                 onTransform: { id, key, mutate in

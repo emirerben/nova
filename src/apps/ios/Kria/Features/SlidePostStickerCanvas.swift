@@ -66,9 +66,6 @@ struct SlidePostStickerCanvas: View {
     let selectedID: String?
     /// Browse mode: pictures take touches. Everywhere else they are just drawn.
     let interactive: Bool
-    /// Side of a square at the canvas centre that never takes a sticker touch. On a video slide the player's own play
-    /// button lives there, and a big centred picture must not cover it. Nil on a photo.
-    var reservedCentre: CGFloat? = nil
     /// Called once when a signed URL had expired, so the session can fetch fresh ones.
     var onExpired: (() async -> Void)? = nil
     var store: SlidePostStickerStore = .shared
@@ -157,13 +154,8 @@ struct SlidePostStickerCanvas: View {
     private func placement(of sticker: SlidePostSticker, _ images: [String: UIImage]) -> SlidePostStickerGeometry.Placement? {
         images[sticker.assetID].map { SlidePostStickerGeometry.placement(for: sticker, imageSize: $0.size, canvas: size) }
     }
-    /// The play button's square on a video slide; touches there go to the player, not to a sticker.
-    private var passthroughRect: CGRect? {
-        reservedCentre.map { CGRect(x: size.width / 2 - $0 / 2, y: size.height / 2 - $0 / 2, width: $0, height: $0) }
-    }
     private func hit(at point: CGPoint, _ images: [String: UIImage]) -> SlidePostSticker? {
-        if let hole = passthroughRect, hole.contains(point) { return nil }
-        return stickers.reversed().first { sticker in
+        stickers.reversed().first { sticker in
             placement(of: sticker, images).map { SlidePostStickerGeometry.contains(point, in: $0, padding: Self.selectionPadding) } ?? false
         }
     }
@@ -190,8 +182,9 @@ struct SlidePostStickerCanvas: View {
         }
         return Color.clear
             .frame(width: size.width, height: size.height)
-            // Only over the pictures (and the handle): the text under them, and the media's own controls, keep every other touch.
-            .contentShape(SlidePostStickerHitShape(rects: rects, hole: passthroughRect))
+            // Only over the pictures (and the handle): the text under them keeps every other touch. A video slide's pause
+            // control is drawn above this canvas, so a picture never covers it (KRI-644).
+            .contentShape(SlidePostTextHitShape(rects: rects))
             .highPriorityGesture(touchGesture(images))
             .simultaneousGesture(pinchGesture)
     }
@@ -339,16 +332,5 @@ struct SlidePostStickerCanvas: View {
                              y: placement.center.y + dx * sin(radians) + dy * cos(radians))
         return CGPoint(x: min(max(Self.handleInset, corner.x), size.width - Self.handleInset),
                        y: min(max(Self.handleInset, corner.y), size.height - Self.handleInset))
-    }
-}
-
-/// The sticker gesture surface: the pictures' (rotated) rectangles, minus the square the video player's play button owns.
-struct SlidePostStickerHitShape: Shape {
-    var rects: [(CGRect, Double)]
-    var hole: CGRect?
-    func path(in bounds: CGRect) -> Path {
-        let covered = SlidePostTextHitShape(rects: rects).path(in: bounds)
-        guard let hole else { return covered }
-        return covered.subtracting(Path(hole))
     }
 }
