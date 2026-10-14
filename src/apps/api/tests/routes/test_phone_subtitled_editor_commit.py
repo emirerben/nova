@@ -212,10 +212,37 @@ def test_fullscreen_card_retime_round_trips(monkeypatch):
     assert track.clips[0].visual_placement.width_fraction is None
 
 
-def test_editor_cannot_promote_a_pip_card_to_fullscreen(monkeypatch):
+def test_editor_can_promote_a_pip_card_to_fullscreen_and_back(monkeypatch):
+    """KRI-661: on top of the speaker <-> full screen, both directions, one Save each."""
     job = phone_job(monkeypatch)
+    save(job, media_overlays=[_overlay_payload(display_mode="fullscreen")])
+    track_ids = [t.id for t in device_status(job, "subtitled").request.recipe.tracks]
+    assert "subtitled-fullscreen" in track_ids and "subtitled-overlays" not in track_ids
+
+    variant = job.assembly_plan["variants"][0]
+    gj.prepare_editor_commit(
+        job,
+        "subtitled",
+        gj.EditorCommitRequest(
+            base_generation=gj.variant_render_baseline(variant),
+            media_overlays=[_overlay_payload(display_mode="pip")],
+        ),
+        user_id="owner",
+        plan_item_id="item",
+    )
+    track_ids = [t.id for t in device_status(job, "subtitled").request.recipe.tracks]
+    assert "subtitled-overlays" in track_ids and "subtitled-fullscreen" not in track_ids
+
+
+def test_two_overlapping_fullscreen_cards_are_refused_on_save(monkeypatch):
+    """Full-screen cutaways are a sequence; the compiler's refusal reaches the creator as a 422."""
+    job = phone_job(monkeypatch)
+    cards = [
+        _overlay_payload(card_id="card-1", display_mode="fullscreen", start_s=1.0, end_s=3.0),
+        _overlay_payload(card_id="card-2", display_mode="fullscreen", start_s=2.0, end_s=4.0),
+    ]
     with pytest.raises(HTTPException) as error:
-        save(job, media_overlays=[_overlay_payload(display_mode="fullscreen")])
+        save(job, media_overlays=cards)
     assert error.value.status_code == 422
 
 

@@ -476,16 +476,19 @@ def _overlays_from_sections(
         previous_card = previous_by_id.get(card_id) if isinstance(card_id, str) else None
         if display_mode not in ("pip", "fullscreen"):
             raise ValueError(f"unsupported overlay display mode: {display_mode!r}")
+        # KRI-661: a card may go either way -- full screen <-> on top of the speaker. Full-screen
+        # cards are a sequence (never a stack); the phone compiler enforces that on the clamped
+        # windows (`_compile_fullscreen_track`) and its refusal reaches the creator as the 422.
         if display_mode == "fullscreen" and (
             previous_card is None or previous_card.display_mode != "fullscreen"
         ):
-            # KRI-297: a full-screen card can only round-trip -- the editor
-            # may move/retime/delete the cards Kria authored as full-screen,
-            # but cannot promote a NEW or picture-in-picture card yet.
-            raise ValueError(
-                "phone Talking edits can't turn a card into a full-screen overlay yet -- "
-                "only Kria's own full-screen overlays can be kept"
-            )
+            from app.config import settings as _settings  # noqa: PLC0415
+
+            if not _settings.phone_subtitled_fullscreen_overlays_enabled:
+                raise ValueError(
+                    "full-screen overlays are turned off right now -- keep the card on top "
+                    "of the video"
+                )
         path = item.get("src_gcs_path")
         binding = next((visual for visual in visuals if visual.gcs_path == path), None)
         if binding is None:

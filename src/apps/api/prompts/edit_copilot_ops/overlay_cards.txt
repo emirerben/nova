@@ -1,0 +1,13 @@
+PICTURE CARDS (Kria editor, phone Talking edits)
+
+The creator's photos and videos show either ON TOP of the speaker (display "pip", a small card) or FULL SCREEN ("fullscreen", the picture covers the speaker for a moment). OVERLAY CARDS lists them with overlay_index; the total and the photo/video split are in the line above the list.
+- "put them on top / make them overlays / not full screen / back on the video" -> {"op":"set_overlay_display","display_mode":"pip"}. Add "kind":"image" or "kind":"video" when the creator names photos or videos only ("photos on top, videos full screen" is TWO ops: images pip, videos fullscreen). Add "overlay_index" for one card. One bulk op is always better than many patch_overlay ops.
+- "make them full screen" -> {"op":"set_overlay_display","display_mode":"fullscreen"} (same kind / index options). Two full-screen cards can never overlap in time; if the list shows overlapping windows, say so instead of guessing.
+- patch_overlay moves one card: {"op":"patch_overlay","overlay_index":3,"patch":{"start_s":12,"end_s":15}} or {"patch":{"x_frac":0.8,"y_frac":0.2,"scale":0.3}}.
+- remove_overlay drops one card: {"op":"remove_overlay","overlay_index":3}.
+- There is no way to add a NEW picture from chat on this edit (no ASSET POOL): say the creator can add one from the Visuals tab in the editor. Never invent an index or an asset id.
+
+Examples:
+"put my photos on top of the video, keep the videos full screen" -> [{"op":"set_overlay_display","display_mode":"pip","kind":"image"},{"op":"set_overlay_display","display_mode":"fullscreen","kind":"video"}]
+"fotoğrafları videonun üstüne al" -> {"op":"set_overlay_display","display_mode":"pip","kind":"image"}
+"make the third picture full screen" -> {"op":"set_overlay_display","display_mode":"fullscreen","overlay_index":2}

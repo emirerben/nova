@@ -66,6 +66,9 @@ struct SlidePostStickerCanvas: View {
     let selectedID: String?
     /// Browse mode: pictures take touches. Everywhere else they are just drawn.
     let interactive: Bool
+    /// Side of a square at the canvas centre that never takes a sticker touch. On a video slide the player's own play
+    /// button lives there, and a big centred picture must not cover it. Nil on a photo.
+    var reservedCentre: CGFloat? = nil
     /// Called once when a signed URL had expired, so the session can fetch fresh ones.
     var onExpired: (() async -> Void)? = nil
     var store: SlidePostStickerStore = .shared
@@ -90,6 +93,9 @@ struct SlidePostStickerCanvas: View {
     @State private var movedFar = false
     @State private var wasSelectedAtTouch = false
     @State private var twistLatched = false
+    /// The same alignment cues the slide text gives: a tick when the picture reaches the centre, an edge, or 0/90/180/270 degrees.
+    @State private var feedback = NativeTextAlignmentFeedback()
+    @State private var haptic = UISelectionFeedbackGenerator()
 
     private static let handleRadius: CGFloat = 11
     private static let handleInset: CGFloat = 13
@@ -151,8 +157,13 @@ struct SlidePostStickerCanvas: View {
     private func placement(of sticker: SlidePostSticker, _ images: [String: UIImage]) -> SlidePostStickerGeometry.Placement? {
         images[sticker.assetID].map { SlidePostStickerGeometry.placement(for: sticker, imageSize: $0.size, canvas: size) }
     }
+    /// The play button's square on a video slide; touches there go to the player, not to a sticker.
+    private var passthroughRect: CGRect? {
+        reservedCentre.map { CGRect(x: size.width / 2 - $0 / 2, y: size.height / 2 - $0 / 2, width: $0, height: $0) }
+    }
     private func hit(at point: CGPoint, _ images: [String: UIImage]) -> SlidePostSticker? {
-        stickers.reversed().first { sticker in
+        if let hole = passthroughRect, hole.contains(point) { return nil }
+        return stickers.reversed().first { sticker in
             placement(of: sticker, images).map { SlidePostStickerGeometry.contains(point, in: $0, padding: Self.selectionPadding) } ?? false
         }
     }
@@ -180,7 +191,7 @@ struct SlidePostStickerCanvas: View {
         return Color.clear
             .frame(width: size.width, height: size.height)
             // Only over the pictures (and the handle): the text under them, and the media's own controls, keep every other touch.
-            .contentShape(SlidePostTextHitShape(rects: rects))
+            .contentShape(SlidePostStickerHitShape(rects: rects, hole: passthroughRect))
             .highPriorityGesture(touchGesture(images))
             .simultaneousGesture(pinchGesture)
     }
@@ -189,7 +200,7 @@ struct SlidePostStickerCanvas: View {
         DragGesture(minimumDistance: 0, coordinateSpace: .named("slidepost-sticker-canvas"))
             .onChanged { value in
                 if mode.isIdle { begin(at: value.startLocation, images) }
-                dragChanged(value)
+                dragChanged(value, images)
             }
             .onEnded { _ in
                 // Touching an already-selected picture without moving it lets go of the selection.
@@ -201,6 +212,7 @@ struct SlidePostStickerCanvas: View {
     private func begin(at start: CGPoint, _ images: [String: UIImage]) {
         movedFar = false
         gestureKey = UUID().uuidString
+        feedback.reset(); haptic.prepare()
         if let selected = grabsHandle(at: start, images), let placed = placement(of: selected, images) {
             wasSelectedAtTouch = true
             mode = .handle(selected, startVector: CGVector(dx: start.x - placed.center.x, dy: start.y - placed.center.y))
@@ -212,7 +224,15 @@ struct SlidePostStickerCanvas: View {
         mode = .move(target)
     }
 
-    private func dragChanged(_ value: DragGesture.Value) {
+    /// Ticks once each time `sticker` newly reaches the centre, an edge, or a right angle (the text's alignment cues).
+    private func tickAlignment(_ sticker: SlidePostSticker, _ images: [String: UIImage]) {
+        guard let placed = placement(of: sticker, images) else { return }
+        if feedback.update(center: placed.center, size: placed.size, rotation: sticker.rotationDeg, canvas: size) {
+            haptic.selectionChanged(); haptic.prepare()
+        }
+    }
+
+    private func dragChanged(_ value: DragGesture.Value, _ images: [String: UIImage]) {
         guard size.width > 0, size.height > 0 else { return }
         switch mode {
         case .idle, .ignored, .pinch:
@@ -223,16 +243,20 @@ struct SlidePostStickerCanvas: View {
             guard movedFar else { return }
             let x = Double(CGFloat(base.xFrac) + value.translation.width / size.width)
             let y = Double(CGFloat(base.yFrac) + value.translation.height / size.height)
+            var moved = base; moved.xFrac = x; moved.yFrac = y
+            tickAlignment(moved, images)
             onTransform(base.id, gestureKey) { $0.xFrac = x; $0.yFrac = y }
         case let .handle(base, startVector):
             guard let centre = stickerCentre(of: base) else { return }
             let next = CGVector(dx: value.location.x - centre.x, dy: value.location.y - centre.y)
             guard let delta = NativeTextTransformMath.cornerDelta(start: startVector, next: next) else { return }
             movedFar = true
-            onTransform(base.id, gestureKey) {
-                $0.widthFrac = base.widthFrac * delta.scale
-                $0.rotationDeg = SlidePostSticker.normalized(base.rotationDeg + delta.rotationDegrees)
-            }
+            // The text's 90-degree detents: a small hold at each right angle, then smooth one-to-one motion.
+            let width = base.widthFrac * delta.scale
+            let angle = SlidePostSticker.normalized(NativeTextRotationSnap.angle(base.rotationDeg + delta.rotationDegrees))
+            var turned = base; turned.widthFrac = width; turned.rotationDeg = angle
+            tickAlignment(turned, images)
+            onTransform(base.id, gestureKey) { $0.widthFrac = width; $0.rotationDeg = angle }
         }
     }
 
@@ -248,16 +272,18 @@ struct SlidePostStickerCanvas: View {
                 if case let .pinch(existing) = mode { base = existing } else {
                     gestureKey = UUID().uuidString
                     twistLatched = false
+                    feedback.reset(); haptic.prepare()
                     base = selected
                     mode = .pinch(base)
                 }
                 let scale = Double(value.first ?? 1), degrees = value.second?.degrees ?? 0
                 if abs(degrees) >= Self.twistThreshold { twistLatched = true }
-                let key = gestureKey, twist = twistLatched ? degrees : 0
-                onTransform(base.id, key) {
-                    $0.widthFrac = base.widthFrac * scale
-                    $0.rotationDeg = SlidePostSticker.normalized(base.rotationDeg + twist)
-                }
+                let key = gestureKey
+                let width = base.widthFrac * scale
+                let angle = twistLatched ? SlidePostSticker.normalized(NativeTextRotationSnap.angle(base.rotationDeg + degrees)) : base.rotationDeg
+                var turned = base; turned.widthFrac = width; turned.rotationDeg = angle
+                tickAlignment(turned, images)
+                onTransform(base.id, key) { $0.widthFrac = width; $0.rotationDeg = angle }
             }
             .onEnded { _ in mode = .idle; twistLatched = false }
     }
@@ -313,5 +339,16 @@ struct SlidePostStickerCanvas: View {
                              y: placement.center.y + dx * sin(radians) + dy * cos(radians))
         return CGPoint(x: min(max(Self.handleInset, corner.x), size.width - Self.handleInset),
                        y: min(max(Self.handleInset, corner.y), size.height - Self.handleInset))
+    }
+}
+
+/// The sticker gesture surface: the pictures' (rotated) rectangles, minus the square the video player's play button owns.
+struct SlidePostStickerHitShape: Shape {
+    var rects: [(CGRect, Double)]
+    var hole: CGRect?
+    func path(in bounds: CGRect) -> Path {
+        let covered = SlidePostTextHitShape(rects: rects).path(in: bounds)
+        guard let hole else { return covered }
+        return covered.subtracting(Path(hole))
     }
 }
