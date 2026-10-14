@@ -370,4 +370,19 @@ import XCTest
         let alpha = try XCTUnwrap(image.cgImage).alphaInfo
         XCTAssertFalse([.none, .noneSkipLast, .noneSkipFirst].contains(alpha), "alpha survived the disk cache")
     }
+
+    /// KRI-668: the play button's square is carved out of the sticker's touch area; the rest of the picture stays touchable.
+    func testStickerTouchAreaLeavesTheReservedCentreToThePlayer() {
+        let canvas = CGSize(width: 330, height: 412)
+        let big = CGRect(x: 40, y: 120, width: 250, height: 170)
+        let hole = CGRect(x: canvas.width / 2 - 44, y: canvas.height / 2 - 44, width: 88, height: 88)
+        let shape = SlidePostStickerHitShape(rects: [(big, 0)], hole: hole)
+        let path = shape.path(in: CGRect(origin: .zero, size: canvas))
+        XCTAssertFalse(path.contains(CGPoint(x: canvas.width / 2, y: canvas.height / 2)), "the play button's spot is not the picture's")
+        XCTAssertFalse(path.contains(CGPoint(x: canvas.width / 2 + 40, y: canvas.height / 2 - 40)), "the whole 88pt square is reserved")
+        XCTAssertTrue(path.contains(CGPoint(x: 70, y: 150)), "other parts of the picture still take touches")
+        XCTAssertTrue(path.contains(CGPoint(x: canvas.width / 2 + 60, y: canvas.height / 2)), "just outside the square it still takes touches")
+        let onPhoto = SlidePostStickerHitShape(rects: [(big, 0)], hole: nil).path(in: CGRect(origin: .zero, size: canvas))
+        XCTAssertTrue(onPhoto.contains(CGPoint(x: canvas.width / 2, y: canvas.height / 2)), "on a photo the centre is part of the picture")
+    }
 }
