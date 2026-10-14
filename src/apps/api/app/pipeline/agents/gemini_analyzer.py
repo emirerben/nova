@@ -109,6 +109,8 @@ class ClipMeta:
     # to wire the real signal through once that behavior change is wanted.
     clip_content_type: str = "broll"
     clip_audio_type: str = "ambient"
+    # KRI-625: [{start_s, end_s, reason}] stretches no shot should be cut from.
+    unusable_spans: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -514,6 +516,7 @@ def analyze_clip(
         hook_text=out.hook_text,
         hook_score=out.hook_score,
         best_moments=[m.model_dump() for m in out.best_moments],
+        unusable_spans=[s.model_dump() for s in getattr(out, "unusable_spans", None) or []],
         detected_subject=out.detected_subject,
         # getattr-with-default: ClipMetadataOutput always carries these, but a
         # partial shim/mock output may not — fall back to the ClipMeta defaults.

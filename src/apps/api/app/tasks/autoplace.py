@@ -1261,6 +1261,7 @@ def _analyze_video(
         from app.services.clip_understanding import (  # noqa: PLC0415
             UNDERSTANDING_KEY,
             understanding_payload,
+            unusable_spans_payload,
         )
 
         file_ref = gemini_upload_and_wait(local_path)
@@ -1358,6 +1359,10 @@ def _analyze_video(
         # KRI-127: one shared open-vocabulary understanding record per clip.
         # `understanding_payload` is getattr-tolerant so a degraded/partial
         # `meta` still yields a valid (if mostly-empty) block.
+        unusable_spans = unusable_spans_payload(meta)
+        if unusable_spans:
+            # KRI-625: absent key = no quality data (moment pickers fail open).
+            analysis["unusable_spans"] = unusable_spans
         analysis[UNDERSTANDING_KEY] = understanding_payload(meta, best_moments=best_moments)
         return analysis, aspect, duration, dims
     except SoftTimeLimitExceeded:
