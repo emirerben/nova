@@ -30,6 +30,7 @@
       "KriaUITests/SlidePostUITests/testBendSliderCurvesTheTextAndApplyToAllCopiesIt",
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",
       "KriaUITests/SlidePostUITests/testPasteAddsCopiedTextToTheSelectedSlide",
+      "KriaUITests/SlidePostUITests/testStickerOnAVideoSlideLeavesTheCentrePlayButtonToThePlayer",
       "KriaUITests/SlidePostUITests/testPastedPictureBecomesAStickerOnTheSlideNotANewSlide",
       "KriaUITests/SlidePostUITests/testPastingAPictureWithoutTheCapabilityExplainsItself",
       "KriaUITests/SlidePostUITests/testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave",

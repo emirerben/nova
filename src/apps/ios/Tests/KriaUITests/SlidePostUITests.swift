@@ -471,8 +471,8 @@ import XCTest
     /// KRI-460: copying a transparent PNG (Strava's share image) and tapping Paste puts it on the selected slide as a sticker:
     /// it is NOT a new slide, it moves with a finger, it survives a save and a slide switch, it is removable (and undoable),
     /// and the export (which renders on the phone from the original bytes) still saves every slide.
-    func testPastedPictureBecomesAStickerOnTheSlideNotANewSlide() throws {
-        // A transparent PNG: an orange disc with an opaque white bar, and fully clear corners (the photo must show there).
+    /// A transparent PNG: an orange disc with an opaque white bar, and fully clear corners (the photo must show there).
+    private func putTransparentPictureOnThePasteboard() throws {
         let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = false
         let png = try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 480, height: 300), format: format).image { _ in
             UIColor(red: 0.99, green: 0.32, blue: 0.0, alpha: 1).setFill()
@@ -480,6 +480,43 @@ import XCTest
             UIColor.white.setFill(); UIRectFill(CGRect(x: 160, y: 130, width: 160, height: 40))
         }.pngData())
         UIPasteboard.general.setData(png, forPasteboardType: UTType.png.identifier)
+    }
+
+    /// KRI-668: on a VIDEO slide the player's play button sits at the centre. A picture covering it must leave that spot to
+    /// the player (a touch there neither deselects nor drags the picture), while every other part still selects and drags.
+    func testStickerOnAVideoSlideLeavesTheCentrePlayButtonToThePlayer() throws {
+        try putTransparentPictureOnThePasteboard()
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1", "KRIA_SLIDE_POST_STICKERS": "1"])
+        XCTAssertTrue(app.buttons["slidepost-tile-2"].waitForExistence(timeout: 8)); app.buttons["slidepost-tile-2"].tap()
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 8))
+        let paste = app.descendants(matching: .any)["slidepost-paste"].firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 8))
+        // The simulator shares the Mac's clipboard; put the picture back right before pasting so a copy made meanwhile can't win.
+        try putTransparentPictureOnThePasteboard()
+        paste.tap()
+        let sticker = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'slidepost-canvas-sticker-'")).firstMatch
+        XCTAssertTrue(sticker.waitForExistence(timeout: 20), "the pasted picture appears on the video slide")
+        XCTAssertTrue(app.buttons["slidepost-sticker-delete"].exists, "a new sticker is selected")
+        XCTAssertTrue(sticker.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY)), "the centred picture covers the play button")
+
+        // The play button's spot belongs to the player: this touch used to deselect the picture.
+        preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["slidepost-sticker-delete"].exists, "a touch on the play button is not a touch on the picture")
+        attach(app, "Centre tap goes to the player, picture stays selected")
+
+        // Everywhere else on it the picture still takes the touch: a drag from its right side (outside the 88pt play-button
+        // square, which spans about 66% of this picture's width) moves it.
+        let before = sticker.frame
+        let grab = sticker.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5))
+        grab.press(forDuration: 0.1, thenDragTo: grab.withOffset(CGVector(dx: -60, dy: -90)))
+        XCTAssertTrue(eventually { sticker.frame.minY < before.minY - 50 }, "dragging from another part still moves the picture")
+        XCTAssertEqual(sticker.frame.width, before.width, accuracy: 3, "moving never resizes")
+        attach(app, "Picture dragged from beside the play button")
+    }
+
+    func testPastedPictureBecomesAStickerOnTheSlideNotANewSlide() throws {
+        try putTransparentPictureOnThePasteboard()
 
         let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1", "KRIA_SLIDE_POST_STICKERS": "1"])
         let sticker = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'slidepost-canvas-sticker-'")).firstMatch
@@ -487,6 +524,7 @@ import XCTest
         XCTAssertTrue(app.buttons["slidepost-tile-3"].exists)
         let paste = app.descendants(matching: .any)["slidepost-paste"].firstMatch
         XCTAssertTrue(paste.waitForExistence(timeout: 8), "Paste is offered when the clipboard holds a picture")
+        try putTransparentPictureOnThePasteboard()
         paste.tap()
 
         XCTAssertTrue(sticker.waitForExistence(timeout: 20), "the pasted picture appears on the canvas")
