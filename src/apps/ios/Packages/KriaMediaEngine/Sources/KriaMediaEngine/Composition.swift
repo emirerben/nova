@@ -446,9 +446,19 @@ public struct PreviewComposition: @unchecked Sendable {
 
     /// The compiler emits above-text overlays in z order. Their placement style
     /// must not move them ahead of legacy peers, and time sorting is only for tracks.
+    ///
+    /// A device-rendered card is drawn BELOW the text layers (`overlayAboveText` unset) with no placement, so
+    /// its order comes from its position in the overlay track instead of a shared 2000. Otherwise every such
+    /// card ties, and an in-place update (which re-reads layers in their previous sorted order) would keep a
+    /// stale stacking after the creator reorders cards or switches one between full screen and PiP.
     static func overlayOrders(in recipe: EditRecipe) -> [String: Int] {
-        Dictionary(uniqueKeysWithValues: recipe.tracks.flatMap(\.clips)
+        let clips = recipe.tracks.flatMap(\.clips)
+        var orders = Dictionary(uniqueKeysWithValues: clips
             .filter { $0.overlayAboveText == true }.enumerated().map { ($0.element.id, 2000 + $0.offset) })
+        let unplaced = recipe.tracks.filter { $0.kind == .overlay }.flatMap(\.clips)
+            .filter { $0.overlayAboveText != true && $0.visualPlacement == nil }
+        for (offset, clip) in unplaced.enumerated() { orders[clip.id] = 2000 + offset }
+        return orders
     }
 
     /// Track matrices use top-left coordinates; decoded CIImage pixels use
