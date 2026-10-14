@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.273.0] - 2026-10-14
+
+### Changed
+- fix(kria): Tigre T1 Talking findings (KRI-628, 629, 630, 631, 632) (#1587) <!-- release-pr: 1587 -->
+
 ## [0.78.272.0] - 2026-10-13
 
 ### Changed
