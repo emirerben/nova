@@ -17,9 +17,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
+from app.schemas.phone_text_style import TextStyleRule
 from app.services.private_text import normalize_private_text
 
-CREATOR_MEMORY_EXTRACTOR_PROMPT_VERSION = "2026-09-06-v1"
+CREATOR_MEMORY_EXTRACTOR_PROMPT_VERSION = "2026-10-13-v2"
 
 MemoryOperation = Literal["activate_explicit", "suggest", "supersede", "forget", "noop"]
 MemoryCategory = Literal["content", "video_style", "stories_pacing", "avoid", "other"]
@@ -38,6 +39,12 @@ StructuredKey = Literal[
     "font_cycling",
     "stroke_width",
     "shadow_enabled",
+    "text_style_all_text",
+    "text_style_title",
+    "text_style_label",
+    "text_style_pinned",
+    "text_style_caption",
+    "text_style_lyric",
 ]
 
 _SAFE_LABEL_RE = re.compile(r"^[^\n\r\t<>]{1,80}$")
@@ -77,6 +84,12 @@ class CreatorMemoryStructuredValue(BaseModel):
     font_cycling: bool | None = None
     stroke_width: Annotated[float, Field(ge=0.0, le=20.0)] | None = None
     shadow_enabled: bool | None = None
+    text_style_all_text: TextStyleRule | None = None
+    text_style_title: TextStyleRule | None = None
+    text_style_label: TextStyleRule | None = None
+    text_style_pinned: TextStyleRule | None = None
+    text_style_caption: TextStyleRule | None = None
+    text_style_lyric: TextStyleRule | None = None
 
     @field_validator("tone", "font_family")
     @classmethod

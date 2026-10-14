@@ -1927,6 +1927,8 @@ class Settings(BaseSettings):
     # Account-wide creator memory/direction control plane. Storage and owner
     # routes are additive; prompt/render extraction remains separately wired.
     creator_memory_enabled: bool = False
+    # KRI-648: stamped only at dispatch; legacy generations are never restyled.
+    phone_text_styling_enabled: bool = False
 
     # Conversational style agent (Creator Agent M2). When True, the
     # POST /personas/agent/start and POST /personas/agent/turn routes are live.

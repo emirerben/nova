@@ -72,7 +72,7 @@ class TestFontRegistryFile:
             )
 
     def test_expected_font_count(self):
-        """Registry has 44 active + 8 soft-deprecated fonts.
+        """Registry has 45 active + 7 soft-deprecated fonts.
 
         Note: Outfit was previously deprecated (PR pre-gradient); PR #487 activated
         it as the OFL substitute for ZT Bros Oskon 90s, so the deprecated count is
@@ -81,11 +81,12 @@ class TestFontRegistryFile:
         Playfair Display Italic was added for accent_parity italic alternation
         in phrase sequences, then by 4 more (Rascal, Big Curls, ZT Bros Oskon 90s,
         Alte Haas Grotesk — all 100% Free dafont fonts).
+        KRI-648 restores Inter Medium without changing the bundled font count.
         """
         fonts = _FONT_REGISTRY.get("fonts", {})
         assert len(fonts) == 52
-        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is True) == 8
-        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 44
+        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is True) == 7
+        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 45
 
     def test_expected_styles(self):
         """All 5 font styles should have defaults."""

@@ -40,6 +40,11 @@ from app.services.creator_render_contract import (
     read_render_contract,
     verify_phone_recipe,
 )
+from app.services.phone_text_styling import (
+    generation_resolved_rows,
+    generation_style_fields,
+    phone_text_generation,
+)
 from app.services.speech_montage_planning import (
     SpeechCandidate,
     plan_speech_montage,
@@ -83,6 +88,7 @@ def _strategy_target_s(strategy: Any) -> float | None:
     return float(raw) if ok else None
 
 
+@phone_text_generation
 def run_phone_speech_montage_job(
     job_id: str,
     snapshot: dict,
@@ -388,10 +394,23 @@ def run_phone_speech_montage_job(
                 "render_generation_id": generation,
                 "render_status": "awaiting_device",
                 "render_destination": "device",
+                **generation_style_fields(),
                 "duration_s": round(receipt.duration_s, 3),
                 "intro_mode": "linear",
                 "intro_layout": "linear",
-                "text_elements": pin_rows,
+                "text_elements": [
+                    *(
+                        {
+                            **row,
+                            "source_params": {
+                                **(row.get("source_params") or {}),
+                                "read_only": True,
+                            },
+                        }
+                        for row in generation_resolved_rows("title")
+                    ),
+                    *pin_rows,
+                ],
                 "orientation": "portrait",
                 "ok": False,
             }
@@ -479,6 +498,7 @@ def _capture_tie_note(snapshot: dict, ordered_ids: list[str]) -> str:
     return f"{tied} clips share a capture time, so I kept them in the order they were added"
 
 
+@phone_text_generation
 def run_phone_voice_behind_footage_job(
     job_id: str,
     snapshot: dict,
@@ -766,10 +786,23 @@ def run_phone_voice_behind_footage_job(
                 "render_generation_id": generation,
                 "render_status": "awaiting_device",
                 "render_destination": "device",
+                **generation_style_fields(),
                 "duration_s": round(receipt.duration_s, 3),
                 "intro_mode": "linear",
                 "intro_layout": "linear",
-                "text_elements": pin_rows,
+                "text_elements": [
+                    *(
+                        {
+                            **row,
+                            "source_params": {
+                                **(row.get("source_params") or {}),
+                                "read_only": True,
+                            },
+                        }
+                        for row in generation_resolved_rows("title")
+                    ),
+                    *pin_rows,
+                ],
                 "orientation": "portrait",
                 "ok": False,
             }

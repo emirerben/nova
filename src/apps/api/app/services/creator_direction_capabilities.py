@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from app.schemas.phone_text_style import TEXT_STYLE_KEYS, TextStyleRule
+
 CapabilityStatus = Literal["enforced", "advisory", "unsupported", "conflicted"]
 
 
@@ -53,6 +55,9 @@ DIRECTION_CAPABILITIES: dict[str, DirectionCapability] = {
     "shadow_enabled": DirectionCapability(bool, True, ALL_RENDER_MODES),
 }
 
+DIRECTION_CAPABILITIES.update(
+    {key: DirectionCapability(dict, True, frozenset({"phone"})) for key in TEXT_STYLE_KEYS}
+)
 SUPPORTED_STRUCTURED_KEYS = frozenset(DIRECTION_CAPABILITIES)
 _SAFE_LABEL = re.compile(r"^[^\n\r\t<>]{1,80}$")
 _HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -107,6 +112,12 @@ def validate_capability_values(value: dict[str, Any] | None) -> bool:
         capability = DIRECTION_CAPABILITIES.get(key)
         if capability is None or not isinstance(item, capability.value_type):
             return False
+        if key in TEXT_STYLE_KEYS:
+            try:
+                TextStyleRule.model_validate(item)
+            except ValueError:
+                return False
+            continue
         if key in {"tone", "font_family"} and (
             not isinstance(item, str) or _SAFE_LABEL.fullmatch(item) is None
         ):

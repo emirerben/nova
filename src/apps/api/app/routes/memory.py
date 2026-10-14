@@ -297,6 +297,9 @@ async def get_memory(user: CurrentUser, db: AsyncSession = Depends(get_db)) -> d
     ).scalar_one_or_none()
     return {
         "feature_available": bool(settings.creator_memory_enabled),
+        "text_preferences_available": bool(
+            settings.creator_memory_enabled and settings.phone_text_styling_enabled
+        ),
         "enabled": snapshot.enabled if settings.creator_memory_enabled else False,
         "revision": snapshot.revision,
         "personalization_sections": sections,

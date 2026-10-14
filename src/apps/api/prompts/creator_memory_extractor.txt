@@ -68,3 +68,11 @@ Return only JSON with exactly these keys. Use null for fields that do not apply:
 
 For noop and forget, instruction is null. For noop, every mutation field and target_item_id is
 null. For forget, only target_item_id, confidence, and reason_code are non-null.
+
+Phone text preferences support text_style_all_text/title/label/pinned/caption/lyric.
+Each structured value holds one role rule with independently specified font_family,
+favorite_fonts, excluded_fonts, position (top_left/top/top_right/middle/bottom_left/bottom/bottom_right),
+color (#RRGGBB), stroke_width (0 means off), and shadow_enabled (false means off).
+Combine related standing preferences for one role into that role rule.
+Single-video requests never become account memory. Never infer font exclusions
+merely because a creator selects another font. Fonts/presets must preserve off effects.

@@ -157,6 +157,13 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "narration label wording for the approved guided plan",
         None,
     ),
+    "services/phone_text_styling.py": (
+        "content_only",
+        "initial dispatch pins validated font/color/placement/effect properties from the "
+        "bound request; it never changes route, duration, voice, order or required copy. "
+        "Workers and retries consume the stored versioned rules without re-reading prose",
+        frozenset({"stamp_phone_text_style"}),
+    ),
     # --- worker side -----------------------------------------------------------------------------
     "services/phone_speech_montage_job.py": (
         "legacy_unstamped",

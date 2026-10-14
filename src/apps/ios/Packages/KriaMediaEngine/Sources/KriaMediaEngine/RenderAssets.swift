@@ -224,7 +224,14 @@ public actor RenderLibraryCache {
         try asset.validate()
         if case .original = asset.source { throw RenderAssetError.invalidManifest }
         let url = root.appendingPathComponent(asset.fingerprint.sha256 + "-" + String(asset.fingerprint.byteCount))
-        guard url.resolvingSymlinksInPath().deletingLastPathComponent().path == root.resolvingSymlinksInPath().path else {
+        // On a physical iPhone, resolving a missing leaf can retain /private/var
+        // while resolving its existing parent returns /var. Compare the parent
+        // first; an existing leaf still requires the full symlink escape check.
+        let canonicalRoot = root.resolvingSymlinksInPath().path
+        guard (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) == nil,
+              url.deletingLastPathComponent().resolvingSymlinksInPath().path == canonicalRoot,
+              !FileManager.default.fileExists(atPath: url.path)
+                || url.resolvingSymlinksInPath().deletingLastPathComponent().path == canonicalRoot else {
             throw RenderAssetError.invalidManifest
         }
         return url

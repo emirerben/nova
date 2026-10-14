@@ -231,6 +231,14 @@ async def get_device_render(
     except KeyError as exc:
         raise HTTPException(404, "Device recipe unavailable") from exc
     record, status = _record(job, status.request.identity)
+    from app.services.phone_text_styling import (
+        PHONE_TEXT_STYLE_FIELD,
+        require_phone_text_style_client,
+    )
+
+    require_phone_text_style_client(
+        (job.assembly_plan or {}).get(PHONE_TEXT_STYLE_FIELD), require_header=True
+    )
     if getattr(status.request.recipe, "drawing_layers", None) and (
         not freehand_drawing_client_supported()
     ):

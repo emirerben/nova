@@ -483,14 +483,17 @@ def upload_bytes_public_read(
     )
 
 
-def download_to_file(object_path: str, local_path: str) -> None:
+def download_to_file(object_path: str, local_path: str, *, timeout_s: float | None = None) -> None:
     """Download a GCS object to a local path (worker use only)."""
     if _uses_local_storage():
         shutil.copy2(local_object_path(object_path), local_path)
         return
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
-    blob.download_to_filename(local_path)
+    if timeout_s is None:
+        blob.download_to_filename(local_path)
+    else:
+        blob.download_to_filename(local_path, timeout=max(0.1, timeout_s), retry=None)
 
 
 def download_generation_to_file(

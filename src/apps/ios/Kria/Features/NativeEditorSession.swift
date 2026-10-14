@@ -4777,7 +4777,14 @@ struct NativeEditorTemporaryVideo {
     }
     func setCaptionMeta(key: String, value: JSONValue?) {
         guard canEditSection(.captionMeta) else { return }
-        transactDocument(section: .captionMeta) { $0.captionMeta[key] = value ?? .null }
+        transactDocument(section: .captionMeta) {
+            $0.captionMeta[key] = value ?? .null
+            if key == "y_frac", var appearance = $0.captionMeta["appearance"]?.objectValue,
+               appearance["position_y_frac"] != nil {
+                appearance["position_y_frac"] = value ?? .null
+                $0.captionMeta["appearance"] = .object(appearance)
+            }
+        }
     }
     var canEditCaptionAppearance: Bool { canEditCaptions && canEdit("caption_editor_style") }
     /// Line-level caption edits (text/timing of individual cues) are gated by
@@ -4810,6 +4817,9 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) {
             var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
             appearance[key] = value
+            if key == "alignment", appearance["position_x_frac"] != nil {
+                appearance["position_x_frac"] = .number(value.stringValue == "left" ? 0.06 : value.stringValue == "right" ? 0.82 : 0.5)
+            }
             $0.captionMeta["appearance"] = .object(appearance)
         }
     }
@@ -6019,6 +6029,13 @@ struct NativeEditorTemporaryVideo {
         let backgroundObject = Self.object(value["background_music"])
         let lyricsObject = Self.object(value["lyrics"])
         let carouselObject = Self.object(value["carousel_moment"])
+        var captionMeta = object("caption_meta", .captionMeta)
+        if let y = captionMeta?["y_frac"]?.numberValue, !(0.30...0.90).contains(y),
+           captionMeta?["appearance"]?.objectValue?["position_y_frac"] != nil {
+            // Upper corners use the resolved appearance geometry; the legacy
+            // position field remains within its existing server contract.
+            captionMeta?.removeValue(forKey: "y_frac")
+        }
         return EditorCommitRequest(
             timelineSlots: array("timeline_slots", .timeline),
             // A guided timeline commit always carries the rebased label lane, like the server's
@@ -6027,7 +6044,7 @@ struct NativeEditorTemporaryVideo {
             textElements: changedSections.contains(.text) || carriesGuidedLabelsWithTimeline
                 ? Self.array(value["text_elements"]) : nil,
             captionCues: array("caption_cues", .captions),
-            captionMeta: object("caption_meta", .captionMeta),
+            captionMeta: captionMeta,
             mix: changedSections.contains(.mix) ? commitMix(Self.object(value["mix"]) ?? Self.object(value["audio_mix"]) ?? [:]) : nil,
             musicTrackID: changedSections.contains(.music) ? value["music_track_id"]?.stringValue : nil,
             removeMusic: changedSections.contains(.music) && document.music == nil,

@@ -1607,6 +1607,7 @@ def measure_text_overlay_box(
     overlay: dict,
     *,
     render_canvas: Canvas = PORTRAIT,
+    resolved_size: bool = False,
 ) -> dict[str, float]:
     """Measure a title with the exact typeface/wrap primitives used to draw it.
 
@@ -1644,13 +1645,21 @@ def measure_text_overlay_box(
     initial_size = _resolve_font_size_px(overlay)
     max_width = _overlay_max_width_px(overlay, render_canvas)
     letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
-    fit = _authored_lines if overlay.get("wrap_lines") is False else _shrink_to_fit
+    shape_text = resolved_size and bool(overlay.get("shape_text"))
+    fit = (
+        _authored_lines
+        if overlay.get("wrap_lines") is False
+        else _wrap_at_fixed_size
+        if resolved_size and overlay.get("preserve_font_size")
+        else _shrink_to_fit
+    )
     font, size, lines = fit(
         text,
         typeface,
         initial_size,
         max_width,
         letter_spacing_em,
+        shape_text=shape_text,
     )
     spacing_px = letter_spacing_em * size
     block = _measure_block(
@@ -1658,17 +1667,21 @@ def measure_text_overlay_box(
         lines,
         line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
         letter_spacing_px=spacing_px,
+        shape_text=shape_text,
     )
     cx, cy = _resolve_anchor(overlay, render_canvas)
     width = max(block["widths"], default=0.0)
     left = _anchored_left_x(_resolve_text_anchor(overlay), cx, width)
     top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
-    return {
+    bounds = {
         "left": max(0.0, left / render_canvas.width),
         "top": max(0.0, top / render_canvas.height),
         "right": min(1.0, (left + width) / render_canvas.width),
         "bottom": min(1.0, (top + block["block_h"]) / render_canvas.height),
     }
+    if resolved_size:
+        bounds["size_px"] = size
+    return bounds
 
 
 def static_block_height_px(

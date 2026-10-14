@@ -384,6 +384,11 @@ struct AccountView: View {
                 if auth.profileState == .failed {
                     profileFailureRow
                 }
+                AccountSection(title: "Preferences") {
+                    NavigationLink(destination: TextPreferencesView(api: model.api)) {
+                        AccountRowLabel(title: "Text preferences", trailingSymbol: "chevron.right")
+                    }.accessibilityIdentifier("account-text-preferences")
+                }
                 AccountSection(title: "Privacy") {
                     AccountCaptureContextRow()
                 }
