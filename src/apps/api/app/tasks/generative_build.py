@@ -6558,7 +6558,15 @@ def _run_phone_subtitled_job(
         crosscheck_detected_language,
         resolve_spoken_caption_language,
     )
-    from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
+    from app.pipeline.caption_spelling import (  # noqa: PLC0415
+        apply_spelling_to_cues,
+        extract_spelling_asks,
+    )
+    from app.pipeline.captions import (  # noqa: PLC0415
+        PHONE_CUE_BUDGET,
+        build_plain_cues,
+        resplit_cues_into_sentences,
+    )
     from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
         SilentAudioPlanDeclined,
         UnsupportedPhonePlan,
@@ -7103,7 +7111,7 @@ def _run_phone_subtitled_job(
                     for item in remap_words(caption_words, cut_plan)
                     if not is_filler_token(item["text"])
                 ]
-                cues = build_plain_cues(cut_words, attach_words=True)
+                cues = build_plain_cues(cut_words, attach_words=True, budget=PHONE_CUE_BUDGET)
             else:
                 transcript = transcribe_whisper_cached(
                     clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
@@ -7186,7 +7194,9 @@ def _run_phone_subtitled_job(
                         }
                         for word in transcript.words
                     ]
-                cues = build_plain_cues(transcript.words, attach_words=True)
+                cues = build_plain_cues(
+                    transcript.words, attach_words=True, budget=PHONE_CUE_BUDGET
+                )
             cues = correct_caption_cues(
                 cues,
                 detected_lang,
@@ -7195,6 +7205,10 @@ def _run_phone_subtitled_job(
                 trusted_aliases=None,
             )
             cues = resplit_cues_into_sentences(cues)
+            # KRI-631: the creator's quoted spelling asks ("write 'community' in English").
+            cues = apply_spelling_to_cues(
+                cues, extract_spelling_asks(_creator_request_text(all_candidates))
+            )
 
             # The speaker's span exactly as the compiler plays it: the cleanup
             # cut, else the phone-measured clip (which can run a hair shorter

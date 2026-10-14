@@ -124,8 +124,105 @@ def _split_sentence_groups(sentence: list[Word]) -> list[list[Word]]:
     return groups
 
 
+@dataclass(frozen=True, slots=True)
+class CueBudget:
+    """What one caption cue may hold so it fits the screen (phone Talking, KRI-632).
+
+    The default cap (`_MAX_CUE_WORDS`) counts words, but Turkish words are long, so
+    14 words wrapped to 4 rows over the speaker's chest. A budget sizes a cue by
+    characters (rows on a 1080 px frame) and on-screen time instead, and splits a
+    long sentence into evenly sized groups at the most natural break.
+    """
+
+    max_words: int
+    max_chars: int
+    max_s: float
+
+
+# 2 rows at the 78 px phone caption size hold about 48 characters; 40 leaves
+# slack for wide letters and the watermark re-wrap. Shorter is the karaoke norm.
+PHONE_CUE_BUDGET = CueBudget(max_words=8, max_chars=40, max_s=3.0)
+# A group shorter than this reads as an orphan ("abi biz.") unless it cannot be helped.
+_MIN_GROUP_WORDS = 3
+
+
+def _split_sentence_by_budget(sentence: list[Word], budget: CueBudget) -> list[list[Word]]:
+    """Split one sentence into the fewest evenly sized groups that fit ``budget``.
+
+    Every group respects the word, character and time caps (a single over-long word
+    is allowed alone). Among splits with the fewest groups the cheapest wins:
+    balanced character counts, no 1-2 word orphans, breaks at a clause end or a
+    spoken pause. A sentence that already fits is returned whole.
+    """
+    n = len(sentence)
+    texts = [w.text.strip() for w in sentence]
+    # prefix[i] = characters of words[:i] joined by single spaces (excluding the lead space)
+    prefix = [0]
+    for t in texts:
+        prefix.append(prefix[-1] + len(t) + 1)
+
+    def chars(i: int, j: int) -> int:
+        return prefix[j] - prefix[i] - 1
+
+    def span_s(i: int, j: int) -> float:
+        return float(sentence[j - 1].end_s) - float(sentence[i].start_s)
+
+    def fits(i: int, j: int) -> bool:
+        if j - i <= 1:
+            return True
+        return (
+            j - i <= budget.max_words
+            and chars(i, j) <= budget.max_chars
+            and span_s(i, j) <= budget.max_s
+        )
+
+    if n <= 1 or fits(0, n):
+        return [sentence]
+
+    def break_cost(j: int) -> float:
+        """Cost of ending a group after word ``j-1`` (j < n)."""
+        if _CLAUSE_END_RE.search(texts[j - 1]):
+            return 0.0
+        gap = max(0.0, float(sentence[j].start_s) - float(sentence[j - 1].end_s))
+        return max(0.0, 0.6 - 0.6 * min(gap / 0.5, 1.0))
+
+    total_chars = chars(0, n)
+    inf = float("inf")
+    for k in range(2, n + 1):
+        target = total_chars / k
+        # best[g][j] = cheapest split of words[:j] into g groups
+        best = [[inf] * (n + 1) for _ in range(k + 1)]
+        back = [[0] * (n + 1) for _ in range(k + 1)]
+        best[0][0] = 0.0
+        for g in range(1, k + 1):
+            for j in range(g, n + 1):
+                for i in range(g - 1, j):
+                    if best[g - 1][i] == inf or not fits(i, j):
+                        continue
+                    size = j - i
+                    cost = ((chars(i, j) - target) / budget.max_chars) ** 2
+                    if size < _MIN_GROUP_WORDS:
+                        cost += 2.0 * (_MIN_GROUP_WORDS - size)
+                    if j < n:
+                        cost += break_cost(j)
+                    if best[g - 1][i] + cost < best[g][j]:
+                        best[g][j] = best[g - 1][i] + cost
+                        back[g][j] = i
+        if best[k][n] < inf:
+            cuts, j = [], n
+            for g in range(k, 0, -1):
+                cuts.append((back[g][j], j))
+                j = back[g][j]
+            return [sentence[i:j] for i, j in reversed(cuts)]
+    return [[w] for w in sentence]  # unreachable: k == n always fits
+
+
 def build_plain_cues(
-    words: list[Word], offset_s: float = 0.0, *, attach_words: bool = False
+    words: list[Word],
+    offset_s: float = 0.0,
+    *,
+    attach_words: bool = False,
+    budget: CueBudget | None = None,
 ) -> list[dict]:
     """Group words into editable plain-caption cues — the source of truth for the
     on-video caption editor — splitting at SENTENCE boundaries.
@@ -134,6 +231,10 @@ def build_plain_cues(
     per-word timings as ``cue["words"] = [{text, start_s, end_s}]`` (offset-shifted),
     so the word-pop burn locks the highlight to the audio and a reburn can reuse them.
     Off (default) keeps cues as ``{text, start_s, end_s}`` — byte-identical to before.
+
+    ``budget`` (phone Talking, KRI-632): size cues by characters and on-screen time
+    (:class:`CueBudget`) instead of the 14-word cap. ``None`` (default) keeps the
+    word cap — the cloud burn is byte-identical.
 
     Each cue is ``{"text", "start_s", "end_s"}`` with RAW (un-sanitized) display text
     and times shifted by ``offset_s``. A new cue starts at every sentence end (terminal
@@ -158,7 +259,11 @@ def build_plain_cues(
     def _emit() -> None:
         if not sentence:
             return
-        groups = _split_sentence_groups(sentence)
+        groups = (
+            _split_sentence_by_budget(sentence, budget)
+            if budget is not None
+            else _split_sentence_groups(sentence)
+        )
         for k, g in enumerate(groups):
             if not g:
                 continue

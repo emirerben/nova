@@ -724,6 +724,18 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-628-opening-cut"),
             ),
             (
+                "src/apps/api/app/pipeline/captions.py",
+                (True, "covered", "kri-632-phone-captions"),
+            ),
+            (
+                "src/apps/api/app/pipeline/caption_spelling.py",
+                (True, "covered", "kri-632-phone-captions"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/kri632_t1_talking_words.json",
+                (True, "covered", "kri-632-phone-captions"),
+            ),
+            (
                 "src/apps/api/app/pipeline/phone_captions.py",
                 (True, "covered", "kri-548-caption-watermark"),
             ),
