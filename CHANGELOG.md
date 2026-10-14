@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.279.0] - 2026-10-14
+
+### Changed
+- fix(ios): drop the tick line under the Text panel sliders (KRI-646) (#1600) <!-- release-pr: 1600 -->
+
 ## [0.78.278.0] - 2026-10-14
 
 ### Changed
