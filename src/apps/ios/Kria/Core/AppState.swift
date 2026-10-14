@@ -212,6 +212,9 @@ enum AccountIdentity {
     private let cache: CacheRepository?
     private var deletedProjectIDs: Set<UUID> = []
     private var reapingChatIDs: Set<UUID> = []
+    /// KRI-640: the full chat a create call returned, held until its screen opens so the
+    /// new chat shows at once instead of reading itself back from the server first.
+    private var createdThreads: [UUID: CreationThread] = [:]
     let chatDrafts: ChatDraftStore
     private var collectionGeneration = 0
     init(
@@ -402,6 +405,7 @@ enum AccountIdentity {
         do {
             let thread = try await api.createThread(message: nil)
             let project = thread.summary
+            createdThreads[project.id] = thread
             collectionGeneration += 1
             projects.insert(project, at: 0)
             projectsState = .loaded
@@ -418,13 +422,18 @@ enum AccountIdentity {
             #endif
         }
     }
+    func takeCreatedThread(_ id: UUID) -> CreationThread? { createdThreads.removeValue(forKey: id) }
     func openWorkspace(preferredProjectID: UUID? = nil) async {
         selectWorkspaceProject(preferredProjectID: preferredProjectID)
         uploads.recoverInterruptedPreparations()
+        // KRI-640: New chat (even from the empty workspace) then needs no capabilities read on tap.
+        let api = api
+        async let capabilitiesPrefetch: Void = api.prefetchCreationCapabilities()
         async let uploadRecovery: Void = uploads.restorePendingTasks()
         await loadProjects()
         selectWorkspaceProject(preferredProjectID: preferredProjectID)
         await uploadRecovery
+        await capabilitiesPrefetch
     }
     private func selectWorkspaceProject(preferredProjectID: UUID?) {
         if let preferredProjectID,

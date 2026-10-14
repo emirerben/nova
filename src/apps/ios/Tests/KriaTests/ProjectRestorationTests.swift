@@ -26,6 +26,8 @@ import SwiftData
         NativeEditorURLProtocol.handler = { request in
             XCTAssertEqual(request.httpMethod, "GET")
             if request.url?.path == "/creation-threads" { return (200, list) }
+            // Opening the workspace also prefetches capabilities for New chat (KRI-640).
+            if request.url?.path == "/creation-threads/capabilities" { return (200, Data(#"{"formats":[]}"#.utf8)) }
             XCTAssertEqual(request.url?.path, "/creation-threads/\(preferredID)")
             XCTAssertEqual(request.url?.query, "projection=full")
             return (200, full)
@@ -56,6 +58,7 @@ import SwiftData
     func testMissingPreferredProjectFallsBackToExistingProject() async {
         let existingID = UUID(uuidString: "74A559F6-28D9-4E0D-9EB6-71CD09A958DE")!
         NativeEditorURLProtocol.handler = { request in
+            if request.url?.path == "/creation-threads/capabilities" { return (200, Data(#"{"formats":[]}"#.utf8)) }
             XCTAssertEqual(request.url?.path, "/creation-threads")
             return (200, Data("""
             [{"id":"\(existingID)","title":"Still available","status":"draft","revision":2,"runtime_version":2,"updated_at":"2026-09-10T12:00:00Z"}]

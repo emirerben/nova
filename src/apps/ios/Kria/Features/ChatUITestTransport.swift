@@ -33,11 +33,15 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
         // `KRIA_SLIDE_POST_CAPS=slow`: capabilities answer after 6s (the slide editor must not wait for them).
         let slowCapabilities = request.url?.path.hasSuffix("/capabilities") == true
             && ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "slow"
-        if slowCapabilities || (request.url?.path.hasSuffix("/messages") == true
+        // `KRIA_CHAT_SLOW_READS=1` (KRI-640): every chat or capabilities read after the first capabilities read
+        // answers 10s late, so anything a new chat waits for beyond its create call shows up as a stall.
+        let slowRead = ProcessInfo.processInfo.environment["KRIA_CHAT_SLOW_READS"] == "1"
+            && CreationChatFixture.shared.isSlowRead(request)
+        if slowCapabilities || slowRead || (request.url?.path.hasSuffix("/messages") == true
             && ProcessInfo.processInfo.environment["KRIA_CHAT_SLOW_CREATION"] == "1") {
             let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
             delayedResponse = work
-            DispatchQueue.global().asyncAfter(deadline: .now() + (slowCapabilities ? 6 : 5), execute: work)
+            DispatchQueue.global().asyncAfter(deadline: .now() + (slowRead ? 10 : slowCapabilities ? 6 : 5), execute: work)
         } else { finishLoading() }
     }
     private func finishLoading() {
@@ -77,6 +81,17 @@ final class CreationChatFixture: @unchecked Sendable {
     /// `KRIA_SLIDE_POST_LATE_ASSET=1`: a fourth photo that is still processing for the first two reads
     /// after a draft exists and then turns ready, like an upload that finishes while the editor is open.
     private var lateAssetPolls: [String: Int] = [:]
+    private var answeredCapabilitiesRead = false
+    /// `KRIA_CHAT_SLOW_READS` (KRI-640): GETs of one chat (or anything under it) and every capabilities read but the
+    /// first. The project list and the create call stay fast.
+    func isSlowRead(_ request: URLRequest) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        let path = request.url?.path ?? ""
+        guard (request.httpMethod ?? "GET") == "GET", path.hasPrefix("/creation-threads/") else { return false }
+        guard path == "/creation-threads/capabilities" else { return true }
+        defer { answeredCapabilitiesRead = true }
+        return answeredCapabilitiesRead
+    }
     /// KRI-460: pictures the fixture "uploaded" (reserve -> register), per item. They join the pool as ready photos the
     /// moment they are registered, exactly like a pasted sticker whose upload finished.
     private var slideStickerAssets: [String: [[String: Any]]] = [:]
