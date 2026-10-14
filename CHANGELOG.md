@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.278.0] - 2026-10-14
+
+### Changed
+- fix(ios): slide sticker snap haptics and a tappable video play button (KRI-668) (#1601) <!-- release-pr: 1601 -->
+
 ## [0.78.277.0] - 2026-10-14
 
 ### Changed
