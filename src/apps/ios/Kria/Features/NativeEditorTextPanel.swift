@@ -370,7 +370,13 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
         _ title: String, accessibilityName: String, value: Binding<Double>, range: ClosedRange<Double>,
         step: Double, valueText: String, accessibilityValue: String, identifier: String
     ) -> some View {
-        let slider = NativeEditorSlider(session: session, value: value, in: range, step: step) { Text(title) }
+        // No `step:` on the slider itself: iOS draws a row of tick marks under a stepped slider. The value is
+        // rounded to `step` as it is written instead, so the control behaves the same without the line.
+        let quantized: Binding<Double> = Binding<Double>(
+            get: { value.wrappedValue },
+            set: { (next: Double) in value.wrappedValue = (next / step).rounded() * step }
+        )
+        let slider = NativeEditorSlider(session: session, value: quantized, in: range) { Text(title) }
             .frame(minHeight: 44)
             .accessibilityLabel(accessibilityName)
             .accessibilityValue(accessibilityValue)
