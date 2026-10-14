@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.284.0] - 2026-10-14
+
+### Changed
+- feat(kria): Turkish chat reads meaning from structured fields, not English regex twins (KRI-667) (#1606) <!-- release-pr: 1606 -->
+
 ## [0.78.283.0] - 2026-10-14
 
 ### Changed
