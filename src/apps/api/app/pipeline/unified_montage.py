@@ -1808,6 +1808,23 @@ def _fit_typography(
         for text in (title, closing, *(label.text for label in labels.values()), *extra_texts)
         if text
     ]
+    from app.schemas.phone_text_style import CURATED_PHONE_FONTS  # noqa: PLC0415
+    from app.services.phone_text_styling import current_phone_text_policy  # noqa: PLC0415
+
+    policy = current_phone_text_policy()
+    if policy:
+        # Coverage is role-scoped in the shared pass. This early planner adapter
+        # must not strip a label because a separately requested title font lacks
+        # its glyphs. Use a drawable provisional face for the compiler dry run.
+        chosen = next(
+            (font for font in CURATED_PHONE_FONTS if all(covers(font, text) for text in texts)),
+            None,
+        )
+        if chosen is None:
+            from app.pipeline.phone_text_style import _style_decline
+
+            raise _style_decline("The eligible fonts cannot draw all text. Choose another font.")
+        return chosen, title, closing, labels
     # Color emoji are supplied by iOS, not the bundled face. Let the face
     # selection still choose DM Sans for an ordinary arrow beside an emoji.
     font_texts = [

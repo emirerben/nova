@@ -16,6 +16,56 @@ import XCTest
         XCTAssertTrue(element.isHittable)
     }
 
+    func testTextPreferencesSaveOffEffectsAndReopen() {
+        let app = launch(mode: "text-preferences")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app)
+        manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        XCTAssertTrue(app.staticTexts["Text preferences"].waitForExistence(timeout: 5))
+        let font = app.buttons["text-preference-font"]
+        reveal(font, app: app)
+        font.tap()
+        app.buttons["Automatic"].tap()
+        let outline = app.buttons["text-preference-outline"]
+        reveal(outline, app: app)
+        outline.tap()
+        app.buttons["Off"].tap()
+        let shadow = app.buttons["text-preference-shadow"]
+        reveal(shadow, app: app)
+        shadow.tap()
+        app.buttons["Off"].tap()
+        let save = app.buttons["text-preferences-save"]
+        reveal(save, app: app)
+        save.tap()
+        XCTAssertTrue(app.staticTexts["Saved for future videos."].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["account-text-preferences"].tap()
+        reveal(app.buttons["text-preference-font"], app: app)
+        XCTAssertTrue(app.buttons["text-preference-font"].label.contains("Automatic"))
+        reveal(app.buttons["text-preference-outline"], app: app)
+        XCTAssertTrue(app.buttons["text-preference-outline"].label.contains("Off"))
+        reveal(app.buttons["text-preference-shadow"], app: app)
+        XCTAssertTrue(app.buttons["text-preference-shadow"].label.contains("Off"))
+    }
+
+    func testTextPreferencesStaleWriteKeepsEditsAndOffersReload() {
+        let app = launch(mode: "text-preferences-stale")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app)
+        manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        let shadow = app.buttons["text-preference-shadow"]
+        reveal(shadow, app: app)
+        shadow.tap()
+        app.buttons["Off"].tap()
+        let save = app.buttons["text-preferences-save"]
+        reveal(save, app: app)
+        save.tap()
+        reveal(app.buttons["text-preferences-reload"], app: app)
+        XCTAssertFalse(app.staticTexts["Saved for future videos."].exists)
+    }
+
     func testAIConsentRequiresExplicitChoiceAndDeclineReturnsToSignInAtLargeText() {
         let app = launch(largeText: true)
         XCTAssertTrue(app.staticTexts["Choose how you create."].waitForExistence(timeout: 5))

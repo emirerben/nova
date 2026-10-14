@@ -80,7 +80,14 @@ def stack_gap(previous: dict, current: dict) -> float:
     )
 
 
-def layout_corner_stack(rows: Sequence[dict], *, bottom: bool, canvas: Canvas = PORTRAIT) -> None:
+def layout_corner_stack(
+    rows: Sequence[dict],
+    *,
+    bottom: bool,
+    canvas: Canvas = PORTRAIT,
+    safe_top_frac: float = 0.10,
+    safe_bottom_frac: float = 0.90,
+) -> None:
     """Lay out groups in reading order, allocating space only for overlapping windows.
 
     A group is fitted uniformly, including its gaps. Separate windows may share
@@ -90,13 +97,14 @@ def layout_corner_stack(rows: Sequence[dict], *, bottom: bool, canvas: Canvas = 
     groups: dict[str, list[dict]] = {}
     for row in rows:
         metadata = (row.get("source_params") or {})[STACK_LAYOUT_PARAM]
+        metadata.setdefault("authored_text", row["text"])
         metadata.update(canvas_width=canvas.width, canvas_height=canvas.height)
         groups.setdefault(str(metadata["stack_id"]), []).append(row)
     placed: list[tuple[list[dict], float, float]] = []
     ordered = list(groups.values())
     if bottom:
         ordered.reverse()
-    safe_top, safe_bottom = canvas.height * 0.10, canvas.height * 0.90
+    safe_top, safe_bottom = canvas.height * safe_top_frac, canvas.height * safe_bottom_frac
     for members in ordered:
         bases = [float(row["size_px"]) for row in members]
         overlaps = [

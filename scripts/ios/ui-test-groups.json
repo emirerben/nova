@@ -101,7 +101,9 @@
       "KriaUITests/TeleprompterUITests/testScriptControlsAreReachableAtAccessibilitySize",
       "KriaUITests/TeleprompterUITests/testPreviousTakeAndFailedIntakeKeepTheRecordingRecoverable",
       "KriaUITests/TeleprompterUITests/testWindowBackgroundAndDimensionsSurviveReopening",
-      "KriaUITests/TeleprompterUITests/testWindowHandlesDoNotPauseOrScrollTheScript"
+      "KriaUITests/TeleprompterUITests/testWindowHandlesDoNotPauseOrScrollTheScript",
+      "KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen",
+      "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -306,6 +308,7 @@
     "src/apps/ios/Kria/Features/TeleprompterStore.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/TeleprompterUITests.swift": "creation",
     "src/apps/ios/Kria/Features/TeleprompterReviewFixture.swift": "creation",
-    "src/apps/ios/Tests/KriaUITests/GamedayAddClipUITests.swift": "editor"
+    "src/apps/ios/Tests/KriaUITests/GamedayAddClipUITests.swift": "editor",
+    "src/apps/ios/Kria/Features/TextPreferencesView.swift": "creation"
   }
 }

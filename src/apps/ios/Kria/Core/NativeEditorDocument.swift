@@ -833,6 +833,9 @@ private extension EditorDocument {
                 }
             }
         }
+        if let y = result["appearance"]?.objectValue?["position_y_frac"] {
+            result["y_frac"] = y
+        }
         return result
     }
 

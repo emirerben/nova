@@ -110,3 +110,28 @@ verification directories are now excluded from the API Docker build context.
 
 Merge/deployment and the original account's post-deploy re-send require the normal
 approval and remain outstanding. No production app or account was modified.
+
+### Integration with merged KRI-648
+
+Merged `origin/main` at `c9e3992118656182bad41c426cc77af67661939d` to resolve
+PR #1602's conflict in the iOS test-selection map. Both the gameday journey and
+the new text-preferences screen remain mapped to their respective test groups.
+
+The initial integration regression failed in all four default/explicit-size,
+top-left/bottom-right cases: KRI-648 independently placed each heading and raised
+explicit 36/24px sizes to 40px. Styling now remeasures connected groups together
+after font selection, preserves creator sizes, and checks the group's safe area.
+The original creator copy is retained for rewrapping after a font change; a
+separate red control caught old font line breaks being retained unnecessarily.
+
+After integration, 1,310 API/free replay checks passed (15 skipped), all 102 iOS
+verification-script checks passed, and the full timeline gate passed: 209 web
+assertions, 70 browser journeys and 582 API checks. Five AVFoundation typography
+exports include Inter preferences and wrapped copy, retaining 72/52/40px sizes
+and 24/8px gaps. The production-image overlay CLI passed all 62 cases again;
+both native and overlay montages were inspected. Evidence is in
+`.dev/gameday-text-merge/`, `.dev/overlay-verify-merge/` and `.dev/kri-669-merge-*.log`.
+Creator placement overrides also move the connected group together. The preship
+gate passed again with 1,381 mapped reliability assertions.
+The physical-iPhone results above precede this merge; the integration exports
+use the same native media engine on the host.

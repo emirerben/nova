@@ -104,6 +104,7 @@ def compile_phone_voiceover_montage_plan(
     music: PhoneMusicBed | None = None,
     narration: PhoneNarrationBed | None = None,
     target_lufs: float | None = None,
+    resolved_text_elements: list[dict] | None = None,
 ) -> EditRecipeV2:
     """See the module docstring for the general contract.
 
@@ -274,9 +275,12 @@ def compile_phone_voiceover_montage_plan(
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone montage clips must have unique identities")
     total_duration_s = cursor
+    from app.services.phone_text_styling import register_generation_timeline
+
+    register_generation_timeline(clips)
 
     layers = []
-    if decision.text_mode == "agent_text":
+    if decision.text_mode == "agent_text" and resolved_text_elements is None:
         at_params = extras.get("intro_overlay_params")
         if at_params:
             # Bound both the reveal and the static hold to slightly inside
@@ -327,6 +331,30 @@ def compile_phone_voiceover_montage_plan(
                         ),
                     )
                 layers.append(layer)
+
+    if resolved_text_elements is not None:
+        from app.agents._schemas.text_element import TextElement
+        from app.pipeline.generative_overlays import build_overlays_from_text_elements
+
+        overlays = build_overlays_from_text_elements(
+            [TextElement.model_validate(row) for row in resolved_text_elements],
+            video_duration_s=total_duration_s,
+            independent_box_alignment=True,
+        )
+        for index, overlay in enumerate(overlays):
+            layer, font = compile_text_overlay(
+                overlay, layer_id=f"intro-{index}", canvas=story_canvas
+            )
+            layers.append(layer)
+            if font is not None:
+                manifest[font.id] = font
+                assets[font.id] = MediaAsset(
+                    id=font.id,
+                    relative_path=font.id,
+                    fingerprint=AssetFingerprint(
+                        hex=font.fingerprint.sha256, byte_count=font.fingerprint.byte_count
+                    ),
+                )
 
     tracks = [TimelineTrack(id="montage", kind="video", clips=clips)]
     audio = AudioMixRecipe()

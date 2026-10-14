@@ -402,6 +402,7 @@ def pinned_text_elements(
                 row["size_px"] = window.pin.size_px
             row["source_params"] = {
                 STACK_LAYOUT_PARAM: {
+                    "corner": corner,
                     "heading_level": level,
                     "stack_id": window.pin.stack_id or f"pin-{window.index}",
                     "explicit_size": window.pin.size_px is not None,

@@ -55,6 +55,57 @@ def _bounds(row):
     return y - height / 2, y + height / 2
 
 
+@pytest.mark.parametrize("corner", ["top_left", "bottom_right"])
+@pytest.mark.parametrize("sizes", [[72, 52, 40], [80, 36, 24]])
+def test_phone_font_preferences_preserve_connected_heading_layout(corner, sizes):
+    """KRI-648 must style a connected stack without placing its rows separately."""
+    from app.pipeline.phone_text_style import measure_box, resolve_phone_text_style
+
+    pins = _pins(corner=corner)
+    if sizes != [72, 52, 40]:
+        for pin, size in zip(pins, sizes, strict=True):
+            pin["size_px"] = size
+    original = _rows(pins)
+    rows = resolve_phone_text_style(original, preferences={"pinned": {"font_family": "Inter"}})
+    assert [row["size_px"] for row in rows] == sizes
+    assert [row["text"] for row in rows] == COPY
+    assert len({(row["x_frac"], row["alignment"]) for row in rows}) == 1
+    assert all(row["font_family"] == "Inter" and not row["shadow_enabled"] for row in rows)
+    bounds = [_bounds(row) for row in rows]
+    assert bounds[1][0] - bounds[0][1] == pytest.approx(24, abs=0.2)
+    assert bounds[2][0] - bounds[1][1] == pytest.approx(8, abs=0.2)
+    for row in rows:
+        left, top, right, bottom = measure_box(row)
+        assert left >= 0.05 and right <= 0.84
+        assert top >= 0.095 and bottom <= 0.79
+
+
+def test_preferred_font_rewraps_creator_copy_instead_of_previous_font_line_breaks():
+    from app.pipeline.phone_text_style import resolve_phone_text_style
+    from app.pipeline.text_stack_layout import measure_text_block
+
+    copy = ["Gameday", "Aston Villa v Fenerbahçe — a morning before the train", "6 am"]
+    rows = resolve_phone_text_style(
+        _rows(_pins(text=copy)), preferences={"pinned": {"font_family": "Inter"}}
+    )
+    subtitle = rows[1]
+    expected = measure_text_block({**subtitle, "text": copy[1], "wrap_lines": True})["lines"]
+    assert subtitle["text"].splitlines() == expected
+    assert subtitle["text"].replace("\n", " ") == copy[1]
+
+
+def test_text_style_position_moves_the_connected_group_together():
+    from app.pipeline.phone_text_style import resolve_phone_text_style
+
+    rows = resolve_phone_text_style(
+        _rows(_pins()), requested={"pinned": {"font_family": "Inter", "position": "middle"}}
+    )
+    bounds = [_bounds(row) for row in rows]
+    assert (bounds[0][0] + bounds[-1][1]) / 2 == pytest.approx(960, abs=0.2)
+    assert bounds[1][0] - bounds[0][1] == pytest.approx(24, abs=0.2)
+    assert bounds[2][0] - bounds[1][1] == pytest.approx(8, abs=0.2)
+
+
 def test_incident_compiles_three_levels_with_tighter_subtitle_detail_group():
     plan = _plan({"pinned_texts": _pins()})
     rows = _pinned(_compiled(plan))

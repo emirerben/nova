@@ -443,6 +443,9 @@ def compile_phone_speech_montage_plan(
         audio=mix,
         required_capabilities=caps,
     )
+    from app.services.phone_text_styling import register_generation_timeline
+
+    register_generation_timeline(main)
     return recipe, receipt
 
 
@@ -950,6 +953,9 @@ def compile_phone_voice_behind_footage_plan(
         audio=AudioMixRecipe(original_volume=1.0, target_lufs=target_lufs),
         required_capabilities={"basicComposition", "local1080Export", "audioMix"},
     )
+    from app.services.phone_text_styling import register_generation_timeline
+
+    register_generation_timeline(footage)
     if opening_title:
         from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
             _compile_title_layers,

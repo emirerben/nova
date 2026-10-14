@@ -4,6 +4,7 @@ import asyncio
 import sys
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -72,6 +73,225 @@ async def _delete_users(*user_ids: uuid.UUID) -> None:
             await db.commit()
     except (OperationalError, OSError):
         pass
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_phone_preferences_persist_pin_and_reset_through_real_memory(monkeypatch):
+    """Profile/chat storage -> immutable generation -> actual portable compiler."""
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.canvas import PORTRAIT
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements
+    from app.pipeline.portable_text_layout import compile_text_overlay
+    from app.services.phone_text_styling import stamp_phone_text_style, style_rows
+
+    monkeypatch.setattr(settings, "phone_text_styling_enabled", True)
+    user_id = await _create_user()
+    service, resolver = CreatorDirectionService(), CreatorDirectionResolver()
+    try:
+        async with AsyncSessionLocal() as db:
+            created = await service.create_item(
+                db,
+                user_id,
+                instruction="Always use Inter Medium for titles without outlines or shadows",
+                category="video_style",
+                enforcement="default",
+                normalized_key=None,
+                structured_value=None,
+                expected_revision=0,
+                idempotency_key="phone-standing-title",
+                source_kind="creation_thread",
+            )
+            item_id = created.item_id
+            await db.commit()
+            direction = await resolver.snapshot(db, user_id)
+            assert direction.typed_overrides["text_style_title"] == {
+                "font_family": "Inter Medium",
+                "stroke_width": 0,
+                "shadow_enabled": False,
+            }
+
+            def generation(request=""):
+                job = SimpleNamespace(
+                    assembly_plan=attach_snapshot({}, direction, source="phone-e2e"),
+                    all_candidates={"creator_request": request},
+                )
+                stamp_phone_text_style(job)
+                return job
+
+            saved = generation("Use a yellow title for this video")
+            row = TextElement(
+                id="guided-title",
+                text="İstanbul'da güzel bir gün",
+                start_s=0,
+                end_s=3,
+                font_family="Pacifico",
+                size_px=76,
+                stroke_width=4,
+                shadow_enabled=True,
+                role="generative_intro",
+            ).model_dump(mode="json", exclude_none=True)
+            resolved = style_rows([row], saved.assembly_plan["phone_text_style"])[0]
+            assert (
+                resolved["font_family"],
+                resolved["color"],
+                resolved["stroke_width"],
+                resolved["shadow_enabled"],
+            ) == ("Inter Medium", "#FFFF00", 0, False)
+            overlay = build_overlays_from_text_elements(
+                [TextElement.model_validate(resolved)],
+                video_duration_s=3,
+                independent_box_alignment=True,
+            )[0]
+            layer, _font = compile_text_overlay(overlay, layer_id="title", canvas=PORTRAIT)
+            assert all(run.stroke_width == 0 and not run.blur_layers for run in layer.runs)
+            assert layer.start == 0 and layer.end == 3
+            await service.update_item(
+                db,
+                user_id,
+                item_id,
+                instruction="My title preferences",
+                category="video_style",
+                enforcement="default",
+                normalized_key="text_style_title",
+                structured_value={
+                    "text_style_title": {"font_family": "Montserrat Bold", "shadow_enabled": True}
+                },
+                expected_revision=1,
+                idempotency_key="phone-settings-font",
+            )
+            await db.commit()
+            with pytest.raises(StaleRevision):
+                await service.forget(
+                    db,
+                    user_id,
+                    item_id,
+                    expected_revision=1,
+                    idempotency_key="phone-stale-reset",
+                )
+            await db.rollback()
+            direction = await resolver.snapshot(db, user_id)
+            assert (
+                style_rows([row], generation().assembly_plan["phone_text_style"])[0]["font_family"]
+                == "Montserrat Bold"
+            )
+            stamp_phone_text_style(saved)  # retry cannot reread the changed account
+            assert style_rows([row], saved.assembly_plan["phone_text_style"])[0] == resolved
+            reset = await service.forget(
+                db, user_id, item_id, expected_revision=2, idempotency_key="phone-reset"
+            )
+            await db.commit()
+            direction = await resolver.snapshot(db, user_id)
+            defaults = style_rows([row], generation().assembly_plan["phone_text_style"])[0]
+            assert defaults["stroke_width"] == 0 and defaults["shadow_enabled"] is False
+            await service.undo(
+                db, user_id, reset.id, expected_revision=3, idempotency_key="phone-undo-reset"
+            )
+            await db.commit()
+            assert (await resolver.snapshot(db, user_id)).typed_overrides["text_style_title"][
+                "font_family"
+            ] == "Montserrat Bold"
+    finally:
+        await _delete_users(user_id)
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_phone_font_only_chat_replacement_preserves_role_properties(monkeypatch):
+    """Standing chat change -> real ledger -> new generation -> portable text."""
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.canvas import PORTRAIT
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements
+    from app.pipeline.portable_text_layout import compile_text_overlay
+    from app.services.phone_text_styling import stamp_phone_text_style, style_rows
+
+    monkeypatch.setattr(settings, "phone_text_styling_enabled", True)
+    user_id = await _create_user()
+    service, resolver = CreatorDirectionService(), CreatorDirectionResolver()
+    try:
+        async with AsyncSessionLocal() as db:
+            await service.create_item(
+                db,
+                user_id,
+                instruction="Use outlines and shadows for text",
+                category="video_style",
+                enforcement="default",
+                normalized_key="text_style_all_text",
+                structured_value={
+                    "text_style_all_text": {"stroke_width": 2, "shadow_enabled": True}
+                },
+                expected_revision=0,
+                idempotency_key="parent-effects",
+                source_kind="creation_thread",
+            )
+            created = await service.create_item(
+                db,
+                user_id,
+                instruction="My title style",
+                category="video_style",
+                enforcement="default",
+                normalized_key="text_style_title",
+                structured_value={
+                    "text_style_title": {
+                        "font_family": "Inter Medium",
+                        "stroke_width": 0,
+                        "shadow_enabled": False,
+                        "color": "#FFFF00",
+                        "position": "top_left",
+                    }
+                },
+                expected_revision=1,
+                idempotency_key="title-properties",
+                source_kind="creation_thread",
+                user_locked=False,
+            )
+            await db.commit()
+            arguments = dict(
+                operation_kind="supersede",
+                target_item_id=created.item_id,
+                instruction="Instead always use Poppins Bold for titles",
+                category="video_style",
+                enforcement="default",
+                normalized_key="text_style_title",
+                structured_value={"text_style_title": {"font_family": "Poppins Bold"}},
+                expected_revision=2,
+                idempotency_key="chat-font-only",
+                source_thread_id=None,
+                source_event_id=None,
+            )
+            changed = await service.apply_extracted_transition(db, user_id, **arguments)
+            await db.commit()
+            retry = await service.apply_extracted_transition(db, user_id, **arguments)
+            assert retry.id == changed.id
+            direction = await resolver.snapshot(db, user_id)
+            rule = direction.typed_overrides["text_style_title"]
+            assert rule["stroke_width"] == 0 and rule["shadow_enabled"] is False
+            assert rule["color"] == "#FFFF00" and rule["position"] == "top_left"
+            assert rule["font_family"] == "Poppins Bold"
+            job = SimpleNamespace(
+                assembly_plan=attach_snapshot({}, direction, source="chat-style-e2e"),
+                all_candidates={},
+            )
+            stamp_phone_text_style(job)
+            row = TextElement(
+                id="guided-title", text="İstanbul güzel", start_s=0, end_s=3, size_px=76
+            ).model_dump(mode="json", exclude_none=True)
+            resolved = style_rows([row], job.assembly_plan["phone_text_style"])[0]
+            assert resolved["stroke_width"] == 0 and resolved["shadow_enabled"] is False
+            overlay = build_overlays_from_text_elements(
+                [TextElement.model_validate(resolved)],
+                video_duration_s=3,
+                independent_box_alignment=True,
+            )[0]
+            layer, _ = compile_text_overlay(overlay, layer_id="title", canvas=PORTRAIT)
+            assert all(run.stroke_width == 0 and not run.blur_layers for run in layer.runs)
+            await service.undo(
+                db, user_id, changed.id, expected_revision=3, idempotency_key="undo-chat-font"
+            )
+            await db.commit()
+            restored = (await resolver.snapshot(db, user_id)).typed_overrides["text_style_title"]
+            assert restored["font_family"] == "Inter Medium"
+            assert restored["stroke_width"] == 0 and restored["shadow_enabled"] is False
+    finally:
+        await _delete_users(user_id)
 
 
 @pytest.mark.asyncio(loop_scope="module")

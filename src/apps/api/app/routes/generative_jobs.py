@@ -1208,6 +1208,9 @@ class EditorCaptionAppearance(BaseModel):
     shadow_color: str | None = None
     shadow_opacity: float | None = Field(None, ge=0, le=1, allow_inf_nan=False)
     highlight_spoken_word: bool | None = None
+    position_x_frac: float | None = Field(None, ge=0.05, le=0.95, allow_inf_nan=False)
+    position_y_frac: float | None = Field(None, ge=0.10, le=0.90, allow_inf_nan=False)
+    max_width_frac: float | None = Field(None, ge=0.2, le=1, allow_inf_nan=False)
 
     @field_validator("stroke_color", "shadow_color")
     @classmethod
@@ -7248,6 +7251,13 @@ def _text_bend_capability(variant: dict) -> bool:
 
 def _editor_capabilities(job: Job, variant: dict) -> dict:
     """Editor capability map for one variant, clamped to what its renderer can save."""
+    if variant.get("render_destination") == "device":
+        from app.services.phone_text_styling import (
+            PHONE_TEXT_STYLE_FIELD,
+            require_phone_text_style_client,
+        )
+
+        require_phone_text_style_client(variant.get(PHONE_TEXT_STYLE_FIELD))
     capabilities = {
         **_device_clamped_editor_capabilities(job, variant),
         "drawings": _drawing_capabilities(job, variant),
@@ -10439,6 +10449,12 @@ def _prepare_editor_commit(
     variant = _find_variant(job, variant_id)
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    from app.services.phone_text_styling import (
+        PHONE_TEXT_STYLE_FIELD,
+        require_phone_text_style_client,
+    )
+
+    require_phone_text_style_client(variant.get(PHONE_TEXT_STYLE_FIELD))
     payload = normalize_editor_deletion_request(job, variant_id, payload)
     require_guided_story_editor_commit(job, variant_id, payload)
 

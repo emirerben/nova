@@ -262,6 +262,40 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
                 if old_id not in known and str(old_id).startswith("kria-"):
                     row["id"] = f"creation-{program.base_digest[:12]}-{index}"
                 known.add(row.get("id"))
+            from app.services.phone_text_styling import current_phone_text_policy
+
+            if current_phone_text_policy() and op.get("op") == "patch_text_style":
+                indexes = op.get("bar_indexes") or [op.get("bar_index")]
+                for index in indexes:
+                    row = state.text_bar(index)
+                    source = dict(row.get("source_params") or {})
+                    source["creator_style_fields"] = sorted(
+                        set(source.get("creator_style_fields") or []) | set(op.get("patch") or {})
+                    )
+                    row["source_params"] = source
+            if current_phone_text_policy() and op.get("op") == "add_text":
+                # Added text carries the creator's style directly rather than a
+                # later patch. Keep those independently requested values too.
+                row = state.text[-1]
+                source = dict(row.get("source_params") or {})
+                fields = set(op.get("patch") or {})
+                if op.get("style_from") is not None:
+                    fields.update(
+                        {
+                            "font_family",
+                            "color",
+                            "size_px",
+                            "alignment",
+                            "position",
+                            "x_frac",
+                            "y_frac",
+                            "stroke_width",
+                            "shadow_enabled",
+                            "max_width_frac",
+                        }
+                    )
+                source["creator_style_fields"] = sorted(fields)
+                row["source_params"] = source
 
         state = apply_text_lane_ops(
             texts, copy.deepcopy(slots), program.operations, hook=stabilize_added_ids

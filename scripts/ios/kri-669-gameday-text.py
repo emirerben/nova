@@ -96,6 +96,8 @@ def prepare(out: Path) -> None:
             "6 am",
         ],
     }
+    cases["styled"] = cases["hierarchy"]
+    cases["styled-wrapped"] = cases["wrapped"]
     for name, copy in cases.items():
         pins = [{"text": text, "corner": "top_left"} for text in copy]
         if name != "original":
@@ -107,6 +109,13 @@ def prepare(out: Path) -> None:
             output_orientation="portrait",
         )
         compiled = compile_execution_plan(plan.guided_edit(), track=None)
+        if name.startswith("styled"):
+            from app.pipeline.phone_text_style import resolve_phone_text_style
+
+            compiled["text_elements"] = resolve_phone_text_style(
+                compiled["text_elements"],
+                preferences={"all_text": {"font_family": "Inter"}},
+            )
         recipe = compile_phone_guided_plan(
             GuidedStoryExecutionPlan.model_validate(compiled), bindings
         )
@@ -125,7 +134,7 @@ def prepare(out: Path) -> None:
         (directory / "rows.json").write_text(
             json.dumps(compiled["text_elements"], indent=2)
         )
-    print(f"Prepared 3 real server recipes: {out}")
+    print(f"Prepared {len(cases)} real server recipes: {out}")
 
 
 def compare(out: Path) -> None:
