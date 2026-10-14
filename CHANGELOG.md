@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.274.0] - 2026-10-14
+
+### Changed
+- fix(kria): moment picker avoids covered-lens / ground / blur stretches (KRI-625) (#1588) <!-- release-pr: 1588 -->
+
 ## [0.78.273.0] - 2026-10-14
 
 ### Changed
