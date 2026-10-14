@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.276.0] - 2026-10-14
+
+### Changed
+- feat(kria): Talking edits show images as cards, videos full screen, in filming order (KRI-661) (#1597) <!-- release-pr: 1597 -->
+
 ## [0.78.275.0] - 2026-10-14
 
 ### Changed
