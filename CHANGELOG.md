@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.283.0] - 2026-10-14
+
+### Changed
+- fix(ios): autoplay the selected video slide without native player chrome (KRI-644) (#1605) <!-- release-pr: 1605 -->
+
 ## [0.78.282.0] - 2026-10-14
 
 ### Changed
