@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.282.0] - 2026-10-14
+
+### Changed
+- feat(ios): show Reels and TikTok danger zones (KRI-670) (#1603) <!-- release-pr: 1603 -->
+
 ## [0.78.281.0] - 2026-10-14
 
 ### Changed
