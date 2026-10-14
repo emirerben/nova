@@ -6,6 +6,8 @@ import Foundation
 /// Deliberately contains metadata and file identifiers only: pixel buffers never cross this boundary.
 public struct EditRecipe: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 2
+    /// Most text layers one recipe may carry (mirrors the server's EditRecipeV2 cap).
+    public static let maxTextLayers = 500
     public var schemaVersion: Int
     public var rendererVersion: String
     public var canvas: Canvas
@@ -99,7 +101,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
             try layer.validate()
             guard layer.end <= TimelineMath.totalDuration(of: self) else { throw RecipeError.invalidTimeline }
         }
-        guard textLayers.count <= 500, Set(textLayers.map(\.id)).count == textLayers.count else { throw RecipeError.invalidTimeline }
+        guard textLayers.count <= Self.maxTextLayers, Set(textLayers.map(\.id)).count == textLayers.count else { throw RecipeError.invalidTimeline }
         for layer in textLayers { try layer.validate(duration: TimelineMath.totalDuration(of: self), manifest: assetManifest) }
         guard frameRate.isFinite && frameRate > 0 && frameRate <= 240 else { throw RecipeError.invalidFrameRate(frameRate) }
         let clips = tracks.flatMap(\.clips)
