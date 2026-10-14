@@ -80,6 +80,27 @@ def understanding_payload(meta: Any, *, best_moments: list[dict] | None = None) 
     return record.model_dump()
 
 
+def unusable_spans_payload(meta: Any) -> list[dict[str, Any]]:
+    """Persistable ``ClipMeta.unusable_spans`` (KRI-625); malformed spans are dropped.
+
+    Read here, not in autoplace: this module is the allowed ClipMeta reader
+    (guard: tests/pipeline/test_clip_meta_dormant_readers.py).
+    """
+    spans: list[dict[str, Any]] = []
+    for sp in getattr(meta, "unusable_spans", None) or []:
+        if not isinstance(sp, dict):
+            continue
+        try:
+            start_s = round(float(sp.get("start_s", 0.0)), 3)
+            end_s = round(float(sp.get("end_s", 0.0)), 3)
+        except (TypeError, ValueError):
+            continue
+        if end_s > start_s:
+            reason = str(sp.get("reason", "") or "").strip()[:80]
+            spans.append({"start_s": start_s, "end_s": end_s, "reason": reason})
+    return spans
+
+
 def clip_record(analysis: dict[str, Any] | None, *, kind: str = "video") -> ClipUnderstanding:
     """Project a stored analysis dict into the shared record. Never raises."""
     media_kind = "image" if kind == "image" else "video"

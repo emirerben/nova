@@ -46,6 +46,14 @@ class Moment(BaseModel):
     description: str = ""
 
 
+class UnusableSpan(BaseModel):
+    """A stretch of the clip that must never be a chosen shot (KRI-625)."""
+
+    start_s: float = Field(..., ge=0)
+    end_s: float = Field(..., ge=0)
+    reason: str = ""
+
+
 class ClipMetadataInput(BaseModel):
     file_uri: str
     file_mime: str = "video/mp4"
@@ -102,6 +110,9 @@ class ClipMetadataOutput(BaseModel):
     hook_text: str
     hook_score: float = Field(..., ge=0, le=10)
     best_moments: list[Moment] = Field(default_factory=list)
+    # KRI-625: stretches where the lens is covered, the camera points at the
+    # ground/feet, or the image is a blur. Optional: absent = no quality data.
+    unusable_spans: list[UnusableSpan] = Field(default_factory=list)
     detected_subject: str = ""
     brands: list[str] = Field(default_factory=list)
     # Composition signal for agent-decided overlay sizing (see overlay_sizing.py).
@@ -370,7 +381,9 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         # that feed app.services.clip_understanding.understanding_payload. Free
         # text/flags only, all defaulted + length-clamped, so a missing/drifted
         # value never breaks parsing.
-        prompt_version="2026-09-21.1",
+        # 2026-10-13.1 (KRI-625) — added `unusable_spans` (covered lens, camera at
+        # the ground, motion blur) so moment pickers avoid them. Optional field.
+        prompt_version="2026-10-13.1",
         model="gemini-2.5-flash",
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,
@@ -502,6 +515,23 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
             except (ValidationError, TypeError, ValueError):
                 continue
 
+        # Quality spans are best-effort: a malformed entry is dropped, never an error.
+        spans: list[UnusableSpan] = []
+        spans_raw = data.get("unusable_spans")
+        for sp in spans_raw if isinstance(spans_raw, list) else []:
+            if not isinstance(sp, dict):
+                continue
+            try:
+                span = UnusableSpan(
+                    start_s=float(sp.get("start_s")),
+                    end_s=float(sp.get("end_s")),
+                    reason=" ".join(str(sp.get("reason", "") or "").split())[:80],
+                )
+            except (ValidationError, TypeError, ValueError):
+                continue
+            if span.end_s > span.start_s:
+                spans.append(span)
+
         # Surface "Gemini sent items but every one failed coercion" as a schema
         # error so the runtime retries with clarification. Without this, an empty
         # `moments` list silently passes back to the orchestrator (refusal check
@@ -531,6 +561,7 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
                 hook_text=str(data.get("hook_text", "") or ""),
                 hook_score=hook_score,
                 best_moments=moments,
+                unusable_spans=spans[:20],
                 detected_subject=str(data.get("detected_subject", "") or ""),
                 brands=data.get("brands") if isinstance(data.get("brands"), list) else [],
                 # Composition fields drive overlay_sizing. parse() reconstructs the

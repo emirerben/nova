@@ -176,6 +176,9 @@ def _load_ready_pool_assets(
                 "aspect": row.aspect,
                 "user_context": getattr(row, "user_context", None) or "",
                 "analysis": row.analysis or {},
+                # KRI-661: when the photo/video was taken (Photos metadata the phone
+                # sent at upload), so a "in the order I filmed" ask can sequence them.
+                "capture": getattr(row, "capture", None),
             }
             for row in rows
         ]
@@ -188,6 +191,8 @@ def resolve_phone_card_geometry(
     job_id: str,
     footprints_by_id: dict[str, MediaFootprint],
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
+    anchors_per_card: int = _MAX_FACE_ANCHORS_PER_CARD,
+    max_anchors: int = _MAX_FACE_ANCHORS_TOTAL,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, str], str]:
     """Face-aware, caption-safe geometry arbitration shared by every phone
     card-placement grounding module (KRI-176 overlay grounding, KRI-178
@@ -217,6 +222,10 @@ def resolve_phone_card_geometry(
     - ``reason_by_id``: omitted card id -> ``"no_safe_spot"`` or ``"duplicate"``.
     - ``face_sampling``: ``"ok"`` | ``"failed"`` | ``"skipped"``.
 
+    ``anchors_per_card`` / ``max_anchors`` (KRI-661, defaults = the original 4 per card, 12 in
+    all): a long sequence of cards (33 photos) would otherwise spend every sample on the first
+    three, leave the rest unchecked and still report ``ok``.
+
     ``face_box_to_canvas`` (KRI-547, default ``None`` = unchanged): when the
     speaker clip is drawn through a face-filled crop, the sampled faces are
     taken RAW and mapped onto the canvas with it
@@ -232,8 +241,8 @@ def resolve_phone_card_geometry(
     for overlay in overlays:
         start_s = float(overlay.get("start_s") or 0.0)
         end_s = float(overlay.get("end_s") or start_s)
-        anchors.extend(_evenly_spaced_anchors(start_s, end_s, _MAX_FACE_ANCHORS_PER_CARD))
-    anchors = anchors[:_MAX_FACE_ANCHORS_TOTAL]
+        anchors.extend(_evenly_spaced_anchors(start_s, end_s, anchors_per_card))
+    anchors = anchors[:max_anchors]
 
     face_regions: list[ProtectedRegion] = []
     face_sampling = "skipped"
@@ -365,25 +374,77 @@ def _match_placements(
     return heuristic_match(words, candidate_assets, duration_s=duration_s), [], "heuristic"
 
 
+def _is_fullscreen_asset(asset: dict, layout: str) -> bool:
+    """Does this Visual play full-frame under ``layout`` (KRI-661)?
+
+    ``"fullscreen"`` = every Visual; ``"fullscreen_videos"`` / ``"fullscreen_images"``
+    = that kind only (the other kind stays a small card on top of the speaker).
+    """
+    if layout == "fullscreen":
+        return True
+    kind = _kind_for_asset(asset)
+    return (layout == "fullscreen_videos" and kind == "video") or (
+        layout == "fullscreen_images" and kind == "image"
+    )
+
+
+def _order_by_capture(assets: list[dict]) -> list[dict]:
+    """Dated Visuals in filming order; undated ones keep their upload position.
+
+    A stable merge: the positions that held an undated Visual stay put, and the
+    dated ones fill the remaining positions oldest first, so a photo with no
+    metadata never jumps to the front or the back (KRI-661).
+    """
+    from app.services.clip_facts import visual_capture_time  # noqa: PLC0415
+
+    times = [visual_capture_time(a.get("capture")) for a in assets]
+    dated = sorted((i for i, t in enumerate(times) if t is not None), key=lambda i: (times[i], i))
+    ordered = list(assets)
+    slots = [i for i, t in enumerate(times) if t is not None]
+    for slot, source in zip(slots, dated, strict=True):
+        ordered[slot] = assets[source]
+    return ordered
+
+
 def _ground_fullscreen_sequence(
     candidate_assets: list[dict],
     *,
     unplaced: list[dict],
     words: list[dict],
     duration_s: float,
+    layout: str = "fullscreen",
+    chronological: bool = False,
+    job_id: str = "",
+    clip_path: str | None = None,
+    face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
+    occupied: Iterable[tuple[float, float]] = (),
 ) -> GroundedOverlayCards:
     """KRI-297: "use all my Visuals full screen" -- deterministic, no LLM.
 
-    Every candidate Visual (pool order) gets one full-canvas cutaway in an
-    even slot across ``[hook, duration - tail]``. A cutaway's start is snapped
-    to the nearest spoken-word start (within the autoplace snap tolerance)
-    when one is near, else it sits at the plain slot time. When the talk is
-    too short to give every Visual the 1.5s minimum, the tail is dropped and
-    reported ``no_room_in_timeline`` (never two cutaways at once). Each
-    window lives wholly inside its own slot, so windows cannot overlap.
-    Pre-placed PiP/beat cards render on a track above the full-screen one, so
-    ``occupied`` is intentionally not consulted here.
+    Every candidate Visual (pool order) gets one cutaway in an even slot across
+    ``[hook, duration - tail]``. A cutaway's start is snapped to the nearest
+    spoken-word start (within the autoplace snap tolerance) when one is near,
+    else it sits at the plain slot time. When the talk is too short to give
+    every Visual the 1.5s minimum, the tail is dropped and reported
+    ``no_room_in_timeline`` (never two cutaways at once). Each window lives
+    wholly inside its own slot, so windows cannot overlap.
+
+    KRI-661: ``layout`` may split by kind (``fullscreen_videos`` /
+    ``fullscreen_images``): the full-frame kind covers the speaker, the other
+    stays a face-aware picture-in-picture card, both in the SAME slot sequence
+    so they never share a moment. ``chronological`` orders the pool by when each
+    Visual was captured (undated ones keep their upload position). A card that
+    would land on a creator-named reaction beat or the closing text (``occupied``)
+    is reported ``overlap`` instead of stacking on it; full-frame cutaways sit
+    below those cards, so they ignore ``occupied`` as before.
     """
+    from app.services.clip_facts import visual_capture_time  # noqa: PLC0415
+
+    dated = sum(1 for a in candidate_assets if visual_capture_time(a.get("capture")) is not None)
+    reordered = chronological and dated >= 2
+    if chronological:
+        candidate_assets = _order_by_capture(candidate_assets)
+    occupied_windows = [(float(a), float(b)) for a, b in occupied]
     lo = min(_FS_HOOK_FREE_S, max(duration_s, 0.0))
     hi = max(duration_s - _FS_TAIL_FREE_S, lo)
     span = hi - lo
@@ -399,10 +460,10 @@ def _ground_fullscreen_sequence(
             }
         )
 
-    cards: list[SubtitledOverlayCard] = []
-    placed: list[dict] = []
     word_starts = [float(w.get("start_s", 0.0)) for w in words]
     slot_len = span / len(fitted) if fitted else 0.0
+    # (asset, start, end, fullscreen, snapped) for every Visual that got a window.
+    windows: list[tuple[dict, float, float, bool, bool]] = []
     for index, asset in enumerate(fitted):
         kind = _kind_for_asset(asset)
         slot_start = lo + index * slot_len
@@ -427,19 +488,118 @@ def _ground_fullscreen_sequence(
         start = _snap_to_word_start(nominal, words) if words else nominal
         start = min(max(start, slot_start), slot_end - window)
         snapped = any(abs(start - ws) < 1e-3 for ws in word_starts)
-        card = SubtitledOverlayCard(
-            id=f"fs-{len(cards)}",
-            media_id=str(asset["id"]),
-            gcs_path=asset["gcs_path"],
-            generation=str(asset.get("gcs_generation")),
-            start_s=round(start, 3),
-            end_s=round(start + window, 3),
-            fade=False,
-            kind=kind,
-            source_start_s=0.0,
-            display_mode="fullscreen",
+        windows.append(
+            (
+                asset,
+                round(start, 3),
+                round(start + window, 3),
+                _is_fullscreen_asset(asset, layout),
+                snapped,
+            )
         )
+
+    # Picture-in-picture cards (the kind that is NOT full-frame) need a face- and
+    # caption-safe spot; the full-frame ones need no geometry.
+    pip_geometry: dict[str, dict[str, Any]] = {}
+    pip_omitted: dict[str, str] = {}
+    face_sampling = "skipped"
+    pip_windows = []
+    for window in windows:
+        asset, start, end, fullscreen, _snapped = window
+        if fullscreen:
+            continue
+        if any(start < o_end and o_start < end for o_start, o_end in occupied_windows):
+            unplaced.append(
+                {
+                    "media_id": str(asset["id"]),
+                    "label": _label_for_asset(asset),
+                    "reason": "overlap",
+                    "kind": _kind_for_asset(asset),
+                }
+            )
+            continue
+        pip_windows.append(window)
+    windows = [w for w in windows if w[3] or w in pip_windows]
+    if pip_windows:
+        overlays_for_arbitration: list[dict[str, Any]] = []
+        footprints_by_id: dict[str, MediaFootprint] = {}
+        for asset, start, end, _fs, _snapped in pip_windows:
+            oid = str(asset["id"])
+            aspect = float(asset["aspect"]) if asset.get("aspect") else 1.0
+            footprints_by_id[oid] = MediaFootprint(aspect_ratio=aspect)
+            overlays_for_arbitration.append(
+                {
+                    "id": oid,
+                    "asset_id": oid,
+                    "src_gcs_path": asset.get("gcs_path"),
+                    "position": "custom",
+                    "x_frac": _DEFAULT_CARD_X_FRAC,
+                    "y_frac": _DEFAULT_CARD_Y_FRAC,
+                    "scale": _DEFAULT_CARD_SCALE,
+                    "start_s": start,
+                    "end_s": end,
+                }
+            )
+        pip_geometry, pip_omitted, face_sampling = resolve_phone_card_geometry(
+            overlays_for_arbitration,
+            clip_path=clip_path,
+            job_id=job_id,
+            footprints_by_id=footprints_by_id,
+            # One sample per card once the sequence is long: every card gets looked at.
+            anchors_per_card=1 if len(pip_windows) > 3 else _MAX_FACE_ANCHORS_PER_CARD,
+            max_anchors=max(_MAX_FACE_ANCHORS_TOTAL, min(len(pip_windows), 60)),
+            **(
+                {"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}
+            ),
+        )
+
+    cards: list[SubtitledOverlayCard] = []
+    placed: list[dict] = []
+    for asset, start, end, fullscreen, snapped in windows:
+        kind = _kind_for_asset(asset)
+        media_id = str(asset["id"])
+        if fullscreen:
+            card = SubtitledOverlayCard(
+                id=f"fs-{len(cards)}",
+                media_id=media_id,
+                gcs_path=asset["gcs_path"],
+                generation=str(asset.get("gcs_generation")),
+                start_s=start,
+                end_s=end,
+                fade=False,
+                kind=kind,
+                source_start_s=0.0,
+                display_mode="fullscreen",
+            )
+        else:
+            resolved = pip_geometry.get(media_id)
+            if resolved is None:
+                unplaced.append(
+                    {
+                        "media_id": media_id,
+                        "label": _label_for_asset(asset),
+                        "reason": pip_omitted.get(media_id, "no_safe_spot"),
+                        "kind": kind,
+                    }
+                )
+                continue
+            card = SubtitledOverlayCard(
+                id=f"pip-{len(cards)}",
+                media_id=media_id,
+                gcs_path=asset["gcs_path"],
+                generation=str(asset.get("gcs_generation")),
+                start_s=float(resolved["start_s"]),
+                end_s=float(resolved["end_s"]),
+                x_frac=float(resolved["x_frac"]),
+                y_frac=min(float(resolved["y_frac"]), CAPTION_BAND_TOP_FRAC),
+                scale=float(resolved["scale"]),
+                fade=True,
+                z=0,
+                kind=kind,
+                source_start_s=0.0,
+            )
         cards.append(card)
+        shown = "full-screen" if fullscreen else "as a card"
         placed.append(
             {
                 "media_id": card.media_id,
@@ -447,22 +607,25 @@ def _ground_fullscreen_sequence(
                 "start_s": card.start_s,
                 "end_s": card.end_s,
                 "reason": (
-                    "full-screen, timed to a spoken word"
+                    f"{shown}, timed to a spoken word"
                     if snapped
-                    else "full-screen, evenly spaced across the talk"
+                    else f"{shown}, evenly spaced across the talk"
                 ),
                 "kind": kind,
+                "display": "fullscreen" if fullscreen else "pip",
             }
         )
     receipt = {
         "version": 1,
         "matcher": "sequence",
-        "layout": "fullscreen",
-        "face_sampling": "skipped",
+        "layout": "fullscreen" if layout == "fullscreen" else "mixed",
+        "face_sampling": face_sampling,
         "placed": placed,
         "unplaced": unplaced,
         "wishlist": [],
     }
+    if reordered:
+        receipt["order"] = "capture_time"
     return GroundedOverlayCards(cards=cards, receipt=receipt)
 
 
@@ -477,6 +640,7 @@ def ground_phone_subtitled_overlays(
     used_media_ids: frozenset[str] = frozenset(),
     video_supported: bool = False,
     layout: str = "pip",
+    chronological: bool = False,
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
 ) -> GroundedOverlayCards:
     """Match the speaker's transcript against the item's ready Visuals pool
@@ -551,9 +715,18 @@ def ground_phone_subtitled_overlays(
             continue
         candidate_assets.append(asset)
 
-    if layout == "fullscreen":
+    if layout in ("fullscreen", "fullscreen_videos", "fullscreen_images"):
         return _ground_fullscreen_sequence(
-            candidate_assets, unplaced=unplaced, words=words, duration_s=duration_s
+            candidate_assets,
+            unplaced=unplaced,
+            words=words,
+            duration_s=duration_s,
+            layout=layout,
+            chronological=chronological,
+            job_id=job_id,
+            clip_path=clip_path,
+            face_box_to_canvas=face_box_to_canvas,
+            occupied=occupied_list,
         )
 
     if not candidate_assets or not words:

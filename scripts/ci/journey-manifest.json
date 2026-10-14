@@ -108,7 +108,8 @@
         "scripts/ios/kri-651-approved-hook-e2e.py",
         "src/apps/api/app/tasks/generative_build.py",
         "src/apps/api/tests/evals/request_following/test_approved_hook_journey.py",
-        "src/apps/api/tests/kria/test_approved_hook_observer_postgres.py"
+        "src/apps/api/tests/kria/test_approved_hook_observer_postgres.py",
+        "src/apps/api/tests/fixtures/incidents/kri661-talking-clip-photos-order-asks-nothing.json"
       ]
     },
     {
@@ -433,6 +434,15 @@
       ]
     },
     {
+      "id": "kri-625-moment-quality",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_best_parts.py tests/pipeline/test_clip_meta_dormant_readers.py",
+      "paths": [
+        "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
+        "src/apps/api/prompts/analyze_clip.txt"
+      ]
+    },
+    {
       "id": "kri-646-text-bend",
       "needs_native": false,
       "api_tests": "tests/kria/test_text_bend.py",
@@ -440,6 +450,26 @@
         "src/apps/api/app/kria/portable_text.py",
         "src/apps/api/app/pipeline/generative_overlays.py",
         "src/apps/api/tests/kria/test_text_bend.py"
+      ]
+    },
+    {
+      "id": "kri-628-opening-cut",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_opening_cut.py",
+      "paths": [
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/pipeline/phone_opening_cut.py",
+        "src/apps/api/app/services/spoken_quotes.py"
+      ]
+    },
+    {
+      "id": "kri-632-phone-captions",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_caption_cue_budget.py tests/pipeline/test_caption_spelling.py",
+      "paths": [
+        "src/apps/api/app/pipeline/captions.py",
+        "src/apps/api/app/pipeline/caption_spelling.py",
+        "src/apps/api/tests/fixtures/kri632_t1_talking_words.json"
       ]
     },
     {

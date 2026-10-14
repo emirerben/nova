@@ -932,7 +932,9 @@ def _order_basis(
     if valid and (len(set(ids)) != len(ids) or (selected and set(ids) != selected)):
         valid, ids = False, []
     missing = []
-    if valid and wants_capture:
+    # KRI-661: one clip has no order to promise (a talk-to-camera recording with photo
+    # Visuals), so a missing filming time on it is not a question worth asking.
+    if valid and wants_capture and len(rows) > 1:
         for row in rows:
             capture = capture_from_assignment(row)
             if not (capture and capture.capture_time):
@@ -1832,6 +1834,14 @@ def _natural_capacity_s(
     return None
 
 
+def _asks_speech_cleanup(brief: Any) -> bool:
+    """The live brief already asks to cut pauses / fillers / retakes from the speech."""
+
+    from app.kria.brief_checks import _wants_cleanup  # noqa: PLC0415
+
+    return any(_wants_cleanup(req) for req in _live(brief))
+
+
 def _length_vs_natural(
     strategy: Mapping[str, Any],
     brief: Any,
@@ -1852,6 +1862,11 @@ def _length_vs_natural(
     if natural is None:
         return None
     owner, capacity, can_trim = natural
+    if owner == "take" and _asks_speech_cleanup(brief):
+        # KRI-629: the take's raw length is not what the edit will run. Pause/filler
+        # cleanup is consented to at approval, after this question would have been
+        # asked; the length ask is judged against the cleaned render instead.
+        return None
     source_capacity = capacity
     if capacity > cap.max_duration_s:
         if not can_trim:

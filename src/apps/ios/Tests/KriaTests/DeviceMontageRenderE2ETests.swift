@@ -155,6 +155,10 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
     }
 
     func testGenerationPinnedTextStylesPreviewAndExport() async throws {
+        // This test exports all 27 cases serially. Hosted Mac runners exceeded
+        // 180 seconds while still advancing through the palette; keep a bounded
+        // batch allowance without relaxing the individual render assertions.
+        executionTimeAllowance = 600
         let input = try inputDirectory()
         let meta = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: input.appendingPathComponent("e2e.json"))) as? [String: Any])
         let cases = try XCTUnwrap(meta["cases"] as? [String: Any])

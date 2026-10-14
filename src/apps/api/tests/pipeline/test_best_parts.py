@@ -4,6 +4,7 @@ from app.pipeline.best_parts import (
     MAX_BEST_PARTS_DURATION_S,
     allocate_best_parts_for_voiceover,
     select_best_parts,
+    select_moment_windows,
 )
 from app.pipeline.unified_montage import BriefView, UnifiedClip, plan_unified_montage
 from app.services.length_planning import build_length_plan
@@ -356,3 +357,40 @@ def test_unified_best_parts_preserves_creator_order_pins_and_label_hold():
     assert cuts["a"].source_start_s <= 1 <= cuts["a"].source_end_s
     assert plan.snapshot.pinned_texts[0].text == "Pinned"
     assert [row["media_id"] for row in plan.record()["best_parts"]] == ["b", "a"]
+
+
+def _take(spans):
+    return {
+        "media_id": "walk",
+        "duration_s": 60,
+        "analysis": {
+            "best_moments": [
+                {"start_s": 38, "end_s": 50, "energy": 9},
+                {"start_s": 10, "end_s": 20, "energy": 5},
+            ],
+            "unusable_spans": spans,
+        },
+    }
+
+
+def test_moment_windows_skip_unusable_spans_even_when_they_hold_the_top_moment():
+    # KRI-625: the highest-energy moment sat on ground / shoes / a finger over the lens.
+    bad = [{"start_s": 40, "end_s": 50, "reason": "finger over lens"}]
+    result = select_moment_windows([_take(bad)], target_duration_s=9, moment_count=3)
+    assert result is not None and len(result.parts) == 3
+    for part in result.parts:
+        assert part.source_end_s <= 40 or part.source_start_s >= 50
+
+
+def test_moment_windows_without_quality_data_are_unchanged():
+    clean = select_moment_windows([_take([])], target_duration_s=9, moment_count=3)
+    missing = _take([])
+    del missing["analysis"]["unusable_spans"]
+    assert clean == select_moment_windows([missing], target_duration_s=9, moment_count=3)
+    assert any(40 <= p.source_start_s < 50 for p in clean.parts)
+
+
+def test_moment_windows_fail_open_when_everything_is_unusable():
+    everything = [{"start_s": 0, "end_s": 60, "reason": "pocketed"}]
+    result = select_moment_windows([_take(everything)], target_duration_s=9, moment_count=3)
+    assert result is not None and len(result.parts) == 3

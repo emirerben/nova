@@ -26,7 +26,11 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
+from app.agents._schemas.creator_agent import (
+    FULLSCREEN_OVERLAY_DISPLAYS,
+    CreativeStrategy,
+    ResolvedCreatorManifest,
+)
 from app.agents._schemas.creator_policy import (
     CAPABILITY_USER_SONG,
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
@@ -691,7 +695,10 @@ def _repair_detail(before: CreativeStrategy, after: CreativeStrategy) -> str:
                 ),
             )
         )
-    if before.overlay_display == "fullscreen" and after.overlay_display != "fullscreen":
+    if (
+        before.overlay_display in FULLSCREEN_OVERLAY_DISPLAYS
+        and after.overlay_display not in FULLSCREEN_OVERLAY_DISPLAYS
+    ):
         lines.append(
             say(
                 en="Full-screen Visuals aren't available for this edit.",

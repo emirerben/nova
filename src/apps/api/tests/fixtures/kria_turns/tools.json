@@ -4136,7 +4136,9 @@
                   {
                     "enum": [
                       "pip",
-                      "fullscreen"
+                      "fullscreen",
+                      "fullscreen_videos",
+                      "fullscreen_images"
                     ],
                     "type": "string"
                   },

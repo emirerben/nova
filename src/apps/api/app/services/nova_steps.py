@@ -590,7 +590,26 @@ def render_notes_from_overlay_receipt(receipt: dict[str, Any] | None) -> list[st
 
     notes: list[str] = []
     fullscreen = receipt.get("layout") == "fullscreen"
-    if unplaced_entries:
+    if receipt.get("layout") == "mixed":
+        # KRI-661: one kind plays full screen, the other as cards.
+        full_n = sum(
+            1
+            for row in (placed or [])
+            if isinstance(row, dict) and row.get("display") == "fullscreen"
+        )
+        card_n = placed_n - full_n
+        parts = [f"{full_n} full screen"] if full_n else []
+        if card_n:
+            parts.append(f"{card_n} as {'a card' if card_n == 1 else 'cards'}")
+        total = placed_n + len(unplaced_entries)
+        noun = "Visual" if (total if unplaced_entries else placed_n) == 1 else "Visuals"
+        lead = (
+            f"Showed {placed_n} of {total} {noun}"
+            if unplaced_entries
+            else f"{placed_n} {noun} shown"
+        )
+        notes.append(f"{lead}: {', '.join(parts)}" if parts else lead)
+    elif unplaced_entries:
         where = "full screen" if fullscreen else "as cards"
         notes.append(f"Showed {placed_n} of {placed_n + len(unplaced_entries)} Visuals {where}")
     elif placed_n == 1:

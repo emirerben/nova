@@ -40,12 +40,14 @@ from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.kria.reply_language import current_reply_language, say
 from app.kria.style_asks import (
     MOMENT_SHORT_MAX_S,
+    MomentAsk,
     clip_length_ask,
     derive_style_ask,
     moment_ask,
     text_look_facts,
     value_matches,
 )
+from app.pipeline.caption_spelling import extract_spelling_asks
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.text_style_intent import (
     LABEL_ANCHORS,
@@ -329,6 +331,12 @@ class PlanFacts:
     # draft, or a render that does not record one): nothing about framing is claimed.
     speaker_framing: str | None = None
     speaker_framing_reason: str | None = None
+    # KRI-628: whether a phone Talking render started at the line the creator quoted
+    # (`variant["opening_cut"]`): "applied" or "not_applied", and why not. None = no
+    # receipt (no such ask, a draft, or an older render): nothing is claimed.
+    opening_cut: str | None = None
+    opening_cut_reason: str | None = None
+    opening_cut_quote: str | None = None
     # KRI-547: pop-ins the render dropped for lack of room, as (trigger, "no_room") when
     # no spot cleared the face and captions, or (trigger, "overlap") when another pop-in
     # held the spot at that moment (`phone_beat_receipt.unplaced[]`).
@@ -351,6 +359,12 @@ class PlanFacts:
     closing_quote_text: str = ""
     # KRI-596: every main-picture cut's length, in screen order. None = unknown.
     cut_lengths_s: tuple[float, ...] | None = None
+    # KRI-624: the clip each of those cuts plays, in the same order, and each footage clip's
+    # own length (media id, seconds). None = unknown.
+    cut_clip_ids: tuple[str, ...] | None = None
+    source_durations_s: tuple[tuple[str, float], ...] | None = None
+    # KRI-624: the plan lays a creator's song under the clips (their own sound is not alone).
+    song_bed: bool = False
     # Every clip the creator added to this edit (footage and Visuals), whether or not the
     # edit used it, so "that clip isn't in the edit" is told apart from an unknown clip id.
     source_clip_ids: tuple[str, ...] = ()
@@ -687,6 +701,9 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         label_timezone_basis=str(record.get("label_timezone_basis") or ""),
         **_closing_quote_facts(record.get("closing_quote")),
         cut_lengths_s=_window_lengths(record.get("best_parts")),
+        cut_clip_ids=_window_media_ids(record.get("best_parts")),
+        source_durations_s=_source_durations(record.get("clip_durations_s")),
+        song_bed=bool(record.get("user_song")),
         **_montage_caption_facts(record.get("captions")),
     )
 
@@ -709,6 +726,25 @@ def _window_lengths(rows: object) -> tuple[float, ...] | None:
             return None
         lengths.append(round(end - start, 3))
     return tuple(lengths) or None
+
+
+def _window_media_ids(rows: object) -> tuple[str, ...] | None:
+    ids = [
+        row["media_id"] if isinstance(row, Mapping) and isinstance(row.get("media_id"), str) else ""
+        for row in (rows if isinstance(rows, list) else [])
+    ]
+    return tuple(ids) if ids and all(ids) else None
+
+
+def _source_durations(raw: object) -> tuple[tuple[str, float], ...] | None:
+    if not isinstance(raw, Mapping):
+        return None
+    pairs = tuple(
+        (str(media_id), float(seconds))
+        for media_id, seconds in raw.items()
+        if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds > 0
+    )
+    return pairs or None
 
 
 def _montage_caption_facts(raw: object) -> dict[str, str]:
@@ -1200,6 +1236,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         changes["audio_strategy"] = "voiceover"
     changes.update(_rendered_speech_facts(variant))
     changes.update(_speaker_framing_facts(variant))
+    changes.update(_opening_cut_facts(variant))
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
     changes.update(_rendered_caption_facts(variant))
     rendered = _rendered_clip_durations(variant)
@@ -1401,6 +1438,9 @@ def plan_facts_from_rendered_montage(
             if start is not None and end is not None and end > start
         )
         or plan.cut_lengths_s,
+        cut_clip_ids=tuple(media_id for media_id, _start, _end in cuts) or plan.cut_clip_ids,
+        source_durations_s=plan.source_durations_s,
+        song_bed=plan.song_bed,
         source_audio_kept=kept if isinstance(kept, bool) else None,
         source_clip_ids=tuple(prints),
         duplicate_clip_positions=_same_file_positions(clip_ids, prints) if prints else None,
@@ -2229,6 +2269,11 @@ def _cleanup_wording(req: BriefRequirement) -> bool:
     if _KEEP_PAUSES_RE.search(text) or not _CLEANUP_VERB_RE.search(text):
         return False
     return bool(_CLEANUP_NOUN_RE.search(text) or _NAMED_CUT_RE.search(text))
+
+
+def _round_s(value: float) -> str:
+    """Seconds for creator copy: one decimal at most (37.9765 -> "38")."""
+    return f"{round(float(value), 1):g}"
 
 
 def _wants_beats(req: BriefRequirement) -> bool:
@@ -3608,6 +3653,80 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
     )
 
 
+# KRI-628: "start the video at '...'" is cut by the phone Talking worker
+# (`app.pipeline.phone_opening_cut`), which records where the video starts on the variant.
+def _wants_opening_cut(req: BriefRequirement) -> bool:
+    from app.kria.opening_cut_ask import requirement_opening_quote  # noqa: PLC0415
+
+    return requirement_opening_quote(req) is not None
+
+
+def _opening_cut_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    receipt = variant.get("opening_cut")
+    if not isinstance(receipt, Mapping) or receipt.get("status") not in {"applied", "not_applied"}:
+        return {}
+    reason = receipt.get("reason")
+    quote = receipt.get("quote")
+    return {
+        "opening_cut": str(receipt["status"]),
+        "opening_cut_reason": str(reason) if isinstance(reason, str) and reason else None,
+        "opening_cut_quote": str(quote) if isinstance(quote, str) and quote else None,
+    }
+
+
+def _opening_cut_miss(reason: str | None, quote: str | None) -> str:
+    line = f"“{quote}”" if quote else "that line"
+    if reason == "cleanup_off":
+        return say(
+            en="Speech cleanup was off, so I couldn't cut the start and the video opens at the "
+            "beginning of your take",
+            tr="Konuşma temizliği kapalıydı, o yüzden başı kesemedim ve video çekimin "
+            "başından açılıyor",
+        )
+    if reason in {"implausible", "too_short"}:
+        return say(
+            en=f"I found {line} but cutting to it would leave too little video, so the video "
+            "still opens at the beginning of your take",
+            tr=f"{line} cümlesini buldum ama oraya kesmek çok az video bırakırdı, bu yüzden "
+            "video hâlâ çekimin başından açılıyor",
+        )
+    return say(
+        en=f"I couldn't find {line} in your take, so the video still opens at the beginning",
+        tr=f"{line} cümlesini çekiminde bulamadım, bu yüzden video hâlâ başından açılıyor",
+    )
+
+
+def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if not facts.rendered_variant:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="I'll check where the video starts on the finished video.",
+                tr="Videonun nereden başladığını video hazır olunca kontrol edeceğim.",
+            ),
+            verification="unchecked",
+        )
+    if facts.opening_cut is None:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="This video didn't record where it starts, so I can't check it.",
+                tr="Bu video nereden başladığını kaydetmedi, o yüzden kontrol edemiyorum.",
+            ),
+            verification="unchecked",
+        )
+    if facts.opening_cut != "applied":
+        return _receipt(
+            req, "partial", _opening_cut_miss(facts.opening_cut_reason, facts.opening_cut_quote)
+        )
+    if _cleanup_wording(req) and facts.speech_cleanup_outcome not in {"applied", "no_change"}:
+        # "...and cut the long pauses" in the same sentence is judged by the cleanup too.
+        return _receipt(req, "partial", _CLEANUP_NOT_RUN)
+    return _receipt(req, "met", None)
+
+
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if clip_length_ask(req) is not None:
         # KRI-558: a per-clip length is judged on the clips, never against the total length.
@@ -3665,25 +3784,36 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
         return _receipt(req, "partial", _CANT_CONFIRM_LENGTH)
     if creator_duration_matches(facts.duration_s, float(target)):
         return _receipt(req, "met", None)
+    if (
+        natural_owner == "take"
+        and facts.speech_cleanup_outcome == "applied"
+        and facts.duration_s < float(target)
+    ):
+        # The target is the take's natural length (accepted as such, or implied by the
+        # brief); cleanup cutting pauses legitimately brings it under that (KRI-629).
+        return _receipt(req, "met", None)
     # The edit's own length is what is compared: the phone adds its outro after the edit,
     # so the file runs `outro_s` longer than this (28.0s of edit is a ~29.6s video).
     outro = ""
     if facts.outro_s:
         outro = say(
-            en=f" (plus a {facts.outro_s:g}s outro on the finished video)",
-            tr=f" (bitmiş videoda buna ek olarak {facts.outro_s:g} saniyelik bir kapanış var)",
+            en=f" (plus a {_round_s(facts.outro_s)}s outro on the finished video)",
+            tr=(
+                f" (bitmiş videoda buna ek olarak {_round_s(facts.outro_s)} saniyelik "
+                "bir kapanış var)"
+            ),
         )
     return _receipt(
         req,
         "partial",
         say(
             en=(
-                f"This draft is about {facts.duration_s:g}s{outro}; "
-                f"you asked for {float(target):g}s."
+                f"This draft is about {_round_s(facts.duration_s)}s{outro}; "
+                f"you asked for {_round_s(float(target))}s."
             ),
             tr=(
-                f"Bu taslak yaklaşık {facts.duration_s:g} saniye{outro}; sen "
-                f"{float(target):g} saniye istedin."
+                f"Bu taslak yaklaşık {_round_s(facts.duration_s)} saniye{outro}; sen "
+                f"{_round_s(float(target))} saniye istedin."
             ),
         ),
     )
@@ -4206,6 +4336,10 @@ def _spelled_names(req: BriefRequirement) -> tuple[str, ...] | None:
         for cue in _SPELL_CUE_RE.finditer(clause):
             cued = True
             names.extend(_names_near_cue(clause, cue))
+    # KRI-631: quoted words to write as given ("community" ve "cringe" İngilizce yazılsın).
+    quoted = extract_spelling_asks(text)
+    cued = cued or bool(quoted)
+    names.extend(quoted)
     if not cued:
         return None
     return tuple(dict.fromkeys(names))[:_MAX_SPELLED_NAMES]
@@ -4819,6 +4953,52 @@ def _check_quoted_ending(req: BriefRequirement, facts: PlanFacts, quote: str) ->
     return _receipt(req, "partial", reason)
 
 
+# KRI-624: "the long takes" are the creator's clips at least this long. Shorter ones are the
+# short clips a "from the long takes" ask rules out.
+LONG_TAKE_MIN_S = 10.0
+
+
+def _moment_source_problem(ask: MomentAsk, facts: PlanFacts) -> str | None:
+    """Why a "from the long takes" / "skip the ..." ask is not shown met, else None.
+
+    Names the extra clips when the cuts include short ones; says so plainly when the
+    cuts or clip lengths are unknown, and when the exclusion ("skip the dark ones") is
+    something no receipt can see in the footage.
+    """
+    if ask.long_takes_only:
+        lengths = dict(facts.source_durations_s or ())
+        used = list(dict.fromkeys(facts.cut_clip_ids or ()))
+        if not used or not lengths or any(media_id not in lengths for media_id in used):
+            return say(
+                en="I can't tell which clips these moments came from",
+                tr="Bu anların hangi kliplerden geldiğini söyleyemiyorum",
+            )
+        if all(seconds < LONG_TAKE_MIN_S for seconds in lengths.values()):
+            return say(
+                en="I can't tell which of your clips are the long takes",
+                tr="Hangi kliplerin uzun çekim olduğunu söyleyemiyorum",
+            )
+        short = [media_id for media_id in used if lengths[media_id] < LONG_TAKE_MIN_S]
+        if short:
+            every = "all " if len(used) == len(lengths) else ""
+            return say(
+                en=(
+                    f"I used {every}{len(used)} clips, including the {len(short)} short "
+                    f"{'one' if len(short) == 1 else 'ones'}"
+                ),
+                tr=(
+                    f"{len(used)} klibin {'hepsini' if every else 'tamamını'} kullandım, "
+                    f"{len(short)} kısa klip de dahil"
+                ),
+            )
+    if ask.excludes:
+        return say(
+            en="I can't check which clips you wanted left out",
+            tr="Hangi klipleri dışarıda bırakmak istediğini kontrol edemiyorum",
+        )
+    return None
+
+
 def _check_moments(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """KRI-596: "the best six moments, each very short", against the finished cuts."""
     ask = moment_ask(req)
@@ -4844,12 +5024,61 @@ def _check_moments(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
                 tr=f"En uzun an {longest:.1f} sn sürüyor",
             ),
         )
+    problem = _moment_source_problem(ask, facts)
+    if problem:
+        return _receipt(req, "partial", problem)
     return _receipt(
         req,
         "met",
         say(
             en=f"{len(lengths)} moments, the longest {longest:.1f} s",
             tr=f"{len(lengths)} an, en uzunu {longest:.1f} sn",
+        ),
+    )
+
+
+# KRI-624: "keep the original sound" - the clips' own audio plays, with no song laid over it.
+_KEEP_VERB_RE = re.compile(r"\b(?:keep|kept|preserve|retain|leave|use)\b|\btut\b|\bkoru")
+
+
+def _wants_source_sound_kept(req: BriefRequirement) -> bool:
+    if req.kind not in _BEAT_KINDS or _wants_beats(req) or _wants_cleanup(req):
+        return False
+    text = _req_text(req)
+    return bool(
+        _BED_NAMED_RE.search(text)
+        and _KEEP_VERB_RE.search(text)
+        and not (_BED_QUIET_RE.search(text) or _BED_UP_RE.search(text) or _BED_MUTE_RE.search(text))
+    )
+
+
+def _check_source_sound(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if facts.source_audio_kept is None or not facts.rendered_montage:
+        return _receipt(req, "partial", _CANT_CHECK_MIX)
+    if facts.source_audio_kept is False:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="The clips' own sound is off in this video",
+                tr="Bu videoda kliplerin kendi sesi kapalı",
+            ),
+        )
+    if facts.song_bed or facts.audio_strategy == "voiceover":
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="The clips' own sound plays, but other sound plays over it",
+                tr="Kliplerin kendi sesi çalıyor ama üstüne başka bir ses de çalıyor",
+            ),
+        )
+    return _receipt(
+        req,
+        "met",
+        say(
+            en="The video keeps the clips' own sound, with nothing laid over it",
+            tr="Video kliplerin kendi sesini koruyor, üstüne başka ses eklenmedi",
         ),
     )
 
@@ -4882,6 +5111,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True
     if req.kind == "select" and moment_ask(req) is not None:
         return True
+    if _wants_source_sound_kept(req):
+        return True
     if req.kind in _BEAT_KINDS:
         return (
             _wants_beats(req)
@@ -4894,6 +5125,10 @@ def _has_checker(req: BriefRequirement) -> bool:
 
 
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if _wants_opening_cut(req) and facts.edit_format in {"subtitled", "talking_head"}:
+        # "Cut the intro, start the video at '...'": a quoted start line owns the sentence
+        # (and any pauses it names); every other speech edit keeps its usual path.
+        return _check_opening_cut(req, facts)
     if (
         _wants_cleanup(req)
         and facts.edit_format in _SPEECH_FORMATS
@@ -4950,6 +5185,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_voice_bed(req, facts)
     elif req.kind == "select" and moment_ask(req) is not None:
         return _check_moments(req, facts)
+    elif _wants_source_sound_kept(req):
+        return _check_source_sound(req, facts)
     if _judges_caption_words(req, facts):  # KRI-549: language / names on a finished render
         return _check_caption_words(req, facts)
     if _wants_captions(req):

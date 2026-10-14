@@ -699,6 +699,13 @@ struct NativeEditorTemporaryVideo {
     /// is what "Find original files" derives its targets from (KRI-211).
     private var originalsRecoveryPool: NativeEditorSourcePool?
     private var resolvedMedia: [String: ResolvedEditorSource] = [:]
+    /// `overlay:<id>` cards whose photo or video could not be loaded for the live preview. They stay in the
+    /// document; the preview just doesn't draw them. Cleared whenever the sources are re-resolved from scratch.
+    private var skippedPreviewMedia: Set<String> = []
+    /// How many of the edit's cards the live preview is not drawing (a non-blocking note, never an error).
+    @Published private(set) var previewSkippedMediaCount = 0
+    /// Cards loaded for the preview at once. Each file keeps its own request/resource timeouts.
+    static let previewMediaConcurrency = 4
     private var resolvedSources: [Int: ResolvedEditorSource]?
     private var sourcePreviewTask: Task<Void, Never>?
     private var sourcePreviewSequence = 0
@@ -715,6 +722,13 @@ struct NativeEditorTemporaryVideo {
     private var editAppliedTask: Task<Void, Never>?
     private var sourcePreviewUpdateDeferred = false
     var hasSourcePreview: Bool { sourcePreviewState == .ready }
+    /// The fallback card offers Retry: the live preview failed for a reason a rebuild can fix. A permanent
+    /// failure (no video track, an unsupported effect, a missing font) would fail the same way again.
+    var fallbackOffersRetry: Bool {
+        guard isShowingRenderedFallback, case .failed = sourcePreviewState else { return false }
+        return !sourcePreviewFailureIsPermanent
+    }
+
     /// A source-composited player is editable. A failed source preparation can
     /// instead show only the server-rendered video, with canvas interaction
     /// deliberately disabled until a retry produces a source preview.
@@ -1024,6 +1038,8 @@ struct NativeEditorTemporaryVideo {
     private var playbackStateObserver: NSKeyValueObservation?
     private var itemStatusObserver: NSKeyValueObservation?
     nonisolated(unsafe) private var itemFailureObserver: NSObjectProtocol?
+    /// KRI-626: iOS restarted its media services, so every player, audio session and composition is dead.
+    nonisolated(unsafe) private var mediaServicesResetObserver: NSObjectProtocol?
     /// The item whose failure was already reported, so status + failed-to-end (which can both fire for one
     /// failure) produce one diagnostic and one recovery.
     private weak var failureHandledItem: AVPlayerItem?
@@ -1343,9 +1359,15 @@ struct NativeEditorTemporaryVideo {
         canEditCaptions = false
         canEditMix = false
         loadState = .idle
+        mediaServicesResetObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.handleMediaServicesReset() }
+        }
     }
 
     deinit {
+        if let mediaServicesResetObserver { NotificationCenter.default.removeObserver(mediaServicesResetObserver) }
         previewRefreshTask?.cancel()
         sourcePreviewTask?.cancel()
         durationLoadTask?.cancel()
@@ -2280,6 +2302,8 @@ struct NativeEditorTemporaryVideo {
         resolvedAudio = [:]
         deviceNarrationResolutionGeneration = nil
         resolvedMedia = [:]
+        skippedPreviewMedia = []
+        previewSkippedMediaCount = 0
         do {
             #if DEBUG
             NativePreviewDiagnostics.record("source-pool-request", fields: ["job": jobID.uuidString, "variant": variantKey])
@@ -2411,6 +2435,8 @@ struct NativeEditorTemporaryVideo {
         resolvedAudio.removeAll()
         deviceNarrationResolutionGeneration = nil
         resolvedMedia.removeAll()
+        skippedPreviewMedia = []
+        previewSkippedMediaCount = 0
         sourcePreview = nil
         liveSongVolumeActive = false; previewBuiltDocument = nil
         textInteractionTask?.cancel()
@@ -2631,18 +2657,40 @@ struct NativeEditorTemporaryVideo {
 
     private func preparePreviewMedia(document: EditorDocument, sequence: Int) async throws -> [String: ResolvedEditorSource] {
         guard let resolver = sourceResolver else { return resolvedMedia.merging(authoredVisualSources) { _, authored in authored } }
+        // One unloadable card must not drop the whole live preview (a 33-card edit once fell back to the
+        // finished video over a single bad file): it is skipped, kept in the document, and noted. Cards load
+        // a few at a time rather than one after another.
+        let generation = document.revision.baseGeneration
+        var wanted: [(key: String, asset: NativeEditorAsset)] = []
         for overlay in document.mediaOverlays {
             let key = "overlay:" + overlay.id
-            guard resolvedMedia[key] == nil else { continue }
+            guard resolvedMedia[key] == nil, authoredVisualSources[key] == nil, !skippedPreviewMedia.contains(key) else { continue }
             guard let asset = sourcePool?.nativeAssets.first(where: { $0.kind == "media_overlay" && $0.id == overlay.id }) else {
-                throw MediaEngineError.missingAsset(key)
+                skippedPreviewMedia.insert(key)
+                NativePreviewDiagnostics.record("preview-media-skipped", fields: ["reason": "no-source"])
+                continue
             }
-            sourcePreviewState = .preparing
-            var resolved = try await resolver.resolveMedia(id: asset.mediaID, url: asset.sourceURL, generation: document.revision.baseGeneration)
-            guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
-            resolved.preserveAlpha = asset.preserveAlpha == true
-            resolvedMedia[key] = resolved
+            wanted.append((key, asset))
         }
+        if !wanted.isEmpty {
+            sourcePreviewState = .preparing
+            let outcomes = try await Self.resolveConcurrently(wanted, limit: Self.previewMediaConcurrency) { asset in
+                var resolved = try await resolver.resolveMedia(id: asset.mediaID, url: asset.sourceURL, generation: generation)
+                resolved.preserveAlpha = asset.preserveAlpha == true
+                return resolved
+            }
+            guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+            for (key, outcome) in outcomes {
+                switch outcome {
+                case .success(let resolved): resolvedMedia[key] = resolved
+                case .failure:
+                    skippedPreviewMedia.insert(key)
+                    NativePreviewDiagnostics.record("preview-media-skipped", fields: ["reason": "load-failed"])
+                }
+            }
+        }
+        let skippedNow = document.mediaOverlays.filter { skippedPreviewMedia.contains("overlay:" + $0.id) }.count
+        if previewSkippedMediaCount != skippedNow { previewSkippedMediaCount = skippedNow }
         if !document.motionScenes.isEmpty {
             for asset in sourcePool?.nativeAssets.filter({ $0.kind == "motion_scene" }) ?? [] {
                 let key = "motion:" + asset.id
@@ -2664,6 +2712,34 @@ struct NativeEditorTemporaryVideo {
             }
         }
         return resolvedMedia.merging(authoredVisualSources) { _, authored in authored }
+    }
+
+    /// Runs `work` for every item with at most `limit` in flight. A failing item is returned as a failure and
+    /// never stops the others; only cancellation of the surrounding task is rethrown. Results keep input order.
+    static func resolveConcurrently(_ items: [(key: String, asset: NativeEditorAsset)], limit: Int,
+                                    _ work: @escaping @Sendable (NativeEditorAsset) async throws -> ResolvedEditorSource)
+        async throws -> [(key: String, outcome: Result<ResolvedEditorSource, Error>)] {
+        var results = [Result<ResolvedEditorSource, Error>?](repeating: nil, count: items.count)
+        try await withThrowingTaskGroup(of: (Int, Result<ResolvedEditorSource, Error>).self) { group in
+            var next = 0
+            func launch() {
+                guard next < items.count else { return }
+                let index = next, asset = items[next].asset
+                next += 1
+                group.addTask {
+                    do { return (index, .success(try await work(asset))) }
+                    catch is CancellationError { throw CancellationError() }
+                    catch { return (index, .failure(error)) }
+                }
+            }
+            for _ in 0..<max(1, limit) { launch() }
+            while let (index, outcome) = try await group.next() {
+                results[index] = outcome
+                launch()
+            }
+        }
+        try Task.checkCancellation()
+        return items.indices.map { (items[$0].key, results[$0] ?? .failure(CancellationError())) }
     }
 
     private func scheduleSourcePreviewUpdate() {
@@ -2759,7 +2835,8 @@ struct NativeEditorTemporaryVideo {
                                      referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
                                      sourceAudioPreserved: sourceAudioPreserved || songRemoved,
                                      songBed: songBed, deviceCaptions: rendersOnDevice,
-                                     songCaptionShift: lyricShift)
+                                     songCaptionShift: lyricShift,
+                                     skippedMediaOverlayIDs: skippedPreviewMedia)
             }
             var program = try compileProgram(songBed: realBed.map {
                 NativeEditorSongBed(assetID: $0.assetID, sourceStart: $0.sourceStart, sourceDuration: $0.sourceDuration,
@@ -6163,7 +6240,19 @@ struct NativeEditorTemporaryVideo {
         finishedRenderPlayer = player
     }
 
+    /// Release builds otherwise learn nothing when the live preview cannot be built (only DEBUG logs it), so a
+    /// creator who is silently left on the finished video leaves no trace. Type, case and numeric code only
+    /// (see `NativePreviewDiagnostics.previewFailure`). A failed player item reports itself, and a cancelled
+    /// rebuild is not a failure.
+    private func reportPreviewFailure(_ error: Error) {
+        if error is CancellationError || error is NativeEditorPlaybackFailure { return }
+        let report = NativePreviewDiagnostics.previewFailure(error: error, sourceState: sourcePreviewStateLabel)
+        guard let api, let jobID else { return }
+        Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
+    }
+
     private func failSourcePreview(_ error: Error) {
+        reportPreviewFailure(error)
         sourcePreviewFailureIsPermanent = Self.isPermanentSourcePreviewFailure(error)
         let finishedWasCurrent = finishedRenderIsCurrent
         restoreFinishedRenderFallback()
@@ -6223,6 +6312,40 @@ struct NativeEditorTemporaryVideo {
         return (error as NSError).domain == AVFoundationErrorDomain
     }
 
+    /// KRI-626: Apple's recovery after `mediaServicesWereReset` is to reconfigure the audio session and
+    /// rebuild every player and composition. The old ones never play again, so recovery budgets that
+    /// were spent on failures from before the reset start over.
+    func handleMediaServicesReset() {
+        NativePreviewDiagnostics.record("media-services-reset", fields: ["state": sourcePreviewStateLabel])
+        startPlaybackRecoveryEpisode()
+        finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
+        sourcePreviewQuietRetryTask?.cancel()
+        let wantsPlayback = isPlaying || pendingPlayRequest
+        player?.pause()
+        isPlaying = false
+        failureHandledItem = nil
+        activatePreviewAudio()
+        if player != nil, player === finishedRenderPlayer, let url = playableDeviceOutputURL ?? finishedRenderURL {
+            reinstallFinishedRender(url: url, preferredDuration: finishedRenderDuration)
+        }
+        pendingPlayRequest = wantsPlayback
+        guard api != nil, jobID != nil, variantKey != nil, sourcePreviewState != .idle else {
+            startPendingPlaybackIfPossible()
+            return
+        }
+        Task { @MainActor [weak self] in await self?.prepareSourcePreview() }
+    }
+
+    /// `AVErrorMediaServicesWereReset`, or the expired-audio-session error (`'!ses'`) the dead session
+    /// leaves behind on the next item. Both clear once the session is set up again.
+    static func isMediaServicesResetFailure(_ error: Error?) -> Bool {
+        guard let error = error as NSError? else { return false }
+        let expiredSession = 561210739 // '!ses'
+        if error.domain == AVFoundationErrorDomain, error.code == AVError.mediaServicesWereReset.rawValue { return true }
+        let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError
+        return error.code == expiredSession || underlying?.code == expiredSession
+    }
+
     /// A new render, or the creator's Retry, is a fresh start for every automatic recovery.
     private func startPlaybackRecoveryEpisode() {
         finishedRenderRetryCount = 0
@@ -6273,6 +6396,8 @@ struct NativeEditorTemporaryVideo {
         let wantsPlayback = isPlaying || pendingPlayRequest
         failedPlayer.pause()
         isPlaying = false
+        // KRI-626: a media-services reset leaves the audio session expired; retrying on it fails again.
+        if Self.isMediaServicesResetFailure(error) { activatePreviewAudio() }
         switch kind {
         case .live:
             pendingPlayRequest = wantsPlayback

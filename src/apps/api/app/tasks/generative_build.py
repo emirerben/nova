@@ -46,7 +46,7 @@ from datetime import UTC, datetime, timedelta
 from functools import wraps
 from itertools import cycle
 from types import SimpleNamespace
-from typing import Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
@@ -244,6 +244,9 @@ def _classic_cloud_evidence(
         evidence={**slot, **audio},
     )
 
+
+if TYPE_CHECKING:
+    from app.pipeline.silence_cut import CutPlan
 
 log = structlog.get_logger()
 
@@ -6575,6 +6578,25 @@ def _demote_beat_receipt(
     }
 
 
+def _approved_capture_order(snapshot: dict, all_candidates: dict) -> bool:
+    """True when the approved render contract asks for capture-time (filming) order (KRI-661).
+
+    The contract already folds in the creator's own answer to the order question ("continue
+    without a fixed order" turns it off), so it wins; the strategy's stored ordering choice
+    is only the fallback for a job with no contract. Never raises.
+    """
+    from app.services.creator_render_contract import read_render_contract  # noqa: PLC0415
+
+    try:
+        contract = read_render_contract(snapshot)
+    except Exception:  # noqa: BLE001 - a malformed contract is "no ordering ask"
+        return False
+    if contract is not None:
+        return bool(contract.order_required and contract.order_basis == "capture_time")
+    strategy = all_candidates.get("creator_strategy")
+    return isinstance(strategy, dict) and strategy.get("ordering_choice") == "chronological"
+
+
 @phone_text_generation
 def _run_phone_subtitled_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
@@ -6619,7 +6641,15 @@ def _run_phone_subtitled_job(
         crosscheck_detected_language,
         resolve_spoken_caption_language,
     )
-    from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
+    from app.pipeline.caption_spelling import (  # noqa: PLC0415
+        apply_spelling_to_cues,
+        extract_spelling_asks,
+    )
+    from app.pipeline.captions import (  # noqa: PLC0415
+        PHONE_CUE_BUDGET,
+        build_plain_cues,
+        resplit_cues_into_sentences,
+    )
     from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
         SilentAudioPlanDeclined,
         UnsupportedPhonePlan,
@@ -6633,7 +6663,6 @@ def _run_phone_subtitled_job(
     from app.pipeline.phone_subtitled_title import talking_closing_window  # noqa: PLC0415
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.silence_cut import (  # noqa: PLC0415
-        CutPlan,
         is_filler_token,
         plan_summary,
         remap_words,
@@ -6789,12 +6818,18 @@ def _run_phone_subtitled_job(
     # KRI-297: "fullscreen" => every Visual becomes a full-screen cutaway
     # (deterministic even-spread sequence). Anything else (absent/None/"pip"/
     # unknown) or the kill switch off => today's PiP grounding, unchanged.
+    # KRI-661: "fullscreen_videos" / "fullscreen_images" play that kind full-frame and
+    # keep the other as a card; they ride the same sequence and the same kill switch.
     overlay_layout: str = (
-        "fullscreen"
-        if all_candidates.get("overlay_display") == "fullscreen"
+        all_candidates["overlay_display"]
+        if all_candidates.get("overlay_display")
+        in ("fullscreen", "fullscreen_videos", "fullscreen_images")
         and getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", True)
         else "pip"
     )
+    # KRI-661: the creator asked for their Visuals in the order they were taken (the
+    # approved contract pinned capture-time order). Only the sequence layouts read it.
+    overlay_chronological: bool = _approved_capture_order(snapshot, all_candidates)
     language: str = all_candidates.get("language") or "en"
     # KRI-177: same explicit override contract as the cloud subtitled render —
     # re-validated here since a stray/legacy value must never silently win.
@@ -6986,6 +7021,14 @@ def _run_phone_subtitled_job(
                 speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
                     analysis_view="full_clip"
                 )
+            # KRI-628: "start the video at '...'" cuts the speech before that line out of
+            # the cleanup plan (the plan's keep segments are the only trim this render has).
+            cut_plan, opening_cut_receipt = _phone_opening_cut(
+                snapshot,
+                cut_plan,
+                speech_cleanup_snapshot.source_words() if speech_cleanup_snapshot else (),
+                duration_s=float(probe.duration_s),
+            )
 
             # KRI-547: the creator asked for a vertical / full-screen / face-in-frame
             # video. A sideways speaker clip is then face-filled -- the engine's
@@ -7157,7 +7200,7 @@ def _run_phone_subtitled_job(
                     for item in remap_words(caption_words, cut_plan)
                     if not is_filler_token(item["text"])
                 ]
-                cues = build_plain_cues(cut_words, attach_words=True)
+                cues = build_plain_cues(cut_words, attach_words=True, budget=PHONE_CUE_BUDGET)
             else:
                 transcript = transcribe_whisper_cached(
                     clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
@@ -7240,7 +7283,9 @@ def _run_phone_subtitled_job(
                         }
                         for word in transcript.words
                     ]
-                cues = build_plain_cues(transcript.words, attach_words=True)
+                cues = build_plain_cues(
+                    transcript.words, attach_words=True, budget=PHONE_CUE_BUDGET
+                )
             cues = correct_caption_cues(
                 cues,
                 detected_lang,
@@ -7249,6 +7294,10 @@ def _run_phone_subtitled_job(
                 trusted_aliases=None,
             )
             cues = resplit_cues_into_sentences(cues)
+            # KRI-631: the creator's quoted spelling asks ("write 'community' in English").
+            cues = apply_spelling_to_cues(
+                cues, extract_spelling_asks(_creator_request_text(all_candidates))
+            )
 
             # The speaker's span exactly as the compiler plays it: the cleanup
             # cut, else the phone-measured clip (which can run a hair shorter
@@ -7458,8 +7507,11 @@ def _run_phone_subtitled_job(
                                 | beat_media_ids,
                                 video_supported=video_overlays_enabled,
                                 **(
-                                    {"layout": "fullscreen"}
-                                    if overlay_layout == "fullscreen"
+                                    {
+                                        "layout": overlay_layout,
+                                        "chronological": overlay_chronological,
+                                    }
+                                    if overlay_layout != "pip"
                                     else {}
                                 ),
                                 **framed_grounding,
@@ -7910,6 +7962,10 @@ def _run_phone_subtitled_job(
             new_entry["phone_lane_receipt"] = lane_receipt
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
+        if opening_cut_receipt is not None:
+            # KRI-628: whether the video starts at the line the creator quoted; the
+            # brief receipt's evidence at render-ready.
+            new_entry["opening_cut"] = opening_cut_receipt
         if speaker_framing is not None:
             # KRI-547: how the speaker was framed and why -- the brief receipt's
             # evidence at render-ready, and what an editor Save keeps or resets.
@@ -7995,6 +8051,70 @@ def _run_phone_subtitled_job(
             ),
         },
     )
+
+
+def _phone_opening_cut(
+    snapshot: dict,
+    cut_plan: CutPlan | None,
+    words: Any,
+    *,
+    duration_s: float,
+) -> tuple[CutPlan | None, dict[str, Any] | None]:
+    """KRI-628: cut the phone Talking take down to start at a line the creator quoted.
+
+    The ask is read deterministically off the approved brief pinned on the job
+    (``creator_brief_binding``), never a prompt field. ``(cut_plan, None)`` without such
+    an ask (or a readable binding), so the render runs exactly as before. Otherwise the
+    plan with everything before the line cut (when the take says it, and the speech
+    cleanup plan exists to carry the cut) and a receipt that never raises."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.opening_cut_ask import brief_opening_cut  # noqa: PLC0415
+    from app.pipeline.phone_opening_cut import apply_opening_cut  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return cut_plan, None
+    try:
+        ask = brief_opening_cut(BriefBinding.model_validate(raw_binding).resolve())
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_opening_cut.binding_unreadable", error=str(exc)[:200])
+        return cut_plan, None
+    if ask is None:
+        return cut_plan, None
+    receipt: dict[str, Any]
+    if cut_plan is None:
+        # Cleanup was declined: no word timings to ground the line in.
+        receipt = {
+            "version": 1,
+            "quote": ask.quote,
+            "requirement_ids": list(ask.requirement_ids),
+            "status": "not_applied",
+            "reason": "cleanup_off",
+        }
+    else:
+        try:
+            cut_plan, receipt = apply_opening_cut(
+                cut_plan,
+                list(words),
+                ask.quote,
+                duration_s=duration_s,
+                requirement_ids=ask.requirement_ids,
+            )
+        except Exception as exc:  # noqa: BLE001 - a missed cut is reported, never fatal
+            log.warning("phone_opening_cut.failed", error=str(exc)[:200])
+            receipt = {
+                "version": 1,
+                "quote": ask.quote,
+                "requirement_ids": list(ask.requirement_ids),
+                "status": "not_applied",
+                "reason": "not_found",
+            }
+    try:
+        record_pipeline_event("phone", "opening_cut", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return cut_plan, receipt
 
 
 def _phone_speaker_framing(

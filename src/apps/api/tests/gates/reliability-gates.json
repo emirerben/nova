@@ -1212,6 +1212,46 @@
       ],
       "red_control": "not_applicable",
       "journey": "kri-653-silent-take"
+    },
+    {
+      "id": "kri-661-talking-visuals-and-order",
+      "tickets": [
+        "KRI-661",
+        "KRI-662"
+      ],
+      "symptom": "A talk-to-camera edit asked for 'images as overlays, videos full screen, in the order I filmed them' put every photo full screen in upload order, and chat said none of the clips had a filming time.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "fix_prs": [
+        1597
+      ],
+      "owner": "KRI-661",
+      "paths": [
+        "src/apps/api/app/services/phone_overlay_grounding.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/tests/fixtures/incidents/kri661-talking-clip-photos-order-asks-nothing.json"
+      ],
+      "regression_tests": [
+        "tests/services/test_phone_overlay_grounding.py",
+        "tests/incidents/test_incident_corpus.py"
+      ],
+      "harness": "real_pipeline",
+      "evidence": {
+        "offline_replay": "incident record kri661-talking-clip-photos-order-asks-nothing (red without the order fix) + test_kri661_* grounding replay of the 33-photo shape",
+        "live_model": "unknown",
+        "native_output": "unknown",
+        "production": "unknown"
+      },
+      "neighbours_covered": [
+        "images pip + videos full screen in one sequence",
+        "undated photos keep upload position"
+      ],
+      "neighbours_gap": [
+        "the planner choosing overlay_display_by_kind from a free-text ask is prompt-only (v57); no paid live eval run"
+      ],
+      "red_control": "not_applicable",
+      "journey": "kri-524-creation"
     }
   ]
 }
