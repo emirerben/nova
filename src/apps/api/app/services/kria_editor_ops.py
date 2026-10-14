@@ -63,6 +63,7 @@ _PORTABLE_FAMILIES = {
     "clip",
     "effect",
     "music",
+    "overlay",
     "sfx",
     "text",
     "title",
@@ -630,6 +631,17 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
     on_device = variant.get("render_destination") == "device"
     if caps.get("sfx") is True and not _sfx_base_missing(variant):
         families.append("sfx")
+    # KRI-661: a phone Talking edit's picture cards (on top of the speaker or full
+    # screen). Only once the draft base carries the card list (`project_editor_draft`
+    # derives it from the pinned recipe), so an index never addresses a row Save
+    # does not know about; Save compiles `media_overlays` into the phone recipe.
+    if (
+        on_device
+        and caps.get("overlays") is True
+        and is_phone_subtitled_editor_variant(variant)
+        and isinstance(variant.get("media_overlays"), list)
+    ):
+        families.append("overlay")
     if caps.get("camera_effects") is True and not on_device:
         families.append("effect")
     return sorted(set(families) & _PORTABLE_FAMILIES)
@@ -647,6 +659,71 @@ def _sfx_base_missing(variant: dict[str, Any]) -> bool:
     if "sound_effects" in variant:
         return False
     return is_phone_subtitled_editor_variant(variant) or is_phone_voiceover_lane_variant(variant)
+
+
+_OVERLAY_SNAPSHOT_FIELDS = ("start_s", "end_s", "x_frac", "y_frac", "scale", "z")
+
+
+def _overlay_snapshot(variant: dict[str, Any]) -> dict[str, Any]:
+    """The picture cards the copilot may address (KRI-661): path-free, indexed.
+
+    ``counts`` is the whole picture even when the prompt can only list the first few
+    rows, so "put all my photos on top" is answerable with ONE bulk op instead of
+    thirty patches. ``asset_pool`` stays empty on purpose: a Talking Save refuses a
+    photo Kria did not pin for this edit, so ``add_overlay`` fails closed in the parser.
+    """
+    rows = [row for row in variant.get("media_overlays") or [] if isinstance(row, dict)]
+    cards = []
+    for index, row in enumerate(rows):
+        card: dict[str, Any] = {
+            "index": index,
+            "id": row.get("id"),
+            "kind": "video" if row.get("kind") == "video" else "image",
+            "position": "custom",
+            "display_mode": "fullscreen" if row.get("display_mode") == "fullscreen" else "pip",
+        }
+        card.update({key: row.get(key) for key in _OVERLAY_SNAPSHOT_FIELDS})
+        label = row.get("label")
+        if isinstance(label, str) and label:
+            card["label"] = label[:60]
+        cards.append(card)
+    return {
+        "cards": cards,
+        "counts": {
+            "total": len(cards),
+            "images": sum(1 for c in cards if c["kind"] == "image"),
+            "videos": sum(1 for c in cards if c["kind"] == "video"),
+            "fullscreen": sum(1 for c in cards if c["display_mode"] == "fullscreen"),
+        },
+        "asset_pool": [],
+        "pending_suggestions": [],
+    }
+
+
+def derived_phone_overlays(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """A Talking edit's cards as the editor shows them before its first Save.
+
+    The pinned device recipe is the only record until a Save persists
+    ``media_overlays`` (the HTTP read paths backfill the same way,
+    `_augment_variant_with_phone_subtitled_editor_sections`); the chat base must
+    index the same rows. None when the variant is not a Talking edit or its lanes
+    are closed.
+    """
+    if not is_phone_subtitled_editor_variant(variant):
+        return None
+    from app.config import settings as app_settings  # noqa: PLC0415
+    from app.services.phone_rollout import phone_subtitled_editor_lanes_supported  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        project_phone_subtitled_editor_sections,
+    )
+
+    if not (app_settings.media_overlays_enabled and phone_subtitled_editor_lanes_supported()):
+        return None
+    projected = project_phone_subtitled_editor_sections(
+        getattr(job, "assembly_plan", None) or {}, variant
+    )
+    rows = (projected or {}).get("media_overlays")
+    return [dict(row) for row in rows if isinstance(row, dict)] if rows is not None else None
 
 
 def _audio_notes(job: Any, variant: dict[str, Any]) -> list[str]:
@@ -975,6 +1052,8 @@ def build_editor_snapshot(
             # via clip_context; empty => add_sfx fails closed in the parser.
             "catalog": list(clip_context.get("sfx_catalog") or []),
         }
+    if "overlay" in snapshot["allowed_op_families"]:
+        snapshot["overlays"] = _overlay_snapshot(variant)
     if "effect" in snapshot["allowed_op_families"]:
         snapshot["camera_effects"] = [
             {
@@ -1147,6 +1226,14 @@ def project_editor_draft(
     for key in ("sound_effects", "camera_effects", "drawings"):
         if payload.get(key) is not None:
             projected[key] = copy.deepcopy(payload[key])
+    # KRI-661: a Talking edit's picture cards. The client's unsaved lane wins; otherwise a
+    # never-Saved edit derives them from its pinned recipe so chat indexes what Save sees.
+    if isinstance(payload.get("media_overlays"), list):
+        projected["media_overlays"] = copy.deepcopy(payload["media_overlays"])
+    elif job is not None and "media_overlays" not in projected:
+        derived = derived_phone_overlays(job, projected)
+        if derived is not None:
+            projected["media_overlays"] = derived
     mix = payload.get("mix")
     if isinstance(mix, dict):
         if mix.get("music_level") is not None:
@@ -1512,7 +1599,7 @@ class _DraftState:
     compile_editor_ops builds the commit request from it at the end.
     changed names the lanes that reach the payload ("text", "timeline",
     "captions", "caption_meta", "mix", "music", "title", "camera_effects",
-    "sound_effects", "visual_media").
+    "sound_effects", "visual_media", "media_overlays").
     """
 
     job: Any
@@ -1551,6 +1638,8 @@ class _DraftState:
     # Slide-post surface only (KRI-301): non-timeline outputs of the slides lane
     # (`cover_slide_id`, `caption`). Empty for every video compile.
     post: dict[str, Any] = field(default_factory=dict)
+    # Phone Talking picture cards (KRI-661); reaches the payload as `media_overlays`.
+    media_overlays: list[dict[str, Any]] = field(default_factory=list)
 
     def text_bar(self, index: object) -> dict[str, Any]:
         row = self.text_bars[_require_index(self.text_bars, index, "Text")]
@@ -2103,6 +2192,9 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         ),
         slots=_variant_slots(variant, job),
         base_generation=variant_render_baseline(variant),
+        media_overlays=copy.deepcopy(
+            [row for row in variant.get("media_overlays") or [] if isinstance(row, dict)]
+        ),
     )
     state.initial_slots = copy.deepcopy(state.slots)
     initial_text = copy.deepcopy(state.text)
@@ -2115,6 +2207,7 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
     before_captions = copy.deepcopy(state.captions)
     before_camera = copy.deepcopy(state.camera_effects)
     before_sfx = copy.deepcopy(state.sound_effects)
+    before_overlays = copy.deepcopy(state.media_overlays)
 
     for op in ops:
         name = str(op.get("op") or "")
@@ -2188,6 +2281,7 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         title=state.title,
         camera_effects=state.camera_effects if "camera_effects" in changed else None,
         sound_effects=state.sound_effects if "sound_effects" in changed else None,
+        media_overlays=state.media_overlays if "media_overlays" in changed else None,
     )
     text_diff: list[dict[str, Any]] = []
     if "text" in changed:
@@ -2217,6 +2311,7 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
             captions=before_captions,
             camera_effects=before_camera,
             sound_effects=before_sfx,
+            media_overlays=before_overlays,
         ),
     )
 
@@ -2229,6 +2324,7 @@ def _before_lanes(
     captions: list[dict[str, Any]],
     camera_effects: list[dict[str, Any]],
     sound_effects: list[dict[str, Any]],
+    media_overlays: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Pre-op lane values for the lanes this bundle changed (commit shape)."""
     changed = state.changed
@@ -2254,6 +2350,8 @@ def _before_lanes(
         before["camera_effects"] = camera_effects
     if "sound_effects" in changed:
         before["sound_effects"] = sound_effects
+    if "media_overlays" in changed:
+        before["media_overlays"] = media_overlays or []
     if "mix" in changed:
         mix: dict[str, Any] = {}
         if state.mix_level is not None and variant.get("mix") is not None:

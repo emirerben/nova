@@ -90,6 +90,7 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "patch_overlay",
             "remove_overlay",
             "accept_overlay_suggestion",
+            "set_overlay_display",
             "remove_visual_media",
             "set_visual_fade",
             "add_motion_block",
