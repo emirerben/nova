@@ -997,8 +997,8 @@ final class CreationUITests: XCTestCase {
     }
 
     /// KRI-640: New chat opens on its create reply alone. Every chat read and every capabilities read after the
-    /// first answers 6s late here, so a new chat that reads itself back or re-reads capabilities before its
-    /// format cards work misses the 3s budget.
+    /// first answers 10s late here, so a new chat that reads itself back or re-reads capabilities before its
+    /// format cards work misses the 5s budget (the budget leaves room for a slow CI accessibility query).
     func testNewChatShowsUsableFormatsWithoutWaitingForMoreReads() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
@@ -1015,7 +1015,7 @@ final class CreationUITests: XCTestCase {
         let tappedAt = Date()
         newChat.tap()
         let card = app.buttons["format-montage"]
-        let usable = eventually(timeout: 3) { card.exists && card.isEnabled && app.staticTexts["What are we making?"].exists }
+        let usable = eventually(timeout: 5) { card.exists && card.isEnabled && app.staticTexts["What are we making?"].exists }
         let elapsed = Date().timeIntervalSince(tappedAt)
         XCTAssertTrue(usable, "format cards took \(String(format: "%.1f", elapsed))s after New chat")
     }

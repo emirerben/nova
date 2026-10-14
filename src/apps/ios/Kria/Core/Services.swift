@@ -1045,6 +1045,8 @@ actor CreationCapabilitiesCache {
         return entry.value
     }
 
+    func forget() { entry = nil }
+
     func fetch(owner: String, _ load: @escaping @Sendable () async throws -> CreationCapabilities) async throws -> CreationCapabilities {
         let task: Task<CreationCapabilities, Error>
         if let inFlight, inFlight.owner == owner {
@@ -1181,7 +1183,13 @@ struct KriaAPI: KriaAPIClient {
         let capabilities: CreationCapabilities
         if let cached { capabilities = cached } else { capabilities = try await creationCapabilities() }
         let runtime = capabilities.preferredRuntimeVersion
-        return try await request(path: "creation-threads", method: "POST", bodyData: JSONEncoder().encode(CreateThreadRequest(message: runtime == 1 ? message : nil, clientEventID: UUID().uuidString, runtimeVersion: runtime)), decode: CreationThread.self)
+        do {
+            return try await request(path: "creation-threads", method: "POST", bodyData: JSONEncoder().encode(CreateThreadRequest(message: runtime == 1 ? message : nil, clientEventID: UUID().uuidString, runtimeVersion: runtime)), decode: CreationThread.self)
+        } catch {
+            // A rollout may have withdrawn the cached runtime (v2 rollback answers 404): the next tap reads fresh.
+            if cached != nil { await capabilitiesCache.forget() }
+            throw error
+        }
     }
     func refreshLibraryPosters(jobIDs: [UUID], brokenJobIDs: [UUID]) async throws -> [LibraryPoster] {
         let body = LibraryPosterRequest(jobIDs: jobIDs, brokenJobIDs: brokenJobIDs)

@@ -426,12 +426,14 @@ enum AccountIdentity {
     func openWorkspace(preferredProjectID: UUID? = nil) async {
         selectWorkspaceProject(preferredProjectID: preferredProjectID)
         uploads.recoverInterruptedPreparations()
+        // KRI-640: New chat (even from the empty workspace) then needs no capabilities read on tap.
         let api = api
-        Task { await api.prefetchCreationCapabilities() }
+        async let capabilitiesPrefetch: Void = api.prefetchCreationCapabilities()
         async let uploadRecovery: Void = uploads.restorePendingTasks()
         await loadProjects()
         selectWorkspaceProject(preferredProjectID: preferredProjectID)
         await uploadRecovery
+        await capabilitiesPrefetch
     }
     private func selectWorkspaceProject(preferredProjectID: UUID?) {
         if let preferredProjectID,

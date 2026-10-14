@@ -34,14 +34,14 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
         let slowCapabilities = request.url?.path.hasSuffix("/capabilities") == true
             && ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "slow"
         // `KRIA_CHAT_SLOW_READS=1` (KRI-640): every chat or capabilities read after the first capabilities read
-        // answers 6s late, so anything a new chat waits for beyond its create call shows up as a stall.
+        // answers 10s late, so anything a new chat waits for beyond its create call shows up as a stall.
         let slowRead = ProcessInfo.processInfo.environment["KRIA_CHAT_SLOW_READS"] == "1"
             && CreationChatFixture.shared.isSlowRead(request)
         if slowCapabilities || slowRead || (request.url?.path.hasSuffix("/messages") == true
             && ProcessInfo.processInfo.environment["KRIA_CHAT_SLOW_CREATION"] == "1") {
             let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
             delayedResponse = work
-            DispatchQueue.global().asyncAfter(deadline: .now() + (slowCapabilities || slowRead ? 6 : 5), execute: work)
+            DispatchQueue.global().asyncAfter(deadline: .now() + (slowRead ? 10 : slowCapabilities ? 6 : 5), execute: work)
         } else { finishLoading() }
     }
     private func finishLoading() {
