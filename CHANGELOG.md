@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.277.0] - 2026-10-14
+
+### Changed
+- feat(kria): chat turns a Talking edit's pictures on top of the video and back (KRI-661) (#1598) <!-- release-pr: 1598 -->
+
 ## [0.78.276.0] - 2026-10-14
 
 ### Changed
