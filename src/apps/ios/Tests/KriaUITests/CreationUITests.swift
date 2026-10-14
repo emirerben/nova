@@ -996,6 +996,30 @@ final class CreationUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Reconnect"].exists)
     }
 
+    /// KRI-640: New chat opens on its create reply alone. Every chat read and every capabilities read after the
+    /// first answers 6s late here, so a new chat that reads itself back or re-reads capabilities before its
+    /// format cards work misses the 3s budget.
+    func testNewChatShowsUsableFormatsWithoutWaitingForMoreReads() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_SLOW_READS"] = "1"
+        app.launch()
+        XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
+        app.buttons["Open projects"].tap()
+        let newChat = app.buttons["drawer-new-chat"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 3))
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: newChat)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 20), .completed)
+
+        let tappedAt = Date()
+        newChat.tap()
+        let card = app.buttons["format-montage"]
+        let usable = eventually(timeout: 3) { card.exists && card.isEnabled && app.staticTexts["What are we making?"].exists }
+        let elapsed = Date().timeIntervalSince(tappedAt)
+        XCTAssertTrue(usable, "format cards took \(String(format: "%.1f", elapsed))s after New chat")
+    }
+
     func testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]

@@ -1035,6 +1035,8 @@ private actor MobileSessionRefreshCoordinator {
 /// and shares one in-flight read between callers, so tapping New chat doesn't
 /// pay for a capabilities round trip the format picker is about to repeat.
 actor CreationCapabilitiesCache {
+    /// Capabilities change only on a server rollout, so a read this recent stands in for a fresh one.
+    static let reuseWindow: TimeInterval = 300
     private var entry: (owner: String, value: CreationCapabilities, readAt: Date)?
     private var inFlight: (owner: String, task: Task<CreationCapabilities, Error>)?
 
@@ -1132,7 +1134,11 @@ struct KriaAPI: KriaAPIClient {
     func recentCreationCapabilities(maxAge: TimeInterval) async -> CreationCapabilities? {
         await capabilitiesCache.recent(owner: capabilitiesOwner, maxAge: maxAge)
     }
-    func prefetchCreationCapabilities() async { _ = try? await creationCapabilities() }
+    func prefetchCreationCapabilities() async {
+        // Opening the drawer prefetches too; a read from the last minute is fresh enough.
+        guard await recentCreationCapabilities(maxAge: 60) == nil else { return }
+        _ = try? await creationCapabilities()
+    }
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink {
         try await request(path: "creation-threads/\(threadID.uuidString)/song-audio", method: "GET",
                           query: generation.map { [URLQueryItem(name: "generation", value: String($0))] } ?? [],
@@ -1170,9 +1176,8 @@ struct KriaAPI: KriaAPIClient {
         }
     }
     func createThread(message: String?) async throws -> CreationThread {
-        // The runtime version changes only on a server rollout, so a read from the
-        // last few minutes is as good as a fresh one and saves a round trip on tap.
-        let cached = await recentCreationCapabilities(maxAge: 300)
+        // A recent read saves a round trip on tap; the chat's format picker reuses it too.
+        let cached = await recentCreationCapabilities(maxAge: CreationCapabilitiesCache.reuseWindow)
         let capabilities: CreationCapabilities
         if let cached { capabilities = cached } else { capabilities = try await creationCapabilities() }
         let runtime = capabilities.preferredRuntimeVersion

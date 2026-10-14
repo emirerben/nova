@@ -18,6 +18,7 @@
       "KriaUITests/CreationUITests/testCreateWithoutAConnectionKeepsConnectionRecovery",
       "KriaUITests/CreationUITests/testExpiredApprovalCannotStartGeneration",
       "KriaUITests/CreationUITests/testUnavailableCapabilitiesShowRetryInsteadOfDeadFormatCards",
+      "KriaUITests/CreationUITests/testNewChatShowsUsableFormatsWithoutWaitingForMoreReads",
       "KriaUITests/CreationUITests/testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap",
       "KriaUITests/CreationUITests/testReadySuggestionChipsApplyFromTapsNearCapsuleEdges",
       "KriaUITests/SlidePostUITests/testSlidePostCreationIsTheRichLayoutThenCreateThenKriaPropose",

@@ -212,6 +212,9 @@ enum AccountIdentity {
     private let cache: CacheRepository?
     private var deletedProjectIDs: Set<UUID> = []
     private var reapingChatIDs: Set<UUID> = []
+    /// KRI-640: the full chat a create call returned, held until its screen opens so the
+    /// new chat shows at once instead of reading itself back from the server first.
+    private var createdThreads: [UUID: CreationThread] = [:]
     let chatDrafts: ChatDraftStore
     private var collectionGeneration = 0
     init(
@@ -402,6 +405,7 @@ enum AccountIdentity {
         do {
             let thread = try await api.createThread(message: nil)
             let project = thread.summary
+            createdThreads[project.id] = thread
             collectionGeneration += 1
             projects.insert(project, at: 0)
             projectsState = .loaded
@@ -418,6 +422,7 @@ enum AccountIdentity {
             #endif
         }
     }
+    func takeCreatedThread(_ id: UUID) -> CreationThread? { createdThreads.removeValue(forKey: id) }
     func openWorkspace(preferredProjectID: UUID? = nil) async {
         selectWorkspaceProject(preferredProjectID: preferredProjectID)
         uploads.recoverInterruptedPreparations()

@@ -30,7 +30,10 @@ struct ChatWorkspaceView: View {
         )
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: showsProjects)
         .onChange(of: showsProjects) { _, isOpen in
-            if isOpen { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
+            guard isOpen else { return }
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            // The drawer holds New chat: have capabilities ready before it is tapped.
+            Task { [api = model.api] in await api.prefetchCreationCapabilities() }
         }
         .task {
             await model.openWorkspace(preferredProjectID: UUID(uuidString: lastProjectID))
@@ -1140,9 +1143,9 @@ private struct CreationWorkspaceView: View {
     }
 
     private func loadCapabilitiesWithRetry() async {
-        // KRI-640: the New chat tap (or workspace open) just read capabilities;
-        // reuse that read so the format picker is usable on first paint.
-        if let recent = await model.api.recentCreationCapabilities(maxAge: 30) {
+        // KRI-640: reuse the read New chat (or opening the workspace) just made, the
+        // same one the create call trusted, so the format picker works on first paint.
+        if let recent = await model.api.recentCreationCapabilities(maxAge: CreationCapabilitiesCache.reuseWindow) {
             await refreshCapabilities(preloaded: recent)
             if capabilitiesAreAuthoritative { return }
         }
@@ -1199,6 +1202,12 @@ private struct CreationWorkspaceView: View {
         }
         .onChange(of: renderShapeScope) { _, scope in renderShapePick.reset(scope: scope) }
         .task {
+            // KRI-640: a chat New chat just made opens on the thread its create call returned, so it
+            // shows without reading itself back first; the poll below still refreshes it.
+            if let created = model.takeCreatedThread(project.id) {
+                apply(created)
+                initialConversationLoaded = true
+            }
             // History should not wait for the independent capability request. Requested as soon as the
             // project opens, and retried: a slow or failed fetch must not leave the screen without it.
             async let capabilities: Void = loadCapabilitiesWithRetry()
