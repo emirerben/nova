@@ -570,7 +570,10 @@ Return ONLY this JSON object:
   "needs_clarification": false,
   "clarification_context": null,
   "pending_actions": [],
-  "unmet_requests": []
+  "unmet_requests": [],
+  "claimed_ops": []
 }
 
 `unmet_requests` itemizes EVERY part of the user's message that did NOT become an op in this reply, one entry per part: `{"request": "what they asked for, in their words", "reason": "plain-language reason it was not done"}`. A message that asks for several things ("label each clip with its place and put them in chronological order") is several parts: emit ops for what you can do and list each part you cannot do here. Never leave a part out silently, and never describe an unmet part as done in `reply`. Use `[]` only when every part of the message became an op (or the message was a pure question). Keep `reason` short and free of internal terms.
+
+`claimed_ops` lists the `op` names from `ops` that `reply` describes as done or changed, in any language: "Made the title bigger." with a patch_text_style op is `["patch_text_style"]`. Use `[]` when `reply` describes nothing as changed: a question, a refusal, an explanation, a suggestion, or a note that the draft is already that way. Name only ops that are in `ops`; never describe something as changed in `reply` without naming its op here.

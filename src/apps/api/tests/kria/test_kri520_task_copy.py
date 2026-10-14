@@ -102,8 +102,12 @@ def test_device_refusal_copy_is_the_old_english_and_a_turkish_sibling() -> None:
             "Neyi değiştirmek istediğini söyle, farklı bir yol deneyeyim. "
             "Bu düzenleme uygulanmadı. Son iyi sürümün hâlâ duruyor."
         )
-        # The contract's own message is carried as written.
-        assert kr._device_refusal_copy(other).startswith("Clip 3 has no speech. Bu düzenleme")
+        # KRI-667: the contract's own message is English; with no Turkish twin it is left
+        # out of a Turkish reply (it used to be carried as written, mid-Turkish).
+        assert kr._device_refusal_copy(other).startswith(
+            "Bu düzenleme istediğin bir şeyi korumadı. Bu düzenleme uygulanmadı."
+        )
+        assert "Clip 3" not in kr._device_refusal_copy(other)
 
 
 def test_phone_gate_refusal_ends_with_the_way_forward_in_each_language() -> None:

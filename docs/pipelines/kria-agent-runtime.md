@@ -168,6 +168,16 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   observed-turn projection; today receipts ride on the `draft_applied` event
   payload and `GET /creation-threads/{id}/brief` returns the current
   brief with the newest receipt per requirement (empty when the flag is off).
+- **Ask facts (KRI-667).** Which checker judges an ask is read from `facts` first,
+  in English keys and values whatever the creator's language: `triggers` (spoken
+  words, never translated), `keep_whole_take`, `closing`, `speech_cleanup`
+  (true/false), `captions` (`on`/`off`/`word_by_word`), `caption_language` (a
+  two-letter code). The Main Creator and the brief extractor are asked for them
+  (Main Creator v58, extractor v8). The word recognisers in `brief_checks.py` run
+  only when the fact is absent or malformed, and no new ones may be added:
+  `tests/kria/test_kri667_no_new_intent_regexes.py` ratchets the `re.*` count of
+  every creator-wording module down (exempt a non-wording regex with
+  `# kri667: <why>`). Pins: `tests/kria/test_kri667_structured_ask_facts.py`.
 - **Cost.** With a render present the flag adds one Main Creator call to
   editor-op turns (the planner extracts requirements before the router runs).
   If that call fails, a plain edit falls back to the legacy copilot-first path
@@ -280,6 +290,28 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   Photos and Visuals are never dropped; "skip the dark ones" stays the model's call
   (no lighting signal yet). Incident: cabin kit M2 re-send, prod thread 35ccc8ef.
   Guard: `tests/kria/test_kri623_ruled_out_clips.py`.
+- *Clip exclusions (KRI-667)*: "Skip the quad bike clip", "don't use the blurry ones",
+  "çamaşır klibini kullanma" are one `exclude` clip intent each, stated by the
+  clip-intent planner in any language (`ClipIntentOp` includes `exclude`; before, the
+  model wrote `include`, which forced the clip IN). The parser's KRI-511 regex is only
+  a fallback that repairs an `include` whose own quote skips exactly those clips
+  (`exclusion_repaired`, log-only); an include beside a skip ("Skip the laundry, but
+  the gym has to be in") is never inverted, and a text or sound removal ("remove the
+  sport labels") is never an exclude. The resolver is asked the membership question
+  (`include`); a clip is kept for the exclude only at confidence >= 0.8, with no vision
+  check and no creator question: nothing matched (or the resolver down) means nothing
+  is left out. `app/kria/clip_scope.py` `apply_clip_exclusions` then narrows the pick
+  like KRI-623 (after resolution in `_plan_creator_action`, re-checked by
+  `check_strategy_for_runtime_v2`; in the v1 route before `compile_active_plan`). It
+  never removes a clip another resolved intent names or the strategy places (reaction
+  beat, closing media, montage audio/cadence source), never the last own clip, never
+  under a guided voiceover contract, and clears an excluded hero. The semantic planner
+  and the narrated aligner skip `exclude` rows, so nothing forces the clip back in.
+  Kill switch `CLIP_INTENT_EXCLUDE_ENABLED` (default on; off = the pre-KRI-667 prompt
+  byte for byte, the skip dropped silently, nothing removed): `fly secrets set
+  CLIP_INTENT_EXCLUDE_ENABLED=false -a nova-video`, then restart api and worker.
+  Guards: `tests/kria/test_kri667_clip_exclusions.py`, the KRI-667 cases in
+  `tests/agents/test_clip_intent_planner.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
   none of those sources, the visible opening title is omitted; `Montage` remains
@@ -380,10 +412,18 @@ reply English and prompts byte-identical).
   creator wrote it. English/unknown adds nothing, so those prompts are unchanged.
 - **Understanding.** Typed answers, status/help questions, redo/move/remove asks, the
   copilot honesty guard and the follow-up parsers accept Turkish, folded with
-  `brief_route.fold_text`/`loose_text` (İ/I/ı and ASCII spellings match).
+  `brief_route.fold_text`/`loose_text` (İ/I/ı and ASCII spellings match). The honesty
+  guard reads the copilot's `claimed_ops` (the ops its reply calls done, restated by the
+  parser for server-written replies) first; the EN/TR wording regexes are only the fallback
+  when that field is missing (KRI-667).
 - **Never localized.** HTTP/`KriaProblem` messages and codes, payload machine values, the
   "Render this draft:" approval prefix and the two command sentences iOS sends
   ("Retry preparing my clips.", "Keep the same plan with my current footage").
+- **Guard (KRI-667).** `tests/kria/test_turkish_chat_guard.py` fails on English written to a
+  Turkish chat (a net over every v2 event writer) and on fixed English handed to a writer,
+  turn plan or strategy refusal without `say()`. Worker refusal text is re-worded at the chat
+  side by exact text (`kria_runtime._WORKER_TEXT_TR`); one with no Turkish twin is left out,
+  never shown in English. Allowlist: `tests/kria/turkish_chat_guard.py`.
 
 ## Render consent
 

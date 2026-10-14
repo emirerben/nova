@@ -65,7 +65,7 @@ from app.kria.brief import (
     wants_clip_descriptions,
 )
 from app.kria.brief_route import loose_text
-from app.kria.clip_scope import apply_clip_scope
+from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
 from app.kria.reply_language import current_reply_language, say
 from app.kria.strategy_policy import (
@@ -2150,13 +2150,16 @@ async def _plan_creator_action(
         )
         if dropped_pins:
             log.info("kria_pinned_texts_ungrounded", thread_id=str(thread_id), count=dropped_pins)
+            note = say(
+                en="I left out on-screen text that wasn't in your words.",
+                tr="Senin sözlerinde olmayan ekran yazısını eklemedim.",
+            )
             action = action.model_copy(
                 update={
                     "strategy": action.strategy.model_copy(
                         update={"pinned_texts": grounded_pins or None}
                     ),
-                    "summary": f"{action.summary.strip()} I left out on-screen text that "
-                    "wasn't in your words.".strip(),
+                    "summary": f"{action.summary.strip()} {note}".strip(),
                 }
             )
     if isinstance(action, ProposeStrategy) and action.strategy.opening_title_duration_s is not None:
@@ -2511,6 +2514,29 @@ async def _plan_creator_action(
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
             )
+        if settings.clip_intent_exclude_enabled:
+            # KRI-667: "Skip the quad bike clip" leaves the clips the resolver confidently
+            # matched out of the pick, whatever the model selected. After the strategy
+            # check, so the narrowed strategy is checked again (a refusal keeps the pick).
+            narrowed = _without_excluded_clips(
+                manifest, action.strategy, planned.resolution.intents
+            )
+            if narrowed is not None:
+                log.info(
+                    "kria_clip_exclusions_applied",
+                    thread_id=str(thread_id),
+                    model_selected=len(action.strategy.selected_media_ids),
+                    model_scope=action.strategy.media_scope,
+                    selected=len(narrowed[0].selected_media_ids),
+                )
+                extra = [n for n in narrowed[1] if n not in policy_notices]
+                action = action.model_copy(
+                    update={
+                        "strategy": narrowed[0],
+                        "summary": " ".join([action.summary.strip(), *extra]).strip(),
+                    }
+                )
+                policy_notices = (*policy_notices, *extra)
         ordering_choice: str | None = None
         if settings.kria_choice_questions_enabled:
             ordering_choice = fold_choice_answers(thread_events).get(CONFLICT_ORDER_VS_GROUP)
@@ -2630,6 +2656,27 @@ def _creative_copy_turn(
         manifest_hash=manifest.manifest_hash,
         context_hash=manifest.context_hash,
     )
+
+
+def _without_excluded_clips(
+    manifest: ResolvedCreatorManifest,
+    strategy: Any,
+    resolved: list[ResolvedClipIntent],
+) -> tuple[Any, tuple[str, ...]] | None:
+    """(checked strategy without the excluded clips, its notices), or None to keep the pick.
+
+    KRI-667: `apply_clip_exclusions` narrows the selection; the narrowed strategy runs the
+    same runtime-v2 check the model's strategy did, so a pick the renderer cannot make
+    is never drafted. A refusal keeps the checked pick: the clip stays, as before.
+    """
+    narrowed = apply_clip_exclusions(manifest, strategy, resolved_intents=resolved)
+    if narrowed is strategy:
+        return None
+    checked = check_strategy_for_runtime_v2(manifest, narrowed)
+    if isinstance(checked, RefusedStrategy):
+        log.info("kria_clip_exclusions_refused", code=checked.code)
+        return None
+    return checked.strategy, tuple(checked.notices)
 
 
 def _ordering_conflict_question(
@@ -3701,7 +3748,11 @@ async def _plan_live_turn(
                     plan=KriaTurnPlan(
                         mode="respond",
                         turn_value="question",
-                        response=clarification or "What would you like me to revise?",
+                        response=clarification
+                        or say(
+                            en="What would you like me to revise?",
+                            tr="Neyi değiştirmemi istersin?",
+                        ),
                     ),
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,

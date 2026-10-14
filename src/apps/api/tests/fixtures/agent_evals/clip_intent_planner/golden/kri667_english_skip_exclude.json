@@ -1,0 +1,42 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-14.1",
+  "input": {
+    "creator_request": "Make a fun montage of our weekend in Lisbon. Skip the laundry clip, nobody wants to see that.",
+    "latest_user_message": "Make a fun montage of our weekend in Lisbon. Skip the laundry clip, nobody wants to see that.",
+    "candidate_intents": null,
+    "clip_exclusions": true
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"exclude_laundry\",\n      \"op\": \"exclude\",\n      \"attribute\": \"laundry clip\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Skip the laundry clip\"\n    }\n  ],\n  \"question\": null\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "exclude_laundry",
+        "op": "exclude",
+        "attribute": "laundry clip",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Skip the laundry clip"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden (KRI-667, prompt 2026-10-14.1, clip_exclusions on): raw_text is plausible Gemini 2.5 Flash output written by hand, not a live capture. Re-capture live when a paid run is approved.",
+    "case": "KRI-667: an English skip is ONE `exclude` naming the clip, never an `include` (which would force it in) and never a question.",
+    "expect_intents": [
+      {
+        "op": "exclude",
+        "source_quote_keywords": [
+          "laundry"
+        ]
+      }
+    ],
+    "expect_absent_ops": [
+      "include"
+    ],
+    "expect_any": true,
+    "expect_question": false
+  }
+}

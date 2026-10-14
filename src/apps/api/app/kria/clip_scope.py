@@ -21,6 +21,11 @@ Long and short come from the clips' own durations: one clear gap (the longer sid
 least twice the shorter, and no second gap like it) splits them. Clips of similar length,
 or a clip of unknown length, leave the pick alone. Photos and Visuals are never dropped:
 they are not takes.
+
+``apply_clip_exclusions`` (KRI-667) narrows the pick the same way for the clips the
+creator named to leave out ("Skip the quad bike clip", "çamaşır klibini kullanma"): the
+clip-intent planner states them as ``exclude`` intents and the resolver keeps only its
+confident matches, so here nothing is read from words, only resolved intents applied.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ from typing import Literal, Protocol
 from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
 from app.agents._schemas.creator_policy import MAX_MAIN_CREATOR_SELECTED_MEDIA
 from app.kria.brief_route import loose_text
+from app.schemas.clip_intents import ResolvedClipIntent
 
 Group = Literal["long", "short", "longest", "shortest", "all"]
 # "only" keeps just this group, "also" adds it back, "skip" leaves it out; "reset" (group
@@ -302,4 +308,88 @@ def apply_clip_scope(
     return strategy.model_copy(update=update)
 
 
-__all__ = ["LengthAsk", "apply_clip_scope", "length_asks", "length_groups", "ruled_out_clips"]
+def _placed_media(strategy: CreativeStrategy) -> set[str]:
+    """Media the strategy itself places or plays: never removed by an exclusion."""
+
+    placed = {beat.visual_id for beat in strategy.reaction_beats or [] if beat.visual_id}
+    if strategy.closing_media is not None:
+        placed.add(strategy.closing_media.visual_id)
+        if strategy.closing_media.badge_visual_id:
+            placed.add(strategy.closing_media.badge_visual_id)
+    if strategy.montage_audio is not None:
+        placed.update(strategy.montage_audio.source_media_ids)
+    if strategy.montage_cadence is not None:
+        placed.update(strategy.montage_cadence.source_media_ids)
+    return placed
+
+
+def excluded_clips(
+    resolved_intents: Iterable[ResolvedClipIntent] | None, strategy: CreativeStrategy
+) -> set[str]:
+    """Media ids resolved ``exclude`` intents leave out (KRI-667), minus every protected one.
+
+    A clip another resolved intent names (an include, an order, a group, a caption or a
+    label) stays: two asks about one clip contradict, and keeping footage is the safe
+    side. So does media the strategy itself places (a reaction beat, the closing media,
+    a montage audio or cadence source).
+    """
+
+    intents = [i for i in resolved_intents or [] if i.status == "resolved"]
+    excluded = {a.media_id for i in intents if i.op == "exclude" for a in i.assignments}
+    if not excluded:
+        return set()
+    named = {a.media_id for i in intents if i.op != "exclude" for a in i.assignments}
+    return excluded - named - _placed_media(strategy)
+
+
+def apply_clip_exclusions(
+    manifest: ResolvedCreatorManifest,
+    strategy: CreativeStrategy,
+    *,
+    resolved_intents: Iterable[ResolvedClipIntent] | None,
+) -> CreativeStrategy:
+    """``strategy`` without the clips the creator asked to leave out (KRI-667), or unchanged.
+
+    The same narrowing as ``apply_clip_scope``: an "all" scope or an empty pick becomes
+    an explicit ``selected`` list of the manifest media minus the excluded clips, and an
+    excluded hero is cleared. Unchanged when a guided voiceover contract needs its
+    all-media scope, when no excluded clip is in the pick, when the exclusion would
+    leave no own clip (or nothing at all), or when a native edit's explicit list would
+    pass ``MAX_MAIN_CREATOR_SELECTED_MEDIA``: a missed exclusion keeps today's behaviour,
+    a wrong one loses footage the creator wanted.
+    """
+
+    if strategy.execution_contract is not None:
+        return strategy
+    dropped = excluded_clips(resolved_intents, strategy)
+    if not dropped:
+        return strategy
+    takes_everything = strategy.media_scope == "all" or not strategy.selected_media_ids
+    base = (
+        [media.media_id for media in manifest.media]
+        if takes_everything
+        else list(dict.fromkeys(strategy.selected_media_ids))
+    )
+    kept = [media_id for media_id in base if media_id not in dropped]
+    if len(kept) == len(base) or not kept:
+        return strategy
+    own = {media.media_id for media in _own_videos(manifest.media)}
+    if own.intersection(base) and not own.intersection(kept):
+        return strategy
+    if strategy.render_program == "native" and len(kept) > MAX_MAIN_CREATOR_SELECTED_MEDIA:
+        return strategy
+    update: dict[str, object] = {"media_scope": "selected", "selected_media_ids": kept}
+    if strategy.hero_media_id in dropped:
+        update["hero_media_id"] = None
+    return strategy.model_copy(update=update)
+
+
+__all__ = [
+    "LengthAsk",
+    "apply_clip_exclusions",
+    "apply_clip_scope",
+    "excluded_clips",
+    "length_asks",
+    "length_groups",
+    "ruled_out_clips",
+]
