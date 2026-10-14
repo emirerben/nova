@@ -80,7 +80,7 @@ log = structlog.get_logger()
 # Voiceover edit a cue for an own clip is `include`, never `order`, and beats persist (v55).
 # KRI-614: a clip's `filename` (the name the app shows) identifies it when the creator writes it
 # (v56).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-12-v56"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-13-v57"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input

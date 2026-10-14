@@ -108,7 +108,8 @@
         "scripts/ios/kri-651-approved-hook-e2e.py",
         "src/apps/api/app/tasks/generative_build.py",
         "src/apps/api/tests/evals/request_following/test_approved_hook_journey.py",
-        "src/apps/api/tests/kria/test_approved_hook_observer_postgres.py"
+        "src/apps/api/tests/kria/test_approved_hook_observer_postgres.py",
+        "src/apps/api/tests/fixtures/incidents/kri661-talking-clip-photos-order-asks-nothing.json"
       ]
     },
     {

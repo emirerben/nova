@@ -1,0 +1,84 @@
+{
+  "id": "kri661-talking-clip-photos-order-asks-nothing",
+  "incident": {
+    "ticket": "KRI-661",
+    "summary": "Must not ask: a talk-to-camera recording plus gallery photos was told 'none of your clips have a filming time'. One clip has no order to promise; the order ask belongs to the photo Visuals, which carry their own capture times."
+  },
+  "kind": "clarification",
+  "approved": {
+    "strategy": {
+      "direction": "guided_story",
+      "edit_format": "subtitled",
+      "render_program": "native",
+      "pacing": "balanced",
+      "target_duration_s": 120,
+      "target_duration_requested": true,
+      "audio_strategy": "original_audio"
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "timing",
+          "scope": "global",
+          "description": "2 minutes",
+          "facts": {
+            "duration_s": 120
+          },
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r2",
+          "kind": "order",
+          "scope": "global",
+          "description": "in the order I filmed them",
+          "facts": {
+            "key": "capture_time"
+          },
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Show my photos as overlays and my videos full screen, in the order I filmed them.",
+    "provenance": "Prod thread f4628258 (2026-10-13), anonymised: one in-app talk-to-camera recording (no Photos capture time) and gallery photos."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "n0",
+        "kind": "video",
+        "duration_s": 231.0,
+        "has_audio": true
+      }
+    ],
+    "turns": [
+      {
+        "role": "user",
+        "text": "Show my photos as overlays and my videos full screen, in the order I filmed them."
+      }
+    ],
+    "notes": [
+      "KRI-661: order_basis must not ask about a single clip's missing capture time."
+    ]
+  },
+  "expect": {
+    "contract": {
+      "duration_s": 120,
+      "order_required": true,
+      "order_basis": "capture_time",
+      "order_ids": [
+        "n0"
+      ],
+      "resolved": true
+    },
+    "question": {
+      "no_question": true
+    }
+  },
+  "repro": {
+    "command": "pytest tests/incidents/test_incident_corpus.py -k kri661-talking-clip-photos-order-asks-nothing",
+    "status": "available"
+  },
+  "sources": []
+}

@@ -15,6 +15,7 @@ import uuid
 
 import structlog
 
+from app.agents._schemas.creator_agent import FULLSCREEN_OVERLAY_DISPLAYS
 from app.agents._schemas.edit_format import (
     DAY_VLOG_RENDERER_VERSION,
     DEFAULT_EDIT_FORMAT,
@@ -584,8 +585,11 @@ def build_generative_job(
         # KRI-297: the confirmed strategy's full-screen Visuals choice, surfaced
         # as a flat key for the phone worker (read like `landscape_fit`). Omitted
         # unless "fullscreen" so every other job keeps its exact shape.
-        if all_candidates["creator_strategy"].get("overlay_display") == "fullscreen":
-            all_candidates["overlay_display"] = "fullscreen"
+        # KRI-661: also the kind-split values ("fullscreen_videos"/"fullscreen_images").
+        if all_candidates["creator_strategy"].get("overlay_display") in FULLSCREEN_OVERLAY_DISPLAYS:
+            all_candidates["overlay_display"] = all_candidates["creator_strategy"][
+                "overlay_display"
+            ]
     bounded_creator_request = str(creator_request or "").strip()[:_MAX_CREATOR_REQUEST_CHARS]
     if bounded_creator_request:
         all_candidates["creator_request"] = bounded_creator_request

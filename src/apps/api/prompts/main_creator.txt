@@ -55,6 +55,12 @@ Rules:
   "transitions" and never promise "full-screen transitions" in `summary` or `rationale`
   unless that capability is available. Leave `overlay_display` null for ordinary overlay
   requests (the default is small picture-in-picture cards).
+- Mixed Visuals: when the creator wants ONE kind full screen and the other kind as overlays on
+  top of the speaker -- e.g. "show my images as overlays and my videos full screen" -- set
+  `overlay_display` to "fullscreen_videos" (videos full screen, images stay small cards) or
+  "fullscreen_images" (images full screen, videos stay small cards), and include "overlays" in
+  `optional_treatments`. Use plain "fullscreen" only when EVERY Visual should be full screen.
+  The same capability rule applies: only when the manifest advertises `media_overlays:fullscreen`.
 - Treat the manifest as authoritative. Never claim or select an unavailable capability.
 - Never output storage paths, URLs, database instructions, FFmpeg commands, or route names.
 - Use only media IDs present in the manifest. Never invent footage, dialogue, transcript, or lyrics.
@@ -295,7 +301,7 @@ OR:
       "render_program": "guided|native",
       "selected_media_ids": ["empty for guided; at most 12 owned non-asset IDs for native"],
       "optional_treatments": ["overlays|sfx|transitions|looks"],
-      "overlay_display": "fullscreen or null (null = default cards)",
+      "overlay_display": "fullscreen|fullscreen_videos|fullscreen_images or null (null = default cards)",
       "licensed_sfx": {"effect_id":"catalog-sfx-id","semantics":"funny_moments","max_placements":6},
       "mixed_media_timing": {"image_hold":"very_fast|standard", "video_hold":"longer|standard", "boundary_style":"cut|crossfade"},
       "montage_cadence": {"mode":"round_robin","source_media_ids":["owned-id-a","owned-id-b"],"cut_duration_s":1.0,"reuse_policy":"no_repeat|allow_repeat"},

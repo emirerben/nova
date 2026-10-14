@@ -932,7 +932,9 @@ def _order_basis(
     if valid and (len(set(ids)) != len(ids) or (selected and set(ids) != selected)):
         valid, ids = False, []
     missing = []
-    if valid and wants_capture:
+    # KRI-661: one clip has no order to promise (a talk-to-camera recording with photo
+    # Visuals), so a missing filming time on it is not a question worth asking.
+    if valid and wants_capture and len(rows) > 1:
         for row in rows:
             capture = capture_from_assignment(row)
             if not (capture and capture.capture_time):
