@@ -19,8 +19,10 @@ enum NativePreviewDangerZones {
     static func overlaps(frame: CGRect, rotation: Double, canvas: CGSize) -> Set<Edge> {
         guard canvas.width > 0, canvas.height > 0 else { return [] }
         let angle = rotation * .pi / 180
-        let halfWidth = (abs(cos(angle)) * frame.width + abs(sin(angle)) * frame.height) / 2
-        let halfHeight = (abs(sin(angle)) * frame.width + abs(cos(angle)) * frame.height) / 2
+        let cosine = CGFloat(abs(cos(angle)))
+        let sine = CGFloat(abs(sin(angle)))
+        let halfWidth = (cosine * frame.width + sine * frame.height) / 2
+        let halfHeight = (sine * frame.width + cosine * frame.height) / 2
         let safe = safeRect(in: canvas)
         var edges = Set<Edge>()
         if frame.midX - halfWidth < safe.minX { edges.insert(.left) }
