@@ -677,6 +677,32 @@ enum NativePreviewDiagnostics {
         record("player-item-failed", fields: fields)
         return report
     }
+    /// The live editable preview could not be built or played, so the finished video is shown instead.
+    /// Reuses the player-item report shape (`POST /me/jobs/{id}/playback-diagnostics`): the identity is the
+    /// error's type and case name (letters, digits and underscores only, never its text, payload, URL or
+    /// path) and its numeric code, so it is safe to upload from any build.
+    static func previewFailure(error: Error, sourceState: String) -> PlaybackFailureReport {
+        let nsError = error as NSError
+        let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        // Foundation-style errors ("NSURLErrorDomain") already name themselves. A Swift enum's bridged
+        // domain is just its type name, so add the case name; payloads (asset ids) are cut off at "(".
+        var domain = nsError.domain
+        if !domain.hasSuffix("Domain") {
+            let caseName = String(String(describing: error).prefix { $0 != "(" && $0 != " " })
+                .filter { $0.isLetter || $0.isNumber || $0 == "_" }.prefix(40)
+            if !caseName.isEmpty { domain += "." + caseName }
+        }
+        let report = PlaybackFailureReport(
+            playerKind: .live,
+            errorDomain: String(("preview." + domain).prefix(120)),
+            errorCode: nsError.code,
+            underlyingDomain: underlying.map { String($0.domain.prefix(120)) },
+            underlyingCode: underlying.map(\.code),
+            sourceState: String(sourceState.prefix(32)),
+            appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
+        record("preview-failure-reported", fields: ["domain": report.errorDomain, "code": String(report.errorCode), "state": sourceState])
+        return report
+    }
     #if DEBUG
     static func failure(_ stage: String, error: Error) {
         var fields = ["type": String(describing: type(of: error)), "domain": (error as NSError).domain, "code": String((error as NSError).code)]
