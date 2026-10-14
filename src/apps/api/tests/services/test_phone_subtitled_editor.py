@@ -344,7 +344,10 @@ def test_lanes_from_editor_sections_rejects_an_unpinned_overlay_path():
         )
 
 
-def test_lanes_from_editor_sections_rejects_a_new_fullscreen_display_mode():
+def test_lanes_from_editor_sections_accepts_a_fullscreen_card_and_honours_the_kill_switch(
+    monkeypatch,
+):
+    """KRI-661: a card may be promoted to full screen -- unless the rollout switch is off."""
     photo = _photo_visual()
     committed = [
         {
@@ -356,13 +359,23 @@ def test_lanes_from_editor_sections_rejects_a_new_fullscreen_display_mode():
             "end_s": 2.0,
         }
     ]
-    with pytest.raises(ValueError, match="full-screen overlay"):
+    lanes = lanes_from_editor_sections(
+        previous=None, sound_effects=None, media_overlays=committed, visuals=(photo,)
+    )
+    assert [c.display_mode for c in lanes.overlays] == ["fullscreen"]
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "phone_subtitled_fullscreen_overlays_enabled", False)
+    with pytest.raises(ValueError, match="turned off"):
         lanes_from_editor_sections(
-            previous=None,
-            sound_effects=None,
-            media_overlays=committed,
-            visuals=(photo,),
+            previous=None, sound_effects=None, media_overlays=committed, visuals=(photo,)
         )
+    # A card that was already full screen still round-trips with the switch off.
+    kept = lanes_from_editor_sections(
+        previous=lanes, sound_effects=None, media_overlays=committed, visuals=(photo,)
+    )
+    assert [c.display_mode for c in kept.overlays] == ["fullscreen"]
 
 
 def test_lanes_from_editor_sections_keeps_the_ending_clip_unchanged():

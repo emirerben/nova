@@ -1120,6 +1120,63 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(session.displayedSourcePreviewRecipe)
     }
 
+    /// One card whose file can't be loaded (or that the pool never listed) is skipped, not fatal: the live
+    /// preview still becomes ready with the cards that did load, the skipped ones stay in the document, and the
+    /// editor says how many it is not drawing.
+    func testPhoneTalkingPreviewSurvivesCardMediaThatCannotLoad() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true, card: true, unloadableCards: true)
+
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        XCTAssertEqual(session.document.mediaOverlays.map(\.id), ["card", "broken-card", "unlisted-card"], "the edit keeps every card")
+        let drawn = session.displayedSourcePreviewRecipe?.tracks.first { $0.kind == .overlay }?.clips.map(\.id)
+        XCTAssertEqual(drawn, ["overlay:card"], "only the card that loaded is drawn")
+        XCTAssertEqual(session.previewSkippedMediaCount, 2)
+        XCTAssertFalse(session.hasUnsavedChanges)
+
+        await session.prepareSourcePreview()
+        XCTAssertEqual(session.sourcePreviewState, .ready, "a retry re-resolves and stays usable")
+        XCTAssertEqual(session.previewSkippedMediaCount, 2)
+    }
+
+    /// A live preview that can't be built is reported from a Release build too: error type, case and code, the
+    /// state it failed in, and nothing that identifies the creator's media (no link, path or text).
+    func testLivePreviewFailureIsReportedWithoutPrivateDetail() async throws {
+        let (session, fake) = try await Self.phoneTalkingSession(lanesEditable: false)
+        guard case .failed = session.sourcePreviewState else { return XCTFail("no video track must fail the live preview") }
+
+        // (The fixture's finished video file doesn't exist, so its own player-item report may arrive too.)
+        func previewReports() -> [PlaybackFailureReport] { fake.playbackFailureReports.filter { $0.errorDomain.hasPrefix("preview.") } }
+        let reported = await waitUntil { !previewReports().isEmpty }
+        XCTAssertTrue(reported)
+        XCTAssertEqual(previewReports().count, 1)
+        let report = try XCTUnwrap(previewReports().first)
+        XCTAssertEqual(report.playerKind, .live)
+        XCTAssertTrue(report.errorDomain.hasPrefix("preview."))
+        XCTAssertTrue(report.errorDomain.hasSuffix("NativeEditorRenderError.missingVideoTrack"), report.errorDomain)
+        XCTAssertEqual(report.sourceState, "preparing")
+        let wire = String(decoding: try JSONEncoder().encode(report), as: UTF8.self)
+        XCTAssertFalse(wire.contains("http") || wire.contains("/"), wire)
+    }
+
+    /// While the finished video stands in for a failed live preview, a failure a rebuild can fix offers Retry
+    /// (and a retry brings the live preview back); one that would fail identically does not.
+    func testFinishedVideoFallbackOffersRetryOnlyWhenARebuildCanHelp() async throws {
+        let (session, fake) = try await Self.phoneTalkingSession(lanesEditable: true, withholdPool: true)
+        guard case .failed = session.sourcePreviewState else { return XCTFail("an unreadable source pool must fail the live preview") }
+        XCTAssertTrue(session.isShowingRenderedFallback)
+        XCTAssertTrue(session.fallbackOffersRetry)
+
+        fake.sourcePoolResult = fake.withheldSourcePool
+        await session.retryPreview()
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertFalse(session.fallbackOffersRetry)
+
+        let (permanent, _) = try await Self.phoneTalkingSession(lanesEditable: false)
+        XCTAssertTrue(permanent.isShowingRenderedFallback)
+        XCTAssertFalse(permanent.fallbackOffersRetry, "no video track fails identically on every rebuild")
+    }
+
     /// KRI-287: Visuals → "Add photo or video" on a phone Voiceover edit. The
     /// server opens `phone_editor_media` + `visual_blocks` with the revision the
     /// app registers against; each import is admitted, placed at the playhead,
@@ -1455,7 +1512,8 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.timelineItems.contains { $0.id == "opening-title" })
     }
 
-    private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false, bindOriginal: Bool = true, title: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy) {
+    private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false, bindOriginal: Bool = true, title: Bool = false,
+                                            unloadableCards: Bool = false, withholdPool: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
         let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
@@ -1511,14 +1569,28 @@ final class NativeEditorSessionTests: XCTestCase {
             variant["media_overlays"] = .array([.object(["id": .string("card"), "kind": .string("image"), "start_s": .number(0.2),
                 "end_s": .number(0.8), "x_frac": .number(0.5), "y_frac": .number(0.3), "scale": .number(0.35), "z": .number(1)])])
         }
+        if unloadableCards, case .array(var cards)? = variant["media_overlays"] {
+            // One card whose file can't be fetched (a non-https link fails at once, with no network) and
+            // one the pool never listed. Neither may take the live preview down.
+            for id in ["broken-card", "unlisted-card"] {
+                cards.append(.object(["id": .string(id), "kind": .string("image"), "start_s": .number(0.3), "end_s": .number(0.7),
+                    "x_frac": .number(0.5), "y_frac": .number(0.5), "scale": .number(0.35), "z": .number(2)]))
+            }
+            variant["media_overlays"] = .array(cards)
+            nativeAssets.append(NativeEditorAsset(id: "broken-card", kind: "media_overlay", mediaID: "broken-media",
+                sourceURL: try XCTUnwrap(URL(string: "http://storage.example/broken.png")), preserveAlpha: nil))
+        }
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
                 snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
                 snapshot: [:], canUndo: false, createdAt: .now),
             authoritativeVariant: variant
         )
-        fake.sourcePoolResult = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: .init(mediaID: "source",
+        let pool = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: .init(mediaID: "source",
             sourceURL: nil, original: descriptor, localRequired: true))], baseGeneration: "generation-1", nativeAssets: nativeAssets)
+        // `withholdPool`: the first read of the source pool fails (a dropped connection); the test hands the
+        // pool back and retries.
+        if withholdPool { fake.withheldSourcePool = pool } else { fake.sourcePoolResult = pool }
         fake.deviceRenderResponse = DeviceRenderStatusResponse(
             phase: "published", request: deviceRenderRequest(jobID: jobID, revision: 1, digest: "a"), publishedGeneration: "generation-1"
         )
@@ -2325,12 +2397,13 @@ final class NativeEditorSessionTests: XCTestCase {
         let recovered = await waitUntil { (session.player?.currentItem?.asset as? AVURLAsset)?.url == good }
         XCTAssertTrue(recovered, "the refreshed link replaces the failed item")
         XCTAssertEqual(fake.playbackURLCallCount, 1, "a link that plays ends the retries")
-        let reported = await waitUntil { !fake.playbackFailureReports.isEmpty }
+        // (This fixture has no source pool, so the live preview's own failure is reported separately.)
+        func itemReports() -> [PlaybackFailureReport] { fake.playbackFailureReports.filter { $0.playerKind == .finished } }
+        let reported = await waitUntil { !itemReports().isEmpty }
         XCTAssertTrue(reported)
-        let report = try XCTUnwrap(fake.playbackFailureReports.first)
-        XCTAssertEqual(report.playerKind, .finished)
+        let report = try XCTUnwrap(itemReports().first)
         XCTAssertEqual(report.errorDomain, AVFoundationErrorDomain)
-        XCTAssertEqual(fake.playbackFailureReports.count, 1, "one report per failed item")
+        XCTAssertEqual(itemReports().count, 1, "one report per failed item")
         session.togglePlayback()
         XCTAssertTrue(session.isPlaying)
         session.pausePlayback()
@@ -5429,6 +5502,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     var sourcePoolCallCount = 0
     var sourcePoolExpectation: XCTestExpectation?
     var sourcePoolResult: NativeEditorSourcePool?
+    var withheldSourcePool: NativeEditorSourcePool?
     var deviceRenderResponse: DeviceRenderStatusResponse?
     var deviceRenderCallCount = 0
     var reserveUploadResult: UploadReservation?

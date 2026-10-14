@@ -396,6 +396,9 @@ def compile_phone_subtitled_plan(
         )
         cursor += seg_duration
     speaker_end = cursor
+    from app.services.phone_text_styling import register_generation_timeline
+
+    register_generation_timeline(main_clips)
 
     try:
         layers = compile_caption_layers(

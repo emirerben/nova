@@ -697,10 +697,19 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: moved, object: textObject)], timeout: 3), .completed)
         XCTAssertLessThan(textObject.frame.midX, initialCenter.x - 15)
         XCTAssertLessThan(textObject.frame.midY, initialCenter.y - 20)
+        func guideSamples() -> Int {
+            let value = (preview.value as? String ?? "").components(separatedBy: ";")
+                .first(where: { $0.hasPrefix("dangerGuideSamples:") }) ?? ""
+            return Int(value.replacingOccurrences(of: "dangerGuideSamples:", with: "")) ?? 0
+        }
+        let guideSamplesBeforeCorner = guideSamples()
         let corner = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: textObject.frame.maxX, dy: textObject.frame.maxY))
         corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: 24, dy: 18)), withVelocity: 20, thenHoldForDuration: 0.1)
         let cornerSamples = (preview.value as? String)?.components(separatedBy: ";").first?.replacingOccurrences(of: "liveTextSamples:", with: "") ?? ""
         XCTAssertGreaterThan(Int(cornerSamples) ?? 0, 4, "Corner resizing must use the immediate text layer")
+        XCTAssertGreaterThan(guideSamples(), guideSamplesBeforeCorner,
+                             "The guide must update during the live scale/rotation gesture")
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-danger-guide"].firstMatch.exists)
         let resizedSize = app.textFields["native-editor-text-size"].value as? String
         let movedCenter = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: textObject.frame.midX, dy: textObject.frame.midY))
         movedCenter.press(forDuration: 0.05, thenDragTo: movedCenter.withOffset(CGVector(dx: 12, dy: -15)), withVelocity: 60, thenHoldForDuration: 0.05)
@@ -725,6 +734,9 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: textReady, object: preview)], timeout: 15), .completed)
         preview.pinch(withScale: 1.4, velocity: 0.4)
         preview.pinch(withScale: 0.75, velocity: -0.4)
+        XCTAssertFalse((preview.value as? String ?? "").hasSuffix("dangerGuideLast:"),
+                       "The oversized text footprint must warn after a live pinch")
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-danger-guide"].firstMatch.exists)
         let samples = (preview.value as? String)?.components(separatedBy: ";").first?.replacingOccurrences(of: "liveTextSamples:", with: "") ?? ""
         XCTAssertGreaterThan(Int(samples) ?? 0, 4)
         XCTAssertFalse(app.staticTexts["Preview unavailable"].exists)
@@ -1073,7 +1085,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Showing your last finished video"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Showing the finished video"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].exists)
         XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].isHittable, "Retry must not sit under the canvas")
         XCTAssertFalse(app.staticTexts["Preview unavailable"].exists)
@@ -1743,11 +1755,32 @@ final class NativeEditorInspectorUITests: XCTestCase {
         if app.buttons["native-editor-text-inspector-done"].exists {
             app.buttons["native-editor-text-inspector-done"].tap()
         }
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        XCTAssertTrue((preview.value as? String ?? "").contains("dangerGuideSamples:"))
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-danger-guide"].firstMatch.exists,
+                       "The advisory guide disappears when the gesture ends")
+        attachShot("danger-guide-hidden-after-drag", app)
         let undo = app.buttons["native-editor-undo"]
         XCTAssertTrue(undo.isEnabled)
         undo.tap()
         expectation(for: NSPredicate(format: "value CONTAINS %@", originalPosition), evaluatedWith: text)
         waitForExpectations(timeout: 3)
+        for (edge, destination) in [("right", CGVector(dx: 0.92, dy: 0.28)),
+                                    ("left", CGVector(dx: 0.08, dy: 0.28)),
+                                    ("top", CGVector(dx: 0.5, dy: 0.08)),
+                                    ("bottom", CGVector(dx: 0.5, dy: 0.78))] {
+            let boundaryStart = preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
+            let boundaryEnd = preview.coordinate(withNormalizedOffset: destination)
+            boundaryStart.press(forDuration: 0.1, thenDragTo: boundaryEnd, withVelocity: 100, thenHoldForDuration: 0.1)
+            XCTAssertTrue((preview.value as? String ?? "").components(separatedBy: "dangerGuideLast:").last?
+                .components(separatedBy: ",").contains(edge) == true,
+                          "The moving object's full bounds must warn at the \(edge) boundary")
+            XCTAssertFalse(app.descendants(matching: .any)["native-editor-danger-guide"].firstMatch.exists)
+            undo.tap()
+            expectation(for: NSPredicate(format: "value CONTAINS %@", originalPosition), evaluatedWith: text)
+            waitForExpectations(timeout: 3)
+        }
+        attachShot("danger-guide-boundary-drag-released", app)
     }
 
     /// KRI-281: a DragGesture on the caption rows fought the ScrollView, so a long list (narrated /

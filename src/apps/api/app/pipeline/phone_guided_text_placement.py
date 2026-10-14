@@ -93,6 +93,7 @@ def build_phone_face_sampler(
     workdir: str,
     download: ProxyDownloader,
     sample: FaceSampler = sample_face_regions,
+    observe_frames=None,
 ) -> Callable[[list[float], float], tuple[list[ProtectedRegion], dict[str, Any]]]:
     """A ``sampler(output_anchors_s, timeout_s)`` over the plan's footage proxies.
 
@@ -166,6 +167,8 @@ def build_phone_face_sampler(
                 width, height = height, width
             if width <= 0 or height <= 0:
                 continue
+            if observe_frames is not None:
+                observe_frames(path, points)
             for region in found:
                 # Regions come back keyed by proxy time; re-key to the moment
                 # that owns the anchor so they read on the output timeline.

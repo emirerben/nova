@@ -162,6 +162,21 @@ def infer_typed_direction(
     """Map narrow, unambiguous durable instructions to renderer-safe keys."""
     instruction = normalize_instruction(instruction)
     lowered = instruction.casefold()
+    if normalized_key is None:
+        from app.schemas.phone_text_style import explicit_text_rule  # noqa: PLC0415
+
+        resolved = explicit_text_rule(instruction)
+        if resolved is not None:
+            role, values = resolved
+            # Preserve existing single-knob contracts. Compound/role-specific
+            # asks commit atomically in one typed ledger row.
+            if (
+                role != "all_text"
+                or len(values) > 1
+                or set(values) not in ({"font_family"}, {"shadow_enabled"})
+            ):
+                key = f"text_style_{role}"
+                return key, {key: values}, "default"
     if normalized_key == "font_family" and structured_value is None:
         mentioned_fonts = [
             font
@@ -611,7 +626,10 @@ class CreatorDirectionService:
             raise DirectionError("unsupported enforcement")
         if initial_state not in {"active", "suggested"}:
             raise DirectionError("unsupported initial state")
-        if category == "other" and normalized_key in {"font_family", "shadow_enabled"}:
+        if category == "other" and (
+            normalized_key in {"font_family", "shadow_enabled"}
+            or str(normalized_key).startswith("text_style_")
+        ):
             category = "video_style"
         user = await self._user(db, user_id, lock=True)
         fingerprint = request_fingerprint(
@@ -1117,6 +1135,20 @@ class CreatorDirectionService:
                 raise DirectionConflict("locked memory requires creator review")
             if normalized_key is None or target.normalized_key != normalized_key:
                 raise DirectionConflict("replacement key does not match active memory")
+            from app.schemas.phone_text_style import (  # noqa: PLC0415
+                TEXT_STYLE_KEYS,
+                TextStyleRule,
+                effective_text_rule,
+            )
+
+            if normalized_key in TEXT_STYLE_KEYS:
+                # A chat replacement names changed properties; settings PATCH
+                # remains a full replacement so Use defaults can reset a field.
+                role = normalized_key.removeprefix("text_style_")
+                previous = (target.structured_value or {}).get(normalized_key, {})
+                replacement = (structured_value or {}).get(normalized_key, {})
+                merged = effective_text_rule({role: previous}, {role: replacement}, role)
+                structured_value = {normalized_key: TextStyleRule.model_validate(merged).values()}
             target.state = "superseded"
             # PostgreSQL may check the partial unique index before applying a
             # same-flush UPDATE batch. Retire the old key first.

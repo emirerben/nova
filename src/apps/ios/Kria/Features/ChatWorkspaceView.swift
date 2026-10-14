@@ -860,6 +860,9 @@ private struct CreationWorkspaceView: View {
                            choiceQuestionMode: choiceQuestionMode(for: message),
                            songRangeMode: songRangeMode(for: message))
                 .id(entry.id)
+            if let operationID = message.memoryOperationID {
+                SavedTextPreferenceUndo(operationID: operationID, api: model.api)
+            }
         case .stage:
             stageContent.id(entry.id)
         case .pendingUpload(let recordID):
@@ -2359,6 +2362,7 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     var songRangeQuestion: SongRangeQuestion? = nil
     /// KRI-588: the `song_range` a user message carried (from the stored event, or the in-flight send).
     var songRangeAnswer: SongRangeAnswer? = nil
+    var memoryOperationID: String? = nil
 
     static func syntheticUser(_ content: String) -> Self {
         Self(id: "synthetic-\(content)", role: .user, content: content)
@@ -2406,7 +2410,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
         let choiceQuestion = role == .assistant ? ChoiceQuestion.parse(payload: event.payload) : nil
         let songRangeQuestion = role == .assistant ? SongRangeQuestion.parse(payload: event.payload) : nil
         let songRangeAnswer = role == .user ? SongRangeAnswer.parse(payload: event.payload) : nil
-        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer)
+        let memoryOperationID = event.payload?["kind"]?.stringValue == "creator_memory_receipt" ? event.payload?["operation_id"]?.stringValue : nil
+        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, memoryOperationID: memoryOperationID)
     }
 }
 

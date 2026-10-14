@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.282.0] - 2026-10-14
+
+### Changed
+- feat(ios): show Reels and TikTok danger zones (KRI-670) (#1603) <!-- release-pr: 1603 -->
+
+## [0.78.281.0] - 2026-10-14
+
+### Changed
+- fix(ios): Talking editor preview draws captions over pictures and survives word-by-word captions (KRI-671) (#1604) <!-- release-pr: 1604 -->
+
+## [0.78.280.0] - 2026-10-14
+
+### Added
+- feat(ios): resolve text styles and save personal preferences (KRI-648 release 1) (#1596) <!-- release-pr: 1596 -->
+
+## [0.78.279.0] - 2026-10-14
+
+### Changed
+- fix(ios): drop the tick line under the Text panel sliders (KRI-646) (#1600) <!-- release-pr: 1600 -->
+
+## [0.78.278.0] - 2026-10-14
+
+### Changed
+- fix(ios): slide sticker snap haptics and a tappable video play button (KRI-668) (#1601) <!-- release-pr: 1601 -->
+
+## [0.78.277.0] - 2026-10-14
+
+### Changed
+- feat(kria): chat turns a Talking edit's pictures on top of the video and back (KRI-661) (#1598) <!-- release-pr: 1598 -->
+
+## [0.78.276.0] - 2026-10-14
+
+### Changed
+- feat(kria): Talking edits show images as cards, videos full screen, in filming order (KRI-661) (#1597) <!-- release-pr: 1597 -->
+
+## [0.78.275.0] - 2026-10-14
+
+### Changed
+- fix(ios): keep the live editor preview when a card fails to load, and report why it fell back (KRI-661) (#1599) <!-- release-pr: 1599 -->
+
+## [0.78.274.0] - 2026-10-14
+
+### Changed
+- fix(kria): moment picker avoids covered-lens / ground / blur stretches (KRI-625) (#1588) <!-- release-pr: 1588 -->
+
+## [0.78.273.0] - 2026-10-14
+
+### Changed
+- fix(kria): Tigre T1 Talking findings (KRI-628, 629, 630, 631, 632) (#1587) <!-- release-pr: 1587 -->
+
 ## [0.78.272.0] - 2026-10-13
 
 ### Changed

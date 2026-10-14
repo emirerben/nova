@@ -252,6 +252,109 @@ import KriaMediaEngine
         }
     }
 
+    // MARK: - Phone Talking: card layering and the word-caption layer budget
+
+    private func talkingSource(duration: Double) -> (ResolvedEditorSource, EditorClip) {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
+            asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100), duration: duration),
+            url: URL(fileURLWithPath: "/fixture/original.mp4"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: duration,
+            trimIn: 0, trimOut: duration, sourceDuration: duration, slotID: "slot")
+        return (source, clip)
+    }
+
+    private func cardDocument() -> (EditorDocument, [NativeEditorTimelineItem], [String: ResolvedEditorSource]) {
+        func card(_ id: String, mode: String, z: Double, y: Double, start: Double) -> EditorTimedEffect {
+            EditorTimedEffect(id: id, startS: start, endS: start + 1.5, kind: "image", raw: ["kind": .string("image"),
+                "display_mode": .string(mode), "x_frac": .number(0.5), "y_frac": .number(y), "scale": .number(0.35), "z": .number(z)])
+        }
+        // Listed pip-high, fullscreen, pip-low so neither document order nor z alone yields the expected stack.
+        let cards = [card("pip-high", mode: "pip", z: 5, y: 0.9, start: 1), card("full", mode: "fullscreen", z: 9, y: 0.5, start: 1),
+                     card("pip-low", mode: "pip", z: 1, y: 0.4, start: 1)]
+        let document = EditorDocument(editFormat: "subtitled", clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 4)],
+            captionCues: [.init(id: "cue", startS: 0.5, endS: 3.5, text: "One more game")], mediaOverlays: cards)
+        var items = cards.map { NativeEditorTimelineItem(selection: .init(kind: .mediaOverlay, id: $0.id), start: $0.startS, end: $0.endS) }
+        items.append(NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 0.5, end: 3.5))
+        let media = ResolvedEditorSource(preserveAlpha: false, clipIndex: -1, mediaID: "card-media",
+            asset: MediaAsset(id: "card-asset", relativePath: "card.png", fingerprint: AssetFingerprint(hex: String(repeating: "b", count: 64), byteCount: 50),
+                naturalSize: MediaSize(width: 400, height: 200)), url: URL(fileURLWithPath: "/fixture/card.png"))
+        return (document, items, Dictionary(uniqueKeysWithValues: cards.map { ("overlay:" + $0.id, media) }))
+    }
+
+    /// A phone device render is finished from the server's recipe: cards under the captions, full-screen
+    /// cutaways under PiP cards, PiP cards kept out of the caption band. The preview must show the same stack.
+    func testDeviceRenderedCardsDrawBelowCaptionsFullscreenUnderPipAndClampedOutOfTheCaptionBand() throws {
+        let (source, clip) = talkingSource(duration: 4)
+        let (document, items, media) = cardDocument()
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let program = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source], mediaSources: media, deviceCaptions: true)
+        let cards = try XCTUnwrap(program.recipe.tracks.first(where: { $0.id == "overlays" })).clips
+        XCTAssertEqual(cards.map(\.id), ["overlay:full", "overlay:pip-low", "overlay:pip-high"], "full-screen first (lowest), then PiP by z")
+        XCTAssertTrue(cards.allSatisfy { $0.overlayAboveText != true }, "captions are painted after (above) every card")
+        XCTAssertEqual(program.recipe.textLayers.count, 1)
+        let high = try XCTUnwrap(cards.first { $0.id == "overlay:pip-high" })
+        XCTAssertEqual(high.transform.positionY, (0.62 * 1920).rounded(.toNearestOrEven) - 960, "y 0.9 clamps to the caption-band top")
+        let low = try XCTUnwrap(cards.first { $0.id == "overlay:pip-low" })
+        XCTAssertEqual(low.transform.positionY, (0.4 * 1920).rounded(.toNearestOrEven) - 960, "a card already above the band is untouched")
+    }
+
+    /// Pins the narrow condition: a cloud variant keeps the legacy ffmpeg stack (cards above text, z order, no clamp).
+    func testCloudRenderedCardsStayAboveCaptionsInZOrderWithoutClamp() throws {
+        let (source, clip) = talkingSource(duration: 4)
+        let (document, items, media) = cardDocument()
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let program = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source], mediaSources: media)
+        let cards = try XCTUnwrap(program.recipe.tracks.first(where: { $0.id == "overlays" })).clips
+        XCTAssertEqual(cards.map(\.id), ["overlay:pip-low", "overlay:pip-high", "overlay:full"], "plain z order")
+        XCTAssertTrue(cards.allSatisfy { $0.overlayAboveText == true })
+        let high = try XCTUnwrap(cards.first { $0.id == "overlay:pip-high" })
+        XCTAssertEqual(high.transform.positionY, (0.9 * 1920).rounded(.toNearestOrEven) - 960)
+    }
+
+    private func wordCaptionProgram(words: Int, wordsPerCue: Int, highlighted: Bool) throws -> NativeEditorRenderProgram {
+        let cueCount = (words + wordsPerCue - 1) / wordsPerCue
+        let duration = Double(cueCount)
+        let (source, clip) = talkingSource(duration: duration)
+        var cues: [EditorCaptionCue] = [], items: [NativeEditorTimelineItem] = []
+        for index in 0..<cueCount {
+            let count = min(wordsPerCue, words - index * wordsPerCue)
+            cues.append(EditorCaptionCue(id: "cue-\(index)", startS: Double(index), endS: Double(index + 1),
+                text: (0..<count).map { "w\(index)x\($0)" }.joined(separator: " ")))
+            items.append(NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue-\(index)"), start: Double(index), end: Double(index + 1)))
+        }
+        let document = EditorDocument(editFormat: "subtitled", clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: duration)],
+            captionMeta: ["style": .string("word"), "highlight_color": .string("#FF0000"),
+                          "appearance": .object(["highlight_spoken_word": .bool(highlighted)])], captionCues: cues)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        return try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source], deviceCaptions: true)
+    }
+
+    /// A short talk keeps one layer per spoken word; a long one (hundreds of words) falls back to one karaoke
+    /// layer per cue instead of passing the engine's cap and losing the whole preview.
+    func testWordDisplayExpandsPerWordWithinTheBudgetAndFallsBackToOneLayerPerCuePastIt() throws {
+        for highlighted in [false, true] {
+            let short = try wordCaptionProgram(words: 400, wordsPerCue: 8, highlighted: highlighted).recipe.textLayers
+            XCTAssertEqual(short.count, 400, "within budget: one layer per word")
+            XCTAssertTrue(short.allSatisfy { $0.karaoke == nil })
+
+            let long = try wordCaptionProgram(words: 640, wordsPerCue: 8, highlighted: highlighted).recipe.textLayers
+            XCTAssertEqual(long.count, 80, "over budget: one karaoke line per cue")
+            XCTAssertLessThanOrEqual(long.count, NativeEditorRenderCompiler.maxTextLayers)
+            XCTAssertTrue(long.allSatisfy { $0.karaoke != nil })
+            let line = long[0].runs.map(\.text).joined()
+            XCTAssertTrue(line.contains("w0x0") && line.contains("w0x7"), "the whole line is on screen: \(line)")
+        }
+    }
+
+    /// Nothing left to fall back to: the failure is named, permanent (no Retry that cannot work) and honest.
+    func testMoreCuesThanTheEngineCapIsANamedPermanentFailure() throws {
+        XCTAssertThrowsError(try wordCaptionProgram(words: 501, wordsPerCue: 1, highlighted: true)) { error in
+            XCTAssertEqual(error as? NativeEditorRenderError, .tooManyTextLayers)
+            XCTAssertTrue(NativeEditorSession.isPermanentSourcePreviewFailure(error))
+            XCTAssertTrue(NativeEditorSession.sourcePreviewMessage(for: error).contains("more on-screen text"))
+        }
+    }
+
     func testCaptionAlignmentMatchesFinalASSMargins() throws {
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
             fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))

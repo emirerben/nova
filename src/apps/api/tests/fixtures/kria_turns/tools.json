@@ -1164,6 +1164,48 @@
               "default": null,
               "title": "Highlight Spoken Word"
             },
+            "max_width_frac": {
+              "anyOf": [
+                {
+                  "maximum": 1,
+                  "minimum": 0.2,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Max Width Frac"
+            },
+            "position_x_frac": {
+              "anyOf": [
+                {
+                  "maximum": 0.95,
+                  "minimum": 0.05,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Position X Frac"
+            },
+            "position_y_frac": {
+              "anyOf": [
+                {
+                  "maximum": 0.9,
+                  "minimum": 0.1,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Position Y Frac"
+            },
             "shadow_color": {
               "anyOf": [
                 {
@@ -4094,7 +4136,9 @@
                   {
                     "enum": [
                       "pip",
-                      "fullscreen"
+                      "fullscreen",
+                      "fullscreen_videos",
+                      "fullscreen_images"
                     ],
                     "type": "string"
                   },

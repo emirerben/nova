@@ -13,6 +13,9 @@ enum NativeEditorRenderError: Error, Equatable {
     /// No clip reached the video track, so nothing would play under the
     /// document's cards and text.
     case missingVideoTrack
+    /// More text layers than one recipe may carry even after captions fall back to one layer per line.
+    /// Rebuilding the same document hits the same limit, so it is a permanent failure, not a retry.
+    case tooManyTextLayers
 }
 
 /// Compiles the public editor document. Internal backend assembly state never
@@ -28,6 +31,15 @@ enum NativeEditorRenderError: Error, Equatable {
     /// can never be a plain word like "song" that a track id could equal.
     static let songSourceKey = "user_song"
     private static let songTrackID = NativeEditorSongBed.trackID
+    /// Mirrors `CAPTION_BAND_TOP_FRAC` (app/pipeline/phone_subtitled_lanes.py): a PiP card's centre never goes
+    /// below it, so a card stays out of the caption band.
+    static let deviceCardMaxYFraction = 0.62
+    /// The engine's text-layer cap (`EditRecipe.validate`). A recipe over it is refused whole.
+    static let maxTextLayers = KriaMediaEngine.EditRecipe.maxTextLayers
+    /// Headroom kept under the cap when deciding whether captions can expand to one layer per word. Titles and
+    /// pinned text are compiled before the caption block and counted exactly; this covers text added by the
+    /// engine/branding and edits staged between recompiles, so a long talk never lands on the cap itself.
+    static let textLayerReserve = 24
 
     init(fontDirectory: URL) throws {
         handwritingLayout = try AuthoredHandwritingLayout(url: fontDirectory.appendingPathComponent("handwriting-strokes.json"))
@@ -48,6 +60,9 @@ enum NativeEditorRenderError: Error, Equatable {
     /// follows it so a phone Narrated caption shows where the phone burns it
     /// (KRI-280); cloud Narrated keeps its low burn position.
     ///
+    /// `skippedMediaOverlayIDs`: `overlay:<id>` keys of cards whose media failed to load; they are left out of the
+    /// preview recipe only.
+    ///
     /// `songCaptionShift` (KRI-576): re-times the song's lyric caption rows for the live preview only; nil leaves
     /// every row exactly as the document has it.
     func compile(document: EditorDocument, clips: [EditorClip], items: [NativeEditorTimelineItem],
@@ -55,7 +70,8 @@ enum NativeEditorRenderError: Error, Equatable {
                  referenceOnlyMusic: Bool = false, sourceAudioPreserved: Bool = true,
                  songBed: NativeEditorSongBed? = nil,
                  deviceCaptions: Bool = false,
-                 songCaptionShift: NativeSongCaptionShift? = nil) throws -> NativeEditorRenderProgram {
+                 songCaptionShift: NativeSongCaptionShift? = nil,
+                 skippedMediaOverlayIDs: Set<String> = []) throws -> NativeEditorRenderProgram {
         for (name, populated) in [
             ("carousel", document.carouselMoment != nil),
         ] where populated { throw NativeEditorRenderError.unsupportedLane(name) }
@@ -303,8 +319,30 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         if !excerptClips.isEmpty { audioTracks.append(TimelineTrack(id: "clip-audio", kind: .audio, clips: excerptClips)) }
         var overlays: [TimelineClip] = []
-        for overlay in document.mediaOverlays.sorted(by: { ($0.raw["z"]?.numberValue ?? 0) < ($1.raw["z"]?.numberValue ?? 0) }) {
+        // A device-rendered variant is finished from the server's pinned recipe, which draws every card BELOW
+        // the text layers (no server writer ever sets `overlay_above_text`), full-screen cutaways below PiP
+        // cards, and clamps PiP cards out of the caption band (`phone_subtitled_plan._compile_overlay_track`,
+        // `_compile_fullscreen_track`). The preview follows it so what the creator sees is what exports.
+        // Cloud variants keep the legacy ffmpeg order: cards above text, in z order.
+        let cardsFollowDeviceRecipe = deviceCaptions
+        func isFullscreenCard(_ card: EditorTimedEffect) -> Bool { card.raw["display_mode"]?.stringValue == "fullscreen" }
+        let orderedCards: [EditorTimedEffect]
+        if cardsFollowDeviceRecipe {
+            func z(_ card: EditorTimedEffect) -> Double { card.raw["z"]?.numberValue ?? 0 }
+            let fullscreenCards = document.mediaOverlays.filter(isFullscreenCard)
+                .sorted { ($0.startS, $0.endS, $0.id) < ($1.startS, $1.endS, $1.id) }
+            let pipCards = document.mediaOverlays.filter { !isFullscreenCard($0) }
+                .sorted { (z($0), $0.startS, $0.id) < (z($1), $1.startS, $1.id) }
+            orderedCards = fullscreenCards + pipCards
+        } else {
+            orderedCards = document.mediaOverlays.sorted(by: { ($0.raw["z"]?.numberValue ?? 0) < ($1.raw["z"]?.numberValue ?? 0) })
+        }
+        for overlay in orderedCards {
             let id = "overlay:" + overlay.id
+            // A card whose photo or video could not be loaded stays in the document (and the saved edit) but
+            // is not drawn: one bad file must not take the whole live preview down. Only a card the session
+            // explicitly gave up on is skipped; a card that was never offered still throws.
+            if skippedMediaOverlayIDs.contains(id), mediaSources[id] == nil { continue }
             guard let source = mediaSources[id], let fingerprint = source.asset.fingerprint, let size = source.asset.naturalSize,
                   let item = items.first(where: { $0.kind == .mediaOverlay && $0.id == overlay.id }), item.end > item.start else {
                 throw MediaEngineError.missingAsset(id)
@@ -336,7 +374,9 @@ enum NativeEditorRenderError: Error, Equatable {
             default: 0.5
             }
             let x = overlay.raw["x_frac"]?.numberValue ?? 0.5
-            let y = overlay.raw["y_frac"]?.numberValue ?? fallbackY
+            let rawY = overlay.raw["y_frac"]?.numberValue ?? fallbackY
+            // Server: `y_frac = min(card.y_frac, CAPTION_BAND_TOP_FRAC)` for PiP cards (full-screen has no geometry).
+            let y = cardsFollowDeviceRecipe && !fullscreen ? min(rawY, Self.deviceCardMaxYFraction) : rawY
             let transform: MediaTransform = fullscreen ? .identity : MediaTransform(scale: cardWidth / coverWidth,
                 positionX: (x * width).rounded(.toNearestOrEven) - width / 2,
                 positionY: (y * height).rounded(.toNearestOrEven) - height / 2)
@@ -349,7 +389,7 @@ enum NativeEditorRenderError: Error, Equatable {
             guard moving > 0 else { throw RecipeError.invalidTimeline }
             overlays.append(TimelineClip(id: id, sourceAssetID: id, sourceStart: sourceStart, sourceDuration: moving,
                 timelineStart: item.start, rate: playbackRate, transform: transform, volume: 0, holdDuration: max(0, window - moving / playbackRate),
-                overlayAboveText: true, overlayPopIn: !fullscreen && overlay.raw["entrance_token"] == .string("pop_in"),
+                overlayAboveText: cardsFollowDeviceRecipe ? nil : true, overlayPopIn: !fullscreen && overlay.raw["entrance_token"] == .string("pop_in"),
                 overlayPreserveAlpha: !fullscreen && source.preserveAlpha,
                 // Only an editor_style moves a card onto the placement path.
                 // That path positions media differently from `transform`
@@ -545,14 +585,21 @@ enum NativeEditorRenderError: Error, Equatable {
             let appearance = meta["appearance"]?.objectValue ?? [:]
             let explicitHighlight = appearance["highlight_spoken_word"]?.boolValue
             let captionAlignment = AuthoredTextLayout.Alignment(rawValue: appearance["alignment"]?.stringValue ?? "center") ?? .center
-            let captionX = captionAlignment == .left ? 80.0 / 1080 : captionAlignment == .right ? 1000.0 / 1080 : 0.5
+            let captionX = appearance["position_x_frac"]?.numberValue ?? (captionAlignment == .left ? 80.0 / 1080 : captionAlignment == .right ? 1000.0 / 1080 : 0.5)
             let captionStyle = AuthoredTextLayout.Style(fontAssetID: fontID, size: meta["size_px"]?.numberValue ?? 78,
-                widthFraction: 920.0 / 1080, xFraction: captionX, yFraction: meta["y_frac"]?.numberValue ?? (talkingCaptionFrame ? 0.82 : 1740.0 / 1920),
+                widthFraction: appearance["max_width_frac"]?.numberValue ?? 920.0 / 1080, xFraction: captionX, yFraction: appearance["position_y_frac"]?.numberValue ?? meta["y_frac"]?.numberValue ?? (talkingCaptionFrame ? 0.82 : 1740.0 / 1920),
                 alignment: captionAlignment,
                 color: try ink(meta["color"], fallback: "#FFFFFF"), stroke: try ink(appearance["stroke_color"], fallback: "#000000"), strokeWidth: meta["stroke_width"]?.numberValue ?? 4,
                 shadows: meta["shadow_enabled"] == .bool(false) ? [] : [TextBlurLayer(color: try ink(appearance["shadow_color"], fallback: "#000000", alpha: appearance["shadow_opacity"]?.numberValue ?? 0.5), sigma: 0, dx: 1, dy: 1)],
-                bottomAligned: true, fontVariations: fontInstances[family] ?? [:])
+                bottomAligned: appearance["position_y_frac"] == nil, fontVariations: fontInstances[family] ?? [:])
             var previousWordEnd = 0.0
+            // `Display: Word` with an explicit highlight setting draws ONE LAYER PER SPOKEN WORD. The engine
+            // refuses a recipe over `maxTextLayers`, which a long Talking cut (hundreds of words) passes, and a
+            // refused recipe means no preview at all. Titles and pinned text are already in `text`, so past the
+            // budget captions fall back to the single karaoke-line layer per cue (what the server builds for
+            // word style): the whole line shows, the spoken word highlighted, instead of one word at a time.
+            let projectedWordLayers = document.captionCues.reduce(0) { $0 + $1.text.split(whereSeparator: \.isWhitespace).count }
+            let expandsPerWord = text.count + projectedWordLayers + Self.textLayerReserve <= Self.maxTextLayers
             // KRI-202: two caption_cues rows can reach the client already
             // overlapping in time (the cloud's own de-overlap guard,
             // `phone_captions._prepare_cues`, runs on a compiled copy the
@@ -604,7 +651,7 @@ enum NativeEditorRenderError: Error, Equatable {
                         starts.append(start)
                     }
                     guard let first = starts.first, first < total else { continue }
-                    if wordStyle, let highlighted = explicitHighlight {
+                    if wordStyle, expandsPerWord, let highlighted = explicitHighlight {
                         for index in tokens.indices {
                             let start = max(item.start, starts[index])
                             let end = min(total, cueEnd, index + 1 < starts.count ? starts[index + 1] : previousWordEnd)
@@ -618,13 +665,14 @@ enum NativeEditorRenderError: Error, Equatable {
                     }
                     text.append(try AuthoredTextLayout.compileHighlightedWords(id: "caption-" + cue.id, text: cue.text,
                         start: first, end: min(total, explicitHighlight == nil ? previousWordEnd : min(cueEnd, previousWordEnd)), starts: starts.map { $0 - first },
-                        highlight: try ink(meta["highlight_color"], fallback: "#C5F82A"), style: captionStyle, fontURL: font, canvas: canvas))
+                        highlight: explicitHighlight == false ? captionStyle.color : try ink(meta["highlight_color"], fallback: "#C5F82A"),
+                        style: captionStyle, fontURL: font, canvas: canvas))
                 } else {
                     let layout = try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
                         start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas)
                     text.append(PortableTextLayer(id: layout.id, start: layout.start, end: layout.end,
                         anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs,
-                        effect: talkingCaptionFrame ? .captionPop : .none))
+                        effect: appearance["position_y_frac"] != nil ? .popIn : talkingCaptionFrame ? .captionPop : .none))
                 }
             }
         }
@@ -744,6 +792,8 @@ enum NativeEditorRenderError: Error, Equatable {
             let under = video.filter { $0.volume > 0 && $0.timelineStart < window.end && $0.timelineStart + $0.duration > window.start }.map(\.id)
             if !under.isEmpty, muteWindows.count < 100 { muteWindows.append(AudioMuteWindow(start: window.start, end: window.end, clipIDs: under)) }
         }
+        // Past the cap `recipe.validate()` would throw a bare `invalidTimeline`, which reads as a transient failure.
+        guard text.count <= Self.maxTextLayers else { throw NativeEditorRenderError.tooManyTextLayers }
         var recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas,
             assets: assets.values.sorted { $0.id < $1.id }, tracks: [TimelineTrack(id: "video", kind: .video, clips: video)] + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
             audio: AudioMixRecipe(originalVolume: originalGain, muteWindows: muteWindows),

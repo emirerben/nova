@@ -321,6 +321,35 @@ def test_a_creator_length_mismatch_reports_the_requested_and_actual_take_duratio
     assert receipt.reason == "This draft is about 30s; you asked for 24s."
 
 
+def test_a_cleaned_take_under_the_accepted_natural_length_is_met():
+    # KRI-629: 51.6 s was accepted as the take's natural length; cleanup cut it to 38 s.
+    req = _req("timing", "Use the available 51.6 seconds", duration_s=51.6)
+
+    receipt = check_requirement(
+        req,
+        _talking(
+            duration_s=37.9765,
+            edit_format="talking_head",
+            audio_strategy="original_audio",
+            speech_cleanup_outcome="applied",
+        ),
+    )
+
+    assert receipt.status == "met"
+
+
+def test_a_shorter_take_without_cleanup_is_still_partial_and_rounds_its_seconds():
+    req = _req("timing", "Use the available 51.6 seconds", duration_s=51.6)
+
+    receipt = check_requirement(
+        req,
+        _talking(duration_s=37.9765, edit_format="talking_head", audio_strategy="original_audio"),
+    )
+
+    assert receipt.status == "partial"
+    assert receipt.reason == "This draft is about 38s; you asked for 51.6s."
+
+
 def test_a_creator_length_without_a_known_take_duration_stays_partial():
     req = _req("timing", "make it 24 seconds", duration_s=24)
 

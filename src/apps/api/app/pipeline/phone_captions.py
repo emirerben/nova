@@ -168,6 +168,8 @@ class PhoneCaptionLook:
     # instead of `_resolve_vertical_anchor`'s left-anchor default of "top".
     text_anchor: str | None = None
     position_x_frac: float = 0.5
+    max_width_frac: float | None = None
+    shape_text: bool = False
     # These four are only ever set onto the compiled overlay dict when NOT
     # None -- absent (the default) reproduces today's implicit "standard"
     # text_overlay_skia shadow/outline exactly (see `_base_overlay`).
@@ -307,6 +309,24 @@ def caption_look_from_variant(variant: dict) -> PhoneCaptionLook:
     else:
         position_x_frac = 0.5
 
+    # New phone generations persist the resolved geometry in the existing
+    # appearance map. Legacy variants have none of these fields.
+    def fraction(key, lower, upper, fallback):
+        import math
+
+        value = editor_style.get(key)
+        return (
+            value
+            if isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and lower <= value <= upper
+            else fallback
+        )
+
+    position_x_frac = fraction("position_x_frac", 0.05, 0.95, position_x_frac)
+    position_y_frac = fraction("position_y_frac", 0.10, 0.90, 1.0 - margin_v / 1920)
+
     highlight_spoken_word = _bool_or_none(editor_style.get("highlight_spoken_word"))
     # The cloud's editor caption path (`captions._write_editor_caption_cues`,
     # taken once `highlight_spoken_word` is explicitly set) defaults the active
@@ -330,10 +350,12 @@ def caption_look_from_variant(variant: dict) -> PhoneCaptionLook:
         text_color=_clean_hex_or(variant.get("caption_text_color"), _CAPTION_TEXT_COLOR),
         highlight_color=_clean_hex_or(variant.get("caption_highlight_color"), default_highlight),
         outline_px=_clamp_int(variant.get("caption_stroke_width"), 0, 12, _CAPTION_OUTLINE_PX),
-        position_y_frac=1.0 - (margin_v / _CLOUD_CAPTION_CANVAS_HEIGHT_PX),
+        position_y_frac=position_y_frac,
         highlight_spoken_word=highlight_spoken_word,
         text_anchor=text_anchor,
         position_x_frac=position_x_frac,
+        max_width_frac=fraction("max_width_frac", 0.2, 1, None),
+        shape_text=(variant.get("phone_text_style") or {}).get("version") == 1,
         stroke_color=_clean_hex_or_none(editor_style.get("stroke_color")),
         shadow_color=_clean_hex_or_none(editor_style.get("shadow_color")),
         shadow_opacity=_shadow_opacity_or_none(editor_style.get("shadow_opacity")),
@@ -401,11 +423,15 @@ def compile_caption_layers(
     re-broken so it does not (`_clear_of_watermark`); every other cue compiles
     exactly as it always has.
     """
+    from app.pipeline.canvas import Canvas as PipelineCanvas
+    from app.services.phone_text_styling import generation_caption_look, remember_caption_bounds
+
+    canvas = PipelineCanvas(width=canvas_width, height=canvas_height)
+    look = generation_caption_look(cues, look, canvas=canvas)
     resolved_look = look if look is not None else _DEFAULT_CAPTION_LOOK
     if not resolved_look.captions_enabled:
         return []
 
-    from app.pipeline.canvas import Canvas as PipelineCanvas
     from app.pipeline.portable_text_layout import compile_text_overlay
 
     prepared = _prepare_cues(cues, timeline_duration_s=timeline_duration_s)
@@ -440,7 +466,9 @@ def compile_caption_layers(
             raise UnsupportedPhonePlan(f"unable to compile caption cue: {exc}") from exc
         layers.append(layer)
         overlays.append(overlay)
-    return _make_room_for_watermark(layers, overlays, canvas=canvas, look=resolved_look)
+    resolved = _make_room_for_watermark(layers, overlays, canvas=canvas, look=resolved_look)
+    remember_caption_bounds(resolved, canvas=canvas)
+    return resolved
 
 
 def watermark_keepout_rect(canvas_width: float, canvas_height: float) -> Box:
@@ -886,6 +914,10 @@ def _base_overlay(cue: dict, look: PhoneCaptionLook) -> dict[str, Any]:
         # for the default centered layout.
         overlay["text_anchor"] = look.text_anchor
         overlay["vertical_anchor"] = "center"
+    if look.max_width_frac is not None:
+        overlay["max_width_frac"] = look.max_width_frac
+    if look.shape_text:
+        overlay["shape_text"] = True
     if look.stroke_color is not None:
         overlay["stroke_color"] = look.stroke_color
     if look.shadow_color is not None:

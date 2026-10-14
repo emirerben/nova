@@ -965,6 +965,33 @@ need the KRI-297 track in `replace_editor_lanes` first. Tests:
 Rollback: `fly secrets set PHONE_VOICEOVER_REACTION_BEATS_ENABLED=false --app
 nova-video` + `fly machine restart <id>` (api + worker + light).
 
+**Chat edits the picture cards (KRI-661).** A phone Talking edit offers the `overlay`
+op family to the copilot once its draft base carries the cards
+(`kria_editor_ops.project_editor_draft` derives `media_overlays` from the pinned recipe for a
+never-Saved edit, like the HTTP read path). Ops (lane `app/agents/editor_ops_v2/overlays.py`):
+`set_overlay_display` (`display_mode` pip|fullscreen, optional `kind` image|video|all or one
+`overlay_index` -- "photos on top, videos full screen" is two ops), `patch_overlay` (timing,
+geometry, display), `remove_overlay`. A card leaving full screen lands in the upper-right
+corner geometry; full-screen cards may not overlap. The prompt fragment
+(`prompts/edit_copilot_ops/overlay_cards.txt`) is appended only when the snapshot offers the
+family, so other prompts stay byte-identical. No `add_overlay` from chat: Save refuses a photo
+Kria did not pin. Guards: `tests/routes/test_phone_chat_overlay_edit.py` (chat op -> parser ->
+compile -> real Save -> recompiled recipe), `tests/kria/test_plan_review.py`.
+
+**Mixed Visuals and filming order on Talking (KRI-661).** `CreativeStrategy.overlay_display`
+also takes `fullscreen_videos` (videos full-frame, photos stay cards on top of the speaker) and
+`fullscreen_images`; same `media_overlays:fullscreen` capability and the same
+`phone_subtitled_fullscreen_overlays_enabled` kill switch as `fullscreen`. The worker copies the
+value to `all_candidates["overlay_display"]` and `ground_phone_subtitled_overlays(layout=...)`
+slots every Visual into ONE shared sequence (`_ground_fullscreen_sequence`), so a card and a
+cutaway never share a moment; the receipt carries `layout: "mixed"` and a per-entry `display`.
+When the approved contract pins capture-time order (`_approved_capture_order`), the pool is
+ordered by `PlanItemAsset.capture` first (`_order_by_capture`: dated Visuals oldest-first,
+undated ones keep their upload position) and the receipt records `order: "capture_time"`. A
+single clip has no order to promise, so `order_basis` no longer asks about one talking
+clip's missing filming time. Guards: `test_kri661_*` in `tests/services/test_phone_overlay_grounding.py`
+and the `kri661-talking-clip-photos-order-asks-nothing` incident record.
+
 #### Phase 2c: video Visuals as PiP cards (KRI-183)
 
 Flag `PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED` (default false), gate
@@ -1049,8 +1076,9 @@ applies. The ending clip is carried over unchanged (not editable yet).
 Fail-closed, named: any lane the creator edited that cannot compile, a photo
 that is not pinned for this edit (adding NEW photos to a Talking edit is not
 supported yet), a pinned video used as a NEW card while the KRI-183 video
-gate is off (an existing video card still Saves), a non-overlay
-`display_mode`, or any other section
+gate is off (an existing video card still Saves), two full-screen cards
+whose windows overlap (KRI-661: a card may go on top of the speaker <-> full
+screen in either direction, but full-screen cutaways are a sequence), or any other section
 (`text_elements`, timeline, mix, music, orientation) returns
 `422 unsupported_phone_edit` with a `reason` -- a Save never silently drops a
 lane (unlike generation, where a failing lane is dropped and receipted).
@@ -2973,6 +3001,42 @@ Prod step before the Draw tool appears: add `freehandDrawing` to
 `PHONE_RENDER_VERIFIED_FEATURES` (fly secret, api + worker, restart). Builds under protocol 6
 get `426 client_update_required` (`feature: "drawing"`) from `device-render` and `editor-commit`
 for a variant that has drawings.
+## Phone text styling (KRI-648)
+
+`PHONE_TEXT_STYLING_ENABLED` defaults off. Content-plan dispatch stamps
+`phone_text_style` version 1 with immutable account/current-video rules. Only
+initial phone writers consume it; old generations and editor saves replay their
+saved rows. Disabling the flag affects new generations, not existing exports.
+New resolved caption geometry requires client protocol 10. Older native builds
+receive `426 client_update_required` for styled device recipes/editor payloads.
+Distribute the compatible TestFlight build before enabling the flag.
+
+Fonts come from the 15-face palette in `schemas/phone_text_style.py`, with actual
+glyph coverage checked before selection. Confirmed required/favorite fonts can
+use the broader supported catalog; exclusions constrain automatic choices.
+An unsupported glyph or impossible requested layout produces a typed `needs_choice`
+decline, preserving the creator's wording. The selector has at most two bounded
+20-second calls per generation and falls back to drawable eligible faces.
+
+Outlines/shadows default off on stamped phone generations. Role-specific account
+rules live in existing `text_style_<role>` memory items. Current-video instructions
+win independently, including explicit false/zero. The iPhone account page and chat
+Undo use existing revision/idempotency-protected `/me/memory` operations. Account
+rules require the existing creator-memory rollout gate; no TikTok style derivation
+flag needs enabling. Observation-derived styles are not confirmed preferences.
+
+Guided/unified plans share the proxy face sampler and persist resolved text rows
+for preview/export. Recorded voiceover intros are materialized into real text rows
+before jointly fitting them with pins. Native frame bounds use the real wordmark;
+platform margins remain provisional until checked on a real posting interface.
+Do not claim platform clearance from the attached comparison images alone.
+
+Verification: KRI-648's failure inventory is in `docs/reviews/kri-648-validation.md`.
+Run mapped reliability gates, the native gate and real exported frame comparisons
+before rollout. API/workers must run the same revision and flags before new jobs
+are admitted. Release 2's repeated-edit learning remains separately gated under
+KRI-336 and is not activated by the typography flag.
+
 
 ## Text Bend capability (KRI-646)
 

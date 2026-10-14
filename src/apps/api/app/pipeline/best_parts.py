@@ -485,7 +485,18 @@ def select_moment_windows(
     if width < MIN_MOMENT_S:
         return None
     ranked: dict[str, list[tuple[float, float, float]]] = {}
+    # KRI-625: stretches the clip analysis marked unusable (covered lens, camera on
+    # the ground, blur). Avoided while any other room is left; absent = no data.
+    unusable: dict[str, list[tuple[float, float]]] = {}
     for media_id, duration, analysis in rows:
+        spans = []
+        for span in analysis.get("unusable_spans") or []:
+            if not isinstance(span, Mapping):
+                continue
+            start, end = _number(span.get("start_s")), _number(span.get("end_s"))
+            if start is not None and end is not None and end > start:
+                spans.append((max(0.0, start), min(duration, end)))
+        unusable[media_id] = [(s, e) for s, e in spans if e > s]
         moments = []
         for moment in analysis.get("best_moments") or []:
             if not isinstance(moment, Mapping):
@@ -504,6 +515,10 @@ def select_moment_windows(
         if pinned is not None and pinned.media_id == media_id:
             # Before the closing line first: the take then walks forward into it.
             tries.insert(0, [*blocks, (pinned.source_end_s, duration)])
+        if unusable[media_id]:
+            # Clean footage first; only when none is left do the unusable stretches
+            # count again, so quality data can never lose a moment (fail-open).
+            tries = [[*t, *unusable[media_id]] for t in tries] + tries
         found = None
         for blocked in tries:
             for gap in (width, MOMENT_GAP_S):

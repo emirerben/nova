@@ -29,11 +29,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # (clip_intents_enabled, brief_enabled) -> sha256 of the deliberate v56 no-song baseline.
 # v55 (KRI-598) adds the unavailable-`guided_voiceover` rule, so all four renders changed.
 # v56 (KRI-614) adds the clip `filename` sentence to the base prompt: all four changed again.
+# v57 (KRI-661) adds the mixed-Visuals `overlay_display` rule: all four changed again.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "f061a32d4c5daaac21beb0e8f86dc55e8dcd1b00fb4d46152d0a8bd8fb266ad3",
-    (True, True): "87da3eed8a4057d391882130aa0de24231612aee55874fb656d5ad6a50e7e776",
-    (False, False): "4574912cab08131e7b887d1349e28abd0f267313b24a4f3ef50da44d3857d4bc",
-    (False, True): "47737de41f42e73a95458c8cbb71c362083b17ae355c218948849311a02c10bc",
+    (True, False): "a1d50c3577ab37e0ce4b4a1167e9abd1786b3f5f0118af5c619b8a19decb70f9",
+    (True, True): "10e1223e80ea3da1ea86b29fcf978b9843676f8e425cf679f0ad74384fc181af",
+    (False, False): "4ba209b3403a172f7718de8e0ad5fdc1c37b840294e916f3a4466063d97cb3a7",
+    (False, True): "f4658c55e52d73d14ac40a0e079893c13fc54771eb3434e4410429d02bc4f7cd",
 }
 
 
@@ -103,7 +104,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-12-v56"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-13-v57"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

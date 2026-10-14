@@ -131,6 +131,12 @@ from app.services.job_phases import (
     record_sub_phase,
 )
 from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX, owned_job_output_path
+from app.services.phone_text_styling import (
+    current_phone_text_policy,
+    generation_style_fields,
+    generation_style_rows,
+    phone_text_generation,
+)
 from app.services.single_hero_policy import (
     _SINGLE_HERO_MAX_SUPPORTING_CLIPS,
     _SINGLE_HERO_MIN_CLIPS,
@@ -4362,6 +4368,7 @@ def _creator_landscape_fit(all_candidates: dict | None) -> str:
     return fit if fit in ("fill", "fit") else "fill"
 
 
+@phone_text_generation
 def _run_phone_guided_job(
     job_id: str,
     snapshot: dict,
@@ -4417,7 +4424,16 @@ def _run_phone_guided_job(
         )
     raw_plan, _track = _guided_execution_plan(job_id, guided)
     plan = GuidedStoryExecutionPlan.model_validate(raw_plan)
-    if settings.phone_guided_text_face_placement_enabled and bindings:
+    if current_phone_text_policy():
+        from app.services.phone_text_styling import style_guided_generation  # noqa: PLC0415
+
+        raw_plan = style_guided_generation(plan, bindings, job_id=job_id)
+        plan = GuidedStoryExecutionPlan.model_validate(raw_plan)
+    if (
+        settings.phone_guided_text_face_placement_enabled
+        and not current_phone_text_policy()
+        and bindings
+    ):
         # KRI-140/KRI-116: the cloud burn moves a title off a face on decoded
         # frames; the phone has none, so decide it here from the proxies and
         # bake it into the rows the variant persists (Save keeps it).
@@ -4517,7 +4533,7 @@ def _run_phone_guided_job(
     )
     recipe, repair_notes = compiled.recipe, compiled.notes
     validate_phone_pilot_recipe(recipe)
-    repaired_plan_payload = None
+    repaired_plan_payload = copy.deepcopy(raw_plan) if current_phone_text_policy() else None
     if compiled.plan is not plan:
         repaired_plan_payload = compiled.plan.model_dump(mode="json", exclude_none=False)
         # The editor recompiles from the persisted rows: keep them equal to what compiled.
@@ -4564,6 +4580,7 @@ def _run_phone_guided_job(
                 "render_generation_id": generation,
                 "render_status": "awaiting_device",
                 "render_destination": "device",
+                **generation_style_fields(),
                 "duration_s": raw_plan["resolved_duration_s"],
                 "style_set_id": raw_plan["typography"]["style_id"],
                 "intro_mode": "linear",
@@ -4865,6 +4882,7 @@ def _emit_phone_blocks_best_effort(job_id: str, recipe: Any, facts: Callable[[],
         log.warning("plan_blocks_phone_failed", job_id=job_id, error=str(exc)[:200])
 
 
+@phone_text_generation
 def _run_phone_voiceover_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
@@ -4897,6 +4915,7 @@ def _run_phone_voiceover_montage_job(
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
     from app.pipeline.phone_voiceover_montage_plan import (  # noqa: PLC0415
+        EXPORT_SAFETY_MARGIN_S,
         compile_phone_voiceover_montage_plan,
     )
     from app.services.device_render import (  # noqa: PLC0415
@@ -5190,6 +5209,48 @@ def _run_phone_voiceover_montage_job(
                     update={"text_elements": [*(decision.text_elements or []), *pin_rows]}
                 )
 
+            if current_phone_text_policy():
+                from app.agents._schemas.text_element import (
+                    _burn_dict_to_text_element,  # noqa: PLC0415
+                )
+                from app.pipeline.canvas import canvas_for_orientation  # noqa: PLC0415
+                from app.pipeline.generative_overlays import (
+                    build_persistent_intro_overlays,  # noqa: PLC0415
+                )
+
+                canvas = canvas_for_orientation(decision.orientation)
+                intro_rows = []
+                params = decision.extras.get("intro_overlay_params")
+                if params and decision.text_mode == "agent_text":
+                    for index, overlay in enumerate(
+                        build_persistent_intro_overlays(
+                            reveal_window_s=min(
+                                max(0.0, recipe.duration - EXPORT_SAFETY_MARGIN_S), 3.0
+                            ),
+                            beats=list(decision.extras.get("beats") or []),
+                            cluster_style=None,
+                            canvas=canvas,
+                            end_s=max(0.0, recipe.duration - EXPORT_SAFETY_MARGIN_S),
+                            **params,
+                        )
+                    ):
+                        element = _burn_dict_to_text_element(overlay, canvas=canvas)
+                        if element is not None:
+                            element.id = f"voiceover-intro-{index}"
+                            intro_rows.append(element.model_dump(mode="json", exclude_none=True))
+                rows = generation_style_rows(
+                    [*intro_rows, *pin_rows], canvas=canvas, job_id=job_id, mood=style_set_id
+                )
+                decision = decision.model_copy(update={"text_elements": rows})
+                recipe = compile_phone_voiceover_montage_plan(
+                    decision,
+                    bindings,
+                    music=music,
+                    narration=narration,
+                    target_lufs=settings.output_target_lufs,
+                    resolved_text_elements=rows,
+                )
+
     validate_phone_pilot_recipe(recipe)
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id=spec["variant_id"], revision=1, recipe=recipe
@@ -5226,6 +5287,7 @@ def _run_phone_voiceover_montage_job(
             "render_generation_id": generation,
             "render_status": "awaiting_device",
             "render_destination": "device",
+            **generation_style_fields(),
             "render_finished_at": None,
             "resolved_archetype": archetype,
             "duration_s": decision.duration_s,
@@ -6072,6 +6134,7 @@ def _save_request_recovery(
     return True
 
 
+@phone_text_generation
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> dict | None:
@@ -6515,6 +6578,26 @@ def _demote_beat_receipt(
     }
 
 
+def _approved_capture_order(snapshot: dict, all_candidates: dict) -> bool:
+    """True when the approved render contract asks for capture-time (filming) order (KRI-661).
+
+    The contract already folds in the creator's own answer to the order question ("continue
+    without a fixed order" turns it off), so it wins; the strategy's stored ordering choice
+    is only the fallback for a job with no contract. Never raises.
+    """
+    from app.services.creator_render_contract import read_render_contract  # noqa: PLC0415
+
+    try:
+        contract = read_render_contract(snapshot)
+    except Exception:  # noqa: BLE001 - a malformed contract is "no ordering ask"
+        return False
+    if contract is not None:
+        return bool(contract.order_required and contract.order_basis == "capture_time")
+    strategy = all_candidates.get("creator_strategy")
+    return isinstance(strategy, dict) and strategy.get("ordering_choice") == "chronological"
+
+
+@phone_text_generation
 def _run_phone_subtitled_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
@@ -6558,7 +6641,15 @@ def _run_phone_subtitled_job(
         crosscheck_detected_language,
         resolve_spoken_caption_language,
     )
-    from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
+    from app.pipeline.caption_spelling import (  # noqa: PLC0415
+        apply_spelling_to_cues,
+        extract_spelling_asks,
+    )
+    from app.pipeline.captions import (  # noqa: PLC0415
+        PHONE_CUE_BUDGET,
+        build_plain_cues,
+        resplit_cues_into_sentences,
+    )
     from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
         SilentAudioPlanDeclined,
         UnsupportedPhonePlan,
@@ -6727,12 +6818,18 @@ def _run_phone_subtitled_job(
     # KRI-297: "fullscreen" => every Visual becomes a full-screen cutaway
     # (deterministic even-spread sequence). Anything else (absent/None/"pip"/
     # unknown) or the kill switch off => today's PiP grounding, unchanged.
+    # KRI-661: "fullscreen_videos" / "fullscreen_images" play that kind full-frame and
+    # keep the other as a card; they ride the same sequence and the same kill switch.
     overlay_layout: str = (
-        "fullscreen"
-        if all_candidates.get("overlay_display") == "fullscreen"
+        all_candidates["overlay_display"]
+        if all_candidates.get("overlay_display")
+        in ("fullscreen", "fullscreen_videos", "fullscreen_images")
         and getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", True)
         else "pip"
     )
+    # KRI-661: the creator asked for their Visuals in the order they were taken (the
+    # approved contract pinned capture-time order). Only the sequence layouts read it.
+    overlay_chronological: bool = _approved_capture_order(snapshot, all_candidates)
     language: str = all_candidates.get("language") or "en"
     # KRI-177: same explicit override contract as the cloud subtitled render —
     # re-validated here since a stray/legacy value must never silently win.
@@ -7103,7 +7200,7 @@ def _run_phone_subtitled_job(
                     for item in remap_words(caption_words, cut_plan)
                     if not is_filler_token(item["text"])
                 ]
-                cues = build_plain_cues(cut_words, attach_words=True)
+                cues = build_plain_cues(cut_words, attach_words=True, budget=PHONE_CUE_BUDGET)
             else:
                 transcript = transcribe_whisper_cached(
                     clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
@@ -7186,7 +7283,9 @@ def _run_phone_subtitled_job(
                         }
                         for word in transcript.words
                     ]
-                cues = build_plain_cues(transcript.words, attach_words=True)
+                cues = build_plain_cues(
+                    transcript.words, attach_words=True, budget=PHONE_CUE_BUDGET
+                )
             cues = correct_caption_cues(
                 cues,
                 detected_lang,
@@ -7195,6 +7294,10 @@ def _run_phone_subtitled_job(
                 trusted_aliases=None,
             )
             cues = resplit_cues_into_sentences(cues)
+            # KRI-631: the creator's quoted spelling asks ("write 'community' in English").
+            cues = apply_spelling_to_cues(
+                cues, extract_spelling_asks(_creator_request_text(all_candidates))
+            )
 
             # The speaker's span exactly as the compiler plays it: the cleanup
             # cut, else the phone-measured clip (which can run a hair shorter
@@ -7231,8 +7334,24 @@ def _run_phone_subtitled_job(
                 )
 
             sfx_duck: dict | None = None
+            if current_phone_text_policy():
+                # Reserve the compiled caption lane before fitting titles and
+                # closing text. The final recipe reuses this resolved look.
+                compile_phone_subtitled_plan(
+                    speaker_bindings,
+                    caption_cues=cues,
+                    caption_style=caption_style,
+                    cut_plan=cut_plan,
+                    cutaways=cutaways,
+                    landscape_fit=landscape_fit,
+                    **framed_compile,
+                )
             if not media_lanes_enabled:
                 closing_text_rows, closing_text_receipt = _closing_rows_for(None)
+                styled_rows = generation_style_rows(title_rows + closing_text_rows, job_id=job_id)
+                title_ids = {row["id"] for row in title_rows}
+                title_rows = [row for row in styled_rows if row["id"] in title_ids]
+                closing_text_rows = [row for row in styled_rows if row["id"] not in title_ids]
                 recipe = compile_phone_subtitled_plan(
                     speaker_bindings,
                     caption_cues=cues,
@@ -7388,8 +7507,11 @@ def _run_phone_subtitled_job(
                                 | beat_media_ids,
                                 video_supported=video_overlays_enabled,
                                 **(
-                                    {"layout": "fullscreen"}
-                                    if overlay_layout == "fullscreen"
+                                    {
+                                        "layout": overlay_layout,
+                                        "chronological": overlay_chronological,
+                                    }
+                                    if overlay_layout != "pip"
                                     else {}
                                 ),
                                 **framed_grounding,
@@ -7591,6 +7713,9 @@ def _run_phone_subtitled_job(
                             )
 
                 def _compile_lanes(text_rows: list[dict]) -> Any:
+                    styled = generation_style_rows(text_rows, job_id=job_id)
+                    for row, updated in zip(text_rows, styled, strict=True):
+                        row.update(updated)
                     return compile_phone_subtitled_plan(
                         speaker_bindings,
                         caption_cues=cues,
@@ -7823,6 +7948,7 @@ def _run_phone_subtitled_job(
             "render_generation_id": generation,
             "render_status": "awaiting_device",
             "render_destination": "device",
+            **generation_style_fields(),
             "render_finished_at": None,
             "resolved_archetype": "subtitled",
             "duration_s": recipe.duration,
@@ -8509,6 +8635,7 @@ def _narrated_alignment_receipts(
     ]
 
 
+@phone_text_generation
 def _run_phone_narrated_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
@@ -9131,6 +9258,7 @@ def _run_phone_narrated_job(
             "render_generation_id": generation,
             "render_status": "awaiting_device",
             "render_destination": "device",
+            **generation_style_fields(),
             "render_finished_at": None,
             "resolved_archetype": "narrated",
             "duration_s": recipe.duration,

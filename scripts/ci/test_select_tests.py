@@ -616,7 +616,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-648-phone-text",
                 ),
             ),
             (
@@ -661,7 +661,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/pipeline/phone_subtitled_plan.py",
-                (True, "covered", "kri-547-speaker-framing,kri-577-reliability-gates"),
+                (
+                    True,
+                    "covered",
+                    "kri-547-speaker-framing,kri-577-reliability-gates,kri-648-phone-text",
+                ),
             ),
             (
                 "src/apps/api/app/pipeline/phone_subtitled_title.py",
@@ -716,6 +720,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-623-ruled-out-clips"),
             ),
             (
+                "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
+                (True, "covered", "kri-625-moment-quality"),
+            ),
+            (
+                "src/apps/api/prompts/analyze_clip.txt",
+                (True, "covered", "kri-625-moment-quality"),
+            ),
+            (
                 "src/apps/api/app/kria/opening_cut_ask.py",
                 (True, "covered", "kri-628-opening-cut"),
             ),
@@ -724,8 +736,20 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-628-opening-cut"),
             ),
             (
+                "src/apps/api/app/pipeline/captions.py",
+                (True, "covered", "kri-632-phone-captions"),
+            ),
+            (
+                "src/apps/api/app/pipeline/caption_spelling.py",
+                (True, "covered", "kri-632-phone-captions"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/kri632_t1_talking_words.json",
+                (True, "covered", "kri-632-phone-captions"),
+            ),
+            (
                 "src/apps/api/app/pipeline/phone_captions.py",
-                (True, "covered", "kri-548-caption-watermark"),
+                (True, "covered", "kri-548-caption-watermark,kri-648-phone-text"),
             ),
             (
                 "src/apps/api/app/pipeline/portable_text_layout.py",
@@ -760,7 +784,7 @@ class GitDiffTests(unittest.TestCase):
         self.write("src/apps/ios/Kria/Core/Services.swift", "changed")
         self.assertEqual(
             ci.journey_details("pull_request", self.base, self.commit()),
-            (True, "covered", "kri-524-creation,kri-557-thinking"),
+            (True, "covered", "kri-524-creation,kri-557-thinking,kri-648-phone-text"),
         )
 
     def test_journey_native_runner_is_linux_for_python_only_and_mac_for_mixed(self):

@@ -99,6 +99,8 @@
         "src/apps/api/tests/evals/request_following/test_creation_composition.py",
         "src/apps/api/app/pipeline/image_crop.py",
         "src/apps/api/app/pipeline/phone_voiceover_cut.py",
+        "src/apps/api/app/agents/editor_ops_v2/overlays.py",
+        "src/apps/api/prompts/edit_copilot_ops/overlay_cards.txt",
         "src/apps/api/prompts/edit_copilot_ops/timeline.txt",
         "src/apps/api/app/schemas/text_composition.py",
         "src/apps/api/app/tasks/edit_proposal_build.py",
@@ -108,7 +110,8 @@
         "scripts/ios/kri-651-approved-hook-e2e.py",
         "src/apps/api/app/tasks/generative_build.py",
         "src/apps/api/tests/evals/request_following/test_approved_hook_journey.py",
-        "src/apps/api/tests/kria/test_approved_hook_observer_postgres.py"
+        "src/apps/api/tests/kria/test_approved_hook_observer_postgres.py",
+        "src/apps/api/tests/fixtures/incidents/kri661-talking-clip-photos-order-asks-nothing.json"
       ]
     },
     {
@@ -433,6 +436,15 @@
       ]
     },
     {
+      "id": "kri-625-moment-quality",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_best_parts.py tests/pipeline/test_clip_meta_dormant_readers.py",
+      "paths": [
+        "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
+        "src/apps/api/prompts/analyze_clip.txt"
+      ]
+    },
+    {
       "id": "kri-646-text-bend",
       "needs_native": false,
       "api_tests": "tests/kria/test_text_bend.py",
@@ -450,6 +462,71 @@
         "src/apps/api/app/kria/opening_cut_ask.py",
         "src/apps/api/app/pipeline/phone_opening_cut.py",
         "src/apps/api/app/services/spoken_quotes.py"
+      ]
+    },
+    {
+      "id": "kri-632-phone-captions",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_caption_cue_budget.py tests/pipeline/test_caption_spelling.py",
+      "paths": [
+        "src/apps/api/app/pipeline/captions.py",
+        "src/apps/api/app/pipeline/caption_spelling.py",
+        "src/apps/api/tests/fixtures/kri632_t1_talking_words.json"
+      ]
+    },
+    {
+      "id": "kri-648-phone-text",
+      "needs_native": true,
+      "fixture_generator": "scripts/ios/phone-text-style-e2e.py",
+      "xctests": [
+        "KriaTests/DeviceMontageRenderE2ETests/testGenerationPinnedTextStylesPreviewAndExport",
+        "KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen",
+        "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload"
+      ],
+      "api_tests": "tests/pipeline/test_phone_text_style.py tests/evals/test_phone_typography_evals.py",
+      "paths": [
+        "scripts/ios/phone-text-style-e2e.py",
+        "src/apps/api/app/agents/creator_memory_extractor.py",
+        "src/apps/api/app/agents/phone_typography.py",
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/pipeline/generative_overlays.py",
+        "src/apps/api/app/pipeline/phone_captions.py",
+        "src/apps/api/app/pipeline/phone_guided_text_placement.py",
+        "src/apps/api/app/pipeline/phone_narrated_plan.py",
+        "src/apps/api/app/pipeline/phone_speech_montage_plan.py",
+        "src/apps/api/app/pipeline/phone_subtitled_plan.py",
+        "src/apps/api/app/pipeline/phone_text_background.py",
+        "src/apps/api/app/pipeline/phone_text_style.py",
+        "src/apps/api/app/pipeline/phone_voiceover_montage_plan.py",
+        "src/apps/api/app/pipeline/text_overlay_skia.py",
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/api/app/routes/memory.py",
+        "src/apps/api/app/schemas/phone_text_style.py",
+        "src/apps/api/app/services/creation_text_composition.py",
+        "src/apps/api/app/services/creator_direction.py",
+        "src/apps/api/app/services/creator_direction_capabilities.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/app/services/phone_text_styling.py",
+        "src/apps/api/app/storage.py",
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/prompts/creator_memory_extractor.txt",
+        "src/apps/api/tests/evals/test_phone_typography_evals.py",
+        "src/apps/api/tests/pipeline/test_phone_text_style.py",
+        "src/apps/api/tests/services/test_creator_direction_postgres.py",
+        "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
+        "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Kria/Features/AccountUITestTransport.swift",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+        "src/apps/ios/Kria/Features/TextPreferencesView.swift",
+        "src/apps/ios/Kria/Features/Views.swift",
+        "src/apps/ios/Kria/Generated/openapi.yaml",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/RenderAssets.swift",
+        "src/apps/ios/Tests/KriaUITests/AccountPrivacyUITests.swift"
       ]
     }
   ]

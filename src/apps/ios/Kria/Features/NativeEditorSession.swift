@@ -699,6 +699,13 @@ struct NativeEditorTemporaryVideo {
     /// is what "Find original files" derives its targets from (KRI-211).
     private var originalsRecoveryPool: NativeEditorSourcePool?
     private var resolvedMedia: [String: ResolvedEditorSource] = [:]
+    /// `overlay:<id>` cards whose photo or video could not be loaded for the live preview. They stay in the
+    /// document; the preview just doesn't draw them. Cleared whenever the sources are re-resolved from scratch.
+    private var skippedPreviewMedia: Set<String> = []
+    /// How many of the edit's cards the live preview is not drawing (a non-blocking note, never an error).
+    @Published private(set) var previewSkippedMediaCount = 0
+    /// Cards loaded for the preview at once. Each file keeps its own request/resource timeouts.
+    static let previewMediaConcurrency = 4
     private var resolvedSources: [Int: ResolvedEditorSource]?
     private var sourcePreviewTask: Task<Void, Never>?
     private var sourcePreviewSequence = 0
@@ -715,6 +722,13 @@ struct NativeEditorTemporaryVideo {
     private var editAppliedTask: Task<Void, Never>?
     private var sourcePreviewUpdateDeferred = false
     var hasSourcePreview: Bool { sourcePreviewState == .ready }
+    /// The fallback card offers Retry: the live preview failed for a reason a rebuild can fix. A permanent
+    /// failure (no video track, an unsupported effect, a missing font) would fail the same way again.
+    var fallbackOffersRetry: Bool {
+        guard isShowingRenderedFallback, case .failed = sourcePreviewState else { return false }
+        return !sourcePreviewFailureIsPermanent
+    }
+
     /// A source-composited player is editable. A failed source preparation can
     /// instead show only the server-rendered video, with canvas interaction
     /// deliberately disabled until a retry produces a source preview.
@@ -2241,7 +2255,7 @@ struct NativeEditorTemporaryVideo {
     static func isPermanentSourcePreviewFailure(_ error: Error) -> Bool {
         switch error {
         case NativeEditorRenderError.missingVideoTrack, NativeEditorRenderError.unsupportedLane,
-             NativeEditorRenderError.missingFont:
+             NativeEditorRenderError.missingFont, NativeEditorRenderError.tooManyTextLayers:
             return true
         default:
             return false
@@ -2260,6 +2274,8 @@ struct NativeEditorTemporaryVideo {
             return "A required font is missing from this app build. Update the app and try again."
         case NativeEditorRenderError.missingVideoTrack:
             return "This edit’s video can’t be previewed on iPhone yet."
+        case NativeEditorRenderError.tooManyTextLayers:
+            return "This edit has more on-screen text than iPhone preview can show. Remove some text or captions to preview it."
         case NativeEditorPlaybackFailure.liveItem:
             return "The editable preview couldn’t play on this iPhone, so the finished video is shown. Retry to rebuild it."
         case NativeEditorPlaybackFailure.finishedItem:
@@ -2288,6 +2304,8 @@ struct NativeEditorTemporaryVideo {
         resolvedAudio = [:]
         deviceNarrationResolutionGeneration = nil
         resolvedMedia = [:]
+        skippedPreviewMedia = []
+        previewSkippedMediaCount = 0
         do {
             #if DEBUG
             NativePreviewDiagnostics.record("source-pool-request", fields: ["job": jobID.uuidString, "variant": variantKey])
@@ -2419,6 +2437,8 @@ struct NativeEditorTemporaryVideo {
         resolvedAudio.removeAll()
         deviceNarrationResolutionGeneration = nil
         resolvedMedia.removeAll()
+        skippedPreviewMedia = []
+        previewSkippedMediaCount = 0
         sourcePreview = nil
         liveSongVolumeActive = false; previewBuiltDocument = nil
         textInteractionTask?.cancel()
@@ -2639,18 +2659,40 @@ struct NativeEditorTemporaryVideo {
 
     private func preparePreviewMedia(document: EditorDocument, sequence: Int) async throws -> [String: ResolvedEditorSource] {
         guard let resolver = sourceResolver else { return resolvedMedia.merging(authoredVisualSources) { _, authored in authored } }
+        // One unloadable card must not drop the whole live preview (a 33-card edit once fell back to the
+        // finished video over a single bad file): it is skipped, kept in the document, and noted. Cards load
+        // a few at a time rather than one after another.
+        let generation = document.revision.baseGeneration
+        var wanted: [(key: String, asset: NativeEditorAsset)] = []
         for overlay in document.mediaOverlays {
             let key = "overlay:" + overlay.id
-            guard resolvedMedia[key] == nil else { continue }
+            guard resolvedMedia[key] == nil, authoredVisualSources[key] == nil, !skippedPreviewMedia.contains(key) else { continue }
             guard let asset = sourcePool?.nativeAssets.first(where: { $0.kind == "media_overlay" && $0.id == overlay.id }) else {
-                throw MediaEngineError.missingAsset(key)
+                skippedPreviewMedia.insert(key)
+                NativePreviewDiagnostics.record("preview-media-skipped", fields: ["reason": "no-source"])
+                continue
             }
-            sourcePreviewState = .preparing
-            var resolved = try await resolver.resolveMedia(id: asset.mediaID, url: asset.sourceURL, generation: document.revision.baseGeneration)
-            guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
-            resolved.preserveAlpha = asset.preserveAlpha == true
-            resolvedMedia[key] = resolved
+            wanted.append((key, asset))
         }
+        if !wanted.isEmpty {
+            sourcePreviewState = .preparing
+            let outcomes = try await Self.resolveConcurrently(wanted, limit: Self.previewMediaConcurrency) { asset in
+                var resolved = try await resolver.resolveMedia(id: asset.mediaID, url: asset.sourceURL, generation: generation)
+                resolved.preserveAlpha = asset.preserveAlpha == true
+                return resolved
+            }
+            guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+            for (key, outcome) in outcomes {
+                switch outcome {
+                case .success(let resolved): resolvedMedia[key] = resolved
+                case .failure:
+                    skippedPreviewMedia.insert(key)
+                    NativePreviewDiagnostics.record("preview-media-skipped", fields: ["reason": "load-failed"])
+                }
+            }
+        }
+        let skippedNow = document.mediaOverlays.filter { skippedPreviewMedia.contains("overlay:" + $0.id) }.count
+        if previewSkippedMediaCount != skippedNow { previewSkippedMediaCount = skippedNow }
         if !document.motionScenes.isEmpty {
             for asset in sourcePool?.nativeAssets.filter({ $0.kind == "motion_scene" }) ?? [] {
                 let key = "motion:" + asset.id
@@ -2672,6 +2714,34 @@ struct NativeEditorTemporaryVideo {
             }
         }
         return resolvedMedia.merging(authoredVisualSources) { _, authored in authored }
+    }
+
+    /// Runs `work` for every item with at most `limit` in flight. A failing item is returned as a failure and
+    /// never stops the others; only cancellation of the surrounding task is rethrown. Results keep input order.
+    static func resolveConcurrently(_ items: [(key: String, asset: NativeEditorAsset)], limit: Int,
+                                    _ work: @escaping @Sendable (NativeEditorAsset) async throws -> ResolvedEditorSource)
+        async throws -> [(key: String, outcome: Result<ResolvedEditorSource, Error>)] {
+        var results = [Result<ResolvedEditorSource, Error>?](repeating: nil, count: items.count)
+        try await withThrowingTaskGroup(of: (Int, Result<ResolvedEditorSource, Error>).self) { group in
+            var next = 0
+            func launch() {
+                guard next < items.count else { return }
+                let index = next, asset = items[next].asset
+                next += 1
+                group.addTask {
+                    do { return (index, .success(try await work(asset))) }
+                    catch is CancellationError { throw CancellationError() }
+                    catch { return (index, .failure(error)) }
+                }
+            }
+            for _ in 0..<max(1, limit) { launch() }
+            while let (index, outcome) = try await group.next() {
+                results[index] = outcome
+                launch()
+            }
+        }
+        try Task.checkCancellation()
+        return items.indices.map { (items[$0].key, results[$0] ?? .failure(CancellationError())) }
     }
 
     private func scheduleSourcePreviewUpdate() {
@@ -2767,7 +2837,8 @@ struct NativeEditorTemporaryVideo {
                                      referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
                                      sourceAudioPreserved: sourceAudioPreserved || songRemoved,
                                      songBed: songBed, deviceCaptions: rendersOnDevice,
-                                     songCaptionShift: lyricShift)
+                                     songCaptionShift: lyricShift,
+                                     skippedMediaOverlayIDs: skippedPreviewMedia)
             }
             var program = try compileProgram(songBed: realBed.map {
                 NativeEditorSongBed(assetID: $0.assetID, sourceStart: $0.sourceStart, sourceDuration: $0.sourceDuration,
@@ -2856,6 +2927,12 @@ struct NativeEditorTemporaryVideo {
     func previewSelectionBounds(for selection: EditorSelection, at time: Double) -> TextSelectionBounds? {
         guard sourcePreviewState == .ready else { return nil }
         if selection.kind == .mediaOverlay { return sourcePreview?.mediaSelectionBounds(id: "overlay:" + selection.id, time: time) }
+        if selection.kind == .visualBlock,
+           document.visualBlocks.first(where: { $0.id == selection.id })?.kind == "media" {
+            // Same media identity as prepareMediaInteraction: use the rendered
+            // footprint for both selection handles and the danger-zone guide.
+            return sourcePreview?.mediaSelectionBounds(id: "visual-\(selection.id)-\(selection.id)", time: time)
+        }
         let id = selection.kind == .captionCue ? "caption-" + selection.id : selection.id
         return sourcePreview?.textSelectionBounds(id: id, time: time)
     }
@@ -4708,7 +4785,14 @@ struct NativeEditorTemporaryVideo {
     }
     func setCaptionMeta(key: String, value: JSONValue?) {
         guard canEditSection(.captionMeta) else { return }
-        transactDocument(section: .captionMeta) { $0.captionMeta[key] = value ?? .null }
+        transactDocument(section: .captionMeta) {
+            $0.captionMeta[key] = value ?? .null
+            if key == "y_frac", var appearance = $0.captionMeta["appearance"]?.objectValue,
+               appearance["position_y_frac"] != nil {
+                appearance["position_y_frac"] = value ?? .null
+                $0.captionMeta["appearance"] = .object(appearance)
+            }
+        }
     }
     var canEditCaptionAppearance: Bool { canEditCaptions && canEdit("caption_editor_style") }
     /// Line-level caption edits (text/timing of individual cues) are gated by
@@ -4741,6 +4825,9 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) {
             var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
             appearance[key] = value
+            if key == "alignment", appearance["position_x_frac"] != nil {
+                appearance["position_x_frac"] = .number(value.stringValue == "left" ? 0.06 : value.stringValue == "right" ? 0.82 : 0.5)
+            }
             $0.captionMeta["appearance"] = .object(appearance)
         }
     }
@@ -5950,6 +6037,13 @@ struct NativeEditorTemporaryVideo {
         let backgroundObject = Self.object(value["background_music"])
         let lyricsObject = Self.object(value["lyrics"])
         let carouselObject = Self.object(value["carousel_moment"])
+        var captionMeta = object("caption_meta", .captionMeta)
+        if let y = captionMeta?["y_frac"]?.numberValue, !(0.30...0.90).contains(y),
+           captionMeta?["appearance"]?.objectValue?["position_y_frac"] != nil {
+            // Upper corners use the resolved appearance geometry; the legacy
+            // position field remains within its existing server contract.
+            captionMeta?.removeValue(forKey: "y_frac")
+        }
         return EditorCommitRequest(
             timelineSlots: array("timeline_slots", .timeline),
             // A guided timeline commit always carries the rebased label lane, like the server's
@@ -5958,7 +6052,7 @@ struct NativeEditorTemporaryVideo {
             textElements: changedSections.contains(.text) || carriesGuidedLabelsWithTimeline
                 ? Self.array(value["text_elements"]) : nil,
             captionCues: array("caption_cues", .captions),
-            captionMeta: object("caption_meta", .captionMeta),
+            captionMeta: captionMeta,
             mix: changedSections.contains(.mix) ? commitMix(Self.object(value["mix"]) ?? Self.object(value["audio_mix"]) ?? [:]) : nil,
             musicTrackID: changedSections.contains(.music) ? value["music_track_id"]?.stringValue : nil,
             removeMusic: changedSections.contains(.music) && document.music == nil,
@@ -6154,7 +6248,19 @@ struct NativeEditorTemporaryVideo {
         finishedRenderPlayer = player
     }
 
+    /// Release builds otherwise learn nothing when the live preview cannot be built (only DEBUG logs it), so a
+    /// creator who is silently left on the finished video leaves no trace. Type, case and numeric code only
+    /// (see `NativePreviewDiagnostics.previewFailure`). A failed player item reports itself, and a cancelled
+    /// rebuild is not a failure.
+    private func reportPreviewFailure(_ error: Error) {
+        if error is CancellationError || error is NativeEditorPlaybackFailure { return }
+        let report = NativePreviewDiagnostics.previewFailure(error: error, sourceState: sourcePreviewStateLabel)
+        guard let api, let jobID else { return }
+        Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
+    }
+
     private func failSourcePreview(_ error: Error) {
+        reportPreviewFailure(error)
         sourcePreviewFailureIsPermanent = Self.isPermanentSourcePreviewFailure(error)
         let finishedWasCurrent = finishedRenderIsCurrent
         restoreFinishedRenderFallback()

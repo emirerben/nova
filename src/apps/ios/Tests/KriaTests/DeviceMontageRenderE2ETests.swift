@@ -3,6 +3,7 @@ import XCTest
 import AVFoundation
 import CoreMedia
 import CoreGraphics
+import UIKit
 import KriaMediaEngine
 @testable import Kria
 
@@ -153,6 +154,23 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         try await assertCase("compound_words_trim_save", expectedCreationProvenance: "authored_editor_fixture")
     }
 
+    func testGenerationPinnedTextStylesPreviewAndExport() async throws {
+        // This test exports all 27 cases serially. Hosted Mac runners exceeded
+        // 180 seconds while still advancing through the palette; keep a bounded
+        // batch allowance without relaxing the individual render assertions.
+        executionTimeAllowance = 600
+        let input = try inputDirectory()
+        let meta = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: input.appendingPathComponent("e2e.json"))) as? [String: Any])
+        let cases = try XCTUnwrap(meta["cases"] as? [String: Any])
+        XCTAssertGreaterThanOrEqual(cases.keys.filter { $0.hasPrefix("kri648_") }.count, 7)
+        let wasDisabled = UIApplication.shared.isIdleTimerDisabled
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer { UIApplication.shared.isIdleTimerDisabled = wasDisabled }
+        for name in cases.keys.filter({ $0.hasPrefix("kri648_") }).sorted() {
+            try await assertCase(name)
+        }
+    }
+
     // MARK: -
 
     func testApprovedUnicodeHookExportsWithoutContextCaptionOnTheIPhone() async throws {
@@ -177,6 +195,14 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
             DeviceRenderStatusResponse.self, from: Data(contentsOf: input.appendingPathComponent(statusFile))
         )
         let recipe = status.request.recipe
+        if caseMeta["requires_off_effects"] as? Bool == true {
+            for layer in recipe.textLayers {
+                for run in layer.runs {
+                    XCTAssertEqual(run.strokeWidth, 0, caseID)
+                    XCTAssertTrue(run.blurLayers.isEmpty, caseID)
+                }
+            }
+        }
         if let expected = caseMeta["expected_copy"] as? String {
             XCTAssertEqual(recipe.textLayers.flatMap(\.runs).map(\.text).joined(separator: " "), expected)
         }
@@ -276,7 +302,19 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
             api: NativeEditorTestSupport.api(), request: status.request, originals: store,
             library: library, downloadSession: NativeEditorTestSupport.session()
         )
-        let urls = try await resolver.resolve(for: recipe)
+        let urls: [String: URL]
+        do { urls = try await resolver.resolve(for: recipe) }
+        catch {
+            let root = await library.root
+            for asset in recipe.assetManifest?.assets ?? [] {
+                if case .library(catalog: .font, catalogID: let name, generation: let generation) = asset.source,
+                   let fonts = Bundle.main.url(forResource: "fonts", withExtension: nil) {
+                    let cached = root.appendingPathComponent(asset.fingerprint.sha256 + "-" + String(asset.fingerprint.byteCount))
+                    print("[render-fixture] font=\(name) generationMatches=\(generation == asset.fingerprint.sha256) bundleParentMatches=\(fonts.appendingPathComponent(name).resolvingSymlinksInPath().deletingLastPathComponent().path == fonts.resolvingSymlinksInPath().path) cacheParent=\(cached.resolvingSymlinksInPath().deletingLastPathComponent().path) cacheRoot=\(root.resolvingSymlinksInPath().path)")
+                }
+            }
+            throw error
+        }
         if let musicAssetID = caseMeta["music_asset_id"] as? String {
             XCTAssertTrue(
                 log.urls.contains { $0 == "https://storage.e2e.test/\(musicAssetID)" },
@@ -404,8 +442,39 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
                 caseID: caseID, recipe: recipe, urls: urls, export: asset, element: element,
                 region: try XCTUnwrap(caseMeta["title_region"] as? [Int]),
                 times: try XCTUnwrap(caseMeta["title_preview_samples"] as? [Double]),
+                exportedTitlePrefix: caseMeta["exported_title_prefix"] as? String ?? "title-",
                 frames: frames, state: project.root.appendingPathComponent("preview-state")
             )
+        }
+        if let snapshot = caseMeta["caption_snapshot"] as? [String: Any] {
+            let raw = try JSONDecoder().decode([String: JSONValue].self, from: JSONSerialization.data(withJSONObject: snapshot))
+            let document = EditorDocument(snapshot: raw)
+            let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+            let placeholder = ResolvedEditorSource(clipIndex: 0, mediaID: "placeholder", asset: MediaAsset(id: "placeholder",
+                relativePath: "placeholder.mov", fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 1)),
+                url: URL(fileURLWithPath: "/placeholder.mov"))
+            let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: duration,
+                trimIn: 0, trimOut: duration, sourceDuration: duration, slotID: "slot")
+            let items = document.captionCues.map { NativeEditorTimelineItem(selection: EditorSelection(kind: .captionCue, id: $0.id), start: $0.startS, end: $0.endS) }
+            let program = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: placeholder], deviceCaptions: true)
+            var preview = recipe
+            preview.textLayers = program.recipe.textLayers
+            let movie = frames.appendingPathComponent("\(caseID)-caption-preview.mp4")
+            let result = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: project.root.appendingPathComponent("caption-preview")), branding: .none)
+                .export(recipe: preview, assetURLs: urls, outputURL: movie)
+            XCTAssertEqual(result.status, .completed)
+            let previewGenerator = AVAssetImageGenerator(asset: AVURLAsset(url: movie))
+            previewGenerator.requestedTimeToleranceBefore = .zero; previewGenerator.requestedTimeToleranceAfter = .zero
+            let region = try XCTUnwrap((caseMeta["caption_samples"] as? [[String: Any]])?.first?["region"] as? [Int])
+            for at in [0.4, 0.8, 1.2] {
+                let time = CMTime(seconds: at, preferredTimescale: 600)
+                let a = try litBox(try await generator.image(at: time).image, region: region)
+                let b = try litBox(try await previewGenerator.image(at: time).image, region: region)
+                print("[caption-preview] \(caseID) t=\(at) export=\(a) preview=\(b)")
+                XCTAssertGreaterThan(a.count, captionPixelPresenceThreshold)
+                XCTAssertEqual(Double(a.count), Double(b.count), accuracy: Double(a.count) * 0.05)
+                for side in 0..<4 { XCTAssertEqual(a.box[side], b.box[side], accuracy: 3) }
+            }
         }
     }
 
@@ -418,7 +487,7 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
     /// same amount of the frame.
     private func assertTitlePreviewMatchesExport(
         caseID: String, recipe: KriaMediaEngine.EditRecipe, urls: [String: URL], export: AVURLAsset, element: [String: Any],
-        region: [Int], times: [Double], frames: URL, state: URL
+        region: [Int], times: [Double], exportedTitlePrefix: String, frames: URL, state: URL
     ) async throws {
         let snapshot = try JSONDecoder().decode(
             [String: JSONValue].self, from: JSONSerialization.data(withJSONObject: ["text_elements": [element]])
@@ -427,7 +496,7 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         let title = try XCTUnwrap(document.textElements.first)
         // The status route sends the title read-only (kill-switch shape) or, since
         // KRI-465, editable; the fixture may come from either server version.
-        XCTAssertEqual(title.id, "narrated-title", "\(caseID): the voiceover title element")
+        XCTAssertEqual(title.id, element["id"] as? String, "\(caseID): the persisted title element")
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         // Only the text compile matters here; the placeholder footage is never read.
         let placeholder = ResolvedEditorSource(clipIndex: 0, mediaID: "placeholder", asset: MediaAsset(id: "placeholder",
@@ -444,7 +513,7 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
             compiler.compile(document: document, clips: [clip], items: items, sources: [0: placeholder]).recipe.textLayers.first
         )
         var preview = recipe
-        let exportedTitle = try XCTUnwrap(preview.textLayers.firstIndex { $0.id.hasPrefix("title-") })
+        let exportedTitle = try XCTUnwrap(preview.textLayers.firstIndex { $0.id.hasPrefix(exportedTitlePrefix) })
         preview.textLayers[exportedTitle] = previewTitle
         let movie = frames.appendingPathComponent("\(caseID)-title-preview.mp4")
         try? FileManager.default.removeItem(at: movie)
@@ -504,6 +573,10 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
 
     private func inputDirectory() throws -> URL {
         guard let path = ProcessInfo.processInfo.environment["KRIA_E2E_DIR"] else { throw XCTSkip("Set KRIA_E2E_DIR to run") }
+        if path.hasPrefix("documents:") {
+            return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent(String(path.dropFirst("documents:".count)))
+        }
         return URL(fileURLWithPath: path)
     }
 

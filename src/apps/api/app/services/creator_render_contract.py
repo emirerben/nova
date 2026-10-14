@@ -1209,11 +1209,13 @@ def build_render_contract(
         ids = [
             str(row["media_id"]) for row in rows if isinstance(row, Mapping) and row.get("media_id")
         ]
+        # KRI-661: a single clip is trivially in order, dated or not.
+        single_clip = len(ids) == 1 and len(rows) == 1
         if (
             not ids
             or len(ids) != len(rows)
             or len(set(ids)) != len(ids)
-            or set(ids) != set(dates)
+            or (set(ids) != set(dates) and not single_clip)
             or (selected and set(ids) != selected)
         ):
             order_ids = ()
@@ -1221,7 +1223,11 @@ def build_render_contract(
                 "I need capture times for every selected clip to verify chronological order."
             )
         else:
-            order_ids = tuple(sorted(ids, key=lambda media_id: dates[media_id]))
+            order_ids = (
+                tuple(ids)
+                if single_clip
+                else tuple(sorted(ids, key=lambda media_id: dates[media_id]))
+            )
             order_basis = "capture_time"
     if (
         order_required
