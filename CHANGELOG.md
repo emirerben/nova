@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.281.0] - 2026-10-14
+
+### Changed
+- fix(ios): Talking editor preview draws captions over pictures and survives word-by-word captions (KRI-671) (#1604) <!-- release-pr: 1604 -->
+
 ## [0.78.280.0] - 2026-10-14
 
 ### Added
