@@ -4,7 +4,8 @@
   "input": {
     "creator_request": "Label each sport and group the pub clips.",
     "latest_user_message": "Remove the sport labels; keep the pub group.",
-    "candidate_intents": null
+    "candidate_intents": null,
+    "clip_exclusions": true
   },
   "raw_text": "{\"intents\":[{\"intent_id\":\"i1\",\"op\":\"group\",\"attribute\":\"pub clips\",\"creator_text\":null,\"caption_attribute\":null,\"position\":null,\"source_quote\":\"group the pub clips\"}],\"question\":null}",
   "output": {
@@ -30,6 +31,7 @@
       }
     ],
     "expect_any": true,
-    "expect_absent_ops": ["label"]
+    "expect_absent_ops": ["label", "exclude"],
+    "case": "Decoy (KRI-667): 'Remove the sport labels' removes text, never clips: no label and no exclude (clip_exclusions on); the pub group stays."
   }
 }

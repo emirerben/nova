@@ -3,7 +3,7 @@ captions (KRI-127, extended by KRI-129).
 
 One open-vocabulary intent replaces the per-feature strategy fields
 (``sport_labels``, ``context_label.kind``...): "label / group / order / include
-/ caption clips by <creator-described attribute>". A model step resolves an
+/ caption / exclude clips by <creator-described attribute>". A model step resolves an
 intent into per-clip assignments with evidence and a confidence; this module
 owns the contract and the ONLY rule by which resolved text may reach the
 screen.
@@ -29,7 +29,7 @@ A caption differs from a label in shape, not in the fence: a label is a <=3
 word per-clip tag (``label_text``/``LABEL_MAX_*``); a caption is a <=10 word
 phrase for the whole chapter (``clean_caption_text``/``CAPTION_MAX_*``,
 ``ground_caption``). ``op="caption"`` assignments stay membership-only (like
-``group``/``order``/``include`` — ``value`` is always ``None``); the one
+``group``/``order``/``include``/``exclude`` — ``value`` is always ``None``); the one
 authored/quoted caption phrase lives on ``ResolvedClipIntent.caption_text`` +
 ``caption_grounding`` instead of per-assignment ``value``.
 """
@@ -45,7 +45,12 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.clip_understanding import ClipUnderstanding
 
-ClipIntentOp = Literal["label", "group", "order", "include", "caption"]
+# KRI-667: ``exclude`` leaves the clips matching ``attribute`` OUT of the edit ("Skip
+# the quad bike clip"). Membership only, like ``include`` but inverted: the resolver
+# keeps a clip for it only at ``LABEL_MIN_CONFIDENCE`` (a wrong drop removes footage the
+# creator wanted) and never asks the creator about it. Always accepted here, so a
+# strategy persisted while CLIP_INTENT_EXCLUDE_ENABLED was on still loads after it is off.
+ClipIntentOp = Literal["label", "group", "order", "include", "caption", "exclude"]
 ClipOrderPosition = Literal["first", "last"]
 # KRI-189: a fact-based ORDER over EVERY clip (not a first/last placement of a
 # described subset): "in the order I filmed them" -> capture_time, "along my
@@ -77,6 +82,9 @@ LABEL_MAX_WORDS = 3
 # itself, so it needs less certainty than a label's per-clip printed value
 # does.
 MEMBERSHIP_MIN_CONFIDENCE = 0.6
+# KRI-667: an `exclude` REMOVES a clip from the edit, and a wrong removal loses footage
+# the creator wanted, so it is held to the label bar, never the membership bar.
+EXCLUDE_MIN_CONFIDENCE = LABEL_MIN_CONFIDENCE
 
 # A caption is a phrase, not a tag: longer than a label, but still short
 # on-screen text for one chapter (never a full sentence). These shape bounds
@@ -154,6 +162,13 @@ class ClipIntent(BaseModel):
             or self.caption_attribute is not None
         ):
             raise ValueError("placeholder requires a clip label with no creator_text")
+        if self.op == "exclude" and (
+            self.creator_text is not None
+            or self.caption_attribute is not None
+            or self.position is not None
+        ):
+            # Nothing is printed or placed for a clip that is left out.
+            raise ValueError("exclude carries no creator_text, caption_attribute or position")
         return self
 
     # Exact creator-written copy for this intent ("post match pub"), if any. A

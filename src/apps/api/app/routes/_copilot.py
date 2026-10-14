@@ -141,6 +141,57 @@ def _claims_success(reply: str) -> bool:
     return _has_success_words(reply) and not _negates_success(reply)
 
 
+def _reply_claims(output: EditCopilotOutput, reply: str, *, strict: bool = False) -> bool:
+    """Does the reply describe an edit as done? (KRI-667)
+
+    The model states it in ``claimed_ops``; parse restates it wherever the server writes
+    the reply. The wording regexes run only when the field is absent (older output, a
+    cassette, a retry or a malformed field). ``strict`` is the legacy check without the
+    negation excuse ("not" elsewhere in the sentence must not hide a separate claim).
+    """
+    claimed = getattr(output, "claimed_ops", None)
+    if claimed is None:
+        return _has_success_words(reply) if strict else _claims_success(reply)
+    return bool(claimed)
+
+
+# Rejection reasons whose `detail` is written for the creator (the unsupported branch
+# already shows them verbatim). Value/required-field details are parser jargon.
+_CREATOR_FACING_REJECTIONS = frozenset({"capability_unavailable", "stale_target"})
+
+
+def _check_claims(output: EditCopilotOutput, ops: list[dict], outcome: CopilotOutcome) -> list[str]:
+    """Log the structured claim against the ops that survived; return the unbacked names."""
+    claimed = getattr(output, "claimed_ops", None)
+    if claimed is None:
+        return []
+    kept = list(dict.fromkeys(str(op.get("op") or "") for op in ops if isinstance(op, dict)))
+    unbacked = [name for name in claimed if name not in kept]
+    log.info(
+        "edit_copilot.claim_check",
+        claimed=list(claimed),
+        kept=kept,
+        unbacked=unbacked,
+        outcome=outcome,
+    )
+    return unbacked
+
+
+def _unbacked_claim_detail(output: EditCopilotOutput, unbacked: list[str]) -> str:
+    """Why a claimed op did not survive, when the parser or the model said so."""
+    if not unbacked:
+        return ""
+    details = [
+        str(item.get("detail") or "").strip()
+        for item in output.rejection_reasons
+        if item.get("op") in unbacked and item.get("reason") in _CREATOR_FACING_REJECTIONS
+    ]
+    if not any(details):
+        # Unmet parts carry no op name: the first stated reason is the best known one.
+        details = [str(item.get("reason") or "").strip() for item in output.unmet_requests][:1]
+    return " ".join(d for d in dict.fromkeys(details) if d and d not in output.reply_notes)
+
+
 # KRI-297: "use all overlays as full screen" is a display-mode change the editor
 # ops cannot express; it needs a fresh edit (the planner re-plans it).
 _FULLSCREEN_WORD = re.compile(r"\b(full[\s-]?(screen|frame)|cutaways?)\b", re.IGNORECASE)
@@ -206,20 +257,23 @@ def _honest_outcome(
         outcome = "no_effect"
 
     reply = output.reply.strip()
+    unbacked = _check_claims(output, ops, outcome)
     if outcome == "proposed":
-        if reply and not _claims_success(reply):
+        if reply and not _reply_claims(output, reply):
             return outcome, reply
         canned = say(
             en="I prepared this edit for the editor to validate and stage.",
             tr="Bu düzenlemeyi hazırladım, editör kontrol edip uygulayacak.",
         )
-        return outcome, f"{canned} {output.reply_notes}".strip()
+        # The canned line stays first: the phone planner swaps it by prefix.
+        lead = " ".join(p for p in (canned, _unbacked_claim_detail(output, unbacked)) if p)
+        return outcome, f"{lead} {output.reply_notes}".strip()
     if outcome == "applied":
         # Compatibility response for pre-v2 browser bundles during a split
         # deploy. Those clients own the historical local-apply wording.
         return outcome, reply
     if outcome == "clarification":
-        if reply and not _claims_success(reply):
+        if reply and not _reply_claims(output, reply):
             return outcome, reply
         return outcome, say(
             en="I need one detail before changing the draft.",
@@ -236,7 +290,7 @@ def _honest_outcome(
             return outcome, detail
         # With no supported operation, a negation elsewhere in the sentence
         # must not excuse a separate claim that something was changed.
-        if reply and not _has_success_words(reply):
+        if reply and not _reply_claims(output, reply, strict=True):
             return outcome, reply
         if is_overlay_display_ask(message):
             return outcome, say(en=OVERLAY_DISPLAY_LIMIT_REPLY, tr=_OVERLAY_DISPLAY_LIMIT_REPLY_TR)
@@ -255,14 +309,14 @@ def _honest_outcome(
             en="I couldn't build a valid draft change for that request. Try again.",
             tr="Bu istek için geçerli bir taslak değişikliği oluşturamadım. Tekrar dene.",
         )
-    if reasons and _has_success_words(reply):
+    if reasons and _reply_claims(output, reply, strict=True):
         # A structured rejection means nothing changed: never surface prose that
         # claims it did (negation elsewhere in the sentence must not excuse it).
         return outcome, detail or say(
             en="I couldn't make that change on this edit.",
             tr="Bu değişikliği bu düzenlemede yapamadım.",
         )
-    if reply and not _claims_success(reply):
+    if reply and not _reply_claims(output, reply):
         return outcome, reply
     # A request that matched nothing must say so, not claim the draft already
     # reflects it: the agent attaches the real reason as an unmet request.

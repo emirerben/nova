@@ -21,6 +21,7 @@ Invariants:
 from __future__ import annotations
 
 import copy
+import re
 import threading
 import time
 import uuid
@@ -37,6 +38,7 @@ from app.database import sync_session
 from app.kria import plan_payloads
 from app.kria.plan_contract import DETAIL_MAX, SCOPABLE_SECTIONS, SUMMARY_MAX
 from app.kria.plan_contract import SECTION_ORDER as _CONTRACT_SECTION_ORDER
+from app.kria.reply_language import reply_language_for, say, thread_reply_language
 
 log = structlog.get_logger()
 
@@ -407,6 +409,11 @@ def _emit(job_id: str | uuid.UUID, blocks: list[dict[str, Any]]) -> dict[str, An
         blocks = freeze_out_of_scope(blocks, events, job_key, scope)
         if not blocks:
             return None
+        # KRI-667: the builders ran in the render worker with no chat language bound; this
+        # is the one place that holds the thread, so the server's own words are re-worded
+        # for its language here.
+        with reply_language_for(thread_reply_language(thread)):
+            blocks = localized_blocks(blocks)
         annotated = annotate_blocks(blocks, events, job_key)
         _append_sync_event(
             db,
@@ -884,6 +891,59 @@ def emit_post_caption(job_id: str | uuid.UUID) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("plan_post_caption_failed", job_id=key, error=str(exc)[:200])
+
+
+# ── the chat's language (KRI-667) ────────────────────────────────────────────
+
+# The fixed words the builders write, in Turkish. Everything else in a block (a title, a
+# song or style name, the post caption) is the creator's or the catalog's and stays as is.
+_BLOCK_TEXT_TR = {
+    "Not used": "Kullanılmadı",
+    "Your song": "Şarkın",
+    "Your voiceover": "Seslendirmen",
+    "Lip-sync": "Dudak senkronu",
+    "Background": "Arka plan",
+}
+_COUNT_NOUNS_TR = {
+    "clip": "klip",
+    "caption": "altyazı",
+    "sound effect": "ses efekti",
+    "overlay": "katman",
+}
+# `_count_label` output, optionally with the clips section's " · 24s".
+_COUNT_SUMMARY = re.compile(  # kri667: reads `_count_label`'s own output, never creator words
+    r"^(\d+) (clip|caption|sound effect|overlay)s?(?: · (\d+)s)?$"
+)
+
+
+def _localized_text(text: Any) -> Any:
+    if not isinstance(text, str):
+        return text
+    fixed = _BLOCK_TEXT_TR.get(text)
+    if fixed is not None:
+        return say(en=text, tr=fixed)
+    match = _COUNT_SUMMARY.match(text)
+    if match is None:
+        return text
+    count, noun, seconds = match.groups()
+    turkish = f"{count} {_COUNT_NOUNS_TR[noun]}" + (f" · {seconds} sn" if seconds else "")
+    return say(en=text, tr=turkish)
+
+
+def localized_blocks(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The blocks with the builders' fixed English summary/detail in the bound language.
+
+    English (or nothing bound) returns them unchanged.
+    """
+    out = []
+    for entry in blocks:
+        localized = {
+            **entry,
+            "summary": _localized_text(entry.get("summary")),
+            "detail": _localized_text(entry.get("detail")),
+        }
+        out.append(localized if localized != entry else entry)
+    return out
 
 
 # ── block builders (summary exactly as before; payload added behind the flag) ─

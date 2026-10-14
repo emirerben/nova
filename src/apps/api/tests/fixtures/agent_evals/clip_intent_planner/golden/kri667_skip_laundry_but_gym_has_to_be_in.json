@@ -1,0 +1,68 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-14.1",
+  "input": {
+    "creator_request": "Make a montage of my week. Skip the laundry, but the gym has to be in.",
+    "latest_user_message": "Make a montage of my week. Skip the laundry, but the gym has to be in.",
+    "candidate_intents": null,
+    "clip_exclusions": true
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"exclude_laundry\",\n      \"op\": \"exclude\",\n      \"attribute\": \"laundry\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Skip the laundry\"\n    },\n    {\n      \"intent_id\": \"include_gym\",\n      \"op\": \"include\",\n      \"attribute\": \"gym\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"the gym has to be in\"\n    }\n  ],\n  \"question\": null\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "exclude_laundry",
+        "op": "exclude",
+        "attribute": "laundry",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Skip the laundry"
+      },
+      {
+        "intent_id": "include_gym",
+        "op": "include",
+        "attribute": "gym",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "the gym has to be in"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden (KRI-667, prompt 2026-10-14.1, clip_exclusions on): raw_text is plausible Gemini 2.5 Flash output written by hand, not a live capture. Re-capture live when a paid run is approved.",
+    "case": "KRI-667: one sentence, two asks. The laundry is an `exclude`, the gym an `include`, each quoting only its own words: the gym is never excluded and the laundry never forced in.",
+    "expect_intents": [
+      {
+        "op": "exclude",
+        "source_quote_keywords": [
+          "laundry"
+        ]
+      },
+      {
+        "op": "include",
+        "source_quote_keywords": [
+          "gym"
+        ]
+      }
+    ],
+    "expect_absent_intents": [
+      {
+        "op": "exclude",
+        "source_quote_keywords": [
+          "gym"
+        ]
+      },
+      {
+        "op": "include",
+        "source_quote_keywords": [
+          "laundry"
+        ]
+      }
+    ],
+    "expect_any": true,
+    "expect_question": false
+  }
+}

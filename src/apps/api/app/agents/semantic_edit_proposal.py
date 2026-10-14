@@ -144,7 +144,8 @@ def _semantic_required_media_ids(input: EditProposalAgentInput) -> set[str]:  # 
     if input.montage_cadence:
         required.update(input.montage_cadence.source_media_ids)
     for intent in input.clip_intents or []:
-        if intent.status == "resolved":
+        # KRI-667: an exclude names clips to leave OUT; requiring them would force them in.
+        if intent.status == "resolved" and intent.op != "exclude":
             required.update(assignment.media_id for assignment in intent.assignments)
     return required
 
@@ -501,6 +502,10 @@ def _semantic_constraint_block(
     intents = []
     exclusive_groups = []
     for intent in input.clip_intents or []:
+        if intent.op == "exclude":
+            # KRI-667: the server already left those clips out of the pick; a constraint
+            # naming them would only invite the model to place them.
+            continue
         data = intent.model_dump(mode="json")
         data["assignments"] = [
             {
@@ -1271,7 +1276,8 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
                 positions.setdefault(source.media_id, []).append(index)
                 source_order.append(source.media_id)
         for intent in input.clip_intents:
-            if intent.status != "resolved":
+            # KRI-667: an exclude's clips are meant to be absent, never "dropped".
+            if intent.status != "resolved" or intent.op == "exclude":
                 continue
             ids = [aliases.get(item.media_id, item.media_id) for item in intent.assignments]
             if not all(media_id in positions for media_id in ids):

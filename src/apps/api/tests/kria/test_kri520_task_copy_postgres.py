@@ -63,6 +63,11 @@ from tests.kria.test_runtime_postgres_integration import (  # noqa: E402
     _seed_runtime_project,
     _seed_user_turn,
 )
+from tests.kria.turkish_chat_guard import turkish_chat_net_fixture  # noqa: E402, F401
+
+# KRI-667: every event these flows write is checked; English in a Turkish chat fails the
+# test at teardown (an English chat is never checked).
+pytestmark = pytest.mark.usefixtures("turkish_chat_net")
 
 _LANGUAGES = [
     pytest.param(None, id="english"),
@@ -113,7 +118,9 @@ def _last_event(thread_id: uuid.UUID, *, event_type: str) -> CreationThreadEvent
         ).scalar_one()
 
 
-def _strategy_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+def _strategy_turn(monkeypatch: pytest.MonkeyPatch, language: str | None = None) -> None:
+    # The model writes the summary in the chat's language (its prompt names it).
+    turkish = language == "tr"
     plan = adapt_creator_action(
         ProposeStrategy(
             kind="propose_strategy",
@@ -124,9 +131,17 @@ def _strategy_turn(monkeypatch: pytest.MonkeyPatch) -> None:
                 pacing="fast",
                 render_program="guided",
                 selected_media_ids=[],
-                rationale="Open on the whisk and end on the packed order.",
+                rationale=(
+                    "Çırpma teliyle aç, paketlenmiş siparişle bitir."
+                    if turkish
+                    else "Open on the whisk and end on the packed order."
+                ),
             ),
-            summary="Open on the whisk and finish on the packed order.",
+            summary=(
+                "Çırpma teliyle açıp paketlenmiş siparişle bitiriyorum."
+                if turkish
+                else "Open on the whisk and finish on the packed order."
+            ),
         )
     )
 
@@ -141,7 +156,7 @@ async def _draft_with_approval(monkeypatch: pytest.MonkeyPatch, language: str | 
     """A project whose strategy draft is waiting on a pinned approval."""
     user_id, thread_id, session_id = _seed_runtime_project()
     _set_language(thread_id, language)
-    _strategy_turn(monkeypatch)
+    _strategy_turn(monkeypatch, language)
     message = (
         "Matcha güncellemesini hızlı ama kişisel yap"
         if language == "tr"

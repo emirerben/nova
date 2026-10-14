@@ -513,9 +513,15 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
             )
         if message.startswith("pinned_texts"):
             return RefusedStrategy(
-                question=(
-                    "This kind of edit can't keep your text in a corner yet. "
-                    "Should I make it without that text?"
+                question=say(
+                    en=(
+                        "This kind of edit can't keep your text in a corner yet. "
+                        "Should I make it without that text?"
+                    ),
+                    tr=(
+                        "Bu tür bir düzenleme yazını henüz köşede tutamıyor. "
+                        "O yazı olmadan yapayım mı?"
+                    ),
                 ),
                 code="pinned_text_unavailable",
             )

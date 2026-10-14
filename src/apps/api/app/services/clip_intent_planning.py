@@ -429,6 +429,8 @@ async def plan_and_resolve_clip_intents(
                 available_clip_count=len(clips),
                 **({"clip_facts": True} if clip_facts_on else {}),
                 reply_language=current_reply_language(),
+                # KRI-667: the `exclude` op; omitted when off (byte-identical input).
+                **({"clip_exclusions": True} if settings.clip_intent_exclude_enabled else {}),
             ),
             ctx=run_context,
         )
