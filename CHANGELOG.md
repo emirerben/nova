@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.285.0] - 2026-10-14
+
+### Changed
+- perf(ios): open a new chat in one round trip instead of four (KRI-640) (#1607) <!-- release-pr: 1607 -->
+
 ## [0.78.284.0] - 2026-10-14
 
 ### Changed
