@@ -565,6 +565,16 @@
         "src/apps/ios/Tests/KriaUITests/GamedayAddClipUITests.swift",
         "scripts/ios/kri-669-gameday-text.py"
       ]
+    },
+    {
+      "id": "kri-679-song-length-mood",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri679_song_length.py tests/kria/test_kri679_music_mood.py tests/kria/test_music_section_fit.py tests/evals/test_music_matcher_evals.py",
+      "paths": [
+        "src/apps/api/prompts/match_music.txt",
+        "src/apps/api/tests/kria/test_kri679_song_length.py",
+        "src/apps/api/tests/kria/test_kri679_music_mood.py"
+      ]
     }
   ]
 }
