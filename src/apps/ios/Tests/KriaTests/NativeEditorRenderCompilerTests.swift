@@ -221,12 +221,20 @@ import KriaMediaEngine
                 "appearance": .object(["highlight_spoken_word": .bool(highlighted)])], captionCues: [cue])
             let item = NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 1, end: 2)
             let layers = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source]).recipe.textLayers
-            XCTAssertEqual(layers.count, 2)
-            XCTAssertEqual(layers.map { $0.runs.map(\.text).joined() }, ["Hello", "world"])
-            XCTAssertEqual(layers[0].start, 1, accuracy: 0.001)
-            XCTAssertEqual(layers[0].end, layers[1].start, accuracy: 0.001)
-            XCTAssertEqual(layers[1].end, 2, accuracy: 0.001)
-            XCTAssertEqual(layers[0].runs.first?.fill, highlighted ? TextInk(red: 1, green: 0, blue: 0, alpha: 1) : TextInk(red: 1, green: 1, blue: 1, alpha: 1))
+            // One layer for the cue, one word on screen at a time (single-word karaoke), on the edited timing.
+            XCTAssertEqual(layers.count, 1)
+            let layer = try XCTUnwrap(layers.first)
+            let karaoke = try XCTUnwrap(layer.karaoke)
+            XCTAssertEqual(karaoke.singleWord, true)
+            XCTAssertEqual(layer.runs.map(\.text), ["Hello", "world"])
+            XCTAssertEqual(layer.start, 1, accuracy: 0.001)
+            XCTAssertEqual(layer.end, 2, accuracy: 0.001)
+            XCTAssertEqual(karaoke.starts.count, 2)
+            XCTAssertEqual(karaoke.starts[0], 0, accuracy: 0.001)
+            XCTAssertGreaterThan(karaoke.starts[1], karaoke.starts[0])
+            XCTAssertLessThan(karaoke.starts[1], 1)
+            // Highlight on: the highlight colour. Off: the plain caption colour, so nothing is tinted.
+            XCTAssertEqual(karaoke.highlight, highlighted ? TextInk(red: 1, green: 0, blue: 0, alpha: 1) : TextInk(red: 1, green: 1, blue: 1, alpha: 1))
         }
     }
 
@@ -252,7 +260,7 @@ import KriaMediaEngine
         }
     }
 
-    // MARK: - Phone Talking: card layering and the word-caption layer budget
+    // MARK: - Phone Talking: card layering and one-word-at-a-time captions
 
     private func talkingSource(duration: Double) -> (ResolvedEditorSource, EditorClip) {
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
@@ -329,21 +337,45 @@ import KriaMediaEngine
         return try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source], deviceCaptions: true)
     }
 
-    /// A short talk keeps one layer per spoken word; a long one (hundreds of words) falls back to one karaoke
-    /// layer per cue instead of passing the engine's cap and losing the whole preview.
-    func testWordDisplayExpandsPerWordWithinTheBudgetAndFallsBackToOneLayerPerCuePastIt() throws {
-        for highlighted in [false, true] {
-            let short = try wordCaptionProgram(words: 400, wordsPerCue: 8, highlighted: highlighted).recipe.textLayers
-            XCTAssertEqual(short.count, 400, "within budget: one layer per word")
-            XCTAssertTrue(short.allSatisfy { $0.karaoke == nil })
-
-            let long = try wordCaptionProgram(words: 640, wordsPerCue: 8, highlighted: highlighted).recipe.textLayers
-            XCTAssertEqual(long.count, 80, "over budget: one karaoke line per cue")
-            XCTAssertLessThanOrEqual(long.count, NativeEditorRenderCompiler.maxTextLayers)
-            XCTAssertTrue(long.allSatisfy { $0.karaoke != nil })
-            let line = long[0].runs.map(\.text).joined()
-            XCTAssertTrue(line.contains("w0x0") && line.contains("w0x7"), "the whole line is on screen: \(line)")
+    /// Display: Word is one layer per cue however long the talk is, so the preview stays far under the engine's
+    /// text-layer cap and builds quickly (the old one-layer-per-word expansion hit the cap near 480 words and cost
+    /// seconds of layout on the main actor).
+    func testWordDisplayIsOneSingleWordLayerPerCueForLongTalks() throws {
+        for (words, highlighted) in [(40, false), (640, true), (1600, true)] {
+            let started = Date()
+            let program = try wordCaptionProgram(words: words, wordsPerCue: 8, highlighted: highlighted)
+            let layers = program.recipe.textLayers
+            XCTAssertEqual(layers.count, words / 8, "one layer per cue at \(words) words")
+            XCTAssertTrue(layers.allSatisfy { $0.karaoke?.singleWord == true && $0.runs.count == 8 })
+            XCTAssertLessThanOrEqual(layers.count, NativeEditorRenderCompiler.maxTextLayers)
+            XCTAssertTrue(program.recipe.effectiveCapabilities.contains(.singleWordText))
+            XCTAssertLessThan(Date().timeIntervalSince(started), 20, "compile is bounded at \(words) words")
         }
+    }
+
+    /// Sentence mode is untouched: one pop-in layer per cue, no karaoke.
+    func testSentenceDisplayStaysOneCaptionPopLayerPerCue() throws {
+        let (source, clip) = talkingSource(duration: 4)
+        let document = EditorDocument(editFormat: "subtitled", clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 4)],
+            captionMeta: ["style": .string("sentence")], captionCues: [.init(id: "cue", startS: 0.5, endS: 3.5, text: "One more game")])
+        let item = NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 0.5, end: 3.5)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let layers = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source], deviceCaptions: true).recipe.textLayers
+        XCTAssertEqual(layers.count, 1)
+        XCTAssertNil(layers[0].karaoke)
+        XCTAssertEqual(layers[0].effect, .captionPop)
+    }
+
+    /// Word style with the highlight setting left unset is the legacy full-line sweep, as the server builds it.
+    func testWordStyleWithoutAnExplicitHighlightKeepsTheFullLineKaraoke() throws {
+        let (source, clip) = talkingSource(duration: 4)
+        let document = EditorDocument(editFormat: "subtitled", clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 4)],
+            captionMeta: ["style": .string("word")], captionCues: [.init(id: "cue", startS: 0.5, endS: 3.5, text: "One more game")])
+        let item = NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 0.5, end: 3.5)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let layer = try XCTUnwrap(compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source], deviceCaptions: true).recipe.textLayers.first)
+        XCTAssertNil(layer.karaoke?.singleWord)
+        XCTAssertNotNil(layer.karaoke)
     }
 
     /// Nothing left to fall back to: the failure is named, permanent (no Retry that cannot work) and honest.
@@ -1596,13 +1628,15 @@ import KriaMediaEngine
             return rows.compactMap { row in row.objectValue.flatMap { o in
                 o["text"]?.stringValue.flatMap { text in o["start_s"]?.numberValue.map { (text, spoken($0)) } } } }
         }
-        let layers = recipe.textLayers.sorted { $0.start < $1.start }
-        XCTAssertEqual(layers.map { $0.runs.map(\.text).joined() }, expected.map(\.0))
-        for (layer, word) in zip(layers, expected) {
-            XCTAssertEqual(try sourceTime(layer.start), word.1, accuracy: 0.01, "\(word.0) must burn when it is spoken")
+        // One single-word layer per cue; word i shows from layer.start + starts[i].
+        let spokenWords = recipe.textLayers.sorted { $0.start < $1.start }.flatMap { layer in
+            zip(layer.runs, try! XCTUnwrap(layer.karaoke).starts).map { ($0.text, layer.start + $1) } }
+        XCTAssertEqual(spokenWords.map(\.0), expected.map(\.0))
+        for (shown, word) in zip(spokenWords, expected) {
+            XCTAssertEqual(try sourceTime(shown.1), word.1, accuracy: 0.01, "\(word.0) must burn when it is spoken")
         }
-        XCTAssertEqual(try sourceTime(layers[0].start), 7.256, accuracy: 0.01)
-        XCTAssertEqual(try sourceTime(try XCTUnwrap(layers.last { $0.runs.map(\.text).joined() == "Yılda" }).start), 11.476, accuracy: 0.01)
+        XCTAssertEqual(try sourceTime(spokenWords[0].1), 7.256, accuracy: 0.01)
+        XCTAssertEqual(try sourceTime(try XCTUnwrap(spokenWords.first { $0.0 == "Yılda" }).1), 11.476, accuracy: 0.01)
     }
 
     func testClipTrimAndAuthoredTextCompileFromPublicDocument() throws {

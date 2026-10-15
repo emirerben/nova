@@ -962,7 +962,11 @@ private enum KriaClientProtocolContract {
     /// for a document that has a bend, since they would draw it straight.
     ///
     /// 10 (KRI-648): replays resolved caption corner/width preferences in native preview and Save.
-    static let version = 10
+    ///
+    /// 11 (single-word captions): draws the recipe's `karaoke.single_word` text layers (one word on screen at a time,
+    /// one layer per cue). The server emits that mode only to this protocol and answers 426 `client_update_required`
+    /// to older builds, which cannot decode the key.
+    static let version = 11
     static let header = "X-Kria-Client-Protocol"
 }
 
