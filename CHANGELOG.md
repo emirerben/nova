@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.0.0] - 2026-10-15
+
+### Added
+- feat(memory): learn text preferences from finished edits (KRI-648 R2) (#1608) <!-- release-pr: 1608 -->
+
 ## [0.78.286.0] - 2026-10-15
 
 ### Changed
