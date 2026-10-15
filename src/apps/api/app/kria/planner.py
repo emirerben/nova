@@ -329,20 +329,37 @@ def _fit_music_section_to_length(section: dict[str, Any], target_s: float | None
     return {**section, "start_s": new_start, "end_s": float(catalog)}
 
 
-def _music_pool_digest(rows: Any, audio: Any) -> str:
+def _creator_music_ask(brief: CreativeBrief | None) -> str:
+    """The creator's own words about the song, from the live brief (KRI-679).
+
+    Only live audio asks for the whole edit: a clip-scoped audio ask is a beat sound,
+    and a superseded one was replaced by a later ask.
+    """
+    if brief is None:
+        return ""
+    asks = (
+        req.text().strip() for req in brief.live() if req.kind == "audio" and req.scope == "global"
+    )
+    return "; ".join(ask for ask in asks if ask)
+
+
+def _music_pool_digest(rows: Any, audio: Any, music_ask: str = "") -> str:
     """The uploaded clips and audio choice a frozen song was matched against (KRI-679).
 
     Unlike the full music input digest, this ignores which clips the edit currently
     selects and their analysis, so a later turn that only re-selects clips keeps the song.
+    A creator music ask is part of it, so a new mood re-matches; without one the digest
+    stays what earlier length questions stored.
     """
     media_ids = sorted(
         str(row.get("media_id"))
         for row in (rows if isinstance(rows, list) else [])
         if isinstance(row, Mapping) and row.get("media_id")
     )
-    return hashlib.sha256(
-        json.dumps({"media": media_ids, "audio": audio}, sort_keys=True).encode()
-    ).hexdigest()
+    pool: dict[str, Any] = {"media": media_ids, "audio": audio}
+    if music_ask:
+        pool["music_ask"] = music_ask
+    return hashlib.sha256(json.dumps(pool, sort_keys=True).encode()).hexdigest()
 
 
 def _prior_frozen_music(
@@ -381,10 +398,12 @@ async def _freeze_licensed_music_section(
     *,
     job_id: str,
     target_s: float | None = None,
+    music_ask: str = "",
 ) -> dict[str, Any] | None:
     """Match once in a real live session and return an immutable catalog section.
 
     ``target_s`` is the creator's own length; the section follows it (KRI-679).
+    ``music_ask`` is the creator's own words about the song; the matcher weighs it first.
     """
     if not isinstance(db, AsyncSession) or not isinstance(snapshot, dict):
         return None
@@ -424,7 +443,7 @@ async def _freeze_licensed_music_section(
         for row in playable
         if row.get("media_id")
     ]
-    track = await asyncio.to_thread(_match_best_track, metas, job_id=job_id)
+    track = await asyncio.to_thread(_match_best_track, metas, job_id=job_id, music_ask=music_ask)
     if track is None:
         return {"status": "fallback_footage"}
     cfg = track_config_with_rank_one(track)
@@ -3334,10 +3353,14 @@ async def _gate_unresolved_choices(
         "selected": strategy.get("selected_media_ids"),
         "audio": strategy.get("audio_strategy", "licensed_music"),
     }
+    # KRI-679: "calm music" must reach the song matcher, and a new ask must re-match.
+    music_ask = _creator_music_ask(brief)
+    if music_ask:
+        music_inputs["music_ask"] = music_ask
     music_input_digest = hashlib.sha256(
         json.dumps(music_inputs, sort_keys=True, default=str).encode()
     ).hexdigest()
-    music_pool_digest = _music_pool_digest(music_inputs["media"], music_inputs["audio"])
+    music_pool_digest = _music_pool_digest(music_inputs["media"], music_inputs["audio"], music_ask)
     from app.services.length_policy import creator_duration_s  # noqa: PLC0415
 
     creator_target = strategy.get("creator_duration_s")
@@ -3351,7 +3374,12 @@ async def _gate_unresolved_choices(
     frozen_music = _prior_frozen_music(events, music_input_digest, music_pool_digest)
     if frozen_music is None:
         frozen_music = await _freeze_licensed_music_section(
-            db, strategy, planned.media_snapshot, job_id=str(thread_id), target_s=music_target_s
+            db,
+            strategy,
+            planned.media_snapshot,
+            job_id=str(thread_id),
+            target_s=music_target_s,
+            music_ask=music_ask,
         )
     elif isinstance(frozen_music, dict):
         # A section frozen before KRI-600 may be longer than the footage can fill, and
