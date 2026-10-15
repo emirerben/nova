@@ -7173,6 +7173,10 @@ async def delete_thread(
         # Their append-only trigger rejects that UPDATE. Delete the PlanItem
         # first so its CASCADE removes the learning rows before the Job rows
         # can trigger SET NULL on them.
+        if getattr(user, "creator_edit_learning_enabled", False):
+            from app.services.finished_style_learning import erase_project_learning
+
+            await erase_project_learning(db, user.id, item.id)
         await db.execute(delete(PlanItem).where(PlanItem.id == item.id))
     elif session_ids:
         await db.execute(delete(CreatorAgentSession).where(CreatorAgentSession.id.in_(session_ids)))

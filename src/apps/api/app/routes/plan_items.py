@@ -1248,6 +1248,10 @@ async def delete_idea(
                 )
             locked_job.content_plan_item_id = None
 
+    if getattr(user, "creator_edit_learning_enabled", False):
+        from app.services.finished_style_learning import erase_project_learning
+
+        await erase_project_learning(db, user.id, item.id)
     await db.delete(item)
     await db.commit()
 
@@ -7907,6 +7911,11 @@ async def _editor_commit_item(
     else:
         prep = prepare_editor_commit(locked_job, variant_id, commit_body, **validation_arguments)
 
+    from app.services.finished_style_learning import stage_prepared_style_edit
+
+    await stage_prepared_style_edit(
+        db, user.id, locked_job, variant_id, prep, temporary=body.learning_temporary
+    )
     canonical_revision_hash = str(
         (prep.get("guided_revision") or {}).get("state_hash") or prep["generation"]
     )

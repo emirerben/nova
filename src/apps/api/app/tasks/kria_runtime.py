@@ -2937,6 +2937,19 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                             else None
                         ),
                     )
+                    from app.services.finished_style_learning import (
+                        explicitly_temporary,
+                        stage_prepared_style_edit_sync,
+                    )
+
+                    stage_prepared_style_edit_sync(
+                        db,
+                        thread.creator_id,
+                        current_job,
+                        approval.target_variant_id,
+                        editor_prep,
+                        temporary=explicitly_temporary(document.intent),
+                    )
                 except (HTTPException, ValueError, KeyError) as exc:
                     if not device_variant:
                         raise

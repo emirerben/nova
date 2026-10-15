@@ -803,6 +803,9 @@ private struct CreationWorkspaceView: View {
     }
 
     @ViewBuilder private var conversationContent: some View {
+        if currentProject.status == .ready {
+            FinishedEditSuggestionsView(api: model.api, refreshToken: String(describing: currentProject.serverRevision))
+        }
         ForEach(ChatTimelineGroup.group(timeline)) { group in
             if case .media = group.entries[0].content {
                 mediaReceipts(group.entries)

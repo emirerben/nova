@@ -28,15 +28,24 @@ struct TextPreferenceRule: Codable, Equatable, Sendable {
 }
 
 struct TextPreferenceMemory: Decodable, Sendable {
+    struct EditLearning: Decodable, Sendable { let available: Bool; let enabled: Bool }
     struct Item: Decodable, Identifiable, Sendable {
+        struct Evidence: Decodable, Sendable {
+            let supportingVideoCount: Int
+            enum CodingKeys: String, CodingKey { case supportingVideoCount = "supporting_video_count" }
+        }
+        let sourceKind: String?
+        let evidence: Evidence?
         let id: String
         let normalizedKey: String?
         let instruction: String
         let structuredValue: [String: JSONValue]?
         enum CodingKeys: String, CodingKey {
             case id, instruction, normalizedKey = "normalized_key", structuredValue = "structured_value"
+            case sourceKind = "source_kind", evidence
         }
     }
+    let editLearning: EditLearning?
     let featureAvailable: Bool
     let textPreferencesAvailable: Bool?
     let enabled: Bool
@@ -47,7 +56,7 @@ struct TextPreferenceMemory: Decodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case featureAvailable = "feature_available", enabled, revision, active, suggestions
         case textPreferencesAvailable = "text_preferences_available"
-        case recentUndo = "recent_undo"
+        case recentUndo = "recent_undo", editLearning = "edit_learning"
     }
     var textStylingAvailable: Bool { featureAvailable && textPreferencesAvailable == true }
     func rule(role: String) -> TextPreferenceRule {
@@ -67,6 +76,7 @@ struct TextPreferenceOperation: Decodable, Sendable {
     @Published var isWorking = false
     @Published var error: String?
     @Published var saved = false
+    @Published var learningHistoryReset = false
     @Published var needsReload = false
     private let api: any KriaAPIClient
     init(api: any KriaAPIClient) { self.api = api }
@@ -110,6 +120,14 @@ struct TextPreferenceOperation: Decodable, Sendable {
         do { try await mutate(path: "me/memory/items/\(item.id)/" + (accept ? "accept" : "suggestion"), method: accept ? "POST" : "DELETE") }
         catch { show(error) }
     }
+    func setLearningEnabled(_ enabled: Bool) async {
+        do { try await mutate(path: "me/memory/edit-learning", method: "PATCH", extra: ["enabled": .bool(enabled)]) }
+        catch { show(error) }
+    }
+    func resetLearningHistory() async {
+        do { try await mutate(path: "me/memory/edit-learning/reset", method: "POST"); learningHistoryReset = true }
+        catch { show(error) }
+    }
     private func mutate(path: String, method: String, extra: [String: JSONValue] = [:]) async throws {
         guard let memory else { return }
         isWorking = true; saved = false
@@ -140,6 +158,21 @@ struct TextPreferencesView: View {
                 Text("These choices apply to future videos. Instructions for a particular video take priority.")
                 Text("Outlines and shadows are off by default.").foregroundStyle(KriaColor.mutedInk)
             }
+            if let learning = model.memory?.editLearning, learning.available || learning.enabled {
+                Section("Learn from finished edits") {
+                    Toggle("Learn from finished edits", isOn: Binding(get: { learning.enabled }, set: { enabled in Task { await model.setLearningEnabled(enabled) } }))
+                        .accessibilityIdentifier("text-learning-enabled")
+                    Text("Off by default. After the same change appears in three finished videos, Kria can suggest a preference. Nothing changes until you accept.")
+                        .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                    Text("Turning this off clears learning history and pending suggestions. Approved preferences stay saved.")
+                        .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                    if learning.enabled {
+                        Button("Reset learning history") { Task { await model.resetLearningHistory() } }
+                            .accessibilityIdentifier("text-learning-reset")
+                    }
+                    if model.learningHistoryReset { Text("Learning history reset.") }
+                }
+            }
             if let memory = model.memory, memory.textStylingAvailable {
                 Toggle("Use saved preferences", isOn: Binding(get: { memory.enabled }, set: { enabled in Task { await model.setEnabled(enabled) } }))
                     .disabled(model.isWorking)
@@ -147,7 +180,7 @@ struct TextPreferencesView: View {
                 Section("Apply to") {
                     Picker("Text role", selection: $role) {
                         ForEach(roles, id: \.self) { Text(label($0)).tag($0) }
-                    }
+                    }.accessibilityIdentifier("text-preference-role")
                 }
                 Section("Fonts") {
                     Picker("Required font", selection: Binding(get: { rule.fontFamily ?? (rule.automaticFont == true ? "automatic" : "defaults") }, set: {
@@ -169,7 +202,7 @@ struct TextPreferencesView: View {
                     Picker("Placement", selection: Binding(get: { rule.position ?? "" }, set: { rule.position = $0.isEmpty ? nil : $0 })) {
                         Text("Use defaults").tag("")
                         ForEach(["top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right"], id: \.self) { Text(label($0)).tag($0) }
-                    }
+                    }.accessibilityIdentifier("text-preference-placement")
                     TextField("Color hex, or blank to use defaults", text: $color)
                         .textInputAutocapitalization(.characters).autocorrectionDisabled()
                         .accessibilityLabel("Text color hex")
@@ -207,10 +240,8 @@ struct TextPreferencesView: View {
                 if !memory.suggestions.isEmpty {
                     Section("Suggestions") {
                         ForEach(memory.suggestions.filter(\.categoryIsText)) { item in
-                            Text(item.instruction)
-                            HStack {
-                                Button("Use for future videos") { Task { await model.decide(item, accept: true); reloadRule() } }
-                                Button("Dismiss") { Task { await model.decide(item, accept: false) } }
+                            TextPreferenceSuggestionRow(item: item) { accept in
+                                await model.decide(item, accept: accept); reloadRule()
                             }
                         }
                     }
@@ -281,5 +312,50 @@ struct SavedTextPreferenceUndo: View {
             }
             if let error { Text(error).foregroundStyle(KriaColor.failureText) }
         }.font(KriaFont.body(13)).frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct TextPreferenceSuggestionRow: View {
+    let item: TextPreferenceMemory.Item
+    let decide: (Bool) async -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(item.instruction)
+            if let count = item.evidence?.supportingVideoCount {
+                Text("Based on \(count) finished videos").font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+            }
+            HStack {
+                Button("Accept") { Task { await decide(true) } }
+                    .accessibilityIdentifier("text-learning-accept-" + item.id)
+                Button("Dismiss") { Task { await decide(false) } }
+                    .accessibilityIdentifier("text-learning-dismiss-" + item.id)
+            }
+            .buttonStyle(.borderless)
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+struct FinishedEditSuggestionsView: View {
+    @StateObject private var model: TextPreferencesModel
+    let refreshToken: String
+    init(api: any KriaAPIClient, refreshToken: String) {
+        _model = StateObject(wrappedValue: TextPreferencesModel(api: api))
+        self.refreshToken = refreshToken
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let memory = model.memory, memory.editLearning?.enabled == true {
+                ForEach(memory.suggestions.filter { $0.sourceKind == "finished_edits" }) { item in
+                    TextPreferenceSuggestionRow(item: item) { accept in await model.decide(item, accept: accept) }
+                }
+                if let error = model.error {
+                    Text(error).foregroundStyle(KriaColor.failureText)
+                    Button("Reload suggestions") { Task { await model.load() } }
+                }
+            }
+        }
+        .disabled(model.isWorking)
+        .task(id: refreshToken) { await model.load() }
     }
 }

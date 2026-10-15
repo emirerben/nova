@@ -37,6 +37,11 @@ from app.services.creator_direction import (
 from app.services.creator_direction_capabilities import capability_status
 from app.services.creator_direction_receipts import project_direction_receipt, stamp_private_receipt
 from app.services.creator_direction_snapshot import serialize_private_snapshot
+from app.services.finished_style_learning import (
+    learning_available,
+    reset_learning_history,
+    set_learning_enabled,
+)
 from app.services.tiktok_style_observations import effective_persona_style
 
 router = APIRouter()
@@ -136,6 +141,7 @@ def _item(row: CreatorMemoryItem) -> dict[str, Any]:
         "source_kind": row.source_kind,
         "source_thread_id": str(row.source_thread_id) if row.source_thread_id else None,
         "source_deleted": source_deleted,
+        "evidence": row.evidence,
         "state": row.state,
         "user_locked": row.user_locked,
         "confidence": row.confidence,
@@ -145,7 +151,9 @@ def _item(row: CreatorMemoryItem) -> dict[str, Any]:
             enforcement=row.enforcement,
         ),
         "scope_label": "Applies to all future videos",
-        "source_label": "Learned from a project"
+        "source_label": "Suggested from finished edits"
+        if row.source_kind == "finished_edits"
+        else "Learned from a project"
         if row.source_kind == "creation_thread"
         else "Added in Personalization",
     }
@@ -300,6 +308,11 @@ async def get_memory(user: CurrentUser, db: AsyncSession = Depends(get_db)) -> d
         "text_preferences_available": bool(
             settings.creator_memory_enabled and settings.phone_text_styling_enabled
         ),
+        "edit_learning": {
+            "available": learning_available(user.id),
+            "enabled": bool(user.creator_edit_learning_enabled),
+            "evidence_version": 1,
+        },
         "enabled": snapshot.enabled if settings.creator_memory_enabled else False,
         "revision": snapshot.revision,
         "personalization_sections": sections,
@@ -321,6 +334,35 @@ async def toggle_memory(
         op = await service.set_enabled(
             db, user.id, body.enabled, body.expected_revision, body.idempotency_key
         )
+        await db.commit()
+        return _op(op)
+    except DirectionError as exc:
+        await db.rollback()
+        raise _error(exc) from exc
+
+
+@router.patch("/memory/edit-learning")
+async def toggle_edit_learning(
+    body: MemoryToggleBody, user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    # Revocation remains available even when the rollout kill switch is off.
+    try:
+        op = await set_learning_enabled(
+            db, user.id, body.enabled, body.expected_revision, body.idempotency_key
+        )
+        await db.commit()
+        return _op(op)
+    except DirectionError as exc:
+        await db.rollback()
+        raise _error(exc) from exc
+
+
+@router.post("/memory/edit-learning/reset")
+async def reset_edit_learning(
+    body: MemoryActionBody, user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    try:
+        op = await reset_learning_history(db, user.id, body.expected_revision, body.idempotency_key)
         await db.commit()
         return _op(op)
     except DirectionError as exc:

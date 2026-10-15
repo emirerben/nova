@@ -6129,6 +6129,17 @@ async def _execute_creator_craft(
                         db, job, _find_variant(job, body.expected_variant_id) or {}
                     ),
                 )
+                from app.services.finished_style_learning import (
+                    stage_prepared_style_edit,
+                )
+
+                await stage_prepared_style_edit(
+                    db,
+                    user.id,
+                    job,
+                    body.expected_variant_id,
+                    prepared,
+                )
                 if speech_operation_id:
                     # The speech rerender projects creator-authored lanes from
                     # this private working snapshot onto its rebuilt source.

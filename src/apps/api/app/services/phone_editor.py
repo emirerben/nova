@@ -392,12 +392,28 @@ def prepare_phone_editor_commit(
     prepare: Callable[[Any], dict],
     sfx_catalog_paths: Mapping[str, str] | None = None,
     creator_brief_binding: dict | None = None,
+    learning_sections: set[str] | None = None,
 ) -> dict:
     """``sfx_catalog_paths`` maps a sound-effect catalog id to its
     `SoundEffect.audio_gcs_path` for the phone Talking effects a Save carries
     over without a known storage path (the caller's async catalog read,
     `generative_jobs._phone_subtitled_sfx_paths`; Save itself never queries)."""
     staged = _StagedJob(job)
+    from app.services.finished_style_learning import learning_available, style_snapshot
+
+    before_variant = next(
+        (
+            v
+            for v in (job.assembly_plan or {}).get("variants", [])
+            if v.get("variant_id") == variant_id
+        ),
+        {},
+    )
+    before_style = (
+        style_snapshot(before_variant, learning_sections or set())
+        if learning_available(job.user_id)
+        else None
+    )
     prep = prepare(staged)
     if not prep["has_render_section"]:
         return {**prep, "render_destination": "device"}
@@ -635,6 +651,19 @@ def prepare_phone_editor_commit(
     job.status = staged.status
     if "started_at" in vars(staged):
         job.started_at = staged.started_at
+    if before_style is not None:
+        after_variant = next(
+            (
+                v
+                for v in (job.assembly_plan or {}).get("variants", [])
+                if v.get("variant_id") == variant_id
+            ),
+            {},
+        )
+        prep["style_learning_transition"] = {
+            "before": before_style,
+            "after": style_snapshot(after_variant, learning_sections or set()),
+        }
     return {**prep, "render_destination": "device", "render_task_id": None}
 
 

@@ -1304,6 +1304,8 @@ class EditorCommitRequest(BaseModel):
     # Audit-only identities for the latest untouched Copilot turn. The Save
     # route links them to the canonical server revision in the same commit.
     copilot_receipt_ids: list[uuid.UUID] = Field(default_factory=list, max_length=8)
+    # Privacy scope, never an instruction to change account preferences.
+    learning_temporary: bool = False
     # Story-native v2 revision. When present this is the complete normalized
     # guided editor state; legacy sections remain mutually exclusive.
     guided_revision: dict[str, Any] | None = None
@@ -10288,6 +10290,7 @@ def prepare_editor_commit(
             prepare=lambda staged: _prepare_editor_commit(staged, variant_id, payload, **arguments),
             sfx_catalog_paths=phone_sfx_catalog_paths,
             creator_brief_binding=creator_brief_binding,
+            learning_sections=payload.model_fields_set,
         )
     return _prepare_editor_commit(job, variant_id, payload, **arguments)
 

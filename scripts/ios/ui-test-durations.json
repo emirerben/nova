@@ -170,5 +170,7 @@
   "KriaUITests/SongRangeUITests/testMovingFromPastToPushesToOut": 29.0,
   "KriaUITests/SongRangeUITests/testSaveIsOffUnderFiveSecondsAndSaysWhy": 30.5,
   "KriaUITests/SongRangeUITests/testSettingARangeShowsItOnTheRowReopensWithItsValuesAndClearsBackToTheWholeSong": 40.0,
-  "KriaUITests/SongRangeUITests/testThereIsNoRowWhenTheServerDoesNotAdvertiseTheRange": 20.0
+  "KriaUITests/SongRangeUITests/testThereIsNoRowWhenTheServerDoesNotAdvertiseTheRange": 20.0,
+  "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference": 40.1,
+  "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory": 25.4
 }

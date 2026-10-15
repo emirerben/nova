@@ -481,9 +481,11 @@
       "xctests": [
         "KriaTests/DeviceMontageRenderE2ETests/testGenerationPinnedTextStylesPreviewAndExport",
         "KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen",
-        "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload"
+        "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload",
+        "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference",
+        "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory"
       ],
-      "api_tests": "tests/pipeline/test_phone_text_style.py tests/evals/test_phone_typography_evals.py",
+      "api_tests": "tests/pipeline/test_phone_text_style.py tests/evals/test_phone_typography_evals.py tests/integration/test_finished_style_learning.py",
       "paths": [
         "scripts/ios/phone-text-style-e2e.py",
         "src/apps/api/app/agents/creator_memory_extractor.py",
@@ -526,7 +528,9 @@
         "src/apps/ios/Kria/Features/Views.swift",
         "src/apps/ios/Kria/Generated/openapi.yaml",
         "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/RenderAssets.swift",
-        "src/apps/ios/Tests/KriaUITests/AccountPrivacyUITests.swift"
+        "src/apps/ios/Tests/KriaUITests/AccountPrivacyUITests.swift",
+        "src/apps/api/app/services/finished_style_learning.py",
+        "src/apps/api/app/migrations/versions/0120_finished_style_learning.py"
       ]
     }
   ]

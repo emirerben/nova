@@ -1815,6 +1815,11 @@
               "default": null,
               "title": "Landscape Fit"
             },
+            "learning_temporary": {
+              "default": false,
+              "title": "Learning Temporary",
+              "type": "boolean"
+            },
             "lyrics": {
               "anyOf": [
                 {
