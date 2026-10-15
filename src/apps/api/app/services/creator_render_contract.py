@@ -236,6 +236,17 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     **_rules(
         "upstream_resolved",
         "render_contract:text",
+        "pinned_texts[].heading_level",
+        "pinned_texts[].stack_id",
+        "pinned_texts[].size_px",
+        note=(
+            "KRI-669: the pinned-text compiler resolves hierarchy, grouping and explicit size "
+            "into measured rows; brief checks verify their size and spatial relationships"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "render_contract:text",
         "pinned_texts[].start_s",
         "pinned_texts[].end_s",
         "pinned_texts[].clip",

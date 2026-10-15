@@ -701,6 +701,19 @@ jobs:
           subprocess.run([sys.executable, "scripts/ios/phone-text-style-e2e.py",
                           "test-results/kri-559/kri-648", str(photograph)], check=True)
           PY
+      - name: Verify gameday heading hierarchy and admitted timeline sources
+        if: contains(needs.changes.outputs.journey_ids, 'kri-669-gameday')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          mkdir -p ../../../test-results/kri-559/kri-669
+          python3 -m pytest tests/kria/test_gameday_text_hierarchy.py \
+            tests/routes/test_native_timeline_sources.py \
+            tests/routes/test_editor_sources.py -q \
+            --junitxml=../../../test-results/kri-559/kri-669/api-tests.xml
       - name: Seal portable fixture inputs for this exact workflow attempt
         if: needs.changes.outputs.journey_needs_native == 'true'
         run: python3 scripts/ci/journey-gate.py seal-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
@@ -845,6 +858,9 @@ jobs:
             -only-testing:KriaTests/DeviceMontageRenderE2ETests/testGenerationPinnedTextStylesPreviewAndExport \
             -only-testing:KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen \
             -only-testing:KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload \
+            -only-testing:KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference \
+            -only-testing:KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory \
+            -only-testing:KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss \
             -resultBundlePath ../../../test-results/kri-559/kri-648/native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/kri-648/native.xcresult \
             > ../../../test-results/kri-559/kri-648/native-test-results.json
@@ -852,7 +868,10 @@ jobs:
             --test-results ../../../test-results/kri-559/kri-648/native-test-results.json \
             --xctest DeviceMontageRenderE2ETests/testGenerationPinnedTextStylesPreviewAndExport \
             --xctest AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen \
-            --xctest AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload
+            --xctest AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload \
+            --xctest AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference \
+            --xctest AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory \
+            --xctest CreationUITests/testFinishedEditLearningChatAcceptAndDismiss
       - name: Render approved Unicode hook on the built iPhone simulator
         if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
@@ -914,6 +933,21 @@ jobs:
             -resultBundlePath ../../../test-results/kri-559/extend/native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/extend/native.xcresult \
             > ../../../test-results/kri-559/extend/native-test-results.json
+      - name: Verify gameday edit, fifth clip, reopen and export on the built simulator
+        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-669-gameday')
+        working-directory: src/apps/ios
+        run: |
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/kri-559/simulator-id.txt)" \
+            -parallel-testing-enabled NO \
+            -only-testing:KriaUITests/GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview \
+            -resultBundlePath ../../../test-results/kri-559/kri-669/native.xcresult test-without-building
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/kri-669/native.xcresult \
+            > ../../../test-results/kri-559/kri-669/native-test-results.json
+          python3 ../../../scripts/ci/journey-gate.py verify-tests \
+            --test-results ../../../test-results/kri-559/kri-669/native-test-results.json \
+            --xctest GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview
       - name: Record and validate immutable journey evidence
         if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         env:

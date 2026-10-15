@@ -489,9 +489,12 @@
       "xctests": [
         "KriaTests/DeviceMontageRenderE2ETests/testGenerationPinnedTextStylesPreviewAndExport",
         "KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen",
-        "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload"
+        "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload",
+        "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference",
+        "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
+        "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss"
       ],
-      "api_tests": "tests/pipeline/test_phone_text_style.py tests/evals/test_phone_typography_evals.py",
+      "api_tests": "tests/pipeline/test_phone_text_style.py tests/evals/test_phone_typography_evals.py tests/integration/test_finished_style_learning.py",
       "paths": [
         "scripts/ios/phone-text-style-e2e.py",
         "src/apps/api/app/agents/creator_memory_extractor.py",
@@ -517,6 +520,10 @@
         "src/apps/api/app/services/creator_direction_capabilities.py",
         "src/apps/api/app/services/phone_speech_montage_job.py",
         "src/apps/api/app/services/phone_text_styling.py",
+        "src/apps/api/app/services/finished_style_learning.py",
+        "src/apps/api/app/services/phone_editor.py",
+        "src/apps/api/app/migrations/versions/0120_finished_style_learning.py",
+        "src/apps/api/tests/integration/test_finished_style_learning.py",
         "src/apps/api/app/storage.py",
         "src/apps/api/app/tasks/content_plan_build.py",
         "src/apps/api/app/tasks/generative_build.py",
@@ -534,7 +541,29 @@
         "src/apps/ios/Kria/Features/Views.swift",
         "src/apps/ios/Kria/Generated/openapi.yaml",
         "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/RenderAssets.swift",
-        "src/apps/ios/Tests/KriaUITests/AccountPrivacyUITests.swift"
+        "src/apps/ios/Tests/KriaUITests/AccountPrivacyUITests.swift",
+        "src/apps/api/app/services/finished_style_learning.py",
+        "src/apps/api/app/migrations/versions/0120_finished_style_learning.py"
+      ]
+    },
+    {
+      "id": "kri-669-gameday",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_gameday_text_hierarchy.py tests/routes/test_native_timeline_sources.py tests/routes/test_editor_sources.py",
+      "xctests": [
+        "KriaUITests/GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/pinned_text.py",
+        "src/apps/api/app/pipeline/text_stack_layout.py",
+        "src/apps/api/prompts/edit_copilot_ops/text.txt",
+        "src/apps/api/tests/kria/test_gameday_text_hierarchy.py",
+        "src/apps/api/tests/routes/test_native_timeline_sources.py",
+        "src/apps/api/tests/routes/test_editor_sources.py",
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+        "src/apps/ios/Kria/Features/NativeEditorUITestFixtures.swift",
+        "src/apps/ios/Tests/KriaUITests/GamedayAddClipUITests.swift",
+        "scripts/ios/kri-669-gameday-text.py"
       ]
     }
   ]

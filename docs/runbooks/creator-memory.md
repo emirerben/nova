@@ -70,3 +70,57 @@ history. Project deletion clears the source link without retaining the project
 name. Account deletion invalidates outbox leases before cascading memory rows.
 Workers must re-check owner existence immediately before commit so a deleted
 account cannot be recreated by a late task.
+
+## Finished-edit learning (KRI-336 / KRI-648 Release 2)
+
+This is a separate owner opt-in, off by default. `CREATOR_EDIT_LEARNING_ENABLED`,
+`CREATOR_EDIT_LEARNING_PRIVACY_APPROVED`, and the internal
+`CREATOR_EDIT_LEARNING_USER_IDS` allowlist must all admit the account before it
+can enable learning. `PHONE_TEXT_STYLING_ENABLED` must also be on so approved
+text preferences can be applied. Revocation remains available when it is off.
+Keep those deployment defaults off. The allowlist is not
+proof of the cohort outcome gate: record the accepted/exported-cut and hands-on
+outcomes required by KRI-336, along with a privacy review, before enabling it.
+The runtime cohort's real-media, recovery and latency evidence is described in
+[the runtime runbook](kria-agent-runtime.md#alerts-and-release-blockers).
+Synthetic/local tests do not pass these external gates.
+
+Deploy migration0120, API and workers first, then the compatible iPhone build.
+Do not enable phone typography or learning as a side effect of deploying code.
+Verify the actual deployed revision and separate API/worker settings before an
+approved internal rollout. Rollback disables new collection; owner revocation
+and history reset remain available when the rollout switch is off.
+
+The iPhone Text preferences page uses `PATCH /me/memory/edit-learning` and
+`POST /me/memory/edit-learning/reset`, with the existing expected revision and
+idempotency key. Approval and dismissal use the existing memory item operations.
+A stale write requires Reload; it must not overwrite a newer rule. Learning
+never activates a memory rule. Chat and settings display the proposed rule and
+supporting finished-video count.
+
+Only validated phone Saves stage normalized font/placement/color/effect deltas.
+Those candidates are not observations until the exact immutable recipe passes
+MP4 verification and publication. Unexported/failed/superseded recipes cannot
+vote. Reverting a property before the accepted export clears its candidate;
+a later successful replacement export updates the same project's vote.
+Explicitly temporary requests fence the submitted text lanes for that project,
+including later Saves returning from the one-off look. They cannot become
+evidence against the temporary font or style. Generation/compiler layout changes
+are not submitted style edits. No video words, messages, media or frames enter
+the learning tables, logs or exports.
+
+Version1 retains five recent finished-project observations and at most twenty
+unfinished candidate projects. Each project votes once per role/property.
+Three agreeing projects within that window, with the latest relevant change in
+agreement, can create an inactive suggestion. Contradictory latest evidence
+retracts pending suggestions. Repeated target fonts suggest favorites. An
+exclusion additionally requires repeated rejection with differing replacement
+fonts; one replacement never bans a font.
+
+Disabling learning or resetting its history removes observations, pending
+suggestions and dismissal suppression, and invalidates evidence-related Undo
+operations. Approved preferences remain ordinary confirmed memory rules with
+no retained project provenance. Account export includes the normalized evidence
+and its version. Account erasure cascades it; project deletion removes its votes
+and source links while retaining already-approved preferences. Platform-control
+clearance remains unverified.

@@ -1940,6 +1940,10 @@ class Settings(BaseSettings):
     creator_memory_enabled: bool = False
     # KRI-648: stamped only at dispatch; legacy generations are never restyled.
     phone_text_styling_enabled: bool = False
+    # KRI-336: all three rollout conditions precede owner opt-in. No public cohort.
+    creator_edit_learning_enabled: bool = False
+    creator_edit_learning_privacy_approved: bool = False
+    creator_edit_learning_user_ids: list[str] = []
 
     # Conversational style agent (Creator Agent M2). When True, the
     # POST /personas/agent/start and POST /personas/agent/turn routes are live.

@@ -40,6 +40,7 @@ node_modules
 out/
 *.tsbuildinfo
 .derived-data/
+.derived-device/
 src/apps/ios/.derived-data/
 src/apps/ios/.derived-data-sim/
 src/apps/ios/.device-derived/

@@ -99,6 +99,7 @@ def prepare_authored_editor_commit(
             prepare=lambda staged: _prepare_editor_commit(
                 staged, variant_id, payload, **validation_arguments
             ),
+            learning_sections=payload.model_fields_set,
         )
     else:
         prep = _prepare_editor_commit(job, variant_id, payload, **validation_arguments)

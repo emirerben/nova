@@ -2,6 +2,31 @@ import XCTest
 
 @MainActor
 final class CreationUITests: XCTestCase {
+    func testFinishedEditLearningChatAcceptAndDismiss() {
+        for action in ["accept", "dismiss"] {
+            let app = launchConfirmationFixture(["KRIA_CHAT_FINISHED_LEARNING": "1"])
+            let confirm = app.buttons["Create this video"]
+            XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+            confirm.tap()
+            XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
+            let count = app.staticTexts["Based on 3 finished videos"]
+            XCTAssertTrue(count.waitForExistence(timeout: 5))
+            let decision = app.buttons["text-learning-\(action)-learning-position"]
+            scrollIntoView(decision, in: app)
+            XCTAssertGreaterThanOrEqual(decision.frame.height, 44)
+            XCTAssertLessThan(decision.frame.maxY, app.textFields["Message Kria"].frame.minY)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Finished-edit chat suggestion before \(action)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            decision.tap()
+            let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: count)
+            XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 5), .completed)
+            XCTAssertTrue(app.buttons["Open editor"].exists)
+            app.terminate()
+        }
+    }
+
     func testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat-bubbles"]

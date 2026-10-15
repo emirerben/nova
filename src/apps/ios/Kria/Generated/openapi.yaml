@@ -2902,6 +2902,11 @@
             "title": "Landscape Fit",
             "type": "string"
           },
+          "learning_temporary": {
+            "default": false,
+            "title": "Learning Temporary",
+            "type": "boolean"
+          },
           "lyrics": {
             "$ref": "#/components/schemas/LyricsSectionRequest",
             "default": null,
@@ -3526,6 +3531,11 @@
             "nullable": true,
             "title": "Landscape Fit",
             "type": "string"
+          },
+          "learning_temporary": {
+            "default": false,
+            "title": "Learning Temporary",
+            "type": "boolean"
           },
           "lyrics": {
             "$ref": "#/components/schemas/LyricsSectionRequest",

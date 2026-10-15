@@ -771,7 +771,7 @@
       "tickets": [
         "KRI-542"
       ],
-      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana dönüştüremedim').",
+      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana d\u00f6n\u00fc\u015ft\u00fcremedim').",
       "boundary": "model_budget",
       "fix_prs": [
         1493
@@ -864,7 +864,7 @@
         "KRI-546",
         "KRI-651"
       ],
-      "symptom": "Phone Montage render-ready reply said 'Doğrulayamadım' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
+      "symptom": "Phone Montage render-ready reply said 'Do\u011frulayamad\u0131m' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
       "boundary": "publication",
       "fix_prs": [
         1503,
@@ -1252,6 +1252,50 @@
       ],
       "red_control": "not_applicable",
       "journey": "kri-524-creation"
+    },
+    {
+      "id": "kri-669-gameday-hierarchy-import",
+      "tickets": [
+        "KRI-669",
+        "KRI-179"
+      ],
+      "symptom": "Gameday headings compiled at equal size and spacing; adding a clip can leave the preview on an older finished render.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-669",
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/pipeline/pinned_text.py",
+        "src/apps/api/app/pipeline/text_stack_layout.py",
+        "src/apps/api/app/services/creation_text_composition.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+        "src/apps/ios/Kria/Core/BackgroundUploads.swift"
+      ],
+      "regression_tests": [
+        "tests/kria/test_gameday_text_hierarchy.py",
+        "tests/routes/test_native_timeline_sources.py",
+        "tests/routes/test_editor_sources.py::test_footage_admission_runs_post_prepare_get_and_save_validation"
+      ],
+      "harness": "real_pipeline",
+      "evidence": {
+        "offline_replay": "Red baseline: equal52px pins and missing admitted guided/montage/narrated pool entries; current compiler/admission/save regressions pass.",
+        "live_model": "unknown; no paid calls",
+        "native_output": "Physical iPhone13Pro:212sessiontests+54.1s UI edit/add fifth/reveal/undo/redo/save/reopen/Photos export passed; exported1080x1920 H264/AAC8.6s inspected. AVFoundation typography3cases and full14case audio parity passed. See docs/reviews/kri-669-gameday.md.",
+        "production": "initial job f4993a14-bcc5-4330-9654-f9cbc35d463c inspected read-only; fix not deployed"
+      },
+      "neighbours_covered": [
+        "explicit sizes",
+        "wrapped and unrelated groups",
+        "legacy pins",
+        "all device timeline modes",
+        "private media masking",
+        "save/reopen source receipt"
+      ],
+      "neighbours_gap": [
+        "physical original-project post-deploy resend"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

@@ -1304,6 +1304,8 @@ class EditorCommitRequest(BaseModel):
     # Audit-only identities for the latest untouched Copilot turn. The Save
     # route links them to the canonical server revision in the same commit.
     copilot_receipt_ids: list[uuid.UUID] = Field(default_factory=list, max_length=8)
+    # Privacy scope, never an instruction to change account preferences.
+    learning_temporary: bool = False
     # Story-native v2 revision. When present this is the complete normalized
     # guided editor state; legacy sections remain mutually exclusive.
     guided_revision: dict[str, Any] | None = None
@@ -8150,12 +8152,18 @@ def dispatch_get_timeline(
         job, variant_id, image_preview_paths=image_preview_paths, sign_url=sign_url
     )
     variant = _find_variant(job, variant_id)
+    from app.services.phone_editor_sources import EDITOR_SOURCES_FIELD  # noqa: PLC0415
+
     if (
         variant
         and variant.get("render_destination") == "device"
         and (
             variant.get("editor_state") == "empty"
             or variant.get("editor_timeline_mode") == "authored"
+            or (
+                variant.get("resolved_archetype") != "guided_story"
+                and isinstance(variant.get(EDITOR_SOURCES_FIELD), dict)
+            )
         )
     ):
         from app.services.phone_editor_sources import phone_editor_source_revision  # noqa: PLC0415
@@ -8190,6 +8198,7 @@ def dispatch_get_timeline(
                 for index, source in enumerate(revision.get("sources") or [])
             ]
             timeline["revision_number"] = revision.get("revision_number")
+            timeline["base_generation"] = variant_render_baseline(variant)
     if (
         variant
         and variant.get("render_destination") != "device"
@@ -8271,6 +8280,16 @@ def _dispatch_rendered_timeline(
             "slots": [],
             "clips": [],
         }
+    if variant_id not in projection.masked_last_good_variant_ids:
+        # The public variant deliberately strips admission receipts. Restore
+        # only this owned variant's private catalog for source resolution after
+        # the privacy decision; the response still exposes canonical sources
+        # and verified original descriptors, never the registry itself.
+        from app.services.phone_editor_sources import EDITOR_SOURCES_FIELD  # noqa: PLC0415
+
+        owned_variant = _find_variant(job, variant_id) or {}
+        if isinstance(owned_variant.get(EDITOR_SOURCES_FIELD), dict):
+            variant = {**variant, EDITOR_SOURCES_FIELD: owned_variant[EDITOR_SOURCES_FIELD]}
     if (
         variant_id not in projection.masked_last_good_variant_ids
         and variant.get("editor_timeline_mode") != "authored"
@@ -10288,6 +10307,7 @@ def prepare_editor_commit(
             prepare=lambda staged: _prepare_editor_commit(staged, variant_id, payload, **arguments),
             sfx_catalog_paths=phone_sfx_catalog_paths,
             creator_brief_binding=creator_brief_binding,
+            learning_sections=payload.model_fields_set,
         )
     return _prepare_editor_commit(job, variant_id, payload, **arguments)
 

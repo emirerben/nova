@@ -27,7 +27,7 @@ private final class AccountUITestURLProtocol: URLProtocol, @unchecked Sendable {
         let mode = ProcessInfo.processInfo.environment["KRIA_ACCOUNT_TEST_MODE"] ?? "normal"
         let result: (Int, String)
         if path.hasPrefix("/me/memory"), mode.hasPrefix("text-preferences") {
-            let result = AccountTextPreferenceFixture.shared.reply(request, stale: mode.hasSuffix("stale"))
+            let result = AccountTextPreferenceFixture.shared.reply(request, stale: mode.hasSuffix("stale"), learning: mode.hasSuffix("learning"))
             deliver(result)
             return
         }
@@ -53,11 +53,20 @@ private final class AccountUITestURLProtocol: URLProtocol, @unchecked Sendable {
     }
     override func stopLoading() {}
 }
-private final class AccountTextPreferenceFixture: @unchecked Sendable {
+final class AccountTextPreferenceFixture: @unchecked Sendable {
     static let shared = AccountTextPreferenceFixture()
     private let lock = NSLock()
     private var revision = 0
     private var item: [String: Any]?
+    private var learningInitialized = false
+    private var learningEnabled = false
+    private var learningDecided = false
+    private var learningSuggestion: [String: Any] {
+        ["id": "learning-position", "normalized_key": "text_style_title", "source_kind": "finished_edits",
+         "instruction": "Place title text at top left in future videos.",
+         "structured_value": ["text_style_title": ["position": "top_left"]],
+         "evidence": ["supporting_video_count": 3]]
+    }
     private func bodyData(_ request: URLRequest) -> Data? {
         if let data = request.httpBody { return data }
         guard let stream = request.httpBodyStream else { return nil }
@@ -71,17 +80,36 @@ private final class AccountTextPreferenceFixture: @unchecked Sendable {
         }
         return data
     }
-    func reply(_ request: URLRequest, stale: Bool) -> (Int, String) {
+    func reply(_ request: URLRequest, stale: Bool, learning: Bool, initiallyEnabled: Bool = false) -> (Int, String) {
         lock.lock(); defer { lock.unlock() }
         let path = request.url?.path ?? ""
+        if learning && !learningInitialized {
+            learningInitialized = true
+            learningEnabled = initiallyEnabled
+            item = ["id": "approved-title", "normalized_key": "text_style_title", "instruction": "My title choices",
+                    "structured_value": ["text_style_title": ["shadow_enabled": false, "stroke_width": 0]]]
+        }
         if request.httpMethod == "GET" {
             let body: [String: Any] = ["feature_available": true, "text_preferences_available": true, "enabled": true, "revision": revision,
-                                      "active": item.map { [$0] } ?? [], "suggestions": [], "recent_undo": NSNull()]
+                                      "active": item.map { [$0] } ?? [],
+                                      "suggestions": learningEnabled && !learningDecided ? [learningSuggestion] : [],
+                                      "edit_learning": ["available": learning, "enabled": learningEnabled], "recent_undo": NSNull()]
             let data = try! JSONSerialization.data(withJSONObject: body)
             return (200, String(decoding: data, as: UTF8.self))
         }
         if stale { return (409, "{\"detail\":{\"code\":\"stale_revision\",\"message\":\"Preferences changed\"}}") }
-        if request.httpMethod == "DELETE" { item = nil }
+        if learning && path == "/me/memory/edit-learning", let data = bodyData(request),
+           let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            learningEnabled = body["enabled"] as? Bool ?? false
+            if !learningEnabled { learningDecided = true }
+        } else if learning && path == "/me/memory/edit-learning/reset" {
+            learningDecided = true
+        } else if learning && path.hasSuffix("/learning-position/accept") {
+            learningDecided = true
+            item?["structured_value"] = ["text_style_title": ["position": "top_left", "shadow_enabled": false, "stroke_width": 0]]
+        } else if learning && path.hasSuffix("/learning-position/suggestion") {
+            learningDecided = true
+        } else if request.httpMethod == "DELETE" { item = nil }
         else if path.contains("/items"), let data = bodyData(request),
                 var value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
             value["id"] = "00000000-0000-0000-0000-000000000648"

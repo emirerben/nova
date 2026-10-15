@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.0.0] - 2026-10-15
+
+### Added
+- feat(memory): learn text preferences from finished edits (KRI-648 R2) (#1608) <!-- release-pr: 1608 -->
+
+## [0.78.286.0] - 2026-10-15
+
+### Changed
+- fix: honor text hierarchy and keep native clip previews current (KRI-669) (#1602) <!-- release-pr: 1602 -->
+
 ## [0.78.285.0] - 2026-10-14
 
 ### Changed

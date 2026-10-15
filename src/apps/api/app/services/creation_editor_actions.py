@@ -206,6 +206,9 @@ async def execute_visual_removal(db: Any, thread: Any, body: Any, user: Any) -> 
                 plan_item_id=str(thread.active_plan_item_id),
                 visual_assets=visual_assets,
             )
+            from app.services.finished_style_learning import stage_prepared_style_edit
+
+            await stage_prepared_style_edit(db, user.id, job, variant_id, prep)
             if not prep["sections"].get("visual_blocks"):
                 raise ValueError("This video cannot currently save uploaded Visuals changes.")
             receipt.update(
@@ -678,6 +681,14 @@ async def execute_copilot_edit(
             plan_item_id=str(thread.active_plan_item_id),
             visual_assets=visual_assets,
             phone_sfx_catalog_paths=await _phone_subtitled_sfx_paths(db, job, variant),
+        )
+        from app.services.finished_style_learning import (
+            explicitly_temporary,
+            stage_prepared_style_edit,
+        )
+
+        await stage_prepared_style_edit(
+            db, user.id, job, variant_id, prep, temporary=explicitly_temporary(body.message)
         )
         if not any((prep["sections"] or {}).values()):
             raise ValueError("This change has no effect on the saved edit.")

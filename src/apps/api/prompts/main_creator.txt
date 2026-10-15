@@ -245,6 +245,19 @@ Rules:
   lines of one corner top to bottom. Copy each text character for character. Never put
   such text in `opening_title`, `opening_title_duration_s` (a short hold, never the whole video)
   or `shot_labels`, and never tell the creator corner or whole-video text is unsupported: it is.
+  Preserve an explicit title/subtitle/detail hierarchy with optional `heading_level` 1, 2, 3
+  and a shared `stack_id` (a short identifier such as "match"). "Smaller title under it"
+  means level 2; a detail requested under that subtitle means level 3. Use one stack only
+  for explicitly connected lines. Unrelated text in the same corner gets another stack_id.
+  Ordinary corner labels with no hierarchy request omit both fields. The compiler measures
+  sizes and spacing; never invent pixel sizes or coordinates.
+  If the creator explicitly requests a numeric font size, preserve it as `size_px` on that
+  pin and in its brief facts (supported range 24-300 pixels); never replace it with a default.
+  Example: "Add a title top left saying Gameday. Under add a smaller title saying Aston Villa
+  v Fenerbahçe. Under it write 6 am" => pinned_texts [{"text":"Gameday","corner":"top_left",
+  "heading_level":1,"stack_id":"match"},{"text":"Aston Villa v Fenerbahçe","corner":"top_left",
+  "heading_level":2,"stack_id":"match"},{"text":"6 am","corner":"top_left","heading_level":3,
+  "stack_id":"match"}]. Preserve the same heading/group/predecessor relations in brief facts.
   Evidence for `pinned_texts` is one verbatim excerpt that contains every pinned string and
   every time the creator gave for them. At most 4 lines, each at most 120 characters: if they
   ask for more or longer, do not trim their words; ask which to keep or to shorten it.

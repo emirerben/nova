@@ -350,7 +350,7 @@ final class ChatDraftStagingTests: XCTestCase {
         let (session, fake, loading) = try await openedWhilePreparing(Self.chatSnapshot(shape: .flatOnly))
         XCTAssertEqual(session.sourcePreviewState, .preparing)
         XCTAssertTrue(session.hasOnlyChatStagedChanges, "the AI edit is already staged in the document")
-        XCTAssertNotNil(session.player, "the old render stays installed as the failure fallback")
+        XCTAssertNotNil(session.player, "the old item may stay installed, but must remain hidden")
         XCTAssertFalse(session.canDisplayCurrentPlayer, "the old render predates the AI edit: never show it as current")
         fake.resumeSourcePool()
         await loading.value
@@ -365,16 +365,18 @@ final class ChatDraftStagingTests: XCTestCase {
         await loading.value
     }
 
-    func testFirstOpenFallsBackToTheOldRenderWhenTheEditCannotBePreviewed() async throws {
+    func testFirstOpenHidesTheObsoleteRenderWhenTheStagedEditCannotBePreviewed() async throws {
         let fake = EditorCommitSpy(draftSnapshot: Self.chatSnapshot(shape: .flatOnly), authoritativeVariant: Self.variant())
         fake.sourcePoolResult = nil  // the source pool is unavailable, so the local preview fails
         let project = threadProject(UUID(), revision: 5)
         let session = NativeEditorSession(project: project)
         await session.load(project: project, api: fake)
         XCTAssertTrue(session.sourcePreviewState.isFailure)
-        XCTAssertTrue(session.isShowingRenderedFallback)
-        XCTAssertTrue(session.canDisplayCurrentPlayer, "better the last finished video, labelled, than a blank editor")
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        XCTAssertFalse(session.canDisplayCurrentPlayer, "an old render cannot represent the staged chat edit")
+        XCTAssertFalse(session.canDownloadCurrentVideo, "the obsolete render must not export as current")
         XCTAssertTrue(session.hasUnsavedChanges, "the staged AI edit is still there to save")
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
     }
 
     func testReopenAsksBeforeReloadingOverANewerRenderWithManualEdits() async throws {

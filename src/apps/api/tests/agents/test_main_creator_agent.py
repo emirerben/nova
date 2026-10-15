@@ -122,11 +122,20 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-14-v58"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-15-v59"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt
     assert "Compatible requirements with the same kind and scope coexist" in prompt
+    for fact in (
+        "heading_level",
+        "stack_id",
+        "below_text",
+        "smaller_than",
+        "triggers",
+        "caption_language",
+    ):
+        assert f"`{fact}`" in prompt or f'"{fact}"' in prompt
 
 
 def test_main_creator_recognizes_mixed_media_timing_request() -> None:

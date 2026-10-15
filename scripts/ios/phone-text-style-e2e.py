@@ -170,6 +170,34 @@ def main():
         )
         add("kri648_" + name, recipe, rows, title_preview=True)
 
+    approved_path = os.environ.get("KRIA_LEARNING_APPROVED_RULES_PATH")
+    approved_rule = {"favorite_fonts": ["Inter Medium"]}
+    provenance = "approved_rule_contract_fixture"
+    if approved_path:
+        approved = json.loads(Path(approved_path).read_text())
+        item = next(
+            item
+            for item in approved["approved_preferences"]
+            if item["normalized_key"] == "text_style_title"
+        )
+        approved_rule = item["structured_value"]["text_style_title"]
+        provenance = "verified_phone_exports_memory_accept"
+    learned_title = TextElement(
+        id="voiceover-intro-0",
+        text="İstanbul'da güzel bir sabah",
+        start_s=0,
+        end_s=2.8,
+        size_px=104,
+        effect="fade-in",
+    ).model_dump(mode="json", exclude_none=True)
+    learned_rows = resolve_phone_text_style([learned_title], preferences={"title": approved_rule})
+    assert learned_rows[0]["font_family"] == "Inter Medium"
+    learned_recipe = compile_phone_voiceover_montage_plan(
+        decision, bindings, narration=voice, resolved_text_elements=learned_rows
+    )
+    add("kri648_learned_title", learned_recipe, learned_rows, title_preview=True)
+    meta["cases"]["kri648_learned_title"]["learning_provenance"] = provenance
+
     for index, font in enumerate(CURATED_PHONE_FONTS):
         row = TextElement(
             id="voiceover-intro-0",
