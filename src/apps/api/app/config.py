@@ -943,6 +943,14 @@ class Settings(BaseSettings):
     # See docs/pipelines/clip-understanding.md. Apply: `fly secrets set
     # CLIP_INTENTS_ENABLED=true --app nova-video` + restart api + worker.
     clip_intents_enabled: bool = False
+    # KRI-680: measure each analysed video's brightness (mean luma + share of near-black
+    # frames, subprocess FFmpeg on the analysis copy; app/services/clip_exposure.py) and
+    # put it in the clip record as words ("very dark, almost nothing visible (...)") so
+    # "skip the very dark clips" can be matched. False (default): nothing is measured and
+    # stored measurements are ignored, byte-identical to before. Clips analysed while it
+    # was off have no measurement (no backfill). Apply: `fly secrets set
+    # CLIP_EXPOSURE_FACT_ENABLED=true --app nova-video` + restart api + worker.
+    clip_exposure_fact_enabled: bool = False
     # KRI-151: durable semantic preparation before the first footage-based plan.
     creator_clip_preparation_enabled: bool = False
     # Chat-turn budget for the on-demand vision re-query (download + File API

@@ -1,0 +1,464 @@
+{
+ "_source": "KRI-680: prod thread 133BDDED (2026-10-15, boat kit M1), job d232ede5. `understanding` = each clip record as the Main Creator read it on that turn (nova.creator.main input media_context); `exposure` = app.services.clip_exposure.measure_exposure on the uploaded footage (the analysis proxy is a smaller copy of the same frames). M1_04 (black sky) and M1_08 (near-black seat shuffle) are the junk clips the creator asked to skip; M1_11 (\"Hadi gidelim\" pier, asked FIRST) and M1_02 (boat will not start, own sound kept) are just as dark.",
+ "creator_request": "Gece 11'de tekneyle Tigre merkeze arkadaşımız Atakan'ı almaya gittik. Başlık: \"Gece 23:00, Tigre\". \"Hadi gidelim\" dediğimiz iskele klibiyle başla; \"tam 20 dakika sürdü\" dediğim klip en sonda olsun ve o cümle duyulsun. Teknenin çalışmadığı klipte de kendi sesi açık kalsın, kalan kliplerde sakin bir müzik olsun. Çok karanlık, hiçbir şeyin görünmediği iki klibi kullanma. Lunapark klibine \"Parque de la Costa\" etiketi koy. Hızlı kesmeler, 25 saniye.",
+ "clips": [
+  {
+   "filename": "M1_01_footage",
+   "media_id": "analysis-proxy-ios-6B153746-B61E-4C3A-827F-A746E91CFE1A.mp4",
+   "duration_s": 12.0,
+   "understanding": {
+    "setting": "river at night, with buildings and trees along the banks",
+    "subject": "river at night",
+    "summary": "The video shows a dark river at night, with lights from buildings and trees reflecting on the water as a boat moves slowly.",
+    "activity": "boating on a river",
+    "audio_type": "ambient",
+    "content_type": "ambience",
+    "notable_moments": [
+     {
+      "end_s": 6.0,
+      "start_s": 0.0,
+      "description": "boat cruising on dark river"
+     },
+     {
+      "end_s": 15.0,
+      "start_s": 8.0,
+      "description": "lights reflecting on water"
+     }
+    ],
+    "kind": "video"
+   },
+   "exposure": {
+    "version": 1,
+    "mean_luma": 16.9,
+    "near_black_share": 0.29,
+    "frames": 24
+   }
+  },
+  {
+   "filename": "M1_02_footage",
+   "media_id": "analysis-proxy-ios-A65897E8-C0CC-4700-B2E2-49767E6206C1.mp4",
+   "duration_s": 15.0,
+   "understanding": {
+    "people": {
+     "note": "a man in the dark",
+     "count": 1,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "segments": [
+      {
+       "start_s": 0.0,
+       "end_s": 1.6,
+       "text": "Dönmek istiyorsan dön."
+      },
+      {
+       "start_s": 4.0,
+       "end_s": 5.5,
+       "text": "Aaa kaldık lan tekne çalışmıyor."
+      },
+      {
+       "start_s": 6.3,
+       "end_s": 8.5,
+       "text": "Tekne çalışmıyor lan."
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Tek dönmek istiyorsan dön. A, kaldık la tekne çalışmıyor. Tekne çalışmıyor lan."
+    },
+    "setting": "lake or river at night",
+    "subject": "water with light reflections, person",
+    "summary": "The video shows a dark body of water at night, with reflections of lights from a distant shore. A person's voice states that they are stuck because the boat isn't working, and then an engine sound sta",
+    "activity": "attempting to start a boat engine, being on a boat",
+    "audio_type": "dialogue",
+    "content_type": "broll",
+    "kind": "video"
+   },
+   "exposure": {
+    "version": 1,
+    "mean_luma": 3.9,
+    "near_black_share": 0.83,
+    "frames": 24
+   }
+  },
+  {
+   "filename": "M1_03_footage",
+   "media_id": "analysis-proxy-ios-6B3439AA-E45B-4316-A03B-D140D4F1600C.mp4",
+   "duration_s": 16.0,
+   "understanding": {
+    "speech": {
+     "segments": [
+      {
+       "start_s": 3.8,
+       "end_s": 13.6,
+       "text": "Çocuklar parkta oynuyor arkadaşlar, Tigre merkeze gelmiş bulunmaktayız yaklaşık 20 dakika sürdü, tam 20 dakika sürdü ha."
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Çocuklar parkta oynuyor arkadaşlar. Tigre merkeze gelmiş bulunmaktayız. Yaklaşık 20 dakika sürdü. Tam 20 dakika sürdü ha."
+    },
+    "setting": "river at night, near a town or city center",
+    "subject": "boats on river at night",
+    "summary": "The video shows a night view from a boat on a river, with lights reflecting on the water and buildings visible on the shore. The speaker mentions arriving at Tigre center and the travel time.",
+    "activity": "traveling by boat",
+    "audio_type": "mixed",
+    "content_type": "ambience",
+    "kind": "video"
+   },
+   "exposure": {
+    "version": 1,
+    "mean_luma": 33.2,
+    "near_black_share": 0.0,
+    "frames": 24
+   }
+  },
+  {
+   "filename": "M1_04_footage",
+   "media_id": "analysis-proxy-ios-3C72EA17-CD30-447D-B729-501CE01CC461.mp4",
+   "duration_s": 7.0,
+   "understanding": {
+    "speech": {
+     "segments": [
+      {
+       "start_s": 0.0,
+       "end_s": 7.0,
+       "text": "No creo que esté, pero me ha pasado, a esta hora, a esta hora es muy..."
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "no creo que esté, pero me ha pasado a esta hora, a esta hora es por"
+    },
+    "setting": "dark outdoor waterfront at night",
+    "subject": "distant lights on water",
+    "summary": "The video shows a dark body of water with distant lights reflecting on its surface at night, while a person speaks off-camera about something that has happened to them at this hour.",
+    "activity": "viewing distant lights reflecting on water",
+    "audio_type": "dialogue",
+    "content_type": "ambience",
+    "notable_moments": [
+     {
+      "end_s": 1.0,
+      "start_s": 0.0,
+      "description": "viewing dark screen"
+     },
+     {
+      "end_s": 6.0,
+      "start_s": 4.5,
+      "description": "camera movement over water"
+     }
+    ],
+    "kind": "video"
+   },
+   "exposure": {
+    "version": 1,
+    "mean_luma": 4.6,
+    "near_black_share": 0.64,
+    "frames": 14
+   }
+  },
+  {
+   "filename": "M1_05_footage",
+   "media_id": "analysis-proxy-ios-198B4DD2-5F70-44B6-B33F-A8EC7DD93057.mp4",
+   "duration_s": 14.0,
+   "understanding": {
+    "setting": "Amusement park across a body of water at night",
+    "subject": "Amusement park rides",
+    "summary": "The video shows a panoramic night view of an amusement park across a body of water, featuring various rides illuminated, with their lights reflecting on the water's surface.",
+    "activity": "Observing illuminated amusement park rides from a moving boat",
+    "audio_type": "ambient",
+    "content_type": "ambience",
+    "notable_moments": [
+     {
+      "end_s": 3.0,
+      "start_s": 0.0,
+      "description": "Ferris wheel and dark structures"
+     },
+     {
+      "end_s": 8.0,
+      "start_s": 3.0,
+      "description": "Amusement rides from water"
+     }
+    ],
+    "kind": "video"
+   },
+   "exposure": {
+    "version": 1,
+    "mean_luma": 33.5,
+    "near_black_share": 0.0,
+    "frames": 24
+   }
+  },
+  {
+   "filename": "M1_06_footage",
+   "media_id": "analysis-proxy-ios-B9B5A8F5-56DB-4D43-88FC-FE130FE325B5.mp4",
+   "duration_s": 8.0,
+   "understanding": {
+    "speech": {
+     "segments": [
+      {
+       "start_s": 2.5,
+       "end_s": 3.9,
+       "text": "Atakan'ı almaya gidiyoruz."
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Vatan almaya gidiyoruz."
+    },
+    "setting": "outdoors, dark, under trees",
+    "subject": "trees at night",
+    "summary": "A person walks at night, filming trees, and states they are 'going to buy a homeland,' which is an unusual and intriguing comment.",
+    "activity": "walking and filming",
+    "audio_type": "dialogue",
+    "content_type": "ambience",
+    "notable_moments": [
+     {
+      "end_s": 2.0,
+      "start_s": 0.0,
+      "description": "camera moving through trees"
+     },
+     {
+      "end_s": 4.8,
+      "start_s": 3.4,
+      "description": "speaker states 'Vatan almaya gidiyoruz'"
+     }
+    ],
+    "kind": "video"
+   },
+   "exposure": {
+    "version": 1,
+    "mean_luma": 8.5,
+    "near_black_share": 0.38,
+    "frames": 16
+   }
+  },
+  {
+   "filename": "M1_07_footage",
+   "media_id": "analysis-proxy-ios-8DDAA160-B660-42BD-ACA6-A43D9446DF60.mp4",
+   "duration_s": 12.0,
+   "understanding": {
+    "setting": "river or canal at night, passing illuminated shore",
+    "subject": "illuminated riverbank at night",
+    "summary": "The video shows a night view from a moving boat, cruising along a waterway with illuminated structures and trees on the bank, reflected in the water.",
+    "activity": "boating along a river at night",
+    "audio_type": "ambient",
+    "content_type": "ambience",
+    "notable_moments": [
+     {
+      "end_s": 3.0,
+      "start_s": 0.0,
+      "description": "boat moves past illuminated buildings"
+     },
+     {
+      "end_s": 7.5,
+      "start_s": 4.0,
+      "description": "boat glides along lighted shore"
+     }
+    ],
+    "kind": "video"
+   },
+   "exposure": {
+    "version": 1,
+    "mean_luma": 23.8,
+    "near_black_share": 0.0,
+    "frames": 24
+   }
+  },
+  {
+   "filename": "M1_08_footage",
+   "media_id": "analysis-proxy-ios-0499D861-4853-487B-BC97-46B880C943A5.mp4",
+   "duration_s": 10.0,
+   "understanding": {
+    "people": {
+     "note": "a person in dark clothing",
+     "count": 1,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "segments": [
+      {
+       "start_s": 8.1,
+       "end_s": 8.4,
+       "text": "Altyazı M.K."
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Hadi bakalım, Bismillah."
+    },
+    "setting": "lake at night",
+    "subject": "person in boat at night",
+    "summary": "A person is in a boat at night, starting the engine. The camera pans to show the dark waters and distant lights, then pans back towards the person.",
+    "activity": "starting boat engine",
+    "audio_type": "mixed",
+    "content_type": "broll",
+    "kind": "video"
+   },
+   "exposure": {
+    "version": 1,
+    "mean_luma": 3.7,
+    "near_black_share": 0.95,
+    "frames": 20
+   }
+  },
+  {
+   "filename": "M1_09_footage",
+   "media_id": "analysis-proxy-ios-41092E45-B6BB-4B41-8ACE-B8B6F1DCB107.mp4",
+   "duration_s": 11.0,
+   "understanding": {
+    "people": {
+     "note": "a man wearing glasses and a light-colored head covering",
+     "count": 1,
+     "speaks_to_camera": false
+    },
+    "setting": "riverfront or canal at night",
+    "subject": "nighttime riverfront with boats and illuminated buildings",
+    "summary": "The video starts with a close-up of a man's face, then transitions to a panoramic view of a riverfront at night, showing illuminated buildings, moored boats, and reflections on the water.",
+    "activity": "panning across a waterfront scene",
+    "audio_type": "ambient",
+    "content_type": "ambience",
+    "notable_moments": [
+     {
+      "end_s": 4.5,
+      "start_s": 1.4,
+      "description": "panning across illuminated buildings"
+     },
+     {
+      "end_s": 10.9,
+      "start_s": 6.0,
+      "description": "panning along moored boats with reflections"
+     }
+    ],
+    "kind": "video"
+   },
+   "exposure": {
+    "version": 1,
+    "mean_luma": 33.6,
+    "near_black_share": 0.0,
+    "frames": 22
+   }
+  },
+  {
+   "filename": "M1_10_footage",
+   "media_id": "analysis-proxy-ios-2CB5659F-221C-43EE-BCBF-103A995B95B1.mp4",
+   "duration_s": 12.0,
+   "understanding": {
+    "setting": "outdoor at night, along a body of water",
+    "subject": "nighttime waterscape",
+    "summary": "The video shows a dark, cloudy night sky above a body of water, possibly a lake or river, with distant lights from buildings or streetlights reflecting on the water's surface as the camera moves.",
+    "activity": "moving along a waterfront",
+    "audio_type": "ambient",
+    "content_type": "ambience",
+    "notable_moments": [
+     {
+      "end_s": 7.5,
+      "start_s": 4.5,
+      "description": "lights and reflections along shoreline"
+     },
+     {
+      "end_s": 11.5,
+      "start_s": 9.0,
+      "description": "panning past distant lights and trees"
+     }
+    ],
+    "kind": "video"
+   },
+   "exposure": {
+    "version": 1,
+    "mean_luma": 11.7,
+    "near_black_share": 0.33,
+    "frames": 24
+   }
+  },
+  {
+   "filename": "M1_11_footage",
+   "media_id": "analysis-proxy-ios-3FBDA9B7-292C-43F9-8D15-D834CFD7494B.mp4",
+   "duration_s": 15.0,
+   "understanding": {
+    "speech": {
+     "segments": [
+      {
+       "start_s": 0.0,
+       "end_s": 0.2,
+       "text": "Tamam."
+      },
+      {
+       "start_s": 1.8,
+       "end_s": 2.7,
+       "text": "Tamam."
+      },
+      {
+       "start_s": 3.2,
+       "end_s": 3.6,
+       "text": "Tutsana."
+      },
+      {
+       "start_s": 3.9,
+       "end_s": 5.6,
+       "text": "Bir saate gidip gelmemiz gerekiyor."
+      },
+      {
+       "start_s": 11.2,
+       "end_s": 12.0,
+       "text": "Amigo Sergio."
+      },
+      {
+       "start_s": 12.4,
+       "end_s": 13.9,
+       "text": "Amigo, amigo, amigo."
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Ay, yardım et. Bisikletle gidip gelmemiz gerekiyor. Amigo Sergio! Amigo, amigo, amigo!"
+    },
+    "setting": "outdoor at night",
+    "subject": "dark sky with distant lights",
+    "summary": "The video starts in darkness with faint lights, then the camera pans up to reveal a dark sky with distant lights, possibly from a city or streetlights. Voices are heard in the background.",
+    "activity": "panning camera upwards",
+    "audio_type": "dialogue",
+    "content_type": "ambience",
+    "kind": "video"
+   },
+   "exposure": {
+    "version": 1,
+    "mean_luma": 3.9,
+    "near_black_share": 1.0,
+    "frames": 24
+   }
+  },
+  {
+   "filename": "M1_12_footage",
+   "media_id": "analysis-proxy-ios-98407F5A-CF43-4EBF-8FED-D3F07B5F1C79.mp4",
+   "duration_s": 12.0,
+   "understanding": {
+    "setting": "river at night",
+    "subject": "river at night with city lights",
+    "summary": "The video shows a night view from a boat moving on a river, capturing illuminated buildings and structures, including a Ferris wheel, on the distant shore.",
+    "activity": "boat moving on water",
+    "audio_type": "ambient",
+    "content_type": "ambience",
+    "notable_moments": [
+     {
+      "end_s": 2.5,
+      "start_s": 0.0,
+      "description": "boat moves along water"
+     },
+     {
+      "end_s": 5.8,
+      "start_s": 2.8,
+      "description": "approaching illuminated shore"
+     }
+    ],
+    "kind": "video"
+   },
+   "exposure": {
+    "version": 1,
+    "mean_luma": 26.5,
+    "near_black_share": 0.0,
+    "frames": 24
+   }
+  }
+ ]
+}

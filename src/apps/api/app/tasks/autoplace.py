@@ -1364,6 +1364,13 @@ def _analyze_video(
             # KRI-625: absent key = no quality data (moment pickers fail open).
             analysis["unusable_spans"] = unusable_spans
         analysis[UNDERSTANDING_KEY] = understanding_payload(meta, best_moments=best_moments)
+        if settings.clip_exposure_fact_enabled:
+            # KRI-680: measured brightness; absent key = unknown (readers fail open).
+            from app.services.clip_exposure import EXPOSURE_KEY, measure_exposure  # noqa: PLC0415
+
+            exposure = measure_exposure(local_path)
+            if exposure is not None:
+                analysis[EXPOSURE_KEY] = exposure
         return analysis, aspect, duration, dims
     except SoftTimeLimitExceeded:
         raise
