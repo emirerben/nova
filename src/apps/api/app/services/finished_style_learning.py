@@ -59,6 +59,7 @@ TEMPORARY_MARKERS = (
 def learning_available(user_id: uuid.UUID) -> bool:
     return bool(
         settings.creator_memory_enabled
+        and settings.phone_text_styling_enabled
         and settings.creator_edit_learning_enabled
         and settings.creator_edit_learning_privacy_approved
         and str(user_id) in settings.creator_edit_learning_user_ids
@@ -207,6 +208,14 @@ def _merge_pending(prior: dict, old: dict, new: dict, temporary: bool) -> dict:
         if old[key]["role"] != new[key]["role"]:
             continue
         edits = pending.get(key, {"role": new[key]["role"], "properties": {}})
+        if temporary:
+            # Keep a scope fence, not the temporary values. A later Save that
+            # returns to a normal look must not become a vote against the
+            # intentionally one-off look.
+            pending[key] = {"role": new[key]["role"], "properties": {}, "temporary": True}
+            continue
+        if edits.get("temporary"):
+            continue
         for prop in PROPERTIES:
             previous, current = old[key]["values"].get(prop), new[key]["values"].get(prop)
             if previous == current:
@@ -216,7 +225,7 @@ def _merge_pending(prior: dict, old: dict, new: dict, temporary: bool) -> dict:
                 # style change. New generation styles carry resolved values.
                 continue
             original = edits["properties"].get(prop, {}).get("from", previous)
-            if temporary or current is None or current == original:
+            if current is None or current == original:
                 edits["properties"].pop(prop, None)
             else:
                 edits["properties"][prop] = {"from": original, "to": current}

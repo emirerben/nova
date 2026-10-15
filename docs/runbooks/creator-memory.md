@@ -76,7 +76,9 @@ account cannot be recreated by a late task.
 This is a separate owner opt-in, off by default. `CREATOR_EDIT_LEARNING_ENABLED`,
 `CREATOR_EDIT_LEARNING_PRIVACY_APPROVED`, and the internal
 `CREATOR_EDIT_LEARNING_USER_IDS` allowlist must all admit the account before it
-can enable learning. Keep those deployment defaults off. The allowlist is not
+can enable learning. `PHONE_TEXT_STYLING_ENABLED` must also be on so approved
+text preferences can be applied. Revocation remains available when it is off.
+Keep those deployment defaults off. The allowlist is not
 proof of the cohort outcome gate: record the accepted/exported-cut and hands-on
 outcomes required by KRI-336, along with a privacy review, before enabling it.
 The runtime cohort's real-media, recovery and latency evidence is described in
@@ -101,7 +103,9 @@ Those candidates are not observations until the exact immutable recipe passes
 MP4 verification and publication. Unexported/failed/superseded recipes cannot
 vote. Reverting a property before the accepted export clears its candidate;
 a later successful replacement export updates the same project's vote.
-Explicitly temporary requests are excluded. Generation/compiler layout changes
+Explicitly temporary requests fence the submitted text lanes for that project,
+including later Saves returning from the one-off look. They cannot become
+evidence against the temporary font or style. Generation/compiler layout changes
 are not submitted style edits. No video words, messages, media or frames enter
 the learning tables, logs or exports.
 

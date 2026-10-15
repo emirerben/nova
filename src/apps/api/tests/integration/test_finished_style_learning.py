@@ -42,6 +42,7 @@ async def journey(monkeypatch):
     factory = async_sessionmaker(engine, expire_on_commit=False)
     uid = uuid.uuid4()
     monkeypatch.setattr(settings, "creator_memory_enabled", True)
+    monkeypatch.setattr(settings, "phone_text_styling_enabled", True)
     monkeypatch.setattr(settings, "creator_edit_learning_enabled", True)
     monkeypatch.setattr(settings, "creator_edit_learning_privacy_approved", True)
     monkeypatch.setattr(settings, "creator_edit_learning_user_ids", [str(uid)])
@@ -276,7 +277,15 @@ async def test_undo_temporary_conflicting_and_stale_recipe_do_not_vote(journey):
     assert record.finished_changes == {}
     for _ in range(3):
         job = await project(j)
-        identity = await stage(j, job, temporary=True)
+        await stage(j, job, temporary=True)
+        # Returning from a one-off look is still not evidence against it.
+        # A later ordinary Save must not erase the earlier privacy scope.
+        identity = await stage(
+            j,
+            job,
+            before=rows(position="top", stroke_width=0, shadow_enabled=False),
+            after=rows(position="middle"),
+        )
         await finish(j, job, identity)
     assert await suggestions(j) == []
     job = await project(j)
@@ -375,6 +384,15 @@ async def test_default_off_gates_and_account_delete(journey, monkeypatch):
         )
     ).all()
     await opt_in(j)
+    monkeypatch.setattr(settings, "phone_text_styling_enabled", False)
+    identity = await stage(j, job)
+    await finish(j, job, identity)
+    assert not (
+        await j.db.scalars(
+            select(CreatorStyleLearningProject).where(CreatorStyleLearningProject.user_id == j.uid)
+        )
+    ).all()
+    monkeypatch.setattr(settings, "phone_text_styling_enabled", True)
     monkeypatch.setattr(settings, "creator_edit_learning_privacy_approved", False)
     identity = await stage(j, job)
     await finish(j, job, identity)

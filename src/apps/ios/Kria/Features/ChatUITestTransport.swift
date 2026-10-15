@@ -143,6 +143,10 @@ final class CreationChatFixture: @unchecked Sendable {
         let path = request.url?.path ?? ""
         let body = (try? JSONSerialization.jsonObject(with: bodyData(request))) as? [String: Any] ?? [:]
         func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
+        if path.hasPrefix("/me/memory"), ProcessInfo.processInfo.environment["KRIA_CHAT_FINISHED_LEARNING"] == "1" {
+            let reply = AccountTextPreferenceFixture.shared.reply(request, stale: false, learning: true, initiallyEnabled: true)
+            return (reply.0, Data(reply.1.utf8))
+        }
         if path == "/creation-threads/capabilities" {
             // `KRIA_SLIDE_POST_CAPS=fail`: the capabilities request never gets an answer.
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "fail" { return nil }

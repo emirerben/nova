@@ -162,6 +162,7 @@ struct TextPreferencesView: View {
                 Section("Learn from finished edits") {
                     Toggle("Learn from finished edits", isOn: Binding(get: { learning.enabled }, set: { enabled in Task { await model.setLearningEnabled(enabled) } }))
                         .accessibilityIdentifier("text-learning-enabled")
+                        .disabled(model.isWorking)
                     Text("Off by default. After the same change appears in three finished videos, Kria can suggest a preference. Nothing changes until you accept.")
                         .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                     Text("Turning this off clears learning history and pending suggestions. Approved preferences stay saved.")
@@ -325,9 +326,13 @@ struct TextPreferenceSuggestionRow: View {
                 Text("Based on \(count) finished videos").font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
             }
             HStack {
-                Button("Accept") { Task { await decide(true) } }
+                Button { Task { await decide(true) } } label: {
+                    Text("Accept").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
                     .accessibilityIdentifier("text-learning-accept-" + item.id)
-                Button("Dismiss") { Task { await decide(false) } }
+                Button { Task { await decide(false) } } label: {
+                    Text("Dismiss").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
                     .accessibilityIdentifier("text-learning-dismiss-" + item.id)
             }
             .buttonStyle(.borderless)
@@ -339,9 +344,11 @@ struct TextPreferenceSuggestionRow: View {
 struct FinishedEditSuggestionsView: View {
     @StateObject private var model: TextPreferencesModel
     let refreshToken: String
-    init(api: any KriaAPIClient, refreshToken: String) {
+    let contentChanged: () -> Void
+    init(api: any KriaAPIClient, refreshToken: String, contentChanged: @escaping () -> Void) {
         _model = StateObject(wrappedValue: TextPreferencesModel(api: api))
         self.refreshToken = refreshToken
+        self.contentChanged = contentChanged
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -357,5 +364,6 @@ struct FinishedEditSuggestionsView: View {
         }
         .disabled(model.isWorking)
         .task(id: refreshToken) { await model.load() }
+        .onChange(of: model.memory?.revision) { _, _ in contentChanged() }
     }
 }

@@ -53,7 +53,7 @@ private final class AccountUITestURLProtocol: URLProtocol, @unchecked Sendable {
     }
     override func stopLoading() {}
 }
-private final class AccountTextPreferenceFixture: @unchecked Sendable {
+final class AccountTextPreferenceFixture: @unchecked Sendable {
     static let shared = AccountTextPreferenceFixture()
     private let lock = NSLock()
     private var revision = 0
@@ -80,11 +80,12 @@ private final class AccountTextPreferenceFixture: @unchecked Sendable {
         }
         return data
     }
-    func reply(_ request: URLRequest, stale: Bool, learning: Bool) -> (Int, String) {
+    func reply(_ request: URLRequest, stale: Bool, learning: Bool, initiallyEnabled: Bool = false) -> (Int, String) {
         lock.lock(); defer { lock.unlock() }
         let path = request.url?.path ?? ""
         if learning && !learningInitialized {
             learningInitialized = true
+            learningEnabled = initiallyEnabled
             item = ["id": "approved-title", "normalized_key": "text_style_title", "instruction": "My title choices",
                     "structured_value": ["text_style_title": ["shadow_enabled": false, "stroke_width": 0]]]
         }

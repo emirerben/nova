@@ -847,6 +847,7 @@ jobs:
             -only-testing:KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload \
             -only-testing:KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference \
             -only-testing:KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory \
+            -only-testing:KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss \
             -resultBundlePath ../../../test-results/kri-559/kri-648/native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/kri-648/native.xcresult \
             > ../../../test-results/kri-559/kri-648/native-test-results.json
@@ -856,7 +857,8 @@ jobs:
             --xctest AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen \
             --xctest AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload \
             --xctest AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference \
-            --xctest AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory
+            --xctest AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory \
+            --xctest CreationUITests/testFinishedEditLearningChatAcceptAndDismiss
       - name: Render approved Unicode hook on the built iPhone simulator
         if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios

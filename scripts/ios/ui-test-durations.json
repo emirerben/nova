@@ -172,5 +172,6 @@
   "KriaUITests/SongRangeUITests/testSettingARangeShowsItOnTheRowReopensWithItsValuesAndClearsBackToTheWholeSong": 40.0,
   "KriaUITests/SongRangeUITests/testThereIsNoRowWhenTheServerDoesNotAdvertiseTheRange": 20.0,
   "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference": 40.1,
-  "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory": 25.4
+  "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory": 25.4,
+  "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss": 45.4
 }
