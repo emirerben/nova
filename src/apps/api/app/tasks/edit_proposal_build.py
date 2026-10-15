@@ -2716,6 +2716,7 @@ def _run_draft_attempt(
     except Exception as exc:  # noqa: BLE001
         from app.services.creation_text_composition import (
             CreationTextCompositionError,  # noqa: PLC0415
+            CreationTextTimeoutError,  # noqa: PLC0415
         )
         from app.tasks.content_plan_build import job_failure_message  # noqa: PLC0415
 
@@ -2748,6 +2749,8 @@ def _run_draft_attempt(
                     current,
                     exc.code
                     if isinstance(exc, SemanticPlanningError)
+                    else "creation_text_timeout"  # KRI-673: said as a timeout, not a wording clash
+                    if isinstance(exc, CreationTextTimeoutError)
                     else "creation_text_failed"
                     if isinstance(exc, CreationTextCompositionError)
                     else "proposal_generation_failed",
@@ -2755,6 +2758,8 @@ def _run_draft_attempt(
                     # reason stays in the admin-only detail below.
                     exc.message
                     if isinstance(exc, SemanticPlanningError)
+                    else job_failure_message("creation_text_timeout")
+                    if isinstance(exc, CreationTextTimeoutError)
                     else job_failure_message("creation_text_failed")
                     if isinstance(exc, CreationTextCompositionError)
                     else "Kria couldn't plan this edit. Try again.",
