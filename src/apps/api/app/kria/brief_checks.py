@@ -3494,8 +3494,6 @@ def check_text_look(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
     judged = 0
     undecided = False  # a fact we cannot read never hides a miss we already found
     for key, value in look.items():
-        if key == "unverified_relationship":
-            return _receipt(req, "partial", _NO_CHECKER)
         if key in ("size_px", "heading_level", "stack_id"):
             haves = [getattr(row, key) for row in rows]
             label = ("text hierarchy", "yazı hiyerarşisi")
