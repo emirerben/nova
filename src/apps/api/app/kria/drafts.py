@@ -23,7 +23,13 @@ from app.agents._schemas.text_element import resolve_narrated_storyboard_rows
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.api_schemas import DraftSnapshotOut
 from app.kria.brief_binding import BriefBinding
-from app.kria.runtime import RuntimeFailure, _append_event, _owned_thread, _promote_queued_successor
+from app.kria.runtime import (
+    RuntimeFailure,
+    _append_event,
+    _owned_thread,
+    _promote_queued_successor,
+    _thread_say,
+)
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -702,7 +708,11 @@ async def undo_draft(
         thread,
         role="assistant",
         event_type="draft_undone",
-        content="I restored the previous draft. Nothing was rendered.",
+        content=_thread_say(
+            thread,
+            en="I restored the previous draft. Nothing was rendered.",
+            tr="Önceki taslağı geri getirdim. Yeni bir video oluşturulmadı.",
+        ),
         payload={
             "draft_id": str(row.id),
             "draft_revision": row.draft_revision,

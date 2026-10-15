@@ -2255,7 +2255,7 @@ struct NativeEditorTemporaryVideo {
     static func isPermanentSourcePreviewFailure(_ error: Error) -> Bool {
         switch error {
         case NativeEditorRenderError.missingVideoTrack, NativeEditorRenderError.unsupportedLane,
-             NativeEditorRenderError.missingFont:
+             NativeEditorRenderError.missingFont, NativeEditorRenderError.tooManyTextLayers:
             return true
         default:
             return false
@@ -2274,6 +2274,8 @@ struct NativeEditorTemporaryVideo {
             return "A required font is missing from this app build. Update the app and try again."
         case NativeEditorRenderError.missingVideoTrack:
             return "This edit’s video can’t be previewed on iPhone yet."
+        case NativeEditorRenderError.tooManyTextLayers:
+            return "This edit has more on-screen text than iPhone preview can show. Remove some text or captions to preview it."
         case NativeEditorPlaybackFailure.liveItem:
             return "The editable preview couldn’t play on this iPhone, so the finished video is shown. Retry to rebuild it."
         case NativeEditorPlaybackFailure.finishedItem:
@@ -2925,6 +2927,12 @@ struct NativeEditorTemporaryVideo {
     func previewSelectionBounds(for selection: EditorSelection, at time: Double) -> TextSelectionBounds? {
         guard sourcePreviewState == .ready else { return nil }
         if selection.kind == .mediaOverlay { return sourcePreview?.mediaSelectionBounds(id: "overlay:" + selection.id, time: time) }
+        if selection.kind == .visualBlock,
+           document.visualBlocks.first(where: { $0.id == selection.id })?.kind == "media" {
+            // Same media identity as prepareMediaInteraction: use the rendered
+            // footprint for both selection handles and the danger-zone guide.
+            return sourcePreview?.mediaSelectionBounds(id: "visual-\(selection.id)-\(selection.id)", time: time)
+        }
         let id = selection.kind == .captionCue ? "caption-" + selection.id : selection.id
         return sourcePreview?.textSelectionBounds(id: id, time: time)
     }

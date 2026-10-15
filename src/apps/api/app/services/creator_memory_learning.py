@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.kria.reply_language import reply_language_for, say, thread_reply_language
 from app.models import CreationThread, CreationThreadEvent, CreatorMemoryOutbox, User
 from app.services.private_text import normalize_private_text
 
@@ -235,6 +236,23 @@ async def apply_explicit_memory_event(
     return operation
 
 
+# The receipt for each automatic memory change: (English, Turkish).
+_MEMORY_RECEIPTS: dict[str, tuple[str, str]] = {
+    "create_item": (
+        "Remembered for future videos.",
+        "Bunu sonraki videoların için aklımda tutacağım.",
+    ),
+    "extracted_supersede": (
+        "Updated what I remember for future videos.",
+        "Sonraki videoların için aklımda tuttuğum şeyi güncelledim.",
+    ),
+    "extracted_forget": (
+        "Stopped using that preference for future videos.",
+        "Bu tercihi sonraki videolarında artık kullanmayacağım.",
+    ),
+}
+
+
 async def append_memory_receipt(
     db: AsyncSession,
     *,
@@ -291,11 +309,10 @@ async def append_memory_receipt(
         + 1
     )
     thread.revision = int(thread.revision) + 1
-    copy = {
-        "create_item": "Remembered for future videos.",
-        "extracted_supersede": "Updated what I remember for future videos.",
-        "extracted_forget": "Stopped using that preference for future videos.",
-    }[operation.operation_kind]
+    english, turkish = _MEMORY_RECEIPTS[operation.operation_kind]
+    # KRI-667: the receipt is written outside a turn, so it reads the chat's own language.
+    with reply_language_for(thread_reply_language(thread)):
+        copy = say(en=english, tr=turkish)
     db.add(
         CreationThreadEvent(
             thread_id=thread.id,

@@ -66,6 +66,7 @@ from app.kria.registry import KRIA_TOOLS
 from app.kria.reply_language import (
     bind_reply_language,
     current_reply_language,
+    detect_chat_language,
     release_reply_language,
     reply_language_for,
     say,
@@ -574,20 +575,30 @@ def _unresolved_choice_plan(
             ),
         )
     except CreatorRenderContractError as exc:
+        # KRI-667: the contract writes English; a Turkish chat gets the Turkish twin or a
+        # Turkish line (`_worker_copy`), never the English sentence.
+        reason = _worker_copy(str(exc)) or say(
+            en=str(exc),
+            tr="Onayladığın isteklerle bu düzenlemeyi güvenle oluşturamıyorum.",
+        )
         return (
             KriaTurnPlan(
                 mode="respond",
                 turn_value="recovery",
-                response=f"{exc}{unchanged}",
+                response=f"{reason}{unchanged}",
             ),
             "unresolved_requirement",
         )
     if contract is not None and contract.unresolved:
+        question = _worker_copy(contract.unresolved[0]) or say(
+            en=contract.unresolved[0],
+            tr="Onayladığın isteklerden birini bu düzenlemede doğrulayamıyorum.",
+        )
         return (
             KriaTurnPlan(
                 mode="respond",
                 turn_value="recovery",
-                response=f"{contract.unresolved[0]}{unchanged}",
+                response=f"{question}{unchanged}",
             ),
             "unresolved_requirement",
         )
@@ -3284,6 +3295,179 @@ def _device_contract_decline(job: Job, variant_id: str | None) -> dict[str, str]
     return None
 
 
+# KRI-667: what the render workers and the pin-time verifier write for a refused edit
+# (`error_detail`, a decline's `alternative`, the device record's `message`). They run with
+# no chat language bound, so their text is always English; the chat re-words it here, by
+# exact text (the `brief_checks._loc` precedent). A sentence with no Turkish twin is left
+# out of a Turkish reply (`_worker_copy`), never shown in English. A test pins that every
+# key still matches what the workers write.
+_WORKER_TEXT_TR: dict[str, str] = {
+    # services/creator_render_contract.py
+    "Tell me which option you want and I'll continue.": (
+        "Hangi seçeneği istediğini söyle, devam edeyim."
+    ),
+    "I can rebuild the edit so it shows this, or you can relax the requirement.": (
+        "Düzenlemeyi bunu gösterecek şekilde yeniden kurabilirim ya da bu isteği esnetebilirsin."
+    ),
+    (
+        "Ask for it to be rendered on your iPhone, where I can check it, "
+        "or tell me to drop that requirement."
+    ): ("Kontrol edebilmem için iPhone'unda oluşturulmasını iste ya da bu isteği bırakmamı söyle."),
+    "I can rebuild the edit with that soundtrack playing once, or you can pick a different one.": (
+        "Düzenlemeyi o ses bir kez çalacak şekilde yeniden kurabilirim ya da başka bir ses "
+        "seçebilirsin."
+    ),
+    "Choose either your recorded voice or the camera audio for this edit.": (
+        "Bu düzenleme için ya kaydettiğin sesi ya da kamera sesini seç."
+    ),
+    "I can rebuild the edit without that soundtrack, or you can ask for music.": (
+        "Düzenlemeyi o ses olmadan yeniden kurabilirim ya da müzik isteyebilirsin."
+    ),
+    "Your confirmed edit lengths conflict, so I can't render it safely.": (
+        "Onayladığın uzunluklar birbiriyle çelişiyor, o yüzden videoyu güvenle oluşturamıyorum."
+    ),
+    "Tell me which length you want.": "Hangi uzunluğu istediğini söyle.",
+    "This edit belongs to a different approved revision.": (
+        "Bu düzenleme onaylanmış başka bir sürüme ait."
+    ),
+    "Ask me to make the edit again from your latest request.": (
+        "Düzenlemeyi son isteğine göre yeniden yapmamı iste."
+    ),
+    "This edit needs your confirmed recorded voice.": (
+        "Bu düzenleme için onayladığın ses kaydın gerekiyor."
+    ),
+    "Record or upload your voice, or tell me to use music instead.": (
+        "Sesini kaydet ya da yükle; istersen bunun yerine müzik kullanmamı söyle."
+    ),
+    "This renderer can't combine the confirmed soundtracks.": (
+        "Bu video hazırlama yolu onayladığın sesleri birleştiremiyor."
+    ),
+    "Choose one soundtrack: the camera audio, your voice, or your song.": (
+        "Tek bir ses seç: kamera sesi, kendi sesin ya da şarkın."
+    ),
+    "I couldn't build the confirmed camera-audio edit.": (
+        "Onayladığın kamera sesli düzenlemeyi kuramadım."
+    ),
+    "Pick a different clip to carry the speech, or ask for a plain montage.": (
+        "Konuşmayı taşıyacak başka bir klip seç ya da düz bir montaj iste."
+    ),
+    "I can't verify this ordering rule from the approved media.": (
+        "Bu sıralama kuralını onaylanan çekimlerden doğrulayamıyorum."
+    ),
+    "I need to know which clips are in the edit to verify their order.": (
+        "Sıralarını doğrulamak için düzenlemede hangi kliplerin olduğunu bilmem gerekiyor."
+    ),
+    "I need capture times for every selected clip to verify chronological order.": (
+        "Çekim sırasını doğrulamak için seçilen her klibin çekim zamanını bilmem gerekiyor."
+    ),
+    "I couldn't tell which clips you want first or last, so I can't confirm their order.": (
+        "Hangi klipleri başa ya da sona istediğini anlayamadım, o yüzden sıralarını "
+        "doğrulayamıyorum."
+    ),
+    # services/cloud_render_contract.py
+    "I can render it again, or you can relax the requirement.": (
+        "Videoyu yeniden oluşturabilirim ya da bu isteği esnetebilirsin."
+    ),
+    (
+        "Ask for a spoken-excerpt montage on your iPhone, which can keep only that camera audio, "
+        "or tell me to drop that requirement."
+    ): (
+        "iPhone'unda yalnızca o kamera sesini koruyabilen, konuşma kesitli bir montaj iste ya da "
+        "bu isteği bırakmamı söyle."
+    ),
+    (
+        "Ask for it to be rendered on your iPhone, which renders clips in the order you confirmed, "
+        "or tell me to drop that requirement."
+    ): (
+        "Klipleri onayladığın sırayla oluşturan iPhone'unda oluşturulmasını iste ya da bu isteği "
+        "bırakmamı söyle."
+    ),
+    (
+        "Ask for a spoken-excerpt montage on your iPhone, which keeps or mutes camera audio as you "
+        "confirmed, or tell me to drop that requirement."
+    ): (
+        "iPhone'unda kamera sesini onayladığın gibi koruyan ya da kısan, konuşma kesitli bir "
+        "montaj iste ya da bu isteği bırakmamı söyle."
+    ),
+    # services/render_route.py
+    "Ask for a different format.": "Farklı bir format iste.",
+    "Ask for a montage with your voice, or a different format.": (
+        "Sesinle bir montaj ya da farklı bir format iste."
+    ),
+    "Record your voice for this edit, or ask for a different format.": (
+        "Bu düzenleme için sesini kaydet ya da farklı bir format iste."
+    ),
+    "Ask for a montage, a subtitled clip, or a narrated edit.": (
+        "Bir montaj, altyazılı bir klip ya da seslendirmeli bir düzenleme iste."
+    ),
+    (
+        "This plan has a guided story but the edit format is audio-led. "
+        "Pick one: the guided story, or the spoken/narrated edit."
+    ): (
+        "Bu planda rehberli bir hikâye var ama düzenleme formatı sese dayalı. Birini seç: "
+        "rehberli hikâye ya da konuşmalı/seslendirmeli düzenleme."
+    ),
+    # pipeline/phone_speech_montage_plan.py
+    "Pick a clip where you talk to use as the voice, or ask for a plain montage.": (
+        "Ses olarak kullanmak için konuştuğun bir klip seç ya da düz bir montaj iste."
+    ),
+    # tasks/generative_build.py
+    "I can rebuild the edit from your confirmed plan, or you can ask for a different edit.": (
+        "Düzenlemeyi onayladığın plana göre yeniden kurabilirim ya da farklı bir düzenleme "
+        "isteyebilirsin."
+    ),
+    "I couldn't find clear speech in your clips to build this edit.": (
+        "Bu düzenlemeyi kurmak için kliplerinde net bir konuşma bulamadım."
+    ),
+    "Pick a clip where you talk, record a voiceover, or ask for a montage.": (
+        "Konuştuğun bir klip seç, bir seslendirme kaydet ya da bir montaj iste."
+    ),
+    "The clip with your speech is too short to cut other footage into.": (
+        "Konuştuğun klip, araya başka çekimler koymak için çok kısa."
+    ),
+    "Use a longer clip of you talking, or ask for a montage.": (
+        "Konuştuğun daha uzun bir klip kullan ya da bir montaj iste."
+    ),
+    "I couldn't read the speech in your clip.": "Klibindeki konuşmayı okuyamadım.",
+    "Try a different clip of you talking, or ask for a montage.": (
+        "Konuştuğun başka bir klibi dene ya da bir montaj iste."
+    ),
+    "Your video has no sound, so there's nothing to caption or cut.": (
+        "Videonda hiç ses yok, o yüzden altyazı eklenecek ya da kesilecek bir şey yok."
+    ),
+    "Record it again and check that nothing is covering the microphone.": (
+        "Yeniden kaydet ve mikrofonun üstünü hiçbir şeyin kapatmadığından emin ol."
+    ),
+    "Try again in a moment, or ask me to make the edit again.": (
+        "Biraz sonra tekrar dene ya da düzenlemeyi yeniden yapmamı iste."
+    ),
+    "Ask me to make the change as a new edit instead.": (
+        "Bunun yerine değişikliği yeni bir düzenleme olarak yapmamı iste."
+    ),
+    "Choose another song or render with footage audio.": (
+        "Başka bir şarkı seç ya da videoyu çekimlerin kendi sesiyle oluştur."
+    ),
+}
+
+
+def _worker_copy(text: str | None) -> str | None:
+    """A worker-written refusal sentence in the chat's language, or None to leave it out.
+
+    English chats get the stored text unchanged. A Turkish chat gets its Turkish twin; a
+    sentence with no twin is dropped (the caller keeps its own Turkish line) unless it
+    already reads as Turkish.
+    """
+    if not text or not text.strip():
+        return None
+    if current_reply_language() != "tr":
+        return text
+    stored = text.strip()
+    turkish = _WORKER_TEXT_TR.get(stored)
+    if turkish is not None:
+        return turkish
+    return stored if detect_chat_language(stored) == "tr" else None
+
+
 _LAST_GOOD_STAYS = "Your last good version is still available."
 _NOTHING_PUBLISHED = "Nothing was published."
 # What a creator can really do next: send a new message. The approved request (the brief)
@@ -3301,7 +3485,9 @@ def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> 
     version is kept, and a next step that exists. Never promises an automatic rebuild and
     never asks the creator to restate a clear instruction.
     """
-    message = decline.get("message") or say(
+    # The message and alternative come from the server's contract checks, in English;
+    # a Turkish chat gets their Turkish twin or, when there is none, the line below.
+    message = _worker_copy(decline.get("message")) or say(
         en="That edit didn't keep something you asked for.",
         tr="Bu düzenleme istediğin bir şeyi korumadı.",
     )
@@ -3315,7 +3501,7 @@ def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> 
     if reason == "capability_unavailable":
         return f"{_capability_refusal_copy(decline)} {not_applied} {kept}"
     if reason in {"needs_choice", "requirement_conflict"}:
-        alternative = decline.get("alternative") or say(
+        alternative = _worker_copy(decline.get("alternative")) or say(
             en="Tell me which way you want to go.",
             tr="Hangi yoldan gitmek istediğini söyle.",
         )
@@ -3329,11 +3515,11 @@ def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> 
 
 def _capability_refusal_copy(decline: dict[str, str]) -> str:
     """A refusal that names the limit and the supported way forward."""
-    limit = decline.get("message") or say(
+    limit = _worker_copy(decline.get("message")) or say(
         en="This render path can't keep that requirement.",
         tr="Bu video hazırlama yolu bu isteği koruyamıyor.",
     )
-    alternative = decline.get("alternative") or _try_different_approach()
+    alternative = _worker_copy(decline.get("alternative")) or _try_different_approach()
     return f"{limit} {alternative}"
 
 
@@ -4876,16 +5062,19 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     "baştan kurmadan tekrar deneyebilirsin."
                 ),
             )
+        worker_alternative = _worker_copy(
+            typed_decline.get("alternative") if typed_decline is not None else None
+        )
         if (
             typed_decline is not None
-            and typed_decline.get("alternative")
+            and worker_alternative
             and failure_code in _DETERMINISTIC_JOB_FAILURE_CODES
             and typed_decline["decline_reason"] != "capability_unavailable"
             and recovery_message is None
             and not device_failed
         ):
             # A deterministic phone decline keeps its copy and adds the way forward.
-            failure_content = f"{failure_content} {typed_decline['alternative']}"
+            failure_content = f"{failure_content} {worker_alternative}"
         title_question = _blocked_title_question(recovery_receipts)
         event = _append_sync_event(
             db,

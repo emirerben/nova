@@ -156,7 +156,7 @@
   "KriaUITests/SlidePostUITests/testSlidePreviewLeavesToolbarAndStripVisible": 22.7,
   "KriaUITests/SlidePostUITests/testSlideScreensAtAccessibilityTypeSizeStayReachable": 29.0,
   "KriaUITests/SlidePostUITests/testSlideTextSelectDragPinchRotateAndDeselect": 47.9,
-  "KriaUITests/SlidePostUITests/testStickerOnAVideoSlideLeavesTheCentrePlayButtonToThePlayer": 19.5,
+  "KriaUITests/SlidePostUITests/testStickerOnAVideoSlideLeavesThePauseControlTappable": 19.5,
   "KriaUITests/SlidePostUITests/testStripFlickScrollsFromATileTheGapAndTheAddBlock": 50.7,
   "KriaUITests/SlidePostUITests/testStripScrollsWithAShortPressFingerDrag": 74.7,
   "KriaUITests/SlidePostUITests/testSwitchingSlidesAfterAddingTextNeverShowsTheBlur": 38.7,

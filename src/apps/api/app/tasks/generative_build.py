@@ -2885,7 +2885,7 @@ def _run_generative_job_impl(
         creator_text_color = creator_strategy.text_color if creator_strategy is not None else None
         raw_creator_strategy = all_candidates.get("creator_strategy") or {}
         creator_resolved_clip_intents = (
-            raw_creator_strategy.get("resolved_clip_intents")
+            _render_clip_intents(raw_creator_strategy.get("resolved_clip_intents"))
             if settings.clip_intents_enabled
             else None
         )
@@ -8510,6 +8510,20 @@ def _record_phone_beat_events(variant_id: str, receipt: dict) -> None:
 _NARRATED_STEP_TEXT_CHARS = 700
 
 
+def _render_clip_intents(raw: object) -> list[dict] | None:
+    """The resolved clip intents a render acts on (KRI-667).
+
+    An `exclude` already narrowed the pick at planning time and draws nothing, so it is
+    left out here: an exclude-only turn must not open the text-free-base burn pass.
+    """
+    if not isinstance(raw, list):
+        return raw  # type: ignore[return-value]  # None, or JSONB the parsers fail closed on
+    kept = [i for i in raw if not (isinstance(i, Mapping) and i.get("op") == "exclude")]
+    if len(kept) == len(raw):
+        return raw
+    return kept or None
+
+
 def _narrated_alignment_record(
     *,
     generation: str | None,
@@ -8538,6 +8552,9 @@ def _narrated_alignment_record(
     placed_by_key: dict[str, list[dict[str, str]]] = {}
     for intent in strategy.get("resolved_clip_intents") or []:
         if not isinstance(intent, Mapping) or intent.get("status") not in (None, "resolved"):
+            continue
+        if intent.get("op") == "exclude":
+            # KRI-667: a clip the creator left out is never one of its shot's labels.
             continue
         name = " ".join(str(intent.get("attribute") or "").split())
         if not name:
@@ -17752,7 +17769,7 @@ def _run_regenerate_variant(
         creator_text_color = creator_strategy.text_color if creator_strategy is not None else None
         raw_creator_strategy = all_candidates.get("creator_strategy") or {}
         creator_resolved_clip_intents = (
-            raw_creator_strategy.get("resolved_clip_intents")
+            _render_clip_intents(raw_creator_strategy.get("resolved_clip_intents"))
             if settings.clip_intents_enabled
             else None
         )
@@ -24367,6 +24384,9 @@ def _narrated_creator_clip_labels(
     for intent in resolved:
         attribute = " ".join(str(intent.get("attribute") or "").split())
         if not attribute or intent.get("status") not in (None, "resolved"):
+            continue
+        if intent.get("op") == "exclude":
+            # KRI-667: never cue a clip the creator left out to the words that name it.
             continue
         for assignment in intent.get("assignments") or []:
             media_id = assignment.get("media_id") if isinstance(assignment, Mapping) else None

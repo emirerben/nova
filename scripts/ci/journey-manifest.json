@@ -445,6 +445,14 @@
       ]
     },
     {
+      "id": "kri-667-turkish-chat",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri667_structured_ask_facts.py tests/kria/test_turkish_chat_guard.py tests/test_kri667_copilot_claims.py tests/kria/test_kri667_clip_exclusions.py tests/kria/test_kri667_no_new_intent_regexes.py",
+      "paths": [
+        "src/apps/api/prompts/edit_copilot.txt"
+      ]
+    },
+    {
       "id": "kri-646-text-bend",
       "needs_native": false,
       "api_tests": "tests/kria/test_text_bend.py",

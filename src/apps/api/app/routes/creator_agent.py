@@ -77,6 +77,7 @@ from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK, acquire_locked_rows
+from app.kria.clip_scope import apply_clip_exclusions
 from app.limiter import limiter
 from app.models import (
     AgentRun,
@@ -138,6 +139,7 @@ from app.services.creator_autonomy import (
 )
 from app.services.creator_capabilities import (
     CreatorSfxUnavailableError,
+    compile_strategy_to_plan,
     resolve_creator_sfx_catalog_ref,
 )
 from app.services.creator_craft import (
@@ -3604,6 +3606,11 @@ async def _run_planning_turn(
                         },
                     )
                     return await _response(db, locked)
+                if settings.clip_intent_exclude_enabled:
+                    # KRI-667: the clips the creator asked to leave out leave the pick.
+                    strategy = _without_excluded_clips(
+                        planning_manifest, strategy, resolution.intents
+                    )
                 strategy = strategy.model_copy(
                     update={
                         "clip_intents": requested_intents or None,
@@ -4170,6 +4177,33 @@ def _apply_plan_intent(
     elif caption == "none":
         item.voiceover_caption_style = None
     item.user_edited = True
+
+
+def _without_excluded_clips(
+    manifest: ResolvedCreatorManifest,
+    strategy: CreativeStrategy,
+    resolved: list[ResolvedClipIntent],
+) -> CreativeStrategy:
+    """``strategy`` without the clips resolved ``exclude`` intents leave out (KRI-667).
+
+    The narrowed strategy must still compile; when it does not, the pick is kept (the
+    clip stays, as before exclusions existed) rather than failing the turn.
+    """
+    narrowed = apply_clip_exclusions(manifest, strategy, resolved_intents=resolved)
+    if narrowed is strategy:
+        return strategy
+    try:
+        compile_strategy_to_plan(manifest, narrowed)
+    except Exception as exc:  # noqa: BLE001 - an exclusion never fails the turn
+        log.info("clip_intents.exclusions_not_compiled", error_type=type(exc).__name__)
+        return strategy
+    log.info(
+        "clip_intents.exclusions_applied",
+        model_selected=len(strategy.selected_media_ids),
+        model_scope=strategy.media_scope,
+        selected=len(narrowed.selected_media_ids),
+    )
+    return narrowed
 
 
 def _specialist_clip_intents(

@@ -957,6 +957,17 @@ class Settings(BaseSettings):
     # (answers are cached per clip, so every turn only moves forward).
     kria_clip_intents_max_vision_requeries: int = Field(default=18, ge=0, le=24)
     kria_clip_intents_vision_deadline_s: float = Field(default=40.0, gt=0, le=60)
+    # KRI-667 kill switch: the clip-intent planner may state "leave this clip out"
+    # ("Skip the quad bike clip", "çamaşır klibini kullanma") as an `exclude` intent,
+    # in any language. The resolver keeps a clip for it only at confidence >= 0.8 and
+    # never asks the creator about it; `app.kria.clip_scope.apply_clip_exclusions`
+    # then removes those clips from the pick (never a clip another intent names, never
+    # the last own clip). False: byte-identical to before -- the planner prompt has no
+    # `exclude` op, an exclusion the model writes is dropped silently, nothing is
+    # removed. Strategies already holding an `exclude` intent still load. Rollback:
+    # `fly secrets set CLIP_INTENT_EXCLUDE_ENABLED=false --app nova-video` +
+    # `fly machine restart <id>` (api + worker).
+    clip_intent_exclude_enabled: bool = True
 
     # Kill switch for the narrated walkthrough archetype. When False, a job
     # whose plan declares edit_format="narrated" follows the existing voiceover

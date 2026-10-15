@@ -1,0 +1,44 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-14.1",
+  "input": {
+    "creator_request": "Label each sport and group the pub clips.",
+    "latest_user_message": "Remove the sport labels; keep the pub group.",
+    "candidate_intents": null,
+    "clip_exclusions": true
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"remove_sport_labels\",\n      \"op\": \"exclude\",\n      \"attribute\": \"sport labels\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Remove the sport labels\"\n    },\n    {\n      \"intent_id\": \"pub_group\",\n      \"op\": \"group\",\n      \"attribute\": \"pub clips\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"group the pub clips\"\n    }\n  ],\n  \"question\": null\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "pub_group",
+        "op": "group",
+        "attribute": "pub clips",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "group the pub clips"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden (KRI-667, prompt 2026-10-14.1, clip_exclusions on): raw_text is plausible Gemini 2.5 Flash output written by hand, not a live capture. Re-capture live when a paid run is approved. The `exclude` is the model mistake this decoy guards against.",
+    "case": "KRI-667 decoy: 'Remove the sport labels' removes TEXT, not clips. Even when the model writes it as an `exclude`, the parser drops it silently (read as an exclude it would remove every sport clip); the pub group stays.",
+    "expect_intents": [
+      {
+        "op": "group",
+        "source_quote_keywords": [
+          "group",
+          "pub"
+        ]
+      }
+    ],
+    "expect_absent_ops": [
+      "exclude",
+      "label"
+    ],
+    "expect_any": true,
+    "expect_question": false
+  }
+}

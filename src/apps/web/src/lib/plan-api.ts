@@ -1457,12 +1457,13 @@ export interface CreatorAgentPlanPreview {
       execution_contract?: "guided_voiceover_v1" | null;
       media_scope?: "all" | "selected" | null;
       /**
-       * Generic label/group/order/include/caption requests. Transcript labels
-       * are grounded later against the recorded narration and final timeline.
+       * Generic label/group/order/include/caption/exclude requests. Transcript
+       * labels are grounded later against the recorded narration and final
+       * timeline. `exclude` (KRI-667) names clips the creator asked to leave out.
        */
       clip_intents?: Array<{
         intent_id: string;
-        op: "label" | "group" | "order" | "include" | "caption";
+        op: "label" | "group" | "order" | "include" | "caption" | "exclude";
         attribute: string;
         label_source?: "clip" | "transcript";
         transcript_kind?: "participant" | "score" | "topic" | null;

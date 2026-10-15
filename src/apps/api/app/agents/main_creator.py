@@ -80,7 +80,10 @@ log = structlog.get_logger()
 # Voiceover edit a cue for an own clip is `include`, never `order`, and beats persist (v55).
 # KRI-614: a clip's `filename` (the name the app shows) identifies it when the creator writes it
 # (v56).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-13-v57"
+# KRI-667: brief `facts` carry what an ask means in English keys and values (`triggers`,
+# `keep_whole_take`, `closing`, `speech_cleanup`, `captions`, `caption_language`) whatever the
+# creator's language, so the server checks them without re-reading the words (v58).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-14-v58"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -372,6 +375,16 @@ requirement, only what the creator said: `animation` ("typewriter", "fade", "pop
 "animated with typewriter"; `position` ("top_left", "top", "top_right", "middle", "bottom_left",
 "bottom", "bottom_right") for "bottom left"; `placeholder` true when they ask for placeholder
 text to fill in later ("placeholder location").
+The server checks these asks from `facts`, not from the description, so ALWAYS record them
+with these English keys and values, whatever language the creator writes in: a photo, video,
+sticker or sound timed to spoken words ("show the medal photo when I say medal", "her 'kahve'
+kelimesinde fincan sesi") => {"triggers": ["medal"]}, the spoken words exactly as the creator
+wrote them, never translated; keep a take whole, uncut => {"keep_whole_take": true}; end on a
+particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses,
+filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
+{"speech_cleanup": false}; captions => {"captions": "on"}, {"captions": "off"} or {"captions":
+"word_by_word"} (karaoke, one word at a time), plus {"caption_language": "en"} (a two-letter
+code) when they name the captions' language ("Türkçe altyazı" => "tr").
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
 ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", "facts": {"duration_s":

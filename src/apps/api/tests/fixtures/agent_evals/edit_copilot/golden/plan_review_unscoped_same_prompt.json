@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-10-13-v79",
+  "prompt_version": "2026-10-14-v80",
   "input": {
     "utterance": "make the captions shorter",
     "prior_turns": [],
