@@ -154,15 +154,23 @@ _POSITION_LAST = re.compile(
 )
 
 
+# KRI-677: a quote copied from a JSON-rendered line keeps its escapes (``\"Hadi
+# gidelim\" dediğimiz iskele klibi``). Both sides of the provenance check are
+# normalised the same way, so a creator who literally typed ``\"`` still matches.
+_JSON_ESCAPES = re.compile(r'\\(["\\])')  # kri667: strips JSON escapes, reads no meaning
+
+
 def _norm(value: str) -> str:
     """Compare creator text the way the model saw it, tolerant of typography.
 
     The prompt shows the model ``_sanitize_text(...)`` output, and models freely
     swap curly/straight quotes, dash styles and line breaks when copying. None of
     that changes what the creator wrote, so provenance is checked on a form with
-    sanitization applied, quotes/dashes unified and whitespace collapsed.
+    sanitization applied, quotes/dashes unified, JSON escapes around quotes
+    removed and whitespace collapsed.
     """
     value = unicodedata.normalize("NFKC", _sanitize_text(value)).translate(_QUOTE_TABLE)
+    value = _JSON_ESCAPES.sub(r"\1", value)
     return " ".join(value.split())
 
 
@@ -1233,6 +1241,16 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 "intent_invalid:" + (",".join(fields) or "model"),
                 f"failed validation on {', '.join(fields) or 'intent'} ({messages})",
             ) from exc
+        # KRI-677: keep the creator's words, not the brief's JSON escapes, on the intent
+        # itself; source_quote and creator_text are shown back to the creator and burned.
+        unescaped = {
+            field: _JSON_ESCAPES.sub(r"\1", value)
+            for field in ("source_quote", "creator_text")
+            if isinstance(value := getattr(intent, field), str)
+            and _JSON_ESCAPES.sub(r"\1", value) != value
+        }
+        if unescaped:
+            intent = intent.model_copy(update=unescaped)
         quote = _norm(intent.source_quote)
         if (not quote or not any(quote in source for source in sources)) and intent.op == "group":
             # A group prints nothing, so its quote is only evidence the creator asked
