@@ -4893,6 +4893,12 @@ def _wants_closing_speech(req: BriefRequirement) -> bool:
     if req.kind not in (*_BEAT_KINDS, "order"):
         return False
     text = _loose_req(req)
+    last_clip = req.facts.get("last_clip")
+    if isinstance(last_clip, str) and last_clip.strip():
+        # KRI-681: "Özel klip sırası" with last_clip "tam 20 dakika sürdü dediğim klip":
+        # the line lives in the recorded last clip, not the ask's short title.
+        named = req.model_copy(update={"description": last_clip, "literal": None})
+        text = f"{text} {_loose_req(named)}"
     if _NOT_OWN_SPEECH_RE.search(text) or not _OWN_SPEECH_RE.search(text):
         return False
     return bool(
@@ -5028,7 +5034,7 @@ def _check_closing_speech(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 tr="Video o klipte bitiyor ama kliplerin kendi sesi kapalı",
             ),
         )
-    quote = _quoted_ending(req)
+    quote = _quoted_ending(req, facts)
     if quote:
         # KRI-597: "end on the moment I say '...'" is met only by that line, held whole.
         return _check_quoted_ending(req, facts, quote)
@@ -5057,15 +5063,19 @@ def _check_closing_speech(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     )
 
 
-def _quoted_ending(req: BriefRequirement) -> str:
-    """The words the creator quoted for their ending, "" when they quoted none."""
+def _quoted_ending(req: BriefRequirement, facts: PlanFacts) -> str:
+    """The line the creator named for their ending, "" when they named none.
+
+    Their quoted words; else (KRI-681, "tam 20 dakika sürdü dediğim klip" with no quote
+    marks) the line the planner found the closing clip saying, which the plan records.
+    """
     from app.services.spoken_quotes import quoted_phrases  # noqa: PLC0415
 
     for text in (req.description, req.facts.get("last_clip"), req.literal):
         quotes = quoted_phrases(text if isinstance(text, str) else None)
         if quotes:
             return quotes[0]
-    return ""
+    return facts.closing_quote_text if facts.closing_quote_status else ""
 
 
 def _check_quoted_ending(req: BriefRequirement, facts: PlanFacts, quote: str) -> RequirementReceipt:
