@@ -4331,6 +4331,12 @@
           "highlight": {
             "$ref": "#/components/schemas/TextInk"
           },
+          "single_word": {
+            "default": null,
+            "nullable": true,
+            "title": "Single Word",
+            "type": "boolean"
+          },
           "starts": {
             "items": {
               "type": "number"

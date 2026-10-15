@@ -1,0 +1,11 @@
+{
+  "save-word-false": "87783f7a72dc3589a233dda81247863823a461c60913e31eac1caaa9ca6b6610",
+  "save-word-true": "fd36422640d9ab51fa4a6a79f745f7f57113d9031cdefd23d7bcb93ed6ce80e8",
+  "save-word-unset": "63cb1ce84f0f35cf46cb73ab07622146a515b17b8d771393c7cd33afeae57f52",
+  "sentence-highlight-true": "63cb1ce84f0f35cf46cb73ab07622146a515b17b8d771393c7cd33afeae57f52",
+  "sentence-unset": "b3acbbf9cee4cdd1ae8d9c3dfe79c9f6e53d5677ea68d6f281c20e5c0f14539a",
+  "word-highlight-false": "87783f7a72dc3589a233dda81247863823a461c60913e31eac1caaa9ca6b6610",
+  "word-highlight-true": "63cb1ce84f0f35cf46cb73ab07622146a515b17b8d771393c7cd33afeae57f52",
+  "word-left-highlight-false": "a8e33b10cf6d6fa61689f19526ef06287d0efbca1cfcb3a6f5c7bc7962d75d34",
+  "word-unset": "63cb1ce84f0f35cf46cb73ab07622146a515b17b8d771393c7cd33afeae57f52"
+}
