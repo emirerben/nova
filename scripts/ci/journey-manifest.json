@@ -473,6 +473,16 @@
       ]
     },
     {
+      "id": "kri-681-named-line-windows",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_named_line_windows_montage.py tests/tasks/test_long_take_moments_montage.py",
+      "paths": [
+        "src/apps/api/app/services/length_planning.py",
+        "src/apps/api/app/services/spoken_quotes.py",
+        "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json"
+      ]
+    },
+    {
       "id": "kri-632-phone-captions",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_phone_caption_cue_budget.py tests/pipeline/test_caption_spelling.py",
