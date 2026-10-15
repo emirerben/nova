@@ -204,7 +204,8 @@
       "KriaUITests/NativeQuickAddMenuUITests/testPasteOptionAddsCopiedTextAsTextElement",
       "KriaUITests/DrawingJourneyUITests/testDrawDoneTrimSaveReopenPersists",
       "KriaUITests/DrawingJourneyUITests/testAnimationTabKeepsItsLayoutWhateverTheEntranceIs",
-      "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability"
+      "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability",
+      "KriaUITests/GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -310,6 +311,7 @@
     "src/apps/ios/Kria/Features/TeleprompterStore.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/TeleprompterUITests.swift": "creation",
     "src/apps/ios/Kria/Features/TeleprompterReviewFixture.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/GamedayAddClipUITests.swift": "editor",
     "src/apps/ios/Kria/Features/TextPreferencesView.swift": "creation"
   }
 }

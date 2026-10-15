@@ -1432,7 +1432,10 @@ def _text_elements(
     return [
         *elements,
         *pinned_text_elements(
-            pin_windows, font_family=snapshot.font_family, text_color=snapshot.text_color
+            pin_windows,
+            font_family=snapshot.font_family,
+            text_color=snapshot.text_color,
+            canvas=_story_canvas(snapshot.output_orientation),
         ),
     ]
 
@@ -1471,10 +1474,30 @@ def _base_text_elements(
 
         return title_y_clear_of_pins(
             default_y,
-            top_pin_edge(pin_windows, 0.0, title_end),
+            top_pin_edge(
+                pin_windows,
+                0.0,
+                title_end,
+                font_family=snapshot.font_family,
+                canvas=_story_canvas(snapshot.output_orientation),
+            ),
             text=text,
             size_px=size_px,
             max_width_frac=max_width_frac,
+            canvas=_story_canvas(snapshot.output_orientation),
+            measure_row={
+                "text": text,
+                "size_px": size_px,
+                "max_width_frac": max_width_frac,
+                "font_family": snapshot.font_family or "Fraunces",
+            }
+            if any(
+                w.pin.heading_level is not None
+                or w.pin.stack_id is not None
+                or w.pin.size_px is not None
+                for w in pin_windows
+            )
+            else None,
         )
 
     def lane_y(default_y: float, start_s: float, end_s: float) -> float:
@@ -5897,6 +5920,14 @@ def _apply_guided_text_face_placement(
                     text=str(row.get("text", "")),
                     size_px=float(row.get("size_px") or 92),
                     max_width_frac=float(row.get("max_width_frac") or 0.8),
+                    canvas=canvas,
+                    measure_row=row
+                    if any(
+                        (pin.get("source_params") or {}).get("text_stack_v1")
+                        for pin in text_element_rows
+                        if str(pin.get("id", "")).startswith("guided-pinned-")
+                    )
+                    else None,
                 )
                 candidates = tuple(
                     value for value in candidates if value == default_y or value >= floor

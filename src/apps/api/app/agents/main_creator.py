@@ -83,7 +83,8 @@ log = structlog.get_logger()
 # KRI-667: brief `facts` carry what an ask means in English keys and values (`triggers`,
 # `keep_whole_take`, `closing`, `speech_cleanup`, `captions`, `caption_language`) whatever the
 # creator's language, so the server checks them without re-reading the words (v58).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-14-v58"
+# v59 combines these facts with KRI-669 heading groups and relative sizes.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-15-v59"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -375,6 +376,13 @@ requirement, only what the creator said: `animation` ("typewriter", "fade", "pop
 "animated with typewriter"; `position` ("top_left", "top", "top_right", "middle", "bottom_left",
 "bottom", "bottom_right") for "bottom left"; `placeholder` true when they ask for placeholder
 text to fill in later ("placeholder location").
+For requested heading stacks, preserve `heading_level` (1 title, 2 smaller subtitle,
+3 subordinate detail), `stack_id` (shared only by explicitly connected lines), `below_text`
+(exact predecessor words) and `smaller_than` (exact larger text words when smaller is asked)
+in each line's facts. Never reduce "smaller" or "under it" to position alone. For "Gameday",
+"Aston Villa v Fenerbahçe", "6 am" top left, emit levels 1/2/3 and stack_id "match";
+the subtitle facts include below_text "Gameday" and smaller_than "Gameday", and the detail
+facts include below_text "Aston Villa v Fenerbahçe". Keep the modifier in description too.
 The server checks these asks from `facts`, not from the description, so ALWAYS record them
 with these English keys and values, whatever language the creator writes in: a photo, video,
 sticker or sound timed to spoken words ("show the medal photo when I say medal", "her 'kahve'

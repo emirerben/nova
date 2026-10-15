@@ -194,6 +194,23 @@ class PinnedText(BaseModel):
     start_s: float | None = Field(default=None, ge=0, exclude_if=lambda value: value is None)
     end_s: float | None = Field(default=None, gt=0, exclude_if=lambda value: value is None)
     clip: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
+    heading_level: Literal[1, 2, 3] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    stack_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        exclude_if=lambda value: value is None,
+    )
+    size_px: float | None = Field(
+        default=None,
+        ge=24,
+        le=300,
+        exclude_if=lambda value: value is None,
+        description="Exact creator-requested corner text size; never shrink it during fitting.",
+    )
 
     @field_validator("text", mode="before")
     @classmethod

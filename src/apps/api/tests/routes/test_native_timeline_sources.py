@@ -1,9 +1,195 @@
 """Native preview must resolve originals without mistaking analysis proxies for them."""
 
+import copy
+import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
+
 from app.routes import generative_jobs as routes
+from app.services.phone_editor_sources import EDITOR_SOURCES_FIELD, canonical_source
 from app.services.phone_sources import PHONE_SOURCES_FIELD
+
+
+def admitted_phone_job(monkeypatch, mode="guided"):
+    from tests.routes.test_phone_guided_timeline_commit import _guided_phone_job
+
+    job, variant, _ = _guided_phone_job(monkeypatch, count=1, clip_s=3)
+    monkeypatch.setattr(routes.settings, "phone_editor_media_enabled", True)
+    monkeypatch.setattr(routes.settings, "visual_blocks_enabled", True)
+    monkeypatch.setattr(
+        routes.settings,
+        "phone_render_verified_features",
+        [
+            *routes.settings.phone_render_verified_features,
+            "stillImages",
+            "visualVideos",
+            "visualBlocks",
+            "alphaOverlay",
+        ],
+    )
+    binding = job.assembly_plan[PHONE_SOURCES_FIELD][0]
+    imports = {}
+    sources = []
+    for index in (1, 2):
+        admitted_binding = {
+            **copy.deepcopy(binding),
+            "media_id": f"import-{index}",
+            "proxy_path": f"users/{job.user_id}/analysis-proxy-import-{index}.mp4",
+        }
+        admitted_binding["original"]["sha256"] = str(index + 1) * 64
+        source = canonical_source(
+            {
+                "media_id": admitted_binding["media_id"],
+                "lane": "clip",
+                "gcs_path": admitted_binding["proxy_path"],
+                "generation": admitted_binding["generation"],
+                "kind": "video",
+                "duration_s": admitted_binding["original"]["duration_s"],
+            }
+        )
+        sources.append(
+            {**source, "source_index": index, "status": "ready", "source_binding": admitted_binding}
+        )
+        imports[str(uuid.uuid4())] = {
+            "status": "ready",
+            "source_id": source["media_id"],
+            "source_index": index,
+            "source": source,
+        }
+    variant[EDITOR_SOURCES_FIELD] = {"sources": sources, "imports": imports}
+    if mode != "guided":
+        variant["resolved_archetype"] = "narrated" if mode == "narrated" else "voiceover"
+        job.all_candidates = {"clip_paths": [binding["proxy_path"]]}
+        variant["ai_timeline"] = {
+            "slots": [{"slot_id": "first", "clip_index": 0, "duration_s": 3, "in_s": 0}]
+        }
+        if mode == "authored":
+            variant["editor_timeline_mode"] = "authored"
+        if mode == "empty":
+            from app.kria.draft_schemas import DraftSnapshotOut
+
+            variant["editor_state"] = "empty"
+            job._saved_editor_drafts = {
+                "guided_story": DraftSnapshotOut(
+                    draft_id=str(uuid.uuid4()),
+                    item_id=str(uuid.uuid4()),
+                    variant_key="guided_story",
+                    draft_revision=1,
+                    snapshot_hash="a" * 64,
+                    etag="draft",
+                    snapshot={},
+                    can_undo=False,
+                    created_at=datetime.now(UTC),
+                )
+            }
+    return job, variant
+
+
+@pytest.mark.parametrize("mode", ["guided", "montage", "narrated", "empty", "authored"])
+def test_admission_indexes_resolve_in_real_device_timeline_for_every_editor_mode(monkeypatch, mode):
+    """Boundary red control: admission-ready sources must exist in GET /timeline.
+
+    Failures: registry stripped by public projection, missing generated-mode pool,
+    lost original receipt, unstable imported indexes, or private registry leakage.
+    """
+    from app.routes.editor_sources import _response
+
+    job, variant = admitted_phone_job(monkeypatch, mode)
+    before = copy.deepcopy(job.assembly_plan)
+    result = routes.TimelineResponse(
+        **routes.dispatch_get_timeline(job, "guided_story", sign_url=lambda path, ttl: "signed")
+    ).model_dump(mode="json")
+    assert result["base_generation"] == "first"
+    clips = {row["clip_index"]: row for row in result["clips"]}
+    assert len(clips) == 3
+    for key, record in variant[EDITOR_SOURCES_FIELD]["imports"].items():
+        admission = _response(uuid.UUID(key), record, variant)
+        clip = clips[admission.source_index]
+        assert clip["media_id"] == admission.source.media_id
+        assert clip["generation"] == admission.source.generation
+        assert clip["native_source"]["media_id"] == admission.source.media_id
+        assert clip["native_source"]["local_required"] is True
+        assert clip["native_source"]["original"]["sha256"] == str(admission.source_index + 1) * 64
+        assert clip["native_source"]["source_url"] is None
+        assert clip["used"] is False
+    assert EDITOR_SOURCES_FIELD not in str(result)
+    assert "source_binding" not in str(result)
+    assert job.assembly_plan == before
+
+
+def test_admitted_guided_clip_save_and_reopen_retains_index_receipt_and_text(monkeypatch):
+    job, variant = admitted_phone_job(monkeypatch)
+    before_registry = copy.deepcopy(variant[EDITOR_SOURCES_FIELD])
+    opened = routes.dispatch_get_timeline(job, "guided_story", sign_url=lambda path, ttl: "signed")
+    imported = next(row for row in opened["clips"] if row.get("media_id") == "import-1")
+    original_slot = opened["slots"][0]
+    routes.prepare_editor_commit(
+        job,
+        "guided_story",
+        routes.EditorCommitRequest(
+            base_generation=opened["base_generation"],
+            guided_revision_number=opened["revision_number"],
+            timeline_slots=[
+                routes.TimelineSlotEdit(
+                    slot_id=original_slot["slot_id"], clip_index=0, in_s=0, duration_s=3
+                ),
+                routes.TimelineSlotEdit(
+                    slot_id="placement-uuid",
+                    clip_index=imported["clip_index"],
+                    in_s=0,
+                    duration_s=2,
+                ),
+            ],
+        ),
+    )
+    # JSON save/reopen mirrors the Job JSONB boundary, including its private registry.
+    job.assembly_plan = copy.deepcopy(job.assembly_plan)
+    reopened = routes.dispatch_get_timeline(
+        job, "guided_story", sign_url=lambda path, ttl: "signed"
+    )
+    assert reopened["slots"][-1]["clip_index"] == imported["clip_index"]
+    assert reopened["clips"][imported["clip_index"]]["used"] is True
+    assert reopened["clips"][imported["clip_index"]]["native_source"] == imported["native_source"]
+    assert job.assembly_plan["variants"][0][EDITOR_SOURCES_FIELD] == before_registry
+    assert job.assembly_plan["variants"][0]["text_elements"] == variant["text_elements"]
+
+
+@pytest.mark.parametrize("privacy", ["masked", "unavailable"])
+def test_private_admission_registry_cannot_bypass_public_media_mask(monkeypatch, privacy):
+    from app.services.public_assembly_plan import PublicAssemblyPlanProjection
+
+    job, variant = admitted_phone_job(monkeypatch)
+    public_variant = {key: value for key, value in variant.items() if key != EDITOR_SOURCES_FIELD}
+    public_variant["candidate_snapshot"] = {"clip_paths": []}
+    monkeypatch.setattr(
+        routes,
+        "project_public_assembly_plan_with_metadata",
+        lambda plan: PublicAssemblyPlanProjection(
+            value={"variants": [public_variant]},
+            masked_last_good_variant_ids=frozenset({"guided_story"})
+            if privacy == "masked"
+            else frozenset(),
+            media_unavailable_variant_ids=frozenset({"guided_story"})
+            if privacy == "unavailable"
+            else frozenset(),
+            active_speech_projection=False,
+        ),
+    )
+    result = routes.dispatch_get_timeline(job, "guided_story", sign_url=lambda path, ttl: "signed")
+    assert not any(row.get("media_id", "").startswith("import-") for row in result["clips"])
+    assert EDITOR_SOURCES_FIELD not in str(result)
+
+
+@pytest.mark.parametrize("mode", ["guided", "montage"])
+def test_missing_admitted_original_receipt_never_downloads_analysis_proxy(monkeypatch, mode):
+    job, variant = admitted_phone_job(monkeypatch, mode)
+    variant[EDITOR_SOURCES_FIELD]["sources"][0].pop("source_binding")
+    result = routes.dispatch_get_timeline(job, "guided_story", sign_url=lambda path, ttl: "signed")
+    assert result["clips"][1]["native_source"] is None
+    assert result["clips"][2]["native_source"]["media_id"] == "import-2"
+    assert result["total_duration_s"] == 3
 
 
 def test_cloud_original_uses_owned_timeline_source(monkeypatch):

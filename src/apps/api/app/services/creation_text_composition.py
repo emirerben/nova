@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -79,7 +80,7 @@ class CreationTextComposer(EditCopilotAgent):
     # This is background creation, not the latency-limited interactive route.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v5-confirmed-creation-copy-brief",
+        prompt_version="v6-text-hierarchy-relations",
         timeout_s=90.0,
     )
 
@@ -134,6 +135,17 @@ class CreationTextComposer(EditCopilotAgent):
 
 class CreationTextCompositionError(ValueError):
     pass
+
+
+def _requests_text_relationships(request: str) -> bool:
+    """Never let a lossy brief hide modifiers in the complete creation request."""
+    return bool(
+        re.search(
+            r"\b(smaller|larger|underneath|below|under it|under add|under the (?:title|text)"
+            r"|daha küçük|daha kucuk|altına|altina)\b|\b\d+(?:\.\d+)?\s*(?:px|pixels)\b",
+            request.casefold(),
+        )
+    )
 
 
 def _lanes(plan: dict) -> tuple[list[dict], list[dict]]:
@@ -242,6 +254,7 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
         known = {row.get("id") for row in texts}
 
         def stabilize_added_ids(op, state, phase):
+            state.variant["output_orientation"] = plan.get("output_orientation", "portrait")
             if phase != "after":
                 return
             for index, row in enumerate(state.text):
@@ -433,7 +446,19 @@ def compose_creation_text(
             if req.kind in {"text", "style"} or req.scope == "title"
         ]
         facts = plan_facts_from_editor_payload({**plan, "title": snapshot.opening_title})
-        if relevant and all(check_requirement(req, facts).status == "met" for req in relevant):
+        relationships_verified = not _requests_text_relationships(creator_request) or all(
+            any(
+                key in req.facts
+                for key in ("heading_level", "below_text", "smaller_than", "size_px")
+            )
+            for req in relevant
+            if req.kind == "text"
+        )
+        if (
+            relevant
+            and relationships_verified
+            and all(check_requirement(req, facts).status == "met" for req in relevant)
+        ):
             return snapshot.model_copy(
                 update={
                     "text_composition": TextCompositionProgram(
@@ -485,7 +510,29 @@ def compose_creation_text(
     program = TextCompositionProgram(
         base_digest=_digest(texts, slots), operations=operations, copy_constraints=constraints
     )
-    replay_text_composition(plan, program)
+    composed = replay_text_composition(plan, program)
+    if text_requirements:
+        from app.kria.brief_checks import (  # noqa: PLC0415
+            check_requirement,
+            plan_facts_from_editor_payload,
+        )
+
+        hierarchy_requirements = [
+            req
+            for req in text_requirements
+            if req.live
+            and any(
+                key in req.facts
+                for key in ("heading_level", "stack_id", "below_text", "smaller_than", "size_px")
+            )
+        ]
+        final_facts = plan_facts_from_editor_payload(composed)
+        if any(
+            check_requirement(req, final_facts).status != "met" for req in hierarchy_requirements
+        ):
+            raise CreationTextCompositionError(
+                "Text composition did not satisfy the requested hierarchy"
+            )
     if not operations and not constraints:
         return snapshot
     return snapshot.model_copy(update={"text_composition": program})

@@ -666,6 +666,7 @@ def run_phone_voice_behind_footage_job(
             allow_silent_tail=composition.voice_span_s is not None,
             target_lufs=settings.output_target_lufs,
             pinned_texts=_creator_pins(all_candidates.get("creator_strategy")),
+            pinned_font_family=(all_candidates.get("creator_strategy") or {}).get("font_family"),
         )
         # Counts only: the voice is the creator's private words.
         record_pipeline_event(

@@ -767,6 +767,18 @@ class GitDiffTests(unittest.TestCase):
                 "src/apps/api/app/kria/planner.py.backup",
                 (True, "gap", ""),
             ),
+            (
+                "src/apps/api/app/pipeline/pinned_text.py",
+                (True, "covered", "kri-669-gameday"),
+            ),
+            (
+                "src/apps/api/app/pipeline/text_stack_layout.py",
+                (True, "covered", "kri-669-gameday"),
+            ),
+            (
+                "src/apps/api/prompts/edit_copilot_ops/text.txt",
+                (True, "covered", "kri-669-gameday"),
+            ),
             # This has journey impact but no incident-corpus repro mapping.
             (
                 "src/apps/api/app/pipeline/unmapped_future_compiler.py",

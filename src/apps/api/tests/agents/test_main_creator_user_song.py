@@ -30,12 +30,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v55 (KRI-598) adds the unavailable-`guided_voiceover` rule, so all four renders changed.
 # v56 (KRI-614) adds the clip `filename` sentence to the base prompt: all four changed again.
 # v57 (KRI-661) adds the mixed-Visuals `overlay_display` rule: all four changed again.
-# v58 (KRI-667) adds the language-neutral ask facts to the brief section: the two brief renders.
+# v59 (KRI-669/KRI-667) combines heading relationships and language-neutral brief facts.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "a1d50c3577ab37e0ce4b4a1167e9abd1786b3f5f0118af5c619b8a19decb70f9",
-    (True, True): "b131cba22a26da8a981a9e7c107a49cbf86877d0f9a498df5d9f5ff696f99a45",
-    (False, False): "4ba209b3403a172f7718de8e0ad5fdc1c37b840294e916f3a4466063d97cb3a7",
-    (False, True): "1226b3f7f50dda49167711ca63e391a7b720c7208994229940c0069acbaf7f60",
+    (True, False): "ee65d056c23556e1f0943f279a38ba9d5cff7e85693baa75ae5e27768d5a6770",
+    (True, True): "3cd51732c9a55f7864294e25f0dc770aa5cf68d45fb4b322e5aed27ee5dbce59",
+    (False, False): "1832d24a557255f7bb3920c7abd14efda2629cd1696cf327d4d2a34bff9ba55c",
+    (False, True): "22ecc3773fc27346c08e5bc55156c725f9d785b164d95a4af16acd157bff98d5",
 }
 
 
@@ -105,7 +105,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-14-v58"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-15-v59"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

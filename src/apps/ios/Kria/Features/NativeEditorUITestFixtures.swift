@@ -1,5 +1,6 @@
 #if DEBUG
 import Foundation
+import KriaMediaEngine
 
 /// Account-free editor fixtures used by UI tests and local visual inspection.
 /// They deliberately use the compatibility `EditorDraft` projection while
@@ -10,6 +11,7 @@ enum NativeEditorUITestFixtures {
         case captionVisuals = "caption-visuals"
         case projectedCaptions = "projected-captions"
         case sourceText = "source-text"
+        case gamedayAdd = "gameday-add"
         case twoText = "two-text"
         case boundary = "boundary"
         case allLanes = "all-lanes"
@@ -48,6 +50,7 @@ enum NativeEditorUITestFixtures {
             // they share source-preview behavior but require a supplied draft.
             return Fixture(shape: .sourceText, draft: capturedCreation)
         }
+        if arguments.contains("-ui-testing-editor-gameday-reset") { UserDefaults.standard.removeObject(forKey: gamedaySavedKey) }
         let shape = Shape.allCases.first { arguments.contains("-ui-testing-editor-\($0.rawValue)") } ?? .twoText
         var value = draft(for: shape)
         if arguments.contains("-ui-testing-editor-text-bend") {
@@ -65,6 +68,7 @@ enum NativeEditorUITestFixtures {
         case .captionVisuals: captionVisuals
         case .projectedCaptions: projectedCaptions
         case .sourceText: sourceText
+        case .gamedayAdd: gamedayAdd
         case .twoText: twoText
         case .boundary: boundary
         case .allLanes: allLanes
@@ -208,6 +212,21 @@ enum NativeEditorUITestFixtures {
             "camera_effects": .bool(true), "motion_scenes": .bool(true), "caption_editor_style": .bool(true),
             "visual_editor_style": .bool(true)])])
     }()
+
+    static let gamedaySavedKey = "native-editor-gameday-saved"
+    static let gamedayPoolKey = "native-editor-gameday-pool"
+    static let gamedayRecipeKey = "native-editor-gameday-recipe"
+    static var gamedayAdd: EditorDraft {
+        if let data = UserDefaults.standard.data(forKey: gamedaySavedKey),
+           let saved = try? JSONDecoder().decode(EditorDraft.self, from: data) { return saved }
+        let clips = (0..<4).map { clip($0, start: Double($0), duration: 1) }
+        let layer = text(100, content: "Gameday", x: 0.2, y: 0.25)
+        return draft(clips: clips, text: [layer], captions: false, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "text_elements": .array([textRecord(layer, start: 0, end: 4, z: 1,
+                extra: ["font_family": .string("Inter"), "size_px": .number(72)])]),
+        ])
+    }
 
     static let sourceText: EditorDraft = {
         let clips = [clip(0, start: 0, duration: 2), clip(1, start: 2, duration: 2)]
@@ -611,7 +630,23 @@ enum NativeEditorUITestCommitTransport {
             guard let url = request.url else { client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return }
             var status = 404
             var body = Data(#"{"detail":"not stubbed"}"#.utf8)
-            if url.path.hasSuffix("/editor-commit") {
+            if url.path.hasSuffix("/device-render"), let data = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedayRecipeKey) {
+                status = 200; body = data
+            } else if url.path.hasSuffix("/timeline"), let data = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedayPoolKey) {
+                status = 200; body = data
+            } else if url.path.hasSuffix("/editor-sources") {
+                var data = request.httpBody ?? Data()
+                if data.isEmpty, let stream = request.httpBodyStream {
+                    stream.open(); defer { stream.close() }
+                    var buffer = [UInt8](repeating: 0, count: 4096)
+                    while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
+                }
+                let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                let response: [String: JSONValue] = ["import_id": fields["client_import_id"] ?? .string(UUID().uuidString),
+                    "status": .string("ready"), "source_id": .string("gameday-istanbul-source-4"), "source_index": .number(4),
+                    "source": .object(["media_id": .string("gameday-istanbul-source-4"), "duration_s": .number(4)]), "retryable": .bool(false)]
+                status = 200; body = (try? JSONEncoder().encode(response)) ?? body
+            } else if url.path.hasSuffix("/editor-commit") {
                 var data = request.httpBody ?? Data()
                 if data.isEmpty, let stream = request.httpBodyStream {
                     stream.open(); defer { stream.close() }
@@ -624,12 +659,19 @@ enum NativeEditorUITestCommitTransport {
                 }
                 let sections = fields.keys.filter { $0 != "base_generation" && $0 != "editor_state_version" && $0 != "deletions" && $0 != "remove_music" }
                 var flags = Dictionary(uniqueKeysWithValues: sections.map { ($0, JSONValue.bool(true)) })
+                // The real response acknowledges the timeline section, not
+                // the request's timeline_slots field name.
+                if fields["timeline_slots"] != nil { flags["timeline"] = .bool(true); flags.removeValue(forKey: "timeline_slots") }
+                let gamedayDuration = fields["timeline_slots"]?.arrayValue?.compactMap { $0.objectValue?["duration_s"]?.numberValue }.reduce(0, +) ?? 6
                 // A deleted drawing is saved by the lane being sent (possibly empty).
                 if fields["deletions"] != nil, fields["drawings"] == nil { flags["drawings"] = .bool(true) }
-                let response: [String: JSONValue] = ["ok": .bool(true), "generation": .string("fixture-generation-2"), "sections": .object(flags),
-                                                      "revision_number": .number(4), "revision_hash": .string("fixture-hash"), "expected_duration_s": .number(6)]
+                let response: [String: JSONValue] = ["ok": .bool(true), "generation": url.path.contains("fixture-gameday-item") ? fields["base_generation"] ?? .string("fixture-generation") : .string("fixture-generation-2"), "sections": .object(flags),
+                                                      "revision_number": .number(4), "revision_hash": .string("fixture-hash"), "expected_duration_s": .number(url.path.contains("fixture-gameday-item") ? gamedayDuration : 6)]
                 status = 200
                 body = (try? JSONEncoder().encode(JSONValue.object(response))) ?? body
+            }
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-gameday-add") {
+                NSLog("KRI669 fixture transport %@ status=%d bytes=%d", url.path, status, body.count)
             }
             guard let http = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"]) else { return }
             client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)

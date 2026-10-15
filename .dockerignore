@@ -80,6 +80,9 @@ openclaw.config.json
 
 # Local native build and verification outputs are never API build inputs.
 src/apps/ios/.derived-data/
+src/apps/ios/.derived-device/
+src/apps/ios/.device-derived/
+.dev/
 **/.build/
 test-results/
 .overlay-verify/

@@ -434,6 +434,7 @@ def with_pinned_text_layers(
         resolve_pin_windows(pins, duration, clip_windows),
         font_family=font_family,
         text_color=text_color,
+        canvas=recipe.canvas,
     )
     from app.pipeline.canvas import Canvas as PipelineCanvas
     from app.services.phone_text_styling import generation_resolved_rows, generation_style_rows

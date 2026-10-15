@@ -228,6 +228,18 @@ struct NativeEditorView: View {
             } message: {
                 Text("Unsaved editor changes are stored only on this device until you save.")
             }
+            #if DEBUG
+            .overlay(alignment: .topLeading) {
+                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-gameday-add") {
+                    VStack {
+                        Text(session.gamedayFixtureSummary).font(.system(size: 1)).frame(height: 1)
+                            .accessibilityIdentifier("gameday-fixture-state")
+                        Button("Retain fixture edit") { Task { await session.saveGamedayFixture() } }
+                            .accessibilityIdentifier("gameday-fixture-save")
+                    }
+                }
+            }
+            #endif
             .task { await loadEditor(); await session.resumeEditorImports() }
             .onReceive(model.uploads.$pendingEditorPlacements) { _ in
                 Task { await session.resumePendingEditorPlacements() }
@@ -882,6 +894,10 @@ struct NativeEditorView: View {
     private func loadEditor() async {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-ui-testing-editor-gameday-add") {
+            await session.prepareGamedayFixture(url: Bundle.main.url(forResource: "montage", withExtension: "mp4")!)
+            return
+        }
         // A generic failure is retryable; missing originals are not (KRI-211), so they
         // are separate fixtures with separate recovery UI.
         let forcedFailure: Error? = arguments.contains("-ui-testing-editor-missing-originals")

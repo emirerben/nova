@@ -144,7 +144,8 @@ def measure_box(row: dict, canvas: Canvas = PORTRAIT) -> tuple[float, float, flo
                 budget["cache"][key] = cached
         boxes.append(cached)
     rendered_size = min(box.get("size_px", float(row.get("size_px") or 76)) for box in boxes)
-    if rendered_size < 40:
+    connected = (row.get("source_params") or {}).get("text_stack_v1")
+    if rendered_size < (24 if connected else 40):
         raise _style_decline(
             "This text cannot wrap at a readable size. Choose another font or shorter text."
         )
@@ -252,6 +253,99 @@ def animation_box(row: dict, box, canvas: Canvas = PORTRAIT):
             _cursor_width(row["font_family"], int(row.get("size_px") or 76), cursor) / canvas.width
         )
     return box[0] - dx, box[1] - dy, box[2] + dx, box[3] + dy
+
+
+def _place_connected_stacks(rows, rules, obstacles_for, canvas):
+    """Reflow the selected face as a group; never independently refit headings."""
+    from app.pipeline.text_stack_layout import (
+        STACK_LAYOUT_PARAM,
+        layout_corner_stack,
+        measure_text_block,
+    )
+    from app.schemas.text_style_intent import LABEL_ANCHORS
+
+    corners = {}
+    for row in rows:
+        if not (row.get("source_params") or {}).get(STACK_LAYOUT_PARAM):
+            continue
+        authored = set(row["source_params"].get("creator_style_fields") or [])
+        wanted = rules[text_role(row)].get("position")
+        corner = row["source_params"][STACK_LAYOUT_PARAM].get("corner")
+        zone = (
+            corner.split("_", 1)[0]
+            if corner
+            else "bottom"
+            if float(row.get("y_frac") or 0.5) >= 0.5
+            else "top"
+        )
+        alignment = row.get("alignment", "left")
+        if wanted and not authored & {"position", "x_frac", "y_frac", "alignment"}:
+            x, _y, alignment = LABEL_ANCHORS[wanted]
+            row.update(x_frac=x, alignment=alignment)
+            zone = wanted.split("_", 1)[0]
+        corners.setdefault((zone, alignment), []).append(row)
+    fitted = []
+    for (zone, alignment), members in corners.items():
+        authored_position = any(
+            set(row["source_params"].get("creator_style_fields") or [])
+            & {"position", "x_frac", "y_frac"}
+            for row in members
+        )
+        if not authored_position:
+            for row in members:
+                authored = set(row["source_params"].get("creator_style_fields") or [])
+                if "size_px" in authored:
+                    row["source_params"][STACK_LAYOUT_PARAM]["explicit_size"] = True
+                row["text"] = row["source_params"][STACK_LAYOUT_PARAM].get(
+                    "authored_text", row["text"]
+                )
+                row["wrap_lines"] = True
+                if "max_width_frac" not in authored:
+                    row["max_width_frac"] = min(float(row.get("max_width_frac") or 0.68), 0.68)
+                if alignment == "right":
+                    row["x_frac"] = min(float(row["x_frac"]), 0.82)
+            try:
+                layout_corner_stack(
+                    members,
+                    bottom=zone == "bottom",
+                    canvas=canvas,
+                    safe_top_frac=0.102,
+                    safe_bottom_frac=0.78,
+                )
+                if zone == "middle":
+                    tops = [
+                        row["y_frac"] - measure_text_block(row)["height"] / canvas.height / 2
+                        for row in members
+                    ]
+                    bottoms = [
+                        row["y_frac"] + measure_text_block(row)["height"] / canvas.height / 2
+                        for row in members
+                    ]
+                    shift = 0.5 - (min(tops) + max(bottoms)) / 2
+                    for row in members:
+                        row["y_frac"] += shift
+            except ValueError as error:
+                raise _style_decline(str(error)) from error
+        for row in members:
+            box = animation_box(row, measure_box(row, canvas), canvas)
+            obstacles = [
+                *obstacles_for(row),
+                *(
+                    animation_box(other, measure_box(other, canvas), canvas)
+                    for other in fitted
+                    if _same_window(row, other)
+                ),
+            ]
+            if (
+                box[0] < 0.05
+                or box[2] > 0.84
+                or box[1] < 0.095
+                or box[3] > 0.79
+                or any(_overlap(box, obstacle) for obstacle in obstacles)
+            ):
+                raise _style_decline("This text group cannot fit clearly in the requested area.")
+        fitted.extend(members)
+    return fitted
 
 
 def _place(
@@ -504,8 +598,10 @@ def resolve_phone_text_style(
         ]
 
     fixed = [row for row in rows if text_role(row) != "title"]
-    fitted = []
+    fitted = _place_connected_stacks(fixed, rules, obstacles_for, canvas)
     for row in fixed:
+        if (row.get("source_params") or {}).get("text_stack_v1"):
+            continue
         _place(
             row,
             role=text_role(row),
