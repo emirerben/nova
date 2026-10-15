@@ -112,6 +112,7 @@ from app.services.clip_selection import fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
 from app.services.creative_copy_decisions import (
     authorship_question,
+    creator_quoted,
     fold_creative_copy,
     localize_question,
     media_digest,
@@ -2132,6 +2133,16 @@ async def _plan_creator_action(
                 and value in evidence
                 and any(evidence in source for source in user_sources)
             )
+            # KRI-682: a title the creator typed in quotes is theirs whatever excerpt
+            # the model cites (it often quotes the brief's rewrite of the ask).
+            quoted = value and creator_quoted(
+                value, [*user_sources, getattr(inputs, "raw_creator_request", None) or ""]
+            )
+            if quoted and not grounded:
+                log.info(
+                    "kria_creative_copy_creator_quoted", thread_id=str(thread_id), target=target
+                )
+            grounded = grounded or quoted
             if value and not (state and state.approved == value) and not (authored or grounded):
                 return _creative_copy_turn(
                     CreativeCopyDecision(target=target, status="candidate", proposed_text=value),

@@ -32,6 +32,37 @@ def normalize_copy(value: object) -> str:
     return " ".join(unicodedata.normalize("NFC", str(value)).split())
 
 
+# Opening/closing mark pairs a creator may type around exact wording (keyboard,
+# iOS smart punctuation, Turkish/European and CJK conventions).
+_QUOTE_PAIRS: tuple[tuple[str, str], ...] = (
+    ('"', '"'),
+    ("“", "”"),
+    ("„", "“"),
+    ("„", "”"),
+    ("«", "»"),
+    ("‘", "’"),
+    ("'", "'"),
+    ("「", "」"),
+)
+
+
+def creator_quoted(text: str, creator_texts: Iterable[str]) -> bool:
+    """True when a creator message wraps exactly ``text`` in quote marks (KRI-682).
+
+    Wording the creator typed in quotes is already theirs, so it never needs the
+    wording-approval question. Pass creator-authored text only (never the brief or
+    assistant messages); a bare, unquoted phrase is not enough.
+    """
+    wanted = normalize_copy(text)
+    if not wanted:
+        return False
+    for source in creator_texts:
+        haystack = normalize_copy(source)
+        if any(f"{open_}{wanted}{close}" in haystack for open_, close in _QUOTE_PAIRS):
+            return True
+    return False
+
+
 def media_digest(media_snapshot: Mapping[str, Any] | None) -> str:
     """Stable dependency key: owned media identity, never chat/context revision."""
     from app.kria.brief_binding import media_identity  # avoids a service import cycle
@@ -397,6 +428,7 @@ __all__ = [
     "CREATIVE_COPY_CONFLICT",
     "CreativeCopyState",
     "authorship_question",
+    "creator_quoted",
     "fold_creative_copy",
     "latest_open_creative_question",
     "media_digest",
