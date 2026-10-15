@@ -448,3 +448,21 @@ def test_a_stale_editor_state_is_refused_in_the_turn_language(
             expected = localized_editor_state_reply(english)
         assert plan.response == expected
         assert plan.response != english
+
+
+def test_failed_render_titles_name_what_happened_in_each_language() -> None:
+    """KRI-673: the failed card's headline comes from the event, in the chat's language."""
+    assert kr._failure_title("plan_ai_timeout") == "Planning took too long"
+    assert kr._failure_title("creation_text_timeout") == "Planning took too long"
+    assert kr._failure_title("phone_plan_failed") == "Your video wasn't made"
+    assert kr._failure_title("anything", device_failed=True) == (
+        "Your iPhone couldn't finish the video"
+    )
+    with reply_language_for("tr"):
+        assert _turkish(kr._failure_title("plan_ai_timeout"))
+        assert _turkish(kr._failure_title("phone_plan_failed"))
+
+
+def test_timeout_codes_have_their_own_sentence_not_the_iphone_one() -> None:
+    for code in ("creation_text_timeout", "plan_ai_timeout", "phone_plan_failed"):
+        assert "iPhone" not in JOB_FAILURE_MESSAGES[code]

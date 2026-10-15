@@ -1562,6 +1562,7 @@ private struct CreationWorkspaceView: View {
                     ).id("failed-preparation")
                 } else {
                     FailedStage(
+                        title: fullThread?.lastAssistantErrorTitle ?? "Your video wasn’t made",
                         bodyText: fullThread?.lastAssistantErrorContent
                             ?? fullThread?.job?.failureMessage
                             ?? "Your direction and footage are safe. Refresh the project or tell me what you want to change.",

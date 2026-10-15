@@ -833,8 +833,22 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
         "This edit needs an iPhone feature that isn't available yet. "
         "Try again later, or ask for a different style."
     ),
+    # KRI-673: the AI that writes the on-screen text ran out of time on a big edit (prod:
+    # 35 clips). Say which step, and what actually helps.
+    "creation_text_timeout": (
+        "Writing the on-screen text for this many clips took longer than our AI allows, so "
+        "your video wasn't made. Your edit and footage are saved. Try again; if it happens "
+        "again, use fewer clips or ask for less text."
+    ),
+    "plan_ai_timeout": (
+        "Our AI took too long to plan this edit, so your video wasn't made. "
+        "Your edit and footage are saved. Try again in a moment."
+    ),
+    # Catch-all for an unclassified planning failure: do not blame the iPhone, it was
+    # never involved (KRI-673).
     "phone_plan_failed": (
-        "This edit couldn't render on your iPhone. Try again, or ask for a change to the direction."
+        "Something broke while planning this edit, so your video wasn't made. "
+        "Your edit and footage are saved. Try again, or ask for a change."
     ),
     "originals_not_uploaded": (
         "Your original footage wasn't uploaded, so this can't render on your "

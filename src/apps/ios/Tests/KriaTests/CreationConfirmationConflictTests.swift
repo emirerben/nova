@@ -169,6 +169,17 @@ import XCTest
         XCTAssertEqual(planUnsupported.lastAssistantErrorContent, "This edit uses something your iPhone can't render yet.")
         XCTAssertTrue(isNonRetryableFailureCode(planUnsupported.lastAssistantErrorCode))
         XCTAssertNil(none.lastAssistantErrorContent)
+
+        // KRI-673: the server sends the failed card's headline; older events have none.
+        XCTAssertNil(planUnsupported.lastAssistantErrorTitle)
+        let timedOut = try thread(#"""
+        [{"id":"e1","sequence":1,"revision":1,"role":"assistant","event_type":"assistant_render_failed",
+          "content":"Our AI took too long to plan this edit, so your video wasn't made.",
+          "payload":{"code":"plan_ai_timeout","recovery":"retry","title":"Planning took too long"},
+          "created_at":"2026-09-07T11:00:00Z"}]
+        """#)
+        XCTAssertEqual(timedOut.lastAssistantErrorTitle, "Planning took too long")
+        XCTAssertFalse(isNonRetryableFailureCode(timedOut.lastAssistantErrorCode))
     }
 
     /// KRI-118 item 4: `strategy_invalid` (`app.services.creator_errors

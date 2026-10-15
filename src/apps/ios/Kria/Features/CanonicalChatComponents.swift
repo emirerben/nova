@@ -1017,7 +1017,7 @@ struct QuestionOptionButton: View {
 }
 
 struct FailedStage: View {
-    var title = "This cut needs another pass"
+    var title = "Your video wasn't made"
     var bodyText = "Your direction and footage are safe. Refresh the project or tell me what you want to change."
     var retryLabel = "Refresh project"
     var retry: (() -> Void)?

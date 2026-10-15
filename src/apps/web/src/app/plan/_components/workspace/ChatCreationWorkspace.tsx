@@ -41,7 +41,7 @@ import { creationLoadFailureCopy, type CreationLoadFailure } from "@/lib/creatio
 import { BeamLoader } from "@/components/progress";
 import { VoiceRecorder } from "@/app/generative/VoiceRecorder";
 import {
-  applyCreationAction, cancelKriaTurn, creationFormat, creationFormatLabel, creationJobFailed,
+  applyCreationAction, cancelKriaTurn, creationFormat, creationFormatLabel, creationJobFailed, latestRenderFailure,
   creationProjectDeletionReason, creationJobPartial, creationJobReady, creationJobSettled, creationPlanningFailed, creationThreadMediaCount, createCreationThread,
   CreationThreadError, decideKriaApproval, deleteCreationThread, getCreationCapabilities,
   getKriaApproval, getKriaDelta, getKriaDraft, listCreationThreads, refreshCreationThread,
@@ -463,8 +463,10 @@ function FailureStatusCard({
   onAdjust: () => void;
 }) {
   const directionFailure = planningFailure && !preparationFailure;
+  // KRI-673: a failed render says what failed, in the server's words, when it sent them.
+  const renderFailure = !directionFailure && !preparationFailure ? latestRenderFailure(thread) : null;
   return (
-    <ChatArtifactCard badge={<Badge variant="outline">{directionFailure ? "Direction needs attention" : preparationFailure ? "Clip preparation needs attention" : "Render needs attention"}</Badge>} title={directionFailure ? "Let’s refine the direction" : "Your project is safe"} description={failureDescription ?? (directionFailure ? "I couldn’t start this edit yet, but your direction, footage, and voiceover are still here." : "The render did not finish, but your direction and footage are still here.")}>
+    <ChatArtifactCard badge={<Badge variant="outline">{directionFailure ? "Direction needs attention" : preparationFailure ? "Clip preparation needs attention" : "Render needs attention"}</Badge>} title={directionFailure ? "Let’s refine the direction" : renderFailure?.title ?? "Your project is safe"} description={failureDescription ?? renderFailure?.message ?? (directionFailure ? "I couldn’t start this edit yet, but your direction, footage, and voiceover are still here." : "The render did not finish, but your direction and footage are still here.")}>
       <div className="flex flex-wrap gap-2">{onRetry ? <Button type="button" onClick={onRetry} disabled={busy || readOnly}><RefreshCw /> {retryLabel}</Button> : null}<Button type="button" variant="outline" onClick={onAdjust} disabled={readOnly}>Edit direction and try again</Button></div>
     </ChatArtifactCard>
   );

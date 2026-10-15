@@ -484,6 +484,23 @@ export function creationJobFailed(thread: CreationThread): boolean {
   ].includes(thread.job.status));
 }
 
+const RENDER_FAILED_EVENT_TYPES = new Set(["assistant_render_failed", "agent_assistant_render_failed"]);
+
+/** The server's own words for the latest failed render (KRI-673): a headline and the
+ * sentence saying what failed. Undefined fields fall back to the card's generic copy. */
+export function latestRenderFailure(thread: CreationThread): { title?: string; message?: string } | null {
+  for (let index = thread.events.length - 1; index >= 0; index -= 1) {
+    const event = thread.events[index];
+    if (!RENDER_FAILED_EVENT_TYPES.has(event.event_type)) continue;
+    const title = event.payload?.title;
+    return {
+      title: typeof title === "string" && title.trim() ? title.trim() : undefined,
+      message: event.content?.trim() || undefined,
+    };
+  }
+  return null;
+}
+
 export function creationJobPartial(thread: CreationThread): boolean {
   const variants = thread.job?.variants ?? [];
   return variants.some(creationVariantPlayable) && variants.some(creationVariantFailed);

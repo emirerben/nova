@@ -2720,15 +2720,23 @@ def _run_generative_job_impl(
                 # KRI-286: a capability the device has not verified yet is a rollout
                 # decision, not a plan defect -- it must stay retryable, so it gets its
                 # own code BEFORE the deterministic `phone_plan_unsupported` branch.
+                from app.agents._runtime import ProviderOutcomeUnknownError  # noqa: PLC0415
                 from app.services.creation_text_composition import (
                     CreationTextCompositionError,  # noqa: PLC0415
+                    CreationTextTimeoutError,  # noqa: PLC0415
                 )
                 from app.services.phone_rollout import (  # noqa: PLC0415
                     PhoneCapabilityUnavailable,
                 )
 
-                if isinstance(exc, CreationTextCompositionError):
+                if isinstance(exc, CreationTextTimeoutError):
+                    # KRI-673: the AI text pass timed out on both models. Distinct from
+                    # `creation_text_failed` (it answered, but unusably) so chat can say so.
+                    failure_reason = "creation_text_timeout"
+                elif isinstance(exc, CreationTextCompositionError):
                     failure_reason = "creation_text_failed"
+                elif isinstance(exc, ProviderOutcomeUnknownError):
+                    failure_reason = "plan_ai_timeout"
                 elif isinstance(exc, PhoneCapabilityUnavailable):
                     failure_reason = "phone_capability_unavailable"
                 elif isinstance(exc, SilentAudioPlanDeclined):
