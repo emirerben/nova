@@ -78,6 +78,13 @@ extension CreationThread {
     private static let assistantFailureEventTypes: Set<String> = [
         "assistant_error", "agent_assistant_error", "assistant_render_failed", "agent_assistant_render_failed",
     ]
+    /// The server's headline for the failed card (KRI-673), sent as `payload.title` on
+    /// `assistant_render_failed`. Nil on older events, which keep the card's default.
+    var lastAssistantErrorTitle: String? {
+        let title = events.last(where: { Self.assistantFailureEventTypes.contains($0.eventType) })?.payload?["title"]?.stringValue
+        guard let title, !title.isEmpty else { return nil }
+        return title
+    }
     var lastAssistantErrorCode: String? {
         events.last(where: { Self.assistantFailureEventTypes.contains($0.eventType) })?.payload?["code"]?.stringValue
     }

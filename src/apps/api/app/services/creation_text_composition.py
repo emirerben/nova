@@ -16,8 +16,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import structlog
+
 from app.agents._model_client import default_client
-from app.agents._runtime import RunContext
+from app.agents._runtime import ProviderOutcomeUnknownError, RunContext
 from app.agents._schemas.text_element import TextElement
 from app.agents.edit_copilot import (
     EditCopilotAgent,
@@ -29,6 +31,11 @@ from app.kria.brief import BriefRequirement
 from app.schemas.edit_proposal import EditProposalSnapshot
 from app.schemas.text_composition import TextCompositionProgram
 from app.services.kria_editor_ops import apply_text_lane_ops, is_caption_text_bar
+
+log = structlog.get_logger()
+
+# Same flash model `main_creator` / `brief_extractor` already fall back to.
+_FAST_COMPOSER_MODEL = "gemini-3.6-flash"
 
 _TEXT_OPS = frozenset(
     {
@@ -77,10 +84,14 @@ unmet. Their wording, look and timing are edited in the caption panel, not in th
 
 class CreationTextComposer(EditCopilotAgent):
     # This is background creation, not the latency-limited interactive route.
+    # KRI-673: the prompt carries one slot and one text bar per clip, so a 35-clip
+    # montage outran the old 90 s limit on the pro model (prod 2026-10-15). The render
+    # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
         prompt_version="v5-confirmed-creation-copy-brief",
-        timeout_s=90.0,
+        timeout_s=180.0,
+        fallback_models=(_FAST_COMPOSER_MODEL,),
     )
 
     def render_prompt(self, input: EditCopilotInput) -> str:
@@ -134,6 +145,33 @@ class CreationTextComposer(EditCopilotAgent):
 
 class CreationTextCompositionError(ValueError):
     pass
+
+
+class CreationTextTimeoutError(CreationTextCompositionError):
+    """The text pass timed out on the pro model and again on the fast fallback.
+
+    Never swallowed into "no text": the creator asked for it, so the job fails with a
+    specific code (`creation_text_timeout`) instead of silently dropping their wording.
+    """
+
+    def __init__(self, message: str, *, slot_count: int = 0) -> None:
+        super().__init__(message)
+        self.slot_count = slot_count
+
+
+class CreationTextComposerFast(CreationTextComposer):
+    """Same prompt, parser and compiler on the flash model with low thinking.
+
+    Used only after the pro composer's provider outcome is unknown (timed out).
+    """
+
+    spec = replace(
+        CreationTextComposer.spec,
+        model=_FAST_COMPOSER_MODEL,
+        fallback_models=(),
+        timeout_s=90.0,
+        thinking_level="low",
+    )
 
 
 def _lanes(plan: dict) -> tuple[list[dict], list[dict]]:
@@ -466,10 +504,29 @@ def compose_creation_text(
             if req.live and (req.kind in {"text", "style"} or req.scope == "title")
         ]
     # The complete request remains data; the composer adds server instructions.
-    output = CreationTextComposer(default_client()).run(
-        EditCopilotInput(utterance=creator_request, variant_snapshot=model_snapshot),
-        ctx=ctx,
-    )
+    composer_input = EditCopilotInput(utterance=creator_request, variant_snapshot=model_snapshot)
+    try:
+        output = CreationTextComposer(default_client()).run(composer_input, ctx=ctx)
+    except ProviderOutcomeUnknownError:
+        # KRI-673: the pro call may still be running, so it is never retried on the same
+        # model. A second, separate reservation on the flash model is safe and bounded.
+        log.warning(
+            "creation_text_composer_fallback",
+            slot_count=len(slots),
+            bar_count=len(model_texts),
+            job_id=getattr(ctx, "job_id", None),
+        )
+        fast_ctx = (
+            replace(ctx, request_id=f"{ctx.request_id}:fast" if ctx.request_id else None)
+            if ctx is not None
+            else None
+        )
+        try:
+            output = CreationTextComposerFast(default_client()).run(composer_input, ctx=fast_ctx)
+        except ProviderOutcomeUnknownError as exc:
+            raise CreationTextTimeoutError(
+                f"Text composition timed out for {len(slots)} clips", slot_count=len(slots)
+            ) from exc
     if (
         output.needs_clarification
         or output.unmet_requests

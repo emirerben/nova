@@ -472,6 +472,65 @@ def test_creation_model_sees_complete_long_title_and_currency(monkeypatch):
     assert title in seen[0]
 
 
+def test_pro_composer_timeout_falls_back_to_the_fast_composer(monkeypatch):
+    """KRI-673: a 35-clip montage outran the pro model's limit; flash finishes the text."""
+    from app.agents._runtime import ProviderOutcomeUnknownError, RunContext
+    from app.services.creation_text_composition import (
+        CreationTextComposer,
+        CreationTextComposerFast,
+        compose_creation_text,
+    )
+
+    plan = base_plan()
+    calls: list[tuple[str, str | None]] = []
+
+    def pro(self, input, *, ctx=None):
+        calls.append((self.spec.model, ctx.request_id))
+        raise ProviderOutcomeUnknownError("gemini provider outcome unknown after 180.0s")
+
+    def fast(self, input, *, ctx=None):
+        calls.append((self.spec.model, ctx.request_id))
+        return self.parse(
+            json.dumps(
+                {"intent": "describe", "confidence": 1.0, "reply": "Already satisfied", "ops": []}
+            ),
+            input,
+        )
+
+    monkeypatch.setattr(CreationTextComposer, "run", pro)
+    monkeypatch.setattr(CreationTextComposerFast, "run", fast)
+    compose_creation_text(
+        plan.snapshot,
+        creator_request="Keep the title unchanged.",
+        ctx=RunContext(job_id="job-1", request_id="creation-text:g1"),
+    )
+    assert calls == [
+        (CreationTextComposer.spec.model, "creation-text:g1"),
+        ("gemini-3.6-flash", "creation-text:g1:fast"),
+    ]
+
+
+def test_both_composers_timing_out_is_a_typed_timeout_never_dropped_text(monkeypatch):
+    from app.agents._runtime import ProviderOutcomeUnknownError
+    from app.services.creation_text_composition import (
+        CreationTextComposer,
+        CreationTextComposerFast,
+        CreationTextTimeoutError,
+        compose_creation_text,
+    )
+
+    plan = base_plan()
+
+    def timeout(self, input, *, ctx=None):
+        raise ProviderOutcomeUnknownError("gemini provider outcome unknown after 90.0s")
+
+    monkeypatch.setattr(CreationTextComposer, "run", timeout)
+    monkeypatch.setattr(CreationTextComposerFast, "run", timeout)
+    with pytest.raises(CreationTextTimeoutError) as caught:
+        compose_creation_text(plan.snapshot, creator_request="Add a chapter title per clip.")
+    assert caught.value.slot_count >= 1
+
+
 def test_catalog_music_does_not_retime_persisted_text_composition(monkeypatch):
     from app.pipeline.guided_story import compile_execution_plan
 

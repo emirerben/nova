@@ -4507,8 +4507,18 @@ _JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
         "Bu düzenleme için gereken bir iPhone özelliği henüz kullanılamıyor. Daha sonra tekrar "
         "dene ya da farklı bir stil iste."
     ),
+    "creation_text_timeout": (
+        "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden "
+        "uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Tekrar "
+        "dene; yine olursa daha az klip kullan ya da daha az yazı iste."
+    ),
+    "plan_ai_timeout": (
+        "Yapay zekâ bu düzenlemeyi planlarken çok uzun sürdü, bu yüzden videon oluşturulmadı. "
+        "Düzenlemen ve çekimlerin kayıtlı. Birazdan tekrar dene."
+    ),
     "phone_plan_failed": (
-        "Bu düzenleme iPhone'unda oluşturulamadı. Tekrar dene ya da yönde bir değişiklik iste."
+        "Bu düzenleme planlanırken bir şey bozuldu, bu yüzden videon oluşturulmadı. "
+        "Düzenlemen ve çekimlerin kayıtlı. Tekrar dene ya da bir değişiklik iste."
     ),
     "originals_not_uploaded": (
         "Orijinal çekimlerin yüklenmedi, bu yüzden iPhone'unda oluşturulamıyor. Kliplerini "
@@ -4562,6 +4572,29 @@ _JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
 _JOB_FAILURE_DEFAULT_TR = (
     "Bir şeyler ters gitti ve bu video tamamlanmadı. Yönün ve çekimlerin hâlâ kayıtlı; tekrar dene."
 )
+
+
+# KRI-673: the failed card's headline, sent with the event so the client never has to
+# invent one ("This cut needs another pass" said nothing about what happened).
+_FAILURE_TITLES: dict[str, tuple[str, str]] = {
+    "creation_text_timeout": ("Planning took too long", "Planlama çok uzun sürdü"),
+    "plan_ai_timeout": ("Planning took too long", "Planlama çok uzun sürdü"),
+    "creation_text_failed": ("The text couldn't be added", "Yazılar eklenemedi"),
+}
+_FAILURE_TITLE_DEVICE = (
+    "Your iPhone couldn't finish the video",
+    "iPhone'un videoyu tamamlayamadı",
+)
+_FAILURE_TITLE_DEFAULT = ("Your video wasn't made", "Videon oluşturulmadı")
+
+
+def _failure_title(failure_code: str | None, *, device_failed: bool = False) -> str:
+    en, tr = (
+        _FAILURE_TITLE_DEVICE
+        if device_failed
+        else _FAILURE_TITLES.get(failure_code or "", _FAILURE_TITLE_DEFAULT)
+    )
+    return say(en=en, tr=tr)
 
 
 def _job_failure_copy(failure_code: str | None, detail: str | None) -> str | None:
@@ -4945,7 +4978,10 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         turn.error = execution.error
         session.status = "awaiting_feedback"
         session.last_error = execution.error
-        from app.tasks.content_plan_build import CREATOR_FACING_DETAIL_CODES  # noqa: PLC0415
+        from app.tasks.content_plan_build import (  # noqa: PLC0415
+            CREATOR_FACING_DETAIL_CODES,
+            JOB_FAILURE_MESSAGES,
+        )
 
         recovery_receipts: list[dict[str, Any]] = []
         recovery_message: str | None = None
@@ -5034,9 +5070,12 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             "phone_capability_unavailable",
             "creation_text_failed",
             *CREATOR_FACING_DETAIL_CODES,
+            *JOB_FAILURE_MESSAGES,
         }:
             # Retryable, but the generic "didn't finish" copy would hide WHY (KRI-286).
             # Creator-facing codes (KRI-466) show the job's own actionable detail.
+            # KRI-673: every code with a table sentence says why; the generic line is
+            # only for codes nothing has words for.
             failure_content = _job_failure_copy(failure_code, getattr(job, "error_detail", None))
         else:
             failure_content = say(
@@ -5076,6 +5115,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "status": "failed",
                 "code": failure_code,
                 "recovery": recovery,
+                "title": _failure_title(failure_code, device_failed=device_failed),
                 **({"choice_question": title_question} if title_question else {}),
                 "receipt_ids": [str(execution.id)],
                 **(
