@@ -517,6 +517,10 @@ class CreatorDirectionService:
     async def _user(self, db: AsyncSession, user_id: uuid.UUID, *, lock: bool = False) -> User:
         stmt = select(User).where(User.id == user_id)
         if lock:
+            # A consent/revision loaded before this lock may have changed while
+            # waiting. Read the database's current owner state under the fence.
+            stmt = stmt.execution_options(populate_existing=True)
+        if lock:
             stmt = stmt.with_for_update()
         row = (await db.execute(stmt)).scalar_one_or_none()
         if row is None:
@@ -557,7 +561,7 @@ class CreatorDirectionService:
             item_id=item.id,
             prior_state=None,
             resulting_revision=user.creator_memory_revision,
-            actor_kind="system" if source_kind == "creation_thread" else "user",
+            actor_kind="system" if source_kind in {"creation_thread", "finished_edits"} else "user",
             source_event_id=source_event_id,
         )
         db.add(operation)
@@ -742,7 +746,7 @@ class CreatorDirectionService:
             item_id=item.id,
             prior_state={"created": True},
             resulting_revision=user.creator_memory_revision,
-            actor_kind="system" if source_kind == "creation_thread" else "user",
+            actor_kind="system" if source_kind in {"creation_thread", "finished_edits"} else "user",
             source_event_id=source_event_id,
             undo_expires_at=datetime.now(UTC) + UNDO_TTL if initial_state == "active" else None,
         )
@@ -894,6 +898,42 @@ class CreatorDirectionService:
                     )
                 )
             ).scalar_one_or_none()
+            if item.source_kind == "finished_edits":
+                from app.schemas.phone_text_style import TextStyleRule, effective_text_rule
+
+                role = item.normalized_key.removeprefix("text_style_")
+                proposed = (item.structured_value or {}).get(item.normalized_key, {})
+                previous = (
+                    (conflict.structured_value or {}).get(item.normalized_key, {})
+                    if conflict
+                    else {}
+                )
+                prior["structured_value"] = item.structured_value
+                # Approval changes only the displayed property. Keep all other
+                # confirmed choices, including explicit zero and false.
+                merged = effective_text_rule({role: previous}, {role: proposed}, role)
+                for prop, opposite in (
+                    ("favorite_fonts", "excluded_fonts"),
+                    ("excluded_fonts", "favorite_fonts"),
+                ):
+                    if prop in proposed:
+                        merged[prop] = list(
+                            dict.fromkeys([*(previous.get(prop) or []), *proposed[prop]])
+                        )
+                        merged[opposite] = [
+                            font
+                            for font in previous.get(opposite, [])
+                            if font not in proposed[prop]
+                        ]
+                if (
+                    "excluded_fonts" in proposed
+                    and previous.get("font_family") in proposed["excluded_fonts"]
+                ):
+                    merged.pop("font_family", None)
+                    merged["automatic_font"] = True
+                item.structured_value = {
+                    item.normalized_key: TextStyleRule.model_validate(merged).values()
+                }
             if conflict:
                 prior["_superseded_item_id"] = str(conflict.id)
                 prior["_superseded_state"] = conflict.state
@@ -1040,6 +1080,10 @@ class CreatorDirectionService:
             item.normalized_key,
             item.structured_value,
         ) = instruction, category, enforcement, normalized_key, structured_value
+        if item.source_kind == "finished_edits":
+            # Explicit owner editing replaces the inferred provenance.
+            item.source_kind = "profile"
+            item.evidence = None
         item.content_hash = _hash(instruction) if not normalized_key else None
         item.user_locked = True
         item.state = "active"

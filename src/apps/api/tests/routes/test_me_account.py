@@ -72,7 +72,9 @@ def _db(execute_results: list) -> AsyncMock:
         # Creator memory is an additive privacy surface. Keep the existing
         # account-flow fixtures focused on their historical query sequence;
         # dedicated memory tests cover the new tables themselves.
-        if "creator_memory_" in str(statement):
+        if "creator_memory_" in str(statement) or "creator_style_learning_projects" in str(
+            statement
+        ):
             return _scalars([])
         # KRI-55 adds lifecycle serialization and an Apple identity snapshot;
         # legacy fixtures have no Apple identities and retain their original
@@ -287,7 +289,7 @@ async def test_valid_apple_proof_persists_encrypted_outbox_before_commit_and_dis
             return _scalars([])
         if "oauth_tokens" in sql:
             return _scalars([])
-        if "creator_memory_" in sql:
+        if "creator_memory_" in sql or "creator_style_learning_projects" in sql:
             return _scalars([])
         return MagicMock()
 

@@ -2855,6 +2855,43 @@ class ExportResponse(BaseModel):
     note: str
 
 
+async def _export_style_learning(db: AsyncSession, user: User) -> dict:
+    from app.models import CreatorStyleLearningProject
+
+    rows = list(
+        (
+            await db.execute(
+                select(CreatorStyleLearningProject)
+                .where(CreatorStyleLearningProject.user_id == user.id)
+                .order_by(
+                    CreatorStyleLearningProject.finished_at.desc().nulls_last(),
+                    CreatorStyleLearningProject.id,
+                )
+                .limit(501)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "enabled": bool(getattr(user, "creator_edit_learning_enabled", False)),
+        "evidence_version": 1,
+        "history_truncated": len(rows) > 500,
+        "projects": [
+            {
+                "project_id": str(row.plan_item_id),
+                "job_id": str(row.job_id) if row.job_id else None,
+                "variant_id": row.variant_id,
+                "pending_changes": row.pending_changes,
+                "finished_changes": row.finished_changes,
+                "published_recipe_digest": row.published_recipe_digest,
+                "finished_at": row.finished_at.isoformat() if row.finished_at else None,
+            }
+            for row in rows[:500]
+        ],
+    }
+
+
 @router.get("/export", response_model=ExportResponse)
 async def export_my_data(
     user: CurrentUser,
@@ -3092,6 +3129,7 @@ async def export_my_data(
             for t in tiktok_rows
         ],
         creator_memory={
+            "edit_learning": await _export_style_learning(db, user),
             "items": [
                 {
                     "id": str(row.id),
@@ -3101,6 +3139,7 @@ async def export_my_data(
                     "enforcement": row.enforcement,
                     "structured_value": row.structured_value,
                     "source_kind": row.source_kind,
+                    "evidence": row.evidence,
                     "state": row.state,
                     "user_locked": row.user_locked,
                     "created_at": row.created_at.isoformat(),

@@ -402,6 +402,8 @@ private struct CreationWorkspaceView: View {
     @State private var uploadAnchors: [UUID: ChatPendingUpload] = [:]
     @State private var nextLocalOrder = 0
     @State private var scrollRequest = 0
+    @State private var finishedEditSuggestionUpdate = 0
+    @State private var finishedEditSuggestionRefresh = 0
     @State private var hasHistoryBaseline = false
     @StateObject private var responsePresentation = ChatResponsePresentation()
     @Environment(\.scenePhase) private var scenePhase
@@ -794,6 +796,7 @@ private struct CreationWorkspaceView: View {
         return timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
             + "|feed\(feed.decidedCount)/\(feed.totalCount)"
             + "|thoughts\(liveThoughtToken)"
+            + "|finishedEdits\(finishedEditSuggestionUpdate)"
     }
 
     private var streamingThoughtSummaries: [KriaThoughtSummary] {
@@ -812,6 +815,11 @@ private struct CreationWorkspaceView: View {
             } else {
                 timelineRow(group.entries[0])
                     .transition(Self.rowTransition(for: group.entries[0], reduceMotion: reduceMotion))
+            }
+        }
+        if currentProject.status == .ready {
+            FinishedEditSuggestionsView(api: model.api, refreshToken: "\(currentProject.serverRevision):\(finishedEditSuggestionRefresh)") {
+                finishedEditSuggestionUpdate += 1
             }
         }
         if (isThinking || isSending) && workspaceStage != .rendering {
@@ -1037,6 +1045,9 @@ private struct CreationWorkspaceView: View {
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { showsResult = false }
+        // A completed device export updates the job without necessarily
+        // advancing the chat revision. Re-read proposals on return.
+        finishedEditSuggestionRefresh += 1
     }
 
     private func openAttachments() {

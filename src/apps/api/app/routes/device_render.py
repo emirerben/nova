@@ -998,5 +998,8 @@ async def complete_device_export(
         if outcome is not None:
             job.assembly_plan = {**assembly, "speech_cleanup_outcome": outcome}
     cleanup.status = "attached"
+    from app.services.finished_style_learning import record_finished_style_edit
+
+    await record_finished_style_edit(db, user_id, job, body.identity.variant_id, status)
     await db.commit()
     return DeviceExportCompleteOut(identity=body.identity)

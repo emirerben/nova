@@ -66,6 +66,55 @@ import XCTest
         XCTAssertFalse(app.staticTexts["Saved for future videos."].exists)
     }
 
+    func testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference() {
+        let app = launch(mode: "text-preferences-learning")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        let learn = app.switches["text-learning-enabled"]
+        reveal(learn, app: app)
+        XCTAssertEqual(learn.value as? String, "0")
+        learn.switches.firstMatch.tap()
+        let count = app.staticTexts["Based on 3 finished videos"]
+        reveal(count, app: app)
+        let accept = app.buttons["text-learning-accept-learning-position"]
+        reveal(accept, app: app); accept.tap()
+        XCTAssertFalse(app.buttons["text-learning-accept-learning-position"].exists)
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["account-text-preferences"].tap()
+        reveal(learn, app: app)
+        XCTAssertEqual(learn.value as? String, "1")
+        learn.switches.firstMatch.tap()
+        XCTAssertEqual(learn.value as? String, "0")
+        XCTAssertFalse(app.staticTexts["Based on 3 finished videos"].exists)
+        let role = app.buttons["text-preference-role"]
+        reveal(role, app: app); role.tap(); app.buttons["Title"].tap()
+        let placement = app.buttons["text-preference-placement"]
+        reveal(placement, app: app)
+        XCTAssertTrue(placement.label.contains("Top Left"))
+        let shadow = app.buttons["text-preference-shadow"]
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.label.contains("Off"))
+    }
+
+    func testFinishedEditLearningDismissAndResetHistory() {
+        let app = launch(mode: "text-preferences-learning")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        let learn = app.switches["text-learning-enabled"]
+        reveal(learn, app: app); learn.switches.firstMatch.tap()
+        let dismiss = app.buttons["text-learning-dismiss-learning-position"]
+        reveal(dismiss, app: app); dismiss.tap()
+        XCTAssertFalse(dismiss.exists)
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["account-text-preferences"].tap()
+        XCTAssertFalse(dismiss.exists)
+        let reset = app.buttons["text-learning-reset"]
+        reveal(reset, app: app); reset.tap()
+        XCTAssertTrue(app.staticTexts["Learning history reset."].waitForExistence(timeout: 5))
+    }
+
     func testAIConsentRequiresExplicitChoiceAndDeclineReturnsToSignInAtLargeText() {
         let app = launch(largeText: true)
         XCTAssertTrue(app.staticTexts["Choose how you create."].waitForExistence(timeout: 5))

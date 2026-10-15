@@ -118,6 +118,12 @@ class User(Base):
     creator_memory_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
+    creator_edit_learning_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    creator_edit_learning_epoch: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="0"
+    )
     creator_memory_revision: Mapped[int] = mapped_column(
         BigInteger, nullable=False, server_default="0"
     )
@@ -1162,6 +1168,7 @@ class CreatorMemoryItem(Base):
         ForeignKey("creation_thread_events.id", ondelete="SET NULL"),
         nullable=True,
     )
+    evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     state: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
     user_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
@@ -1183,7 +1190,8 @@ class CreatorMemoryItem(Base):
             name="ck_creator_memory_enforcement",
         ),
         CheckConstraint(
-            "source_kind IN ('profile','creation_thread')", name="ck_creator_memory_source_kind"
+            "source_kind IN ('profile','creation_thread','finished_edits')",
+            name="ck_creator_memory_source_kind",
         ),
         CheckConstraint(
             "state IN ('active','suggested','dismissed','superseded','forgotten')",
@@ -1197,6 +1205,12 @@ class CreatorMemoryItem(Base):
             "user_id",
             "state",
             text("updated_at DESC"),
+        ),
+        Index(
+            "idx_creator_memory_finished_signature",
+            "user_id",
+            text("(evidence ->> 'signature')"),
+            postgresql_where=text("source_kind = 'finished_edits'"),
         ),
         Index("idx_creator_memory_items_source_event", "source_event_id"),
         Index("idx_creator_memory_items_source_thread", "source_thread_id"),
@@ -1215,6 +1229,39 @@ class CreatorMemoryItem(Base):
             "content_hash",
             unique=True,
             postgresql_where=text("content_hash IS NOT NULL AND state IN ('active','suggested')"),
+        ),
+    )
+
+
+class CreatorStyleLearningProject(Base):
+    """One consented, normalized style vote per project; no text or media."""
+
+    __tablename__ = "creator_style_learning_projects"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    evidence_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    consent_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    variant_id: Mapped[str] = mapped_column(Text, nullable=False)
+    pending_recipe_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    pending_changes: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    finished_changes: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    published_recipe_digest: Mapped[str | None] = mapped_column(Text, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    __table_args__ = (
+        UniqueConstraint("user_id", "plan_item_id", name="uq_style_learning_owner_project"),
+        Index("idx_style_learning_owner_finished", "user_id", text("finished_at DESC")),
+        Index("idx_style_learning_project", "plan_item_id"),
+        Index("idx_style_learning_job", "job_id"),
+        CheckConstraint(
+            "evidence_version = 1 AND consent_epoch >= 0", name="ck_style_learning_version"
         ),
     )
 

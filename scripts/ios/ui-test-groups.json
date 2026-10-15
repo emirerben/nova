@@ -106,7 +106,10 @@
       "KriaUITests/TeleprompterUITests/testWindowBackgroundAndDimensionsSurviveReopening",
       "KriaUITests/TeleprompterUITests/testWindowHandlesDoNotPauseOrScrollTheScript",
       "KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen",
-      "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload"
+      "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload",
+      "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference",
+      "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
+      "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
