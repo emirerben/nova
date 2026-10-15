@@ -91,7 +91,8 @@ def _required_ids(input: EditProposalAgentInput) -> list[str]:
         else list(input.selected_media_ids or [])
     )
     for intent in input.clip_intents or []:
-        if intent.status == "resolved":
+        # KRI-667: an exclude names clips to leave OUT; requiring them would force them in.
+        if intent.status == "resolved" and intent.op != "exclude":
             ids.extend(assignment.media_id for assignment in intent.assignments)
     if input.montage_audio is not None:
         ids.extend(input.montage_audio.source_media_ids)

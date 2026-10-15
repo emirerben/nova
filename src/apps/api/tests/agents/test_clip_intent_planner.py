@@ -1285,9 +1285,16 @@ _CAPPADOCIA_REQUEST = (
 )
 
 
-def _cappadocia_input(request: str = _CAPPADOCIA_REQUEST) -> ClipIntentPlannerInput:
+def _cappadocia_input(
+    request: str = _CAPPADOCIA_REQUEST, *, exclusions: bool = False
+) -> ClipIntentPlannerInput:
+    # `exclusions` = CLIP_INTENT_EXCLUDE_ENABLED (KRI-667). The KRI-511 cases below run
+    # with it off: they pin the flag-off behaviour, which must stay exactly as it was.
     return ClipIntentPlannerInput(
-        creator_request=request, latest_user_message=request, clip_facts=True
+        creator_request=request,
+        latest_user_message=request,
+        clip_facts=True,
+        clip_exclusions=exclusions,
     )
 
 
@@ -1303,8 +1310,13 @@ _SUNSET_LAST = _games_intent(
 )
 
 
-def test_kri511_prod_shape_keeps_both_orders_and_drops_the_skip_silently() -> None:
-    # The live capture that reproduced the prod reply (drop_classes op + order_by).
+@pytest.mark.parametrize("exclusions", [False, True])
+def test_kri511_prod_shape_keeps_both_orders_and_the_skip_only_as_an_exclude(
+    exclusions: bool,
+) -> None:
+    # The live capture that reproduced the prod reply (drop_classes op + order_by). Flag
+    # off (KRI-511): the invented `exclude` is dropped silently. Flag on (KRI-667): it is
+    # the real op, kept, and the creator is still never asked anything.
     raw = json.dumps(
         {
             "intents": [
@@ -1317,14 +1329,15 @@ def test_kri511_prod_shape_keeps_both_orders_and_drops_the_skip_silently() -> No
             "question": None,
         }
     )
-    out = _agent().parse(raw, _cappadocia_input())
+    out = _agent().parse(raw, _cappadocia_input(exclusions=exclusions))
     assert [(i.op, i.attribute, i.position, i.order_by) for i in out.intents] == [
         ("order", "balloons", None, None),
         ("order", "sunset valley", "last", None),
+        *([("exclude", "quad bike clip", None, None)] if exclusions else []),
     ]
     assert out.salvage_question is None
     assert out.salvage_reasons == []
-    assert out.silent_drops == {"exclusion_dropped": 1}
+    assert out.silent_drops == ({} if exclusions else {"exclusion_dropped": 1})
 
 
 @pytest.mark.parametrize(
@@ -1341,6 +1354,8 @@ def test_kri511_prod_shape_keeps_both_orders_and_drops_the_skip_silently() -> No
 def test_kri511_include_minted_from_a_skip_is_dropped_never_inverted(
     request_text: str, quote: str
 ) -> None:
+    # Flag off: the include is dropped (it would force the clip IN). Flag on, see
+    # test_kri667_include_minted_from_a_skip_is_repaired_into_an_exclude.
     raw = json.dumps(
         {
             "intents": [_games_intent("skip", "include", "quad bike clip", quote)],
@@ -1355,6 +1370,7 @@ def test_kri511_include_minted_from_a_skip_is_dropped_never_inverted(
 
 @pytest.mark.parametrize("op", ["exclude", "Skip", "remove", "omit", "drop"])
 def test_kri511_invented_exclusion_op_is_silent_even_with_a_garbled_quote(op: str) -> None:
+    # Flag off. Flag on keeps a well-quoted one as `exclude` (see the KRI-667 cases).
     raw = json.dumps(
         {
             "intents": [
@@ -1385,11 +1401,18 @@ def test_kri511_invented_exclusion_op_is_silent_even_with_a_garbled_quote(op: st
         ("Use every uploaded file.", "every uploaded file", "Use every uploaded file"),
     ],
 )
-def test_kri511_real_include_asks_are_kept(request_text: str, attribute: str, quote: str) -> None:
+@pytest.mark.parametrize("exclusions", [False, True])
+def test_kri511_real_include_asks_are_kept(
+    request_text: str, attribute: str, quote: str, exclusions: bool
+) -> None:
+    # KRI-667: with exclusions on, an ask to USE clips is never read as one to skip them,
+    # even when it is worded around what it leaves out.
     raw = json.dumps(
         {"intents": [_games_intent("keep", "include", attribute, quote)], "question": None}
     )
-    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request_text))
+    out = _agent().parse(
+        raw, ClipIntentPlannerInput(creator_request=request_text, clip_exclusions=exclusions)
+    )
     assert [i.op for i in out.intents] == ["include"]
     assert out.silent_drops == {}
 
@@ -1553,13 +1576,318 @@ def test_kri511_real_labels_beside_captions_are_kept(
 
 
 def test_kri511_prompt_teaches_exclusions_narration_order_and_caption_text() -> None:
+    # Flag off (KRI-667 off): the KRI-511 "no intent for an exclusion" prompt, unchanged.
     prompt = " ".join(_agent().render_prompt(_cappadocia_input()).split())
+    assert "Never invent an op such as `exclude`" in prompt
+    assert "- exclude:" not in prompt
+    assert "caption|exclude" not in prompt
     assert "No other op exists." in prompt
     assert "Never write it as `include`" in prompt
     assert "Skip the quad bike clip" in prompt
     assert "show the balloons while I talk about the balloons" in prompt
     assert "A list of names to spell is never a request to label clips" in prompt
     assert 'never the string "null"' in prompt
+
+
+# ── KRI-667: `exclude` is a real op (CLIP_INTENT_EXCLUDE_ENABLED) ───────────────────
+# Ways this could go wrong, written before the code: an exclusion still lost or still
+# turned into a question; an ask to USE clips ("the gym has to be in", "the remaining
+# clips (excluding the talk video)") read as one to skip them; an include beside a
+# skip ("Skip the laundry, but the gym has to be in") repaired into excluding the gym;
+# a text/sound removal ("Remove the sport labels") turned into removing the sport
+# clips; an unverified (garbled) exclusion kept, so footage is removed on a quote the
+# creator never wrote; "skip the clips" (no particular clip) kept.
+
+
+def _parse_exclusions(request: str, *intents: dict) -> object:
+    raw = json.dumps({"intents": list(intents), "question": None}, ensure_ascii=False)
+    return _agent().parse(raw, _cappadocia_input(request, exclusions=True))
+
+
+@pytest.mark.parametrize(
+    ("request_text", "attribute", "quote"),
+    [
+        (_CAPPADOCIA_REQUEST, "quad bike clip", "Skip the quad bike clip"),
+        (
+            "Make a montage and leave the quad bike clip out.",
+            "quad bike clip",
+            "leave the quad bike clip out",
+        ),
+        ("Fun edit. Don't use the blurry ones.", "blurry ones", "Don't use the blurry ones"),
+        ("Fun edit, but without the drone shot.", "drone shot", "but without the drone shot"),
+        ("Remove the selfie clip please.", "selfie clip", "Remove the selfie clip"),
+        ("Quad klibini kullanma.", "quad klibi", "Quad klibini kullanma"),
+        ("Çamaşır videosunu gösterme.", "çamaşır", "Çamaşır videosunu gösterme"),
+    ],
+)
+def test_kri667_include_minted_from_a_skip_is_repaired_into_an_exclude(
+    request_text: str, attribute: str, quote: str
+) -> None:
+    out = _parse_exclusions(request_text, _games_intent("skip", "include", attribute, quote))
+    assert [(i.op, i.attribute) for i in out.intents] == [("exclude", attribute)]
+    assert out.salvage_question is None
+    assert out.silent_drops == {"exclusion_repaired": 1}
+
+
+@pytest.mark.parametrize(
+    ("request_text", "op", "attribute", "quote"),
+    [
+        # The gym is what the creator wants IN; only the laundry is skipped.
+        (
+            "Skip the laundry, but the gym has to be in.",
+            "include",
+            "gym",
+            "Skip the laundry, but the gym has to be in",
+        ),
+        (
+            "Skip the laundry, but the gym has to be in.",
+            "exclude",
+            "gym",
+            "Skip the laundry, but the gym has to be in",
+        ),
+        (
+            "Don't use the drone shot, use the beach ones.",
+            "include",
+            "beach ones",
+            "Don't use the drone shot, use the beach ones",
+        ),
+        ("Skip the laundry and use the gym.", "include", "gym", "Skip the laundry and use the gym"),
+        (
+            "Spor salonu kalsın ama çamaşır klibini kullanma.",
+            "include",
+            "spor salonu",
+            "Spor salonu kalsın ama çamaşır klibini kullanma",
+        ),
+        (
+            "Spor salonu kalsın ama çamaşır klibini kullanma.",
+            "exclude",
+            "spor salonu",
+            "Spor salonu kalsın ama çamaşır klibini kullanma",
+        ),
+        # The quote skips something else entirely.
+        (
+            "Fun edit. Don't use the blurry ones.",
+            "include",
+            "quad bike clip",
+            "Don't use the blurry ones",
+        ),
+    ],
+)
+def test_kri667_a_clip_beside_a_skip_is_never_excluded(
+    request_text: str, op: str, attribute: str, quote: str
+) -> None:
+    out = _parse_exclusions(request_text, _games_intent("x", op, attribute, quote))
+    assert out.intents == []
+    assert out.salvage_question is None
+    assert out.silent_drops == {"exclusion_dropped": 1}
+
+
+def test_kri667_skip_the_laundry_but_the_gym_has_to_be_in() -> None:
+    request = "Skip the laundry, but the gym has to be in."
+    out = _parse_exclusions(
+        request,
+        _games_intent("skip", "exclude", "laundry", "Skip the laundry"),
+        _games_intent("gym", "include", "gym", "the gym has to be in"),
+    )
+    assert [(i.op, i.attribute) for i in out.intents] == [
+        ("exclude", "laundry"),
+        ("include", "gym"),
+    ]
+    assert out.silent_drops == {}
+
+
+@pytest.mark.parametrize(
+    "op", ["exclude", "Skip", "remove", "omit", "drop", "skip_clip", "exclude-videos"]
+)
+def test_kri667_exclusion_op_and_its_synonyms_are_the_exclude_op(op: str) -> None:
+    out = _parse_exclusions(
+        _CAPPADOCIA_REQUEST,
+        _BALLOONS,
+        _games_intent("x", op, "the quad bike", "Skip the quad bike clip"),
+    )
+    assert [(i.op, i.attribute) for i in out.intents] == [
+        ("order", "balloons"),
+        ("exclude", "the quad bike"),
+    ]
+    assert out.salvage_question is None
+
+
+def test_kri667_an_unverified_exclusion_is_dropped_silently_never_kept_or_asked() -> None:
+    # "skip quad bikes entirely" is not the creator's text: removing footage on it would
+    # act on words nobody wrote, and asking would make the creator restate a skip.
+    out = _parse_exclusions(
+        _CAPPADOCIA_REQUEST,
+        _BALLOONS,
+        _games_intent("x", "exclude", "the quad bike", "skip quad bikes entirely"),
+    )
+    assert [i.intent_id for i in out.intents] == ["balloons"]
+    assert out.salvage_question is None
+    assert out.silent_drops == {"exclusion_dropped": 1}
+
+
+def test_kri667_exclude_shape_is_repaired_never_printed_or_placed() -> None:
+    out = _parse_exclusions(
+        "Skip the quad bike clip.",
+        _games_intent(
+            "x",
+            "exclude",
+            "quad bike clip",
+            "Skip the quad bike clip",
+            creator_text="quad bike",
+            caption_attribute="quad",
+            position="last",
+            order_by="null",
+        ),
+    )
+    [intent] = out.intents
+    assert (intent.op, intent.creator_text, intent.caption_attribute, intent.position) == (
+        "exclude",
+        None,
+        None,
+        None,
+    )
+    assert intent.order_by is None
+
+
+@pytest.mark.parametrize(
+    ("request_text", "op", "attribute", "quote", "reason"),
+    [
+        (
+            "Remove the sport labels.",
+            "exclude",
+            "sport labels",
+            "Remove the sport labels",
+            "non_clip_exclusion_dropped",
+        ),
+        (
+            "Remove the sport labels.",
+            "remove",
+            "sport",
+            "Remove the sport labels",
+            "non_clip_exclusion_dropped",
+        ),
+        (
+            "Remove the sport labels.",
+            "include",
+            "sport",
+            "Remove the sport labels",
+            "non_clip_exclusion_dropped",
+        ),
+        (
+            "Skip the title card.",
+            "exclude",
+            "title card",
+            "Skip the title card",
+            "non_clip_exclusion_dropped",
+        ),
+        (
+            "No music on the beach clips.",
+            "exclude",
+            "beach clips",
+            "No music on the beach clips",
+            "non_clip_exclusion_dropped",
+        ),
+        (
+            "Etiketleri kaldır, müziği çıkar.",
+            "exclude",
+            "müzik",
+            "müziği çıkar",
+            "non_clip_exclusion_dropped",
+        ),
+        (
+            "I don't want subtitles.",
+            "exclude",
+            "subtitles",
+            "I don't want subtitles",
+            "non_clip_exclusion_dropped",
+        ),
+        # Names no particular clip: removing "the clips" would remove everything.
+        ("Skip the clips.", "exclude", "clips", "Skip the clips", "exclusion_dropped"),
+    ],
+)
+def test_kri667_a_text_or_sound_removal_is_never_a_clip_exclusion(
+    request_text: str, op: str, attribute: str, quote: str, reason: str
+) -> None:
+    out = _parse_exclusions(request_text, _games_intent("x", op, attribute, quote))
+    assert out.intents == []
+    assert out.salvage_question is None
+    assert out.silent_drops == {reason: 1}
+
+
+def test_kri667_an_exclude_in_words_the_parser_cannot_read_is_the_models_statement() -> None:
+    # Any language: "I'd rather not have the laundry in it" has no exclusion verb the
+    # fallback reads, so the model's explicit `exclude` stands (resolution is fenced).
+    request = "I'd rather not have the laundry in it."
+    out = _parse_exclusions(
+        request, _games_intent("x", "exclude", "laundry", "I'd rather not have the laundry in it")
+    )
+    assert [(i.op, i.attribute) for i in out.intents] == [("exclude", "laundry")]
+
+
+def test_kri667_flag_off_never_keeps_an_exclude() -> None:
+    raw = json.dumps(
+        {
+            "intents": [_games_intent("x", "exclude", "laundry", "Skip the laundry")],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request="Skip the laundry."))
+    assert out.intents == []
+    assert out.silent_drops == {"exclusion_dropped": 1}
+
+
+def test_kri667_prompt_teaches_exclude_only_with_the_flag() -> None:
+    off = _agent().render_prompt(_cappadocia_input())
+    on = _agent().render_prompt(_cappadocia_input(exclusions=True))
+    flat = " ".join(on.split())
+    assert "- exclude:" in on
+    assert '"op":"label|group|order|include|caption|exclude"' in on
+    assert "Never invent an op such as `exclude`" not in on
+    assert '"Skip the laundry, but the gym has to be in" is one `exclude`' in flat
+    assert '"remove the sport labels"' in flat
+    assert "Never ask about an exclusion" in flat
+    # Everything outside the three slots is shared, byte for byte.
+    assert off.split("No other op exists.")[0] == on.split("- exclude:")[0]
+    assert off.split("Showing a clip when")[1] == on.split("Showing a clip when")[1].replace(
+        "caption|exclude", "caption"
+    )
+    assert "clip_exclusions" not in _cappadocia_input().model_dump()
+
+
+def test_kri667_exclude_candidates_never_reach_the_flag_off_prompt() -> None:
+    from app.schemas.clip_intents import ClipIntent
+
+    candidates = [
+        ClipIntent(intent_id="g", op="group", attribute="pub clips"),
+        ClipIntent(intent_id="x", op="exclude", attribute="laundry"),
+    ]
+    off = _agent().render_prompt(
+        ClipIntentPlannerInput(creator_request="Skip the laundry.", candidate_intents=candidates)
+    )
+    on = _agent().render_prompt(
+        ClipIntentPlannerInput(
+            creator_request="Skip the laundry.", candidate_intents=candidates, clip_exclusions=True
+        )
+    )
+    assert '"op": "exclude"' not in off and '"op": "group"' in off
+    assert '"op": "exclude"' in on
+
+
+def test_kri667_turkish_question_names_an_exclude_it_could_not_fit() -> None:
+    from app.schemas.clip_intents import MAX_CLIP_INTENTS
+
+    request = "Klipleri grupla. Quad klibini kullanma."
+    intents = [
+        _games_intent(f"g{i}", "group", f"grup {i}", "Klipleri grupla")
+        for i in range(MAX_CLIP_INTENTS)
+    ] + [_games_intent("x", "exclude", "quad klibi", "Quad klibini kullanma")]
+    raw = json.dumps({"intents": intents, "question": None}, ensure_ascii=False)
+    out = _agent().parse(
+        raw,
+        ClipIntentPlannerInput(creator_request=request, reply_language="tr", clip_exclusions=True),
+    )
+    assert out.salvage_question is not None
+    assert "hariç tutma: quad klibi" in out.salvage_question
 
 
 # ── KRI-531: model slips on a Turkish chapter request are repaired, never asked ──
@@ -1887,7 +2215,12 @@ def test_kri531_include_placed_last_is_an_order(
     assert [(i.op, i.position) for i in out.intents] == [expected]
 
 
-def test_kri531_include_with_a_placement_word_but_an_exclusion_is_still_dropped() -> None:
+@pytest.mark.parametrize("exclusions", [False, True])
+def test_kri531_include_with_a_placement_word_but_an_exclusion_is_never_an_order(
+    exclusions: bool,
+) -> None:
+    # Flag off: dropped, as before. Flag on (KRI-667): the exclude it asked for, with the
+    # stray placement cleared -- never an `order` that would END the edit on those clips.
     request = "Fun edit. Don't use the blurry ones at the end."
     raw = json.dumps(
         {
@@ -1903,6 +2236,14 @@ def test_kri531_include_with_a_placement_word_but_an_exclusion_is_still_dropped(
             "question": None,
         }
     )
-    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request))
-    assert out.intents == []
-    assert out.silent_drops == {"exclusion_dropped": 1}
+    out = _agent().parse(
+        raw, ClipIntentPlannerInput(creator_request=request, clip_exclusions=exclusions)
+    )
+    if exclusions:
+        assert [(i.op, i.attribute, i.position) for i in out.intents] == [
+            ("exclude", "blurry ones", None)
+        ]
+        assert out.silent_drops == {"exclusion_repaired": 1}
+    else:
+        assert out.intents == []
+        assert out.silent_drops == {"exclusion_dropped": 1}

@@ -61,6 +61,7 @@ from app.agents.clip_request_resolver import (
 from app.config import settings
 from app.kria.reply_language import current_reply_language, say
 from app.schemas.clip_intents import (
+    EXCLUDE_MIN_CONFIDENCE,
     LABEL_MIN_CONFIDENCE,
     MEMBERSHIP_MIN_CONFIDENCE,
     ClipAssignment,
@@ -776,8 +777,11 @@ def picker_eligible(intent: ClipIntent) -> bool:
 
     Membership ops, and labels/captions whose TEXT is already fixed (creator's words or
     the placeholder). A per-clip authored label or an authored caption still needs a
-    model, so those stay text questions.
+    model, so those stay text questions. An exclude (KRI-667) is never asked about at all,
+    so it is never a picker category either.
     """
+    if intent.op == "exclude":
+        return False
     if intent.op in {"group", "include", "order"}:
         return True
     if intent.op == "label":
@@ -971,8 +975,10 @@ def _build_resolver_input(
         ResolverIntentIn(
             intent_id=i.intent_id,
             # KRI-282: a placeholder label is membership-only for the resolver ("which
-            # clips are <attribute>"); it must never author text for it.
-            op="include" if i.placeholder else i.op,
+            # clips are <attribute>"); it must never author text for it. KRI-667: so is
+            # an exclude ("which clips are the quad bike clip"); the resolver has no
+            # exclude op, and leaving the matched clips out is the server's step.
+            op="include" if i.placeholder or i.op == "exclude" else i.op,
             attribute=i.attribute,
             creator_text=i.creator_text,
             caption_attribute=i.caption_attribute,
@@ -1103,6 +1109,26 @@ async def resolve_clip_intents_for_turn(
             is_terminal_error=isinstance(exc, TerminalError),
             **{k: v for k, v in failure_diagnostics.items() if k != "error_type"},
         )
+        if all(i.op == "exclude" for i in intents):
+            # KRI-667: exclusions alone never hold the turn: with the resolver down,
+            # nothing is left out (the edit planner still reads the creator's words),
+            # exactly as before exclusions were resolved at all.
+            return IntentResolution(
+                diagnostics=failure_diagnostics,
+                intents=[
+                    ResolvedClipIntent(
+                        intent_id=i.intent_id,
+                        op=i.op,
+                        attribute=i.attribute,
+                        status="resolved",
+                        assignments=[],
+                    )
+                    for i in intents
+                ],
+                question=None,
+                vision_answers={},
+                status="resolved",
+            )
         return IntentResolution(
             diagnostics=failure_diagnostics,
             intents=[
@@ -1173,12 +1199,16 @@ async def resolve_clip_intents_for_turn(
             f":min={min(confs, default=0.0):.2f}:max={max(confs, default=0.0):.2f}"
             f":nv={len(resolved.needs_vision)}:q={int(bool(resolved.question))}"
         )
-        if resolved.question and not has_candidates:
+        if resolved.question and intent.op == "exclude":
+            # KRI-667: an exclusion never asks the creator anything; what the resolver
+            # could not match is simply not left out.
+            stray_questions_ignored += 1
+        elif resolved.question and not has_candidates:
             work.intent_question = resolved.question
             work.had_any_candidate = True
             question_intents += 1
             continue
-        if resolved.question:
+        elif resolved.question:
             # KRI-282: a model-authored question must never discard matches it also
             # returned -- the creator would be asked to do the matching themselves.
             stray_questions_ignored += 1
@@ -1201,6 +1231,26 @@ async def resolve_clip_intents_for_turn(
             assignment = assignment_by_media.get(alias)
             forced_question = vision_media.get(alias)
 
+            if intent.op == "exclude":
+                # KRI-667: a clip is left out only on the resolver's confident match.
+                # Removing footage the creator wanted is worse than keeping one they
+                # skipped, so an unsure match (below the label bar, or one the resolver
+                # wants a vision check for) keeps the clip: no vision spend, no question.
+                if (
+                    forced_question is None
+                    and assignment is not None
+                    and assignment.confidence >= EXCLUDE_MIN_CONFIDENCE
+                ):
+                    work.kept.append(
+                        ClipAssignment(
+                            media_id=media_id,
+                            value=None,
+                            evidence=assignment.evidence,
+                            confidence=assignment.confidence,
+                            grounding=None,
+                        )
+                    )
+                continue
             if intent.op == "label" and intent.placeholder:
                 # KRI-282: the text is the system's fixed stand-in (no source fence
                 # applies); only WHICH clips it lands on is a judgment, and it prints,
@@ -1843,7 +1893,10 @@ async def resolve_clip_intents_for_turn(
     creator_work: list[_IntentWork] = []
     for intent in intents:
         work = work_by_id[intent.intent_id]
-        has_non_creator_failure = bool(
+        # KRI-667: an exclude is settled by whatever the resolver confidently matched,
+        # even nothing: it never asks the creator and never holds the turn.
+        settles_itself = intent.op == "exclude"
+        has_non_creator_failure = not settles_itself and bool(
             work.pending_media_ids
             or work.provider_unavailable_media_ids
             or work.provider_unknown_media_ids
@@ -1856,8 +1909,10 @@ async def resolve_clip_intents_for_turn(
         # question. The caller can retry the preparation/resolution attempt;
         # only settled ambiguity or a genuinely empty result belongs in
         # `needs_creator`.
-        is_creator_unresolved = not has_non_creator_failure and (
-            bool(work.intent_question) or bool(work.failed_media_ids) or not work.kept
+        is_creator_unresolved = (
+            not settles_itself
+            and not has_non_creator_failure
+            and (bool(work.intent_question) or bool(work.failed_media_ids) or not work.kept)
         )
         is_unresolved = is_creator_unresolved or has_non_creator_failure
         if is_unresolved:

@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.285.0] - 2026-10-14
+
+### Changed
+- perf(ios): open a new chat in one round trip instead of four (KRI-640) (#1607) <!-- release-pr: 1607 -->
+
+## [0.78.284.0] - 2026-10-14
+
+### Changed
+- feat(kria): Turkish chat reads meaning from structured fields, not English regex twins (KRI-667) (#1606) <!-- release-pr: 1606 -->
+
+## [0.78.283.0] - 2026-10-14
+
+### Changed
+- fix(ios): autoplay the selected video slide without native player chrome (KRI-644) (#1605) <!-- release-pr: 1605 -->
+
+## [0.78.282.0] - 2026-10-14
+
+### Changed
+- feat(ios): show Reels and TikTok danger zones (KRI-670) (#1603) <!-- release-pr: 1603 -->
+
 ## [0.78.281.0] - 2026-10-14
 
 ### Changed

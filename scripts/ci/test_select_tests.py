@@ -728,6 +728,10 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-625-moment-quality"),
             ),
             (
+                "src/apps/api/prompts/edit_copilot.txt",
+                (True, "covered", "kri-667-turkish-chat"),
+            ),
+            (
                 "src/apps/api/app/kria/opening_cut_ask.py",
                 (True, "covered", "kri-628-opening-cut"),
             ),

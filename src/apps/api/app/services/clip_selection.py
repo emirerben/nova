@@ -31,6 +31,9 @@ MAX_QUESTION_CATEGORIES = 8  # a tap-to-answer screen; <= MAX_CLIP_INTENTS
 _KEY_MAX = 120
 # Token-set similarity needed for the fallback intent<->selection-key match.
 _FALLBACK_MIN_SIMILARITY = 0.5
+# Ops whose picker answers may stand in for each other. KRI-667: never `exclude`, so the
+# clips a creator tapped for "include: laundry" can never become the clips an
+# "exclude: laundry" leaves out (an exclude is never a picker category of its own).
 _MEMBERSHIP_OPS = frozenset({"group", "include"})
 
 

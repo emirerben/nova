@@ -2161,6 +2161,49 @@ def _req_text(req: BriefRequirement) -> str:
     return _fold(" ".join(x for x in (req.description, req.literal) if x))
 
 
+# KRI-667: what an ask means, as the model that read the creator's message recorded it in
+# `facts` (English keys, language-neutral values; prompt: main_creator._BRIEF_PROMPT_SECTION).
+# A recorded value decides; the word recognisers above only run when it is absent or
+# malformed, so a Turkish ask no longer depends on a Turkish twin of every pattern.
+_CAPTION_FACTS = frozenset({"on", "off", "word_by_word"})
+
+
+def _fact_flag(req: BriefRequirement, key: str) -> bool | None:
+    """``facts[key]`` as yes/no, or None when the model recorded nothing usable."""
+    value = req.facts.get(key)
+    if isinstance(value, bool | int):
+        return bool(value)
+    if isinstance(value, str):
+        folded = value.strip().casefold()
+        if folded in {"true", "yes"}:
+            return True
+        if folded in {"false", "no"}:
+            return False
+    return None
+
+
+def _caption_fact(req: BriefRequirement) -> str | None:
+    """``facts["captions"]``: "on", "off" or "word_by_word", else None."""
+    value = req.facts.get("captions")
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if not isinstance(value, str):
+        return None
+    folded = "_".join(value.strip().casefold().replace("-", " ").split())
+    return folded if folded in _CAPTION_FACTS else None
+
+
+def _caption_language_fact(req: BriefRequirement) -> str | None:
+    """``facts["caption_language"]`` as a language code ("tr-TR", "Turkish" -> "tr")."""
+    value = req.facts.get("caption_language")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    code = value.strip().casefold().replace("_", "-").split("-")[0]
+    if code in _LANGUAGE_NAMES:
+        return code
+    return _LANGUAGE_WORDS.get(loose_text(value).strip())
+
+
 def _wants_whole_take(req: BriefRequirement) -> bool:
     # Source-preservation is a global (or explicitly clip-scoped) timing ask.
     # Title-scoped timing requirements describe a text element's hold window;
@@ -2168,7 +2211,10 @@ def _wants_whole_take(req: BriefRequirement) -> bool:
     # incorrectly routes them through the whole-take checker.
     if req.kind != "timing" or req.scope == "title" or _has_duration_target(req):
         return False
-    return bool(req.facts.get("keep_whole_take") or _WHOLE_TAKE_RE.search(_req_text(req)))
+    stated = _fact_flag(req, "keep_whole_take")
+    if stated is not None:
+        return stated
+    return bool(_WHOLE_TAKE_RE.search(_req_text(req)))
 
 
 _WHOLE_TEXT_RE = re.compile(
@@ -2287,6 +2333,9 @@ _EXPLICIT_POP_RE = re.compile(
 
 def _cleanup_wording(req: BriefRequirement) -> bool:
     """Removal verb + something speech cleanup removes ("cut the pauses", "remove the ums")."""
+    stated = _fact_flag(req, "speech_cleanup")
+    if stated is not None:
+        return stated
     text = _req_text(req)
     if _KEEP_PAUSES_RE.search(text) or not _CLEANUP_VERB_RE.search(text):
         return False
@@ -2367,14 +2416,22 @@ def _wants_captions(req: BriefRequirement) -> bool:
             return False
     elif not (req.kind == "text" and req.scope == "global" and not req.literal):
         return False
+    if _caption_fact(req) is not None or _caption_language_fact(req) is not None:
+        return True
     return bool(_CAPTION_RE.search(_req_text(req)))
 
 
 def _wants_no_captions(req: BriefRequirement) -> bool:
+    stated = _caption_fact(req)
+    if stated is not None:
+        return stated == "off"
     return bool(_NO_CAPTION_RE.search(_req_text(req)))
 
 
 def _wants_word_captions(req: BriefRequirement) -> bool:
+    stated = _caption_fact(req)
+    if stated is not None:
+        return stated == "word_by_word"
     return bool(_WORD_CAPTION_RE.search(_req_text(req)))
 
 
@@ -2553,6 +2610,7 @@ _REASON_TR: dict[str, str] = {
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
     _CLEANUP_NOTHING_TO_CUT: "Konuşma temizliği kesilecek uzun bir duraklama bulmadı",
     _CLEANUP_NOT_RUN: ("Konuşma temizliği bu videoda çalışmadı, o yüzden uzun duraklamalar kaldı"),
+    "Some requested text ends before the video does.": "Bazı yazılar video bitmeden kayboluyor.",
 }
 
 
@@ -4167,6 +4225,9 @@ def _check_narrated_timing(req: BriefRequirement, facts: PlanFacts) -> Requireme
 def _requested_caption_language(req: BriefRequirement) -> str | None:
     """The language a captions ask wants ("English subtitles", "captions in Turkish"), as
     a code, else None. "English subtitles translated from the Turkish voiceover" is English."""
+    stated = _caption_language_fact(req)
+    if stated is not None:
+        return stated
     wording = loose_text(_req_text(req))
     for pattern in _CAPTION_LANGUAGE_PATTERNS:
         found = pattern.search(wording)

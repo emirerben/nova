@@ -2468,21 +2468,20 @@ def length_inputs_waiting(resolution: ChoiceResolution) -> str | None:
         CONFLICT_SOURCE_COVERAGE,
     }
     if any(choice.kind in timing_kinds for choice in resolution.exhausted):
-        return (
-            "Your length choice is still waiting. Choose an offered option or update the footage."
+        return say(
+            en=(
+                "Your length choice is still waiting. "
+                "Choose an offered option or update the footage."
+            ),
+            tr="Uzunluk seçimin hâlâ bekliyor. Önerilen seçeneklerden birini seç ya da "
+            "çekimlerini güncelle.",
         )
     if any(answer.get("kind") == CONFLICT_SOURCE_COVERAGE for answer in resolution.answers):
-        return "Add or update the selected footage, and I will continue with those clips."
+        return say(
+            en="Add or update the selected footage, and I will continue with those clips.",
+            tr="Seçtiğin çekimleri ekle ya da güncelle, ben de o kliplerle devam edeyim.",
+        )
     return None
-
-
-def _disclosure(kind: object, option: object) -> str | None:
-    """The plain-language note for an answered option (dynamic ``length_N`` keys included)."""
-
-    note = _DISCLOSURES.get((kind, option))
-    if note is None and kind == CONFLICT_VOICE_VS_DURATION and str(option).startswith("length_"):
-        return f"I'm making it {str(option).removeprefix('length_')} seconds."
-    return note
 
 
 def _apply_effect(strategy: dict[str, Any], choice: UnresolvedChoice, option_key: str) -> None:
@@ -2522,17 +2521,37 @@ _DISCLOSURES_TR = {
     (CONFLICT_ORDER_BASIS, OPT_ATTACHMENT_ORDER): "Klipleri eklediğin sırayla kullanıyorum.",
     (CONFLICT_ORDER_BASIS, OPT_UNORDERED): "Belirli bir sıra vaat etmiyorum.",
     (CONFLICT_TITLE_TEXT, OPT_NO_TITLE): ("Kelimeleri söylemediğin için başlığı koymuyorum."),
+    (CONFLICT_VOICE_VS_DURATION, OPT_MATCH_VOICE): "Düzenlemeyi sesinin bittiği yerde bitirdim.",
+    (CONFLICT_VOICE_VS_DURATION, OPT_SILENT_TAIL): (
+        "Süreni korudum: son saniyeler sesin olmadan oynuyor."
+    ),
+    **{
+        (CONFLICT_WHICH_VOICE, f"clip_{i}"): (
+            "Diğer kliplerin altında o klibin sesini kullanıyorum."
+        )
+        for i in range(1, MAX_CHOICE_OPTIONS + 1)
+    },
 }
 
 
 def _disclosure(kind: object, option: object) -> str | None:
-    """The disclosure note for an answered option, in the chat's language."""
+    """The plain-language note for an answered option, in the chat's language.
+
+    Dynamic ``length_N`` keys (KRI-479) included. KRI-667: KRI-520 had added a second
+    definition that shadowed KRI-479's, so the ``length_N`` note was never shown.
+    """
 
     key = (kind, option)
     english = _DISCLOSURES.get(key)  # type: ignore[arg-type]
-    if english is None:
-        return None
-    return say(en=english, tr=_DISCLOSURES_TR.get(key, english))  # type: ignore[arg-type]
+    if english is not None:
+        return say(en=english, tr=_DISCLOSURES_TR.get(key, english))  # type: ignore[arg-type]
+    if kind == CONFLICT_VOICE_VS_DURATION and str(option).startswith("length_"):
+        seconds = str(option).removeprefix("length_")
+        return say(
+            en=f"I'm making it {seconds} seconds.",
+            tr=f"Videoyu {seconds} saniye yapıyorum.",
+        )
+    return None
 
 
 def _emits_answered_value(
@@ -2719,9 +2738,16 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                 changed[req.id] = req.model_copy(
                     update={
                         "facts": {**req.facts, "duration_s": data["target_duration_s"]},
-                        "description": (
-                            f"Keep {_clean_seconds(new)} seconds (extended from "
-                            f"{_clean_seconds(old)} so every clip can be seen)"
+                        "description": say(
+                            en=(
+                                f"Keep {_clean_seconds(new)} seconds (extended from "
+                                f"{_clean_seconds(old)} so every clip can be seen)"
+                            ),
+                            # No "her klip ... N saniye": that reads as a per-clip length.
+                            tr=(
+                                f"{_clean_seconds(new)} saniye olsun ({_clean_seconds(old)} "
+                                "saniyeden uzatıldı, böylece her klip görülebiliyor)"
+                            ),
                         ),
                     }
                 )
@@ -2730,7 +2756,10 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                     changed[req.id] = req.model_copy(
                         update={
                             "facts": {**req.facts, "key": ATTACHMENT_ORDER_KEY},
-                            "description": "in the order the clips were added",
+                            "description": say(
+                                en="in the order the clips were added",
+                                tr="klipleri eklediğin sırayla",
+                            ),
                         }
                     )
                 elif option == OPT_UNORDERED:
@@ -2747,9 +2776,15 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                 changed[req.id] = req.model_copy(
                     update={
                         "facts": {**req.facts, "duration_s": data["target_duration_s"]},
-                        "description": (
-                            f"Keep {_clean_seconds(new)} seconds (as long as your voice, "
-                            f"shortened from {_clean_seconds(old)})"
+                        "description": say(
+                            en=(
+                                f"Keep {_clean_seconds(new)} seconds (as long as your voice, "
+                                f"shortened from {_clean_seconds(old)})"
+                            ),
+                            tr=(
+                                f"{_clean_seconds(new)} saniye olsun (sesin kadar, "
+                                f"{_clean_seconds(old)} saniyeden kısaltıldı)"
+                            ),
                         ),
                     }
                 )
@@ -2765,9 +2800,15 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                 changed[req.id] = req.model_copy(
                     update={
                         "facts": {**req.facts, "duration_s": data["target_duration_s"]},
-                        "description": (
-                            f"Keep {_clean_seconds(new)} seconds (the available source length, "
-                            f"instead of {_clean_seconds(old)})"
+                        "description": say(
+                            en=(
+                                f"Keep {_clean_seconds(new)} seconds (the available source "
+                                f"length, instead of {_clean_seconds(old)})"
+                            ),
+                            tr=(
+                                f"{_clean_seconds(new)} saniye olsun ({_clean_seconds(old)} "
+                                "saniye yerine, eldeki çekimlerin uzunluğu)"
+                            ),
                         ),
                     }
                 )

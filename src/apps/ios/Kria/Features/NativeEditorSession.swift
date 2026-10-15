@@ -3022,6 +3022,12 @@ struct NativeEditorTemporaryVideo {
     func previewSelectionBounds(for selection: EditorSelection, at time: Double) -> TextSelectionBounds? {
         guard sourcePreviewState == .ready else { return nil }
         if selection.kind == .mediaOverlay { return sourcePreview?.mediaSelectionBounds(id: "overlay:" + selection.id, time: time) }
+        if selection.kind == .visualBlock,
+           document.visualBlocks.first(where: { $0.id == selection.id })?.kind == "media" {
+            // Same media identity as prepareMediaInteraction: use the rendered
+            // footprint for both selection handles and the danger-zone guide.
+            return sourcePreview?.mediaSelectionBounds(id: "visual-\(selection.id)-\(selection.id)", time: time)
+        }
         let id = selection.kind == .captionCue ? "caption-" + selection.id : selection.id
         return sourcePreview?.textSelectionBounds(id: id, time: time)
     }

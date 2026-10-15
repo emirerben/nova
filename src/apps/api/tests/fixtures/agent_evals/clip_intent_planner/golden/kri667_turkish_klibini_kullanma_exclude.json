@@ -1,0 +1,43 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-14.1",
+  "input": {
+    "creator_request": "Hafta sonu videolarımdan eğlenceli bir montaj yap. Çamaşır klibini kullanma.",
+    "latest_user_message": "Hafta sonu videolarımdan eğlenceli bir montaj yap. Çamaşır klibini kullanma.",
+    "candidate_intents": null,
+    "reply_language": "tr",
+    "clip_exclusions": true
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"exclude_camasir\",\n      \"op\": \"exclude\",\n      \"attribute\": \"çamaşır klibi\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Çamaşır klibini kullanma\"\n    }\n  ],\n  \"question\": null\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "exclude_camasir",
+        "op": "exclude",
+        "attribute": "çamaşır klibi",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Çamaşır klibini kullanma"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden (KRI-667, prompt 2026-10-14.1, clip_exclusions on): raw_text is plausible Gemini 2.5 Flash output written by hand, not a live capture. Re-capture live when a paid run is approved.",
+    "case": "KRI-667: 'Çamaşır klibini kullanma' (don't use the laundry clip) is ONE `exclude` in the creator's own words, in a Turkish chat, never an `include`.",
+    "expect_intents": [
+      {
+        "op": "exclude",
+        "source_quote_keywords": [
+          "Çamaşır klibini kullanma"
+        ]
+      }
+    ],
+    "expect_absent_ops": [
+      "include"
+    ],
+    "expect_any": true,
+    "expect_question": false
+  }
+}

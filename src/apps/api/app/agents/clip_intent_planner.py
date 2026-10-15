@@ -41,6 +41,47 @@ _ORDER_BY_NOTE = (
 
 _ORDER_BY_FIELD = ',"order_by":"capture_time|route|null"'
 
+# KRI-667: the three prompt slots that teach the `exclude` op. With
+# CLIP_INTENT_EXCLUDE_ENABLED off they render today's bytes exactly (no bullet, the
+# KRI-511 "no intent for an exclusion" paragraph, no `exclude` in the JSON template).
+_EXCLUDE_BULLET = (
+    '\n- exclude: membership explicitly left OUT of the edit. "Skip the quad bike clip",\n'
+    '  "leave out the laundry", "don\'t use the blurry ones", "without the drone shot"\n'
+    '  and "quad klibini kullanma" are one `exclude` intent per named subject,\n'
+    '  `attribute` naming the clips as the creator described them ("quad bike clip").\n'
+    "  Leave `creator_text`, `caption_attribute` and `position` null."
+)
+_EXCLUDE_OP = "|exclude"
+_EXCLUSION_RULES_ON = (
+    "Leaving clips OUT is `exclude`, never `include`: include FORCES those clips into\n"
+    "the edit, the opposite of skipping them. Never ask about an exclusion: when no\n"
+    "clip matches it, nothing is left out. An exclude names clips; removing text,\n"
+    'labels, captions, a title, music or a sound ("remove the sport labels", "no\n'
+    'music") is never an exclude. Asks to use or keep clips are still `include` as\n'
+    'before ("using all my clips", "the gym has to be in", "a montage of the\n'
+    'remaining clips (excluding the talk video)"): the creator asks to USE that set,\n'
+    'even when it is described by what it leaves out. "Skip the laundry, but the gym\n'
+    'has to be in" is one `exclude` for the laundry and one `include` for the gym,\n'
+    "each quoting only its own words. Picking the best, strongest or favourite N\n"
+    "clips names no clips: the edit planner chooses them, so it yields no intent.\n"
+    'Using a clip\'s sound ("the voice from the talk to camera video") is an audio\n'
+    "choice, never `include` or `exclude`."
+)
+_EXCLUSION_RULES_OFF = (
+    'Leaving clips OUT is not one of these operations. "Skip the quad bike clip",\n'
+    '"leave out the laundry", "don\'t use the blurry ones" and "without the drone\n'
+    'shot" choose which clips the edit uses, and the edit planner already handles\n'
+    "that from the creator's words. Return no intent for an exclusion and do not ask\n"
+    "about it. Never write it as `include`: include FORCES those clips into the edit,\n"
+    "the opposite of skipping them. Never invent an op such as `exclude`. Asks to\n"
+    'use or keep clips are still `include` as before ("using all my clips", "the gym\n'
+    'has to be in", "a montage of the remaining clips (excluding the talk video)"):\n'
+    "the creator asks to USE that set, even when it is described by what it leaves\n"
+    "out. Picking the best, strongest or favourite N clips names no clips: the edit\n"
+    "planner chooses them, so it yields no intent. Using a clip's sound (\"the voice\n"
+    'from the talk to camera video") is an audio choice, never `include`.'
+)
+
 # Appended after the generic language line (Turkish chats only): the JSON stays machine
 # shaped and the provenance fence needs the creator's own words.
 _REPLY_LANGUAGE_SCOPE = (
@@ -81,6 +122,10 @@ _CREATOR_TEXT_MAX = 60
 _LABEL_PREVIEW_CHARS = 40
 _QUESTION_MAX_CHARS = 400
 _KNOWN_OPS = {"label", "group", "order", "include", "caption"}
+# KRI-667: `exclude` is a real op only with CLIP_INTENT_EXCLUDE_ENABLED; `_KNOWN_OPS`
+# stays the flag-off vocabulary (invented-op detection must not drift), and a creator
+# question may still name an exclude it could not keep.
+_PREVIEW_OPS = _KNOWN_OPS | {"exclude"}
 # KRI-282: "add a text placeholder so I can replace it with their real names".
 # Flash does not reliably set `placeholder: true` (it has mapped this to a
 # creator_text caption or a grounded "person's name" label), so a quote that
@@ -159,6 +204,7 @@ _OP_NAMES_TR = {
     "order": "sıra",
     "include": "dahil etme",
     "caption": "yazı",
+    "exclude": "hariç tutma",
 }
 
 
@@ -176,7 +222,7 @@ def _preview(raw_intent: object, language: str | None = None) -> str:
     op = raw_intent.get("op")
     text = " ".join(_sanitize_text(attribute).split()) if isinstance(attribute, str) else ""
     text = text[:_LABEL_PREVIEW_CHARS].strip() or fallback
-    if isinstance(op, str) and op in _KNOWN_OPS:
+    if isinstance(op, str) and op in _PREVIEW_OPS:
         return f"{_copy(language, en=op, tr=_OP_NAMES_TR[op])}: {text}"
     return text
 
@@ -392,10 +438,13 @@ def _repair_order_by(data: dict[str, Any]) -> None:
 
 
 # KRI-511: leaving clips OUT is clip selection, which the Main Creator owns
-# (`selected_media_ids` against the brief's `select` requirement). There is no
-# exclude op: Flash either invents one (a loud rejection, so the creator was asked
-# to restate "Skip the quad bike clip") or writes `include`, which FORCES the clip
-# into the edit, the opposite of the ask. Both are dropped silently.
+# (`selected_media_ids` against the brief's `select` requirement). Without KRI-667
+# there is no exclude op: Flash either invents one (a loud rejection, so the creator
+# was asked to restate "Skip the quad bike clip") or writes `include`, which FORCES
+# the clip into the edit, the opposite of the ask. Both are dropped silently.
+# KRI-667 (CLIP_INTENT_EXCLUDE_ENABLED): `exclude` is a real op; these synonyms map
+# onto it, and an `include` whose quote asks to leave its own clips out is repaired
+# into one (`_repair_exclusion`), never dropped or inverted.
 _EXCLUSION_OPS = frozenset("exclude excluded exclusion skip remove omit drop deselect hide".split())
 _LEADING_GLUE = r"^(?:(?:and|but|also|please|then|so|just|oh)\s+)*"
 _EXCLUSION_ASK = re.compile(
@@ -449,7 +498,8 @@ def _repair_misplaced_placement(data: dict[str, Any]) -> None:
     edit planner's audio choice; ending on her clip is the order the creator asked
     for. Only when the creator's quote also names that placement, so a stray model
     position never moves a clip. ``_repair_position`` then normalises the placement
-    (two placements still ask). An exclusion is left for ``_silent_non_clip_drop``.
+    (two placements still ask). An exclusion is left for ``_repair_exclusion``
+    (KRI-667) or ``_silent_non_clip_drop``.
     """
     op = data.get("op")
     quote = data.get("source_quote")
@@ -472,7 +522,180 @@ def _is_exclusion_ask(quote: str) -> bool:
     return bool(_EXCLUSION_ASK.search(text) or _EXCLUSION_ASK_TR.search(text))
 
 
-def _silent_non_clip_drop(data: dict[str, Any]) -> str | None:
+# KRI-667: where the clause an exclusion verb governs ends. English puts the verb first
+# ("Skip the laundry, but the gym has to be in": the laundry), Turkish last ("Spor
+# salonu kalsın ama çamaşır klibini kullanma": the laundry). A comma, a sentence end or
+# a joining word ends it, so "skip the laundry and use the gym" never governs the gym.
+# Plain word sets, no new patterns: the model states exclusions; this is only the
+# fallback's reading of a quote the model already tied to the clip.
+_CLAUSE_BREAKS = str.maketrans(dict.fromkeys(".,;:!?()", "\n"))
+_EN_JOINERS = frozenset(
+    "and but or then plus however though although instead while whereas yet so".split()
+)
+_TR_JOINERS = frozenset("ve ama fakat ancak sonra veya ya yoksa".split())
+# Words that name no particular clip ("the quad bike CLIP", "çamaşır KLİBİ").
+_CLIP_NOUN_PREFIXES = ("klip", "klib", "video", "cekim", "goruntu")
+# An `exclude` removes FOOTAGE. "Remove the sport labels" / "müziği çıkar" remove text
+# or sound, and read as an exclude they would drop every sport clip (folded words).
+_NON_CLIP_TARGET_WORDS = frozenset(
+    "label labels labeled labelled labeling caption captions subtitle subtitles title titles "
+    "text texts sticker stickers watermark watermarks logo logos music song songs sound sounds "
+    "audio voice voices voiceover voiceovers narration filter filters effect effects "
+    "transition transitions emoji emojis overlay overlays font fonts ses sesi sesini sesler "
+    "sesleri".split()
+)
+_NON_CLIP_TARGET_PREFIXES = (
+    "etiket",
+    "yazi",
+    "altyazi",
+    "baslik",
+    "muzik",
+    "sarki",
+    "efekt",
+    "filtre",
+    "gecis",
+    "seslendir",
+)
+# Compound op names Flash writes for the same ask ("skip_clip", "exclude-videos").
+_EXCLUSION_OP_FILLER = frozenset({"clip", "clips", "shot", "shots", "video", "videos", "footage"})
+
+
+def _fold_words(text: str) -> list[str]:
+    """Case-, accent- and dotless-ı-insensitive words (Turkish suffixes kept)."""
+    decomposed = unicodedata.normalize("NFKD", _norm(text)).replace("ı", "i").casefold()
+    plain = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return _WORDS.findall(plain)
+
+
+def _clauses(text: str, joiners: frozenset[str]) -> list[list[str]]:
+    """The folded words of ``text``, split at punctuation and joining words (non-empty)."""
+    clauses: list[list[str]] = []
+    for piece in text.translate(_CLAUSE_BREAKS).split("\n"):
+        clause: list[str] = []
+        for word in _fold_words(piece):
+            if word in joiners:
+                clauses.append(clause)
+                clause = []
+            else:
+                clause.append(word)
+        clauses.append(clause)
+    return [clause for clause in clauses if clause]
+
+
+def _exclusion_clause(quote: str) -> list[str] | None:
+    """The folded words an exclusion verb in ``quote`` governs, or None when it asks none.
+
+    English: the first clause (leading glue such as "but" is a joiner, so it is skipped).
+    Turkish: the last one, where the verb is.
+    """
+    text = _norm(quote).casefold()
+    if _EXCLUSION_ASK.search(text):
+        return next(iter(_clauses(text, _EN_JOINERS)), [])
+    if _EXCLUSION_ASK_TR.search(text):
+        return (_clauses(text, _TR_JOINERS) or [[]])[-1]
+    return None
+
+
+def _content_words(attribute: str) -> list[str]:
+    return [
+        word
+        for word in _fold_words(attribute)
+        if word not in _STOPWORDS and not word.startswith(_CLIP_NOUN_PREFIXES)
+    ]
+
+
+# Turkish softens a final k/p/t before a vowel suffix: "müzik" -> "müziği" (folded g),
+# "kitap" -> "kitabı", "dolap" -> "dolabı", "kanat" -> "kanadı".
+_SOFTENED = {"k": "g", "p": "b", "t": "d"}
+
+
+def _same_stem(want: str, have: str) -> bool:
+    """One word, allowing suffixes either way ("çamaşır" / "çamaşırı", "one" / "ones")."""
+    if want == have:
+        return True
+    shorter = min(len(want), len(have))
+    if shorter >= 3 and (have.startswith(want) or want.startswith(have)):
+        return True
+    soft = _SOFTENED.get(want[-1:])
+    return (
+        soft is not None
+        and len(want) >= 4
+        and len(have) > len(want)
+        and have.startswith(want[:-1] + soft)
+    )
+
+
+def _exclusion_governs(attribute: str, quote: str) -> bool:
+    """True when every content word of ``attribute`` is in the clause the verb governs."""
+    clause = _exclusion_clause(quote)
+    want = _content_words(attribute)
+    if clause is None or not want:
+        return False
+    return all(any(_same_stem(word, other) for other in clause) for word in want)
+
+
+def _names_non_clip_target(words: list[str]) -> bool:
+    return any(
+        word in _NON_CLIP_TARGET_WORDS or word.startswith(_NON_CLIP_TARGET_PREFIXES)
+        for word in words
+    )
+
+
+def _is_exclusion_op(op: object) -> bool:
+    """``exclude`` or a synonym Flash writes for it ("skip", "remove", "skip_clip")."""
+    if not isinstance(op, str):
+        return False
+    text = op.strip().casefold()
+    if text in _EXCLUSION_OPS:
+        return True
+    words = set(_OP_WORDS.findall(text))
+    return bool(words & _EXCLUSION_OPS) and words <= _EXCLUSION_OPS | _EXCLUSION_OP_FILLER
+
+
+def _repair_exclusion(data: dict[str, Any]) -> str | None:
+    """KRI-667: settle an exclusion onto the ``exclude`` op, in place.
+
+    Returns a closed-vocabulary silent reason: ``exclusion_repaired`` (an ``include``
+    whose own quote asks to leave exactly those clips out became an ``exclude``; kept),
+    ``exclusion_dropped`` (an exclusion this parser cannot attribute to the clips it
+    names, as before KRI-667) or ``non_clip_exclusion_dropped`` (it removes text or
+    sound, not footage); None leaves the intent as it is.
+
+    The repair never inverts an ask: an ``include`` becomes an ``exclude`` only when
+    every content word of its attribute sits in the clause the exclusion verb governs
+    ("Skip the quad bike clip" on "quad bike clip"). "Skip the laundry, but the gym has
+    to be in" minted as ``include: gym`` is not repaired into excluding the gym; it is
+    dropped, exactly as before KRI-667. An explicit ``exclude`` whose quote the same
+    reading can check must pass it too; one in words it cannot read (another language,
+    another phrasing) is the model's statement and is kept.
+    """
+    op = data.get("op")
+    quote = data.get("source_quote")
+    quote_text = quote if isinstance(quote, str) else ""
+    attribute = data.get("attribute")
+    attribute_text = attribute if isinstance(attribute, str) else ""
+    if _is_exclusion_op(op):
+        data["op"] = "exclude"
+    elif not (op == "include" and _is_exclusion_ask(quote_text)):
+        return None
+    clause = _exclusion_clause(quote_text)
+    target = _fold_words(attribute_text) + (
+        clause if clause is not None else _fold_words(quote_text)
+    )
+    if _names_non_clip_target(target):
+        return "non_clip_exclusion_dropped"
+    if clause is not None and not _exclusion_governs(attribute_text, quote_text):
+        return "exclusion_dropped"
+    if not _content_words(attribute_text):
+        # "skip the clips" names no particular clip: nothing safe to remove.
+        return "exclusion_dropped"
+    if op == "include":
+        data["op"] = "exclude"
+        return "exclusion_repaired"
+    return None
+
+
+def _silent_non_clip_drop(data: dict[str, Any], *, exclusions: bool = False) -> str | None:
     """Why an intent is not a clip operation at all, or None to keep it (KRI-511).
 
     Closed vocabulary: ``exclusion_dropped`` (an invented exclude op, or an
@@ -481,13 +704,15 @@ def _silent_non_clip_drop(data: dict[str, Any]) -> str | None:
     ``spelling_dropped`` (how names are spelled), ``speech_caption_dropped`` (a
     non-caption op whose target is the spoken captions). The creator's words stay
     in the Creative Brief, which the Main Creator and the caption steps read.
+    ``exclusions`` (KRI-667): ``_repair_exclusion`` already settled every exclusion,
+    so an ``exclude`` here is a real op.
     """
     op = data.get("op")
     quote = data.get("source_quote")
     quote_text = quote if isinstance(quote, str) else ""
-    if isinstance(op, str) and op.strip().casefold() in _EXCLUSION_OPS:
+    if not exclusions and isinstance(op, str) and op.strip().casefold() in _EXCLUSION_OPS:
         return "exclusion_dropped"
-    if op == "include" and _is_exclusion_ask(quote_text):
+    if not exclusions and op == "include" and _is_exclusion_ask(quote_text):
         return "exclusion_dropped"
     if _invented_op_words(op) & (_NON_CLIP_OP_WORDS | _AUDIO_OP_WORDS):
         return "non_clip_op_dropped"
@@ -662,6 +887,9 @@ class ClipIntentPlannerInput(BaseModel):
     # KRI-520: the chat's language (app.kria.reply_language). None/"en" => the prompt
     # and the server-written question stay English, byte-identical.
     reply_language: str | None = Field(default=None, max_length=8, exclude_if=lambda v: v is None)
+    # KRI-667: CLIP_INTENT_EXCLUDE_ENABLED, so the prompt teaches the `exclude` op and
+    # the parser keeps it. Omitted from dumps when off (byte-identical).
+    clip_exclusions: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
 class ClipIntentPlannerOutput(BaseModel):
@@ -682,7 +910,8 @@ class ClipIntentPlannerOutput(BaseModel):
     # style ask like "big readable captions", a `Title: "..."` line, "Skip the quad
     # bike clip", "Spell the place names exactly: ...") and were dropped
     # SILENTLY, as {closed-vocabulary reason: count}. Diagnostics only: it never
-    # raises a creator question.
+    # raises a creator question. KRI-667 also counts `exclusion_repaired` here: an
+    # `include` repaired into the `exclude` it asked for (kept, not dropped).
     silent_drops: dict[str, int] = Field(default_factory=dict, exclude_if=lambda value: not value)
 
 
@@ -694,7 +923,9 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         # KRI-612: "explain / summarise the footage" is one `what is happening in the clip`
         # label, never a caption.
         # KRI-651: inventory receives saved title placement and the owned clip count.
-        prompt_version="2026-10-13.1",
+        # KRI-667: the `exclude` op (CLIP_INTENT_EXCLUDE_ENABLED; off renders the
+        # 2026-10-13.1 prompt byte-for-byte).
+        prompt_version="2026-10-14.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -740,7 +971,13 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         }
 
     def render_prompt(self, input: ClipIntentPlannerInput) -> str:  # noqa: A002
-        candidates = [intent.model_dump(mode="json") for intent in (input.candidate_intents or [])]
+        candidates = [
+            intent.model_dump(mode="json")
+            for intent in (input.candidate_intents or [])
+            # KRI-667: with exclusions off the prompt never shows an `exclude` (before
+            # KRI-667 no strategy could carry one).
+            if input.clip_exclusions or intent.op != "exclude"
+        ]
         prompt = load_prompt(
             "clip_intent_planner",
             creator_request=_sanitize_text(input.creator_request),
@@ -759,6 +996,11 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             max_intents=str(MAX_CLIP_INTENTS),
             order_by_note=_ORDER_BY_NOTE if input.clip_facts else "",
             order_by_field=_ORDER_BY_FIELD if input.clip_facts else "",
+            exclude_bullet=_EXCLUDE_BULLET if input.clip_exclusions else "",
+            exclusion_rules=(
+                _EXCLUSION_RULES_ON if input.clip_exclusions else _EXCLUSION_RULES_OFF
+            ),
+            exclude_op=_EXCLUDE_OP if input.clip_exclusions else "",
         )
         # KRI-520: the reply-language instruction goes last. "" for English/unknown:
         # byte-identical prompt.
@@ -902,15 +1144,47 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             data["intent_id"] = f"intent-{index + 1}"
         _repair_placeholder(data, sources)
         _repair_misplaced_placement(data)
+        notes: list[str] = silent if silent is not None else []
+        repaired = None
+        if input.clip_exclusions:
+            # KRI-667: settle the exclusion onto `exclude` first; a repair is kept.
+            repaired = _repair_exclusion(data)
+            if repaired not in (None, "exclusion_repaired"):
+                notes.append(repaired)
+                return None
         # KRI-456/KRI-511/KRI-531: a style ask, title line, exclusion, spoken-caption
         # instruction or invented timing/style/audio op is not a clip operation. Drop
         # it before shape/provenance checks so a garbled quote can never turn it into
         # a question.
-        silent_reason = _silent_caption_drop(data) or _silent_non_clip_drop(data)
+        silent_reason = _silent_caption_drop(data) or _silent_non_clip_drop(
+            data, exclusions=input.clip_exclusions
+        )
         if silent_reason is not None:
-            if silent is not None:
-                silent.append(silent_reason)
+            notes.append(silent_reason)
             return None
+        if data.get("op") != "exclude":
+            return ClipIntentPlannerAgent._validated_intent(data, sources, input)
+        # Nothing is printed for a clip left out. An exclusion that fails the shape or
+        # provenance fence is dropped silently, as before KRI-667: asking the creator to
+        # restate "Skip the quad bike clip" helps nobody, and an unverified exclude must
+        # never remove footage.
+        data["creator_text"] = None
+        try:
+            intent = ClipIntentPlannerAgent._validated_intent(data, sources, input)
+        except _IntentRejected:
+            notes.append("exclusion_dropped")
+            return None
+        if intent is not None and repaired is not None:
+            notes.append(repaired)
+        return intent
+
+    @staticmethod
+    def _validated_intent(
+        data: dict[str, Any],
+        sources: tuple[str, ...],
+        input: ClipIntentPlannerInput,  # noqa: A002
+    ) -> PlannedClipIntent | None:
+        """Shape repairs, schema and provenance fence for one intent (see `_build_intent`)."""
         # Benign shape repairs: none of these change what the creator asked for.
         if isinstance(data.get("creator_text"), str):
             data["creator_text"] = " ".join(data["creator_text"].split()) or None

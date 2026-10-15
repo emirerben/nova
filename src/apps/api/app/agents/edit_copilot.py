@@ -41,7 +41,8 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-14-v80"
+# v81 (KRI-667/KRI-669): keep claimed_ops honesty and measured heading placement together.
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-15-v81"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -746,9 +747,39 @@ class EditCopilotOutput(BaseModel):
     # used). Survives the canned "I prepared this edit" reply that replaces a model
     # reply claiming success.
     reply_notes: str = ""
+    # KRI-667: the op names `reply` describes as done. The model states them; parse
+    # overrides them wherever the server writes the reply itself. None = not stated
+    # (older output, a cassette, malformed): the honesty guard then falls back to
+    # reading the reply's wording.
+    claimed_ops: list[str] | None = None
 
 
 _MAX_UNMET_REQUESTS = 6
+_MAX_CLAIMED_OPS = 48
+_MAX_CLAIMED_OP_CHARS = 64
+
+
+def _sanitize_claimed_ops(raw: object, renamed: dict[str, str]) -> list[str] | None:
+    """KRI-667: the model's list of op names its reply describes as done.
+
+    Anything but a list of strings is malformed and returns None, so the honesty guard
+    falls back to the wording check instead of trusting a half-read field. Names are
+    mapped through the renames parse actually made (``set_title`` -> ``edit_text`` when
+    the draft has a guided title), so a claim matches the op it became.
+    """
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        return None
+    names: list[str] = []
+    for item in raw:
+        name = item.strip().lower()[:_MAX_CLAIMED_OP_CHARS]
+        if not name:
+            continue
+        name = renamed.get(name, name)
+        if name not in names:
+            names.append(name)
+        if len(names) >= _MAX_CLAIMED_OPS:
+            break
+    return names
 
 
 def _sanitize_unmet_requests(raw: object) -> list[dict[str, str]]:
@@ -3384,6 +3415,9 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             for raw_op in raw_ops
         )
         appearance_parse_failed = False
+        # KRI-667: raw op name -> the name parse turned it into (set_title -> edit_text),
+        # so the model's claimed_ops can be matched against the ops that survived.
+        renamed: dict[str, str] = {}
         for raw_op in raw_ops:
             # A bulk caption replacement is one atomic client operation no
             # matter how many cues it changes. Keep it outside the ordinary
@@ -3407,6 +3441,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             parsed = _parse_op(raw_op, input.variant_snapshot, state)
             if parsed is not None:
                 ops.append(parsed)
+                if raw_name and parsed.get("op") != raw_name:
+                    renamed[raw_name] = str(parsed.get("op"))
                 if raw_name == "replace_caption_text":
                     bulk_caption_op_count += 1
                 elif raw_name not in _BULK_OPS:
@@ -3489,11 +3525,19 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             bulk_context = _bulk_clarification_context([], input.utterance, bulk_pending_actions)
 
         reply = str(data.get("reply") or "").strip()
+        # KRI-667: the model's claim describes the model's reply. Every branch below that
+        # replaces that reply with server text restates the claim for the new text.
+        claimed_ops = _sanitize_claimed_ops(data.get("claimed_ops"), renamed)
         if no_effect_reply is not None:
+            # "Already like that / nothing changed": describes no change.
             reply = no_effect_reply
+            claimed_ops = []
         if capacity_reply is not None:
+            # A clarification question (or a stale bulk plan): describes no change.
             reply = capacity_reply
+            claimed_ops = []
         if bulk_duration_needs_clarification:
+            claimed_ops = []  # the "how short?" question below describes no change
             referent = bulk_context.get("referent") if isinstance(bulk_context, dict) else None
             if referent == "images" and any(
                 action.get("op") == "stack_images" for action in bulk_pending_actions
@@ -3522,13 +3566,25 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             notes = " ".join(dict.fromkeys(state.reply_notes))
             if ops and state.reorder_noop:
                 reply = _server_reply(ops, notes)
+                # "Updated the edit." / "Labelled 3 clips." claims every surviving op as
+                # done, so the guard still swaps it for the "prepared" line on a proposal.
+                claimed_ops = list(dict.fromkeys(str(op.get("op") or "") for op in ops))
+            elif ops:
+                # Server facts appended to the model's reply: its claim still applies.
+                reply = f"{reply} {notes}".strip()
             else:
-                reply = f"{reply} {notes}".strip() if ops else notes
+                # Nothing survived: the notes say why (no filming time, value refused), but
+                # one can still claim an op a later pass dropped ("I turned off the
+                # animation" before a capacity question). The model's claim no longer
+                # describes this text, so None lets the guard read the notes' wording.
+                reply = notes
+                claimed_ops = None
         if not reply:
             reply = say(
                 en="Got it. What else should we change?",
                 tr="Tamam. Başka neyi değiştirelim?",
             )
+            claimed_ops = []
 
         suggestions_raw = data.get("suggestions") or []
         if not isinstance(suggestions_raw, list):
@@ -3638,9 +3694,15 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                         )
                         + limitation
                     )
+                    # "Prepared" is a proposal, not a done change, and the limitation says
+                    # what was not done. Without this, "hazırladım" read as a Turkish edit
+                    # claim and the guard swapped the line for its canned one, dropping the
+                    # limitation (English "prepared" never matched, so it kept it).
+                    claimed_ops = []
                 elif outcome in {"no_effect", "unsupported"}:
                     outcome = "unsupported"
                     reply = limitation
+                    claimed_ops = []  # the reasons say why nothing was done
                 else:
                     reply = f"{reply} {limitation}".strip()
 
@@ -3658,6 +3720,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 pending_actions=pending_actions,
                 unmet_requests=unmet_requests,
                 reply_notes=" ".join(dict.fromkeys(state.reply_notes)),
+                claimed_ops=claimed_ops,
             )
         except Exception as exc:  # noqa: BLE001
             raise RefusalError(f"edit_copilot: output validation — {exc}") from exc
@@ -3680,7 +3743,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             "(edit|clarify|describe|reject|unknown), ops (array of editor op objects), "
             "confidence (float 0-1), reply (string), suggestions (list of short chips), "
             "needs_clarification (boolean), clarification_context (object or null), "
-            "pending_actions (array), unmet_requests (array of {request, reason}). "
+            "pending_actions (array), unmet_requests (array of {request, reason}), "
+            "claimed_ops (array of the op names reply describes as done; [] if none). "
             "No markdown or prose outside JSON." + hint
         )
 
