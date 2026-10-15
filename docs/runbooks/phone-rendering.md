@@ -2010,7 +2010,7 @@ What flips it on (all of these):
 Off-state guarantee: while (1) is false, or the request's build is below 11 / sends no protocol, or
 there is no stamp outside a request, caption compilation is byte-for-byte the pre-feature output (no
 error, no stamp written). Pinned by `tests/pipeline/test_phone_single_word_captions.py` against digests
-generated from origin/main (`tests/fixtures/phone_captions/single_word_off_state.json`).
+generated from origin/main (`tests/pipeline/single_word_off_state.json`).
 
 Rollback: remove `singleWordText` from `PHONE_RENDER_VERIFIED_FEATURES` (Fly secret on API and
 worker, restart): the very next compile returns to the full-line sweep and no stamp is trusted.

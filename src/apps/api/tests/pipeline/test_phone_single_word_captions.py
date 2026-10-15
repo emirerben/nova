@@ -3,7 +3,7 @@
 Everything goes through the real compilers: the editor Save path
 (`prepare_editor_commit` -> `phone_editor` -> `compile_phone_subtitled_plan` ->
 `compile_caption_layers`) on a ~190 s talk with per-word timings. The off-state is pinned to
-digests generated from origin/main (`tests/fixtures/phone_captions/single_word_off_state.json`):
+digests generated from origin/main (`tests/pipeline/single_word_off_state.json`):
 until `singleWordText` is verified AND the build declares protocol 11, nothing moves.
 """
 
@@ -43,14 +43,7 @@ from tests.pipeline.single_word_fixture import (
     talk_recipe,
 )
 
-GOLDEN = json.loads(
-    (
-        Path(__file__).resolve().parents[1]
-        / "fixtures"
-        / "phone_captions"
-        / "single_word_off_state.json"
-    ).read_text()
-)
+GOLDEN = json.loads((Path(__file__).with_name("single_word_off_state.json")).read_text())
 SAVE_CASES = {"save-word-unset": None, "save-word-true": True, "save-word-false": False}
 VERIFIED = ["singleWordText", "authoredText"]
 LIME = (0xC5 / 255, 0xF8 / 255, 0x2A / 255)
