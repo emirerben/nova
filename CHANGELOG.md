@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.1.0] - 2026-10-15
+
+### Fixed
+- fix(montage): finish text pass on large montages and say why a render failed (KRI-673) (#1609) <!-- release-pr: 1609 -->
+
 ## [0.79.0.0] - 2026-10-15
 
 ### Added
