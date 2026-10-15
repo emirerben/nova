@@ -401,19 +401,18 @@ def prepare_phone_editor_commit(
     staged = _StagedJob(job)
     from app.services.finished_style_learning import learning_available, style_snapshot
 
-    before_variant = next(
-        (
-            v
-            for v in (job.assembly_plan or {}).get("variants", [])
-            if v.get("variant_id") == variant_id
-        ),
-        {},
-    )
-    before_style = (
-        style_snapshot(before_variant, learning_sections or set())
-        if learning_available(job.user_id)
-        else None
-    )
+    owner_id = getattr(job, "user_id", None)
+    before_style = None
+    if owner_id is not None and learning_available(owner_id):
+        before_variant = next(
+            (
+                v
+                for v in (job.assembly_plan or {}).get("variants", [])
+                if v.get("variant_id") == variant_id
+            ),
+            {},
+        )
+        before_style = style_snapshot(before_variant, learning_sections or set())
     prep = prepare(staged)
     if not prep["has_render_section"]:
         return {**prep, "render_destination": "device"}

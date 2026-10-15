@@ -30,6 +30,7 @@ from app.routes import plan_items
 def _user() -> MagicMock:
     u = MagicMock()
     u.id = uuid.uuid4()
+    u.creator_edit_learning_enabled = False
     return u
 
 
