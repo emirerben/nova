@@ -1296,6 +1296,53 @@
         "physical original-project post-deploy resend"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-698-simpler-approval",
+      "tickets": [
+        "KRI-698"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-698",
+      "symptom": "Accepting the simpler version left omitted rule text mandatory in the approved brief; native pinning then refused the export.",
+      "boundary": "persistence",
+      "paths": [
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/kria/brief_binding.py",
+        "src/apps/api/tests/kria/test_runtime_simpler_version_loop.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_runtime_simpler_version_loop.py",
+        "tests/kria/test_brief_binding.py",
+        "tests/kria/test_request_binding_journey.py"
+      ],
+      "harness": "mocked_internal",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Red before fix: durable brief stayed v1, declined/unrelated/stale replies reached approval. Real Postgres, approval, dispatch claim, native compiler, immutable pin and publication authority guard; planner output replayed.",
+        "live_model": "Not run; no paid calls.",
+        "native_output": "scripts/ios/kri-698-simpler-version.py prepares the exact pinned recipe for AudioParityFixtureTests and verifies actual MP4 title, length, clip order and audio; synthetic sources, macOS AVFoundation. Physical iPhone/original N2 footage pending.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "explicit omission changes durable brief and approval binding",
+        "refusal/unrelated reply/clip number cannot waive",
+        "stale brief and new missing requirement require another choice",
+        "later request restores text",
+        "accepted omissions survive a subsequent unresolved choice",
+        "unwaived text and missing retained title still fail verification",
+        "pin redelivery is idempotent"
+      ],
+      "neighbours_gap": [
+        "Planner output is replayed at _plan_with_live_agent; fresh model behavior is not measured.",
+        "Original N2 phone source files are unavailable on this host; physical-device replay remains pending."
+      ],
+      "follow_ups": [
+        "KRI-721",
+        "KRI-734"
+      ],
+      "red_control": "not_applicable",
+      "journey": "kri-492-length-ownership"
     }
   ]
 }
