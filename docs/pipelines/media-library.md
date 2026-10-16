@@ -46,9 +46,18 @@ Finalization downloads the pinned generation, verifies the full uploaded hash
 and length, and checks the actual media. Device declarations never prove the
 uploaded-byte identity. No automatic video-original backup is added.
 
-The limit is 500 active catalogue assets per creator. Live new-import reservations
-consume capacity; owner locking serializes admission and duplicate finalization.
-Existing per-file and per-post limits still apply. Compatible imports coalesce
+Saved uploads keeps the newest 500 active catalogue assets per creator. A verified,
+unique import atomically archives the oldest active entry by upload/admission time
+(`created_at`, then `id` for ties). Reusing an old upload does not reset its age.
+Rotation hides it from future library selection; sources, reusable facts, local
+originals and existing post references remain intact. Existing posts keep working
+under the normal storage retention rules. No physical deletion runs during rotation.
+
+Reservations do not displace saved items. Up to 500 unfinished uploads are allowed
+independently of the active catalogue; failed or abandoned imports do not rotate it.
+Owner locking serializes admission and duplicate finalization. An attachment that
+rolls back also rolls back its archive changes. Duplicate imports and repairs do
+not consume another slot. Existing per-file and per-post limits still apply. Compatible imports coalesce
 after verifying the canonical cloud copy. Matching reimports can add a fresh
 source to an existing catalogue asset after cloud expiry. To repair at capacity,
 pass `repair_asset_id`: original bytes must match their verified identity, and a
@@ -106,7 +115,8 @@ uploads. Sign-out/local-original behavior belongs to the iOS slice.
 
 ## Evidence
 
-Real PostgreSQL tests cover quota races, duplicate finalization, ownership,
+Real PostgreSQL tests cover automatic rotation at 500, concurrent admission, rollback,
+duplicate finalization, ownership,
 cleanup claims, repair, durable facts/version invalidation and shared-post erasure.
 Reuse tests record provider counts and check independent edits, archived-source
 binding, original hash rejection and two chat bindings without uploads.
