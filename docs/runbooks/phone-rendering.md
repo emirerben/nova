@@ -1776,6 +1776,41 @@ text budget. Native preview/export tests include backward seeking, time-window
 clipping, and independent word color changes. Both contract validators reject
 missing, mismatched, or invalid timings.
 
+#### Single-word karaoke (`karaoke.single_word`): one word at a time
+
+Caption `Display: Word` is one word on screen at a time. The editor preview draws it from ONE
+`karaoke-line` layer per cue (never one layer per word, which hit the 500-text-layer cap on long
+talks). The saved/exported video follows only when the server emits the same shape; until then the
+server's word style stays a full-line sweep. Wire contract (also on `KaraokeContent` in
+`PortableText.swift`):
+
+- `karaoke.single_word: true` (omitted/false = today's behaviour; the key is new) requires
+  `karaoke.active_only: true`. Capability `singleWordText` (the engine derives it from the field,
+  like `authoredText` for `active_only`); client protocol >= 11.
+- `runs[i]` is word `i` (no whitespace, non-empty), laid out STANDALONE exactly as a one-word centred
+  caption layer of that style: `x`/`baseline_y` are absolute canvas pixels, the word centred at the
+  caption anchor on its own line (not a slice of the wrapped line). All runs share the layer's
+  `anchor_x`/`anchor_y`; the layer needs no frame or box. One run per word (a word that would wrap
+  cannot use the mode; send the full-line karaoke for that cue).
+- `starts[i]` is layer-local seconds (0 = `layer.start`), non-decreasing, one per run, 1..100. Word `i`
+  shows for `[starts[i], starts[i+1])`, the last until `layer.end`; nothing before `starts[0]`.
+  Words never overlap. Cues over 100 words are sent as consecutive layers.
+- Colour: every word is painted in `highlight` and `runs[i].fill` is ignored. "Highlight spoken word"
+  off sends the plain caption colour as `highlight`; on sends the highlight colour.
+- Stroke, stroke width, blur/shadow layers, glyphs and font variations come from each run. Hidden
+  words draw nothing, shadow included.
+- `effect: "karaoke-line"`: no entrance animation, alpha 1, scale 1 (today's per-word layers have none).
+  Case transforms are applied before layout.
+- Which cues: `style: "word"` with an explicit `highlight_spoken_word` (true or false) uses the mode;
+  `style: "word"` with it unset, or `highlight_spoken_word: true` under `style: "sentence"`, keeps the
+  full-line karaoke (the editor's behaviour, and what the server does today).
+- Server gate to add (not yet done): `singleWordText` in `PHONE_RENDER_VERIFIED_FEATURES` (config
+  `phone_render_verified_features`), `required_capabilities |= {"singleWordText"}` in
+  `EditRecipeV2` when a layer has `karaoke.single_word`, a `PhoneCapabilityUnavailable(capability=
+  "singleWordText")` in `phone_rollout` like `authoredText`/`textBend`, `"singleWordText"` in the
+  `recipes.py` capability list, `KaraokeContent.single_word` in `app/kria/portable_text.py`, and a
+  min-client-protocol (>= 11) 426 for a variant that would carry it. Builds below 11 cannot decode the key.
+
 `slide-in` currently renders as static text in the production Skia dispatcher.
 The phone preserves that actual behavior, including ignoring motion and exit
 fades. A cloud full-frame comparison and native timing test pin this behavior.

@@ -195,6 +195,36 @@ public enum AuthoredTextLayout {
             rotationDegrees: style.rotation, runs: runs, effect: layerEffect, motion: motion, revealBounds: inkBounds,
             discreteReveal: reveal, smoothReveal: smooth, animationPhases: phases, background: background, bend: bend)
     }
+    /// One-word-at-a-time caption for a cue (`KaraokeContent.singleWord`; see its wire contract). Every word is laid
+    /// out STANDALONE with `compile`, so it is positioned exactly as a one-word caption layer of this style would
+    /// be, and the layer carries all of them as runs. `starts` are layer-local, one per word. A cue of more than 100
+    /// words (the karaoke cap) comes back as consecutive layers. Returns nil if a word cannot stay on one line,
+    /// in which case the caller shows the cue as a full-line karaoke layer.
+    public static func compileSingleWords(id: String, text: String, start: Double, end: Double, starts: [Double],
+                                          highlight: TextInk, style: Style, fontURL: URL, canvas: Canvas) throws -> [PortableTextLayer]? {
+        let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty, words.count == starts.count, end > start else { throw RecipeError.invalidTimeline }
+        var runs: [PositionedTextRun] = []
+        var anchor: PortableTextLayer?
+        for word in words {
+            let layout = try compile(id: id, text: word, start: start, end: end, style: style, fontURL: fontURL, canvas: canvas)
+            guard layout.runs.count == 1, let run = layout.runs.first else { return nil }
+            runs.append(run)
+            anchor = anchor ?? layout
+        }
+        guard let anchor else { throw RecipeError.invalidTimeline }
+        let limit = 100
+        return stride(from: 0, to: words.count, by: limit).enumerated().map { part, lower in
+            let upper = min(lower + limit, words.count)
+            let layerStart = start + starts[lower]
+            let layerEnd = upper < words.count ? start + starts[upper] : end
+            return PortableTextLayer(id: part == 0 ? id : "\(id)-part-\(part)", start: layerStart, end: layerEnd,
+                anchorX: anchor.anchorX, anchorY: anchor.anchorY, rotationDegrees: anchor.rotationDegrees,
+                runs: Array(runs[lower..<upper]), effect: .karaokeLine,
+                karaoke: KaraokeContent(starts: starts[lower..<upper].map { $0 - starts[lower] }, highlight: highlight, activeOnly: true, singleWord: true))
+        }
+    }
+
     /// Keeps full-line shaping and positions while assigning an independently
     /// timed color to each word. No line is reflowed when the highlight changes.
     public static func compileHighlightedWords(id: String, text: String, start: Double, end: Double,

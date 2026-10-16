@@ -293,6 +293,7 @@ extension RecipeTextLayer {
         if let giantTitle { return giantTitle.bitmapBytes }
         if let handwriting { return handwriting.bitmapBytes }
         if let karaoke { return karaoke.bitmapBytes }
+        if let singleWord { return singleWord.bitmapBytes }
         if let staggered { return staggered.bitmapBytes }
         if let smoothReveal { return smoothReveal.bitmapBytes }
         return Int(pixelCount * 4) * (discreteReveal == nil ? 1 : 2)
