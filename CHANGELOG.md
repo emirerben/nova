@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.4.0] - 2026-10-16
+
+### Changed
+- fix(kria): render the approved simpler edit (KRI-698) (#1639) <!-- release-pr: 1639 -->
+
 ## [0.80.3.0] - 2026-10-16
 
 ### Changed
