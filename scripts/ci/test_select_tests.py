@@ -744,6 +744,10 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-628-opening-cut,kri-681-named-line-windows"),
             ),
             (
+                "src/apps/api/app/pipeline/caption_correct.py",
+                (True, "covered", "kri-708-caption-correction"),
+            ),
+            (
                 "src/apps/api/app/services/length_planning.py",
                 (True, "covered", "kri-681-named-line-windows"),
             ),
