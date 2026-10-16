@@ -454,6 +454,37 @@ live evals (`--eval-mode=live`, no judge):
 `test_landmark_guess_evals.py`, `test_clip_intent_planner_evals.py`,
 `test_main_creator_evals.py`, `test_edit_proposal_evals.py`.
 
+## Measured brightness (`CLIP_EXPOSURE_FACT_ENABLED`, KRI-680)
+
+"Skip the very dark clips / nothing is visible" could not match on a night shoot:
+the analyzer describes every clip there as "dark ...". With the flag on,
+`autoplace._analyze_video` also measures the analysis copy
+(`app/services/clip_exposure.py`: subprocess FFmpeg, keyframes or 2 fps samples
+shrunk to 90x160 gray, at most 24 frames) and stores
+`analysis["exposure"] = {version, mean_luma, near_black_share, frames}` beside the
+understanding block. A frame is near-black when under 1% of its pixels reach
+full-range luma 48. `clip_record` turns it into `ClipUnderstanding.visibility`, a
+phrase every prompt view carries ("very dark, almost nothing visible (measured
+mean brightness 4/255, 95% of sampled frames near-black)"), so the resolver can
+match an `exclude` ask to it. Tiers: very dark = mean <= 8 and >= 50% near-black
+frames; dark = mean < 40 or >= 25% near-black; very bright = mean > 200.
+
+- Fail-open: an unreadable file, missing FFmpeg or a timeout stores nothing, and
+  a clip analysed with the flag off (no backfill, no `ANALYSIS_VERSION` bump) has
+  no line. Flag off, `clip_record` ignores stored measurements: byte-identical.
+- Measured "very dark" never removes a clip by itself. On the boat kit M1 the
+  "Hadi gidelim" pier clip (asked first) and the boat-won't-start clip (own sound)
+  are as dark as the two junk clips; they stay because `excluded_clips` never
+  removes a clip another ask names or the strategy plays.
+- The line is never on-screen copy (`footage_lines` / grounding read explicit
+  fields only).
+
+Coverage: `tests/services/test_kri680_clip_exposure.py` (recorded M1 records +
+measurements in `tests/fixtures/kri680_tigre_m1_clip_records.json`; the resolver
+model is a stand-in, so a live replay is still the proof of the model's match).
+Apply: `fly secrets set CLIP_EXPOSURE_FACT_ENABLED=true --app nova-video` +
+restart api and worker.
+
 ## Kria thread clips: one loop per item, and Visuals queue fairness
 
 `attach_media` enqueues `tasks.analyze_kria_clips` (`app/tasks/kria_clip_understanding.py`)

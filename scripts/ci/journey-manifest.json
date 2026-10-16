@@ -436,6 +436,17 @@
       ]
     },
     {
+      "id": "kri-680-dark-clips",
+      "needs_native": false,
+      "api_tests": "tests/services/test_kri680_clip_exposure.py tests/kria/test_kri667_clip_exclusions.py",
+      "paths": [
+        "src/apps/api/app/schemas/clip_understanding.py",
+        "src/apps/api/app/services/clip_exposure.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/tests/fixtures/kri680_tigre_m1_clip_records.json"
+      ]
+    },
+    {
       "id": "kri-625-moment-quality",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_best_parts.py tests/pipeline/test_clip_meta_dormant_readers.py",
