@@ -292,6 +292,16 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   takes but refuses overlapping windows. Moments that don't fit fall back to one
   window per take, with a notice. Incident: cabin kit M2, prod thread 6605cf61.
   Guard: `tests/tasks/test_long_take_moments_montage.py`.
+  KRI-686: the count may sit apart from the noun ("eight of them", "8 in total", "sekiz
+  tane") and a per-moment length ("about 2 seconds each", "her biri 2 saniye") is
+  `MomentAsk.each_s` (<= 3s also means `short`; it sizes the moments when no count is
+  given). Read by tokens, not patterns (KRI-667 ratchet); a recorded
+  `facts.moment_count` / `facts.moment_length_s` decides first. "no dark stretches"
+  sets `excludes`, so that half of the ask stays an honest "can't check". When a take's
+  analysis has no `best_moments` (the model may return `[]` for uniform footage) the
+  moment path spreads windows over the take (`moment_fill`); the plain one-window
+  selector falls back to the take's first seconds (`analysis_fallback`). Incident:
+  boat kit M2, thread 1390E686. Guard: `tests/tasks/test_moment_ask_wording.py`.
 - *Clips ruled out by length (KRI-623)*: "from the long takes", "skip the short
   clips", "uzun çekimlerden", "kısa klipleri kullanma" leave clips out whatever the
   Main Creator picked. `app/kria/clip_scope.py` reads the live brief's `select` asks
