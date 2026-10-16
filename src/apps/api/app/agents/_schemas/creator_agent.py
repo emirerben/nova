@@ -73,6 +73,10 @@ MAX_CREATOR_REVIEW_EVIDENCE = 12
 MAX_CREATOR_REVISION_EVIDENCE_IDS = 8
 MAX_CREATOR_WORKSPACE_MEDIA_IDS = 50
 MAX_CREATOR_CRAFT_COMMANDS = 3
+# One `story_structure` entry (a short beat of prose, taste only). The Main Creator agent
+# trims an over-long model line to this before validation (KRI-687); the schema itself
+# stays strict for every other source.
+STORY_LINE_MAX_CHARS = 120
 CREATOR_COLOR_ALIASES: dict[str, str] = {
     "pastel yellow": "#FFF0A6",
     "yellow": "#FFD24A",
@@ -653,8 +657,8 @@ class CreativeStrategy(_CreatorModel):
     @field_validator("story_structure")
     @classmethod
     def _validate_story_structure(cls, values: list[str]) -> list[str]:
-        if any(not value.strip() or len(value) > 120 for value in values):
-            raise ValueError("story_structure entries must be 1-120 characters")
+        if any(not value.strip() or len(value) > STORY_LINE_MAX_CHARS for value in values):
+            raise ValueError(f"story_structure entries must be 1-{STORY_LINE_MAX_CHARS} characters")
         return [value.strip() for value in values]
 
     @field_validator("archetype", mode="before")

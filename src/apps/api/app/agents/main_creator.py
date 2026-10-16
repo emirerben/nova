@@ -18,6 +18,7 @@ from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import (
     CREATOR_AGENT_OUTPUT_ADAPTER,
     CREATOR_REQUEST_MAX_CHARS,
+    STORY_LINE_MAX_CHARS,
     CreatorAgentOutput,
     ProposeStrategy,
     ResolvedCreatorManifest,
@@ -615,6 +616,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             data = _hoist_misplaced_brief_updates(data)
             data = _repair_creative_decision(data)
             raw_action = _repair_action_envelope(data.get("action"))
+            raw_action = _repair_story_structure(raw_action)
             if isinstance(raw_action, dict) and raw_action.get("kind") == "propose_strategy":
                 raw_strategy = raw_action.get("strategy")
                 if not isinstance(raw_strategy, dict) or "target_duration_s" not in raw_strategy:
@@ -908,6 +910,16 @@ def _repair_action_envelope(action: object) -> object:
     seen on a phone Talking "Add captions" turn, KRI-238). Move each only when
     its destination is absent; all other malformed or unknown fields remain
     subject to the strict adapter and fail closed.
+
+    KRI-687 (prod 2026-10-15 logged ``strategy.summary`` as ``extra_forbidden``): a
+    `summary` the move rule above leaves in ``strategy`` -- a copy beside the documented
+    one, or a value that is not a string -- failed the strict adapter. `summary` is prose
+    only the proposal envelope reads --
+    `CreativeStrategy` has no such field -- so a nested copy that cannot be moved
+    (the documented one already holds text, or the value is not a string) carries
+    nothing and is dropped. Nothing else is dropped: a misspelt real field must
+    still stop the turn, and two diverging `render_intent_evidence` objects are an
+    ambiguity the retry should resolve, not one to settle by guessing.
     """
 
     if not isinstance(action, dict) or action.get("kind") != "propose_strategy":
@@ -915,15 +927,118 @@ def _repair_action_envelope(action: object) -> object:
     strategy = action.get("strategy")
     if not isinstance(strategy, dict):
         return action
-    moved = {
-        key: strategy[key]
-        for key, kind in (("summary", str), ("render_intent_evidence", dict))
-        if key not in action and isinstance(strategy.get(key), kind)
-    }
-    if not moved:
+    outer_summary = action.get("summary")
+    outer_summary_blank = outer_summary is None or (
+        isinstance(outer_summary, str) and not outer_summary.strip()
+    )
+    moved: dict[str, object] = {}
+    nested_summary = strategy.get("summary")
+    if outer_summary_blank and isinstance(nested_summary, str) and nested_summary.strip():
+        moved["summary"] = nested_summary
+    if "render_intent_evidence" not in action and isinstance(
+        strategy.get("render_intent_evidence"), dict
+    ):
+        moved["render_intent_evidence"] = strategy["render_intent_evidence"]
+    removed = set(moved) | ({"summary"} if "summary" in strategy else set())
+    if not removed:
         return action
-    repaired_strategy = {key: value for key, value in strategy.items() if key not in moved}
+    repaired_strategy = {key: value for key, value in strategy.items() if key not in removed}
     return {**action, "strategy": repaired_strategy, **moved}
+
+
+# Punctuation only -- no regex, so this cannot become a guess at what the model meant
+# (tests/kria/test_kri667_no_new_intent_regexes.py ratchets the `re.*` calls per module).
+_STORY_SENTENCE_END = frozenset(".!?…")
+_STORY_CLAUSE_END = frozenset(",;:")
+_STORY_DASHES = frozenset("-–—")
+
+
+def _trim_story_line(line: str) -> str:
+    """Shorten one over-long story line to ``STORY_LINE_MAX_CHARS``, cutting at a boundary.
+
+    Prefers the end of the last full sentence, then the last clause break, then the last
+    word -- each only if it keeps at least half the allowance -- and falls back to a plain
+    cut for a line with no usable break. Anything cut mid-sentence ends in an ellipsis so
+    a reader can see it was shortened. A line that fits once its padding is stripped is
+    only stripped (the schema counts the padding), never shortened.
+    """
+
+    text = line.strip()
+    if len(text) <= STORY_LINE_MAX_CHARS:
+        return text
+    text = " ".join(text.split())
+    limit = STORY_LINE_MAX_CHARS
+    if len(text) <= limit:
+        return text
+    floor = limit // 2
+    room = limit - 1  # leaves one character for the ellipsis
+    # Slices (not indexes) look one or two characters ahead, so the end of the text is safe.
+    sentence_end = max(
+        (
+            i + 1
+            for i in range(limit)
+            if text[i] in _STORY_SENTENCE_END and text[i + 1 : i + 2] == " "
+        ),
+        default=0,
+    )
+    if sentence_end >= floor:
+        return text[:sentence_end]
+    clause = max(
+        (
+            i
+            for i in range(room + 1)
+            if (text[i] in _STORY_CLAUSE_END and text[i + 1 : i + 2] == " ")
+            or (
+                text[i] == " "
+                and text[i + 1 : i + 2] in _STORY_DASHES
+                and text[i + 2 : i + 3] == " "
+            )
+        ),
+        default=0,
+    )
+    if clause >= floor:
+        cut = clause
+    else:
+        word = text.rfind(" ", 0, room + 1)
+        cut = word if word >= floor else room
+    return text[:cut].rstrip(" ,;:-–—") + "…"
+
+
+def _repair_story_structure(action: object) -> object:
+    """Trim an over-long ``strategy.story_structure`` line instead of failing the turn.
+
+    KRI-687 (prod 2026-10-15, thread 1390E686): on a rich multi-part prompt the model wrote
+    one story line past 120 characters on all three attempts, so the creator got "I couldn't
+    turn that into a plan" for a request that was fine. The field is taste only
+    (``preference_only`` in the render contract): readers join the lines into a goal
+    sentence, show them as numbered beats and keep them in the receipt, and no renderer is
+    held to their wording. Trimming keeps the count and order of the lines (splitting could
+    pass the eight-line cap and shows the creator beats nobody wrote); a blank line, a
+    non-text entry or more than eight lines still fail the strict schema.
+    """
+
+    if not isinstance(action, dict) or action.get("kind") != "propose_strategy":
+        return action
+    strategy = action.get("strategy")
+    if not isinstance(strategy, dict):
+        return action
+    lines = strategy.get("story_structure")
+    if not isinstance(lines, list):
+        return action
+    repaired = [
+        _trim_story_line(line)
+        if isinstance(line, str) and len(line) > STORY_LINE_MAX_CHARS
+        else line
+        for line in lines
+    ]
+    if repaired == lines:
+        return action
+    log.info(
+        "main_creator_story_line_trimmed",
+        trimmed=sum(1 for before, after in zip(lines, repaired, strict=True) if before != after),
+        lines=len(lines),
+    )
+    return {**action, "strategy": {**strategy, "story_structure": repaired}}
 
 
 _DECISION_KEYS = ("target", "status", "proposed_text", "source_evidence", "language")
