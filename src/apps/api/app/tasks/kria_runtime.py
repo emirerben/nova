@@ -696,11 +696,11 @@ def _simpler_version_question() -> dict[str, Any]:
             reason="",
             options=(
                 ConflictOption(
-                    key="different_approach",
+                    "different_approach",
                     label=say(en="Try a different approach", tr="Farklı bir yol dene"),
                 ),
                 ConflictOption(
-                    key="simpler_version",
+                    "simpler_version",
                     label=say(en="Make this simpler version", tr="Daha basit sürümü hazırla"),
                     aliases=(
                         "simpler version",
