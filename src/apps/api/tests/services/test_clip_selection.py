@@ -467,16 +467,23 @@ def test_identity_never_crosses_ops_or_generic_ids() -> None:
         is None
     )
     # A generic id reused for a different intent never inherits an answer.
-    question = _question()
-    for cat in question["categories"]:
-        cat["intent_id"] = "g1"
-    generic = fold_clip_selections(
-        [
-            ("assistant", {"clip_question": question}),
-            ("user", {"clip_selection": {"question_id": "q1", "none_keys": ["group:dodgeball"]}}),
-        ]
-    )
-    assert generic.match(ClipIntent(intent_id="g1", op="group", attribute="pub videos")) is None
+    for generic_id in ["g1", "intent_2", "include_1", "clip_1", "media_2", "slot_3"]:
+        question = _question()
+        for cat in question["categories"]:
+            cat["intent_id"] = generic_id
+        generic = fold_clip_selections(
+            [
+                ("assistant", {"clip_question": question}),
+                (
+                    "user",
+                    {"clip_selection": {"question_id": "q1", "none_keys": ["group:dodgeball"]}},
+                ),
+            ]
+        )
+        assert (
+            generic.match(ClipIntent(intent_id=generic_id, op="group", attribute="pub videos"))
+            is None
+        ), generic_id
 
 
 @pytest.mark.asyncio

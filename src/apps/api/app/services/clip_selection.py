@@ -39,10 +39,11 @@ _FALLBACK_MIN_SIMILARITY = 0.5
 # clips a creator tapped for "include: laundry" can never become the clips an
 # "exclude: laundry" leaves out (an exclude is never a picker category of its own).
 _MEMBERSHIP_OPS = frozenset({"group", "include"})
-# KRI-697: an `intent_id` built only from these words (plus digits) is positional ("g1",
-# "intent_2", "include_1"): a re-plan may reuse it for a different intent, so it never
-# binds an answer. A descriptive id ("caption_rule3_text") does.
+# KRI-697: an `intent_id` binds an answer only with a 4+ letter word outside these generic
+# words AND not as one word plus digits ("clip_1", "media2"): a re-plan may reuse those
+# positional ids for a different intent. A descriptive id ("caption_rule3_text") binds.
 _GENERIC_ID_WORDS = frozenset({*get_args(ClipIntentOp), "intent", "item"})
+_POSITIONAL_ID = re.compile(r"[a-z]+[_-]?\d*")
 
 
 class _Strict(BaseModel):
@@ -112,8 +113,11 @@ def _identities(intent_id: object, creator_text: object) -> list[str]:
     """What a picker answer stays bound to when a later turn rewords the row (KRI-697)."""
     out: list[str] = []
     if isinstance(intent_id, str):
-        words = re.findall(r"[a-z]+", intent_id.casefold())
-        if any(len(w) >= 4 and w not in _GENERIC_ID_WORDS for w in words):
+        folded = intent_id.casefold()
+        words = re.findall(r"[a-z]+", folded)
+        if not _POSITIONAL_ID.fullmatch(folded) and any(
+            len(w) >= 4 and w not in _GENERIC_ID_WORDS for w in words
+        ):
             out.append(f"id:{intent_id}")
     if isinstance(creator_text, str) and (text := "-".join(_words(creator_text))):
         out.append(f"text:{text}")
