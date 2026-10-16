@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.12.0] - 2026-10-16
+
+### Fixed
+- fix(kria): a brighten ask gets an honest "Couldn't" and never reaches the approval card (KRI-700) (#1622) <!-- release-pr: 1622 -->
+
 ## [0.79.11.0] - 2026-10-16
 
 ### Changed
