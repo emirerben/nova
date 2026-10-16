@@ -578,7 +578,7 @@
     {
       "id": "kri-669-gameday",
       "needs_native": true,
-      "api_tests": "tests/kria/test_gameday_text_hierarchy.py tests/routes/test_native_timeline_sources.py tests/routes/test_editor_sources.py",
+      "api_tests": "tests/kria/test_gameday_text_hierarchy.py tests/routes/test_native_timeline_sources.py tests/routes/test_editor_sources.py tests/routes/test_device_render.py",
       "xctests": [
         "KriaUITests/GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview"
       ],
@@ -592,7 +592,8 @@
         "src/apps/ios/Kria/Features/NativeEditorSession.swift",
         "src/apps/ios/Kria/Features/NativeEditorUITestFixtures.swift",
         "src/apps/ios/Tests/KriaUITests/GamedayAddClipUITests.swift",
-        "scripts/ios/kri-669-gameday-text.py"
+        "scripts/ios/kri-669-gameday-text.py",
+        "src/apps/api/app/kria/device_render.py"
       ]
     },
     {

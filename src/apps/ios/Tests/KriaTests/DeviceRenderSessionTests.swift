@@ -171,6 +171,33 @@ private actor RetryGate {
         XCTAssertNil(finished.exportProgress)
     }
 
+    /// A failed reconciliation belongs to the newly saved edit. A previous synced
+    /// presentation cannot remain its apparent success or expose the old local file.
+    func testNewRequestPreparationFailureReplacesPreviousSyncedPresentation() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let first = request(job)
+        let next = DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: job, variantID: "first",
+            recipeRevision: 2, recipeDigest: String(repeating: "b", count: 64)), recipe: first.recipe)
+        let status = SessionStatus(phase: "published", request: first)
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            DeviceRenderStatusResponse(phase: await status.phase, request: await status.request, publishedGeneration: "old-output")
+        }, factory: { _, request in
+            if request.identity.recipeRevision == 2 { throw APIError.invalidResponse }
+            return try DeviceRenderCoordinator(directory: output, exporter: SessionExport(), sources: SessionSources(), publisher: SessionPublisher())
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        XCTAssertEqual(sessions.presentations[key]?.phase, .synced)
+        await status.set(phase: "awaiting_device", request: next)
+        await sessions.reconcile(key, capabilities: enabled)
+        XCTAssertEqual(sessions.presentations[key]?.phase, .needsAttention)
+        XCTAssertNil(sessions.presentations[key]?.publishedGeneration)
+        XCTAssertNotNil(sessions.presentations[key]?.message)
+        XCTAssertFalse(sessions.presentations[key]?.requiresServerRetry ?? true)
+        await sessions.stopAll()
+    }
+
     func testDisabledGateNeverStartsExport() async throws {
         let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: output) }

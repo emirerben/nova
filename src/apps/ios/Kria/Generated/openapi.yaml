@@ -1960,6 +1960,12 @@
       "DeviceRenderStatus": {
         "additionalProperties": false,
         "properties": {
+          "base_generation": {
+            "default": null,
+            "nullable": true,
+            "title": "Base Generation",
+            "type": "string"
+          },
           "phase": {
             "enum": [
               "awaiting_device",
