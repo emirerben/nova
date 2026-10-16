@@ -492,6 +492,15 @@
       ]
     },
     {
+      "id": "kri-719-talking-multi-clip",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_talking_cutaways.py tests/tasks/test_phone_subtitled_narrated_dispatch.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_talking_cutaways.py",
+        "src/apps/api/tests/pipeline/test_phone_talking_cutaways.py"
+      ]
+    },
+    {
       "id": "kri-681-named-line-windows",
       "needs_native": false,
       "api_tests": "tests/tasks/test_named_line_windows_montage.py tests/tasks/test_long_take_moments_montage.py",
