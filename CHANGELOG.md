@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.13.0] - 2026-10-16
+
+### Changed
+- fix(kria): judge a glued music + ending ask by its parts and never call a clip ending a photo (KRI-688) (#1623) <!-- release-pr: 1623 -->
+
 ## [0.79.12.0] - 2026-10-16
 
 ### Fixed
