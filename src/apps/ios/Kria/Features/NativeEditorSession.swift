@@ -704,6 +704,9 @@ struct NativeEditorTemporaryVideo {
     /// Cards loaded for the preview at once. Each file keeps its own request/resource timeouts.
     static let previewMediaConcurrency = 4
     private var resolvedSources: [Int: ResolvedEditorSource]?
+    /// KRI-719: a multi-clip Talking edit's footage cutaways, drawn over the speakers in the live preview
+    /// only (never part of the document). Set with `resolvedSources`, cleared with it.
+    private var previewTalkingCutaways: [NativePhoneTalkingSource.Cutaway] = []
     private var sourcePreviewTask: Task<Void, Never>?
     private var sourcePreviewSequence = 0
     /// The last `sourcePreviewSequence` a `rebuildSourcePreview` attempt
@@ -2004,7 +2007,7 @@ struct NativeEditorTemporaryVideo {
         player?.pause()
         player = nil
         finishedRenderURL = nil; finishedRenderPlayer = nil; finishedRenderIsCurrent = true
-        sourcePreview = nil; sourceCompiler = nil; sourcePool = nil; resolvedSources = nil
+        sourcePreview = nil; sourceCompiler = nil; sourcePool = nil; resolvedSources = nil; previewTalkingCutaways = []
         liveSongVolumeActive = false; previewBuiltDocument = nil
         sourcePreviewState = .idle; sourcePreviewGeneration = nil
         previewVariant = [:]
@@ -2395,6 +2398,7 @@ struct NativeEditorTemporaryVideo {
         player?.pause()
         isPlaying = false
         resolvedSources = nil
+        previewTalkingCutaways = []
         sourcePool = nil
         resolvedAudio = [:]
         deviceNarrationResolutionGeneration = nil
@@ -2425,6 +2429,7 @@ struct NativeEditorTemporaryVideo {
             originalsRecoveryPool = pool
             let sources: [Int: ResolvedEditorSource]
             var phoneTalkingIndices: [Int]?
+            var phoneTalkingCutaways: [NativePhoneTalkingSource.Cutaway] = []
             var phoneNarratedSeeds: [NativePhoneNarratedSource.Seed] = []
             if let base = NativeEditorBaseSource(variant: previewVariant, document: document) {
                 #if DEBUG
@@ -2449,11 +2454,21 @@ struct NativeEditorTemporaryVideo {
             } else {
                 phoneTalkingIndices = NativePhoneTalkingSource.sourceIndices(variant: previewVariant, document: document,
                     pool: pool, lanesEditable: canEdit(.mediaOverlays) || canEdit(.soundEffects))
+                if let speakers = phoneTalkingIndices {
+                    // A cutaway the preview can't place would show the speaker where the MP4 cuts away:
+                    // fall back to the finished MP4 rather than preview a different video.
+                    if let cutaways = NativePhoneTalkingSource.cutaways(variant: previewVariant, pool: pool, speakerIndices: speakers) {
+                        phoneTalkingCutaways = cutaways
+                    } else {
+                        phoneTalkingIndices = nil
+                    }
+                }
                 if NativePhoneNarratedSource.applies(variant: previewVariant, document: document) {
                     phoneNarratedSeeds = await loadPhoneNarratedSeeds(pool: pool, generation: generation, sequence: sequence)
                 }
                 sources = try await resolver.resolve(pool, generation: generation,
                     requiredIndices: Set(timelineClips.compactMap(\.sourceClipIndex) + (phoneTalkingIndices ?? [])
+                        + phoneTalkingCutaways.map(\.clipIndex)
                         + document.clipAudio.map(\.sourceClipIndex) + phoneNarratedSeeds.map(\.clipIndex)))
             }
             guard sequence == sourcePreviewSequence, !Task.isCancelled,
@@ -2501,6 +2516,7 @@ struct NativeEditorTemporaryVideo {
             sourceCompiler = try NativeEditorRenderCompiler(fontDirectory: fonts)
             sourcePool = pool
             resolvedSources = sources
+            previewTalkingCutaways = phoneTalkingIndices == nil ? [] : phoneTalkingCutaways
             await rebuildSourcePreview(sequence: sequence)
         } catch {
             guard sequence == sourcePreviewSequence, !Task.isCancelled else { return }
@@ -2531,6 +2547,7 @@ struct NativeEditorTemporaryVideo {
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
         resolvedSources = nil
+        previewTalkingCutaways = []
         sourcePool = nil
         resolvedAudio.removeAll()
         deviceNarrationResolutionGeneration = nil
@@ -2887,7 +2904,9 @@ struct NativeEditorTemporaryVideo {
                 start: projection.projectBaseTime(pending.startS), end: projection.projectBaseTime(pending.endS), zIndex: 999, sourceIndex: items.count))
         }
         do {
-            let needed = Set(clips.compactMap(\.sourceClipIndex) + baseline.clipAudio.map(\.sourceClipIndex))
+            let talkingCutaways = previewTalkingCutaways
+            let needed = Set(clips.compactMap(\.sourceClipIndex) + baseline.clipAudio.map(\.sourceClipIndex)
+                + talkingCutaways.map(\.clipIndex))
             if !needed.isSubset(of: Set(sources.keys)), let pool = sourcePool, let resolver = sourceResolver {
                 sourcePreviewState = .preparing
                 sources = try await resolver.resolve(pool, generation: baseline.revision.baseGeneration, requiredIndices: needed)
@@ -2938,7 +2957,8 @@ struct NativeEditorTemporaryVideo {
                                      sourceAudioPreserved: sourceAudioPreserved || songRemoved,
                                      songBed: songBed, deviceCaptions: rendersOnDevice,
                                      songCaptionShift: lyricShift,
-                                     skippedMediaOverlayIDs: skippedPreviewMedia)
+                                     skippedMediaOverlayIDs: skippedPreviewMedia,
+                                     talkingCutaways: talkingCutaways)
             }
             var program = try compileProgram(songBed: realBed.map {
                 NativeEditorSongBed(assetID: $0.assetID, sourceStart: $0.sourceStart, sourceDuration: $0.sourceDuration,

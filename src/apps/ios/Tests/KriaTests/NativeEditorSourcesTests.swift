@@ -227,6 +227,40 @@ final class NativeEditorSourcesTests: XCTestCase {
         XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: true))
     }
 
+    /// KRI-719: the receipt's footage windows map onto the source pool for the live preview, sorted by start.
+    /// Anything the preview could not draw faithfully (unknown clip, a speaker, overlap, a bad window) is nil,
+    /// so the editor shows the finished MP4 instead of a video without its cutaways.
+    func testPhoneTalkingCutawaysComeFromTheReceiptWindows() {
+        func source(_ id: String) -> NativeTimelineSource {
+            NativeTimelineSource(mediaID: id, sourceURL: URL(string: "https://example.com/\(id).mov"), original: nil, localRequired: false)
+        }
+        let pool = NativeEditorSourcePool(clips: [
+            .init(clipIndex: 0, nativeSource: source("take")),
+            .init(clipIndex: 1, nativeSource: source("street")),
+            .init(clipIndex: 2, nativeSource: source("market")),
+        ], baseGeneration: "g")
+        func variant(_ rows: [JSONValue]?) -> [String: JSONValue] {
+            var receipt: [String: JSONValue] = ["version": .number(1), "speaker_media_ids": .array([.string("take")])]
+            if let rows { receipt["cutaways"] = .array(rows) }
+            return ["resolved_archetype": .string("subtitled"), "render_destination": .string("device"),
+                    "phone_talking_multi_clip": .object(receipt)]
+        }
+        func row(_ id: String, _ start: Double, _ end: Double) -> JSONValue {
+            .object(["media_id": .string(id), "start_s": .number(start), "end_s": .number(end)])
+        }
+        XCTAssertEqual(NativePhoneTalkingSource.cutaways(variant: variant([row("market", 9, 12), row("street", 3, 6.5)]), pool: pool, speakerIndices: [0]),
+                       [.init(clipIndex: 1, start: 3, end: 6.5), .init(clipIndex: 2, start: 9, end: 12)])
+        // No receipt (one clip) or no footage placed: nothing to draw, the speakers still preview.
+        XCTAssertEqual(NativePhoneTalkingSource.cutaways(variant: ["resolved_archetype": .string("subtitled")], pool: pool, speakerIndices: [0]), [])
+        XCTAssertEqual(NativePhoneTalkingSource.cutaways(variant: variant(nil), pool: pool, speakerIndices: [0]), [])
+        XCTAssertEqual(NativePhoneTalkingSource.cutaways(variant: variant([]), pool: pool, speakerIndices: [0]), [])
+        XCTAssertNil(NativePhoneTalkingSource.cutaways(variant: variant([row("gone", 3, 6)]), pool: pool, speakerIndices: [0]))
+        XCTAssertNil(NativePhoneTalkingSource.cutaways(variant: variant([row("take", 3, 6)]), pool: pool, speakerIndices: [0]))
+        XCTAssertNil(NativePhoneTalkingSource.cutaways(variant: variant([row("street", 3, 6), row("market", 5, 8)]), pool: pool, speakerIndices: [0]))
+        XCTAssertNil(NativePhoneTalkingSource.cutaways(variant: variant([row("street", 6, 3)]), pool: pool, speakerIndices: [0]))
+        XCTAssertNil(NativePhoneTalkingSource.cutaways(variant: variant([.string("street")]), pool: pool, speakerIndices: [0]))
+    }
+
     /// KRI-232: job 62716037's speech cleanup removed three spans; the Talking
     /// source must play as the server's hard-cut kept segments, not whole.
     func testPhoneTalkingSourceSplitsOnSpeechCleanupCuts() throws {

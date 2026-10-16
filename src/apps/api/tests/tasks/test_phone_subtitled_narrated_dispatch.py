@@ -3462,6 +3462,21 @@ def _setup_talking_multi(monkeypatch, *, clips, enabled=True):
     return job, snapshot, bindings
 
 
+def _assert_receipt_cutaways_match_recipe(receipt, recipe):
+    """The iPhone editor previews footage cutaways from the receipt
+    (`NativePhoneTalkingSource.cutaways`), so its windows must be exactly the
+    ones the device renders from the pinned recipe."""
+    track = next((t for t in recipe.tracks if t.id == "talking-head-cutaways"), None)
+    pinned = track.clips if track else []
+    rows = receipt["cutaways"]
+    assert [row["media_id"] for row in rows] == [c.source_asset_id for c in pinned]
+    for row, clip in zip(rows, pinned, strict=True):
+        assert row["start_s"] == pytest.approx(clip.timeline_start, abs=1e-6)
+        assert row["end_s"] == pytest.approx(clip.timeline_start + clip.source_duration, abs=1e-6)
+        # The preview plays each footage clip from its start.
+        assert clip.source_start == 0
+
+
 def test_two_talking_clips_play_back_to_back_and_footage_covers_them(monkeypatch):
     job, _snapshot, _bindings = _setup_talking_multi(
         monkeypatch,
@@ -3497,6 +3512,7 @@ def test_two_talking_clips_play_back_to_back_and_footage_covers_them(monkeypatch
     assert receipt["speaker_media_ids"] == ["take1", "take2"]
     assert [row["media_id"] for row in receipt["cutaways"]] == ["street"]
     assert receipt["unplaced"] == []
+    _assert_receipt_cutaways_match_recipe(receipt, recipe)
     assert gb.PHONE_TALKING_HEAD_FIELD not in variant
 
     from app.services.nova_steps import render_notes_from_talking_multi_clip_receipt
@@ -3525,6 +3541,7 @@ def test_one_talking_clip_with_footage_keeps_one_speaker(monkeypatch):
     receipt = job.assembly_plan["variants"][0][gb.PHONE_TALKING_MULTI_CLIP_FIELD]
     assert receipt["speaker_media_ids"] == ["take"]
     assert "lanes_skipped" not in receipt
+    _assert_receipt_cutaways_match_recipe(receipt, recipe)
 
 
 def test_footage_that_finds_no_room_is_reported_by_upload_position(monkeypatch):
@@ -3537,6 +3554,7 @@ def test_footage_that_finds_no_room_is_reported_by_upload_position(monkeypatch):
     receipt = job.assembly_plan["variants"][0][gb.PHONE_TALKING_MULTI_CLIP_FIELD]
     # 6 s talk: 2.5 s hook + 1 s tail leaves room for one 1.5 s cutaway.
     assert [row["media_id"] for row in receipt["cutaways"]] == ["a"]
+    _assert_receipt_cutaways_match_recipe(receipt, device_status(job, "subtitled").request.recipe)
     assert receipt["unplaced"] == [
         {"media_id": "b", "position": 3, "reason": "no_room_in_timeline"},
         {"media_id": "c", "position": 4, "reason": "no_room_in_timeline"},

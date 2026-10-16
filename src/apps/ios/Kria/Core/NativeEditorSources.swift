@@ -166,8 +166,10 @@ struct NativeEditorBaseSource: Sendable {
 /// Several videos (KRI-719): the server plays every speaker back to back on
 /// the main track, in the order of the variant's `phone_talking_multi_clip`
 /// receipt (`speaker_media_ids`). The first speaker carries any cut; the rest
-/// play in full. Their footage cutaways are not projected into the editor yet,
-/// so the live preview shows the speakers where the finished MP4 cuts away.
+/// play in full. The receipt's `cutaways` windows (footage clips shown full
+/// frame, muted, over the speakers) are drawn on top as locked preview
+/// clips: they never enter the document, so nothing can select, move or
+/// Save them (Save keeps them from the pinned recipe, `cutaways_from_recipe`).
 enum NativePhoneTalkingSource {
     static let slotID = "native-phone-talking-source"
     static let multiClipReceiptField = "phone_talking_multi_clip"
@@ -175,6 +177,41 @@ enum NativePhoneTalkingSource {
     struct Speaker: Equatable, Sendable {
         let clipIndex: Int
         let duration: Double
+    }
+
+    /// One muted full-frame footage window (KRI-719), on the edit's timeline.
+    /// Mirrors a `talking-head-cutaways` recipe clip: the footage plays from
+    /// `sourceStart` for the whole window.
+    struct Cutaway: Equatable, Sendable {
+        let clipIndex: Int
+        let start: Double
+        let end: Double
+        var sourceStart: Double = 0
+    }
+
+    /// Source-pool cutaways from the receipt's `cutaways` rows
+    /// (`{media_id, start_s, end_s}`), sorted by start. Empty when there is no
+    /// receipt or it placed no footage. Nil when any row is malformed, can't be
+    /// found in the pool, reuses a speaker, or overlaps another: a preview that
+    /// silently dropped one would show the speaker where the MP4 cuts away, so
+    /// the caller falls back to the finished MP4 instead.
+    static func cutaways(variant: [String: JSONValue], pool: NativeEditorSourcePool,
+                         speakerIndices: [Int]) -> [Cutaway]? {
+        guard let receipt = variant[multiClipReceiptField]?.objectValue else { return [] }
+        guard let rowsValue = receipt["cutaways"] else { return [] }
+        guard case .array(let rows) = rowsValue else { return nil }
+        var result: [Cutaway] = []
+        for row in rows {
+            guard let fields = row.objectValue, let mediaID = fields["media_id"]?.stringValue,
+                  let start = fields["start_s"]?.numberValue, let end = fields["end_s"]?.numberValue,
+                  start.isFinite, end.isFinite, start >= 0, end > start,
+                  let clip = pool.clips.first(where: { $0.nativeSource?.mediaID == mediaID }),
+                  !speakerIndices.contains(clip.clipIndex) else { return nil }
+            result.append(Cutaway(clipIndex: clip.clipIndex, start: start, end: end))
+        }
+        result.sort { ($0.start, $0.end) < ($1.start, $1.end) }
+        for (previous, next) in zip(result, result.dropFirst()) where next.start < previous.end - 1e-6 { return nil }
+        return result
     }
 
     /// Source spans speech cleanup removed from this variant, sorted. Empty

@@ -1103,6 +1103,87 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges, "The source clip is server state, never a user edit to Save")
     }
 
+    /// KRI-719: a Talking edit with a footage clip previews that clip full frame and muted in the receipt's
+    /// window, on top of the speaker. The frame mid-cutaway is the footage, not the speaker; it is server state,
+    /// so nothing in the editor can select it and the edit has nothing to Save.
+    func testPhoneTalkingEditPreviewsItsFootageCutawayOverTheSpeaker() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true, talkingCutaways: [
+            .object(["media_id": .string("street"), "start_s": .number(1.5), "end_s": .number(3.0)])])
+
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertEqual(session.timelineClips.map(\.sourceClipIndex), [0], "only the speaker is on the timeline")
+        XCTAssertTrue(session.document.mediaOverlays.isEmpty, "the cutaway is never a card the creator can edit")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        let recipe = try XCTUnwrap(session.displayedSourcePreviewRecipe)
+        let cutaway = try XCTUnwrap(recipe.tracks.first { $0.kind == .overlay }?.clips.first)
+        XCTAssertEqual(cutaway.id, "cutaway-0")
+        XCTAssertEqual(cutaway.sourceAssetID, "source-1")
+        XCTAssertEqual(cutaway.timelineStart, 1.5)
+        XCTAssertEqual(cutaway.sourceDuration, 1.5, accuracy: 1e-9)
+        XCTAssertEqual(cutaway.volume, 0)
+
+        // What the creator sees: grab the live preview's frames and compare them with the two source videos.
+        let item = try XCTUnwrap(session.player?.currentItem)
+        let composition = try XCTUnwrap(item.videoComposition)
+        func frame(_ asset: AVAsset, at seconds: Double, composition: AVVideoComposition? = nil) async throws -> CGImage {
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.videoComposition = composition
+            generator.appliesPreferredTrackTransform = true
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            return try await withCheckedThrowingContinuation { continuation in
+                generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: CMTime(seconds: seconds, preferredTimescale: 600))]) { _, image, _, result, error in
+                    if result == .succeeded, let image { continuation.resume(returning: image) }
+                    else { continuation.resume(throwing: error ?? MediaEngineError.exportFailed) }
+                }
+            }
+        }
+        /// The centre 9:16 of a frame as a 9x16 grid of RGB means (what a full-frame cover fill shows).
+        func signature(_ image: CGImage, coverCrop: Bool) throws -> [Double] {
+            var rect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+            if coverCrop, rect.width / rect.height > 9.0 / 16 {
+                let width = rect.height * 9 / 16
+                rect = CGRect(x: (rect.width - width) / 2, y: 0, width: width, height: rect.height)
+            }
+            let cropped = try XCTUnwrap(image.cropping(to: rect.integral))
+            var pixels = [UInt8](repeating: 0, count: 9 * 16 * 4)
+            let context = try XCTUnwrap(CGContext(data: &pixels, width: 9, height: 16, bitsPerComponent: 8, bytesPerRow: 36,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.interpolationQuality = .medium
+            context.draw(cropped, in: CGRect(x: 0, y: 0, width: 9, height: 16))
+            return pixels.enumerated().filter { $0.offset % 4 != 3 }.map { Double($0.element) }
+        }
+        func distance(_ a: [Double], _ b: [Double]) -> Double { zip(a, b).map { abs($0 - $1) }.reduce(0, +) / Double(a.count) }
+        let speakerURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let footageURL = try XCTUnwrap(Bundle.main.url(forResource: "istanbul", withExtension: "mp4"))
+        let midCutaway = try await frame(item.asset, at: 2.25, composition: composition)
+        let speakerTime = try await frame(item.asset, at: 0.75, composition: composition)
+        let footage = try signature(try await frame(AVURLAsset(url: footageURL), at: 0.75), coverCrop: true)
+        let speakerAtCut = try signature(try await frame(AVURLAsset(url: speakerURL), at: 2.25), coverCrop: true)
+        let previewed = try signature(midCutaway, coverCrop: false)
+        XCTAssertLessThan(distance(previewed, footage), distance(previewed, speakerAtCut), "mid-cutaway the preview shows the footage")
+        let speakerFrame = try signature(try await frame(AVURLAsset(url: speakerURL), at: 0.75), coverCrop: true)
+        let previewedSpeaker = try signature(speakerTime, coverCrop: false)
+        XCTAssertLessThan(distance(previewedSpeaker, speakerFrame), distance(previewedSpeaker, footage), "outside it, the speaker")
+        for (name, image) in [("kri719-preview-mid-cutaway-2.25s", midCutaway), ("kri719-preview-speaker-0.75s", speakerTime)] {
+            let attachment = XCTAttachment(image: UIImage(cgImage: image))
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+    }
+
+    /// A receipt cutaway whose clip isn't in the source pool can't be drawn: the editor keeps the finished MP4
+    /// instead of a live preview that shows the speaker where the video cuts away.
+    func testPhoneTalkingEditWithAnUnknownCutawayClipKeepsTheFinishedMP4() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true, talkingCutaways: [
+            .object(["media_id": .string("not-in-pool"), "start_s": .number(1.5), "end_s": .number(3.0)])])
+
+        XCTAssertTrue(session.timelineClips.isEmpty)
+        guard case .failed = session.sourcePreviewState else { return XCTFail("state: \(session.sourcePreviewState)") }
+        XCTAssertNil(session.displayedSourcePreviewRecipe)
+    }
+
     /// KRI-211: a project whose originals aren't on this iPhone settles into its own state (no Retry
     /// can help), the relink targets come from the source pool that failed, a wrong file is refused, and
     /// the right one rebuilds the live preview.
@@ -1556,8 +1637,11 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.timelineItems.contains { $0.id == "opening-title" })
     }
 
+    /// `talkingCutaways`: KRI-719 receipt `cutaways` rows; the footage clip "street" (istanbul.mp4) joins the pool
+    /// as clip 1 and the variant carries a `phone_talking_multi_clip` receipt with "source" as the one speaker.
     private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false, bindOriginal: Bool = true, title: Bool = false,
-                                            unloadableCards: Bool = false, withholdPool: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy) {
+                                            unloadableCards: Bool = false, withholdPool: Bool = false,
+                                            talkingCutaways: [JSONValue]? = nil) async throws -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
         let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
@@ -1624,14 +1708,27 @@ final class NativeEditorSessionTests: XCTestCase {
             nativeAssets.append(NativeEditorAsset(id: "broken-card", kind: "media_overlay", mediaID: "broken-media",
                 sourceURL: try XCTUnwrap(URL(string: "http://storage.example/broken.png")), preserveAlpha: nil))
         }
+        var poolClips: [NativeEditorSourcePool.Clip] = [.init(clipIndex: 0, nativeSource: .init(mediaID: "source",
+            sourceURL: nil, original: descriptor, localRequired: true))]
+        if let talkingCutaways {
+            variant["phone_talking_multi_clip"] = .object(["version": .number(1), "speaker_media_ids": .array([.string("source")]),
+                "cutaways": .array(talkingCutaways), "unplaced": .array([])])
+            let footageInput = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+            try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "istanbul", withExtension: "mp4")), to: footageInput)
+            defer { try? FileManager.default.removeItem(at: footageInput) }
+            let footage = try await AssetImportCoordinator(project: project).importAsset(from: footageInput)
+            try SourceAssetStore(project: project).bind(mediaID: "street", original: footage)
+            poolClips.append(.init(clipIndex: 1, nativeSource: .init(mediaID: "street", sourceURL: nil,
+                original: OriginalMediaDescriptor(sha256: try XCTUnwrap(footage.fingerprint).hex, byteCount: try XCTUnwrap(footage.fingerprint).byteCount,
+                    durationS: 6, width: 1280, height: 720, orientationDegrees: 0, hasAudio: false), localRequired: true)))
+        }
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
                 snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
                 snapshot: [:], canUndo: false, createdAt: .now),
             authoritativeVariant: variant
         )
-        let pool = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: .init(mediaID: "source",
-            sourceURL: nil, original: descriptor, localRequired: true))], baseGeneration: "generation-1", nativeAssets: nativeAssets)
+        let pool = NativeEditorSourcePool(clips: poolClips, baseGeneration: "generation-1", nativeAssets: nativeAssets)
         // `withholdPool`: the first read of the source pool fails (a dropped connection); the test hands the
         // pool back and retries.
         if withholdPool { fake.withheldSourcePool = pool } else { fake.sourcePoolResult = pool }
