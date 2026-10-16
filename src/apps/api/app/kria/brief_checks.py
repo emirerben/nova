@@ -38,6 +38,7 @@ from app.kria.brief_route import (
 )
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.kria.reply_language import current_reply_language, say
+from app.kria.speed_ask import asks_clip_speed
 from app.kria.style_asks import (
     MOMENT_SHORT_MAX_S,
     MomentAsk,
@@ -384,6 +385,10 @@ class PlanFacts:
     # None = this plan placed no lyric captions (nothing about them is claimed).
     montage_captions: str | None = None
     montage_caption_style: str | None = None
+    # KRI-689: True when the plan was laid out by the phone unified montage, which plays every
+    # clip at its natural speed (the phone recipe has no retime for story footage). A
+    # clip-speed ask is then a known miss; any other plan claims nothing about speed.
+    speed_unsupported: bool = False
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -709,6 +714,7 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         cut_clip_ids=_window_media_ids(record.get("best_parts")),
         source_durations_s=_source_durations(record.get("clip_durations_s")),
         song_bed=bool(record.get("user_song")),
+        speed_unsupported=True,
         **_montage_caption_facts(record.get("captions")),
     )
 
@@ -1463,6 +1469,7 @@ def plan_facts_from_rendered_montage(
         cut_clip_ids=tuple(media_id for media_id, _start, _end in cuts) or plan.cut_clip_ids,
         source_durations_s=plan.source_durations_s,
         song_bed=plan.song_bed,
+        speed_unsupported=plan.speed_unsupported,
         source_audio_kept=kept if isinstance(kept, bool) else None,
         source_clip_ids=tuple(prints),
         duplicate_clip_positions=_same_file_positions(clip_ids, prints) if prints else None,
@@ -2570,6 +2577,9 @@ _CANT_CHECK_CAPTIONS = "I can't check the captions on this draft yet."
 _NO_CHECKER = "I can't verify this one automatically yet."
 _CANT_CHECK_STYLE = "I can't check this text style automatically."
 _CANT_CHECK_MIX = "I can't check the sound mix on this draft yet."
+# KRI-689: the phone montage plays every clip at its natural speed. Said before approval
+# (`clip_speed_notice`) and again, as the reason, on the finished video's receipt.
+_NO_CLIP_SPEED = "I can't change clip speed on your iPhone yet, so the clips play at normal speed"
 # Start of the reason on a "mute the footage sound" ask the voiceover mix cannot fully meet
 # (the footage sound is a quiet bed under the voice, never off): a limit of the format.
 _BED_STILL_PLAYS = "The footage sound still plays"
@@ -2629,6 +2639,9 @@ _REASON_TR: dict[str, str] = {
     _NO_CHECKER: "Bunu henüz otomatik olarak doğrulayamıyorum.",
     _CANT_CHECK_STYLE: "Bu yazı stilini otomatik olarak kontrol edemiyorum.",
     _CANT_CHECK_MIX: "Bu taslakta ses karışımını henüz kontrol edemiyorum.",
+    _NO_CLIP_SPEED: (
+        "iPhone'unda klip hızını henüz değiştiremiyorum, o yüzden klipler normal hızda oynuyor"
+    ),
     _BED_STILL_PLAYS: "Çekim sesi hâlâ çalıyor",
     _CLEANUP_PLANNED: "Konuşma temizliği uzun duraklamaları keser",
     _CLEANUP_AT_APPROVAL: (
@@ -2693,10 +2706,11 @@ _NEUTRAL_REASONS = _NEUTRAL_EN | frozenset(_REASON_TR[reason] for reason in _NEU
 
 # Reasons that describe what the format the creator chose does with an ask, not a
 # simplification Kria made instead of it: a Talking edit's length follows the take,
-# speech cleanup is chosen at approval and cuts pauses, never a named line. The
-# receipt stays an honest "Partly"; it never turns a first draft into the "should I
-# make a simpler version?" question (`needs_creator_choice`), which only makes sense
-# when there is a different, simpler plan to choose.
+# speech cleanup is chosen at approval and cuts pauses, never a named line, and a phone
+# montage plays every clip at natural speed (KRI-689, an honest "Couldn't"). The
+# receipt never turns a first draft into the "should I make a simpler version?"
+# question (`needs_creator_choice`), which only makes sense when there is a different,
+# simpler plan to choose, and never blocks an approved render.
 _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _TALKING_KEEPS_WHOLE_TAKE,
     _VOICEOVER_SETS_LENGTH,
@@ -2708,6 +2722,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_NOTHING_TO_CUT,
     _CLEANUP_NOT_RUN,
     _BED_STILL_PLAYS,
+    _NO_CLIP_SPEED,
     _LIGHT_UNAVAILABLE,
 )
 _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
@@ -5344,6 +5359,10 @@ def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
     if _wants_speaker_framing(req) or wants_light_change(req):
         return True
+    if asks_clip_speed(req):
+        # KRI-689: judged wherever the plan knows it cannot retime (the phone montage); a plan
+        # that does not say gets the neutral `_NO_CHECKER`, which `is_judged` treats as unjudged.
+        return True
     if _wants_cleanup(req) or _wants_captions(req):
         return True
     if judged_at_render(req):
@@ -5397,6 +5416,10 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_speech_cleanup(req, facts)
     if _wants_speaker_framing(req):
         return _check_speaker_framing(req, facts)
+    if facts.speed_unsupported and asks_clip_speed(req):
+        # KRI-689: the creator is told before approving (`clip_speed_notice`); the finished
+        # video's receipt then says "Couldn't", never "have a look" at a speed that is not there.
+        return _receipt(req, "not_possible", _NO_CLIP_SPEED)
     if wants_light_change(req) and (facts.rendered_variant or not facts.editor):
         # KRI-700: a draft or a finished render never brightens the footage. An editor turn
         # keeps its own receipts (the before/after diff names what its ops changed).
@@ -5619,6 +5642,35 @@ def requirements_to_check_at_draft(
         and not (narrated and _settled_by_narrated_render(req, strategy))
         and not (phone_captions and _wants_captions(req) and _caption_words_ask(req))
     ]
+
+
+def clip_speed_notice(
+    requirements: Iterable[BriefRequirement],
+    *,
+    creator_id: object,
+    strategy: Mapping[str, Any] | None,
+    item_edit_format: object,
+    clip_paths: Iterable[object] = (),
+) -> str | None:
+    """The plain heads-up, before approval, that this draft cannot change clip speed (KRI-689).
+
+    "Speed the river shots up 2x" on a phone montage: the unified planner plays every clip at
+    its natural speed, so the draft would otherwise be approved with the ask silently dropped
+    and only the finished video's review would admit it. Returned only for a draft that
+    will render through that planner (the same gate `requirements_to_check_at_draft` uses); a
+    cloud render, a voiceover lane and the other phone formats get ``None``.
+    """
+    strategy = strategy or {}
+    if not any(req.live and asks_clip_speed(req) for req in requirements):
+        return None
+    if not defers_to_unified_montage(
+        creator_id=creator_id,
+        edit_format=strategy.get("edit_format") or item_edit_format,
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=list(clip_paths or ()),
+    ):
+        return None
+    return _loc(_NO_CLIP_SPEED) + "."
 
 
 def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool:
@@ -5903,6 +5955,7 @@ __all__ = [
     "PlanFacts",
     "build_receipts",
     "check_requirement",
+    "clip_speed_notice",
     "is_format_limit",
     "is_judged",
     "is_no_title_reason",

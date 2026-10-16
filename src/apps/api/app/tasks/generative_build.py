@@ -6353,6 +6353,7 @@ def _run_phone_unified_montage_job(
     if brief is not None and brief.live():
         from app.kria.brief_checks import (  # noqa: PLC0415
             build_receipts,
+            needs_creator_choice,
             plan_facts_from_unified_montage,
         )
 
@@ -6369,18 +6370,15 @@ def _run_phone_unified_montage_job(
                 include_unchecked=bool(snapshot.get("creator_brief_binding")),
             )
         ]
+        # A checked receipt that only states a limit of the phone montage (KRI-689: it plays
+        # every clip at natural speed, and the draft already said so) never blocks the render.
         if snapshot.get("creator_brief_binding") and any(
-            row.get("verification") == "checked" and row["status"] != "met"
-            for row in record["requirement_receipts"]
+            needs_creator_choice(row) for row in record["requirement_receipts"]
         ):
             from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-            failures = [
-                row
-                for row in record["requirement_receipts"]
-                if row.get("verification") == "checked" and row["status"] != "met"
-            ]
+            failures = [row for row in record["requirement_receipts"] if needs_creator_choice(row)]
             record_pipeline_event(
                 "montage",
                 "requirement_recovery",
