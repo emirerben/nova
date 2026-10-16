@@ -16,7 +16,7 @@ from app.models import (
     RequestFollowingCase,
     RequestFollowingCollector,
 )
-from app.services.request_following_cases import digest
+from app.services.request_following_cases import diagnostics, digest
 from app.services.training_eligibility import evaluate_training_eligibility_async
 
 LOCK_ID = 202610160215
@@ -137,26 +137,6 @@ async def source_capture(db: AsyncSession, thread: CreationThread):
         source["sections"] = {}
         source["missing"] = {"source": "capture_exceeds_size_limit"}
     return source
-
-
-def diagnostics(source):
-    turns = source["sections"].get("turns", [])
-    failed = [t["id"] for t in turns if t["status"] == "failed"]
-    broken = [
-        name
-        for name, edge in source["sections"].get("integrity", {}).get("edges", {}).items()
-        if not edge["coherent"]
-    ]
-    return {
-        "failed_turns": failed,
-        "broken_edges": broken,
-        "missing": source["missing"],
-        "intent_verdict": "unassessed",
-        "rendered_output": "missing",
-        "next_action": "Review creator intent and inspect turn receipts"
-        if failed or broken
-        else "Review creator intent; add a runnable regression and output evidence",
-    }
 
 
 async def collect_batch(db: AsyncSession):

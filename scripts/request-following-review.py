@@ -16,6 +16,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,7 +37,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def serve(*, base, token, port, open_browser=True):
+def serve(*, base=None, token=None, store=None, port=4455, open_browser=True):
     session = secrets.token_urlsafe(32)
     upstream = urllib.request.build_opener(NoRedirect())
 
@@ -81,7 +82,11 @@ def serve(*, base, token, port, open_browser=True):
                     200,
                     {
                         "session": session,
-                        "source": "Production" if base == PROD_URL else "Local API",
+                        "source": "Private captures"
+                        if store
+                        else "Production"
+                        if base == PROD_URL
+                        else "Local API",
                     },
                 )
                 return
@@ -127,6 +132,27 @@ def serve(*, base, token, port, open_browser=True):
             if set(query) - {"cursor", "limit", "review_state"}:
                 self.reply(400, {"detail": "Unsupported filter"})
                 return
+            if store is not None:
+                from app.services.request_following_private_store import StoreError
+
+                try:
+                    result = store.handle(
+                        self.command,
+                        parsed.path,
+                        query,
+                        json.loads(data) if data else None,
+                    )
+                    self.reply(200, result)
+                except StoreError as error:
+                    self.reply(error.status, {"detail": error.detail})
+                except (ValueError, KeyError, TypeError, OSError):
+                    self.reply(
+                        422,
+                        {
+                            "detail": "Private capture unavailable or invalid. Reimport verified evidence."
+                        },
+                    )
+                return
             path = parsed.path.replace("/api/cases", "/admin/request-following", 1)
             if parsed.query:
                 path += "?" + urllib.parse.urlencode(query, doseq=True)
@@ -161,7 +187,7 @@ def serve(*, base, token, port, open_browser=True):
     url = f"http://127.0.0.1:{server.server_port}"
     print(f"Review app: {url}", flush=True)
     print(
-        f"Source: {'Production' if base == PROD_URL else base}. Ctrl+C stops the app.",
+        f"Source: {'Private captures' if store else 'Production' if base == PROD_URL else base}. Ctrl+C stops the app.",
         flush=True,
     )
     if open_browser:
@@ -178,10 +204,26 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--prod", action="store_true")
+    source.add_argument(
+        "--store", type=Path, help="Review receipted private CLI captures offline"
+    )
     source.add_argument("--api-url", default="http://127.0.0.1:8000")
     parser.add_argument("--port", type=int, default=4455)
     parser.add_argument("--no-open", action="store_true")
     args = parser.parse_args()
+    if args.store is not None:
+        sys.path.insert(0, str(ROOT / "src/apps/api"))
+        from app.services.request_following_private_store import PrivateReviewStore
+
+        private_path = args.store.resolve()
+        if private_path == ROOT or ROOT in private_path.parents:
+            parser.error("Keep private captures outside the repository")
+        try:
+            store = PrivateReviewStore(private_path)
+        except ValueError as error:
+            parser.error(str(error))
+        serve(store=store, port=args.port, open_browser=not args.no_open)
+        return
     base = PROD_URL if args.prod else args.api_url.rstrip("/")
     parsed = urllib.parse.urlsplit(base)
     if not args.prod and (

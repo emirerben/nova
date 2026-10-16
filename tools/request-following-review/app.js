@@ -36,10 +36,15 @@ async function loadQueue() {
     state.queue = await api(`?${params}`);
     const queue = state.queue, collector = queue.collector;
     const configured = collector.all_users || collector.scoped_users + collector.scoped_threads > 0;
+    if (collector.mode === "private_store") {
+      $("collection-summary").textContent = `Private captures · ${collector.scoped_threads} sessions ready for review`;
+      $("collection-detail").replaceChildren(element("p", "This app reads downloaded copies and saves reviews locally. It does not change production or grant consent."));
+    } else {
     $("collection-summary").textContent = `${collector.enabled && configured ? "Automatic collection · every 15 minutes" : "Collection is paused or needs a scope"} · ${collector.last_run_at ? "Last run " + date(collector.last_run_at) : "Not run yet"}`;
     $("collection-detail").replaceChildren(element("p", collector.all_users ? "All accounts with current recorded eligibility. Consent is checked on every capture and review; ineligible accounts are skipped." : `${collector.scoped_users} scoped accounts · ${collector.scoped_threads} scoped sessions. Current training consent is checked on capture and review.`));
     if (!collector.enabled || !configured) $("collection-detail").append(element("p", "To start, enable REQUEST_FOLLOWING_COLLECTION_ENABLED and set REQUEST_FOLLOWING_ALL_USERS or an explicit account/session scope on the API and worker. The local app does not change these settings."));
     if (collector.last_run) $("collection-detail").append(element("pre", JSON.stringify(collector.last_run, null, 2)));
+    }
     $("collection-detail").append(element("p", queue.coverage_note));
     $("cases").replaceChildren();
     for (const item of queue.items) {
@@ -55,7 +60,7 @@ async function loadQueue() {
     }
     $("page-count").textContent = `${queue.items.length} on this page`;
     $("queue-empty").hidden = queue.items.length > 0;
-    $("queue-empty").textContent = state.filter === "all" ? "No eligible sessions on this page. Collection needs a selected scope and current consent. Held-out sessions stay private." : "No sessions with this review status on this page.";
+    $("queue-empty").textContent = state.filter === "all" ? collector.mode === "private_store" ? "No reviewable private captures on this page. Import a current eligibility receipt with each source. Expired and held-out copies stay unavailable." : "No eligible sessions on this page. Collection needs a selected scope and current consent. Held-out sessions stay private." : "No sessions with this review status on this page.";
     show("holdouts", queue.holdout_count ? `${queue.holdout_count} held-out sessions on this page. Their content is withheld.` : "");
     $("next-page").hidden = !queue.next_cursor; $("first-page").hidden = !state.cursor;
   } catch (error) { show("error", error.message); }
@@ -83,7 +88,7 @@ function renderCase(detail) {
   const events = detail.capture.sections.events || [], review = detail.review;
   const first = events.find(e => e.kind === "user_message" && e.content);
   $("case-title").textContent = first?.content?.slice(0, 130) || "Review this session";
-  $("case-date").textContent = `Captured ${date(detail.created_at)} · session ${detail.thread_id.slice(0, 8)}`;
+  $("case-date").textContent = `Captured ${date(detail.created_at)} · session ${detail.thread_id.slice(0, 8)}${detail.eligibility_checked_at ? " · Eligibility checked " + date(detail.eligibility_checked_at) : ""}`;
   $("review-state").textContent = labels[detail.review_state] || detail.review_state;
   $("review-state").className = `pill ${detail.review_state}`;
   const missing = Object.keys(detail.capture.missing);

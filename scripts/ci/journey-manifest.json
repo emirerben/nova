@@ -609,7 +609,7 @@
     {
       "id": "kri-215-learning-loop",
       "needs_native": false,
-      "api_tests": "tests/incidents/test_request_following_loop.py",
+      "api_tests": "tests/incidents/test_request_following_loop.py tests/incidents/test_request_following_private_review.py",
       "paths": [
         "scripts/request-following-loop.py",
         "src/apps/api/tests/incidents/test_request_following_loop.py",
@@ -621,7 +621,9 @@
         "src/apps/api/app/services/request_following_collection.py",
         "src/apps/api/app/routes/admin_request_following.py",
         "src/apps/api/app/tasks/request_following.py",
-        "src/apps/api/tests/integration/test_request_following_queue.py"
+        "src/apps/api/tests/integration/test_request_following_queue.py",
+        "src/apps/api/app/services/request_following_private_store.py",
+        "src/apps/api/tests/incidents/test_request_following_private_review.py"
       ]
     }
   ]

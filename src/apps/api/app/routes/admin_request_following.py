@@ -15,7 +15,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import CreationThread, RequestFollowingCase, RequestFollowingCollector
 from app.routes.admin import _require_admin
-from app.services.request_following_cases import build_candidate, digest
+from app.services.request_following_cases import build_candidate, digest, validate_intent
 from app.services.request_following_collection import (
     LOCK_ID,
     eligible_case,
@@ -189,25 +189,10 @@ async def save_review(case_id: uuid.UUID, body: ReviewIn, db: DB):
     await require_current(db, case)
     if body.source_sha256 != case.source_sha256 or body.review_version != case.review_version:
         raise HTTPException(409, "review_changed_reload")
-    if body.decision == "approved" and (not body.expectations or case.capture["missing"]):
-        raise HTTPException(422, "approval_requires_expectations_and_complete_capture")
-    events = case.capture["sections"].get("events", [])
-    for expectation in body.expectations:
-        if not expectation.text.strip():
-            raise HTTPException(422, "empty_expectation")
-        for pointer in expectation.source_pointers:
-            import re
-
-            match = re.fullmatch(r"/sections/events/([0-9]+)/content", pointer)
-            if not match or int(match[1]) >= len(events):
-                raise HTTPException(422, "expectation_requires_creator_source")
-            event = events[int(match[1])]
-            if (
-                event.get("kind") != "user_message"
-                or event.get("actor") != "user"
-                or not event.get("content")
-            ):
-                raise HTTPException(422, "expectation_requires_creator_source")
+    try:
+        validate_intent(case.capture, body.model_dump())
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
     case.review_version += 1
     case.review = {
         **body.model_dump(),
@@ -239,4 +224,17 @@ async def export_case(case_id: uuid.UUID, db: DB):
     )
     # Promotion still needs a runnable IncidentRecord, redaction and a separate
     # review bound to the whole candidate, enforced by the existing CLI.
-    return {"schema_version": 1, "capture": case.capture, "candidate": candidate}
+    return {
+        "schema_version": 1,
+        "capture": case.capture,
+        "candidate": candidate,
+        "eligibility": {
+            "source_sha256": case.source_sha256,
+            "thread_id": str(case.thread_id),
+            "creator_id": str(case.creator_id),
+            "eligibility_key": case.eligibility_key,
+            "checked_at": datetime.now(UTC).isoformat(),
+            "captured_at": case.created_at.isoformat(),
+            "expires_at": case.expires_at.isoformat(),
+        },
+    }

@@ -32,7 +32,7 @@ commands/results separately from this plan. No production collection in verifica
 - Isolated worktree and migrated disposable PostgreSQL `nova_request_learning_auto_test`.
 - Task -> real database -> admin HTTP -> local HTTP proxy -> review/export -> CLI import;
   promotion correctly refused without full human review. Eight integration journeys pass.
-- Offline runner: 596 passed, two existing expected failures. Report and JUnit at
+- Offline runner: 597 passed, two existing expected failures. Report and JUnit at
   `.request-following-report/`; no live provider calls.
 - Negative report controls: a deliberate JUnit failure with exit code zero, and missing
   JUnit, both produce failed status.
@@ -56,3 +56,15 @@ fail closed on malformed configured IDs. Collection remains disabled by default.
 - CLI capture ownership negative control also failed before the fix and now passes:
   detached video metadata and unowned job debug bodies are withheld from captures.
 - GitHub daily-regression workflow passed on the initial follow-on draft head.
+
+Private-store review extension (requested before implementation): the real imported
+captures must be visible without production writes. Preregistered failures: an
+unreceipted, wrong-owner, expired, held-out or changed source must not appear; a
+review must retain creator-source pointers and optimistic version checks, and must
+never become full fixture approval; export must preserve eligibility provenance;
+local HTTP origin/session protections must apply in file mode as well. Private
+copies must be labelled with their eligibility check time, not current live consent.
+
+- Private-store CLI import -> real local HTTP review -> export journey passes, including
+  missing/wrong-owner/expired receipts, source tampering, holdout exclusion, origin
+  checks and stale-review rejection. Full offline report: 597 passed, two expected failures.

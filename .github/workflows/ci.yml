@@ -736,7 +736,7 @@ jobs:
           GEMINI_API_KEY: test
         run: |
           mkdir -p ../../../test-results/kri-559/kri-215
-          python3 -m pytest tests/incidents/test_request_following_loop.py -q \
+          python3 -m pytest tests/incidents/test_request_following_loop.py tests/incidents/test_request_following_private_review.py -q \
             --junitxml=../../../test-results/kri-559/kri-215/api-tests.xml
       - name: Seal portable fixture inputs for this exact workflow attempt
         if: needs.changes.outputs.journey_needs_native == 'true'

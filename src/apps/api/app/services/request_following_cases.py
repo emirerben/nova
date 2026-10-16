@@ -87,3 +87,119 @@ def build_candidate(source, *, case_id, session_id, source_sha256, tickets):
         "review": None,
     }
     return candidate
+
+
+def diagnostics(source):
+    turns = source["sections"].get("turns", [])
+    failed = [t["id"] for t in turns if t["status"] == "failed"]
+    broken = [
+        name
+        for name, edge in source["sections"].get("integrity", {}).get("edges", {}).items()
+        if not edge["coherent"]
+    ]
+    return {
+        "failed_turns": failed,
+        "broken_edges": broken,
+        "missing": source["missing"],
+        "intent_verdict": "unassessed",
+        "rendered_output": "missing",
+        "next_action": "Review creator intent and inspect turn receipts"
+        if failed or broken
+        else "Review creator intent; add a runnable regression and output evidence",
+    }
+
+
+def validate_intent(source, body):
+    """Shared intent checks for the database API and private downloaded copies."""
+    import re
+
+    decision = body.get("decision")
+    if decision not in {"approved", "needs_clarification", "rejected"}:
+        raise ValueError("invalid_decision")
+    for name, limit in (("reviewer", 120), ("rationale", 4000)):
+        if not isinstance(body.get(name), str) or not body[name].strip() or len(body[name]) > limit:
+            raise ValueError("reviewer_and_rationale_required")
+    if body.get("loss_stage", "unknown") not in (*STAGES, "unknown"):
+        raise ValueError("invalid_loss_stage")
+    tickets = body.get("tickets", [])
+    if (
+        not isinstance(tickets, list)
+        or len(tickets) > 20
+        or any(
+            not isinstance(ticket, str) or not re.fullmatch(r"KRI-[0-9]+", ticket)
+            for ticket in tickets
+        )
+    ):
+        raise ValueError("invalid_tickets")
+    expectations = body.get("expectations", [])
+    if not isinstance(expectations, list) or len(expectations) > 50:
+        raise ValueError("invalid_expectations")
+    if decision == "approved" and (not expectations or source.get("missing")):
+        raise ValueError("approval_requires_expectations_and_complete_capture")
+    events = source.get("sections", {}).get("events", [])
+    for expectation in expectations:
+        if not isinstance(expectation, dict) or not isinstance(expectation.get("text"), str):
+            raise ValueError("empty_expectation")
+        if not expectation["text"].strip() or len(expectation["text"]) > 2000:
+            raise ValueError("empty_expectation")
+        pointers = expectation.get("source_pointers", [])
+        if not isinstance(pointers, list) or not 1 <= len(pointers) <= 20:
+            raise ValueError("expectation_requires_creator_source")
+        for pointer in pointers:
+            match = (
+                re.fullmatch(r"/sections/events/([0-9]+)/content", pointer)
+                if isinstance(pointer, str)
+                else None
+            )
+            if not match or int(match[1]) >= len(events):
+                raise ValueError("expectation_requires_creator_source")
+            event = events[int(match[1])]
+            if (
+                event.get("kind") != "user_message"
+                or event.get("actor") != "user"
+                or not event.get("content")
+            ):
+                raise ValueError("expectation_requires_creator_source")
+    return {
+        "decision": decision,
+        "reviewer": body["reviewer"].strip(),
+        "rationale": body["rationale"].strip(),
+        "loss_stage": body.get("loss_stage", "unknown"),
+        "tickets": tickets,
+        "expectations": expectations,
+    }
+
+
+def validate_eligibility_receipt(source, source_hash, receipt):
+    """Validate an operator's recorded-eligibility receipt for a private copy.
+
+    This binds downloaded evidence, not live server consent or a new grant.
+    Only the authenticated database API can re-check current server eligibility.
+    """
+    import re
+    from datetime import UTC, datetime, timedelta
+
+    owner = (source.get("sections", {}).get("integrity", {}).get("thread") or {}).get("creator_id")
+    if (
+        not owner
+        or receipt.get("creator_id") != owner
+        or receipt.get("thread_id") != source.get("thread_id")
+        or receipt.get("source_sha256") != source_hash
+        or not re.fullmatch(
+            r"(?:internal_grant|training_consent):[0-9a-f-]{36}", receipt.get("eligibility_key", "")
+        )
+    ):
+        raise ValueError("eligibility_receipt_mismatch")
+    captured = datetime.fromisoformat(receipt.get("captured_at") or source.get("captured_at", ""))
+    checked = datetime.fromisoformat(receipt["checked_at"])
+    expires = datetime.fromisoformat(receipt["expires_at"])
+    now = datetime.now(UTC)
+    if any(value.tzinfo is None for value in (captured, checked, expires)) or (
+        expires <= now
+        or captured > now + timedelta(minutes=1)
+        or checked > now + timedelta(minutes=1)
+        or checked >= expires
+        or expires > captured + timedelta(days=30, seconds=1)
+    ):
+        raise ValueError("eligibility_receipt_expired_or_invalid")
+    return receipt

@@ -26,6 +26,7 @@ from app.services.request_following_cases import (  # noqa: E402
     STAGES,
     build_candidate,
     digest,
+    validate_eligibility_receipt,
 )
 
 
@@ -170,6 +171,20 @@ def import_capture(args):
     # Content digest excludes capture timestamp, preserving idempotency on unchanged reads.
     content = {k: v for k, v in data.items() if k != "captured_at"}
     source_hash = digest(content)
+    receipt = read(args.eligibility_file) if args.eligibility_file else None
+    if receipt is not None:
+        validate_eligibility_receipt(data, source_hash, receipt)
+        receipt_path = store / "eligibility" / f"{source_hash}.json"
+        if (
+            receipt_path.exists()
+            and read(receipt_path)["eligibility_key"] != receipt["eligibility_key"]
+        ):
+            raise ValueError("A new grant cannot revive an old capture")
+        if receipt_path.exists() and datetime.fromisoformat(
+            receipt["expires_at"]
+        ) > datetime.fromisoformat(read(receipt_path)["expires_at"]):
+            raise ValueError("Receipt cannot extend capture retention")
+        write(receipt_path, receipt)
     target = store / "sessions" / key / f"{source_hash}.json"
     write(target, data)
     index[key] = {
@@ -280,6 +295,19 @@ def import_queue(args):
     }
     write(index_path, index)
     validate_candidate(candidate, store)
+    if packet.get("eligibility"):
+        receipt = validate_eligibility_receipt(source, source_hash, packet["eligibility"])
+        receipt_path = store / "eligibility" / f"{source_hash}.json"
+        if (
+            receipt_path.exists()
+            and read(receipt_path)["eligibility_key"] != receipt["eligibility_key"]
+        ):
+            raise ValueError("A new grant cannot revive an old capture")
+        if receipt_path.exists() and datetime.fromisoformat(
+            receipt["expires_at"]
+        ) > datetime.fromisoformat(read(receipt_path)["expires_at"]):
+            raise ValueError("Receipt cannot extend capture retention")
+        write(receipt_path, receipt)
     write(target, candidate)
     print(str(target))
 
@@ -525,6 +553,9 @@ def main():
     p = sub.add_parser("import")
     p.add_argument("--input", required=True)
     p.add_argument("--split", choices=("development", "holdout"), required=True)
+    p.add_argument(
+        "--eligibility-file", help="Recorded eligibility receipt for offline local review"
+    )
     p = sub.add_parser("import-queue")
     p.add_argument("--input", required=True)
     p = sub.add_parser("propose")

@@ -1,17 +1,38 @@
 # Local request-following review app
 
-Start from the repository root:
+Open an existing private capture store from the repository root:
 
 ```bash
-python3 scripts/request-following-review.py --prod
+python3 scripts/request-following-review.py --store /private/tmp/nova-learning-evidence
 ```
 
-The app opens at `http://127.0.0.1:4455`. It uses `ADMIN_PROD_API_KEY` from
-`.env`, keeps the key in the local Python process, and requires no frontend build.
-For a local API, use `--api-url http://127.0.0.1:8000` and `ADMIN_API_KEY`.
-`--port` changes the app port; `--no-open` suppresses opening the browser.
-The production API must have this change deployed first. An empty queue explains
-whether collection is disabled or has no eligible sessions.
+The app opens at `http://127.0.0.1:4455` without a database, frontend build or
+production deployment. The store must be outside git and mode 700. Only development
+captures with valid eligibility receipts appear. Incomplete captures show their
+missing evidence and cannot be approved.
+
+Import an operator-verified capture with its point-in-time eligibility receipt:
+
+```bash
+python3 scripts/request-following-loop.py --store /private/tmp/nova-learning-evidence import --input /path/to/capture.json --split development --eligibility-file /path/to/receipt.json
+```
+
+Receipt fields are `source_sha256`, `thread_id`, `creator_id`, `eligibility_key`,
+`checked_at`, `captured_at`, and `expires_at`. The key identifies the existing
+`internal_grant:<uuid>` or `training_consent:<uuid>` checked by the trusted operator;
+a receipt does not create consent. Expiry cannot exceed 30 days from capture.
+Changed source, wrong ownership, missing receipts and expired evidence are hidden.
+A replacement grant cannot revive a capture or extend its original expiry.
+
+File mode shows the eligibility check time and cannot observe later server revocation.
+Delete private copies and exports when consent is revoked; expiration hides them in
+the app but does not erase their files. Never commit captures, receipts or exports.
+
+After deploying the review API, `python3 scripts/request-following-review.py --prod`
+opens the live queue and rechecks current eligibility. It uses `ADMIN_PROD_API_KEY`
+from `.env` only in the local Python process. For a local API, use
+`--api-url http://127.0.0.1:8000` and `ADMIN_API_KEY`. `--port` changes the app port;
+`--no-open` suppresses browser opening.
 
 ## Review a session
 
