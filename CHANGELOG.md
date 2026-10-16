@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.15.0] - 2026-10-16
+
+### Changed
+- fix(kria): read "eight of them, about 2 seconds each" as a moment ask (KRI-686) (#1625) <!-- release-pr: 1625 -->
+
 ## [0.79.14.0] - 2026-10-16
 
 ### Changed
