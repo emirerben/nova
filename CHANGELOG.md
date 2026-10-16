@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.6.0] - 2026-10-16
+
+### Changed
+- feat(ios): choose the part of a clip to use with a slide-and-resize window (KRI-717) (#1638) <!-- release-pr: 1638 -->
+
 ## [0.80.5.0] - 2026-10-16
 
 ### Changed
