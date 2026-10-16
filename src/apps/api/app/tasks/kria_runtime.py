@@ -37,6 +37,7 @@ from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
     build_receipts,
     clip_speed_notice,
+    defers_caption_words_to_phone_render,
     describe_text_look,
     is_judged,
     judged_at_render,
@@ -1006,6 +1007,19 @@ def _complete_draft_turn(
                         manifest=planned.brief_manifest,
                         speech_cleanup_enabled=bool(getattr(item, "speech_cleanup_enabled", False)),
                         speech_cleanup_offered=_speech_cleanup_offered(item, document.strategy),
+                    )
+                    # KRI-705: a phone Talking draft answers every ask plainly, so the
+                    # approval text cannot promise a cut or a mix change no receipt backs.
+                    facts = replace(
+                        facts,
+                        phone_talking=defers_caption_words_to_phone_render(
+                            creator_id=thread.creator_id,
+                            edit_format=document.strategy.get("edit_format") or item.edit_format,
+                            audio_strategy=document.strategy.get("audio_strategy"),
+                            clip_paths=item.clip_gcs_paths or (),
+                        )
+                        and (document.strategy.get("edit_format") or item.edit_format)
+                        in {"subtitled", "talking_head"},
                     )
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,

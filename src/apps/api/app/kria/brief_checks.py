@@ -285,6 +285,13 @@ class PlanFacts:
     # the footage list was not available to count).
     edit_format: str | None = None
     video_clip_count: int | None = None
+    # KRI-705: True when this draft / finished video is a phone Talking edit, which draws only
+    # a title, captions, a start cut and speech cleanup; an ask outside that set is answered
+    # with a plain "can't" before approval and after render (`_talking_honest_receipt`).
+    phone_talking: bool = False
+    # Seconds of footage the draft would keep whole (the selected video clips' source length);
+    # None = unknown, so the length line never states a number it was not given.
+    take_duration_s: float | None = None
     # The item's opt-in Speech cleanup toggle (None = unknown): when on, a render
     # may cut pauses and retakes out of the take.
     speech_cleanup_enabled: bool | None = None
@@ -453,6 +460,22 @@ def _video_clip_count(strategy: Mapping[str, Any], manifest: ResolvedCreatorMani
     return len(videos)
 
 
+def _selected_video_seconds(
+    strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest
+) -> float | None:
+    """Source seconds of the video clips the strategy uses; None when any length is unknown."""
+    selected = {str(x) for x in strategy.get("selected_media_ids") or []}
+    scoped = bool(selected) and strategy.get("media_scope") != "all"
+    videos = [
+        m
+        for m in manifest.media
+        if m.kind == "video" and not (scoped and m.media_id not in selected)
+    ]
+    if not videos or any(m.duration_s is None for m in videos):
+        return None
+    return float(sum(m.duration_s for m in videos))
+
+
 def _pinned_text_values(pins: object) -> list[str]:
     """KRI-523: the exact lines of whole-video corner text (strategy or unified record)."""
     return [
@@ -521,6 +544,7 @@ def plan_facts_from_strategy(
     if manifest is not None:
         extra = _beat_facts(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
+        extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
     edit_format = strategy.get("edit_format")
     caption_style = strategy.get("caption_style")
     audio_strategy = strategy.get("audio_strategy")
@@ -1270,6 +1294,8 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     rendered = _rendered_clip_durations(variant)
     if rendered is not None:
         changes["clip_output_durations"] = rendered
+    if changes.get("edit_format") == "subtitled":
+        changes["phone_talking"] = True  # KRI-705
     return dataclasses.replace(base, **changes) if changes else base
 
 
@@ -2603,6 +2629,19 @@ _LIGHT_UNAVAILABLE = (
     "I can't change how bright or dark clips look in this edit yet, so they keep their own light"
 )
 
+# KRI-705: what a phone Talking edit says, before approval and after render, about an ask
+# outside what it can draw. Static strings: `is_judged` / `is_format_limit` read them by prefix.
+_TALKING_NO_SUCH_EDIT = "A Talking video can't do this, so it stays as filmed"
+_TALKING_NO_SPOKEN_TEXT = "A Talking video can't show text at a word you say yet"
+_TALKING_OPENING_CUT_PLAN = (
+    "I'll start the video at that line if I find it in your take; if not, it opens at the start"
+)
+_TALKING_HONEST_EN: tuple[str, ...] = (
+    _TALKING_NO_SUCH_EDIT,
+    _TALKING_NO_SPOKEN_TEXT,
+    _TALKING_OPENING_CUT_PLAN,
+)
+
 # The Turkish twin of every static reason above (KRI-520). Reasons are written into
 # receipts when a turn runs, in that turn's language, so everything that tells one
 # reason from another (neutral, format limit, wordless title) accepts both texts;
@@ -2664,6 +2703,11 @@ _REASON_TR: dict[str, str] = {
         "Bu düzenlemede kliplerin ne kadar aydınlık ya da karanlık göründüğünü henüz "
         "değiştiremiyorum, o yüzden kendi ışıklarıyla kalıyorlar"
     ),
+    _TALKING_NO_SUCH_EDIT: "Konuşmalı videoda bunu yapamıyorum, çekimde olduğu gibi kalır",
+    _TALKING_NO_SPOKEN_TEXT: "Konuşmalı video söylediğin bir kelimede yazı gösteremiyor",
+    _TALKING_OPENING_CUT_PLAN: (
+        "Videoyu o cümlenin başladığı yerden başlatırım; çekiminde bulamazsam baştan açılır"
+    ),
     "Some requested text ends before the video does.": "Bazı yazılar video bitmeden kayboluyor.",
 }
 
@@ -2724,6 +2768,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _BED_STILL_PLAYS,
     _NO_CLIP_SPEED,
     _LIGHT_UNAVAILABLE,
+    *_TALKING_HONEST_EN,
 )
 _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
     *_FORMAT_LIMIT_EN,
@@ -4898,6 +4943,10 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         }:
             return _receipt(req, "partial", _NO_CHECKER)
         return _receipt(req, "met", None)
+    if _is_spoken_text_cue(req) and facts.edit_format in {"subtitled", "talking_head"}:
+        # KRI-705: a Talking edit has the same gap (a pinned line has no trigger field), and the
+        # reply says so plainly instead of holding the draft behind "a simpler version?".
+        return _receipt(req, "not_possible", _TALKING_NO_SPOKEN_TEXT)
     if _is_spoken_text_cue(req) and _is_voiceover_edit(facts):
         # KRI-699: a voiceover edit draws its title, captions and word-timed photos/sounds,
         # never a creator text on a spoken word, so a retry can't add it. Still the
@@ -5693,6 +5742,17 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     stored before these stopped being written still exist, so every reader of
     stored receipts filters through this too.
     """
+    if (
+        req is not None
+        and receipt.status in {"partial", "not_possible"}
+        and receipt.reason
+        and any(
+            str(receipt.reason).startswith(prefix)
+            for prefix in (*_TALKING_HONEST_EN, *(_REASON_TR[r] for r in _TALKING_HONEST_EN))
+        )
+    ):
+        # KRI-705: a phone Talking edit's plain "can't" is an answer, though no checker owns it.
+        return True
     if req is not None and receipt.verification == "checked" and receipt.stage == "applied":
         # KRI-558: a change proven by the before/after edit diff, not by a value check.
         return receipt.reason not in _NEUTRAL_REASONS
@@ -5702,6 +5762,54 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
         and _has_checker(req)
         and receipt.reason not in _NEUTRAL_REASONS
     )
+
+
+def _talking_honest_receipt(
+    req: BriefRequirement, receipt: RequirementReceipt, facts: PlanFacts
+) -> RequirementReceipt:
+    """What a phone Talking edit can honestly say about every ask it has no checker for (KRI-705).
+
+    Talking draws a title, captions, a start cut, speech cleanup and word-triggered pop-ins;
+    everything else the brief holds (a single repeated word to cut, quieter engine noise) is
+    never done. Left alone an unjudged ask is silent before approval, so the approval text runs
+    ahead of what the plan holds, and it is "have a look at these" after render. This turns it
+    into a plain "can't" (a limit of the format, never the simpler-version question). Which
+    asks count is read from the row's `kind` and the checkers that already own an ask, never
+    from its words (KRI-667).
+    """
+    if not facts.phone_talking or (facts.editor and not facts.rendered_variant):
+        return receipt
+    if _wants_opening_cut(req):
+        if facts.rendered_variant:
+            return receipt  # the render's own `opening_cut` receipt judges it
+        return _receipt(req, "partial", _TALKING_OPENING_CUT_PLAN)
+    if is_judged(req, receipt):
+        return receipt
+    if _has_duration_target(req):
+        target = float(req.facts["duration_s"])
+        take = facts.take_duration_s
+        if take is None or take <= target + 0.5:
+            return receipt
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    f"{_TALKING_KEEPS_WHOLE_TAKE}; your take is {_round_s(take)}s and you "
+                    f"asked for {_round_s(target)}s"
+                ),
+                tr=(
+                    f"{_REASON_TR[_TALKING_KEEPS_WHOLE_TAKE]}; çekimin {_round_s(take)} "
+                    f"saniye, sen {_round_s(target)} saniye istedin"
+                ),
+            ),
+        )
+    bed_ask = _wants_bed_under_voice(req) or _wants_bed_muted(req)  # footage sound level
+    if req.kind not in {"audio", "timing", "select"} and not bed_ask:
+        return receipt
+    if _has_checker(req) and not bed_ask:
+        return receipt
+    return _receipt(req, "not_possible", _TALKING_NO_SUCH_EDIT)
 
 
 def build_receipts(
@@ -5724,7 +5832,11 @@ def build_receipts(
     """
     if (include_unchecked if strict_order is None else strict_order) and not facts.strict_order:
         facts = dataclasses.replace(facts, strict_order=True)
-    checked = ((req, check_requirement(req, facts)) for req in requirements if req.live)
+    checked = (
+        (req, _talking_honest_receipt(req, check_requirement(req, facts), facts))
+        for req in requirements
+        if req.live
+    )
     receipts: list[RequirementReceipt] = []
     for req, receipt in checked:
         if is_judged(req, receipt):
