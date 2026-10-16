@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.16.0] - 2026-10-16
+
+### Changed
+- fix(kria): repair an over-long story line instead of failing the turn (KRI-687) (#1621) <!-- release-pr: 1621 -->
+
 ## [0.79.15.0] - 2026-10-16
 
 ### Changed
