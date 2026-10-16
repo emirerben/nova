@@ -939,6 +939,8 @@ async def test_pending_vision_is_not_reported_as_a_match_failure(
     assert result.plan.turn_value == "recovery"
     assert "couldn't reliably match" not in (result.plan.response or "")
     assert "still checking" in (result.plan.response or "")
+    # KRI-709: a budget stop with saved answers is re-run by the runtime ("go ahead" bug).
+    assert result.continuable is True
     diag = result.plan.diagnostics
     assert diag["status"] == "pending"
     assert diag["reason"] == "vision_batch_deadline_or_foreground_cap"
@@ -956,6 +958,7 @@ async def test_provider_failure_persists_a_reason_code_not_a_bare_apology(
     result = await _degraded_clip_intent_turn(monkeypatch, resolver)
 
     assert "couldn't reliably match" in (result.plan.response or "")
+    assert result.continuable is False  # a provider failure is retried by the creator
     assert result.plan.diagnostics["reason"] == "planner_exception"
     assert result.plan.diagnostics["error_type"] == "RuntimeError"
     assert "secret" not in str(result.plan.diagnostics)

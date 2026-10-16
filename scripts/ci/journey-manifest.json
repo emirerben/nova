@@ -630,6 +630,16 @@
         "src/apps/api/tests/kria/test_kri679_song_length.py",
         "src/apps/api/tests/kria/test_kri679_music_mood.py"
       ]
+    },
+    {
+      "id": "kri-215-learning-loop",
+      "needs_native": false,
+      "api_tests": "tests/incidents/test_request_following_loop.py",
+      "paths": [
+        "scripts/request-following-loop.py",
+        "src/apps/api/tests/incidents/test_request_following_loop.py",
+        "src/apps/api/tests/evals/request_following/README.md"
+      ]
     }
   ]
 }
