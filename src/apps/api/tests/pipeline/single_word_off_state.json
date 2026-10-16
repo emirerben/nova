@@ -1,11 +1,11 @@
 {
-  "save-word-false": "cd1acc4876b4a9d9c3a1c2609597cd5674afe2c7ea4185e259a719d68816a33f",
-  "save-word-true": "1787ccf9909664573007e6737cb0263dc88840e7cab89c83b93e59e05e7a3d36",
-  "save-word-unset": "59bbbfe6d087df9a35c09fdf3ecdaad2a2ecab957b2cd934fe93dbbefdefd6ed",
-  "sentence-highlight-true": "59bbbfe6d087df9a35c09fdf3ecdaad2a2ecab957b2cd934fe93dbbefdefd6ed",
-  "sentence-unset": "e873d4be0398f634db3de34c7f682eb9b457ae0a8f252c73a8a2d7936ff9b4a9",
-  "word-highlight-false": "cd1acc4876b4a9d9c3a1c2609597cd5674afe2c7ea4185e259a719d68816a33f",
-  "word-highlight-true": "59bbbfe6d087df9a35c09fdf3ecdaad2a2ecab957b2cd934fe93dbbefdefd6ed",
-  "word-left-highlight-false": "77d9e30acd0ebe7d1d303a513f52cbc2a369fbf8a2119a996eb10017c19de6b8",
-  "word-unset": "59bbbfe6d087df9a35c09fdf3ecdaad2a2ecab957b2cd934fe93dbbefdefd6ed"
+  "save-word-false": "c98fdda78473bee456a245524a229ec67ee322a1b0dca497919d0d04bc353d33",
+  "save-word-true": "0f07466e77302811085295eaaf4307735f6a4854b3541ae9e9a5e254840ec03d",
+  "save-word-unset": "3f2ce720677ba51b5a52c58473588bc01bdeae9e4a9cb2b6f2f6a36592b5a18f",
+  "sentence-highlight-true": "3f2ce720677ba51b5a52c58473588bc01bdeae9e4a9cb2b6f2f6a36592b5a18f",
+  "sentence-unset": "71a7c99535a162719fa563ca1e56027f6f93ad2314aba1fda3e5944ce727db59",
+  "word-highlight-false": "c98fdda78473bee456a245524a229ec67ee322a1b0dca497919d0d04bc353d33",
+  "word-highlight-true": "3f2ce720677ba51b5a52c58473588bc01bdeae9e4a9cb2b6f2f6a36592b5a18f",
+  "word-left-highlight-false": "f3a876e4d2ee909cbd9b0edc501964d79334cf1df6bae66554f9c0f8e6036fb3",
+  "word-unset": "3f2ce720677ba51b5a52c58473588bc01bdeae9e4a9cb2b6f2f6a36592b5a18f"
 }

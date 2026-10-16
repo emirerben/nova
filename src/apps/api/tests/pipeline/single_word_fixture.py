@@ -76,11 +76,12 @@ def talk_recipe(*, caption_style: str, look: PhoneCaptionLook | None, cues=None)
     )
 
 
-# Text layout floats come out of the font engine (glyph advances, run positions) and differ in
-# their last digits between a Mac and the Linux CI image, so they are not part of the digest.
-# What the digest pins is everything else: layer ids and timing, run text and order, glyph
-# ids, sizes, colours, strokes and shadows, karaoke fields and required capabilities.
-_PLATFORM_LAYOUT_RUN_KEYS = frozenset({"x", "baseline_y"})
+# Text layout is the font engine's business: glyph advances and run positions differ in their
+# last digits between a Mac and the Linux CI image, and a wrapped line can break one word
+# earlier or later. So the digest does not pin where a run sits or where a line wraps. It pins
+# everything else: layer ids and timing, each layer's full text, the distinct run styles
+# (size, colours, strokes, shadows, font), karaoke fields and the required capabilities.
+_PLATFORM_LAYOUT_RUN_KEYS = frozenset({"x", "baseline_y", "glyphs", "text"})
 
 
 def _stable(value):
@@ -89,34 +90,22 @@ def _stable(value):
     if isinstance(value, list):
         return [_stable(item) for item in value]
     if isinstance(value, dict):
-        if "glyph_id" in value:
-            return {"glyph_id": value["glyph_id"]}
-        return {key: _stable(item) for key, item in value.items()}
-    return value
-
-
-def _stable_runs(value):
-    """Apply the run-key filter to every `runs` list, wherever it sits."""
-    if isinstance(value, dict):
-        return {
-            key: (
-                [
-                    {
-                        k: _stable_runs(v)
-                        for k, v in run.items()
-                        if k not in _PLATFORM_LAYOUT_RUN_KEYS
-                    }
-                    if isinstance(run, dict)
-                    else run
-                    for run in item
-                ]
-                if key == "runs" and isinstance(item, list)
-                else _stable_runs(item)
+        out = {key: _stable(item) for key, item in value.items() if key != "runs"}
+        runs = value.get("runs")
+        if isinstance(runs, list):
+            styles = {
+                json.dumps(
+                    {k: _stable(v) for k, v in run.items() if k not in _PLATFORM_LAYOUT_RUN_KEYS},
+                    sort_keys=True,
+                )
+                for run in runs
+                if isinstance(run, dict)
+            }
+            text = " ".join(
+                " ".join(str(run.get("text", "")) for run in runs if isinstance(run, dict)).split()
             )
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_stable_runs(item) for item in value]
+            out["runs"] = {"text": text, "styles": sorted(styles)}
+        return out
     return value
 
 
@@ -124,7 +113,7 @@ def recipe_digest(recipe) -> str:
     dumped = recipe.model_dump(mode="json")
     # A set on the model: its list order follows PYTHONHASHSEED, its content is the contract.
     dumped["required_capabilities"] = sorted(dumped["required_capabilities"])
-    payload = json.dumps(_stable(_stable_runs(dumped)), sort_keys=True, ensure_ascii=False)
+    payload = json.dumps(_stable(dumped), sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
