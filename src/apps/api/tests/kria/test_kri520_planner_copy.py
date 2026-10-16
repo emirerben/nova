@@ -197,6 +197,17 @@ def test_still_checking_clips_reply() -> None:
         )
 
 
+def test_continuation_superseded_reply_asks_for_nothing() -> None:
+    # KRI-709: the pending turn is closed because a newer message is already queued.
+    assert planner.continuation_superseded_reply() == (
+        "I'm still checking some of your clips. I'll carry on with your new message."
+    )
+    with reply_language_for("tr"):
+        assert planner.continuation_superseded_reply() == (
+            "Kliplerinden bazılarını hâlâ kontrol ediyorum. Yeni mesajınla devam edeceğim."
+        )
+
+
 def test_song_pending_reply() -> None:
     assert planner._song_pending_plan().response == planner._SONG_PENDING_REPLY
     assert planner._SONG_PENDING_REPLY == (

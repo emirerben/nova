@@ -779,6 +779,14 @@ class Settings(BaseSettings):
     kria_runtime_v2_phone_enabled: bool = False
     kria_runtime_v2_phone_user_ids: list[UUID] = Field(default_factory=list)
     kria_turn_lease_seconds: int = Field(default=15, ge=10, le=120)
+    # KRI-709: a turn whose planner stopped on a time budget ("still checking your
+    # clips") is re-run by the server instead of asking the creator to say "go ahead".
+    # Caps the runs one turn may take (each can pay for a Main Creator call plus vision),
+    # counted by `lease_epoch`, so a turn that waited queued is not shortchanged. Past
+    # it the old "come back later" reply is sent (the AI really is stuck). 0 or 1 = off,
+    # byte-identical to the pre-fix behaviour.
+    # Apply: fly secret KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 + restart (api + worker).
+    kria_turn_auto_continue_max_runs: int = Field(default=4, ge=0, le=8)
     # KRI-188: thread-level Creative Brief ledger + deterministic scope router +
     # per-requirement receipts on runtime-v2 turns. False (default): the planner,
     # router, draft validation, dispatch request and replies are byte-identical
