@@ -201,7 +201,7 @@ final class PerfUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(2.5))
         }
         var next = 10
-        measure(metrics: [interval("chat.open")], options: options) {
+        measure(metrics: [interval("chat.open"), interval("chat.toPixels")], options: options) {
             openChat(app, "Chat \(next)")
             next = next == 10 ? 11 : 10
         }
