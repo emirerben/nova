@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.9.0] - 2026-10-16
+
+### Changed
+- feat(media): automatically keep the newest 500 saved uploads (#1643) <!-- release-pr: 1643 -->
+
 ## [0.80.8.0] - 2026-10-16
 
 ### Changed
