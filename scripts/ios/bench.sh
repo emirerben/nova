@@ -132,7 +132,8 @@ fi
 
 xctestrun_in() {
   local found
-  found="$(ls "$1"/*.xctestrun 2>/dev/null | head -1)"
+  # A derived-data folder that has seen both platforms holds one .xctestrun per SDK; take the simulator's.
+  found="$(ls "$1"/*iphonesimulator*.xctestrun 2>/dev/null | head -1)"
   [[ -n "$found" ]] || { echo "No .xctestrun in $1" >&2; exit 2; }
   echo "$found"
 }
