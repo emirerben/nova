@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.11.0] - 2026-10-16
+
+### Changed
+- fix(kria): say a voiceover edit can't show text on a spoken word (KRI-699) (#1620) <!-- release-pr: 1620 -->
+
 ## [0.79.10.0] - 2026-10-16
 
 ### Changed
