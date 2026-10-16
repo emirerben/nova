@@ -5165,6 +5165,17 @@ def _check_moments(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
                 tr=f"En uzun an {longest:.1f} sn sürüyor",
             ),
         )
+    # KRI-686: "about 2 seconds each" tolerates a stretch to fit the creator's total length
+    # (8 x 2 s in 20 s runs 2.5 s each), not a moment of twice that.
+    if ask.each_s is not None and longest > ask.each_s * 1.5 + 0.05:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"The longest moment runs {longest:.1f} s, not about {ask.each_s:g} s",
+                tr=f"En uzun an {longest:.1f} sn sürüyor, yaklaşık {ask.each_s:g} sn değil",
+            ),
+        )
     problem = _moment_source_problem(ask, facts)
     if problem:
         return _receipt(req, "partial", problem)

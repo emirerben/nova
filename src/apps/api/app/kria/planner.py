@@ -73,7 +73,7 @@ from app.kria.strategy_policy import (
     check_strategy_for_runtime_v2,
     song_captions_refusal,
 )
-from app.kria.style_asks import MOMENT_SHORT_MAX_S, brief_moment_ask
+from app.kria.style_asks import brief_moment_ask
 from app.kria.voiceover_clips import keep_every_voiceover_clip
 from app.models import (
     ContentPlan,
@@ -212,7 +212,7 @@ def _enrich_best_parts_snapshot(
         order_ids=contract.order_ids if contract is not None else (),
         closing_quote=closing_quote,
         moment_count=moments.count if moments is not None else None,
-        moment_max_s=MOMENT_SHORT_MAX_S if moments is not None and moments.short else None,
+        moment_max_s=moments.max_s if moments is not None else None,
     )
     enriched = dict(media_snapshot)
     enriched["length_plan"] = length_plan
