@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.14.0] - 2026-10-16
+
+### Changed
+- fix(kria): tell the creator before render that phone montages can't change clip speed (KRI-689) (#1624) <!-- release-pr: 1624 -->
+
 ## [0.79.13.0] - 2026-10-16
 
 ### Changed
