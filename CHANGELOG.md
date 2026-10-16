@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.10.0] - 2026-10-16
+
+### Changed
+- fix(kria): name the missing text when a phone render is refused (KRI-701) (#1619) <!-- release-pr: 1619 -->
+
 ## [0.79.9.0] - 2026-10-16
 
 ### Changed
