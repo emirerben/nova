@@ -2574,18 +2574,20 @@ struct NativeEditorTemporaryVideo {
     }
 
     /// Device-rendered variants have no cloud receipt or base-video URL. Their
-    /// current recipe is the authority for narration and the creator's song, and
-    /// its published generation must still be the document we are reconstructing.
+    /// current recipe is the authority for narration and the creator's song. Its
+    /// saved or published generation must be the document we are reconstructing.
     static func currentDeviceRecipeRequest(
         _ status: DeviceRenderStatusResponse,
         jobID: UUID,
         variantID: String,
         generation: String
     ) throws -> DeviceRenderRequest {
-        guard status.request.identity.jobID == jobID,
-              status.request.identity.variantID == variantID,
-              status.phase == "published",
-              status.publishedGeneration == generation else {
+        let matchesGeneration = status.phase == "published"
+            ? status.publishedGeneration == generation
+            : ["awaiting_device", "syncing", "needs_attention"].contains(status.phase)
+                && status.baseGeneration == generation
+        guard !generation.isEmpty, status.request.identity.jobID == jobID,
+              status.request.identity.variantID == variantID, matchesGeneration else {
             throw APIError.conflict
         }
         return status.request
@@ -6268,6 +6270,11 @@ struct NativeEditorTemporaryVideo {
 
     private func acknowledge(_ sections: Set<EditorSection>, generation: String, submittedDocument: EditorDocument) {
         guard !sections.isEmpty else { return }
+        if document.revision.baseGeneration != generation {
+            finishedRenderIsCurrent = false
+            finishedRenderRecoveryTask?.cancel()
+            finishedRenderRecoveryInFlight = false
+        }
         document.revision.baseGeneration = generation
         let acknowledgedRevision = document.revision
         // KRI-576: the cuts this save carried now ARE the clean clips, so a lip-sync song start they moved stops
@@ -6382,9 +6389,8 @@ struct NativeEditorTemporaryVideo {
         // text would flash the old style for the few seconds it takes the
         // local source preview (built straight from the current document)
         // to take over. Untrusted here only gates *display* during that
-        // window; restoreFinishedRenderFallback() still uses it if source
-        // preview construction genuinely fails, same as before — stale is
-        // still better than nothing once every other option is exhausted.
+        // window. A failed source preview must keep this fence too: an older
+        // render cannot represent the saved document or replace its error.
         finishedRenderIsCurrent = isCurrent
         guard sourcePreviewState == .idle || sourcePreviewState.isFailure || player == nil else { return }
         installPlayer(item: AVPlayerItem(url: url), preferredDuration: preferredDuration)
@@ -6565,6 +6571,13 @@ struct NativeEditorTemporaryVideo {
             pendingPlayRequest = wantsPlayback
             failSourcePreview(NativeEditorPlaybackFailure.liveItem)
         case .finished:
+            // An obsolete render may still be retained for recovery, but it is
+            // hidden. Its failures cannot replace the current preview's state or
+            // start a retry loop against a generation the server no longer serves.
+            guard finishedRenderIsCurrent, !hasUnsavedChanges, chatStagedDocument == nil else {
+                finishedRenderFailed = true
+                return
+            }
             pendingPlayRequest = wantsPlayback
             recoverFinishedRender(failedPlayer: failedPlayer)
         }
@@ -6616,6 +6629,9 @@ struct NativeEditorTemporaryVideo {
     }
 
     private func surfaceUnplayableFinishedRender() {
+        // The retry may have started before a save or staged edit made this
+        // player obsolete. Its delayed completion cannot own the new error.
+        guard finishedRenderIsCurrent, !hasUnsavedChanges, chatStagedDocument == nil else { return }
         // An editable preview still building will take over by itself; only a settled state needs a message.
         guard sourcePreviewState != .preparing else { return }
         let message = Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem)
@@ -6640,7 +6656,8 @@ struct NativeEditorTemporaryVideo {
     }
 
     private func restoreFinishedRenderFallback() {
-        guard let finishedRenderURL else { return }
+        guard let finishedRenderURL, finishedRenderIsCurrent,
+              !hasUnsavedChanges, chatStagedDocument == nil else { return }
         guard player === finishedRenderPlayer else {
             installFinishedRenderPlayer(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
             return
@@ -6888,6 +6905,7 @@ struct NativeEditorTemporaryVideo {
     private func startPreviewRefresh(generation: String) {
         previewRefreshTask?.cancel()
         pendingPreviewGeneration = generation
+        if surfaceDeviceRenderFailure() { return }
         guard let api, let jobID, let variantKey else {
             saveState = .previewFailed("Your edit is saved, but this device cannot check the new preview yet.")
             return
@@ -6964,6 +6982,7 @@ struct NativeEditorTemporaryVideo {
     @discardableResult
     func applyPreviewVariant(_ variant: [String: JSONValue], generation: String) -> Bool {
         guard pendingPreviewGeneration == generation else { return false }
+        if surfaceDeviceRenderFailure() { return true }
         let currentGeneration = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
         guard let currentGeneration else { return false }
         if currentGeneration != generation {
@@ -7103,13 +7122,31 @@ struct NativeEditorTemporaryVideo {
     func retryDeviceRender() async {
         guard !isSaving, let key = deviceRenderKey, let deviceRenders,
               let generation = pendingPreviewGeneration else { return }
-        let retried = await deviceRenders.retryNeedsAttention(key)
-        guard retried, !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
+        if deviceRenders.presentations[key]?.requiresServerRetry == true {
+            let retried = await deviceRenders.retryNeedsAttention(key)
+            guard retried else { return }
+        }
+        guard !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
         await refreshDeviceRender(retry: true)
         guard !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
         pendingDeviceRenderIdentity = deviceRenders.request(for: key)?.identity
         saveState = .previewPending
         startPreviewRefresh(generation: generation)
+    }
+
+    /// Saving the edit and producing its video are separate outcomes. A local
+    /// preparation failure (including a failed status fetch) must leave a useful
+    /// retry instead of polling the unchanged awaiting_device variant forever.
+    @discardableResult
+    private func surfaceDeviceRenderFailure() -> Bool {
+        guard let key = deviceRenderKey, let presentation = deviceRenders?.presentations[key],
+              presentation.requiresServerRetry || presentation.phase == .needsAttention
+                || presentation.phase == .cancelled
+                || (presentation.phase == .localReady && presentation.message != nil) else { return false }
+        saveState = .deviceRenderRetryNeeded(
+            presentation.message ?? "Your edit is saved, but this iPhone needs to retry rendering it."
+        )
+        return true
     }
 
     func retryRender() async {

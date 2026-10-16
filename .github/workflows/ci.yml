@@ -723,7 +723,8 @@ jobs:
           mkdir -p ../../../test-results/kri-559/kri-669
           python3 -m pytest tests/kria/test_gameday_text_hierarchy.py \
             tests/routes/test_native_timeline_sources.py \
-            tests/routes/test_editor_sources.py -q \
+            tests/routes/test_editor_sources.py \
+            tests/routes/test_device_render.py -q \
             --junitxml=../../../test-results/kri-559/kri-669/api-tests.xml
       - name: Seal portable fixture inputs for this exact workflow attempt
         if: needs.changes.outputs.journey_needs_native == 'true'
