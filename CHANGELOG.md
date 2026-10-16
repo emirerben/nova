@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.5.0] - 2026-10-16
+
+### Changed
+- Add a local request-review app and automatic regression loop (#1635) <!-- release-pr: 1635 -->
+
 ## [0.80.4.0] - 2026-10-16
 
 ### Changed
