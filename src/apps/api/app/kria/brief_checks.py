@@ -350,6 +350,9 @@ class PlanFacts:
     opening_cut: str | None = None
     opening_cut_reason: str | None = None
     opening_cut_quote: str | None = None
+    # KRI-706: True when the rendered opening title still sits on the speaker's face
+    # (`variant["opening_title_placement"]["face_collision"]`). None = no such receipt.
+    title_face_collision: bool | None = None
     # KRI-547: pop-ins the render dropped for lack of room, as (trigger, "no_room") when
     # no spot cleared the face and captions, or (trigger, "overlap") when another pop-in
     # held the spot at that moment (`phone_beat_receipt.unplaced[]`).
@@ -1289,6 +1292,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_rendered_speech_facts(variant))
     changes.update(_speaker_framing_facts(variant))
     changes.update(_opening_cut_facts(variant))
+    changes.update(_title_face_facts(variant))
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
     changes.update(_rendered_caption_facts(variant))
     rendered = _rendered_clip_durations(variant)
@@ -3725,6 +3729,7 @@ def _with_text_look(
     req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
 ) -> RequirementReceipt:
     """Add the look check to a text requirement's presence check (KRI-558)."""
+    base = _with_title_face(req, facts, base)
     if not text_look_facts(req) or base.status != "met":
         return base
     look = check_text_look(req, facts)
@@ -3923,6 +3928,31 @@ def _opening_cut_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         "opening_cut_reason": str(reason) if isinstance(reason, str) and reason else None,
         "opening_cut_quote": str(quote) if isinstance(quote, str) and quote else None,
     }
+
+
+def _title_face_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    placement = variant.get("opening_title_placement")
+    if isinstance(placement, Mapping) and isinstance(placement.get("face_collision"), bool):
+        return {"title_face_collision": placement["face_collision"]}
+    return {}
+
+
+def _with_title_face(
+    req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
+) -> RequirementReceipt:
+    """KRI-706: text never covers a face (a product rule, asked for or not), so a title
+    the render could not move off the face is not "met"; say so instead of certifying
+    the words alone."""
+    if req.scope != "title" or base.status != "met" or not facts.title_face_collision:
+        return base
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en="The title lands on your face; I couldn't find a spot clear of it",
+            tr="Başlık yüzünün üstüne denk geliyor; yüzünü açıkta bırakan bir yer bulamadım",
+        ),
+    )
 
 
 def _opening_cut_miss(reason: str | None, quote: str | None) -> str:
