@@ -115,13 +115,14 @@ async def list_cases(
             elif case.capture is not None:
                 items.append(summary(case))
     collector = await db.get(RequestFollowingCollector, 1)
-    users, threads, _ = scope()
+    users, threads, _, all_users = scope()
     return {
         "items": items,
         "holdout_count": held,
         "next_cursor": str(rows[limit - 1].id) if len(rows) > limit else None,
         "collector": {
             "enabled": settings.request_following_collection_enabled,
+            "all_users": all_users,
             "scoped_users": len(users),
             "scoped_threads": len(threads),
             "interval_minutes": 15,

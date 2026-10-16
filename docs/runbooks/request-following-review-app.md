@@ -44,16 +44,18 @@ server revocation and expiry cannot erase copies already downloaded.
 
 ## Automatic collection
 
-Collection is off until explicitly enabled for a cohort. Configure the API and
+Collection is off until explicitly enabled for the approved scope. Configure the API and
 worker/beat consistently:
 
 - `REQUEST_FOLLOWING_COLLECTION_ENABLED=true`
-- `REQUEST_FOLLOWING_USER_IDS=["creator-uuid"]` and/or
-  `REQUEST_FOLLOWING_THREAD_IDS=["thread-uuid"]`
+- `REQUEST_FOLLOWING_ALL_USERS=true` for every account with current recorded eligibility;
+  alternatively leave it false and set `REQUEST_FOLLOWING_USER_IDS=["creator-uuid"]`
+  and/or `REQUEST_FOLLOWING_THREAD_IDS=["thread-uuid"]`
 - `REQUEST_FOLLOWING_HOLDOUT_THREAD_IDS=["unseen-thread-uuid"]`, if needed before capture
 
-A configured creator or thread must also pass the existing training-consent/internal-
-account-grant policy. Empty or malformed scopes capture nothing. No new grants are
+Every creator, including in all-users mode, must pass the existing training-consent/internal-
+account-grant policy. Empty scopes capture nothing unless all-users mode is explicitly enabled. Malformed
+IDs fail the whole scope closed, including all-users mode. No new grants are
 created by this feature. Deployment and production activation need normal approval.
 
 Celery Beat sweeps up to 25 threads every 15 minutes. A durable cursor wraps through
@@ -98,3 +100,21 @@ DATABASE_URL=postgresql://localhost/nova_learning_test \
 A failed test, runner error or absent JUnit cannot produce a passing report. Historical
 replay KPIs retain their recorded-evidence limitations; daily success is not evidence
 of live-provider quality or rendered-video correctness.
+
+### Prepared production activation
+
+The user selected all app accounts. This is scope authorization, not a replacement
+for missing consent records. After this PR is reviewed, merged and deployed through
+the normal Fly Deploy workflow, the remaining production configuration action is:
+
+```bash
+fly secrets set --app nova-video \
+  REQUEST_FOLLOWING_COLLECTION_ENABLED=true \
+  REQUEST_FOLLOWING_ALL_USERS=true
+```
+
+That command changes production and restarts processes; it has **not** been run.
+Verify API and worker use the deployed revision and flags, then inspect the first
+collector summary. Ineligible accounts are skipped; never manufacture consent to
+increase coverage. To pause new capture, set `REQUEST_FOLLOWING_COLLECTION_ENABLED=false`;
+retention cleanup continues. Scope/holdout metadata stays intact.

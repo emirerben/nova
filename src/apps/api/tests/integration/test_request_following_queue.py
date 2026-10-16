@@ -27,6 +27,7 @@ async def journey(monkeypatch):
     thread = uuid.uuid4()
     grant = uuid.uuid4()
     monkeypatch.setattr(settings, "request_following_collection_enabled", True)
+    monkeypatch.setattr(settings, "request_following_all_users", False)
     monkeypatch.setattr(settings, "request_following_user_ids", [str(owner)])
     monkeypatch.setattr(settings, "request_following_thread_ids", [])
     monkeypatch.setattr(settings, "request_following_holdout_thread_ids", [])
@@ -468,4 +469,42 @@ async def test_cross_owner_projection_never_captures_foreign_video(journey, monk
             await db.flush()
             await db.execute(delete(Job).where(Job.id == job_id))
             await db.execute(delete(User).where(User.id == foreign))
+            await db.commit()
+
+
+async def test_all_users_scope_still_requires_recorded_eligibility(journey, monkeypatch):
+    from app.services import request_following_collection as collection
+
+    client, owner, original, _ = journey
+    monkeypatch.setattr(settings, "request_following_user_ids", [])
+    monkeypatch.setattr(settings, "request_following_all_users", True, raising=False)
+    monkeypatch.setattr(collection, "BATCH_SIZE", 1000)
+    eligible, ineligible = uuid.uuid4(), uuid.uuid4()
+    threads = {eligible: uuid.uuid4(), ineligible: uuid.uuid4()}
+    async with AsyncSessionLocal() as db:
+        for user_id, thread_id in threads.items():
+            db.add(User(id=user_id, email=f"{user_id}@queue.test"))
+            await db.flush()
+            db.add(CreationThread(id=thread_id, creator_id=user_id))
+        db.add(
+            InternalAccountGrant(
+                creator_id=eligible, granted_by="test", idempotency_key=str(uuid.uuid4())
+            )
+        )
+        await db.commit()
+    try:
+        result = await collect()
+        assert result["status"] == "complete"
+        response = (await client.get("/admin/request-following?limit=50")).json()
+        ids = {item["thread_id"] for item in response["items"]}
+        assert str(original) in ids
+        assert str(threads[eligible]) in ids
+        assert str(threads[ineligible]) not in ids
+        assert response["collector"]["all_users"] is True
+        monkeypatch.setattr(settings, "request_following_holdout_thread_ids", ["invalid"])
+        assert (await collect())["status"] == "empty_scope"
+        assert (await client.get("/admin/request-following")).json()["items"] == []
+    finally:
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(User).where(User.id.in_([eligible, ineligible])))
             await db.commit()

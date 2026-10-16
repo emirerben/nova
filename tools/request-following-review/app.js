@@ -35,10 +35,10 @@ async function loadQueue() {
   try {
     state.queue = await api(`?${params}`);
     const queue = state.queue, collector = queue.collector;
-    const configured = collector.scoped_users + collector.scoped_threads > 0;
+    const configured = collector.all_users || collector.scoped_users + collector.scoped_threads > 0;
     $("collection-summary").textContent = `${collector.enabled && configured ? "Automatic collection · every 15 minutes" : "Collection is paused or needs a scope"} · ${collector.last_run_at ? "Last run " + date(collector.last_run_at) : "Not run yet"}`;
-    $("collection-detail").replaceChildren(element("p", `${collector.scoped_users} scoped accounts · ${collector.scoped_threads} scoped sessions. Current training consent is checked on capture and review.`));
-    if (!collector.enabled || !configured) $("collection-detail").append(element("p", "To start, enable REQUEST_FOLLOWING_COLLECTION_ENABLED and set an explicit account or session scope on the API and worker. The local app does not change these settings."));
+    $("collection-detail").replaceChildren(element("p", collector.all_users ? "All accounts with current recorded eligibility. Consent is checked on every capture and review; ineligible accounts are skipped." : `${collector.scoped_users} scoped accounts · ${collector.scoped_threads} scoped sessions. Current training consent is checked on capture and review.`));
+    if (!collector.enabled || !configured) $("collection-detail").append(element("p", "To start, enable REQUEST_FOLLOWING_COLLECTION_ENABLED and set REQUEST_FOLLOWING_ALL_USERS or an explicit account/session scope on the API and worker. The local app does not change these settings."));
     if (collector.last_run) $("collection-detail").append(element("pre", JSON.stringify(collector.last_run, null, 2)));
     $("collection-detail").append(element("p", queue.coverage_note));
     $("cases").replaceChildren();

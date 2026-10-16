@@ -121,6 +121,7 @@ def capture(args):
         except (ValueError, subprocess.TimeoutExpired):
             data["missing"][section] = "capture_failed"
     integrity = data["sections"].get("integrity", {})
+    owner = (integrity.get("thread") or {}).get("creator_id")
     item = integrity.get("edges", {}).get("plan_item", {})
     linked = []
     if item.get("exists") and item.get("coherent") and item.get("id"):
@@ -129,13 +130,22 @@ def capture(args):
         job for turn in data["sections"].get("turns", []) for job in turn.get("job_ids", [])
     }
     video = integrity.get("video") or {}
-    if video.get("job_id"):
-        job_ids.add(video["job_id"])
+    if integrity.get("edges", {}).get("job", {}).get("coherent"):
+        if video.get("job_id"):
+            job_ids.add(video["job_id"])
+    elif video:
+        integrity["video"] = None
     for job_id in sorted(job_ids):
         linked.append((f"job-{uuid.UUID(job_id)}", f"jobs/{uuid.UUID(job_id)}/debug"))
     for section, route in linked:
         try:
-            data["sections"][section] = admin_get(route, args.prod)
+            linked_data = admin_get(route, args.prod)
+            if section.startswith("job-") and (
+                not owner or (linked_data.get("job") or {}).get("user_id") != owner
+            ):
+                data["missing"][section] = "missing_or_unowned_job"
+                continue
+            data["sections"][section] = linked_data
         except (ValueError, subprocess.TimeoutExpired):
             data["missing"][section] = "capture_failed"
     # Linked debug metadata preserves available media/agent/output references.

@@ -31,8 +31,8 @@ commands/results separately from this plan. No production collection in verifica
 
 - Isolated worktree and migrated disposable PostgreSQL `nova_request_learning_auto_test`.
 - Task -> real database -> admin HTTP -> local HTTP proxy -> review/export -> CLI import;
-  promotion correctly refused without full human review. Seven integration journeys pass.
-- Offline runner: 594 passed, two existing expected failures. Report and JUnit at
+  promotion correctly refused without full human review. Eight integration journeys pass.
+- Offline runner: 596 passed, two existing expected failures. Report and JUnit at
   `.request-following-report/`; no live provider calls.
 - Negative report controls: a deliberate JUnit failure with exit code zero, and missing
   JUnit, both produce failed status.
@@ -45,3 +45,14 @@ commands/results separately from this plan. No production collection in verifica
   a synthetic marker via raw integrity diagnostics. The collector now removes video
   metadata for detached jobs; the real-database journey passes and still flags the
   broken link. The existing operator diagnostics endpoint is unchanged.
+
+All-users scope extension (explicit user clarification): before implementation,
+register that enabling all-users mode must include other eligible accounts, exclude
+accounts without recorded eligibility, retain immutable holdout assignment, and
+fail closed on malformed configured IDs. Collection remains disabled by default.
+
+- Explicit all-users mode: eight database journeys pass. Default remains off;
+  all-users still requires recorded eligibility and rejects malformed scope IDs.
+- CLI capture ownership negative control also failed before the fix and now passes:
+  detached video metadata and unowned job debug bodies are withheld from captures.
+- GitHub daily-regression workflow passed on the initial follow-on draft head.

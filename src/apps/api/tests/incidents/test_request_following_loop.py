@@ -254,3 +254,31 @@ else:
     assert len(capture["sections"]["events"]) == 2
     assert capture["missing"]["turns"] == "capture_failed_or_incomplete"
     assert not (Path(json.loads(result.stdout)["capture"]).stat().st_mode & 0o077)
+
+
+def test_capture_drops_foreign_job_metadata(workspace):
+    repo, _, _ = workspace
+    (repo / "scripts/admin.py").write_text("""import json, sys
+route = sys.argv[-1]
+thread = "11111111-1111-1111-1111-111111111111"
+job = "22222222-2222-2222-2222-222222222222"
+owner = "33333333-3333-3333-3333-333333333333"
+if "/events?" in route:
+    data = {"thread_id": thread, "events": [], "next_cursor": None}
+elif "/turns?" in route:
+    data = {"thread_id": thread, "turns": [{"job_ids": [job]}], "next_cursor": None}
+elif "/integrity" in route:
+    data = {"thread": {"creator_id": owner}, "edges": {"job": {"coherent": False}},
+            "video": {"job_id": job, "private": "FOREIGN-MARKER"}}
+elif route.startswith("jobs/"):
+    data = {"job": {"user_id": "44444444-4444-4444-4444-444444444444"},
+            "private": "FOREIGN-MARKER"}
+else:
+    data = {}
+print(json.dumps(data))
+""")
+    result = run(workspace, "capture", "--thread", "11111111-1111-1111-1111-111111111111", ok=False)
+    assert result.returncode == 2
+    path = Path(json.loads(result.stdout)["capture"])
+    assert "FOREIGN-MARKER" not in path.read_text()
+    assert "job-22222222-2222-2222-2222-222222222222" in json.loads(path.read_text())["missing"]

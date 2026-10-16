@@ -31,14 +31,14 @@ def scope():
         users = {uuid.UUID(v) for v in settings.request_following_user_ids}
         threads = {uuid.UUID(v) for v in settings.request_following_thread_ids}
         holdouts = {uuid.UUID(v) for v in settings.request_following_holdout_thread_ids}
-        return users, threads, holdouts
+        return users, threads, holdouts, settings.request_following_all_users
     except (ValueError, TypeError, AttributeError):
-        return set(), set(), set()
+        return set(), set(), set(), False
 
 
 def in_scope(creator_id, thread_id):
-    users, threads, _ = scope()
-    return creator_id in users or thread_id in threads
+    users, threads, _, all_users = scope()
+    return all_users or creator_id in users or thread_id in threads
 
 
 def eligibility_key(decision):
@@ -176,8 +176,8 @@ async def collect_batch(db: AsyncSession):
     if not settings.request_following_collection_enabled:
         await db.commit()
         return {"status": "disabled"}
-    users, threads, holdouts = scope()
-    if not users and not threads:
+    users, threads, holdouts, all_users = scope()
+    if not all_users and not users and not threads:
         await db.commit()
         return {"status": "empty_scope"}
     if not await db.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": LOCK_ID}):
@@ -188,9 +188,11 @@ async def collect_batch(db: AsyncSession):
         cursor = RequestFollowingCollector(id=1)
         db.add(cursor)
         await db.flush()
-    query = select(CreationThread).where(
-        or_(CreationThread.creator_id.in_(users), CreationThread.id.in_(threads))
-    )
+    query = select(CreationThread)
+    if not all_users:
+        query = query.where(
+            or_(CreationThread.creator_id.in_(users), CreationThread.id.in_(threads))
+        )
     if cursor.after_thread_id:
         query = query.where(CreationThread.id > cursor.after_thread_id)
     batch = (await db.scalars(query.order_by(CreationThread.id).limit(BATCH_SIZE))).all()
