@@ -121,7 +121,7 @@ final class PerfUITests: XCTestCase {
             book.add(counters(app))
             app.terminate()
         }
-        book.report("testLaunchToTranscript", prefixes: ["net ", "auth ", "fullread ", "t "])
+        book.report("testLaunchToTranscript", prefixes: ["net ", "auth ", "fullread ", "t ", "fixture "])
     }
 
     /// The same launch after the access token has expired: every first request 401s and waits for a refresh.
@@ -137,7 +137,7 @@ final class PerfUITests: XCTestCase {
             book.add(counters(app))
             app.terminate()
         }
-        book.report("testLaunchExpiredToken", prefixes: ["net ", "auth ", "fullread ", "t "])
+        book.report("testLaunchExpiredToken", prefixes: ["net ", "auth ", "fullread ", "t ", "fixture "])
     }
 
     // MARK: Opening chats

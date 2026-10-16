@@ -48,7 +48,7 @@ enum PerfFixture {
         return TimeInterval(milliseconds) / 1000
     }
 
-    private static func isFullProjectionRead(_ request: URLRequest) -> Bool {
+    static func isFullProjectionRead(_ request: URLRequest) -> Bool {
         guard (request.httpMethod ?? "GET") == "GET", let url = request.url else { return false }
         let parts = url.path.split(separator: "/")
         guard parts.count == 2, parts[0] == "creation-threads", UUID(uuidString: String(parts[1])) != nil else { return false }
