@@ -613,7 +613,15 @@
       "paths": [
         "scripts/request-following-loop.py",
         "src/apps/api/tests/incidents/test_request_following_loop.py",
-        "src/apps/api/tests/evals/request_following/README.md"
+        "src/apps/api/tests/evals/request_following/README.md",
+        "scripts/request-following-review.py",
+        "scripts/request-following-regressions.py",
+        "tools/request-following-review/",
+        "src/apps/api/app/services/request_following_cases.py",
+        "src/apps/api/app/services/request_following_collection.py",
+        "src/apps/api/app/routes/admin_request_following.py",
+        "src/apps/api/app/tasks/request_following.py",
+        "src/apps/api/tests/integration/test_request_following_queue.py"
       ]
     }
   ]

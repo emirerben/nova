@@ -135,3 +135,9 @@ bash scripts/check-api.sh test tests/incidents/test_request_following_loop.py -q
 ```
 
 CI journey `kri-215-learning-loop` selects that acceptance test when the CLI changes.
+
+## Automatic collection and local review
+
+For the scoped collector, one-command local review app, private queue import and
+scheduled free regression reports, see [the review-app runbook](request-following-review-app.md).
+Intent approval in that app remains separate from complete fixture review here.

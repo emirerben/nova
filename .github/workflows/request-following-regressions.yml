@@ -9,6 +9,14 @@ on:
       - '.github/workflows/request-following-regressions.yml'
       - 'scripts/request-following-regressions.py'
       - 'scripts/request-following-loop.py'
+      - 'scripts/request-following-review.py'
+      - 'tools/request-following-review/**'
+      - 'src/apps/api/app/models.py'
+      - 'src/apps/api/app/config.py'
+      - 'src/apps/api/app/worker.py'
+      - 'src/apps/api/app/migrations/versions/**'
+      - 'src/apps/api/tests/incidents/**'
+      - 'src/apps/api/tests/evals/request_following/**'
       - 'src/apps/api/app/services/request_following_*.py'
       - 'src/apps/api/app/routes/admin_request_following.py'
       - 'src/apps/api/app/tasks/request_following.py'
@@ -56,7 +64,9 @@ jobs:
         working-directory: src/apps/api
         run: pip install -e '.[dev]'
       - name: Install renderer libraries
-        run: sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1
+        run: |
+          sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
+          sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1
       - name: Migrate disposable database
         working-directory: src/apps/api
         run: python -m alembic upgrade head
