@@ -1671,6 +1671,31 @@ def test_kri667_include_minted_from_a_skip_is_repaired_into_an_exclude(
             "quad bike clip",
             "Don't use the blurry ones",
         ),
+        # KRI-680: a comma after a finished verb still ends the clause the skip governs.
+        (
+            "Spor salonu kalsın, çamaşır klibini kullanma.",
+            "include",
+            "spor salonu",
+            "Spor salonu kalsın, çamaşır klibini kullanma",
+        ),
+        (
+            "Spor salonu kalsın, çamaşır klibini kullanma.",
+            "exclude",
+            "spor salonu",
+            "Spor salonu kalsın, çamaşır klibini kullanma",
+        ),
+        (
+            "Lunaparkla başla, karanlık klipleri kullanma.",
+            "exclude",
+            "lunapark",
+            "Lunaparkla başla, karanlık klipleri kullanma",
+        ),
+        (
+            "Lunapark klibini göster, karanlık klipleri kullanma.",
+            "include",
+            "lunapark klibi",
+            "Lunapark klibini göster, karanlık klipleri kullanma",
+        ),
     ],
 )
 def test_kri667_a_clip_beside_a_skip_is_never_excluded(
@@ -1680,6 +1705,34 @@ def test_kri667_a_clip_beside_a_skip_is_never_excluded(
     assert out.intents == []
     assert out.salvage_question is None
     assert out.silent_drops == {"exclusion_dropped": 1}
+
+
+# KRI-680 (Tigre night M1): "Çok karanlık, hiçbir şeyin görünmediği iki klibi kullanma"
+# was dropped as `exclusion_dropped` on every turn: the comma cut "çok karanlık" off the
+# clause the Turkish verb governs, so both near-black clips rendered. Turkish stacks a
+# clip's descriptions before its noun with commas; only a finished verb ends the clause.
+_M1_DARK = "Çok karanlık, hiçbir şeyin görünmediği iki klibi kullanma"
+
+
+@pytest.mark.parametrize(
+    ("op", "attribute"),
+    [
+        ("exclude", "çok karanlık klipler"),
+        ("exclude", "karanlık klipler"),
+        ("exclude", "çok karanlık, hiçbir şeyin görünmediği iki klip"),
+        ("exclude", "hiçbir şeyin görünmediği klipler"),
+        ("include", "çok karanlık klipler"),
+        ("skip", "karanlık klipler"),
+    ],
+)
+def test_kri680_dark_clips_described_before_a_comma_are_excluded(op: str, attribute: str) -> None:
+    request = (
+        "Gece 11'de tekneyle Tigre merkeze gittik. Başlık: Gece 23:00, Tigre. "
+        f"{_M1_DARK}. Hızlı kesmeler, 25 saniye."
+    )
+    out = _parse_exclusions(request, _games_intent("dark", op, attribute, _M1_DARK))
+    assert [(i.op, i.attribute) for i in out.intents] == [("exclude", attribute)]
+    assert "exclusion_dropped" not in out.silent_drops
 
 
 def test_kri667_skip_the_laundry_but_the_gym_has_to_be_in() -> None:

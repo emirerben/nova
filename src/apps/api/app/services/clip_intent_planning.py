@@ -55,6 +55,9 @@ ClipRefresh = Callable[[], Awaitable[list[IntentClip]]]
 class PlannedIntentResolution:
     requested_intents: list[ClipIntent]
     resolution: IntentResolution
+    # KRI-680: "leave these clips out" asks the planner could not tie to clips
+    # (`exclusion_dropped`); the turn's reply says so instead of dropping them silently.
+    dropped_exclusions: int = 0
 
 
 # How often a turn re-reads clip analysis while background understanding lands.
@@ -523,6 +526,7 @@ async def plan_and_resolve_clip_intents(
                 question=output.question,
             ),
         )
+    dropped_exclusions = output.silent_drops.get("exclusion_dropped", 0)
     intents = [
         ClipIntent.model_validate(intent.model_dump(exclude={"source_quote"}))
         for intent in output.intents
@@ -563,9 +567,13 @@ async def plan_and_resolve_clip_intents(
     if not visual_intents:
         if resolved_orders:
             return PlannedIntentResolution(
-                intents, IntentResolution(intents=_as_listed(resolved_orders, intents))
+                intents,
+                IntentResolution(intents=_as_listed(resolved_orders, intents)),
+                dropped_exclusions=dropped_exclusions,
             )
-        return PlannedIntentResolution(intents, IntentResolution())
+        return PlannedIntentResolution(
+            intents, IntentResolution(), dropped_exclusions=dropped_exclusions
+        )
     if require_clip_understanding:
         # KRI-282 L2: a clip whose background analysis has not landed has an empty
         # record, so the resolver would ask the creator about it. That is OUR gap, not
@@ -632,4 +640,4 @@ async def plan_and_resolve_clip_intents(
         resolution = replace(
             resolution, intents=_as_listed([*resolution.intents, *resolved_orders], intents)
         )
-    return PlannedIntentResolution(intents, resolution)
+    return PlannedIntentResolution(intents, resolution, dropped_exclusions=dropped_exclusions)

@@ -582,17 +582,74 @@ def _clauses(text: str, joiners: frozenset[str]) -> list[list[str]]:
     return [clause for clause in clauses if clause]
 
 
+# KRI-680: Turkish stacks a clip's descriptions before its noun with commas ("Çok
+# karanlık, hiçbir şeyin görünmediği iki klibi kullanma"), so a comma ends the governed
+# clause only after a finished verb ("Spor salonu kalsın, çamaşır klibini kullanma").
+# Folded word endings of finite verbs: optative, past, progressive, reported, future,
+# necessity, "let's", and a negative imperative.
+_TR_SENTENCE_BREAKS = str.maketrans(dict.fromkeys(".;:!?()", "\n"))
+_TR_VERB_ENDINGS = (
+    "sin",
+    "sun",
+    "di",
+    "du",
+    "ti",
+    "tu",
+    "yor",
+    "mis",
+    "mus",
+    "acak",
+    "ecek",
+    "mali",
+    "meli",
+    "alim",
+    "elim",
+    "ma",
+    "me",
+)
+# Bare imperatives ("başla", "koy") carry no ending; the exclusion verbs are here too.
+_TR_IMPERATIVES = frozenset(
+    "kullan koy ekle basla bitir goster yaz kes ac kapat birak yap al ver tut at cikar atla "
+    "sil kaldir".split()
+)
+
+
+def _ends_in_tr_verb(words: list[str]) -> bool:
+    last = words[-1]
+    return last in _TR_IMPERATIVES or last.endswith(_TR_VERB_ENDINGS)
+
+
+def _tr_governed_clause(text: str) -> list[str]:
+    """The last Turkish clause, with the comma-led descriptions of its noun (KRI-680)."""
+    sentences = [s for s in text.translate(_TR_SENTENCE_BREAKS).split("\n") if _fold_words(s)]
+    if not sentences:
+        return []
+    clause: list[str] = []
+    for piece in reversed(sentences[-1].split(",")):
+        words = _fold_words(piece)
+        if not words:
+            continue
+        if clause and _ends_in_tr_verb(words):
+            break
+        joiners = [i for i, word in enumerate(words) if word in _TR_JOINERS]
+        start = joiners[-1] + 1 if joiners else 0
+        clause = words[start:] + clause
+        if joiners:
+            break
+    return clause
+
+
 def _exclusion_clause(quote: str) -> list[str] | None:
     """The folded words an exclusion verb in ``quote`` governs, or None when it asks none.
 
     English: the first clause (leading glue such as "but" is a joiner, so it is skipped).
-    Turkish: the last one, where the verb is.
+    Turkish: the last one, where the verb is, with its comma-led descriptions.
     """
     text = _norm(quote).casefold()
     if _EXCLUSION_ASK.search(text):
         return next(iter(_clauses(text, _EN_JOINERS)), [])
     if _EXCLUSION_ASK_TR.search(text):
-        return (_clauses(text, _TR_JOINERS) or [[]])[-1]
+        return _tr_governed_clause(text)
     return None
 
 

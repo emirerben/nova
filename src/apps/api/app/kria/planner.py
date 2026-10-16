@@ -106,7 +106,10 @@ from app.services.choice_questions import (
     tag_event,
 )
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
-from app.services.clip_intent_planning import plan_and_resolve_clip_intents
+from app.services.clip_intent_planning import (
+    PlannedIntentResolution,
+    plan_and_resolve_clip_intents,
+)
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_selection import fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
@@ -2655,6 +2658,15 @@ async def _plan_creator_action(
                     }
                 )
                 policy_notices = (*policy_notices, *extra)
+            if _unapplied_exclusions(planned):
+                # KRI-680: "don't use the two very dark clips" that no clip matched was
+                # dropped without a word, and both clips rendered. Say so before the render.
+                notice = _unapplied_exclusion_notice()
+                if notice not in policy_notices:
+                    action = action.model_copy(
+                        update={"summary": " ".join([action.summary.strip(), notice]).strip()}
+                    )
+                    policy_notices = (*policy_notices, notice)
         ordering_choice: str | None = None
         if settings.kria_choice_questions_enabled:
             ordering_choice = fold_choice_answers(thread_events).get(CONFLICT_ORDER_VS_GROUP)
@@ -2773,6 +2785,34 @@ def _creative_copy_turn(
         ),
         manifest_hash=manifest.manifest_hash,
         context_hash=manifest.context_hash,
+    )
+
+
+def _unapplied_exclusions(planned: PlannedIntentResolution) -> int:
+    """How many "leave these clips out" asks leave nothing out (KRI-680).
+
+    The planner could not tie the ask to clips (`exclusion_dropped`), or the resolver
+    matched no clip confidently: an exclude never asks the creator, so without a notice
+    the ask vanishes and the clips play.
+    """
+    unmatched = sum(
+        1
+        for intent in planned.resolution.intents
+        if intent.op == "exclude" and intent.status == "resolved" and not intent.assignments
+    )
+    return planned.dropped_exclusions + unmatched
+
+
+def _unapplied_exclusion_notice() -> str:
+    return say(
+        en=(
+            "I couldn't tell which clips you asked me to leave out, so I haven't removed"
+            " any for that. Tell me which ones and I'll take them out."
+        ),
+        tr=(
+            "Hangi klipleri çıkarmamı istediğini anlayamadım, bu yüzden o istek için"
+            " hiçbirini çıkarmadım. Hangilerini çıkarayım, söylersen çıkarırım."
+        ),
     )
 
 

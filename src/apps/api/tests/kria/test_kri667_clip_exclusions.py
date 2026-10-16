@@ -479,7 +479,22 @@ async def _draft(
     message: str = SKIP_HALLWAY,
     **strategy_update: Any,
 ) -> dict[str, Any]:
-    """One recorded planning turn; returns the strategy the draft would apply.
+    """One recorded planning turn; returns the strategy the draft would apply."""
+    planned = await _planned_turn(monkeypatch, resolved, message=message, **strategy_update)
+    apply_intent = planned.plan.intents[0]
+    assert apply_intent.tool_name == "draft.apply_strategy"
+    return apply_intent.arguments["strategy"]
+
+
+async def _planned_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    resolved: list[ResolvedClipIntent],
+    *,
+    message: str = SKIP_HALLWAY,
+    dropped_exclusions: int = 0,
+    **strategy_update: Any,
+) -> Any:
+    """One recorded planning turn (a draft); returns the planned turn.
 
     The REAL Main Creator parse and runtime-v2 planner; only the model text and the
     clip-intent resolution (its recorded answer) are stand-ins.
@@ -503,7 +518,11 @@ async def _draft(
         planner,
         "plan_and_resolve_clip_intents",
         AsyncMock(
-            return_value=PlannedIntentResolution(requested, IntentResolution(intents=resolved))
+            return_value=PlannedIntentResolution(
+                requested,
+                IntentResolution(intents=resolved),
+                dropped_exclusions=dropped_exclusions,
+            )
         ),
     )
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
@@ -530,9 +549,7 @@ async def _draft(
         clip_scope_texts=planner._brief_clip_scope_texts(None),
     )
     assert planned.plan.mode == "act", planned.plan.response
-    apply_intent = planned.plan.intents[0]
-    assert apply_intent.tool_name == "draft.apply_strategy"
-    return apply_intent.arguments["strategy"]
+    return planned
 
 
 def _played(strategy: dict[str, Any]) -> set[str]:
@@ -610,6 +627,56 @@ async def test_flag_off_removes_nothing(prod_profile, monkeypatch) -> None:
     strategy = await _draft(monkeypatch, [_exclude()])
     assert _played(strategy) == set(ALL)
     assert _dispatched(strategy) == ALL
+
+
+# -- KRI-680: a skip that leaves nothing out is said, never silent ----------------------
+#
+# Tigre night M1: "don't use the two very dark clips" was dropped by the planner on every
+# turn and both clips rendered; the reply never said so. Ways this could go wrong:
+#
+# a. The planner drops the ask (`exclusion_dropped`) and the reply says nothing.
+# b. The resolver matches no clip, the ask never asks (by design), and the reply says
+#    nothing.
+# c. A skip that DID remove its clips gets the notice anyway (a false alarm).
+# d. Flag off: the reply changes.
+# e. The notice is repeated per unmatched ask.
+
+_UNAPPLIED_EN = "I couldn't tell which clips you asked me to leave out"
+
+
+def _notices(planned: Any) -> list[str]:
+    return [n for n in planned.policy_notices if _UNAPPLIED_EN in n]
+
+
+async def test_kri680_a_skip_the_planner_dropped_is_said_before_the_render(
+    prod_profile, monkeypatch
+) -> None:
+    planned = await _planned_turn(monkeypatch, [], dropped_exclusions=1)
+    assert len(_notices(planned)) == 1
+    summary = planned.plan.intents[0].arguments["summary"]
+    assert _UNAPPLIED_EN in summary
+    assert _played(planned.plan.intents[0].arguments["strategy"]) == set(ALL)
+
+
+async def test_kri680_a_skip_no_clip_matched_is_said_before_the_render(
+    prod_profile, monkeypatch
+) -> None:
+    planned = await _planned_turn(monkeypatch, [_exclude(None)], dropped_exclusions=1)
+    assert len(_notices(planned)) == 1
+
+
+async def test_kri680_a_skip_that_removed_its_clip_says_nothing_extra(
+    prod_profile, monkeypatch
+) -> None:
+    planned = await _planned_turn(monkeypatch, [_exclude()])
+    assert _notices(planned) == []
+    assert HALLWAY not in _played(planned.plan.intents[0].arguments["strategy"])
+
+
+async def test_kri680_flag_off_reply_is_unchanged(prod_profile, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "clip_intent_exclude_enabled", False)
+    planned = await _planned_turn(monkeypatch, [_exclude(None)], dropped_exclusions=1)
+    assert _notices(planned) == []
 
 
 # -- the v1 creator route (9, 11) --------------------------------------------------------
