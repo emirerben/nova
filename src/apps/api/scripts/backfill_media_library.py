@@ -340,6 +340,19 @@ async def run(owner: uuid.UUID, *, apply=False, max_bytes=1024**3, max_candidate
                 if known and known[0].archived_at is not None:
                     record(candidate, "archived")
                     continue
+                if known is None:
+                    # Historical migration fills empty slots only. Runtime ingest may
+                    # rotate its newest-500 catalogue, but older backfill candidates
+                    # must never displace uploads that are already saved.
+                    active = await db.scalar(
+                        select(func.count())
+                        .select_from(MediaAsset)
+                        .where(MediaAsset.user_id == owner, MediaAsset.archived_at.is_(None))
+                    )
+                    if int(active or 0) >= ingest.ACTIVE_ASSET_LIMIT:
+                        record(candidate, "library_quota")
+                        report["counts"]["not_imported_at_capacity"] = len(prepared) - position - 1
+                        break
                 contract = MediaUploadContract.model_validate(candidate.contract)
                 original = contract.proxy.original if contract.proxy else None
                 if known:
