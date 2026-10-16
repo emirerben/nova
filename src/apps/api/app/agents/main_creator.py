@@ -84,7 +84,9 @@ log = structlog.get_logger()
 # `keep_whole_take`, `closing`, `speech_cleanup`, `captions`, `caption_language`) whatever the
 # creator's language, so the server checks them without re-reading the words (v58).
 # v59 combines these facts with KRI-669 heading groups and relative sizes.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-15-v59"
+# KRI-700: a brighten / darken ask carries `footage_light`, so the server can say no draft
+# changes the footage's light instead of the summary promising it (v60).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-16-v60"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -392,7 +394,10 @@ particular shot, photo or badge => {"closing": "<the creator's words for it>"}; 
 filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
 {"speech_cleanup": false}; captions => {"captions": "on"}, {"captions": "off"} or {"captions":
 "word_by_word"} (karaoke, one word at a time), plus {"caption_language": "en"} (a two-letter
-code) when they name the captions' language ("Türkçe altyazı" => "tr").
+code) when they name the captions' language ("Türkçe altyazı" => "tr"); brighten or darken
+the footage itself ("brighten the dark clips", "klipleri aydınlat") => a `style` requirement with
+{"footage_light": "brighter"} or {"footage_light": "darker"}; no edit can change the footage's
+light yet, so never say in `summary` that it is brightened or darkened.
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
 ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", "facts": {"duration_s":

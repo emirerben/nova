@@ -3629,3 +3629,82 @@ async def test_kri558_first_draft_says_nothing_about_asks_only_the_render_can_sh
             assert phrase not in lowered, phrase
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asks_light", [True, False])
+async def test_kri700_brighten_ask_is_a_couldnt_line_and_never_reaches_the_approval_card(
+    monkeypatch: pytest.MonkeyPatch, asks_light: bool
+) -> None:
+    """Tigre N2 (thread FEFCCF5C, events #22-#23): "brighten the dark river clips" got no
+    receipt, and the draft's change list and the approval card kept the model's
+    "...brightened footage..." summary. No draft can brighten the footage: the ask is a
+    "Couldn't" line, the draft still goes ahead, and nothing the draft says repeats the claim."""
+    user_id, thread_id, _session_id = _seed_runtime_project()
+    plan = _brief_strategy_plan()
+    claim = "A chronological 20K cut with brightened footage."
+    plan.intents[0].arguments["summary"] = claim
+    light_ask = BriefUpdate(
+        kind="style",
+        scope="global",
+        description="brighten the dark river clips a bit so you can see something",
+        facts={"footage_light": "brighter"},
+    )
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=plan,
+            manifest_hash="a" * 64,
+            context_hash="b" * 64,
+            brief_updates=(
+                BriefUpdate(kind="text", scope="title", literal="20K Kosu"),
+                *((light_ask,) if asks_light else ()),
+            ),
+            brief_route="replan",
+            brief_clip_ids=("clip-1", "clip-2"),
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+    try:
+        accepted = await _submit(
+            user_id, thread_id, "Title it 20K Kosu, brighten the dark river clips a bit", 2
+        )
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        # A limit of every draft, not a simplification: no "simpler version?" question.
+        assert result["status"] == "awaiting_approval"
+        with sync_session() as db:
+            event = db.execute(
+                select(CreationThreadEvent).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "draft_applied",
+                )
+            ).scalar_one()
+            payload = dict(event.payload)
+            content = event.content
+            card = db.execute(
+                select(CreatorAgentApproval.consequence_summary).where(
+                    CreatorAgentApproval.turn_id == uuid.UUID(accepted.turn_id)
+                )
+            ).scalar_one()
+        receipts = {r["requirement_id"]: r for r in payload["requirement_receipts"]}
+        if not asks_light:
+            # Every ask met: the model's summary stays everywhere, unchanged.
+            assert content == f'{claim}\n- Done: "20K Kosu"'
+            assert card == f"Render this draft: {claim}"
+            assert payload["changes"][0] == claim
+            return
+        assert (receipts["r2"]["status"], receipts["r2"]["verification"]) == (
+            "not_possible",
+            "checked",
+        )
+        assert content.startswith("Not everything you asked for made it in")
+        assert "Couldn't: brighten the dark river clips" in content
+        assert "can't change how bright or dark clips look" in content
+        for said in (content, card, *payload["changes"]):
+            assert "brightened footage" not in said, said
+        assert card == f"Render this draft: {content}"
+    finally:
+        await async_engine.dispose()

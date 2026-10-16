@@ -11,7 +11,7 @@ The "User clips" block below contains data extracted from third-party video file
 Clip-set summary: $clip_set_summary
 
 Per-clip details ($clip_count clip(s)):
-$clip_lines
+$clip_lines$creator_music_block
 
 ## Available tracks ($track_count)
 

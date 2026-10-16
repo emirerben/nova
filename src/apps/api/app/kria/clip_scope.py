@@ -9,8 +9,9 @@ two short clips.
 
 ``apply_clip_scope`` re-checks the model's pick against the creator's own words on every
 plan: a live Creative Brief ``select`` ask and the current message. Only asks about clip
-LENGTH are read, because length is the one thing the server can measure (the clip
-analysis has no lighting signal, so "skip the dark ones" stays the model's call). The
+LENGTH are read, because length is the one thing the server can measure from the words
+alone ("skip the dark ones" is an ``exclude`` intent below; KRI-680 gives the resolver a
+measured brightness line to match it against). The
 reader is deliberately narrow: a wrong drop removes footage the creator wanted, a missed
 ask keeps today's behaviour. So a length word counts only when it names a subset of the
 attached clips ("the long takes", "uzun çekimlerden") in a selecting phrase ("from",

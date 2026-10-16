@@ -1829,3 +1829,44 @@ async def test_router_reuses_the_first_copilot_answer_instead_of_calling_it_twic
     )
     assert copilot.await_count == 1
     assert result.plan is refusal and result.brief_route == "editor_ops"
+
+
+def test_kri677_rendered_facts_keep_quoted_spoken_lines_verbatim() -> None:
+    # Tigre night M1: `json.dumps` rendered the order fact as `\"Hadi gidelim\" ...`; the
+    # Main Creator copied that escaped form into source_quote and the clip-intent planner
+    # rejected the creator's own ask on every turn after the first. Strings render as
+    # typed; other values keep a compact JSON form so numbers/flags stay unambiguous.
+    brief = apply_updates(
+        None,
+        [
+            _upd(
+                "order",
+                "global",
+                description="Özel klip sırası",
+                facts={
+                    "last_clip": '"tam 20 dakika sürdü" dediğim klip',
+                    "first_clip": '"Hadi gidelim" dediğimiz iskele klibi',
+                    "key": "narrative",
+                },
+            ),
+            _upd(
+                "audio",
+                "global",
+                description="kalan kliplerde sakin bir müzik",
+                facts={"preserve_source_audio": True, "duration_s": 25, "moods": ["calm", "a b"]},
+            ),
+        ],
+        source_turn_id="t1",
+    )
+    rendered = render_brief_request(brief)
+    assert "\\" not in rendered
+    assert (
+        '[r1] [order/global] Özel klip sırası facts={first_clip: "Hadi gidelim" dediğimiz '
+        'iskele klibi; key: narrative; last_clip: "tam 20 dakika sürdü" dediğim klip}'
+    ) in rendered
+    assert (
+        "[r2] [audio/global] kalan kliplerde sakin bir müzik "
+        'facts={duration_s: 25; moods: ["calm","a b"]; preserve_source_audio: true}'
+    ) in rendered
+    # The bounded batches use the same line, so a quoted ask reads identically everywhere.
+    assert batch_brief_requests(brief)[0].text == rendered

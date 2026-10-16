@@ -661,8 +661,11 @@ def _run_music_matcher(
     candidate_tracks: list[MusicTrack],
     n_variants: int,
     job_id: str,
+    music_ask: str = "",
 ) -> list[dict[str, Any]]:
     """Call the matcher exactly once. Returns the ranked list as plain dicts.
+
+    ``music_ask`` is the creator's own words about the music (KRI-679), if any.
 
     Returns empty list on refusal / failure. The caller decides whether
     that's terminal.
@@ -712,6 +715,7 @@ def _run_music_matcher(
         clip_summaries=clip_summaries,
         available_tracks=track_summaries,
         n_variants=n_variants,
+        creator_music_ask=music_ask,
     )
 
     try:

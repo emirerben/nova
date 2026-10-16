@@ -2388,6 +2388,39 @@ def _wants_closing(req: BriefRequirement) -> bool:
     return bool(closing_fact or _CLOSING_RE.search(_req_text(req)))
 
 
+def _ending_names_picture(req: BriefRequirement) -> bool:
+    """The ending is said to be a photo, sticker or badge: in the model's `closing` fact, or
+    in a sentence of the ask that says how the edit ENDS (per sentence, so a sticker named
+    elsewhere in a glued requirement does not count)."""
+    if req.facts.get("closing_media"):
+        return True  # a creator-owned picture by definition
+    said = req.facts.get("closing")
+    text = _req_text(req)
+    for mark in ("!", "?", ";", "\n"):
+        text = text.replace(mark, ". ")
+    sentences = [s for s in text.split(". ") if _CLOSING_RE.search(s)]
+    if isinstance(said, str):
+        sentences.append(_fold(said))
+    return any(_VISUAL_RE.search(s) for s in sentences)
+
+
+def _closing_photo_ask(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """A closing photo, sticker or badge ask, as opposed to "end on the arrival clip" (KRI-688).
+
+    The words "End on ..." start the closing-shot check (`closing_media`, a creator-owned
+    picture placed last), but they are just as often an ordering ask about a CLIP, which the
+    `order` checker owns. The check therefore stays on only where the model recorded a
+    `closing` fact, the sentence names a picture, or a closing picture can exist at all:
+    the edit's capabilities say so (only a Talking edit places one; ``reaction_beats_available``
+    is False on every other format) and the model did not record the ending as a `last_clip`.
+    """
+    if not _wants_closing(req):
+        return False
+    if req.facts.get("closing") or _ending_names_picture(req):
+        return True
+    return facts.reaction_beats_available is not False and not req.facts.get("last_clip")
+
+
 def _wants_cleanup(req: BriefRequirement) -> bool:
     """A speech-cleanup ask (pauses, retakes, filler) in the creator's own words."""
     if req.kind not in _CLEANUP_KINDS or _wants_whole_take(req):
@@ -2555,6 +2588,10 @@ _CAPTIONS_WORD_BY_WORD = "words light up as you say them"
 _CLEANUP_DONE = "Speech cleanup cut the long pauses"
 _CLEANUP_NOTHING_TO_CUT = "Speech cleanup found no long pauses to cut"
 _CLEANUP_NOT_RUN = "Speech cleanup didn't run on this video, so the long pauses stay"
+# KRI-700: no draft can brighten or darken the footage (see `wants_light_change`).
+_LIGHT_UNAVAILABLE = (
+    "I can't change how bright or dark clips look in this edit yet, so they keep their own light"
+)
 
 # The Turkish twin of every static reason above (KRI-520). Reasons are written into
 # receipts when a turn runs, in that turn's language, so everything that tells one
@@ -2610,6 +2647,10 @@ _REASON_TR: dict[str, str] = {
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
     _CLEANUP_NOTHING_TO_CUT: "Konuşma temizliği kesilecek uzun bir duraklama bulmadı",
     _CLEANUP_NOT_RUN: ("Konuşma temizliği bu videoda çalışmadı, o yüzden uzun duraklamalar kaldı"),
+    _LIGHT_UNAVAILABLE: (
+        "Bu düzenlemede kliplerin ne kadar aydınlık ya da karanlık göründüğünü henüz "
+        "değiştiremiyorum, o yüzden kendi ışıklarıyla kalıyorlar"
+    ),
     "Some requested text ends before the video does.": "Bazı yazılar video bitmeden kayboluyor.",
 }
 
@@ -2667,6 +2708,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_NOTHING_TO_CUT,
     _CLEANUP_NOT_RUN,
     _BED_STILL_PLAYS,
+    _LIGHT_UNAVAILABLE,
 )
 _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
     *_FORMAT_LIMIT_EN,
@@ -2896,7 +2938,7 @@ def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
 def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Word-triggered pop-ins and the closing shot, from the repaired strategy."""
     wants_beats = _wants_beats(req)
-    wants_closing = _wants_closing(req)
+    wants_closing = _closing_photo_ask(req, facts)
     if facts.reaction_beats is None:
         return _receipt(req, "partial", _CANT_CHECK_BEATS)
     beats = facts.reaction_beats
@@ -3021,17 +3063,28 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                     )
     if wants_closing:
         if facts.closing_visual_id is None:
-            problems.append(
-                say(
-                    en="I couldn't find the closing photo you named",
-                    tr="Söylediğin kapanış fotoğrafını bulamadım",
+            if facts.closing_requested:
+                problems.append(
+                    say(
+                        en="I couldn't find the closing photo you named",
+                        tr="Söylediğin kapanış fotoğrafını bulamadım",
+                    )
                 )
-                if facts.closing_requested
-                else say(
-                    en="This draft doesn't end on the photo you asked for",
-                    tr="Bu taslak istediğin fotoğrafla bitmiyor",
+            elif _ending_names_picture(req):
+                problems.append(
+                    say(
+                        en="This draft doesn't end on the photo you asked for",
+                        tr="Bu taslak istediğin fotoğrafla bitmiyor",
+                    )
                 )
-            )
+            else:
+                # KRI-688: nothing says the ending is a picture; never call it a photo.
+                problems.append(
+                    say(
+                        en="This draft doesn't end the way you asked",
+                        tr="Bu taslak istediğin gibi bitmiyor",
+                    )
+                )
         else:
             delivered = True
             if facts.closing_badge_requested and facts.closing_badge_id is None:
@@ -4830,11 +4883,44 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         }:
             return _receipt(req, "partial", _NO_CHECKER)
         return _receipt(req, "met", None)
+    if _is_spoken_text_cue(req) and _is_voiceover_edit(facts):
+        # KRI-699: a voiceover edit draws its title, captions and word-timed photos/sounds,
+        # never a creator text on a spoken word, so a retry can't add it. Still the
+        # creator's call (held draft), not a format limit.
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en="A voiceover edit can't show text at a word you say yet.",
+                tr="Seslendirmeli düzenleme henüz söylediğin bir kelimede yazı gösteremiyor.",
+            ),
+        )
     return _receipt(
         req,
         "partial",
         say(en="That exact text isn't in this draft.", tr="Bu tam yazı bu taslakta yok."),
     )
+
+
+# Fact keys that name the spoken words a text line waits for. Narrower than
+# `_TRIGGER_FACT_KEYS`: on a text ask, "words" / "keywords" may be the text itself.
+_SPOKEN_TEXT_CUE_KEYS = ("triggers", "trigger", "trigger_words", "when_i_say", "spoken_words")
+
+
+def _is_spoken_text_cue(req: BriefRequirement) -> bool:
+    """A text line asked to appear when the creator says something (KRI-699).
+
+    The cue is read from the ask, never from the text itself ("Meet at the words" is copy).
+    """
+    if req.scope == "title":
+        return False
+    return any(req.facts.get(key) for key in _SPOKEN_TEXT_CUE_KEYS) or bool(
+        _SPOKEN_CUE_RE.search(_fold(req.description or ""))
+    )
+
+
+def _is_voiceover_edit(facts: PlanFacts) -> bool:
+    return facts.edit_format in NARRATED_EDIT_FORMATS and facts.audio_strategy == "voiceover"
 
 
 # KRI-546: two asks a finished phone montage can settle from its own evidence. Patterns run
@@ -4893,6 +4979,12 @@ def _wants_closing_speech(req: BriefRequirement) -> bool:
     if req.kind not in (*_BEAT_KINDS, "order"):
         return False
     text = _loose_req(req)
+    last_clip = req.facts.get("last_clip")
+    if isinstance(last_clip, str) and last_clip.strip():
+        # KRI-681: "Özel klip sırası" with last_clip "tam 20 dakika sürdü dediğim klip":
+        # the line lives in the recorded last clip, not the ask's short title.
+        named = req.model_copy(update={"description": last_clip, "literal": None})
+        text = f"{text} {_loose_req(named)}"
     if _NOT_OWN_SPEECH_RE.search(text) or not _OWN_SPEECH_RE.search(text):
         return False
     return bool(
@@ -5028,7 +5120,7 @@ def _check_closing_speech(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 tr="Video o klipte bitiyor ama kliplerin kendi sesi kapalı",
             ),
         )
-    quote = _quoted_ending(req)
+    quote = _quoted_ending(req, facts)
     if quote:
         # KRI-597: "end on the moment I say '...'" is met only by that line, held whole.
         return _check_quoted_ending(req, facts, quote)
@@ -5057,15 +5149,19 @@ def _check_closing_speech(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     )
 
 
-def _quoted_ending(req: BriefRequirement) -> str:
-    """The words the creator quoted for their ending, "" when they quoted none."""
+def _quoted_ending(req: BriefRequirement, facts: PlanFacts) -> str:
+    """The line the creator named for their ending, "" when they named none.
+
+    Their quoted words; else (KRI-681, "tam 20 dakika sürdü dediğim klip" with no quote
+    marks) the line the planner found the closing clip saying, which the plan records.
+    """
     from app.services.spoken_quotes import quoted_phrases  # noqa: PLC0415
 
     for text in (req.description, req.facts.get("last_clip"), req.literal):
         quotes = quoted_phrases(text if isinstance(text, str) else None)
         if quotes:
             return quotes[0]
-    return ""
+    return facts.closing_quote_text if facts.closing_quote_status else ""
 
 
 def _check_quoted_ending(req: BriefRequirement, facts: PlanFacts, quote: str) -> RequirementReceipt:
@@ -5193,6 +5289,26 @@ def _wants_source_sound_kept(req: BriefRequirement) -> bool:
     )
 
 
+# KRI-700: brightening or darkening the footage itself. No draft can carry it: a strategy has
+# no exposure field, and the phone plans only take the warm `golden_hour` look, which adds
+# contrast and so makes near-black night clips darker, not brighter. The model that read the
+# ask records it as `facts["footage_light"]` ("brighter" / "darker",
+# main_creator._BRIEF_PROMPT_SECTION); the words are never re-read here (KRI-667).
+_FOOTAGE_LIGHT_FACTS = frozenset({"brighter", "darker"})
+
+
+def wants_light_change(req: BriefRequirement) -> bool:
+    """True when the creator asks to brighten or darken the footage itself (KRI-700)."""
+    stated = req.facts.get("footage_light")
+    return isinstance(stated, str) and stated.strip().casefold() in _FOOTAGE_LIGHT_FACTS
+
+
+def _check_light_change(req: BriefRequirement) -> RequirementReceipt:
+    # A limit of every draft, not a simplification: reported as "Couldn't", never the
+    # "should I make a simpler version?" question (`is_format_limit`).
+    return _receipt(req, "not_possible", _LIGHT_UNAVAILABLE)
+
+
 def _check_source_sound(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if facts.source_audio_kept is None or not facts.rendered_montage:
         return _receipt(req, "partial", _CANT_CHECK_MIX)
@@ -5226,7 +5342,7 @@ def _check_source_sound(req: BriefRequirement, facts: PlanFacts) -> RequirementR
 
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
-    if _wants_speaker_framing(req):
+    if _wants_speaker_framing(req) or wants_light_change(req):
         return True
     if _wants_cleanup(req) or _wants_captions(req):
         return True
@@ -5281,6 +5397,10 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_speech_cleanup(req, facts)
     if _wants_speaker_framing(req):
         return _check_speaker_framing(req, facts)
+    if wants_light_change(req) and (facts.rendered_variant or not facts.editor):
+        # KRI-700: a draft or a finished render never brightens the footage. An editor turn
+        # keeps its own receipts (the before/after diff names what its ops changed).
+        return _check_light_change(req)
     if facts.rendered_montage:
         # KRI-546: a finished phone montage shows which files repeat and whether the
         # closing clip's own line plays whole; every other plan keeps its usual path.
@@ -5312,7 +5432,10 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         # A rendered variant keeps `editor=True` for its text lanes but also carries the
         # render's own pop-in receipt and mix level (`plan_facts_from_phone_variant`): judge
         # those asks.
-        and not (facts.reaction_beats is not None and (_wants_beats(req) or _wants_closing(req)))
+        and not (
+            facts.reaction_beats is not None
+            and (_wants_beats(req) or _closing_photo_ask(req, facts))
+        )
         and not (_wants_bed_under_voice(req) or _wants_bed_muted(req))
         # KRI-541: "clean captions" on a rendered variant is judged against its captions.
         and not (facts.rendered_variant and _wants_captions(req))
@@ -5320,7 +5443,7 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_style(req, facts)
     elif req.kind in _BEAT_KINDS and _wants_speech(req) and facts.speech_sections is not None:
         return _check_speech_excerpts(req, facts)
-    elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _wants_closing(req)):
+    elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _closing_photo_ask(req, facts)):
         return _check_reaction_beats(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_bed_under_voice(req) or _wants_bed_muted(req)):
         return _check_voice_bed(req, facts)
@@ -5639,6 +5762,35 @@ def _outcome_reason(reason: str) -> str:
     return _loc(reason)
 
 
+def keeps_model_summary(
+    brief: CreativeBrief, receipts: Iterable[RequirementReceipt | Mapping[str, Any]]
+) -> bool:
+    """True when ``reply_from_receipts`` keeps the model's free-text summary (KRI-700).
+
+    It is kept only when every judged requirement is met and none is left to look at, the
+    same rule as the reply's own branches. Anything else the draft says about itself (its
+    change list, the approval card) must follow the reply, or a summary that promised
+    "brightened footage" reaches the card the reply already corrected.
+    """
+    by_id = {req.id: req for req in brief.requirements}
+    for raw in receipts:
+        receipt = (
+            raw
+            if isinstance(raw, RequirementReceipt)
+            else RequirementReceipt.model_validate(
+                {k: v for k, v in raw.items() if k in RequirementReceipt.model_fields}
+            )
+        )
+        req = by_id.get(receipt.requirement_id)
+        if req is None:
+            continue
+        if receipt.verification == "unchecked":
+            return False
+        if is_judged(req, receipt) and receipt.status != "met":
+            return False
+    return True
+
+
 def reply_from_receipts(
     brief: CreativeBrief,
     receipts: list[RequirementReceipt],
@@ -5742,6 +5894,8 @@ __all__ = [
     "NARRATED_ALIGNMENT_FIELD",
     "NarratedStepFact",
     "asks_caption_language",
+    "keeps_model_summary",
+    "wants_light_change",
     "defers_caption_words_to_phone_render",
     "defers_to_narrated_render",
     "defers_to_unified_montage",

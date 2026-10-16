@@ -71,6 +71,7 @@ from app.schemas.clip_intents import (
     chapter_name_caption,
     clean_caption_text,
     clean_label_text,
+    creator_label_problem,
     footage_lines,
     ground_caption,
     ground_label,
@@ -785,7 +786,10 @@ def picker_eligible(intent: ClipIntent) -> bool:
     if intent.op in {"group", "include", "order"}:
         return True
     if intent.op == "label":
-        return bool(intent.creator_text) or intent.placeholder
+        if intent.placeholder:
+            return True
+        # KRI-678: words that can never be printed are not answered by tapping clips.
+        return bool(intent.creator_text) and creator_label_problem(intent.creator_text) is None
     if intent.op == "caption":
         return bool(intent.creator_text)
     return False

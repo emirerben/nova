@@ -2958,3 +2958,10 @@ protocol 8 is refused with `426 client_update_required`, because such a save can
 **Why:** A render-time trap, not a UI one: a sticker image that became a slide would silently change the exported post. Rendering is best
 effort for a stale sticker asset (dropped, never fatal) so deleting a pool image cannot brick an export.
 **Revisit if:** a pool-wide "role" column on `PlanItemAsset` (sticker vs slide) is ever added; the subtraction can then become one query filter.
+
+## [2026-10-15] Vercel env-var history moved out of CLAUDE.md (KRI-680 budget)
+
+`NEXT_PUBLIC_GOOGLE_CLIENT_ID` + `NEXT_PUBLIC_GOOGLE_PICKER_API_KEY` were removed in
+v0.7.8.2 with the dead `/template/[id]` route (Drive picker gone; NextAuth uses the
+server-side `GOOGLE_CLIENT_ID`). Moved here to make room for the
+`CLIP_EXPOSURE_FACT_ENABLED` line.

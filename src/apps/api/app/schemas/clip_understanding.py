@@ -185,6 +185,10 @@ class ClipUnderstanding(BaseModel):
     # KRI-189: when/where facts with provenance. Empty unless CLIP_FACTS is on,
     # so a stored record and every prompt view stay byte-identical otherwise.
     facts: list[ClipFact] = Field(default_factory=list, exclude_if=lambda value: not value)
+    # KRI-680: measured brightness in words ("very dark, almost nothing visible (...)"),
+    # from ``app.services.clip_exposure``. Empty (and omitted from dumps and prompt views)
+    # unless CLIP_EXPOSURE_FACT is on and the clip was measured.
+    visibility: str = Field(default="", exclude_if=lambda value: not value)
 
     @field_validator("facts", mode="before")
     @classmethod
@@ -210,7 +214,9 @@ class ClipUnderstanding(BaseModel):
     def _short(cls, v: object) -> str:
         return _clean_text(v, _SHORT_TEXT_LIMIT)
 
-    @field_validator("summary", "setting", "activity", "on_screen_text", mode="before")
+    @field_validator(
+        "summary", "setting", "activity", "on_screen_text", "visibility", mode="before"
+    )
     @classmethod
     def _text(cls, v: object) -> str:
         return _clean_text(v, _TEXT_LIMIT)
@@ -257,7 +263,7 @@ class ClipUnderstanding(BaseModel):
         speech ``segments`` (KRI-282) follow the same rule via ``include_segments``.
         """
         view: dict[str, Any] = {}
-        for key in ("subject", "summary", "setting", "activity", "on_screen_text"):
+        for key in ("subject", "summary", "setting", "activity", "on_screen_text", "visibility"):
             value = getattr(self, key)
             if value:
                 view[key] = value
