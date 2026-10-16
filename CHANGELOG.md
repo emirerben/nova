@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.8.0] - 2026-10-16
+
+### Changed
+- fix(kria): Tigre night T1 Talking fixes (KRI-703: 704, 705, 706, 708) (#1633) <!-- release-pr: 1633 -->
+
 ## [0.80.7.0] - 2026-10-16
 
 ### Changed
