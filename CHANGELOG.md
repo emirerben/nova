@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.9.0] - 2026-10-16
+
+### Changed
+- fix(montage): cut named-line clips on the line, never call a missed line met (KRI-681) (#1616) <!-- release-pr: 1616 -->
+
 ## [0.79.8.0] - 2026-10-16
 
 ### Fixed
