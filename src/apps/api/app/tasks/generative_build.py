@@ -20785,8 +20785,11 @@ def _select_generative_style_set(clip_metas: list, agent_text, *, job_id: str) -
         return "default"
 
 
-def _match_best_track(clip_metas: list, *, job_id: str) -> MusicTrack | None:
-    """Top-1 matched track, or None if the library has no confident match."""
+def _match_best_track(clip_metas: list, *, job_id: str, music_ask: str = "") -> MusicTrack | None:
+    """Top-1 matched track, or None if the library has no confident match.
+
+    ``music_ask`` is the creator's own words about the music (KRI-679), if any.
+    """
     try:
         from app.tasks.auto_music_orchestrate import (  # noqa: PLC0415
             _load_matcher_candidates,
@@ -20800,7 +20803,11 @@ def _match_best_track(clip_metas: list, *, job_id: str) -> MusicTrack | None:
             log.info("generative_no_labeled_tracks", job_id=job_id)
             return None
         ranked = _run_music_matcher(
-            clip_metas=clip_metas, candidate_tracks=candidates, n_variants=1, job_id=job_id
+            clip_metas=clip_metas,
+            candidate_tracks=candidates,
+            n_variants=1,
+            job_id=job_id,
+            music_ask=music_ask,
         )
         if not ranked:
             return None
