@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.2.0] - 2026-10-16
+
+### Changed
+- fix(kria): never re-ask the wording of a title the creator quoted (KRI-682) (#1611) <!-- release-pr: 1611 -->
+
 ## [0.79.1.0] - 2026-10-15
 
 ### Fixed
