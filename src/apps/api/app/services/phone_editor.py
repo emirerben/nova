@@ -70,6 +70,7 @@ from app.services.phone_editor_sources import (
     editor_visual_bindings,
 )
 from app.services.phone_rollout import (
+    SINGLE_WORD_CAPTIONS_STAMP,
     freehand_drawing_client_supported,
     phone_guided_sfx_supported,
     phone_narrated_caption_edits_supported,
@@ -78,6 +79,9 @@ from app.services.phone_rollout import (
     phone_subtitled_title_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
+    recipe_has_single_word_text,
+    single_word_text_client_supported,
+    single_word_text_verified,
     text_bend_client_supported,
     validate_phone_pilot_recipe,
 )
@@ -646,6 +650,7 @@ def prepare_phone_editor_commit(
         # KRI-646: the recompiled recipe pins bent text (`textLayers[].bend`) that this app
         # build cannot decode or draw; nothing is committed.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
+    _settle_single_word_captions(staged, variant_id)
     job.assembly_plan = staged.assembly_plan
     job.status = staged.status
     if "started_at" in vars(staged):
@@ -664,6 +669,34 @@ def prepare_phone_editor_commit(
             "after": style_snapshot(after_variant, learning_sections or set()),
         }
     return {**prep, "render_destination": "device", "render_task_id": None}
+
+
+def _settle_single_word_captions(staged: Any, variant_id: str) -> None:
+    """One-word captions: refuse a build that cannot decode them, remember one that can.
+
+    The recompiled recipe pins `karaoke.single_word` only when the compile knew the build
+    could decode it, so the 426 below is the belt for a recipe that reached an older build
+    some other way. The stamp is for the next compile that has NO request (a worker applying
+    a chat edit): it cannot see the app build, so it trusts the last Save's answer. Written
+    only while the feature is verified and only inside a request, so with the feature off the
+    committed assembly plan is exactly what it was.
+    """
+    from app.services.client_protocol import in_http_request
+
+    recipe = device_status(staged, variant_id).request.recipe
+    if recipe_has_single_word_text(recipe) and not single_word_text_client_supported():
+        raise HTTPException(
+            426, detail={"code": "client_update_required", "feature": "single_word_text"}
+        )
+    if not in_http_request() or not single_word_text_verified():
+        return
+    qualifies = single_word_text_client_supported(require_client=True)
+    for row in staged.assembly_plan.get("variants") or []:
+        if isinstance(row, dict) and row.get("variant_id") == variant_id:
+            if qualifies:
+                row[SINGLE_WORD_CAPTIONS_STAMP] = True
+            else:
+                row.pop(SINGLE_WORD_CAPTIONS_STAMP, None)
 
 
 def _guided_sound_effects(

@@ -1296,6 +1296,95 @@
         "physical original-project post-deploy resend"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-709-auto-continue",
+      "tickets": [
+        "KRI-709"
+      ],
+      "symptom": "A long multi-clip request replied 'Reply \"go ahead\" in a moment and I'll pick up where I left off' although nothing was stuck; only a new message restarted the work.",
+      "boundary": "model_budget",
+      "status": "open_pr",
+      "owner": "KRI-709",
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/web/src/app/plan/_components/workspace/ChatCreationWorkspace.tsx"
+      ],
+      "regression_tests": [
+        "tests/kria/test_turn_auto_continue_postgres.py",
+        "tests/kria/test_planner.py::test_pending_vision_is_not_reported_as_a_match_failure",
+        "tests/kria/test_planner_analysis_recovery.py",
+        "tests/kria/test_planner_song_order.py::test_alignment_missing_returns_the_song_pending_reply"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Postgres-backed run_kria_turn: pending -> continued -> one final reply; run cap, queued-turn age, brief written once, newer message, cancel and lost publish covered. Lever is an int cap, not a bool: KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 restores the old reply (test_kill_switch_keeps_the_old_reply_byte_identical).",
+        "live_model": "n/a",
+        "native_output": "unknown",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "clip-intent vision cap or deadline",
+        "clip understanding still running",
+        "song alignment still running",
+        "a second message sent during the wait (KRI-552 class)",
+        "cancel during planning",
+        "lost broker publish"
+      ],
+      "neighbours_gap": [
+        "iOS device re-send of a long multi-clip request after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-698-simpler-approval",
+      "tickets": [
+        "KRI-698"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-698",
+      "symptom": "Accepting the simpler version left omitted rule text mandatory in the approved brief; native pinning then refused the export.",
+      "boundary": "persistence",
+      "paths": [
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/kria/brief_binding.py",
+        "src/apps/api/tests/kria/test_runtime_simpler_version_loop.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_runtime_simpler_version_loop.py",
+        "tests/kria/test_brief_binding.py",
+        "tests/kria/test_request_binding_journey.py"
+      ],
+      "harness": "mocked_internal",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Red before fix: durable brief stayed v1, declined/unrelated/stale replies reached approval. Real Postgres, approval, dispatch claim, native compiler, immutable pin and publication authority guard; planner output replayed.",
+        "live_model": "Not run; no paid calls.",
+        "native_output": "scripts/ios/kri-698-simpler-version.py prepares the exact pinned recipe for AudioParityFixtureTests and verifies actual MP4 title, length, clip order and audio; synthetic sources, macOS AVFoundation. Physical iPhone/original N2 footage pending.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "explicit omission changes durable brief and approval binding",
+        "refusal/unrelated reply/clip number cannot waive",
+        "stale brief and new missing requirement require another choice",
+        "later request restores text",
+        "accepted omissions survive a subsequent unresolved choice",
+        "unwaived text and missing retained title still fail verification",
+        "pin redelivery is idempotent"
+      ],
+      "neighbours_gap": [
+        "Planner output is replayed at _plan_with_live_agent; fresh model behavior is not measured.",
+        "Original N2 phone source files are unavailable on this host; physical-device replay remains pending."
+      ],
+      "follow_ups": [
+        "KRI-721",
+        "KRI-734"
+      ],
+      "red_control": "not_applicable",
+      "journey": "kri-492-length-ownership"
     }
   ]
 }

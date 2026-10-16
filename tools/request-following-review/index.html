@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kria · Request review</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Skip to review</a>
+  <header class="topbar"><a class="brand" href="/">kria <span>/ request review</span></a><div class="top-actions"><span id="source" class="pill">Connecting</span><button id="refresh" class="quiet">Refresh</button></div></header>
+  <main id="workspace">
+    <section class="intro"><div><p class="eyebrow">LEARN FROM REAL REQUESTS</p><h1>What should have happened?</h1><p class="lede">Read one session. Correct the expected edit. Turn it into a test that catches the same mistake.</p></div><a id="regressions" class="text-link" href="https://github.com/emirerben/nova/actions/workflows/request-following-regressions.yml" target="_blank" rel="noreferrer">Daily test results ↗</a></section>
+    <div id="error" class="notice error" role="alert" hidden></div>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <details class="collection"><summary id="collection-summary">Connecting to collection…</summary><div id="collection-detail"></div></details>
+    <div class="workspace-grid">
+      <aside class="queue" aria-label="Sessions">
+        <div class="queue-heading"><h2>Sessions</h2><span id="page-count"></span></div>
+        <label class="sr-only" for="filter">Review status</label>
+        <select id="filter"><option value="all">All current sessions</option><option value="unreviewed">Needs review</option><option value="approved">Intent approved</option><option value="needs_clarification">Needs clarification</option><option value="rejected">Rejected</option></select>
+        <p id="queue-loading" class="muted" role="status">Loading sessions…</p>
+        <p id="queue-empty" class="empty" hidden>No sessions to review yet.</p>
+        <ul id="cases" class="case-list"></ul>
+        <p id="holdouts" class="small muted" hidden></p>
+        <div class="pager"><button id="first-page" class="quiet" hidden>First page</button><button id="next-page" class="quiet" hidden>Next page →</button></div>
+      </aside>
+      <section id="review" class="review" aria-label="Session review">
+        <div id="choose" class="choose"><span class="step-number">01</span><h2>Start with a session</h2><p>Choose a session on the left. Your review stays tied to the exact conversation you read.</p></div>
+        <p id="detail-loading" role="status" hidden>Opening session…</p>
+        <div id="case-detail" hidden>
+          <header class="case-heading"><div><p id="case-date" class="eyebrow"></p><h2 id="case-title" tabindex="-1"></h2></div><span id="review-state" class="pill"></span></header>
+          <div id="case-diagnostics" class="notice" hidden></div>
+          <div class="review-section"><div class="section-heading"><span class="step-number">01</span><div><h3>What the creator asked</h3><p>Select the creator messages that support your expected outcome.</p></div></div><ol id="conversation" class="conversation"></ol></div>
+          <div class="review-section"><div class="section-heading"><span class="step-number">02</span><div><h3>What the AI did</h3><p>Recorded decisions and tool results. A completed turn does not prove the edit was right.</p></div></div><div id="turns"></div><details class="technical"><summary>Saved edit and capture details</summary><pre id="saved-evidence"></pre></details><div class="evidence-note"><strong>Final video: not verified</strong><p>This capture contains metadata, not a verified video export. Understanding and saved execution are also unassessed until their own checks run.</p></div></div>
+          <form id="review-form" class="review-section">
+            <div class="section-heading"><span class="step-number">03</span><div><h3>What should the edit do?</h3><p>Write the expected outcome in your own words. Nothing is approved automatically.</p></div></div>
+            <fieldset id="review-fields">
+              <label for="expected">Expected outcome</label><textarea id="expected" rows="4" maxlength="2000" aria-describedby="expected-help" placeholder="Keep the title and English subtitles. Remove the other labels."></textarea><p id="expected-help" class="small muted">Use the selected creator messages. Resolve ambiguity before approving.</p>
+              <div class="form-row"><div><label for="decision">Decision</label><select id="decision"><option value="needs_clarification">Needs clarification</option><option value="approved">Approve intent</option><option value="rejected">Reject this case</option></select></div><div><label for="reviewer">Your name <span class="muted">(required)</span></label><input id="reviewer" required maxlength="120" autocomplete="name"></div></div>
+              <label for="rationale">Why this outcome? <span class="muted">(required)</span></label><textarea id="rationale" rows="2" required maxlength="4000" placeholder="The follow-up makes it clear that subtitles should remain."></textarea>
+              <details class="technical"><summary>Where did it go wrong? Add issue links</summary><div class="form-row"><div><label for="stage">Where the request was lost</label><select id="stage"><option value="unknown">Not sure yet</option value="understanding">Understanding the request</option><option value="handoff">Passing it to another agent</option><option value="operations">Choosing editing operations</option><option value="persistence">Saving the edit</option><option value="rendering">Rendering the video</option></select></div><div><label for="tickets">Related issues</label><input id="tickets" placeholder="KRI-215, KRI-598"></div></div></details>
+            </fieldset>
+            <p id="review-error" class="error-text" role="alert" hidden></p><p id="save-help" class="small muted"></p>
+            <div class="review-actions"><button id="save" class="primary" type="submit">Save review</button><button id="export" type="button" class="secondary" hidden>Export for a fixing PR</button></div>
+            <p class="small muted">This approves the expected outcome only. Tests, redaction, and prompt changes still need their own review.</p>
+          </form>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

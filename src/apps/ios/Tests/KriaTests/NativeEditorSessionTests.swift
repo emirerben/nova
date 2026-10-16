@@ -3368,6 +3368,48 @@ final class NativeEditorSessionTests: XCTestCase {
         session.deleteSelectedClip(); XCTAssertEqual(session.draft.clips.count, 1); XCTAssertEqual(session.draft.clips[0].start, 0)
     }
 
+    /// KRI-717: Range writes the slot's `in_s` + `duration_s`, one drag is one undo step, and a window the server
+    /// would refuse (`TIMELINE_SOURCE_BOUNDS`) is never staged.
+    func testSourceWindowWriteIsOneUndoStepAndRefusesOutOfBounds() {
+        let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 4, trimIn: 1, trimOut: 5, sourceDuration: 10)
+        let second = EditorClip(id: UUID(), assetID: UUID(), start: 4, end: 6, trimIn: 0, trimOut: 2, sourceDuration: 4)
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [clip, second], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        let selection = EditorSelection(kind: .clip, id: clip.id.uuidString)
+        typealias Window = KriaSourceWindowGeometry.Window
+
+        XCTAssertNil(session.sourceWindowBlockedReason(for: selection))
+        session.beginTransaction()
+        XCTAssertTrue(session.setSourceWindow(for: selection, Window(start: 3, length: 2), rate: 1, sourceDuration: 10))
+        XCTAssertTrue(session.setSourceWindow(for: selection, Window(start: 3, length: 5), rate: 1, sourceDuration: 10))
+        session.endTransaction()
+        XCTAssertEqual(session.draft.clips[0].trimIn, 3)
+        XCTAssertEqual(session.draft.clips[0].end - session.draft.clips[0].start, 5, accuracy: 0.001)
+        XCTAssertEqual(session.draft.clips[1].start, 5, accuracy: 0.001, "a longer window ripples the clips after it")
+
+        XCTAssertFalse(session.setSourceWindow(for: selection, Window(start: 8, length: 5), rate: 1, sourceDuration: 10))
+        XCTAssertEqual(session.draft.clips[0].trimIn, 3)
+
+        session.undo()
+        XCTAssertEqual(session.draft.clips[0].trimIn, 1)
+        XCTAssertEqual(session.draft.clips[0].end - session.draft.clips[0].start, 4, accuracy: 0.001)
+        XCTAssertFalse(session.canUndo)
+    }
+
+    /// KRI-717: dropping a handle back where it was writes nothing (no undo step), and a slot that overruns its
+    /// footage, like a slowed narrated clip, can still be shrunk even though the result is not valid yet.
+    func testSourceWindowNoOpWritesNothingAndOverlongSlotCanShrink() {
+        let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 12, trimIn: 0, trimOut: 10, sourceDuration: 10)
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [clip], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        let selection = EditorSelection(kind: .clip, id: clip.id.uuidString)
+        typealias Window = KriaSourceWindowGeometry.Window
+
+        XCTAssertTrue(session.setSourceWindow(for: selection, Window(start: 0, length: 12), rate: 1, sourceDuration: 10))
+        XCTAssertFalse(session.canUndo, "an unchanged window is not an edit")
+        XCTAssertTrue(session.setSourceWindow(for: selection, Window(start: 0, length: 11), rate: 1, sourceDuration: 10))
+        XCTAssertEqual(session.draft.clips[0].end - session.draft.clips[0].start, 11, accuracy: 0.001)
+        XCTAssertFalse(session.setSourceWindow(for: selection, Window(start: 0, length: 13), rate: 1, sourceDuration: 10), "growing past the footage stays refused")
+    }
+
     func testDeletingLastClipIsExplicitEmptyAndUndoRestoresIt() {
         let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 2, trimIn: 0, trimOut: 2, sourceDuration: 2, slotID: "server-slot")
         let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [clip], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))

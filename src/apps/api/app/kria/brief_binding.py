@@ -81,6 +81,16 @@ class BriefBinding(BaseModel):
             )
         else:
             request = brief_request
+        if snapshot is not None:
+            omitted = [req for req in snapshot.requirements if not req.live]
+            if omitted:
+                # Chronological chat is evidence, not permission to resurrect an
+                # earlier request the creator subsequently removed (KRI-698).
+                request += (
+                    "\n\nSuperseded requirements (historical only; do not reintroduce). "
+                    "The current creative brief above is authoritative:\n"
+                    + "\n".join(f"- {req.id}: {req.text()}" for req in omitted)
+                )
         if len(request) > 12_000:
             raise BriefBindingRequestTooLongError("Approved creator request exceeds the safe limit")
         media = copy.deepcopy(media_snapshot or {})

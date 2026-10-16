@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.7.0] - 2026-10-16
+
+### Changed
+- fix(montage): grouped title is one continuous block across the group (KRI-716) (#1637) <!-- release-pr: 1637 -->
+
+## [0.80.6.0] - 2026-10-16
+
+### Changed
+- feat(ios): choose the part of a clip to use with a slide-and-resize window (KRI-717) (#1638) <!-- release-pr: 1638 -->
+
+## [0.80.5.0] - 2026-10-16
+
+### Changed
+- Add a local request-review app and automatic regression loop (#1635) <!-- release-pr: 1635 -->
+
+## [0.80.4.0] - 2026-10-16
+
+### Changed
+- fix(kria): render the approved simpler edit (KRI-698) (#1639) <!-- release-pr: 1639 -->
+
+## [0.80.3.0] - 2026-10-16
+
+### Changed
+- Add a reviewed request-following learning loop (#1629) <!-- release-pr: 1629 -->
+
+## [0.80.2.0] - 2026-10-16
+
+### Changed
+- fix(kria): re-run a turn that hit its time budget instead of asking for "go ahead" (KRI-709) (#1628) <!-- release-pr: 1628 -->
+
+## [0.80.1.0] - 2026-10-16
+
+### Changed
+- feat(api): Display Word saves as one word at a time (karaoke.single_word) (KRI-683, 2/2) (#1627) <!-- release-pr: 1627 -->
+
 ## [0.80.0.0] - 2026-10-16
 
 ### Added

@@ -77,6 +77,8 @@ from app.services.guided_speech_cleanup import (
 from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.phone_rollout import (
     freehand_drawing_client_supported,
+    recipe_has_single_word_text,
+    single_word_text_client_supported,
     text_bend_client_supported,
 )
 from app.services.render_library import catalog_path, inspect_library_asset
@@ -250,6 +252,13 @@ async def get_device_render(
     ):
         # KRI-646: same for bent text; an older build cannot decode `bend`.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
+    if not single_word_text_client_supported() and recipe_has_single_word_text(
+        status.request.recipe
+    ):
+        # One-word captions (`karaoke.single_word`): an older build cannot decode the key.
+        raise HTTPException(
+            426, detail={"code": "client_update_required", "feature": "single_word_text"}
+        )
     now = datetime.now(UTC)
     last_polled_raw = record.get("last_polled_at")
     should_touch = True

@@ -1,0 +1,55 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-14.1",
+  "input": {
+    "creator_request": "Group all the Aston Villa clips together and add a title that says Aston Villa.",
+    "latest_user_message": null,
+    "candidate_intents": null
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"group_aston_villa\",\n      \"op\": \"group\",\n      \"attribute\": \"Aston Villa\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Group all the Aston Villa clips together\"\n    },\n    {\n      \"intent_id\": \"title_aston_villa\",\n      \"op\": \"caption\",\n      \"attribute\": \"Aston Villa\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": \"Aston Villa\",\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"add a title that says Aston Villa\"\n    }\n  ],\n  \"question\": null\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "group_aston_villa",
+        "op": "group",
+        "attribute": "Aston Villa",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Group all the Aston Villa clips together"
+      },
+      {
+        "intent_id": "title_aston_villa",
+        "op": "caption",
+        "attribute": "Aston Villa",
+        "creator_text": "Aston Villa",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "add a title that says Aston Villa"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-716: \"group these clips and add a title\" is a group plus ONE caption carrying the creator's words. The server then prints that caption once, as a single group-title spanning the group's neighbouring clips (unified_montage group_id -> guided_story group-title-*), never a copy per clip.",
+    "expect_intents": [
+      {
+        "op": "group",
+        "source_quote_keywords": [
+          "group",
+          "aston villa"
+        ]
+      },
+      {
+        "op": "caption",
+        "source_quote_keywords": [
+          "title",
+          "aston villa"
+        ],
+        "creator_text": "Aston Villa"
+      }
+    ],
+    "expect_any": true
+  }
+}

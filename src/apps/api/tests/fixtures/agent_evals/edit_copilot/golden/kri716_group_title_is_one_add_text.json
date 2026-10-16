@@ -1,0 +1,25 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-16-v82",
+  "input": {
+    "utterance": "group clips 2 to 4 and add one title that says Aston Villa",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "editor_ops_version": 2,
+      "allowed_op_families": ["text"],
+      "has_narrated_captions": false,
+      "text_bars": [],
+      "slots": [
+        {"index": 0, "output_start_s": 0, "output_end_s": 3, "duration_s": 3},
+        {"index": 1, "output_start_s": 3, "output_end_s": 6, "duration_s": 3},
+        {"index": 2, "output_start_s": 6, "output_end_s": 9, "duration_s": 3},
+        {"index": 3, "output_start_s": 9, "output_end_s": 12, "duration_s": 3},
+        {"index": 4, "output_start_s": 12, "output_end_s": 15, "duration_s": 3}
+      ],
+      "total_duration_s": 15
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"add_text\",\"text\":\"Aston Villa\",\"start_s\":3,\"end_s\":12,\"style_from\":\"title\"}],\"confidence\":0.9,\"reply\":\"Added one Aston Villa title across clips 2 to 4.\",\"suggestions\":[\"Make it bigger\",\"Move it lower\"],\"needs_clarification\":false}",
+  "output": {"intent": "edit", "ops": [{"op": "add_text", "text": "Aston Villa", "start_s": 3, "end_s": 12, "style_from": "title"}], "confidence": 0.9, "reply": "Added one Aston Villa title across clips 2 to 4.", "suggestions": ["Make it bigger", "Move it lower"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "KRI-716: a group title is ONE add_text from the first grouped slot's start to the last slot's end, with no clip_id (never one label per clip)"}
+}

@@ -1968,6 +1968,55 @@ shape; `test_default_mode_rejects_font_outside_the_bundled_registry`,
 `true`), per `docs/reviews/kri-29/capability-matrix.md`'s "Font/authored-text qualification is
 per-instance" note that these are defense-in-depth, not redundant.
 
+### Single-word karaoke: server emission and rollout
+
+Server half of the app's "Single-word karaoke" wire contract (`karaoke.single_word`, see the
+contract on `KaraokeContent` in `PortableText.swift`): caption `Display: Word` is ONE WORD AT A TIME,
+and the saved/exported video follows the editor preview only when the server emits the same shape.
+
+What is emitted (`app/pipeline/phone_captions.py::compile_caption_layers`):
+
+- Cues in `style: "word"` with an explicit `highlight_spoken_word` (true or false) become ONE
+  `karaoke-line` layer per cue with `active_only: true, single_word: true`. `style: "word"` with the
+  highlight unset, or `highlight_spoken_word: true` under `style: "sentence"`, stay today's full-line
+  karaoke. A cue with a word wider than the caption frame (it would wrap), or a word containing
+  whitespace, is sent as today's full-line karaoke; cues over 100 words become consecutive layers
+  (`caption-N`, `caption-N-part-1`, ...) that meet exactly.
+- `runs[i]` is word `i` laid out STANDALONE by the same karaoke layout the full line uses, with a
+  single word: same font, size, tracking, stroke, shadow, centred (or left/right anchored) at the
+  caption anchor on its own line, then watermark-cleared like any one-word caption. `starts[i]` is the
+  word's timing local to the layer (non-decreasing, at least 10 ms apart); the layer opens at the
+  first word and closes at the last word's end (never past the cue end), like the editor preview.
+- `highlight` is the highlight colour, or the plain caption colour when `highlight_spoken_word` is
+  false.
+- `EditRecipeV2` adds capability `singleWordText` (and `authoredText`, as for any `active_only` layer)
+  when a layer has `karaoke.single_word`; `validate_phone_pilot_recipe` raises
+  `PhoneCapabilityUnavailable(capability="singleWordText")` without it; builds below
+  `single_word_text_min_client_protocol` (11) get 426 `client_update_required` (feature
+  `single_word_text`) on the device-render poll.
+
+What flips it on (all of these):
+
+1. `PHONE_RENDER_VERIFIED_FEATURES` contains `singleWordText` AND `authoredText` (Fly secret; API and
+   worker; restart). Both, because the mode is an `active_only` layer: without `authoredText` the
+   recipe would be refused where the full-line sweep is not.
+2. The app build with the editor change is out and declares `X-Kria-Client-Protocol` >= 11.
+3. The compile knows (2): an HTTP editor Save reads the request's protocol
+   (`phone_rollout.single_word_captions_enabled`) and, while (1) holds, stamps the variant
+   (`caption_single_word_text`) with the answer. A compile with no request (a worker applying a chat
+   edit through `prepare_phone_editor_commit`) cannot see the build, so it trusts that stamp. A
+   variant never saved by a protocol-11 build keeps the full-line sweep from workers.
+
+Off-state guarantee: while (1) is false, or the request's build is below 11 / sends no protocol, or
+there is no stamp outside a request, caption compilation is byte-for-byte the pre-feature output (no
+error, no stamp written). Pinned by `tests/pipeline/test_phone_single_word_captions.py` against digests
+generated from origin/main (`tests/pipeline/single_word_off_state.json`).
+
+Rollback: remove `singleWordText` from `PHONE_RENDER_VERIFIED_FEATURES` (Fly secret on API and
+worker, restart): the very next compile returns to the full-line sweep and no stamp is trusted.
+Recipes already pinned with the mode keep it (old builds get the 426, new builds draw it) until the
+creator's next Save recompiles them.
+
 ### Authored text saves and device retry identity (KRI-153)
 
 Highlight backgrounds and explicit entrance/exit/loop phases require
