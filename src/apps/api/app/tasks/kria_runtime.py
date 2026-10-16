@@ -39,6 +39,7 @@ from app.kria.brief_checks import (
     describe_text_look,
     is_judged,
     judged_at_render,
+    keeps_model_summary,
     needs_creator_choice,
     plan_facts_from_editor_payload,
     plan_facts_from_phone_variant,
@@ -1152,6 +1153,20 @@ def _complete_draft_turn(
                 brief_expected_version=planned.brief_expected_version,
             )
             return replace(completed, response_only=True)
+        approval_summary = arguments.summary
+        if (
+            apply_intent.tool_name == "draft.apply_strategy"
+            and brief is not None
+            and requirement_receipts
+            and not keeps_model_summary(brief, requirement_receipts)
+        ):
+            # KRI-700: the reply above already replaced the model's summary with what was
+            # checked ("Couldn't: brighten the dark river clips"). The draft's change list and
+            # the approval card follow it, so neither promises what the plan doesn't contain.
+            changes = [change for change in changes if change != arguments.summary]
+            approval_summary = reply_text
+            document = document.model_copy(update={"changes": changes})
+            snapshot, snapshot_hash = canonical_snapshot(document)
         choice_gate = (
             settings.kria_choice_questions_enabled
             and apply_intent.tool_name == "draft.apply_strategy"
@@ -1443,7 +1458,7 @@ def _complete_draft_turn(
             target_manifest_hash=planned.manifest_hash,
             target_ownership_epoch=int(session.ownership_epoch),
             execution_ids=[str(render_execution.id)],
-            consequence_summary=f"Render this draft: {arguments.summary}",
+            consequence_summary=f"Render this draft: {approval_summary}",
             cost_summary=say(en="One render", tr="Tek bir video"),
             status="pending",
             expires_at=datetime.now(UTC) + _APPROVAL_TTL,
