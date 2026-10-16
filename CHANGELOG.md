@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.3.0] - 2026-10-16
+
+### Changed
+- fix(kria): song follows the creator's length and music mood (KRI-679) (#1612) <!-- release-pr: 1612 -->
+
 ## [0.79.2.0] - 2026-10-16
 
 ### Changed
