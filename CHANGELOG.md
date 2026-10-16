@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.6.0] - 2026-10-16
+
+### Changed
+- feat(clips): measured brightness so "skip the very dark clips" matches (KRI-680) (#1615) <!-- release-pr: 1615 -->
+
 ## [0.79.5.0] - 2026-10-16
 
 ### Changed
