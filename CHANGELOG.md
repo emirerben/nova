@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.3.0] - 2026-10-16
+
+### Changed
+- Add a reviewed request-following learning loop (#1629) <!-- release-pr: 1629 -->
+
 ## [0.80.2.0] - 2026-10-16
 
 ### Changed
