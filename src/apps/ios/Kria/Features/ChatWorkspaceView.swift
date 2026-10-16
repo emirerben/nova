@@ -23,7 +23,7 @@ struct ChatWorkspaceView: View {
             close: { setDrawerOpen(false) },
             drawer: ProjectsDrawer(
                 close: { setDrawerOpen(false) },
-                openGallery: { setDrawerOpen(false); showsGallery = true },
+                openGallery: { setDrawerOpen(false); Perf.begin("gallery.open"); showsGallery = true },
                 openAccount: { setDrawerOpen(false); showsAccount = true }
             ),
             content: workspace
@@ -107,6 +107,7 @@ struct ChatWorkspaceView: View {
     }
 
     private func commitDrawer(_ isOpen: Bool) {
+        if isOpen { Perf.begin("drawer.open") }
         drawerMounted = true
         showsProjects = isOpen
     }
@@ -560,7 +561,8 @@ private struct CreationWorkspaceView: View {
     }
 
     private var timeline: [ChatTimelineEntry] {
-        ChatTimeline.build(
+        Perf.event("timeline.build")
+        return ChatTimeline.build(
             events: events, pending: pendingMessages, stage: stageAnchor,
             suppressedMessageIDs: suppressedTimelineMessages,
             uploads: activeUploadIDs.compactMap { uploadAnchors[$0] },
@@ -579,7 +581,10 @@ private struct CreationWorkspaceView: View {
     }
 
     /// KRI-443: the live plan feed, reduced from the thread's `plan_block` events.
-    private var planFeed: PlanBlockFeedState { PlanBlockFeedState.reduce(events: events) }
+    private var planFeed: PlanBlockFeedState {
+        Perf.event("planFeed.reduce")
+        return PlanBlockFeedState.reduce(events: events)
+    }
 
     private var showsPlanFeed: Bool {
         PlanFeedVisibility.shows(
@@ -1214,11 +1219,13 @@ private struct CreationWorkspaceView: View {
         }
         .onChange(of: renderShapeScope) { _, scope in renderShapePick.reset(scope: scope) }
         .task {
+            Perf.begin("chat.open", id: project.id.uuidString)
             // KRI-640: a chat New chat just made opens on the thread its create call returned, so it
             // shows without reading itself back first; the poll below still refreshes it.
             if let created = model.takeCreatedThread(project.id) {
                 apply(created)
                 initialConversationLoaded = true
+                markTranscriptVisible(source: "created")
             }
             // History should not wait for the independent capability request. Requested as soon as the
             // project opens, and retried: a slow or failed fetch must not leave the screen without it.
@@ -1969,9 +1976,18 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// Closes the open and launch intervals the first time a transcript can be seen (later calls are no-ops).
+    private func markTranscriptVisible(source: String) {
+        Perf.end("chat.open", id: project.id.uuidString, "source=\(source)")
+        Perf.end("launch.toTranscript", "source=\(source)")
+    }
+
     private func refreshNow() async {
         defer {
-            if !Task.isCancelled { initialConversationLoaded = true }
+            if !Task.isCancelled {
+                initialConversationLoaded = true
+                markTranscriptVisible(source: "network")
+            }
         }
         failure = nil
         do {
@@ -1983,6 +1999,7 @@ private struct CreationWorkspaceView: View {
             // never sees an empty ready state followed by old AI messages.
             if fullThread != nil, !Task.isCancelled {
                 initialConversationLoaded = true
+                markTranscriptVisible(source: "network")
             }
             if thread.runtimeVersion == 2 {
                 _ = try await refreshDelta()

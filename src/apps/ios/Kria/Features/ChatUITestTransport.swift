@@ -20,8 +20,9 @@ enum ChatUITestTransport {
 
 /// UI fixtures must never read or rotate a developer's Keychain session.
 struct ChatUITestTokenStore: TokenStore {
-    func read() throws -> MobileSession? { nil }
-    func write(_ session: MobileSession) throws {}
+    // `KRIA_FIXTURE_EXPIRED_TOKEN=1` (perf): an in-memory expired session, so the 401 -> refresh path runs.
+    func read() throws -> MobileSession? { PerfFixture.expiredToken ? PerfTokenState.shared.current : nil }
+    func write(_ session: MobileSession) throws { if PerfFixture.expiredToken { PerfTokenState.shared.store(session) } }
     func delete() throws {}
 }
 
@@ -42,9 +43,25 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
             let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
             delayedResponse = work
             DispatchQueue.global().asyncAfter(deadline: .now() + (slowRead ? 10 : slowCapabilities ? 6 : 5), execute: work)
+        } else if PerfFixture.delay(for: request) > 0 {
+            // Concurrent queue: parallel requests overlap the way they do on a real network.
+            let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
+            delayedResponse = work
+            DispatchQueue.global().asyncAfter(deadline: .now() + PerfFixture.delay(for: request), execute: work)
         } else { finishLoading() }
     }
     private func finishLoading() {
+        if let perf = PerfFixture.respond(request) {
+            guard let url = request.url,
+                  let response = HTTPURLResponse(url: url, statusCode: perf.status, httpVersion: nil, headerFields: perf.headers.merging(["Content-Type": "application/json"]) { first, _ in first }) else {
+                client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+                return
+            }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: perf.data)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
         let fixture: (Int, Data)? = ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] != nil
             ? CreationChatFixture.shared.respond(request)
             : (503, Data())
@@ -70,6 +87,10 @@ final class CreationChatFixture: @unchecked Sendable {
     static let shared = CreationChatFixture()
     private let lock = NSLock()
     private var threads: [String: [String: Any]] = [:]
+    init() {
+        // `KRIA_CHAT_SEED_THREADS` (perf): an account that already has chats.
+        PerfFixture.seedThreads(runtime: ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1, into: &threads)
+    }
     private var renders: [String: Int] = [:]
     private var preparations: [String: Int] = [:]
     private var planVersions: [String: Int] = [:]
@@ -236,8 +257,8 @@ final class CreationChatFixture: @unchecked Sendable {
             }
             if request.httpMethod == "POST" {
                 let id = UUID().uuidString
-                let fixtureEvents: [[String: Any]] = ProcessInfo.processInfo.environment["KRIA_CHAT_LONG_HISTORY"] == "1"
-                    ? (0..<24).map { index in
+                let fixtureEvents: [[String: Any]] = PerfFixture.longHistoryCount != nil
+                    ? (0..<(PerfFixture.longHistoryCount ?? 24)).map { index in
                         ["id": UUID().uuidString, "sequence": index, "revision": index + 1,
                          "role": index.isMultiple(of: 2) ? "user" : "assistant",
                          "event_type": index.isMultiple(of: 2) ? "user_message" : "assistant_response",

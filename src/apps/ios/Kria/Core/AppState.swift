@@ -224,16 +224,20 @@ enum AccountIdentity {
         cache: CacheRepository? = nil,
         chatDrafts: ChatDraftStore = ChatDraftStore()
     ) {
+        Perf.begin("appmodel.init")
+        defer { Perf.end("appmodel.init") }
         self.chatDrafts = chatDrafts
         self.api = api
         self.editorOperations = editorOperations
         self.uploads = BackgroundUploadCoordinator(api: api)
         self.deviceRenders = DeviceRenderSessions(api: api)
         self.cache = cache
+        Perf.begin("cache.load")
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {
             projects = cached.map(\.summary).filter { !deletedProjectIDs.contains($0.id) }
             projectsState = .loaded
         }
+        Perf.end("cache.load")
     }
     func loadProjects() async {
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {

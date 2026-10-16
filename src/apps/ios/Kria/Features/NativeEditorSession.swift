@@ -2038,7 +2038,8 @@ struct NativeEditorTemporaryVideo {
         isSaving = true
         saveState = .saving
         loadState = .loading
-        defer { isSaving = false }
+        Perf.begin("editor.open", id: editorJobID.uuidString)
+        defer { isSaving = false; Perf.end("editor.open", id: editorJobID.uuidString) }
         do {
             let receipt: OpenInEditorResponse? = if planItemID == nil {
                 try await api.openJobInEditor(jobID: editorJobID)
@@ -2386,6 +2387,8 @@ struct NativeEditorTemporaryVideo {
 
     func prepareSourcePreview() async {
         guard let api, let jobID, let variantKey else { return }
+        Perf.begin("editor.preview", id: jobID.uuidString)
+        defer { Perf.end("editor.preview", id: jobID.uuidString) }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
         let sequence = sourcePreviewSequence

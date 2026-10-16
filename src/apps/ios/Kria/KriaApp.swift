@@ -7,6 +7,11 @@ import SwiftData
     @StateObject private var model: AppModel
     private let container: ModelContainer
     init() {
+        // Launch ends when the first transcript row is visible (`ChatWorkspaceView`); `launch.init` is the
+        // synchronous setup in this initializer and `AppModel.init`.
+        Perf.begin("launch.toTranscript")
+        Perf.begin("launch.init")
+        defer { Perf.end("launch.init") }
         #if DEBUG
         // Opt-in hardware journey: real HTTP/API + scratch database, separate QA bundle.
         // Never uses a developer's Keychain or connects without both explicit inputs.
@@ -40,11 +45,16 @@ import SwiftData
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
-            let container = Self.fallbackContainer()
+            let container = PerfFixture.container()
             self.container = container
             CreationChatFixture.seedClipThumbnails()
-            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore()))
-            _model = StateObject(wrappedValue: AppModel(api: ChatUITestTransport.api(), cache: CacheRepository(context: container.mainContext)))
+            PerfPosterURLProtocol.registerIfNeeded()
+            let api = ChatUITestTransport.api()
+            // With an expired fixture session the account is "signed in", so its profile read must hit the fixture too.
+            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken ? api : nil))
+            let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext))
+            if PerfFixture.uploadTicks { model.uploads.startProgressTicksForTesting() }
+            _model = StateObject(wrappedValue: model)
             return
         }
         #endif
@@ -117,7 +127,9 @@ struct RootView: View {
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat-bubbles") {
                 ChatBubbleUITestHost()
             }
-            else if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") { ChatWorkspaceView() }
+            else if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
+                ChatWorkspaceView().overlay(alignment: .topLeading) { if PerfFixture.countersProbe { PerfCountersProbe() } }
+            }
             else if !auth.isSignedIn { SignInView() }
             else { signedInContent }
             #else

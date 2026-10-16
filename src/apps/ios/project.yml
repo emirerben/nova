@@ -142,6 +142,19 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.emirerben.kria.uitests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: Kria
+  KriaPerfUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: Tests/KriaPerfUITests
+    dependencies:
+      - target: Kria
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.emirerben.kria.perftests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Kria
   KriaHardwareUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -156,6 +169,18 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: Kria
 schemes:
+  # Performance benchmarks (`scripts/ios/bench.sh`). Its own scheme so coverage instrumentation, which inflates
+  # every timing, never applies, and so CI's Kria scheme (verify.sh) does not run these.
+  Kria Perf:
+    build:
+      targets:
+        Kria: all
+        KriaPerfUITests: [test]
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - KriaPerfUITests
   Kria Hardware QA:
     build:
       targets:
