@@ -31,10 +31,13 @@ final class PerfUITests: XCTestCase {
     private func makeApp(reset: Bool = false, _ environment: [String: String] = [:]) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"] + (reset ? ["-perf-reset"] : [])
+        // The network model is an assumption, so it can be changed per run without a rebuild:
+        // `TEST_RUNNER_KRIA_PERF_LATENCY_MS=400 TEST_RUNNER_KRIA_PERF_FULL_PROJECTION_MS=30 scripts/ios/bench.sh ...`.
+        let runner = ProcessInfo.processInfo.environment
         var base: [String: String] = [
             "KRIA_CHAT_CREATION_FLOW": "v2",
-            "KRIA_FIXTURE_LATENCY_MS": "150",
-            "KRIA_FIXTURE_FULL_PROJECTION_MS": "600",
+            "KRIA_FIXTURE_LATENCY_MS": runner["KRIA_PERF_LATENCY_MS"] ?? "150",
+            "KRIA_FIXTURE_FULL_PROJECTION_MS": runner["KRIA_PERF_FULL_PROJECTION_MS"] ?? "600",
             "KRIA_CHAT_SEED_THREADS": "60",
             "KRIA_CHAT_LONG_HISTORY": "200",
             "KRIA_PERF_DISK_STORE": "1",

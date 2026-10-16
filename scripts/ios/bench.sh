@@ -18,6 +18,11 @@
 # with coverage off, and is saved under $KRIA_BENCH_BUILDS/<label>-<dest> (default ~/.cache/kria-bench/builds) as
 # a relocatable test bundle, so a baseline survives later rebuilds and other worktrees.
 #
+# NETWORK MODEL. The fixtures answer after KRIA_PERF_LATENCY_MS (default 150) plus KRIA_PERF_FULL_PROJECTION_MS
+# (default 600) on the full chat read. Both are assumptions: set them to test other conditions, e.g.
+#   TEST_RUNNER_KRIA_PERF_LATENCY_MS=400 TEST_RUNNER_KRIA_PERF_FULL_PROJECTION_MS=30 scripts/ios/bench.sh ...
+# The real handler measured ~2 ms for a 200-event chat, so the 600 ms default is a deliberately heavy case.
+#
 # Results: test-results/ios/bench/<label>-<sha>-<dest>.json (+ .log). Compare with `--compare`, or let `--vs` do it.
 # Simulator: KRIA_SIMULATOR_ID, else the one named "Kria Perf" (xcrun simctl create "Kria Perf" "iPhone 17 Pro"),
 # else the newest iPhone. A dedicated simulator keeps other sessions' booted simulators from adding noise.
@@ -40,7 +45,7 @@ DEVICE_ID="${KRIA_DEVICE_ID:-}"
 SKIP_BUILD=0
 
 xcbeautify_or_cat() { if command -v xcbeautify >/dev/null 2>&1; then xcbeautify --quiet; else cat; fi; }
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 if [[ "${1:-}" == "--compare" ]]; then
   shift
