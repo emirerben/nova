@@ -72,7 +72,14 @@ async def journey(monkeypatch):
 
 async def collect():
     from app.tasks.request_following import collect_request_following
+    from app.worker import celery_app
 
+    entry = celery_app.conf.beat_schedule["request-following-collection"]
+    route = celery_app.amqp.router.route(entry.get("options") or {}, entry["task"])
+    assert route["queue"].name == "maintenance", (
+        "Collector must run while render workers are stopped"
+    )
+    assert entry["schedule"] == 900.0
     return await asyncio.to_thread(collect_request_following.run)
 
 

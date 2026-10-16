@@ -105,6 +105,7 @@ celery_app = Celery(
 # machine that might be stopped) but is at least loud in effect: Beat
 # entries are rare and reviewed, unlike per-request dispatch call sites.
 MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
+    "app.tasks.request_following.collect",
     "tasks.sweep_stale_jobs",
     "tasks.cleanup_agent_runs",
     "tasks.purge_expired_ai_caches",

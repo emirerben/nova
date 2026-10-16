@@ -68,3 +68,10 @@ copies must be labelled with their eligibility check time, not current live cons
 - Private-store CLI import -> real local HTTP review -> export journey passes, including
   missing/wrong-owner/expired receipts, source tampering, holdout exclusion, origin
   checks and stale-review rejection. Full offline report: 597 passed, two expected failures.
+
+Activation preflight failure: Beat can publish to the default render queue while its
+worker is stopped. Extend the database journey to resolve the actual Beat task route
+before collection; require the always-on maintenance queue and 15-minute cadence.
+
+The queue negative control failed all eight collection journeys before the route
+was added, demonstrating that the default render queue would strand the task.
