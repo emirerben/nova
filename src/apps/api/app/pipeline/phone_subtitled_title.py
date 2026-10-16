@@ -96,6 +96,13 @@ _TOP_MARGIN_FRAC = 0.06
 # Where to try the title when the preset spot covers the face: below a
 # talk-to-camera face first (the face sits in the upper half), then higher.
 _FALLBACK_Y_FRACS = (0.5, 0.44, 0.38)
+# KRI-706: a close selfie makes the face band cover most of the upper frame, so
+# every row above fails. The last resort is a row just under the face: its top
+# sits this far (canvas height) below the face band, and its bottom may go no
+# lower than this (the captions move down off a face that fills the frame, the
+# way the caption lane already does, so the title may use the space above them).
+_BELOW_FACE_GAP_FRAC = 0.01
+_BELOW_FACE_BOTTOM_MAX_FRAC = 0.86
 # Same tolerance as caption and guided-story placement
 # (`render_geometry._FACE_OVERLAP_MAX_COVERAGE`): at most 5% of the title box.
 _MAX_FACE_COVERAGE = 0.05
@@ -274,16 +281,48 @@ def choose_title_y_frac(
                 "coverage": coverage,
                 "evaluated": evaluated,
             }
+    # KRI-706: no row in the top band clears the face. Try the spot just under it.
+    below = _below_face_y_frac(probe_box, faces)
+    if below is not None:
+        box = _translate_centered_box_to_y(probe_box, below)
+        coverage = round(max((box.coverage_by(face) for face in faces), default=0.0), 5)
+        evaluated.append(
+            {"y_frac": below, "coverage": coverage, "in_band": False, "below_face": True}
+        )
+        if coverage <= _MAX_FACE_COVERAGE:
+            return below, {
+                "status": "moved_below_face",
+                "chosen_y_frac": below,
+                "coverage": coverage,
+                "evaluated": evaluated,
+            }
+        evaluated[-1]["below_face"] = False  # tried, still covers the face
     best = min(
         range(len(candidates)),
         key=lambda i: (0 if evaluated[i]["in_band"] else 1, evaluated[i]["coverage"], i),
     )
+    best_coverage = evaluated[best]["coverage"]
     return candidates[best], {
         "status": "best_effort",
         "chosen_y_frac": candidates[best],
-        "coverage": evaluated[best]["coverage"],
+        "coverage": best_coverage,
+        # KRI-706: the title still sits on the face; the brief receipt reads this
+        # so it never claims "text off the face" for it.
+        "face_collision": best_coverage > _MAX_FACE_COVERAGE,
         "evaluated": evaluated,
     }
+
+
+def _below_face_y_frac(probe_box: NormalizedBox, faces: Sequence[NormalizedBox]) -> float | None:
+    """The title's centre y that puts its top just under the lowest face, or None
+    when there is no face or the title would then run past the lower limit."""
+    if not faces:
+        return None
+    height = probe_box.bottom - probe_box.top
+    top = max(face.bottom for face in faces) + _BELOW_FACE_GAP_FRAC
+    if top + height > _BELOW_FACE_BOTTOM_MAX_FRAC:
+        return None
+    return round(top + height / 2, _Y_FRAC_DECIMALS)
 
 
 def _face_boxes(
