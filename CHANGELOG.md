@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.5.0] - 2026-10-16
+
+### Changed
+- fix(clip-intents): 4-word creator labels settle, unusable label text never loops the picker (KRI-678) (#1614) <!-- release-pr: 1614 -->
+
 ## [0.79.4.0] - 2026-10-16
 
 ### Changed
