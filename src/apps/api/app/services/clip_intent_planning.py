@@ -303,12 +303,16 @@ def _settle(
         return None
     caption_text = caption_grounding = None
     if intent.op == "caption":
+        # KRI-696: picker-eligible captions carry the creator's own copy, so ground it
+        # the way the resolver does; the short-phrase bounds refused "·" / "’" and the
+        # picker asked the same question forever.
         grounded = ground_caption(
             value=intent.creator_text,
             confidence=1.0,
             creator_request=creator_request,
             records=[clip_record(by_id[m].analysis, kind=by_id[m].kind) for m in media_ids],
             intent_id=intent.intent_id,
+            creator_copy=True,
         )
         if grounded is None:
             return None
