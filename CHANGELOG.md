@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.1.0] - 2026-10-16
+
+### Changed
+- feat(api): Display Word saves as one word at a time (karaoke.single_word) (KRI-683, 2/2) (#1627) <!-- release-pr: 1627 -->
+
 ## [0.80.0.0] - 2026-10-16
 
 ### Added
