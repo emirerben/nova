@@ -179,6 +179,34 @@ final class PerfUITests: XCTestCase {
         book.report("testOpenOldChatFromDrawer", prefixes: ["net ", "fullread "])
     }
 
+    /// Opens `title` from the drawer and waits for its transcript.
+    private func openChat(_ app: XCUIApplication, _ title: String) {
+        app.buttons["workspace-menu-toggle"].tap()
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "\(title) is not in the drawer")
+        row.tap()
+        waitForTranscript(app)
+    }
+
+    /// Switching back to a chat already opened on this device, the common case: Chat 10 and Chat 11 are each opened
+    /// once, then every measured iteration alternates between them.
+    func testReopenSeenChat() {
+        warmCache()
+        let app = makeApp()
+        app.launch()
+        waitForTranscript(app)
+        for title in ["Chat 10", "Chat 11"] {
+            openChat(app, title)
+            // Let the transcript cache write (it is debounced by a second) before leaving the chat.
+            RunLoop.current.run(until: Date().addingTimeInterval(2.5))
+        }
+        var next = 10
+        measure(metrics: [interval("chat.open")], options: options) {
+            openChat(app, "Chat \(next)")
+            next = next == 10 ? 11 : 10
+        }
+    }
+
     // MARK: Scrolling
 
     /// Flicks a 200-message transcript, with plan blocks and a song question mixed in and an upload reporting
