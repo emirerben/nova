@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.7.0] - 2026-10-16
+
+### Changed
+- fix(kria): keep quoted clip asks after the first turn (KRI-677) (#1617) <!-- release-pr: 1617 -->
+
 ## [0.79.6.0] - 2026-10-16
 
 ### Changed
