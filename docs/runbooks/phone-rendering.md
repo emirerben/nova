@@ -2419,7 +2419,10 @@ to `TALKING_MULTI_CLIP_MAX_CLIPS` (10) clips.
   per-clip roles); trace event `phone/talking_multi_clip_roles`.
 - **Editor Save** keeps speakers and cutaways from the pinned recipe
   (`speaker_binding_from_recipe`, `additional_speakers_from_recipe`, `cutaways_from_recipe`).
-  The iOS live preview still falls back to the finished MP4 for 2+ clips (phase 2).
+- **iOS live preview** (`NativePhoneTalkingSource.sourceIndices`) plays the receipt's
+  `speaker_media_ids` in order as locked composite clips; cutaways are not drawn in the
+  preview yet (no editor projection). A speaker missing from the source pool falls back
+  to the finished MP4.
 
 ## Hook titles on phone Talking edits (KRI-467)
 

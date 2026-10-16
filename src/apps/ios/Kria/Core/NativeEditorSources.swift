@@ -162,8 +162,20 @@ struct NativeEditorBaseSource: Sendable {
 /// Only when the edit's cards and sounds are editable (`lanesEditable`): with
 /// them closed the server doesn't send those lanes, so a live preview would
 /// drop what the finished MP4 shows.
+///
+/// Several videos (KRI-719): the server plays every speaker back to back on
+/// the main track, in the order of the variant's `phone_talking_multi_clip`
+/// receipt (`speaker_media_ids`). The first speaker carries any cut; the rest
+/// play in full. Their footage cutaways are not projected into the editor yet,
+/// so the live preview shows the speakers where the finished MP4 cuts away.
 enum NativePhoneTalkingSource {
     static let slotID = "native-phone-talking-source"
+    static let multiClipReceiptField = "phone_talking_multi_clip"
+
+    struct Speaker: Equatable, Sendable {
+        let clipIndex: Int
+        let duration: Double
+    }
 
     /// Source spans speech cleanup removed from this variant, sorted. Empty
     /// when no cleanup was applied.
@@ -191,30 +203,54 @@ enum NativePhoneTalkingSource {
         return kept.filter { $0.end - $0.start > 0.001 }
     }
 
-    static func sourceIndex(variant: [String: JSONValue], document: EditorDocument,
-                            pool: NativeEditorSourcePool, lanesEditable: Bool) -> Int? {
+    /// Source-pool indices of the speaker clips, in play order: the one pool
+    /// clip, or each `speaker_media_ids` entry of a multi-clip receipt. Nil
+    /// (finished-MP4 fallback) when the edit isn't a live phone Talking edit
+    /// or any speaker can't be found in the pool.
+    static func sourceIndices(variant: [String: JSONValue], document: EditorDocument,
+                              pool: NativeEditorSourcePool, lanesEditable: Bool) -> [Int]? {
         guard lanesEditable,
               variant["resolved_archetype"] == .string("subtitled"),
               variant["render_destination"] == .string("device"),
               document.capabilities["timeline"]?.editable != true,
               document.tombstones.isEmpty,
-              document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }),
-              pool.clips.count == 1 else { return nil }
-        return pool.clips[0].clipIndex
+              document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return nil }
+        guard let receipt = variant[multiClipReceiptField] else {
+            return pool.clips.count == 1 ? [pool.clips[0].clipIndex] : nil
+        }
+        guard case .array(let rows)? = receipt.objectValue?["speaker_media_ids"], !rows.isEmpty else { return nil }
+        var indices: [Int] = []
+        for row in rows {
+            guard let mediaID = row.stringValue,
+                  let clip = pool.clips.first(where: { $0.nativeSource?.mediaID == mediaID }),
+                  !indices.contains(clip.clipIndex) else { return nil }
+            indices.append(clip.clipIndex)
+        }
+        return indices
     }
 
     static func hydrate(_ document: EditorDocument, clipIndex: Int, duration: Double,
                         removed: [(start: Double, end: Double)] = []) throws -> EditorDocument {
-        guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
+        try hydrate(document, speakers: [.init(clipIndex: clipIndex, duration: duration)], removed: removed)
+    }
+
+    /// `removed` applies to the first speaker only (the server cuts only it);
+    /// every later speaker plays in full right after it.
+    static func hydrate(_ document: EditorDocument, speakers: [Speaker],
+                        removed: [(start: Double, end: Double)] = []) throws -> EditorDocument {
+        guard let first = speakers.first,
+              speakers.allSatisfy({ $0.duration.isFinite && $0.duration > 0 }) else { throw APIError.invalidResponse }
         guard document.editorState != "empty" else { return document }
         guard document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return document }
-        let kept = keptSegments(duration: duration, removed: removed)
+        let kept = keptSegments(duration: first.duration, removed: removed)
         guard !kept.isEmpty else { throw RecipeError.invalidTimeline }
+        let segments = kept.map { (speaker: first, start: $0.start, end: $0.end) }
+            + speakers.dropFirst().map { (speaker: $0, start: 0.0, end: $0.duration) }
         var result = document
-        result.clips = kept.enumerated().map { index, segment in
-            .init(id: index == 0 ? slotID : slotID + "-\(index)", clipIndex: clipIndex, inS: segment.start,
+        result.clips = segments.enumerated().map { index, segment in
+            .init(id: index == 0 ? slotID : slotID + "-\(index)", clipIndex: segment.speaker.clipIndex, inS: segment.start,
                   durationS: segment.end - segment.start,
-                  raw: ["native_composite_source": .bool(true), "source_duration_s": .number(duration)])
+                  raw: ["native_composite_source": .bool(true), "source_duration_s": .number(segment.speaker.duration)])
         }
         return result
     }

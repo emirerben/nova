@@ -413,6 +413,29 @@ private struct SlidePostFormatCard: View {
     }
 }
 
+/// Footage-step wording that depends on the server's clip cap.
+enum FootageStageCopy {
+    /// "1 clip", "10 clips".
+    static func count(_ value: Int, _ noun: String) -> String {
+        "\(value) \(noun)\(value == 1 ? "" : "s")"
+    }
+
+    /// Talking to camera: one take, or (KRI-719) the take plus clips shown
+    /// while the creator talks when the server allows more than one.
+    static func talkingBody(maximumClipCount: Int) -> String {
+        maximumClipCount > 1
+            ? "Choose the video of you talking, plus any clips to show while you talk."
+            : "Choose one clear take. I’ll keep your voice at the center."
+    }
+
+    /// The Add media sheet's footage subtitle.
+    static func attachmentSubtitle(talking: Bool, maximumClipCount: Int) -> String {
+        talking && maximumClipCount > 1
+            ? "The video of you talking, plus any clips to show while you talk."
+            : "Choose the clips you want Kria to work with."
+    }
+}
+
 struct FootageStage: View {
     let format: CreationFormat
     let mediaCount: Int
@@ -459,8 +482,8 @@ struct FootageStage: View {
                 bodyText: format.usesVisualPool
                     ? "Choose the photos and videos for your post. You can mix both."
                     : format == .talkingToCamera
-                    ? "Choose one clear take. I’ll keep your voice at the center."
-                    : "Choose the moments you want me to work with. You can add up to \(maximumClipCount) clips."
+                    ? FootageStageCopy.talkingBody(maximumClipCount: maximumClipCount)
+                    : "Choose the moments you want me to work with. You can add up to \(FootageStageCopy.count(maximumClipCount, "clip"))."
             )
 
             Button(action: addFootage) {
@@ -474,7 +497,7 @@ struct FootageStage: View {
                     Text(format.usesVisualPool ? "Add photos & videos" : "Choose videos")
                         .font(KriaFont.body(14).weight(.semibold))
                         .foregroundStyle(KriaColor.ink)
-                    Text(format.usesVisualPool ? "Photos or videos · up to \(maximumClipCount) items" : "MP4, MOV · up to \(maximumClipCount) clips")
+                    Text(format.usesVisualPool ? "Photos or videos · up to \(FootageStageCopy.count(maximumClipCount, "item"))" : "MP4, MOV · up to \(FootageStageCopy.count(maximumClipCount, "clip"))")
                         .font(KriaFont.body(11))
                         .foregroundStyle(KriaColor.zinc)
                 }

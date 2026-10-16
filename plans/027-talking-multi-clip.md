@@ -1,6 +1,6 @@
 # 027 — Talking to camera with several videos (speaker + cutaways)
 
-Linear: [KRI-719](https://linear.app/kria/issue/KRI-719). Status: **Phase 1 built (server + iPhone render, flag off)**; phases 2-3 open. Pause/filler removal for several videos: [KRI-720](https://linear.app/kria/issue/KRI-720). Written 2026-10-16 against `origin/main` 31af74ef7.
+Linear: [KRI-719](https://linear.app/kria/issue/KRI-719). Status: **Phases 1-2 built (server + iPhone render + iOS app, flag off)**; phase 3 open. Pause/filler removal for several videos: [KRI-720](https://linear.app/kria/issue/KRI-720). Written 2026-10-16 against `origin/main` 31af74ef7.
 
 ## Phase 1 as built (2026-10-16)
 
@@ -10,6 +10,15 @@ Changed from the plan after Yasin's note that a Talking edit can hold several ta
 - Speech cleanup is refused for every multi-clip Talking edit in v1 (KRI-720 adds it). With 2+ speakers, cards/sounds/beats and face fill are skipped.
 - No creator speaker pin yet (comes with the iOS work in phase 2).
 - Details: `docs/runbooks/phone-rendering.md` "Several videos on a phone Talking edit".
+
+## Phase 2 as built (2026-10-16, iOS)
+
+- Offline fallback cap for Talking is 10; the server's `max_clips` always wins (`CreationFormat.maximumClipCount(for:serverLimits:)`), so a server with the flag off still caps Talking at 1 and the single-pick picker auto-close keeps working there.
+- Copy follows the cap: with more than one clip allowed, Talking reads "the video of you talking, plus any clips to show while you talk"; "up to 1 clips" plural fixed.
+- Teleprompter take is refused only when the edit is full (it already was cap-based); the refusal names the cap.
+- Live editor preview plays every speaker from the variant's `phone_talking_multi_clip.speaker_media_ids`, in order, as locked composite clips (first speaker carries any cut, the rest play whole). A speaker missing from the source pool falls back to the finished MP4.
+- **Not done:** cutaways are not in the live preview (the editor shows the speaker where the MP4 cuts away) until the server projects them as locked full-screen rows in `project_phone_subtitled_editor_sections`. No "Make speaker" pin (needs a server `set_speaker` action; scope with Yasin).
+- Tests: `CreationUITests.testTalkingToCameraPicksThreeVideos` (3 videos on Talking), `testLibraryPickerReturnsToChatByDoneAndBySinglePick` now runs against a cap-1 server (`KRIA_CHAT_TALKING_MAX_CLIPS=1`).
 
 
 A creator on **Talking to camera** (`edit_format = "subtitled"`) can pick several videos. One is the **speaker** (main track: its own audio, captions, title, cleanup). The rest play **on top, full screen and muted**, at moments Kria picks, while the speaker's voice and captions keep running.

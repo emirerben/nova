@@ -224,11 +224,14 @@ final class CreationUITests: XCTestCase {
 
     /// Full-access Photos returns to the attachment flow on Done. A selected
     /// talking-to-camera clip advances to overlays; Done there returns to chat.
+    /// The single pick closes Apple's picker on its own only while the server
+    /// caps Talking at one clip (multi-clip Talking off, KRI-719).
     func testLibraryPickerReturnsToChatByDoneAndBySinglePick() {
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
         app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-apple-photo-picker"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_TALKING_MAX_CLIPS"] = "1"
         app.launch()
         createFreshChat(in: app)
         let card = app.buttons["format-talking_to_camera"]
@@ -299,6 +302,64 @@ final class CreationUITests: XCTestCase {
         dismissFailure.tap()
         XCTAssertFalse(selectedClipFailure.exists)
         XCTAssertTrue(photos.isHittable, "The user can choose the clip again after dismissing the failure")
+    }
+
+    /// KRI-719: with multi-clip Talking on, the Talking footage step explains the talking video plus
+    /// extra clips and lets the creator pick three videos at once. All three are read from Photos and
+    /// reach upload (the offline fixture has no upload reservations, so each surfaces as a named failure).
+    func testTalkingToCameraPicksThreeVideos() {
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+        let card = app.buttons["format-talking_to_camera"]
+        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        XCTAssertTrue(app.staticTexts["Choose the video of you talking, plus any clips to show while you talk."].waitForExistence(timeout: 5),
+                      app.debugDescription)
+        XCTAssertTrue(app.staticTexts["MP4, MOV · up to 10 clips"].exists)
+        let chooseVideos = app.buttons["choose-videos"]
+        XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
+        chooseVideos.tap()
+        XCTAssertTrue(app.staticTexts["The video of you talking, plus any clips to show while you talk."].waitForExistence(timeout: 5))
+        func allowFullAccess(_ alert: XCUIElement) -> Bool {
+            guard alert.buttons.count == 3 else { return false }
+            alert.buttons.element(boundBy: 1).tap()
+            return true
+        }
+        let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
+        defer { removeUIInterruptionMonitor(monitor) }
+        let photos = app.buttons["Choose from Photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        photos.tap()
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
+
+        let tiles = (0..<3).map { app.buttons["gallery-tile-\($0)"] }
+        XCTAssertTrue(tiles[0].waitForExistence(timeout: 40), app.debugDescription)
+        let count = app.staticTexts["gallery-count"]
+        XCTAssertTrue(eventually { count.label.hasPrefix("0 of 10") }, count.label)
+        for (index, tile) in tiles.enumerated() {
+            tile.tap()
+            XCTAssertTrue(eventually { count.label.hasPrefix("\(index + 1) of 10") }, count.label)
+        }
+        XCTAssertEqual(tiles[2].value as? String, "Selected, 3")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Talking to camera with three videos picked"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["photos-picker-done"].tap()
+
+        // Three picks reach upload and come back as three failed files: none was dropped by a one-clip cap.
+        let reachedUpload = app.staticTexts["The data couldn\u{2019}t be read because it isn\u{2019}t in the correct format."]
+        XCTAssertTrue(reachedUpload.waitForExistence(timeout: 25), app.debugDescription)
+        if app.buttons["attachment-done"].exists { app.buttons["attachment-done"].tap() }
+        let failures = app.staticTexts["footage-upload-failures-message"]
+        XCTAssertTrue(failures.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(eventually(timeout: 10) { failures.label.hasPrefix("3 files") }, failures.label)
     }
 
     func testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes() {

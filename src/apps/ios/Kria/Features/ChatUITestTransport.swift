@@ -150,7 +150,10 @@ final class CreationChatFixture: @unchecked Sendable {
         if path == "/creation-threads/capabilities" {
             // `KRIA_SLIDE_POST_CAPS=fail`: the capabilities request never gets an answer.
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "fail" { return nil }
-            var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", 1), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
+            // `KRIA_CHAT_TALKING_MAX_CLIPS`: Talking's cap. 10 is a server with KRI-719 multi-clip Talking on;
+            // `1` is one with it off (a single pick then closes Apple's picker on its own).
+            let talkingMaxClips = ProcessInfo.processInfo.environment["KRIA_CHAT_TALKING_MAX_CLIPS"].flatMap(Int.init) ?? 10
+            var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", talkingMaxClips), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" { capabilities["live_plan_review_enabled"] = true }
             // `KRIA_CHAT_PLAN_BLOCKS_VERSION=2`: the server speaks live-plan contract v2 (structured payloads,
             // 8 sections including post_caption, Review entry points). Absent = an older feed-only server.
