@@ -453,6 +453,14 @@
       ]
     },
     {
+      "id": "kri-689-clip-speed",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri689_clip_speed_ask.py tests/tasks/test_kri689_speed_review.py tests/tasks/test_unified_montage_dispatch.py",
+      "paths": [
+        "src/apps/api/app/kria/speed_ask.py"
+      ]
+    },
+    {
       "id": "kri-646-text-bend",
       "needs_native": false,
       "api_tests": "tests/kria/test_text_bend.py",

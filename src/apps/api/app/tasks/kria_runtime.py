@@ -36,6 +36,7 @@ from app.kria.brief_binding import BriefBindingRequestTooLongError
 from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
     build_receipts,
+    clip_speed_notice,
     describe_text_look,
     is_judged,
     judged_at_render,
@@ -974,6 +975,7 @@ def _complete_draft_turn(
             reply_text = f"{reply_text} {scope_note}".strip()
         requirement_receipts: list[dict[str, Any]] = []
         brief = None
+        speed_notice: str | None = None  # KRI-689
         if planned.brief_route is not None:
             # KRI-188: persist this turn's requirements (idempotent per turn),
             # then check each one deterministically against what was drafted.
@@ -1010,6 +1012,15 @@ def _complete_draft_turn(
                     # them against this text-free draft would only mislead.
                     checked = requirements_to_check_at_draft(
                         checked,
+                        creator_id=thread.creator_id,
+                        strategy=document.strategy,
+                        item_edit_format=item.edit_format,
+                        clip_paths=item.clip_gcs_paths or (),
+                    )
+                    # KRI-689: a phone montage plays every clip at natural speed. Say so
+                    # before approval; the render-ready review reports it as "Couldn't".
+                    speed_notice = clip_speed_notice(
+                        brief.live(),
                         creator_id=thread.creator_id,
                         strategy=document.strategy,
                         item_edit_format=item.edit_format,
@@ -1078,6 +1089,8 @@ def _complete_draft_turn(
                         reply_text = reply_from_diff(
                             phrases, notices=planned.policy_notices, notes=arguments.notes
                         )
+        if speed_notice:
+            reply_text = f"{reply_text}\n{speed_notice}"
         unmet_ids = [
             str(receipt.get("requirement_id"))
             for receipt in requirement_receipts
@@ -1443,7 +1456,9 @@ def _complete_draft_turn(
             target_manifest_hash=planned.manifest_hash,
             target_ownership_epoch=int(session.ownership_epoch),
             execution_ids=[str(render_execution.id)],
-            consequence_summary=f"Render this draft: {arguments.summary}",
+            consequence_summary=" ".join(
+                part for part in (f"Render this draft: {arguments.summary}", speed_notice) if part
+            ),
             cost_summary=say(en="One render", tr="Tek bir video"),
             status="pending",
             expires_at=datetime.now(UTC) + _APPROVAL_TTL,
