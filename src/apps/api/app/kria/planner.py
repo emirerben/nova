@@ -106,12 +106,16 @@ from app.services.choice_questions import (
     tag_event,
 )
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
-from app.services.clip_intent_planning import plan_and_resolve_clip_intents
+from app.services.clip_intent_planning import (
+    PlannedIntentResolution,
+    plan_and_resolve_clip_intents,
+)
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_selection import fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
 from app.services.creative_copy_decisions import (
     authorship_question,
+    creator_quoted,
     fold_creative_copy,
     localize_question,
     media_digest,
@@ -155,7 +159,11 @@ from app.services.song_range import (
     song_range_of,
     song_range_question_text,
 )
-from app.services.spoken_quotes import closing_quote_notice, ground_closing_quote
+from app.services.spoken_quotes import (
+    closing_quote_notice,
+    described_line_moments,
+    ground_closing_quote,
+)
 
 log = structlog.get_logger()
 
@@ -171,7 +179,8 @@ def _enrich_best_parts_snapshot(
 
     ``closing_quote`` is ``spoken_quotes.ground_closing_quote``'s record of the line the
     creator asked to end on (KRI-597); the brief's moment ask (KRI-596, "the best six
-    moments, each very short") lets a long take give several windows.
+    moments, each very short") lets a long take give several windows; a clip the creator's
+    sound or order ask describes by what is said in it starts on that sentence (KRI-681).
     """
     if not isinstance(media_snapshot, dict):
         return media_snapshot
@@ -204,6 +213,11 @@ def _enrich_best_parts_snapshot(
     if recording is None and isinstance(media_snapshot.get("voiceover"), dict):
         recording = media_snapshot["voiceover"].get("duration_s")
     moments = brief_moment_ask(brief)
+    held = (
+        [str(closing_quote.get("media_id"))]
+        if isinstance(closing_quote, Mapping) and closing_quote.get("status") == "found"
+        else []
+    )
     length_plan = build_length_plan(
         {**strategy, "voiceover_duration_s": recording},
         media_snapshot,
@@ -213,6 +227,9 @@ def _enrich_best_parts_snapshot(
         closing_quote=closing_quote,
         moment_count=moments.count if moments is not None else None,
         moment_max_s=MOMENT_SHORT_MAX_S if moments is not None and moments.short else None,
+        spoken_moments=described_line_moments(
+            _described_clip_texts(brief), media_snapshot, skip_ids=held
+        ),
     )
     enriched = dict(media_snapshot)
     enriched["length_plan"] = length_plan
@@ -224,6 +241,20 @@ def _enrich_best_parts_snapshot(
         {"code": item["code"], "message": item["message"]} for item in length_plan["conflicts"]
     ]
     return enriched
+
+
+def _described_clip_texts(brief: CreativeBrief | None) -> list[str]:
+    """The creator's live sound and order asks, whose words may describe a clip by what
+    is said in it ("the clip where the boat won't start: keep its sound", KRI-681)."""
+    if brief is None:
+        return []
+    texts: list[str] = []
+    for req in brief.live():
+        if req.kind not in ("audio", "order"):
+            continue
+        texts.extend(text for text in (req.description, req.literal) if text)
+        texts.extend(value for value in req.facts.values() if isinstance(value, str))
+    return texts
 
 
 def _moment_count_notice(
@@ -294,10 +325,117 @@ def _fit_music_section_to_footage(
     return {**section, "end_s": fitted_end}
 
 
-async def _freeze_licensed_music_section(
-    db: Any, strategy: Mapping[str, Any], snapshot: dict | None, *, job_id: str
+def _fit_music_section_to_length(section: dict[str, Any], target_s: float | None) -> dict[str, Any]:
+    """Make an auto-selected song section as long as the creator asked (KRI-679).
+
+    The matcher's "best section" is often 10-17 s. Frozen as the length owner, it capped a
+    footage-rich "25 seconds" montage at 16.6 s and asked the creator to accept that. The
+    song is a background bed, so the section follows the creator's length instead: keep the
+    matcher's start, run forward, and start earlier only when the track ends first. A track
+    shorter than the ask plays whole. Without a known catalog length the section can only be
+    shortened. Run before `_fit_music_section_to_footage`, which still wins when the footage
+    is shorter than the ask.
+    """
+    if section.get("status") != "selected" or not isinstance(target_s, (int, float)):
+        return section
+    start, end = section.get("start_s"), section.get("end_s")
+    if isinstance(start, bool) or isinstance(end, bool) or isinstance(target_s, bool):
+        return section
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or end <= start:
+        return section
+    if not 0 < target_s < float("inf") or abs((end - start) - target_s) <= 1e-3:
+        return section
+    if end - start > target_s:
+        return {**section, "end_s": math.floor((start + target_s) * 1000) / 1000}
+    catalog = section.get("catalog_duration_s")
+    if (
+        isinstance(catalog, bool)
+        or not isinstance(catalog, (int, float))
+        or not end <= catalog < float("inf")
+    ):
+        return section
+    if start + target_s <= catalog:
+        return {**section, "end_s": math.floor((start + target_s) * 1000) / 1000}
+    new_start = max(0.0, math.ceil((catalog - target_s) * 1000) / 1000)
+    return {**section, "start_s": new_start, "end_s": float(catalog)}
+
+
+def _creator_music_ask(brief: CreativeBrief | None) -> str:
+    """The creator's own words about the song, from the live brief (KRI-679).
+
+    Only live audio asks for the whole edit: a clip-scoped audio ask is a beat sound,
+    and a superseded one was replaced by a later ask.
+    """
+    if brief is None:
+        return ""
+    asks = (
+        req.text().strip() for req in brief.live() if req.kind == "audio" and req.scope == "global"
+    )
+    return "; ".join(ask for ask in asks if ask)
+
+
+def _music_pool_digest(rows: Any, audio: Any, music_ask: str = "") -> str:
+    """The uploaded clips and audio choice a frozen song was matched against (KRI-679).
+
+    Unlike the full music input digest, this ignores which clips the edit currently
+    selects and their analysis, so a later turn that only re-selects clips keeps the song.
+    A creator music ask is part of it, so a new mood re-matches; without one the digest
+    stays what earlier length questions stored.
+    """
+    media_ids = sorted(
+        str(row.get("media_id"))
+        for row in (rows if isinstance(rows, list) else [])
+        if isinstance(row, Mapping) and row.get("media_id")
+    )
+    pool: dict[str, Any] = {"media": media_ids, "audio": audio}
+    if music_ask:
+        pool["music_ask"] = music_ask
+    return hashlib.sha256(json.dumps(pool, sort_keys=True).encode()).hexdigest()
+
+
+def _prior_frozen_music(
+    events: Sequence[tuple[str, Any]], input_digest: str, pool_digest: str
 ) -> dict[str, Any] | None:
-    """Match once in a real live session and return an immutable catalog section."""
+    """The song an earlier length question in this thread already froze.
+
+    An exact input match reuses whatever was frozen. Otherwise a selected song frozen
+    over the same clip pool and audio choice is kept (KRI-679): answering "use the
+    available length" changed the selection, the matcher ran again, and every answer
+    produced a new, shorter section to ask about.
+    """
+    pool_match: dict[str, Any] | None = None
+    for role, payload in reversed(events):
+        question = payload.get("choice_question") if isinstance(payload, dict) else None
+        context = question.get("length_context") if isinstance(question, dict) else None
+        if role != "assistant" or not isinstance(context, dict):
+            continue
+        if context.get("input_digest") == input_digest:
+            return context.get("licensed_music")
+        music = context.get("licensed_music")
+        if (
+            pool_match is None
+            and context.get("pool_digest") == pool_digest
+            and isinstance(music, dict)
+            and music.get("status") == "selected"
+        ):
+            pool_match = music
+    return pool_match
+
+
+async def _freeze_licensed_music_section(
+    db: Any,
+    strategy: Mapping[str, Any],
+    snapshot: dict | None,
+    *,
+    job_id: str,
+    target_s: float | None = None,
+    music_ask: str = "",
+) -> dict[str, Any] | None:
+    """Match once in a real live session and return an immutable catalog section.
+
+    ``target_s`` is the creator's own length; the section follows it (KRI-679).
+    ``music_ask`` is the creator's own words about the song; the matcher weighs it first.
+    """
     if not isinstance(db, AsyncSession) or not isinstance(snapshot, dict):
         return None
     if strategy.get("audio_strategy", "licensed_music") != "licensed_music":
@@ -336,7 +474,7 @@ async def _freeze_licensed_music_section(
         for row in playable
         if row.get("media_id")
     ]
-    track = await asyncio.to_thread(_match_best_track, metas, job_id=job_id)
+    track = await asyncio.to_thread(_match_best_track, metas, job_id=job_id, music_ask=music_ask)
     if track is None:
         return {"status": "fallback_footage"}
     cfg = track_config_with_rank_one(track)
@@ -351,7 +489,7 @@ async def _freeze_licensed_music_section(
         or not 0 <= start < end <= catalog_duration < float("inf")
     ):
         return {"status": "fallback_footage"}
-    return _fit_music_section_to_footage(
+    section = _fit_music_section_to_length(
         {
             "status": "selected",
             "track_id": str(track.id),
@@ -362,9 +500,9 @@ async def _freeze_licensed_music_section(
             "catalog_duration_s": catalog_duration,
             "beat_timestamps_s": list(getattr(track, "beat_timestamps_s", None) or []),
         },
-        rows,
-        selected_ids=selected,
+        target_s,
     )
+    return _fit_music_section_to_footage(section, rows, selected_ids=selected)
 
 
 @dataclass(frozen=True)
@@ -2132,6 +2270,16 @@ async def _plan_creator_action(
                 and value in evidence
                 and any(evidence in source for source in user_sources)
             )
+            # KRI-682: a title the creator typed in quotes is theirs whatever excerpt
+            # the model cites (it often quotes the brief's rewrite of the ask).
+            quoted = value and creator_quoted(
+                value, [*user_sources, getattr(inputs, "raw_creator_request", None) or ""]
+            )
+            if quoted and not grounded:
+                log.info(
+                    "kria_creative_copy_creator_quoted", thread_id=str(thread_id), target=target
+                )
+            grounded = grounded or quoted
             if value and not (state and state.approved == value) and not (authored or grounded):
                 return _creative_copy_turn(
                     CreativeCopyDecision(target=target, status="candidate", proposed_text=value),
@@ -2537,6 +2685,15 @@ async def _plan_creator_action(
                     }
                 )
                 policy_notices = (*policy_notices, *extra)
+            if _unapplied_exclusions(planned):
+                # KRI-680: "don't use the two very dark clips" that no clip matched was
+                # dropped without a word, and both clips rendered. Say so before the render.
+                notice = _unapplied_exclusion_notice()
+                if notice not in policy_notices:
+                    action = action.model_copy(
+                        update={"summary": " ".join([action.summary.strip(), notice]).strip()}
+                    )
+                    policy_notices = (*policy_notices, notice)
         ordering_choice: str | None = None
         if settings.kria_choice_questions_enabled:
             ordering_choice = fold_choice_answers(thread_events).get(CONFLICT_ORDER_VS_GROUP)
@@ -2655,6 +2812,34 @@ def _creative_copy_turn(
         ),
         manifest_hash=manifest.manifest_hash,
         context_hash=manifest.context_hash,
+    )
+
+
+def _unapplied_exclusions(planned: PlannedIntentResolution) -> int:
+    """How many "leave these clips out" asks leave nothing out (KRI-680).
+
+    The planner could not tie the ask to clips (`exclusion_dropped`), or the resolver
+    matched no clip confidently: an exclude never asks the creator, so without a notice
+    the ask vanishes and the clips play.
+    """
+    unmatched = sum(
+        1
+        for intent in planned.resolution.intents
+        if intent.op == "exclude" and intent.status == "resolved" and not intent.assignments
+    )
+    return planned.dropped_exclusions + unmatched
+
+
+def _unapplied_exclusion_notice() -> str:
+    return say(
+        en=(
+            "I couldn't tell which clips you asked me to leave out, so I haven't removed"
+            " any for that. Tell me which ones and I'll take them out."
+        ),
+        tr=(
+            "Hangi klipleri çıkarmamı istediğini anlayamadım, bu yüzden o istek için"
+            " hiçbirini çıkarmadım. Hangilerini çıkarayım, söylersen çıkarırım."
+        ),
     )
 
 
@@ -3246,28 +3431,39 @@ async def _gate_unresolved_choices(
         "selected": strategy.get("selected_media_ids"),
         "audio": strategy.get("audio_strategy", "licensed_music"),
     }
+    # KRI-679: "calm music" must reach the song matcher, and a new ask must re-match.
+    music_ask = _creator_music_ask(brief)
+    if music_ask:
+        music_inputs["music_ask"] = music_ask
     music_input_digest = hashlib.sha256(
         json.dumps(music_inputs, sort_keys=True, default=str).encode()
     ).hexdigest()
-    frozen_music = None
-    for role, payload in reversed(events):
-        question = payload.get("choice_question") if isinstance(payload, dict) else None
-        context = question.get("length_context") if isinstance(question, dict) else None
-        if (
-            role == "assistant"
-            and isinstance(context, dict)
-            and context.get("input_digest") == music_input_digest
-        ):
-            frozen_music = context.get("licensed_music")
-            break
+    music_pool_digest = _music_pool_digest(music_inputs["media"], music_inputs["audio"], music_ask)
+    from app.services.length_policy import creator_duration_s  # noqa: PLC0415
+
+    creator_target = strategy.get("creator_duration_s")
+    music_target_s = creator_duration_s(brief=brief) or (
+        float(creator_target)
+        if isinstance(creator_target, (int, float))
+        and not isinstance(creator_target, bool)
+        and creator_target > 0
+        else None
+    )
+    frozen_music = _prior_frozen_music(events, music_input_digest, music_pool_digest)
     if frozen_music is None:
         frozen_music = await _freeze_licensed_music_section(
-            db, strategy, planned.media_snapshot, job_id=str(thread_id)
+            db,
+            strategy,
+            planned.media_snapshot,
+            job_id=str(thread_id),
+            target_s=music_target_s,
+            music_ask=music_ask,
         )
     elif isinstance(frozen_music, dict):
-        # A section frozen before KRI-600 may be longer than the footage can fill.
+        # A section frozen before KRI-600 may be longer than the footage can fill, and
+        # one frozen before KRI-679 (or before the selection changed) shorter than asked.
         frozen_music = _fit_music_section_to_footage(
-            frozen_music,
+            _fit_music_section_to_length(frozen_music, music_target_s),
             (planned.media_snapshot or {}).get("clip_assignments") or [],
             selected_ids={str(v) for v in strategy.get("selected_media_ids") or []},
         )
@@ -3347,6 +3543,7 @@ async def _gate_unresolved_choices(
         if frozen_music is not None:
             question["length_context"] = {
                 "input_digest": music_input_digest,
+                "pool_digest": music_pool_digest,
                 "licensed_music": frozen_music,
             }
         asked = KriaTurnPlan(

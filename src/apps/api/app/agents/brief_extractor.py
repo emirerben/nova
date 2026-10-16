@@ -22,7 +22,8 @@ from app.kria.brief import (
 from app.pipeline.prompt_loader import load_prompt
 
 # v9 (KRI-667/KRI-669): shared brief preserves heading and language-neutral ask facts.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-15-v9"
+# v10 (KRI-700): shared brief records `footage_light` for brighten / darken asks.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-16-v10"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

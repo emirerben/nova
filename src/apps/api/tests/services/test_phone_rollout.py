@@ -98,6 +98,7 @@ def test_compiled_clip_label_sequence_cannot_satisfy_opening_contract() -> None:
         CreatorRenderContract,
         CreatorRenderContractError,
         TextRequirement,
+        decline_payload,
         verify_phone_recipe,
     )
 
@@ -129,8 +130,12 @@ def test_compiled_clip_label_sequence_cannot_satisfy_opening_contract() -> None:
         exact_texts=(TextRequirement(role="opening", text="Morning coffee"),)
     )
 
-    with pytest.raises(CreatorRenderContractError, match="missing confirmed on-screen text"):
+    with pytest.raises(
+        CreatorRenderContractError, match="missing confirmed on-screen text"
+    ) as caught:
         verify_phone_recipe(contract, recipe)
+    # KRI-701: the refusal carries the missing words so the chat can name them.
+    assert decline_payload(caught.value)["missing_text"] == "Morning coffee"
 
 
 def test_qualified_font_does_not_qualify_giant_title(monkeypatch):

@@ -20,6 +20,7 @@ from app.schemas.clip_understanding import (
     ClipSpeech,
     ClipUnderstanding,
 )
+from app.services.clip_exposure import EXPOSURE_KEY, exposure_words
 from app.services.transcript_quality import is_degenerate_transcript
 
 
@@ -101,17 +102,30 @@ def unusable_spans_payload(meta: Any) -> list[dict[str, Any]]:
     return spans
 
 
+def _visibility(analysis: dict[str, Any]) -> str:
+    """KRI-680: the measured brightness words, only while CLIP_EXPOSURE_FACT is on, so the
+    kill switch also silences measurements already stored on older analyses."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.clip_exposure_fact_enabled:
+        return ""
+    return exposure_words(analysis.get(EXPOSURE_KEY))
+
+
 def clip_record(analysis: dict[str, Any] | None, *, kind: str = "video") -> ClipUnderstanding:
     """Project a stored analysis dict into the shared record. Never raises."""
     media_kind = "image" if kind == "image" else "video"
     if not isinstance(analysis, dict) or not analysis:
         return ClipUnderstanding(kind=media_kind)
+    visibility = _visibility(analysis) if media_kind == "video" else ""
 
     block = analysis.get(UNDERSTANDING_KEY)
     if isinstance(block, dict) and block:
         merged = {**block, "kind": media_kind}
         if analysis.get(FACTS_KEY):
             merged["facts"] = analysis[FACTS_KEY]
+        if visibility:
+            merged["visibility"] = visibility
         if not merged.get("subject"):
             merged["subject"] = analysis.get("subject") or ""
         if not merged.get("summary"):
@@ -139,6 +153,7 @@ def clip_record(analysis: dict[str, Any] | None, *, kind: str = "video") -> Clip
         brands=analysis.get("brands") or [],
         notable_moments=_moment_notes(analysis.get("best_moments")),
         facts=analysis.get(FACTS_KEY) or [],
+        visibility=visibility,
     )
 
 
