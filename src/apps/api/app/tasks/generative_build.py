@@ -16786,11 +16786,13 @@ def _grounded_context_labels(
                 # `ground_label`'s creator_text branch performs against a
                 # real creator_request.
                 from app.schemas.clip_intents import (  # noqa: PLC0415
+                    CREATOR_LABEL_MAX_WORDS,
                     _match_key,  # type: ignore[attr-defined]
                     clean_label_text,
                 )
 
-                cleaned = clean_label_text(assignment.value)
+                # KRI-678: the creator's own words keep their longer word cap here too.
+                cleaned = clean_label_text(assignment.value, max_words=CREATOR_LABEL_MAX_WORDS)
                 if cleaned is not None and _match_key(cleaned) == _match_key(intent.creator_text):
                     from app.schemas.clip_intents import GroundedLabel  # noqa: PLC0415
 

@@ -23,11 +23,14 @@ from app.config import settings
 from app.kria.reply_language import current_reply_language, say
 from app.schemas.clip_intents import (
     CLIP_DESCRIPTION_ATTRIBUTE,
+    CREATOR_LABEL_MAX_WORDS,
+    LABEL_MAX_CHARS,
     MAX_CLIP_INTENTS,
     ClipAssignment,
     ClipIntent,
     ResolvedClipIntent,
     asks_clip_description,
+    creator_label_problem,
     fit_intent_id,
     ground_caption,
     ground_label,
@@ -172,6 +175,77 @@ def with_clip_descriptions(intents: list[ClipIntent]) -> list[ClipIntent]:
         *kept,
         ClipIntent(intent_id=intent_id, op="label", attribute=CLIP_DESCRIPTION_ATTRIBUTE),
     ]
+
+
+def _label_problem_phrase(text: str, problem: str) -> str:
+    if problem == "too_long":
+        return say(
+            en=(
+                f'The label "{text}" is too long to fit on the video '
+                f"(a label holds up to {LABEL_MAX_CHARS} characters)."
+            ),
+            tr=(
+                f'"{text}" etiketi videoya sığmayacak kadar uzun '
+                f"(etiket en fazla {LABEL_MAX_CHARS} karakter olabilir)."
+            ),
+        )
+    if problem == "too_many_words":
+        return say(
+            en=(
+                f'The label "{text}" has too many words to fit on the video '
+                f"(a label holds up to {CREATOR_LABEL_MAX_WORDS} words)."
+            ),
+            tr=(
+                f'"{text}" etiketinde videoya sığmayacak kadar çok kelime var '
+                f"(etiket en fazla {CREATOR_LABEL_MAX_WORDS} kelime olabilir)."
+            ),
+        )
+    if problem == "characters":
+        return say(
+            en=(
+                f'The label "{text}" has characters a label can\'t show '
+                "(only letters, numbers, spaces, &, apostrophes and hyphens)."
+            ),
+            tr=(
+                f'"{text}" etiketinde etikette gösterilemeyen karakterler var '
+                "(yalnızca harf, rakam, boşluk, &, kesme işareti ve tire)."
+            ),
+        )
+    return say(
+        en=f'The label "{text}" has no letters to show.',
+        tr=f'"{text}" etiketinde gösterilecek harf yok.',
+    )
+
+
+def unusable_label_question(intents: list[ClipIntent]) -> str | None:
+    """A plain reply when the creator's own label words can never be printed (KRI-678).
+
+    Such a label can never be grounded, so the clip picker would ask "which clips?"
+    again after every answer. Say why the text can't be used and ask for another;
+    None when every creator label can be printed.
+    """
+    phrases: list[str] = []
+    for intent in intents:
+        if (
+            intent.op != "label"
+            or intent.label_source != "clip"
+            or intent.placeholder
+            or not intent.creator_text
+        ):
+            continue
+        problem = creator_label_problem(intent.creator_text)
+        if problem is None:
+            continue
+        phrase = _label_problem_phrase(intent.creator_text, problem)
+        if phrase not in phrases:
+            phrases.append(phrase)
+    if not phrases:
+        return None
+    ask = say(
+        en="What shorter label should I use instead?",
+        tr="Yerine hangi daha kısa etiketi yazayım?",
+    )
+    return " ".join([*phrases, ask])
 
 
 def apply_creator_selections(
@@ -540,6 +614,19 @@ async def plan_and_resolve_clip_intents(
         ]
     if describe_clips:
         intents = with_clip_descriptions(intents)
+    # KRI-678: a creator label that can never be printed is a question about the TEXT,
+    # never about clips. Asked before the picker, so a tapped answer cannot loop.
+    label_question = unusable_label_question(intents)
+    if label_question is not None:
+        return PlannedIntentResolution(
+            intents,
+            IntentResolution(
+                status="needs_creator",
+                question=label_question,
+                error_code="label_text_unusable",
+                diagnostics={"stage": "planning", "reason": "label_text_unusable"},
+            ),
+        )
     visual_intents = [intent for intent in intents if intent.label_source == "clip"]
     order_by_intents = [intent for intent in visual_intents if intent.order_by]
     visual_intents = [intent for intent in visual_intents if not intent.order_by]

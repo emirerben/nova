@@ -78,6 +78,11 @@ PLACEHOLDER_LABEL_TEXT = "Name"
 LABEL_MIN_CONFIDENCE = 0.8
 LABEL_MAX_CHARS = 24
 LABEL_MAX_WORDS = 3
+# KRI-678: the creator's OWN label words ("Parque de la Costa", "Sagrada Família de
+# Gaudí") are a name, not a model-authored tag, so they may run a little longer.
+# LABEL_MAX_CHARS stays the on-screen width bound for every label; model and vision
+# copy keep LABEL_MAX_WORDS.
+CREATOR_LABEL_MAX_WORDS = 5
 # Membership (group/order/include/caption) moves clips but prints nothing
 # itself, so it needs less certainty than a label's per-clip printed value
 # does.
@@ -301,16 +306,40 @@ def ground_placeholder_label(*, media_id: str, intent_id: str = "") -> GroundedL
     )
 
 
-def clean_label_text(value: object) -> str | None:
-    """Normalise candidate label copy; None when it can never be a label."""
+def clean_label_text(value: object, *, max_words: int = LABEL_MAX_WORDS) -> str | None:
+    """Normalise candidate label copy; None when it can never be a label.
+
+    ``max_words`` is ``CREATOR_LABEL_MAX_WORDS`` only for the creator's own words.
+    """
     text = _clean(value, 200)
     if not text or _LABEL_ALLOWED.search(text):
         return None
-    if len(text) > LABEL_MAX_CHARS or len(text.split()) > LABEL_MAX_WORDS:
+    if len(text) > LABEL_MAX_CHARS or len(text.split()) > max_words:
         return None
     if not any(c.isalpha() for c in text):
         return None
     return text
+
+
+CreatorLabelProblem = Literal["too_long", "too_many_words", "characters", "empty"]
+
+
+def creator_label_problem(value: object) -> CreatorLabelProblem | None:
+    """Why the creator's own label words can never be printed, or None when they can.
+
+    KRI-678: such a label can never be grounded, so asking "which clips?" about it
+    loops forever. The caller says this reason instead of showing the clip picker.
+    """
+    if clean_label_text(value, max_words=CREATOR_LABEL_MAX_WORDS) is not None:
+        return None
+    text = _clean(value, 200)
+    if not text or not any(c.isalpha() for c in text):
+        return "empty"
+    if _LABEL_ALLOWED.search(text):
+        return "characters"
+    if len(text) > LABEL_MAX_CHARS:
+        return "too_long"
+    return "too_many_words"
 
 
 def vision_evidence_text(record: ClipUnderstanding) -> str:
@@ -421,7 +450,7 @@ def ground_label(
     intent_id: str = "",
 ) -> GroundedLabel | None:
     """Apply the on-screen text fence. Returns None when the label must not render."""
-    text = clean_label_text(value)
+    text = clean_label_text(value, max_words=CREATOR_LABEL_MAX_WORDS)
     if text is None:
         return None
     if _contains_phrase(creator_request or "", text):
@@ -432,6 +461,10 @@ def ground_label(
             confidence=1.0,
             intent_id=intent_id,
         )
+    # KRI-678: only the creator's own words get the longer word cap. Copy grounded
+    # from a clip record or a vision answer keeps the short-tag bound.
+    if len(text.split()) > LABEL_MAX_WORDS:
+        return None
     words = _tokens(text)
     if not words:
         return None
