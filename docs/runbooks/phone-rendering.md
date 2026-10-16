@@ -2394,6 +2394,33 @@ agree. Guards: `tests/pipeline/test_narrated_title.py`,
 `testReadOnlyTitleCompilesLikeTheExportedPhoneTitle`, overlay fixture
 `narrated_title_fit.json`.
 
+## Several videos on a phone Talking edit (KRI-719)
+
+Env `TALKING_MULTI_CLIP_ENABLED` (default `false`; api + worker) plus phone
+`subtitled` and the `PHONE_TALKING_HEAD_FEATURES` device features
+(`phone_rollout.phone_talking_multi_clip_supported()`, the single gate for the
+clip cap, dispatch, manifest and worker). On: a declared Talking item takes up
+to `TALKING_MULTI_CLIP_MAX_CLIPS` (10) clips.
+
+- **Speakers vs footage** (`pipeline/phone_talking_cutaways.classify_talking_clips`,
+  worker `_classify_phone_talking_clips`): a clip speaks when its audio is present
+  and Whisper hears >= 6 words at >= 0.8 words/s. Speakers play back to back on
+  the main track in upload order (`compile_phone_subtitled_plan(additional_speakers=...)`),
+  captions built per clip and shifted. No clear speaker: the wordiest clip speaks.
+- **Footage** becomes muted full-frame cutaways on the KRI-136 `talking-head-cutaways`
+  track, timed by `schedule_footage_cutaways` (KRI-297 rules: 2.5 s hook and title
+  free, 1 s tail, 1.5-4 s windows, word-snapped, never over a full-screen Visual).
+  No room: receipt `unplaced` with upload position, shown as chat render notes.
+- **v1 limits**: speech cleanup refused for any multi-clip Talking (KRI-720); with
+  2+ speakers the KRI-174 lanes (cards, sounds, beats) and KRI-547 face fill are
+  skipped (`lanes_skipped`); cloud Talking still uses only the first clip, so keep
+  the flag off until the cloud renderer lands (plans/027 phase 3).
+- **Receipt**: `variants[i].phone_talking_multi_clip` (speakers, cutaways, unplaced,
+  per-clip roles); trace event `phone/talking_multi_clip_roles`.
+- **Editor Save** keeps speakers and cutaways from the pinned recipe
+  (`speaker_binding_from_recipe`, `additional_speakers_from_recipe`, `cutaways_from_recipe`).
+  The iOS live preview still falls back to the finished MP4 for 2+ clips (phase 2).
+
 ## Hook titles on phone Talking edits (KRI-467)
 
 A confirmed `opening_title` on a phone Talking edit (`subtitled`: one clip, or

@@ -809,9 +809,23 @@ def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web"
 
 
 def _format_clip_limit(edit_format: str | None) -> int:
-    """Mirror the format-specific limit enforced by the PlanItem setup UI."""
+    """Mirror the format-specific limit enforced by the PlanItem setup UI.
 
-    return 1 if edit_format == "subtitled" else _MAX_CLIPS_PER_ITEM
+    Talking to camera (`subtitled`) is one clip. With KRI-719's multi-clip
+    rollout live (`phone_talking_multi_clip_supported()`) it carries up to
+    `TALKING_MULTI_CLIP_MAX_CLIPS` (speakers + muted cutaways) -- the same cap
+    the dispatch gate enforces, so a creator can never attach more than the
+    phone will render.
+    """
+
+    if edit_format == "subtitled":
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            TALKING_MULTI_CLIP_MAX_CLIPS,
+            phone_talking_multi_clip_supported,
+        )
+
+        return TALKING_MULTI_CLIP_MAX_CLIPS if phone_talking_multi_clip_supported() else 1
+    return _MAX_CLIPS_PER_ITEM
 
 
 def _safe_filename(filename: str) -> str:
@@ -2086,6 +2100,7 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
     from app.services.nova_steps import (
         render_notes_from_beat_receipt,
         render_notes_from_overlay_receipt,
+        render_notes_from_talking_multi_clip_receipt,
     )
     from app.tasks.content_plan_build import job_failure_message
 
@@ -2113,6 +2128,10 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
         primary_variant.get("phone_beat_receipt") if primary_variant is not None else None
     ) + render_notes_from_overlay_receipt(
         primary_variant.get("phone_overlay_receipt") if primary_variant is not None else None
+    )
+    # KRI-719: which clips spoke back to back and which other clips found room.
+    render_notes += render_notes_from_talking_multi_clip_receipt(
+        primary_variant.get("phone_talking_multi_clip") if primary_variant is not None else None
     )
     # KRI-286: what the phone compiler repaired so this plan could render (never silent).
     repair_notes = primary_variant.get("phone_repair_notes") if primary_variant else None

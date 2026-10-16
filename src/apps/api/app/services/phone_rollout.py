@@ -1026,6 +1026,34 @@ def phone_talking_head_supported() -> bool:
     )
 
 
+# KRI-719: most clips a declared Talking-to-camera item may carry when
+# `phone_talking_multi_clip_supported()` (speakers + cutaways together).
+TALKING_MULTI_CLIP_MAX_CLIPS = 10
+
+
+def phone_talking_multi_clip_supported() -> bool:
+    """Single source of truth for "may a declared Talking-to-camera
+    (`subtitled`) item carry 2+ clips right now" (KRI-719).
+
+    Consulted by the clip cap (`routes/creation_threads._format_clip_limit`),
+    the dispatch gate (`content_plan_build.py`), the planner manifest
+    (`creator_capabilities.resolve_creator_manifest`) and the worker
+    (`generative_build._run_phone_subtitled_job`), so none of them disagree.
+
+    True iff ALL of: `talking_multi_clip_enabled`, phone `subtitled` rendering,
+    and every `PHONE_TALKING_HEAD_FEATURES` entry in
+    `phone_render_verified_features` (the cutaway track is the same KRI-136
+    shape).
+    """
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        getattr(settings, "talking_multi_clip_enabled", False)
+        and "subtitled" in phone_render_supported_formats()
+        and all(feature in verified for feature in PHONE_TALKING_HEAD_FEATURES)
+    )
+
+
 def phone_render_supported_formats() -> frozenset[str]:
     """The single source of truth for "which edit formats can render on the
     phone for THIS deployment, right now" -- settings-aware, unlike the

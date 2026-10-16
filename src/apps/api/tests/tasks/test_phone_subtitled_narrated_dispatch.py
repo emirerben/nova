@@ -3395,3 +3395,173 @@ def test_voiceover_beat_lane_compile_error_drops_the_lane_not_the_job(monkeypatc
     assert receipt["placed"] == []
     assert {entry["reason"] for entry in receipt["unplaced"]} == {"compile_dropped"}
     assert PHONE_VISUALS_FIELD not in job.assembly_plan
+
+
+# --- KRI-719: multi-clip declared Talking (speakers back to back + footage) --
+
+
+def _setup_talking_multi(monkeypatch, *, clips, enabled=True):
+    """Declared `subtitled` item. ``clips`` = [(clip_id, duration_s, words)] in
+    upload order; each clip's transcript has ``words`` words spread over it."""
+    bindings = {cid: _binding(cid, duration_s=dur) for cid, dur, _ in clips}
+    snapshot = {
+        PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings.values()],
+        "creator_generation_id": "generation",
+    }
+    all_candidates = {
+        "clip_paths": [b.proxy_path for b in bindings.values()],
+        "edit_format": "subtitled",
+        "language": "en",
+    }
+    job, session = _job_and_session(
+        monkeypatch, assembly_plan=snapshot, all_candidates=all_candidates
+    )
+    monkeypatch.setattr(gb.settings, "phone_render_verified_features", _TALKING_HEAD_FEATURES)
+    monkeypatch.setattr(gb.settings, "talking_multi_clip_enabled", enabled)
+    durations = {cid: dur for cid, dur, _ in clips}
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *a, **k: {
+            "clip_metas": [_Meta(cid, 5.0) for cid, _, _ in clips],
+            "clip_id_to_gcs": {cid: b.proxy_path for cid, b in bindings.items()},
+            "clip_id_to_local": {cid: f"/tmp/{cid}.mp4" for cid in durations},
+            "probe_map": {
+                f"/tmp/{cid}.mp4": SimpleNamespace(duration_s=dur) for cid, dur in durations.items()
+            },
+            "hero": _Meta(clips[0][0], 5.0),
+        },
+        raising=False,
+    )
+
+    import app.pipeline.probe as probe_mod
+    import app.pipeline.transcribe as transcribe_mod
+
+    def _clip_id(path):
+        return path.rsplit("/", 1)[-1].split(".")[0]
+
+    monkeypatch.setattr(
+        probe_mod,
+        "probe_video",
+        lambda path: SimpleNamespace(duration_s=durations[_clip_id(path)]),
+        raising=False,
+    )
+    word_counts = {cid: n for cid, _, n in clips}
+
+    def _transcribe(path, *a, **k):
+        cid = _clip_id(path)
+        n = word_counts[cid]
+        step = durations[cid] / max(n, 1)
+        spans = [
+            (f"{cid}w{i}{'.' if i % 6 == 5 else ''}", i * step, i * step + step * 0.8)
+            for i in range(n)
+        ]
+        return Transcript(words=_words(*spans), language="en")
+
+    monkeypatch.setattr(transcribe_mod, "transcribe_whisper_cached", _transcribe, raising=False)
+    return job, snapshot, bindings
+
+
+def test_two_talking_clips_play_back_to_back_and_footage_covers_them(monkeypatch):
+    job, _snapshot, _bindings = _setup_talking_multi(
+        monkeypatch,
+        clips=[("take1", 20.0, 40), ("street", 6.0, 1), ("take2", 15.0, 30)],
+    )
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    recipe = device_status(job, "subtitled").request.recipe
+    tracks = {track.id: track for track in recipe.tracks}
+    main = tracks["subtitled"].clips
+    # Both speakers play in upload order, each in full with its own audio.
+    assert [(c.source_asset_id, c.timeline_start, c.source_duration) for c in main] == [
+        ("take1", 0.0, 20.0),
+        ("take2", 20.0, 15.0),
+    ]
+    assert all(c.volume != 0 for c in main)
+    assert recipe.duration == pytest.approx(35.0)
+    # The footage clip covers them, muted and full frame, outside the hook and tail.
+    cutaways = tracks["talking-head-cutaways"].clips
+    assert [c.source_asset_id for c in cutaways] == ["street"]
+    assert cutaways[0].volume == 0
+    assert cutaways[0].visual_placement.width_fraction is None
+    assert cutaways[0].timeline_start >= 2.5
+    assert cutaways[0].timeline_start + cutaways[0].source_duration <= 34.0 + 1e-6
+
+    variant = job.assembly_plan["variants"][0]
+    # Captions cover the second speaker too, on its place in the timeline.
+    cue_starts = [cue["start_s"] for cue in variant["caption_cues"]]
+    assert min(cue_starts) < 20.0 <= max(cue_starts)
+    assert not any("street" in cue["text"] for cue in variant["caption_cues"])
+    receipt = variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]
+    assert receipt["speaker_media_ids"] == ["take1", "take2"]
+    assert [row["media_id"] for row in receipt["cutaways"]] == ["street"]
+    assert receipt["unplaced"] == []
+    assert gb.PHONE_TALKING_HEAD_FIELD not in variant
+
+    from app.services.nova_steps import render_notes_from_talking_multi_clip_receipt
+
+    assert render_notes_from_talking_multi_clip_receipt(receipt) == [
+        "Played your 2 talking clips back to back",
+        "Showed your 1 other clip full screen while you talk",
+    ]
+
+
+def test_one_talking_clip_with_footage_keeps_one_speaker(monkeypatch):
+    job, _snapshot, _bindings = _setup_talking_multi(
+        monkeypatch,
+        clips=[("broll1", 5.0, 0), ("take", 30.0, 60), ("broll2", 8.0, 2)],
+    )
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    recipe = device_status(job, "subtitled").request.recipe
+    tracks = {track.id: track for track in recipe.tracks}
+    assert [c.source_asset_id for c in tracks["subtitled"].clips] == ["take"]
+    assert [c.source_asset_id for c in tracks["talking-head-cutaways"].clips] == [
+        "broll1",
+        "broll2",
+    ]
+    receipt = job.assembly_plan["variants"][0][gb.PHONE_TALKING_MULTI_CLIP_FIELD]
+    assert receipt["speaker_media_ids"] == ["take"]
+    assert "lanes_skipped" not in receipt
+
+
+def test_footage_that_finds_no_room_is_reported_by_upload_position(monkeypatch):
+    job, _snapshot, _bindings = _setup_talking_multi(
+        monkeypatch,
+        clips=[("take", 6.0, 12), ("a", 5.0, 0), ("b", 5.0, 0), ("c", 5.0, 0)],
+    )
+    gb._run_generative_job(str(job.id))
+
+    receipt = job.assembly_plan["variants"][0][gb.PHONE_TALKING_MULTI_CLIP_FIELD]
+    # 6 s talk: 2.5 s hook + 1 s tail leaves room for one 1.5 s cutaway.
+    assert [row["media_id"] for row in receipt["cutaways"]] == ["a"]
+    assert receipt["unplaced"] == [
+        {"media_id": "b", "position": 3, "reason": "no_room_in_timeline"},
+        {"media_id": "c", "position": 4, "reason": "no_room_in_timeline"},
+    ]
+    from app.services.nova_steps import render_notes_from_talking_multi_clip_receipt
+
+    assert render_notes_from_talking_multi_clip_receipt(receipt) == [
+        "Showed 1 of your 3 other clips full screen",
+        "There wasn't room in the video to show clip 3 too",
+        "There wasn't room in the video to show clip 4 too",
+    ]
+
+
+def test_multi_clip_talking_flag_off_keeps_the_single_clip_contract(monkeypatch):
+    job, snapshot, _bindings = _setup_talking_multi(
+        monkeypatch, clips=[("take", 20.0, 40), ("street", 6.0, 0)], enabled=False
+    )
+    with pytest.raises(ValueError, match="exactly one clip"):
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+
+def test_multi_clip_talking_refuses_required_speech_cleanup(monkeypatch):
+    job, snapshot, _bindings = _setup_talking_multi(
+        monkeypatch, clips=[("take", 20.0, 40), ("street", 6.0, 0)]
+    )
+    snapshot["speech_cleanup_contract"] = "required_v1"
+    with pytest.raises(gb.SpeechCleanupFailure):
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)

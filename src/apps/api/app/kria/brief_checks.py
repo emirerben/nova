@@ -2760,6 +2760,17 @@ def _wants_exact_text(req: BriefRequirement) -> bool:
     return bool(_EXACT_TEXT_RE.search(req.description or ""))
 
 
+def _talking_uses_every_clip(video_clip_count: int) -> bool:
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        TALKING_MULTI_CLIP_MAX_CLIPS,
+        phone_talking_multi_clip_supported,
+    )
+
+    if phone_talking_multi_clip_supported():
+        return 1 <= video_clip_count <= TALKING_MULTI_CLIP_MAX_CLIPS
+    return video_clip_count == 1
+
+
 def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """A single-clip subtitled edit renders its one clip full-length."""
     if facts.edit_format is None or facts.editor:
@@ -2781,7 +2792,9 @@ def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         )
     if facts.video_clip_count is None:
         return _receipt(req, "partial", _CANT_CHECK_TAKE)
-    if facts.video_clip_count != 1:
+    # KRI-719: with multi-clip Talking live, every attached clip is a speaker or a
+    # cutaway of the one edit, so more than one clip is not a dropped take.
+    if not _talking_uses_every_clip(facts.video_clip_count):
         return _receipt(
             req,
             "partial",

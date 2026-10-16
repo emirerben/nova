@@ -288,6 +288,16 @@ class Settings(BaseSettings):
     # PHONE_TALKING_HEAD_RENDERING_ENABLED=true --app nova-video` +
     # `fly machine restart <id>` (api + worker). No NEXT_PUBLIC twin.
     phone_talking_head_rendering_enabled: bool = False
+    # KRI-719: a declared Talking-to-camera (`subtitled`) item may carry up to
+    # `TALKING_MULTI_CLIP_MAX_CLIPS` clips on the phone. Clips with speech play
+    # back to back on the main track (each with its own audio and captions);
+    # the rest cover the picture as muted full-frame cutaways. Also needs phone
+    # `subtitled` and the `PHONE_TALKING_HEAD_FEATURES` device features -- see
+    # `app.services.phone_rollout.phone_talking_multi_clip_supported`. False
+    # (default): byte-identical, Talking stays capped at one clip. Keep off until
+    # the cloud renderer uses the extra clips too (plans/027). Apply: `fly secrets
+    # set TALKING_MULTI_CLIP_ENABLED=true --app nova-video` + restart api + worker.
+    talking_multi_clip_enabled: bool = False
     # KRI-132 (narrated walkthrough): a `narrated`/`narrated_planned`/
     # `narrated_ready` item WITH a recorded voiceover compiles through
     # `app.pipeline.phone_narrated_plan.compile_phone_narrated_plan`

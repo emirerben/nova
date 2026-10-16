@@ -626,3 +626,41 @@ def test_a_hit_demoted_after_grounding_still_counts_as_heard() -> None:
         }
     )
     assert facts.capped_beat_hits == (("kahve", 23, 30),)
+
+
+# ---------------------------------------------- KRI-719: multi-clip Talking
+
+
+def _multi_clip_talking(monkeypatch: pytest.MonkeyPatch, *, flag: bool) -> None:
+    from app.config import settings
+    from app.services.phone_rollout import PHONE_TALKING_HEAD_FEATURES
+
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", True)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(PHONE_TALKING_HEAD_FEATURES)
+    )
+    monkeypatch.setattr(settings, "talking_multi_clip_enabled", flag)
+
+
+@pytest.mark.parametrize(("videos", "status"), [(2, "partial"), (3, "partial"), (11, "partial")])
+def test_whole_take_multi_clip_talking_flag_off_still_partial(
+    monkeypatch: pytest.MonkeyPatch, videos: int, status: str
+) -> None:
+    _multi_clip_talking(monkeypatch, flag=False)
+    facts = PlanFacts(edit_format="subtitled", video_clip_count=videos)
+    receipt = check_requirement(_WHOLE_TAKE, facts)
+    assert receipt.status == status
+    assert receipt.reason == "This edit uses one of your clips, not every take."
+
+
+@pytest.mark.parametrize(
+    ("videos", "status"), [(1, "met"), (3, "met"), (10, "met"), (11, "partial")]
+)
+def test_whole_take_multi_clip_talking_flag_on_uses_every_clip(
+    monkeypatch: pytest.MonkeyPatch, videos: int, status: str
+) -> None:
+    _multi_clip_talking(monkeypatch, flag=True)
+    facts = PlanFacts(edit_format="subtitled", video_clip_count=videos)
+    assert check_requirement(_WHOLE_TAKE, facts).status == status
