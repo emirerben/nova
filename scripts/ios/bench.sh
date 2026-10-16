@@ -117,8 +117,15 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
     -enableCodeCoverage NO SWIFT_OPTIMIZATION_LEVEL=-O SWIFT_COMPILATION_MODE=wholemodule \
     "${BUILD_SETTINGS[@]}" | xcbeautify_or_cat
   rm -rf "$SAVED"
-  mkdir -p "$SAVED"
-  cp -R "$DERIVED_DATA/Build/Products/." "$SAVED/"
+  if [[ "$DEST" == "device" ]]; then
+    # A physical device only launches the app under test in scheme mode (-xctestrun fails with "process identifier
+    # of the launched application could not be determined"), and scheme mode wants a derived-data layout.
+    mkdir -p "$SAVED/Build/Products"
+    ditto "$DERIVED_DATA/Build/Products" "$SAVED/Build/Products"
+  else
+    mkdir -p "$SAVED"
+    ditto "$DERIVED_DATA/Build/Products" "$SAVED"
+  fi
   echo "bench: saved build to $SAVED"
 fi
 [[ -d "$SAVED" ]] || { echo "No saved build for '$LABEL' on $DEST ($SAVED); run without --skip-build first" >&2; exit 2; }
@@ -140,10 +147,15 @@ fi
 
 # run_pass <saved-build-dir> <log> <iterations> : append one xcodebuild test pass to <log>
 run_pass() {
-  local build="$1" log="$2" iterations="$3" bundle
+  local build="$1" log="$2" iterations="$3" bundle target
   bundle="$(mktemp -d "$OUT_DIR/pass.XXXXXX")"
+  if [[ "$DEST" == "device" ]]; then
+    target=(-project "$IOS_ROOT/Kria.xcodeproj" -scheme "Kria Perf" -configuration Debug -derivedDataPath "$build")
+  else
+    target=(-xctestrun "$(xctestrun_in "$build")")
+  fi
   TEST_RUNNER_KRIA_PERF_ITERATIONS="$iterations" xcodebuild test-without-building \
-    -xctestrun "$(xctestrun_in "$build")" -destination "$DESTINATION" \
+    "${target[@]}" -destination "$DESTINATION" \
     -resultBundlePath "$bundle/result.xcresult" -enableCodeCoverage NO \
     "${ONLY_ARGS[@]}" 2>&1 | tee -a "$log" | xcbeautify_or_cat || echo "bench: a pass had failures; reporting what was measured" >&2
   rm -rf "$bundle"

@@ -193,6 +193,30 @@ final class PerfUITests: XCTestCase {
 
     // MARK: Gallery
 
+    /// On a physical iPhone `AsyncImage` does not go through the fixture's URL protocol (the posters never reach
+    /// `PerfPosterURLProtocol`, `poster.network` stays 0), so the baseline gallery cannot be measured there. The
+    /// simulator measures it; the poster cache that replaces `AsyncImage` takes an injectable session and is
+    /// measurable on both.
+    private func skipGalleryOnDevice() throws {
+        #if !targetEnvironment(simulator)
+        throw XCTSkip("AsyncImage bypasses the fixture URL protocol on a physical device; gallery is measured on the simulator")
+        #endif
+    }
+
+    /// The first poster on screen. On failure the accessibility tree is printed, so a missing poster can be told
+    /// apart from a gallery that never opened.
+    private func waitForPoster(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let poster = app.images["project-poster-image"].firstMatch
+        guard poster.waitForExistence(timeout: 30) else {
+            let buttons = app.buttons.allElementsBoundByIndex.prefix(25).map(\.label).joined(separator: " | ")
+            let states = ["Loading your cuts…", "Your next cut will live here.", "Your gallery couldn’t load."]
+                .filter { app.staticTexts[$0].exists }
+            print("PERFDEBUG no poster. buttons: \(buttons). gallery states: \(states). images: \(app.images.count). counters: \(counters(app))")
+            XCTFail("No gallery poster appeared", file: file, line: line)
+            return
+        }
+    }
+
     /// From the chat, or from the drawer the gallery's menu button returns to.
     private func openGallery(_ app: XCUIApplication) {
         let gallery = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Gallery'")).firstMatch
@@ -209,30 +233,32 @@ final class PerfUITests: XCTestCase {
     }
 
     /// Gallery to the first screen of posters, 200 videos, posters re-signed on every fetch.
-    func testGalleryOpen() {
+    func testGalleryOpen() throws {
+        try skipGalleryOnDevice()
         warmCache(["KRIA_GALLERY_ITEMS": "200"])
         let app = makeApp(["KRIA_GALLERY_ITEMS": "200"])
         app.launch()
         waitForTranscript(app)
         measure(metrics: [interval("gallery.open")], options: options) {
             openGallery(app)
-            XCTAssertTrue(app.images["project-poster-image"].firstMatch.waitForExistence(timeout: 30))
+            waitForPoster(app)
             closeGallery(app)
         }
     }
 
     /// Reopening the gallery should not fetch posters it already showed; reports the network fetches per reopen.
-    func testGalleryReopenPosterFetches() {
+    func testGalleryReopenPosterFetches() throws {
+        try skipGalleryOnDevice()
         let environment = ["KRIA_GALLERY_ITEMS": "200"]
         let app = makeApp(reset: true, environment)
         app.launch()
         waitForTranscript(app)
         openGallery(app)
-        XCTAssertTrue(app.images["project-poster-image"].firstMatch.waitForExistence(timeout: 30))
+        waitForPoster(app)
         let afterFirstOpen = counters(app)["poster.network"] ?? 0
         closeGallery(app)
         openGallery(app)
-        XCTAssertTrue(app.images["project-poster-image"].firstMatch.waitForExistence(timeout: 30))
+        waitForPoster(app)
         RunLoop.current.run(until: Date().addingTimeInterval(2))
         let afterReopen = counters(app)["poster.network"] ?? 0
         add(XCTAttachment(string: "poster.network first=\(afterFirstOpen) reopen=\(afterReopen - afterFirstOpen)"))

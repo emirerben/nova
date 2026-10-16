@@ -132,7 +132,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
         print(f"| {key} | {fmt(b['median'], b['unit'])} | {fmt(n['median'], n['unit'])} | {percent:+.0f}% | {word} |")
     for key in sorted(set(base["counters"]) & set(new["counters"])):
         b, n = base["counters"][key], new["counters"][key]
-        word = "same" if abs(b - n) < 0.01 else ("improved" if n < b else "regressed")
+        # Counts that depend on timing (poll loops, rebuilds while scrolling) wobble by a few percent between
+        # identical runs; only a change beyond that, or beyond half a request, is a difference.
+        word = "same" if abs(b - n) <= max(0.5, 0.1 * abs(b)) else ("improved" if n < b else "regressed")
         print(f"| {key} | {b:g} | {n:g} | {n - b:+g} | {word} |")
     only = sorted(set(base["metrics"]) ^ set(new["metrics"]))
     if only:

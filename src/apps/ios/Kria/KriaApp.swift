@@ -13,6 +13,8 @@ import SwiftData
         Perf.begin("launch.init")
         defer { Perf.end("launch.init") }
         #if DEBUG
+        // First, before anything can touch `URLSession.shared`: AsyncImage loads gallery posters through it.
+        PerfPosterURLProtocol.registerIfNeeded()
         // Opt-in hardware journey: real HTTP/API + scratch database, separate QA bundle.
         // Never uses a developer's Keychain or connects without both explicit inputs.
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-retry-api"),
@@ -48,7 +50,6 @@ import SwiftData
             let container = PerfFixture.container()
             self.container = container
             CreationChatFixture.seedClipThumbnails()
-            PerfPosterURLProtocol.registerIfNeeded()
             let api = ChatUITestTransport.api()
             // With an expired fixture session the account is "signed in", so its profile read must hit the fixture too.
             _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken ? api : nil))

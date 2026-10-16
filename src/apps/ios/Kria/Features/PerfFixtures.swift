@@ -243,6 +243,7 @@ final class PerfPosterURLProtocol: URLProtocol, @unchecked Sendable {
     static func registerIfNeeded() {
         guard PerfFixture.galleryItemCount > 0 else { return }
         URLProtocol.registerClass(PerfPosterURLProtocol.self)
+        PerfCounters.shared.increment("poster.protocolRegistered")
     }
 
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == host }
