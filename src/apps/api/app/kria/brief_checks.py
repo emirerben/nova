@@ -4830,11 +4830,44 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         }:
             return _receipt(req, "partial", _NO_CHECKER)
         return _receipt(req, "met", None)
+    if _is_spoken_text_cue(req) and _is_voiceover_edit(facts):
+        # KRI-699: a voiceover edit draws its title, captions and word-timed photos/sounds,
+        # never a creator text on a spoken word, so a retry can't add it. Still the
+        # creator's call (held draft), not a format limit.
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en="A voiceover edit can't show text at a word you say yet.",
+                tr="Seslendirmeli düzenleme henüz söylediğin bir kelimede yazı gösteremiyor.",
+            ),
+        )
     return _receipt(
         req,
         "partial",
         say(en="That exact text isn't in this draft.", tr="Bu tam yazı bu taslakta yok."),
     )
+
+
+# Fact keys that name the spoken words a text line waits for. Narrower than
+# `_TRIGGER_FACT_KEYS`: on a text ask, "words" / "keywords" may be the text itself.
+_SPOKEN_TEXT_CUE_KEYS = ("triggers", "trigger", "trigger_words", "when_i_say", "spoken_words")
+
+
+def _is_spoken_text_cue(req: BriefRequirement) -> bool:
+    """A text line asked to appear when the creator says something (KRI-699).
+
+    The cue is read from the ask, never from the text itself ("Meet at the words" is copy).
+    """
+    if req.scope == "title":
+        return False
+    return any(req.facts.get(key) for key in _SPOKEN_TEXT_CUE_KEYS) or bool(
+        _SPOKEN_CUE_RE.search(_fold(req.description or ""))
+    )
+
+
+def _is_voiceover_edit(facts: PlanFacts) -> bool:
+    return facts.edit_format in NARRATED_EDIT_FORMATS and facts.audio_strategy == "voiceover"
 
 
 # KRI-546: two asks a finished phone montage can settle from its own evidence. Patterns run
