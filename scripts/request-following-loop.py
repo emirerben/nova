@@ -20,23 +20,14 @@ from urllib.parse import urlencode
 
 ROOT = Path(__file__).resolve().parents[1]
 API = ROOT / "src/apps/api"
-STAGES = ("understanding", "handoff", "operations", "persistence", "rendering")
-CHANNELS = ("understanding", "persisted_execution", "rendered_output")
-CONTEXT = (
-    "requests",
-    "media",
-    "followups",
-    "manual_edits",
-    "agent_decisions",
-    "saved_operations",
-    "final_output",
+sys.path.insert(0, str(API))
+from app.services.request_following_cases import (  # noqa: E402
+    CHANNELS,
+    STAGES,
+    build_candidate,
+    digest,
+    validate_eligibility_receipt,
 )
-
-
-def digest(value):
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, ensure_ascii=False).encode()
-    ).hexdigest()
 
 
 def read(path):
@@ -131,19 +122,31 @@ def capture(args):
         except (ValueError, subprocess.TimeoutExpired):
             data["missing"][section] = "capture_failed"
     integrity = data["sections"].get("integrity", {})
+    owner = (integrity.get("thread") or {}).get("creator_id")
     item = integrity.get("edges", {}).get("plan_item", {})
     linked = []
     if item.get("exists") and item.get("coherent") and item.get("id"):
         linked.append(("plan_item", f"plan-items/{uuid.UUID(item['id'])}/debug"))
-    job_ids = {job for turn in data["sections"].get("turns", []) for job in turn.get("job_ids", [])}
+    job_ids = {
+        job for turn in data["sections"].get("turns", []) for job in turn.get("job_ids", [])
+    }
     video = integrity.get("video") or {}
-    if video.get("job_id"):
-        job_ids.add(video["job_id"])
+    if integrity.get("edges", {}).get("job", {}).get("coherent"):
+        if video.get("job_id"):
+            job_ids.add(video["job_id"])
+    elif video:
+        integrity["video"] = None
     for job_id in sorted(job_ids):
         linked.append((f"job-{uuid.UUID(job_id)}", f"jobs/{uuid.UUID(job_id)}/debug"))
     for section, route in linked:
         try:
-            data["sections"][section] = admin_get(route, args.prod)
+            linked_data = admin_get(route, args.prod)
+            if section.startswith("job-") and (
+                not owner or (linked_data.get("job") or {}).get("user_id") != owner
+            ):
+                data["missing"][section] = "missing_or_unowned_job"
+                continue
+            data["sections"][section] = linked_data
         except (ValueError, subprocess.TimeoutExpired):
             data["missing"][section] = "capture_failed"
     # Linked debug metadata preserves available media/agent/output references.
@@ -168,9 +171,27 @@ def import_capture(args):
     # Content digest excludes capture timestamp, preserving idempotency on unchanged reads.
     content = {k: v for k, v in data.items() if k != "captured_at"}
     source_hash = digest(content)
+    receipt = read(args.eligibility_file) if args.eligibility_file else None
+    if receipt is not None:
+        validate_eligibility_receipt(data, source_hash, receipt)
+        receipt_path = store / "eligibility" / f"{source_hash}.json"
+        if (
+            receipt_path.exists()
+            and read(receipt_path)["eligibility_key"] != receipt["eligibility_key"]
+        ):
+            raise ValueError("A new grant cannot revive an old capture")
+        if receipt_path.exists() and datetime.fromisoformat(
+            receipt["expires_at"]
+        ) > datetime.fromisoformat(read(receipt_path)["expires_at"]):
+            raise ValueError("Receipt cannot extend capture retention")
+        write(receipt_path, receipt)
     target = store / "sessions" / key / f"{source_hash}.json"
     write(target, data)
-    index[key] = {"split": args.split, "source_sha256": source_hash, "path": str(target)}
+    index[key] = {
+        "split": args.split,
+        "source_sha256": source_hash,
+        "path": str(target),
+    }
     write(index_path, index)
     print(
         json.dumps(
@@ -194,71 +215,101 @@ def propose(args):
     if path.exists():
         raise ValueError("Candidate exists; preserve its review/history, use a new id")
     source = read(session["path"])
-    context = {name: {"status": "missing", "source_pointers": []} for name in CONTEXT}
-    events = source.get("sections", {}).get("events", [])
-    requests = []
-    for i, event in enumerate(events):
-        pointer = f"/sections/events/{i}"
-        kind = event.get("kind", "")
-        categories = []
-        if kind == "user_message":
-            categories = ["requests" if not requests else "followups"]
-            requests.append((pointer + "/content", event.get("content", "")))
-        if kind in ("media_added", "action_remove_media"):
-            categories.append("media")
-        if kind == "draft_applied":
-            categories.append("saved_operations")
-        for name in categories:
-            context[name]["status"] = "available_unreviewed"
-            context[name]["source_pointers"].append(pointer)
-    if source.get("sections", {}).get("turns"):
-        context["agent_decisions"] = {
-            "status": "available_unreviewed",
-            "source_pointers": ["/sections/turns"],
-        }
-    # Source excerpts are proposals, never inferred expected outcomes.
-    variation_instructions = {
-        "paraphrase": "Rewrite the initial request with the same constraints; review equivalence.",
-        "combined_requests": "Combine requests; resolve superseded constraints.",
-        "different_footage": "Substitute media facts and review which expectations still apply.",
-        "multi_turn_correction": "Change one constraint in a later turn.",
-    }
-    candidate = {
-        "schema_version": 1,
-        "id": case_id,
-        "session": args.session,
-        "source_sha256": session["source_sha256"],
-        "split": session["split"],
-        "tickets": args.ticket,
-        "fix_prs": [],
-        "loss_stage": "unknown",
-        "context": context,
-        "request_excerpts": [{"source_pointer": p, "text": t} for p, t in requests],
-        "expectations": [],
-        "ambiguities": ["Creator-derived expectations need review"],
-        "evidence": {
-            name: {"status": "missing", "level": None, "artifact": None} for name in CHANNELS
-        },
-        "variations": [
-            {
-                "kind": kind,
-                "status": "needs_authoring",
-                "request": None,
-                "proposal": variation_instructions[kind],
-                "expected_changes": None,
-            }
-            for kind in (
-                "paraphrase",
-                "combined_requests",
-                "different_footage",
-                "multi_turn_correction",
-            )
-        ],
-        "incident": None,
-        "review": None,
-    }
+    candidate = build_candidate(
+        source,
+        case_id=case_id,
+        session_id=args.session,
+        source_sha256=session["source_sha256"],
+        tickets=args.ticket,
+    )
     write(path, candidate)
     print(str(path))
+
+
+def import_queue(args):
+    store = private_store(args.store)
+    packet = read(args.input)
+    if packet.get("schema_version") != 1:
+        raise ValueError("Unsupported queue packet")
+    source, supplied = packet["capture"], packet["candidate"]
+    source_hash = digest({k: v for k, v in source.items() if k != "captured_at"})
+    key = "session-" + digest(str(uuid.UUID(source["thread_id"])))[:16]
+    intent = supplied.get("intent_review") or {}
+    if (
+        supplied.get("split") != "development"
+        or supplied.get("source_sha256") != source_hash
+        or supplied.get("session") != key
+        or intent.get("decision") != "approved"
+        or intent.get("source_sha256") != source_hash
+        or source.get("missing")
+    ):
+        raise ValueError("Export needs current, complete, development intent approval")
+    case_id = safe_id(supplied["id"] + "-v" + str(intent["version"]))
+    target = store / "candidates" / f"{case_id}.json"
+    if target.exists():
+        raise ValueError("Candidate exists; preserve its review/history")
+    candidate = build_candidate(
+        source,
+        case_id=case_id,
+        session_id=key,
+        source_sha256=source_hash,
+        tickets=intent["tickets"],
+    )
+    candidate.update(
+        expectations=intent["expectations"],
+        loss_stage=intent["loss_stage"],
+        ambiguities=[],
+        intent_review=intent,
+    )
+    # Import only human intent. Never trust exported promotion approvals/evidence.
+    index_path = store / "index.json"
+    index = read(index_path) if index_path.exists() else {}
+    if key in index and index[key]["split"] != "development":
+        raise ValueError("Conversation split is immutable; derivatives inherit it")
+    if (
+        not candidate["expectations"]
+        or candidate["loss_stage"] not in (*STAGES, "unknown")
+        or not str(intent.get("reviewer", "")).strip()
+        or not str(intent.get("rationale", "")).strip()
+    ):
+        raise ValueError("Export needs attributed intent and creator expectations")
+    for expectation in candidate["expectations"]:
+        if not str(expectation.get("text", "")).strip() or not expectation.get(
+            "source_pointers"
+        ):
+            raise ValueError("Every expectation needs creator-source pointers")
+        for pointer in expectation.get("source_pointers", []):
+            if not re.fullmatch(r"/sections/events/\d+/content", pointer) or not pointer_exists(
+                source, pointer
+            ):
+                raise ValueError("Expectation source pointer does not resolve")
+            event = source["sections"]["events"][int(pointer.split("/")[3])]
+            if event.get("kind") != "user_message" or event.get("actor") != "user":
+                raise ValueError("Expectation requires creator source")
+    source_path = store / "sessions" / key / f"{source_hash}.json"
+    write(source_path, source)
+    index[key] = {
+        "split": "development",
+        "source_sha256": source_hash,
+        "path": str(source_path),
+    }
+    write(index_path, index)
+    validate_candidate(candidate, store)
+    if packet.get("eligibility"):
+        receipt = validate_eligibility_receipt(source, source_hash, packet["eligibility"])
+        receipt_path = store / "eligibility" / f"{source_hash}.json"
+        if (
+            receipt_path.exists()
+            and read(receipt_path)["eligibility_key"] != receipt["eligibility_key"]
+        ):
+            raise ValueError("A new grant cannot revive an old capture")
+        if receipt_path.exists() and datetime.fromisoformat(
+            receipt["expires_at"]
+        ) > datetime.fromisoformat(read(receipt_path)["expires_at"]):
+            raise ValueError("Receipt cannot extend capture retention")
+        write(receipt_path, receipt)
+    write(target, candidate)
+    print(str(target))
 
 
 def payload(candidate):
@@ -289,7 +340,10 @@ def validate_candidate(candidate, store):
     if candidate["ambiguities"] or not candidate["expectations"]:
         raise ValueError("Resolve ambiguities and record creator-derived expectations")
     source = read(session["path"])
-    if digest({k: v for k, v in source.items() if k != "captured_at"}) != session["source_sha256"]:
+    if (
+        digest({k: v for k, v in source.items() if k != "captured_at"})
+        != session["source_sha256"]
+    ):
         raise ValueError("Source file changed outside import; reimport and re-review")
     for expectation in candidate["expectations"]:
         if not expectation.get("text") or not expectation.get("source_pointers"):
@@ -363,7 +417,10 @@ def promote(args):
     ):
         raise ValueError("Current proposal needs human approval")
     sys.path.insert(0, str(API))
-    from tests.incidents.loader import unresolved_reference, validate_against_current_schemas
+    from tests.incidents.loader import (
+        unresolved_reference,
+        validate_against_current_schemas,
+    )
     from tests.incidents.models import IncidentRecord
 
     record = IncidentRecord.model_validate(candidate["incident"])
@@ -486,7 +543,9 @@ def report(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--store", required=True, help="Private directory outside git, mode 700")
+    parser.add_argument(
+        "--store", required=True, help="Private directory outside git, mode 700"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("capture")
     p.add_argument("--thread", required=True)
@@ -494,6 +553,11 @@ def main():
     p = sub.add_parser("import")
     p.add_argument("--input", required=True)
     p.add_argument("--split", choices=("development", "holdout"), required=True)
+    p.add_argument(
+        "--eligibility-file", help="Recorded eligibility receipt for offline local review"
+    )
+    p = sub.add_parser("import-queue")
+    p.add_argument("--input", required=True)
     p = sub.add_parser("propose")
     p.add_argument("--session", required=True)
     p.add_argument("--id", required=True)
@@ -513,6 +577,7 @@ def main():
         return {
             "capture": capture,
             "import": import_capture,
+            "import-queue": import_queue,
             "propose": propose,
             "review": review,
             "promote": promote,

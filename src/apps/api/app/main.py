@@ -32,6 +32,7 @@ from app.routes import (
     admin_kria,
     admin_music,
     admin_plan_items,
+    admin_request_following,
     admin_review,
     admin_reviewer,
     admin_sound_effects,
@@ -375,6 +376,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(
+    admin_request_following.router, prefix="/admin/request-following", tags=["admin"]
+)
 app.include_router(admin_jobs.router, prefix="/admin/jobs", tags=["admin-jobs"])
 app.include_router(admin_kria.router, prefix="/admin/kria", tags=["admin-kria"])
 app.include_router(
