@@ -251,9 +251,17 @@ def test_the_other_asks_read_exactly_as_before():
     assert "- Done: 20 seconds" in text
     assert receipts["r1"]["status"] == "met"
     assert receipts["r2"]["status"] == "met"
-    for req_id in ("r3", "r5"):
-        assert receipts[req_id]["verification"] == "unchecked"
-    assert "pick the moments where a lit house" in _look_section(text)
+    # r3 is the KRI-686 incident ask ("eight of them, about 2 seconds each"): since #1625 it
+    # is a moment ask the receipt CHECKS (this fixture has 4 moments), no longer unchecked.
+    # The speed fix still must not touch it, so pin what #1625 makes it say.
+    assert receipts["r3"]["verification"] == "checked"
+    assert receipts["r3"]["status"] == "partial"
+    assert receipts["r3"]["reason"] == "The video has 4 moments, not 8"
+    assert receipts["r5"]["verification"] == "unchecked"
+    assert "- Partly: pick the moments where a lit house" in text
+    assert "(The video has 4 moments, not 8)" in text
+    # Only the unchecked ask is left for the creator to look at.
+    assert _look_section(text).strip() == "- Keep every clip's own sound without any music"
 
 
 def test_a_pacing_ask_is_not_reported_as_a_dropped_speed_ask():
