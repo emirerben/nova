@@ -104,10 +104,13 @@ from app.services.choice_questions import (
     KEEP_OPEN_REASON,
     MAX_ASKS_PER_QUESTION,
     ChoiceCapability,
+    ConflictCandidate,
+    ConflictOption,
     answered_brief,
     build_choice_question,
     choice_question_text,
     count_asks,
+    match_open_choice,
     open_conflicts,
     tag_event,
 )
@@ -684,22 +687,49 @@ def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resoluti
 _SIMPLER_VERSION_REASON = "simplification_requires_choice"
 
 
+def _simpler_version_question() -> dict[str, Any]:
+    """Use the existing exact option matcher; an arbitrary next reply is not consent."""
+    return build_choice_question(
+        ConflictCandidate(
+            conflict_id=_SIMPLER_VERSION_REASON,
+            intro="",
+            reason="",
+            options=(
+                ConflictOption(
+                    "different_approach",
+                    label=say(en="Try a different approach", tr="Farklı bir yol dene"),
+                ),
+                ConflictOption(
+                    "simpler_version",
+                    label=say(en="Make this simpler version", tr="Daha basit sürümü hazırla"),
+                    aliases=(
+                        "simpler version",
+                        "make it more basic",
+                        "skip, decide for me",
+                        "Make this simpler version",
+                        "Daha basit sürümü hazırla",
+                    ),
+                ),
+            ),
+        )
+    )
+
+
 def _simpler_version_already_offered(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
     requirement_ids: list[str],
+    *,
+    brief: CreativeBrief | None,
+    source_event: CreationThreadEvent | None,
 ) -> bool:
-    """True when the creator was already asked "different approach, or simpler version?"
-    about these same unmet requirements, and no draft has been made since.
+    """Explicit acceptance of these exact omissions at the offered brief revision.
 
-    KRI-610: answering that question relied on the planner dropping the requirement.
-    When it didn't, every reply ("simpler version", "you decide", "skip") got the same
-    question back; thread 0ef4fdde asked five times in an hour and never drafted. The
-    creator's reply is their answer, so the caller drafts the simpler version and its
-    receipts report what is missing. Clip questions in between don't reset the ask; a
-    draft does, and a requirement never offered as a choice is still asked about.
+    Legacy offers have receipt versions but no choice card. They use the same exact
+    label/alias matcher, preserving KRI-610's text fallback without treating silence,
+    refusal, another question, or an old stable requirement ID as consent (KRI-698).
     """
-    if not requirement_ids:
+    if not requirement_ids or brief is None or source_event is None:
         return False
     rows = db.execute(
         select(CreationThreadEvent.event_type, CreationThreadEvent.payload)
@@ -717,12 +747,30 @@ def _simpler_version_already_offered(
         coverage = payload.get("brief_coverage")
         if not isinstance(coverage, Mapping) or coverage.get("reason") != _SIMPLER_VERSION_REASON:
             continue
-        offered = {
-            str(receipt.get("requirement_id"))
+        receipts = [
+            receipt
             for receipt in payload.get("requirement_receipts") or []
             if isinstance(receipt, Mapping) and needs_creator_choice(receipt)
+        ]
+        offered = {str(receipt.get("requirement_id")) for receipt in receipts}
+        if set(requirement_ids) != offered or {r.get("brief_version") for r in receipts} != {
+            brief.version
+        }:
+            return False
+        question = payload.get("choice_question") or _simpler_version_question()
+        selection = (source_event.payload or {}).get("choice_selection")
+        if isinstance(selection, Mapping):
+            return (
+                selection.get("question_id") == question.get("question_id")
+                and selection.get("option_key") == "simpler_version"
+            )
+        # A bare number may answer an intervening clip question. Only the live
+        # card's validated selection can use its ordinal; a text fallback must
+        # name the simpler option itself.
+        named_option = {
+            "options": [o for o in question.get("options", []) if o.get("key") == "simpler_version"]
         }
-        return set(requirement_ids) <= offered
+        return match_open_choice(named_option, source_event.content) == "simpler_version"
     return False
 
 
@@ -1027,6 +1075,7 @@ def _complete_draft_turn(
         if scope_note:
             reply_text = f"{reply_text} {scope_note}".strip()
         requirement_receipts: list[dict[str, Any]] = []
+        effective_brief_updates = planned.brief_updates
         brief = None
         speed_notice: str | None = None  # KRI-689
         if planned.brief_route is not None:
@@ -1144,6 +1193,12 @@ def _complete_draft_turn(
                         )
         if speed_notice:
             reply_text = f"{reply_text}\n{speed_notice}"
+        if brief is not None:
+            # A repeated offer can have no new updates to persist in the response
+            # transaction. Its receipts still name the revision it checked.
+            requirement_receipts = [
+                {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
+            ]
         unmet_ids = [
             str(receipt.get("requirement_id"))
             for receipt in requirement_receipts
@@ -1153,9 +1208,41 @@ def _complete_draft_turn(
             bool(unmet_ids)
             and apply_intent.tool_name == "draft.apply_strategy"
             and settings.brief_binding_for(thread.creator_id)
-            and _simpler_version_already_offered(db, thread.id, unmet_ids)
+            # A concurrent/new instruction needs its own offer, even if its stable
+            # requirement IDs happen to be the same. Never waive model-authored updates.
+            and not planned.brief_updates
+            and _simpler_version_already_offered(
+                db,
+                thread.id,
+                unmet_ids,
+                brief=brief,
+                source_event=db.get(CreationThreadEvent, turn.source_event_id),
+            )
         )
         if simpler_version_chosen:
+            omitted = [req for req in brief.live() if req.id in unmet_ids]
+            effective_brief_updates = tuple(
+                BriefUpdate(
+                    operation="remove",
+                    target_requirement_id=req.id,
+                    expected_version=brief.version,
+                )
+                for req in omitted
+            )
+            brief = persist_brief_version_sync(
+                db,
+                thread_id=thread.id,
+                turn_id=turn.id,
+                updates=effective_brief_updates,
+            )
+            if settings.kria_choice_questions_enabled:
+                brief = answered_brief(brief, document.strategy)
+            # These are now agreed omissions, not failed obligations in the new
+            # revision. Keep the history; pin only the effective requirements.
+            requirement_receipts = [
+                r for r in requirement_receipts if r["requirement_id"] not in unmet_ids
+            ]
+            checked = [req for req in checked if req.id not in unmet_ids]
             log.info(
                 "kria_simpler_version_drafted",
                 thread_id=str(thread.id),
@@ -1163,7 +1250,23 @@ def _complete_draft_turn(
                 requirement_ids=unmet_ids,
             )
             lead = say(en="Here's the simpler version.", tr="İşte daha basit sürüm.")
-            reply_text = f"{lead}\n{reply_text}"
+            omissions = "\n".join(
+                say(
+                    en=f"- Left out as agreed: {req.text()}",
+                    tr=f"- Kararlaştırdığımız gibi çıkarıldı: {req.text()}",
+                )
+                for req in omitted
+            )
+            kept = (
+                reply_from_receipts(
+                    brief,
+                    build_receipts(checked, facts, include_unchecked=True, strict_order=True),
+                    notices=planned.policy_notices,
+                )
+                if checked
+                else ""
+            )
+            reply_text = "\n".join(part for part in (lead, kept, omissions, speed_notice) if part)
         if (
             settings.brief_binding_for(thread.creator_id)
             and unmet_ids
@@ -1191,6 +1294,7 @@ def _complete_draft_turn(
             recovery = KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
+                choice_question=_simpler_version_question(),
                 response=(
                     f"{reply_text}\n{draft_state} "
                     + say(
@@ -1222,15 +1326,31 @@ def _complete_draft_turn(
         if (
             apply_intent.tool_name == "draft.apply_strategy"
             and brief is not None
-            and requirement_receipts
-            and not keeps_model_summary(brief, requirement_receipts)
+            and (
+                simpler_version_chosen
+                or (requirement_receipts and not keeps_model_summary(brief, requirement_receipts))
+            )
         ):
             # KRI-700: the reply above already replaced the model's summary with what was
             # checked ("Couldn't: brighten the dark river clips"). The draft's change list and
             # the approval card follow it, so neither promises what the plan doesn't contain.
             changes = [change for change in changes if change != arguments.summary]
             approval_summary = reply_text
-            document = document.model_copy(update={"changes": changes})
+            document = document.model_copy(
+                update={
+                    "changes": changes,
+                    **(
+                        {
+                            "intent": say(
+                                en="Simpler version with the agreed omissions.",
+                                tr="Kararlaştırılan eksiklerle daha basit sürüm.",
+                            )
+                        }
+                        if simpler_version_chosen
+                        else {}
+                    ),
+                }
+            )
             snapshot, snapshot_hash = canonical_snapshot(document)
         choice_gate = (
             settings.kria_choice_questions_enabled
@@ -1284,12 +1404,13 @@ def _complete_draft_turn(
                     lease_epoch=lease_epoch,
                     claimed_thread_revision=claimed_thread_revision,
                     plan=blocked_plan,
-                    brief_updates=planned.brief_updates,
+                    brief_updates=effective_brief_updates,
                     requirement_receipts=requirement_receipts,
                     brief_coverage={
                         **(planned.brief_coverage or {}),
                         "stage": "draft",
                         "reason": blocked_reason,
+                        **({"accepted_omission_ids": unmet_ids} if simpler_version_chosen else {}),
                     },
                     brief_expected_version=planned.brief_expected_version,
                 )
@@ -1314,6 +1435,14 @@ def _complete_draft_turn(
             if source_event is not None and full_request is None:
                 raise ApprovedCreatorRequestTooLongError
             coverage = dict(planned.brief_coverage or {})
+            if simpler_version_chosen:
+                coverage["accepted_omission_ids"] = unmet_ids
+                coverage["applicable_ids"] = [req.id for req in brief.live()]
+                coverage["retrieved_ids"] = [
+                    req_id
+                    for req_id in coverage.get("retrieved_ids", [])
+                    if req_id not in unmet_ids
+                ]
             coverage["enforced_ids"] = [
                 r["requirement_id"]
                 for r in requirement_receipts

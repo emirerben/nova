@@ -50,7 +50,7 @@
     {
       "id": "kri-492-length-ownership",
       "needs_native": true,
-      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py",
+      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py",
       "paths": [
         "src/apps/api/app/services/length_policy.py",
         "src/apps/api/app/services/length_policy_state.py",
@@ -76,7 +76,10 @@
         "scripts/ci/creator-contract-replay.schema.json",
         "scripts/ci/fixtures/kri492-creator-contracts.json",
         "scripts/ios/kri-492-length-e2e.py",
-        "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift"
+        "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/kria/test_runtime_simpler_version_loop.py",
+        "scripts/ios/kri-698-simpler-version.py"
       ]
     },
     {
