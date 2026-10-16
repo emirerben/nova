@@ -627,6 +627,16 @@
         "src/apps/api/tests/kria/test_kri679_song_length.py",
         "src/apps/api/tests/kria/test_kri679_music_mood.py"
       ]
+    },
+    {
+      "id": "kri-716-group-title",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_unified_montage_creator_words.py tests/kria/test_chapter_list_title.py tests/evals/test_edit_copilot_evals.py tests/evals/test_clip_intent_planner_evals.py",
+      "paths": [
+        "src/apps/api/app/pipeline/sequence_text_evidence.py",
+        "src/apps/api/tests/fixtures/agent_evals/clip_intent_planner/golden/kri716_group_and_add_a_title.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kri716_group_title_is_one_add_text.json"
+      ]
     }
   ]
 }
