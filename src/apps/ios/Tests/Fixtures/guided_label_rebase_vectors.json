@@ -6723,6 +6723,3333 @@
           "end_s": 5.0
         }
       ]
+    },
+    {
+      "name": "free_text_follows_extend",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.533,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "kria-text-late",
+          "text": "Free text",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 2.533,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "start_s": 2.533,
+          "end_s": 4.533,
+          "segment_id": "s2"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 4.533,
+          "end_s": 6.533,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 6.533,
+          "end_s": 8.533,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 8.533,
+          "end_s": 10.533,
+          "segment_id": "s5"
+        },
+        {
+          "id": "kria-text-late",
+          "start_s": 6.533,
+          "end_s": 8.533,
+          "segment_id": "s4"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "free_text_spanning_clips_middle_clip_deleted",
+      "note": "text over clips 1-3 survives a delete of clip 2 and keeps its start",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "kria-text-span",
+          "text": "Free text",
+          "start_s": 1.0,
+          "end_s": 5.0,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s5"
+        },
+        {
+          "id": "kria-text-span",
+          "start_s": 1.0,
+          "end_s": 3.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "free_text_start_in_deleted_clip_survives",
+      "note": "any surviving part keeps the text: it starts where its first surviving clip does",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "kria-text-tail",
+          "text": "Free text",
+          "start_s": 3.0,
+          "end_s": 5.0,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s5"
+        },
+        {
+          "id": "kria-text-tail",
+          "start_s": 2.0,
+          "end_s": 3.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "free_text_entirely_in_deleted_clip_is_dropped",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "kria-text-gone",
+          "text": "Free text",
+          "start_s": 2.2,
+          "end_s": 3.8,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s5"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "free_text_ending_on_a_cut_into_a_deleted_clip_survives",
+      "note": "the end is anchored one frame early so a cut boundary never reads as the next clip",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "kria-text-on-cut",
+          "text": "Free text",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s5"
+        },
+        {
+          "id": "kria-text-on-cut",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "free_text_near_old_tail_after_shorten_stays_visible",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "kria-text-end-a",
+          "text": "Free text",
+          "start_s": 8.5,
+          "end_s": 10.0,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64
+        },
+        {
+          "id": "kria-text-end-b",
+          "text": "Free text",
+          "start_s": 9.2,
+          "end_s": 10.0,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 8.0,
+          "end_s": 9.0,
+          "segment_id": "s5"
+        },
+        {
+          "id": "kria-text-end-a",
+          "start_s": 8.5,
+          "end_s": 9.0,
+          "segment_id": "s5"
+        },
+        {
+          "id": "kria-text-end-b",
+          "start_s": 8.8,
+          "end_s": 9.0,
+          "segment_id": "s5"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "group_title_touching_start_follows_footage_not_edge",
+      "note": "only titles/pins edge-anchor; a group title over the first clips follows them",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "group-title-0",
+          "text": "Free text",
+          "start_s": 0.0,
+          "end_s": 6.0,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s5"
+        },
+        {
+          "id": "group-title-0",
+          "start_s": 0.0,
+          "end_s": 4.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "group_title_over_whole_video_tracks_whole_video",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.533,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "group-title-1",
+          "text": "Free text",
+          "start_s": 0.0,
+          "end_s": 10.0,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 2.533,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "start_s": 2.533,
+          "end_s": 4.533,
+          "segment_id": "s2"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 4.533,
+          "end_s": 6.533,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 6.533,
+          "end_s": 8.533,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 8.533,
+          "end_s": 10.533,
+          "segment_id": "s5"
+        },
+        {
+          "id": "group-title-1",
+          "start_s": 0.0,
+          "end_s": 10.533
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "montage_text_follows_its_clip_on_reorder",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "montage-text-cut-2",
+          "text": "Montage 2",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s2"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5"
+        },
+        {
+          "id": "montage-text-cut-2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "montage_text_dropped_with_its_deleted_clip",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "montage-text-cut-2",
+          "text": "Montage 2",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s5"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "montage_text_stretched_over_several_clips_is_a_span_not_collapsed",
+      "note": "a montage text the creator stretched across clips 2-4 keeps its span when clip 2 goes",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "montage-text-cut-2",
+          "text": "Montage 2",
+          "start_s": 2.0,
+          "end_s": 8.0,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s5"
+        },
+        {
+          "id": "montage-text-cut-2",
+          "start_s": 2.0,
+          "end_s": 6.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "montage_text_without_segment_follows_by_time",
+      "note": "no segment/media link: ordinary timed text, not silently dropped",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "montage-text-cut-3",
+          "text": "Montage 3",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.4,
+          "size_px": 64
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 4.0,
+          "end_s": 6.0,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s5"
+        },
+        {
+          "id": "montage-text-cut-3",
+          "start_s": 2.0,
+          "end_s": 4.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
     }
   ]
 }

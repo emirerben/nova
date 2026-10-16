@@ -6178,7 +6178,29 @@ struct NativeEditorTemporaryVideo {
     }
 
     private var carriesGuidedLabelsWithTimeline: Bool {
-        changedSections.contains(.timeline) && canEditSection(.text) && GuidedLabelRebase.hasLabels(document.textElements)
+        changedSections.contains(.timeline) && canEditSection(.text)
+            && GuidedLabelRebase.hasLabels(document.textElements, includeFreeText: ridesGuidedTimeline)
+    }
+
+    /// A guided story times EVERY text on its absolute output seconds, so any clip-timing edit
+    /// must re-time all of it (chat / creator text, group titles, `montage-text-*`), not just the
+    /// per-clip labels. Other archetypes keep their own text rules.
+    private var ridesGuidedTimeline: Bool { previewVariant["resolved_archetype"] == .string("guided_story") }
+
+    /// Source media ids by `clip_index`, for slots that do not carry a `media_id` themselves
+    /// (the server resolves them from the guided revision's `sources[clip_index]`).
+    private var mediaIDsByClipIndex: [Int: String] {
+        var result: [Int: String] = [:]
+        // The variant's own clip pool names every clip's media (resolved or not); the resolved
+        // source pool only fills in what it lacks.
+        for clip in previewVariant["user_timeline"]?.objectValue?["clips"]?.arrayValue ?? [] {
+            if let object = clip.objectValue, let index = object["clip_index"]?.numberValue,
+               let mediaID = object["media_id"]?.stringValue, !mediaID.isEmpty { result[Int(index)] = mediaID }
+        }
+        for clip in sourcePool?.clips ?? [] where result[clip.clipIndex] == nil {
+            if let mediaID = clip.nativeSource?.mediaID { result[clip.clipIndex] = mediaID }
+        }
+        return result
     }
 
     private func commitRequest(sections: [String: JSONValue]?, baseGeneration: String) -> EditorCommitRequest {
@@ -6362,16 +6384,23 @@ struct NativeEditorTemporaryVideo {
         let start = min(max(0, index), clips.count - 1)
         for i in start..<clips.count { let length = max(minimumClipDuration, clips[i].end - clips[i].start); let previousEnd = i == 0 ? 0 : clips[i - 1].end; clips[i].start = previousEnd; clips[i].end = previousEnd + length }
     }
-    /// Retimes the per-clip label bars onto their clips after any change to clip
+    /// Retimes the text that rides the guided timeline (clip labels, titles and, on a guided
+    /// story, every other text: see `GuidedLabelRebase`) after any change to clip
     /// timing (trim, extend, reorder, delete, transition overlap, add). Runs inside the
     /// same transaction as the timeline edit, so one Undo reverts both, and the text lane
     /// then differs from the clean document and is saved alongside `timeline_slots`.
     /// No-op unless a window actually moved and the text lane is editable.
     private func rebaseGuidedLabels(_ next: inout EditorDocument, from previous: EditorDocument) {
-        guard GuidedLabelRebase.hasLabels(next.textElements), canEditSection(.text),
-              previous.clips != next.clips,
-              GuidedLabelRebase.windows(of: previous.clips) != GuidedLabelRebase.windows(of: next.clips) else { return }
-        next.textElements = GuidedLabelRebase.rebase(next.textElements, oldSlots: previous.clips, newSlots: next.clips)
+        let freeText = ridesGuidedTimeline
+        guard GuidedLabelRebase.hasLabels(next.textElements, includeFreeText: freeText), canEditSection(.text),
+              previous.clips != next.clips else { return }
+        let media = mediaIDsByClipIndex
+        guard GuidedLabelRebase.windows(of: previous.clips, mediaByClipIndex: media)
+                != GuidedLabelRebase.windows(of: next.clips, mediaByClipIndex: media) else { return }
+        next.textElements = GuidedLabelRebase.rebase(
+            next.textElements, oldSlots: previous.clips, newSlots: next.clips,
+            mediaByClipIndex: media, includeFreeText: freeText
+        )
     }
     private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil, isCurrent: Bool = true) {
         // A completed cloud render remains a useful, non-editable fallback
