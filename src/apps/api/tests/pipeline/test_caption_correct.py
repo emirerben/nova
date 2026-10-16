@@ -69,7 +69,6 @@ def test_legacy_call_keeps_original_freeform_contract(monkeypatch) -> None:
             "text": "Kaçer nereye",
             "start_s": 0.0,
             "end_s": 1.0,
-            "words": [{"text": "Kaçer", "start_s": 0.0, "end_s": 0.5}],
         }
     ]
     out = cc.correct_caption_cues(cues, "tr")
@@ -327,3 +326,47 @@ def test_trusted_alias_match_survives_punctuation_riding_the_word(monkeypatch) -
     out = cc.correct_caption_cues(_PUNCTUATED_CUES, "en", trusted_aliases=["Usersmagic"])
     assert out[0]["words"][0]["text"] == "Usersmagic"
     assert out[0]["text"] == "Usersmagic is great."
+
+
+def _timed(text: str) -> dict:
+    tokens = text.split()
+    return {
+        "text": text,
+        "start_s": 0.0,
+        "end_s": float(len(tokens)),
+        "words": [
+            {"text": t, "start_s": float(i), "end_s": float(i + 1)} for i, t in enumerate(tokens)
+        ],
+    }
+
+
+def test_kri708_rewording_keeps_spoken_order_and_word_timings(monkeypatch) -> None:
+    spoken = [
+        "Kim, Atakan'ı alacağız değil mi şimdi?",
+        "Mesajlaştın mı hiç?",
+        "Arabası hararet yapmıştı ama geliyormuş.",
+        "Kaçer adet yapıyoruz",
+    ]
+    monkeypatch.setattr(
+        cc,
+        "_llm_correct_lines",
+        lambda texts, language, *, model: [
+            "Şimdi Atakan'ı alacağız değil mi?",
+            "Mesaj attın mı hiç?",
+            "Araba hararet yapmıştı ama geliyormuş.",
+            "Kaçar adet yapıyoruz",
+        ],
+    )
+    cues = [_timed(t) for t in spoken]
+    out = cc.correct_caption_cues(cues, "tr")
+    assert all(cue.get("words") for cue in out)
+    # Reordered / reworded cues keep the spoken text and original timings.
+    assert [c["text"] for c in out[:2]] == spoken[:2]
+    assert out[:2] == cues[:2]
+    # A spelling-level fix keeps timings too.
+    assert [w["text"] for w in out[3]["words"]] == ["Kaçar", "adet", "yapıyoruz"]
+    assert [(w["start_s"], w["end_s"]) for w in out[3]["words"]] == [
+        (w["start_s"], w["end_s"]) for w in cues[3]["words"]
+    ]
+    for cue in out:
+        assert " ".join(w["text"] for w in cue["words"]) == cue["text"]
