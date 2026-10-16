@@ -4,7 +4,7 @@
     {
       "id": "kri-384-library-ingest",
       "needs_native": false,
-      "api_tests": "tests/integration/test_media_library_ingest.py tests/integration/test_media_library_analysis.py tests/integration/test_media_library_reuse.py tests/pipeline/test_library_transcription_cost.py tests/routes/test_media_assets.py tests/routes/test_media_library_attachments.py tests/services/test_media_library_source_verification.py",
+      "api_tests": "tests/integration/test_media_library_ingest.py tests/integration/test_media_library_analysis.py tests/integration/test_media_library_reuse.py tests/pipeline/test_library_transcription_cost.py tests/routes/test_media_assets.py tests/routes/test_media_library_attachments.py tests/services/test_media_library_source_verification.py tests/integration/test_media_library_backfill.py",
       "paths": [
         "src/apps/api/app/pipeline/clip_cache.py",
         "src/apps/api/app/pipeline/transcribe.py",
@@ -27,7 +27,9 @@
         "src/apps/ios/Kria/Core/SavedMediaReuse.swift",
         "src/apps/ios/Kria/Features/SavedUploadsView.swift",
         "src/apps/ios/Tests/KriaTests/MediaLibraryOriginalsTests.swift",
-        "src/apps/ios/Tests/KriaTests/MediaLibraryExportJourneyTests.swift"
+        "src/apps/ios/Tests/KriaTests/MediaLibraryExportJourneyTests.swift",
+        "src/apps/api/scripts/backfill_media_library.py",
+        "src/apps/api/tests/integration/test_media_library_backfill.py"
       ]
     },
     {
