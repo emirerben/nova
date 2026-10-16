@@ -39,6 +39,7 @@ from app.kria.brief_checks import (
     describe_text_look,
     is_judged,
     judged_at_render,
+    keeps_model_summary,
     needs_creator_choice,
     plan_facts_from_editor_payload,
     plan_facts_from_phone_variant,
@@ -1152,6 +1153,20 @@ def _complete_draft_turn(
                 brief_expected_version=planned.brief_expected_version,
             )
             return replace(completed, response_only=True)
+        approval_summary = arguments.summary
+        if (
+            apply_intent.tool_name == "draft.apply_strategy"
+            and brief is not None
+            and requirement_receipts
+            and not keeps_model_summary(brief, requirement_receipts)
+        ):
+            # KRI-700: the reply above already replaced the model's summary with what was
+            # checked ("Couldn't: brighten the dark river clips"). The draft's change list and
+            # the approval card follow it, so neither promises what the plan doesn't contain.
+            changes = [change for change in changes if change != arguments.summary]
+            approval_summary = reply_text
+            document = document.model_copy(update={"changes": changes})
+            snapshot, snapshot_hash = canonical_snapshot(document)
         choice_gate = (
             settings.kria_choice_questions_enabled
             and apply_intent.tool_name == "draft.apply_strategy"
@@ -1443,7 +1458,7 @@ def _complete_draft_turn(
             target_manifest_hash=planned.manifest_hash,
             target_ownership_epoch=int(session.ownership_epoch),
             execution_ids=[str(render_execution.id)],
-            consequence_summary=f"Render this draft: {arguments.summary}",
+            consequence_summary=f"Render this draft: {approval_summary}",
             cost_summary=say(en="One render", tr="Tek bir video"),
             status="pending",
             expires_at=datetime.now(UTC) + _APPROVAL_TTL,
@@ -3263,7 +3278,7 @@ def _typed_creator_decline(
     if raw is None:
         return None
     decline = {"decline_reason": str(raw["decline_reason"])}
-    for key in ("field_path", "alternative"):
+    for key in ("field_path", "alternative", "missing_text"):
         if isinstance(raw.get(key), str) and raw[key]:
             decline[key] = raw[key]
     if isinstance(message, str) and message.strip():
@@ -3288,7 +3303,7 @@ def _device_contract_decline(job: Job, variant_id: str | None) -> dict[str, str]
         raw = contract_decline(job, str(record_variant))
         if isinstance(raw, dict) and raw.get("decline_reason") in DECLINE_REASONS:
             decline = {"decline_reason": str(raw["decline_reason"])}
-            for key in ("field_path", "alternative", "message"):
+            for key in ("field_path", "alternative", "message", "missing_text"):
                 if isinstance(raw.get(key), str) and raw[key].strip():
                     decline[key] = raw[key].strip()[:500]
             return decline
@@ -3363,6 +3378,18 @@ _WORKER_TEXT_TR: dict[str, str] = {
     "I couldn't tell which clips you want first or last, so I can't confirm their order.": (
         "Hangi klipleri başa ya da sona istediğini anlayamadım, o yüzden sıralarını "
         "doğrulayamıyorum."
+    ),
+    "This edit is missing confirmed on-screen text.": (
+        "Bu düzenlemede onayladığın ekran yazısı eksik."
+    ),
+    "This edit couldn't keep confirmed text on screen long enough.": (
+        "Bu düzenleme onayladığın yazıyı ekranda yeterince uzun tutamadı."
+    ),
+    "This edit put confirmed text in the wrong place.": (
+        "Bu düzenleme onayladığın yazıyı yanlış yere koydu."
+    ),
+    "This edit keeps confirmed text on screen after the picture has ended.": (
+        "Bu düzenleme onayladığın yazıyı görüntü bittikten sonra da ekranda tutuyor."
     ),
     # services/cloud_render_contract.py
     "I can render it again, or you can relax the requirement.": (
@@ -3487,11 +3514,23 @@ def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> 
     """
     # The message and alternative come from the server's contract checks, in English;
     # a Turkish chat gets their Turkish twin or, when there is none, the line below.
-    message = _worker_copy(decline.get("message")) or say(
-        en="That edit didn't keep something you asked for.",
-        tr="Bu düzenleme istediğin bir şeyi korumadı.",
-    )
     reason = decline["decline_reason"]
+    quoted = _quoted_missing_text(decline) if reason == "evidence_missing" else None
+    message = (
+        (
+            say(
+                en=f"The text {quoted} isn't in that edit.",
+                tr=f"{quoted} yazısı bu düzenlemede yok.",
+            )
+            if quoted
+            else None
+        )
+        or _worker_copy(decline.get("message"))
+        or say(
+            en="That edit didn't keep something you asked for.",
+            tr="Bu düzenleme istediğin bir şeyi korumadı.",
+        )
+    )
     kept = (
         say(en=_LAST_GOOD_STAYS, tr="Son iyi sürümün hâlâ duruyor.")
         if last_good
@@ -3511,6 +3550,44 @@ def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> 
         tr="Baştan yapmamı söylersen onayladığın isteğe göre yeni bir sürüm hazırlarım.",
     )
     return f"{message} {not_applied} {kept} {redo}"
+
+
+_MISSING_TEXT_QUOTE_CHARS = 120
+
+
+def _quoted_missing_text(decline: dict[str, str]) -> str | None:
+    """The confirmed on-screen text a refused edit lacks, quoted for a chat line."""
+    text = " ".join(str(decline.get("missing_text") or "").split())
+    if not text:
+        return None
+    if len(text) > _MISSING_TEXT_QUOTE_CHARS:
+        text = text[: _MISSING_TEXT_QUOTE_CHARS - 1].rstrip() + "…"
+    return f"“{text}”"
+
+
+def _phone_evidence_refusal_copy(decline: dict[str, str]) -> str:
+    """A phone plan the contract refused for missing evidence (KRI-701).
+
+    Nothing here is an iPhone limit, so it never says "your iPhone can't render": a missing
+    text is named with one question, anything else says what the edit lacked (the
+    alternative, when there is one, is added by the caller).
+    """
+    quoted = _quoted_missing_text(decline)
+    if quoted:
+        return say(
+            en=(
+                f"Your video wasn't made: the text {quoted} isn't in the edit. "
+                "Want me to add it, or leave it out?"
+            ),
+            tr=(
+                f"Videon oluşturulmadı: {quoted} yazısı düzenlemede yok. "
+                "Ekleyeyim mi, yoksa bu yazı olmadan mı yapayım?"
+            ),
+        )
+    return _worker_copy(decline.get("message")) or say(
+        en="Your video wasn't made: the edit didn't keep something you asked for.",
+        tr="Videon oluşturulmadı: düzenleme istediğin bir şeyi korumadı.",
+    )
 
 
 def _capability_refusal_copy(decline: dict[str, str]) -> str:
@@ -5079,6 +5156,14 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # The decline's own authored message plus the way forward. Only a TYPED decline
             # reaches here, so no raw exception text is ever shown.
             failure_content = _capability_refusal_copy(typed_decline)
+        elif (
+            typed_decline is not None
+            and failure_code == "phone_plan_unsupported"
+            and typed_decline["decline_reason"] == "evidence_missing"
+        ):
+            # KRI-701: the plan lacked something the creator confirmed; the iPhone can render
+            # it, so the "can't render yet" table line would blame the wrong thing.
+            failure_content = _phone_evidence_refusal_copy(typed_decline)
         elif deterministic or failure_code in {
             "phone_capability_unavailable",
             "creation_text_failed",
@@ -5111,6 +5196,8 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             and typed_decline["decline_reason"] != "capability_unavailable"
             and recovery_message is None
             and not device_failed
+            # A named missing text already asks its one question (KRI-701).
+            and not _quoted_missing_text(typed_decline)
         ):
             # A deterministic phone decline keeps its copy and adds the way forward.
             failure_content = f"{failure_content} {worker_alternative}"

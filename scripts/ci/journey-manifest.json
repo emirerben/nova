@@ -436,6 +436,17 @@
       ]
     },
     {
+      "id": "kri-680-dark-clips",
+      "needs_native": false,
+      "api_tests": "tests/services/test_kri680_clip_exposure.py tests/kria/test_kri667_clip_exclusions.py",
+      "paths": [
+        "src/apps/api/app/schemas/clip_understanding.py",
+        "src/apps/api/app/services/clip_exposure.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/tests/fixtures/kri680_tigre_m1_clip_records.json"
+      ]
+    },
+    {
       "id": "kri-625-moment-quality",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_best_parts.py tests/pipeline/test_clip_meta_dormant_readers.py",
@@ -470,6 +481,16 @@
         "src/apps/api/app/kria/opening_cut_ask.py",
         "src/apps/api/app/pipeline/phone_opening_cut.py",
         "src/apps/api/app/services/spoken_quotes.py"
+      ]
+    },
+    {
+      "id": "kri-681-named-line-windows",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_named_line_windows_montage.py tests/tasks/test_long_take_moments_montage.py",
+      "paths": [
+        "src/apps/api/app/services/length_planning.py",
+        "src/apps/api/app/services/spoken_quotes.py",
+        "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json"
       ]
     },
     {
@@ -564,6 +585,16 @@
         "src/apps/ios/Kria/Features/NativeEditorUITestFixtures.swift",
         "src/apps/ios/Tests/KriaUITests/GamedayAddClipUITests.swift",
         "scripts/ios/kri-669-gameday-text.py"
+      ]
+    },
+    {
+      "id": "kri-679-song-length-mood",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri679_song_length.py tests/kria/test_kri679_music_mood.py tests/kria/test_music_section_fit.py tests/evals/test_music_matcher_evals.py",
+      "paths": [
+        "src/apps/api/prompts/match_music.txt",
+        "src/apps/api/tests/kria/test_kri679_song_length.py",
+        "src/apps/api/tests/kria/test_kri679_music_mood.py"
       ]
     }
   ]

@@ -1671,6 +1671,31 @@ def test_kri667_include_minted_from_a_skip_is_repaired_into_an_exclude(
             "quad bike clip",
             "Don't use the blurry ones",
         ),
+        # KRI-680: a comma after a finished verb still ends the clause the skip governs.
+        (
+            "Spor salonu kalsın, çamaşır klibini kullanma.",
+            "include",
+            "spor salonu",
+            "Spor salonu kalsın, çamaşır klibini kullanma",
+        ),
+        (
+            "Spor salonu kalsın, çamaşır klibini kullanma.",
+            "exclude",
+            "spor salonu",
+            "Spor salonu kalsın, çamaşır klibini kullanma",
+        ),
+        (
+            "Lunaparkla başla, karanlık klipleri kullanma.",
+            "exclude",
+            "lunapark",
+            "Lunaparkla başla, karanlık klipleri kullanma",
+        ),
+        (
+            "Lunapark klibini göster, karanlık klipleri kullanma.",
+            "include",
+            "lunapark klibi",
+            "Lunapark klibini göster, karanlık klipleri kullanma",
+        ),
     ],
 )
 def test_kri667_a_clip_beside_a_skip_is_never_excluded(
@@ -1680,6 +1705,34 @@ def test_kri667_a_clip_beside_a_skip_is_never_excluded(
     assert out.intents == []
     assert out.salvage_question is None
     assert out.silent_drops == {"exclusion_dropped": 1}
+
+
+# KRI-680 (Tigre night M1): "Çok karanlık, hiçbir şeyin görünmediği iki klibi kullanma"
+# was dropped as `exclusion_dropped` on every turn: the comma cut "çok karanlık" off the
+# clause the Turkish verb governs, so both near-black clips rendered. Turkish stacks a
+# clip's descriptions before its noun with commas; only a finished verb ends the clause.
+_M1_DARK = "Çok karanlık, hiçbir şeyin görünmediği iki klibi kullanma"
+
+
+@pytest.mark.parametrize(
+    ("op", "attribute"),
+    [
+        ("exclude", "çok karanlık klipler"),
+        ("exclude", "karanlık klipler"),
+        ("exclude", "çok karanlık, hiçbir şeyin görünmediği iki klip"),
+        ("exclude", "hiçbir şeyin görünmediği klipler"),
+        ("include", "çok karanlık klipler"),
+        ("skip", "karanlık klipler"),
+    ],
+)
+def test_kri680_dark_clips_described_before_a_comma_are_excluded(op: str, attribute: str) -> None:
+    request = (
+        "Gece 11'de tekneyle Tigre merkeze gittik. Başlık: Gece 23:00, Tigre. "
+        f"{_M1_DARK}. Hızlı kesmeler, 25 saniye."
+    )
+    out = _parse_exclusions(request, _games_intent("dark", op, attribute, _M1_DARK))
+    assert [(i.op, i.attribute) for i in out.intents] == [("exclude", attribute)]
+    assert "exclusion_dropped" not in out.silent_drops
 
 
 def test_kri667_skip_the_laundry_but_the_gym_has_to_be_in() -> None:
@@ -2247,3 +2300,96 @@ def test_kri531_include_with_a_placement_word_but_an_exclusion_is_never_an_order
     else:
         assert out.intents == []
         assert out.silent_drops == {"exclusion_dropped": 1}
+
+
+# ---------------------------------------------------------------- KRI-677
+# Tigre night M1: the brief rendered its r2 order fact with `json.dumps`, so the
+# model saw `\"Hadi gidelim\" dediğimiz iskele klibi` and copied that into
+# source_quote. Nothing in the creator's own words carries a backslash, so both
+# quoted order asks failed provenance on every turn after the first (the picker
+# answer became the latest message) and the creator was told to rewrite them.
+_KRI677_REQUEST = (
+    "Gece 11'de tekneyle Tigre merkeze arkadaşımız Atakan'ı almaya gittik. "
+    'Başlık: "Gece 23:00, Tigre". "Hadi gidelim" dediğimiz iskele klibiyle başla; '
+    '"tam 20 dakika sürdü" dediğim klip en sonda olsun ve o cümle duyulsun. '
+    "Hızlı kesmeler, 25 saniye."
+)
+_KRI677_FIRST_QUOTE = '"Hadi gidelim" dediğimiz iskele klibiyle başla'
+_KRI677_LAST_QUOTE = '"tam 20 dakika sürdü" dediğim klip en sonda olsun'
+
+
+def _kri677_turn_two_input() -> ClipIntentPlannerInput:
+    # Turn two as `plan_and_resolve_clip_intents` sees it: every creator message joined
+    # (`_full_creator_request`), the picker answer as the latest message, and the live
+    # brief rendered by the real renderer as the non-authoritative recall aid.
+    from app.kria.brief import BriefRequirement, CreativeBrief, render_brief_request
+    from app.services.song_order import CLIP_ANSWER_MESSAGE
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r2",
+                kind="order",
+                scope="global",
+                description="Özel klip sırası",
+                facts={
+                    "first_clip": '"Hadi gidelim" dediğimiz iskele klibi',
+                    "key": "narrative",
+                    "last_clip": '"tam 20 dakika sürdü" dediğim klip',
+                },
+            )
+        ],
+    )
+    return ClipIntentPlannerInput(
+        creator_request=f"{_KRI677_REQUEST}\n{CLIP_ANSWER_MESSAGE}",
+        latest_user_message=CLIP_ANSWER_MESSAGE,
+        generated_brief=render_brief_request(brief),
+        clip_facts=True,
+    )
+
+
+@pytest.mark.parametrize("escaped", [False, True], ids=["creator_words", "json_escaped_brief_copy"])
+def test_kri677_quoted_spoken_line_asks_survive_the_picker_turn(escaped: bool) -> None:
+    def quote(text: str) -> str:
+        # The pre-fix brief line, copied verbatim by the model: `\"` around the spoken line.
+        return text.replace('"', '\\"') if escaped else text
+
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "first",
+                    "order",
+                    "iskele klibi",
+                    quote(_KRI677_FIRST_QUOTE),
+                    position="first",
+                    order_by=None,
+                ),
+                _games_intent(
+                    "last",
+                    "order",
+                    "tam 20 dakika sürdü dediğim klip",
+                    quote(_KRI677_LAST_QUOTE),
+                    position="last",
+                    order_by=None,
+                ),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _kri677_turn_two_input())
+    assert [(i.op, i.position, i.source_quote) for i in out.intents] == [
+        ("order", "first", _KRI677_FIRST_QUOTE),
+        ("order", "last", _KRI677_LAST_QUOTE),
+    ]
+    assert out.salvage_reasons == []
+    assert out.salvage_question is None
+
+
+def test_kri677_rendered_brief_never_shows_escaped_quotes_to_the_model() -> None:
+    # The planner prompt forbids copying brief wording, but a `\"` the model has only
+    # ever seen in the brief is exactly what it copies. The brief must read as typed.
+    rendered = _kri677_turn_two_input().generated_brief or ""
+    assert '"Hadi gidelim" dediğimiz iskele klibi' in rendered
+    assert "\\" not in rendered

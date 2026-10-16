@@ -35,6 +35,11 @@ _STILL_CAPACITY_S = 3.0
 _STILL_PREFERRED_WINDOW_S = 1.2
 # "Six moments" with no length: each moment gets this much (KRI-596).
 DEFAULT_MOMENT_S = 2.5
+# KRI-681: above every analysed moment's energy, so a sentence the creator described a
+# clip by (``spoken_quotes.described_line_moments``) is that clip's window.
+DESCRIBED_MOMENT_ENERGY = 100.0
+# ...and the clip keeps at least that sentence (up to this long) when lengths are shared.
+DESCRIBED_MOMENT_FLOOR_MAX_S = 4.0
 
 
 def _number(value: object) -> float | None:
@@ -49,7 +54,10 @@ def _number(value: object) -> float | None:
 
 
 def _sources(
-    snapshot: Mapping[str, Any], selected_ids: Sequence[str], strategy: Mapping[str, Any]
+    snapshot: Mapping[str, Any],
+    selected_ids: Sequence[str],
+    strategy: Mapping[str, Any],
+    spoken_moments: Mapping[str, tuple[float, float]] | None = None,
 ) -> list[dict[str, Any]]:
     selected = set(selected_ids)
     rows = snapshot.get("clip_assignments")
@@ -79,6 +87,15 @@ def _sources(
             duration_s = bounds.maximum_s if bounds else _STILL_CAPACITY_S
             preferred_s = bounds.preferred_s if bounds else _STILL_PREFERRED_WINDOW_S
             analysis["best_moments"] = [{"start_s": 0.0, "end_s": preferred_s, "energy": 0.0}]
+        spoken_floor_s = None
+        if kind == "video" and spoken_moments and row["media_id"] in spoken_moments:
+            # KRI-681: the sentence the creator described this clip by is its window.
+            start, end = spoken_moments[row["media_id"]]
+            analysis["best_moments"] = [
+                {"start_s": start, "end_s": end, "energy": DESCRIBED_MOMENT_ENERGY},
+                *(analysis.get("best_moments") or []),
+            ]
+            spoken_floor_s = round(min(end - start, DESCRIBED_MOMENT_FLOOR_MAX_S), 3)
         sources.append(
             {
                 "media_id": row["media_id"],
@@ -89,7 +106,9 @@ def _sources(
                 "gcs_path": row.get("gcs_path", row.get("proxy_path")),
                 "kind": kind,
                 "duration_s": duration_s or 0.0,
-                "minimum_duration_s": bounds.minimum_s if bounds is not None else 0.1,
+                "minimum_duration_s": bounds.minimum_s
+                if bounds is not None
+                else spoken_floor_s or 0.1,
                 # Allocation policy is distinct from video source duration:
                 # the latter remains in the approved identity envelope so a
                 # late analysed moment (for example 7s–10s of a 10s clip)
@@ -115,6 +134,7 @@ def build_length_plan(
     closing_quote: Mapping[str, Any] | None = None,
     moment_count: int | None = None,
     moment_max_s: float | None = None,
+    spoken_moments: Mapping[str, tuple[float, float]] | None = None,
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
 
@@ -126,12 +146,14 @@ def build_length_plan(
     more than one per take. A found ``closing_quote`` (KRI-597,
     ``spoken_quotes.ground_closing_quote``) pins its take's last window to the
     creator's quoted line; the record rides on the plan either way, so the
-    receipt can say whether the line was found and held.
+    receipt can say whether the line was found and held; a song-owned montage pins it
+    too (KRI-681). ``spoken_moments`` (``spoken_quotes.described_line_moments``) seats a
+    clip's window on the sentence the creator described it by.
     """
 
     natural_owner = natural_length_owner(strategy)
     owner = length_owner(strategy, creator_duration_proven=creator_target_s is not None)
-    sources = _sources(media_snapshot, selected_ids, strategy)
+    sources = _sources(media_snapshot, selected_ids, strategy, spoken_moments)
     by_id = {source["media_id"]: source for source in sources}
     if len(by_id) != len(sources):
         raise ValueError("duplicate length plan source")
@@ -302,6 +324,7 @@ def build_length_plan(
             closing_quote,
             moment_count,
             moment_max_s,
+            natural_duration_s,
         )
     ):
         result = moment_windows
@@ -457,20 +480,27 @@ def _moment_or_quote_windows(
     closing_quote: Mapping[str, Any] | None,
     moment_count: int | None,
     moment_max_s: float | None,
+    natural_duration_s: float | None = None,
 ) -> BestPartsResult | None:
     """Moments inside long takes, and/or a held closing line; None keeps the selector.
 
-    Only a footage-owned montage of videos qualifies: voiceover and song edits and
-    photos keep one window per source exactly as before. Moments share the creator's
-    length, or ``DEFAULT_MOMENT_S`` each when they gave none.
+    Only a montage of videos qualifies: voiceover edits and photos keep one window per
+    source exactly as before. Moments (footage-owned only) share the creator's length,
+    or ``DEFAULT_MOMENT_S`` each when they gave none. A closing line is also held when a
+    song section owns the length (KRI-681: music on the other clips, the line in its own
+    sound); the section's length is then the target the creator did not give.
     """
     if (
         strategy.get("edit_format") != "montage"
-        or natural_owner != "footage"
+        or natural_owner not in {"footage", "song"}
         or not sources
         or any(source["kind"] != "video" for source in sources)
     ):
         return None
+    if natural_owner == "song":
+        moment_count = moment_max_s = None
+        if creator_target_s is None:
+            creator_target_s = natural_duration_s
     pinned: tuple[str, float, float] | None = None
     if isinstance(closing_quote, Mapping) and closing_quote.get("status") == "found":
         media_id = closing_quote.get("media_id")

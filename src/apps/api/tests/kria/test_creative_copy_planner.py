@@ -253,3 +253,142 @@ def test_incident_kri586_shape_with_empty_state_becomes_a_server_wording_questio
     assert result.plan.choice_question["conflict"] == "creative_copy"
     assert result.plan.choice_question["kind"] == "creative_copy_wording"
     assert result.plan.choice_question["candidate"] == "Sunrise miles"
+
+
+# KRI-682 (prod 2026-10-15, Tigre night M1): the creator typed `Başlık: "Gece 23:00,
+# Tigre"` on turn 1; on turn 3 the strategy carried that exact title but its evidence
+# excerpt did not match the creator's words, so Kria asked "Şunu deneyebilirim: …
+# Bu ifade sana uyar mı?" for the creator's own title.
+#
+# Ways this can go wrong, each pinned below:
+# - the quote sits in an earlier message, not the current one;
+# - the model's evidence is the brief's rewrite (`Başlık ("…")`), not the creator's text;
+# - iPhone smart quotes (“…”) instead of straight ones;
+# - spacing / Unicode form differs between the quote and the strategy value;
+# - the quote is beyond the model's 1000-char conversation excerpt;
+# - an unquoted phrase must still need approval (see the incidental-phrase test above);
+# - a title that only overlaps the quote must still need approval;
+# - a quote in an assistant message (Kria's own suggestion) is not creator wording.
+_TIGRE_FIRST = (
+    "Gece 11'de tekneyle Tigre merkeze arkadaşımız Atakan'ı almaya gittik. "
+    'Başlık: "Gece 23:00, Tigre". "Hadi gidelim" dediğimiz iskele klibiyle başla.'
+)
+_TIGRE_LATEST = "İlk klip: iskelede Amigo Sergio diye seslendiğimiz karanlık klip."
+
+
+def _quoted_title_inputs(
+    conversation: list[dict], *, raw_creator_request: str | None = None
+) -> SimpleNamespace:
+    inputs = _inputs()
+    inputs.agent_input = SimpleNamespace(conversation=conversation)
+    inputs.raw_creator_request = raw_creator_request
+    return inputs
+
+
+class _PastCopyGate(Exception):
+    """Raised by the first runtime check after the copy gate; that part is not under test."""
+
+
+async def _title_turn(
+    title: str,
+    *,
+    conversation: list[dict],
+    user_message: str = _TIGRE_LATEST,
+    evidence: str | None = 'Başlık ("Gece 23:00, Tigre")',
+    raw_creator_request: str | None = None,
+    monkeypatch,
+) -> PlannedKriaTurn | None:
+    """The copy-gate question, or None when the title went through to planning."""
+    from app.agents._schemas.creator_agent import CreatorRenderIntentEvidence
+    from app.agents.main_creator import MainCreatorOutput
+
+    def past_gate(*_args, **_kwargs):
+        raise _PastCopyGate
+
+    monkeypatch.setattr(planner, "check_strategy_for_runtime_v2", past_gate)
+    output = MainCreatorOutput(
+        action=ProposeStrategy(
+            kind="propose_strategy",
+            strategy=CreativeStrategy(opening_title=title),
+            summary="Night boat montage",
+            render_intent_evidence=CreatorRenderIntentEvidence(opening_title=evidence),
+        )
+    )
+    try:
+        return await planner._plan_creator_action(
+            None,
+            thread_id=uuid4(),
+            item_id=uuid4(),
+            creator_id=uuid4(),
+            user_message=user_message,
+            manifest=SimpleNamespace(manifest_hash="a" * 64, context_hash="b" * 64, media=()),
+            inputs=_quoted_title_inputs(conversation, raw_creator_request=raw_creator_request),
+            output=output,
+        )
+    except _PastCopyGate:
+        return None
+
+
+def _asks_wording(result: PlannedKriaTurn | None) -> bool:
+    question = (result.plan.choice_question or {}) if result is not None else {}
+    return question.get("conflict") == "creative_copy"
+
+
+@pytest.mark.asyncio
+async def test_kri682_title_quoted_in_an_earlier_message_is_not_re_asked(monkeypatch):
+    result = await _title_turn(
+        "Gece 23:00, Tigre",
+        conversation=[
+            {"role": "user", "content": _TIGRE_FIRST},
+            {"role": "user", "content": _TIGRE_LATEST},
+        ],
+        monkeypatch=monkeypatch,
+    )
+    assert not _asks_wording(result)
+
+
+@pytest.mark.asyncio
+async def test_kri682_smart_quotes_and_spacing_still_count(monkeypatch):
+    result = await _title_turn(
+        "Gece 23:00, Tigre",
+        conversation=[{"role": "user", "content": "Başlık: “Gece  23:00,  Tigre” olsun."}],
+        evidence=None,
+        monkeypatch=monkeypatch,
+    )
+    assert not _asks_wording(result)
+
+
+@pytest.mark.asyncio
+async def test_kri682_quote_past_the_model_excerpt_uses_the_full_request(monkeypatch):
+    long_first = "x" * 1200 + ' Başlık: "Gece 23:00, Tigre".'
+    result = await _title_turn(
+        "Gece 23:00, Tigre",
+        conversation=[{"role": "user", "content": long_first[:1000]}],
+        raw_creator_request=long_first,
+        monkeypatch=monkeypatch,
+    )
+    assert not _asks_wording(result)
+
+
+@pytest.mark.asyncio
+async def test_kri682_title_that_only_overlaps_the_quote_is_still_asked(monkeypatch):
+    result = await _title_turn(
+        "Gece 23:00",
+        conversation=[{"role": "user", "content": _TIGRE_FIRST}],
+        monkeypatch=monkeypatch,
+    )
+    assert _asks_wording(result)
+    assert result.plan.choice_question["candidate"] == "Gece 23:00"
+
+
+@pytest.mark.asyncio
+async def test_kri682_assistant_quote_is_not_creator_wording(monkeypatch):
+    result = await _title_turn(
+        "Gece Yarısı Teknesi",
+        conversation=[
+            {"role": "assistant", "content": 'Şunu deneyebilirim: "Gece Yarısı Teknesi".'},
+            {"role": "user", "content": _TIGRE_LATEST},
+        ],
+        monkeypatch=monkeypatch,
+    )
+    assert _asks_wording(result)

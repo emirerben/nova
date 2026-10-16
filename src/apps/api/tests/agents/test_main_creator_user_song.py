@@ -31,11 +31,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v56 (KRI-614) adds the clip `filename` sentence to the base prompt: all four changed again.
 # v57 (KRI-661) adds the mixed-Visuals `overlay_display` rule: all four changed again.
 # v59 (KRI-669/KRI-667) combines heading relationships and language-neutral brief facts.
+# v60 (KRI-700) adds the `footage_light` brief fact: the two brief-on renders changed.
 PRE_CHANGE_PROMPT_SHA = {
     (True, False): "ee65d056c23556e1f0943f279a38ba9d5cff7e85693baa75ae5e27768d5a6770",
-    (True, True): "3cd51732c9a55f7864294e25f0dc770aa5cf68d45fb4b322e5aed27ee5dbce59",
+    (True, True): "32a211e177b66bfe54b5ca43173c292726d8a2ece9620c4fcb7a3d331a8f7544",
     (False, False): "1832d24a557255f7bb3920c7abd14efda2629cd1696cf327d4d2a34bff9ba55c",
-    (False, True): "22ecc3773fc27346c08e5bc55156c725f9d785b164d95a4af16acd157bff98d5",
+    (False, True): "2cff6ddf9e8bdc158e89713f993f96e5cb572799eb8fda801acf273c227d37fe",
 }
 
 
@@ -105,7 +106,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-15-v59"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-16-v60"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

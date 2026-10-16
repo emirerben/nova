@@ -2,6 +2,66 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.13.0] - 2026-10-16
+
+### Changed
+- fix(kria): judge a glued music + ending ask by its parts and never call a clip ending a photo (KRI-688) (#1623) <!-- release-pr: 1623 -->
+
+## [0.79.12.0] - 2026-10-16
+
+### Fixed
+- fix(kria): a brighten ask gets an honest "Couldn't" and never reaches the approval card (KRI-700) (#1622) <!-- release-pr: 1622 -->
+
+## [0.79.11.0] - 2026-10-16
+
+### Changed
+- fix(kria): say a voiceover edit can't show text on a spoken word (KRI-699) (#1620) <!-- release-pr: 1620 -->
+
+## [0.79.10.0] - 2026-10-16
+
+### Changed
+- fix(kria): name the missing text when a phone render is refused (KRI-701) (#1619) <!-- release-pr: 1619 -->
+
+## [0.79.9.0] - 2026-10-16
+
+### Changed
+- fix(montage): cut named-line clips on the line, never call a missed line met (KRI-681) (#1616) <!-- release-pr: 1616 -->
+
+## [0.79.8.0] - 2026-10-16
+
+### Fixed
+- fix(clip-picker): settle tapped creator captions with creator-copy bounds (KRI-696) (#1618) <!-- release-pr: 1618 -->
+
+## [0.79.7.0] - 2026-10-16
+
+### Changed
+- fix(kria): keep quoted clip asks after the first turn (KRI-677) (#1617) <!-- release-pr: 1617 -->
+
+## [0.79.6.0] - 2026-10-16
+
+### Changed
+- feat(clips): measured brightness so "skip the very dark clips" matches (KRI-680) (#1615) <!-- release-pr: 1615 -->
+
+## [0.79.5.0] - 2026-10-16
+
+### Changed
+- fix(clip-intents): 4-word creator labels settle, unusable label text never loops the picker (KRI-678) (#1614) <!-- release-pr: 1614 -->
+
+## [0.79.4.0] - 2026-10-16
+
+### Changed
+- fix(kria): keep Turkish "don't use the dark clips" asks and never drop a skip silently (KRI-680) (#1613) <!-- release-pr: 1613 -->
+
+## [0.79.3.0] - 2026-10-16
+
+### Changed
+- fix(kria): song follows the creator's length and music mood (KRI-679) (#1612) <!-- release-pr: 1612 -->
+
+## [0.79.2.0] - 2026-10-16
+
+### Changed
+- fix(kria): never re-ask the wording of a title the creator quoted (KRI-682) (#1611) <!-- release-pr: 1611 -->
+
 ## [0.79.1.0] - 2026-10-15
 
 ### Fixed

@@ -154,15 +154,23 @@ _POSITION_LAST = re.compile(
 )
 
 
+# KRI-677: a quote copied from a JSON-rendered line keeps its escapes (``\"Hadi
+# gidelim\" dediğimiz iskele klibi``). Both sides of the provenance check are
+# normalised the same way, so a creator who literally typed ``\"`` still matches.
+_JSON_ESCAPES = re.compile(r'\\(["\\])')  # kri667: strips JSON escapes, reads no meaning
+
+
 def _norm(value: str) -> str:
     """Compare creator text the way the model saw it, tolerant of typography.
 
     The prompt shows the model ``_sanitize_text(...)`` output, and models freely
     swap curly/straight quotes, dash styles and line breaks when copying. None of
     that changes what the creator wrote, so provenance is checked on a form with
-    sanitization applied, quotes/dashes unified and whitespace collapsed.
+    sanitization applied, quotes/dashes unified, JSON escapes around quotes
+    removed and whitespace collapsed.
     """
     value = unicodedata.normalize("NFKC", _sanitize_text(value)).translate(_QUOTE_TABLE)
+    value = _JSON_ESCAPES.sub(r"\1", value)
     return " ".join(value.split())
 
 
@@ -582,17 +590,74 @@ def _clauses(text: str, joiners: frozenset[str]) -> list[list[str]]:
     return [clause for clause in clauses if clause]
 
 
+# KRI-680: Turkish stacks a clip's descriptions before its noun with commas ("Çok
+# karanlık, hiçbir şeyin görünmediği iki klibi kullanma"), so a comma ends the governed
+# clause only after a finished verb ("Spor salonu kalsın, çamaşır klibini kullanma").
+# Folded word endings of finite verbs: optative, past, progressive, reported, future,
+# necessity, "let's", and a negative imperative.
+_TR_SENTENCE_BREAKS = str.maketrans(dict.fromkeys(".;:!?()", "\n"))
+_TR_VERB_ENDINGS = (
+    "sin",
+    "sun",
+    "di",
+    "du",
+    "ti",
+    "tu",
+    "yor",
+    "mis",
+    "mus",
+    "acak",
+    "ecek",
+    "mali",
+    "meli",
+    "alim",
+    "elim",
+    "ma",
+    "me",
+)
+# Bare imperatives ("başla", "koy") carry no ending; the exclusion verbs are here too.
+_TR_IMPERATIVES = frozenset(
+    "kullan koy ekle basla bitir goster yaz kes ac kapat birak yap al ver tut at cikar atla "
+    "sil kaldir".split()
+)
+
+
+def _ends_in_tr_verb(words: list[str]) -> bool:
+    last = words[-1]
+    return last in _TR_IMPERATIVES or last.endswith(_TR_VERB_ENDINGS)
+
+
+def _tr_governed_clause(text: str) -> list[str]:
+    """The last Turkish clause, with the comma-led descriptions of its noun (KRI-680)."""
+    sentences = [s for s in text.translate(_TR_SENTENCE_BREAKS).split("\n") if _fold_words(s)]
+    if not sentences:
+        return []
+    clause: list[str] = []
+    for piece in reversed(sentences[-1].split(",")):
+        words = _fold_words(piece)
+        if not words:
+            continue
+        if clause and _ends_in_tr_verb(words):
+            break
+        joiners = [i for i, word in enumerate(words) if word in _TR_JOINERS]
+        start = joiners[-1] + 1 if joiners else 0
+        clause = words[start:] + clause
+        if joiners:
+            break
+    return clause
+
+
 def _exclusion_clause(quote: str) -> list[str] | None:
     """The folded words an exclusion verb in ``quote`` governs, or None when it asks none.
 
     English: the first clause (leading glue such as "but" is a joiner, so it is skipped).
-    Turkish: the last one, where the verb is.
+    Turkish: the last one, where the verb is, with its comma-led descriptions.
     """
     text = _norm(quote).casefold()
     if _EXCLUSION_ASK.search(text):
         return next(iter(_clauses(text, _EN_JOINERS)), [])
     if _EXCLUSION_ASK_TR.search(text):
-        return (_clauses(text, _TR_JOINERS) or [[]])[-1]
+        return _tr_governed_clause(text)
     return None
 
 
@@ -1233,6 +1298,16 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 "intent_invalid:" + (",".join(fields) or "model"),
                 f"failed validation on {', '.join(fields) or 'intent'} ({messages})",
             ) from exc
+        # KRI-677: keep the creator's words, not the brief's JSON escapes, on the intent
+        # itself; source_quote and creator_text are shown back to the creator and burned.
+        unescaped = {
+            field: _JSON_ESCAPES.sub(r"\1", value)
+            for field in ("source_quote", "creator_text")
+            if isinstance(value := getattr(intent, field), str)
+            and _JSON_ESCAPES.sub(r"\1", value) != value
+        }
+        if unescaped:
+            intent = intent.model_copy(update=unescaped)
         quote = _norm(intent.source_quote)
         if (not quote or not any(quote in source for source in sources)) and intent.op == "group":
             # A group prints nothing, so its quote is only evidence the creator asked
