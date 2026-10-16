@@ -182,8 +182,15 @@ def test_berlin_chapter_titles_print_on_their_clips_and_never_as_an_opening_titl
 
     compiled = compile_execution_plan(plan.guided_edit(), track=None)
     assert all(e["id"] != "guided-title" for e in compiled["text_elements"])
-    labels = [e for e in compiled["text_elements"] if e["id"].startswith("clip-label-")]
-    assert [e["text"] for e in labels] == list(SEATS.values())
+    labels = [
+        e for e in compiled["text_elements"] if e["id"].startswith(("clip-label-", "group-title-"))
+    ]
+    # KRI-716: the two "Sabah" clips sit together, so their chapter name is ONE
+    # continuous title across both, not a copy that blinks at the cut between them.
+    assert [e["text"] for e in labels] == list(dict.fromkeys(SEATS.values()))
+    sabah = labels[0]
+    assert sabah["id"].startswith("group-title-") and sabah["start_s"] == 0.0
+    assert sabah["end_s"] == labels[1]["start_s"]
     # The first thing on screen is the "Sabah" chapter label, alone.
     assert [e["text"] for e in compiled["text_elements"] if e["start_s"] == 0.0] == ["Sabah"]
     # The plan card's title row says "Not used", not the first chapter name.

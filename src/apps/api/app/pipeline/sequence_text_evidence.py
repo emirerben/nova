@@ -50,7 +50,9 @@ def sequence_role(row: Mapping[str, Any]) -> str:
         return "opening"
     if source == "guided-closing-title":
         return "closing"
-    if isinstance(source, str) and source.startswith(("clip-label-", "montage-text-")):
+    if isinstance(source, str) and source.startswith(
+        ("clip-label-", "montage-text-", "group-title-")
+    ):
         return "clip"
     return "any"
 
