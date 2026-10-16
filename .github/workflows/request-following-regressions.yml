@@ -85,5 +85,6 @@ jobs:
         with:
           name: request-following-${{ github.run_id }}-${{ github.run_attempt }}
           path: .request-following-report/
-          if-no-files-found: warn
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 14
