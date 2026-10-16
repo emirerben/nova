@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.7.0] - 2026-10-16
+
+### Changed
+- fix(montage): grouped title is one continuous block across the group (KRI-716) (#1637) <!-- release-pr: 1637 -->
+
 ## [0.80.6.0] - 2026-10-16
 
 ### Changed
