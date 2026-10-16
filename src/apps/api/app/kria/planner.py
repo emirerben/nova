@@ -159,7 +159,11 @@ from app.services.song_range import (
     song_range_of,
     song_range_question_text,
 )
-from app.services.spoken_quotes import closing_quote_notice, ground_closing_quote
+from app.services.spoken_quotes import (
+    closing_quote_notice,
+    described_line_moments,
+    ground_closing_quote,
+)
 
 log = structlog.get_logger()
 
@@ -175,7 +179,8 @@ def _enrich_best_parts_snapshot(
 
     ``closing_quote`` is ``spoken_quotes.ground_closing_quote``'s record of the line the
     creator asked to end on (KRI-597); the brief's moment ask (KRI-596, "the best six
-    moments, each very short") lets a long take give several windows.
+    moments, each very short") lets a long take give several windows; a clip the creator's
+    sound or order ask describes by what is said in it starts on that sentence (KRI-681).
     """
     if not isinstance(media_snapshot, dict):
         return media_snapshot
@@ -208,6 +213,11 @@ def _enrich_best_parts_snapshot(
     if recording is None and isinstance(media_snapshot.get("voiceover"), dict):
         recording = media_snapshot["voiceover"].get("duration_s")
     moments = brief_moment_ask(brief)
+    held = (
+        [str(closing_quote.get("media_id"))]
+        if isinstance(closing_quote, Mapping) and closing_quote.get("status") == "found"
+        else []
+    )
     length_plan = build_length_plan(
         {**strategy, "voiceover_duration_s": recording},
         media_snapshot,
@@ -217,6 +227,9 @@ def _enrich_best_parts_snapshot(
         closing_quote=closing_quote,
         moment_count=moments.count if moments is not None else None,
         moment_max_s=MOMENT_SHORT_MAX_S if moments is not None and moments.short else None,
+        spoken_moments=described_line_moments(
+            _described_clip_texts(brief), media_snapshot, skip_ids=held
+        ),
     )
     enriched = dict(media_snapshot)
     enriched["length_plan"] = length_plan
@@ -228,6 +241,20 @@ def _enrich_best_parts_snapshot(
         {"code": item["code"], "message": item["message"]} for item in length_plan["conflicts"]
     ]
     return enriched
+
+
+def _described_clip_texts(brief: CreativeBrief | None) -> list[str]:
+    """The creator's live sound and order asks, whose words may describe a clip by what
+    is said in it ("the clip where the boat won't start: keep its sound", KRI-681)."""
+    if brief is None:
+        return []
+    texts: list[str] = []
+    for req in brief.live():
+        if req.kind not in ("audio", "order"):
+            continue
+        texts.extend(text for text in (req.description, req.literal) if text)
+        texts.extend(value for value in req.facts.values() if isinstance(value, str))
+    return texts
 
 
 def _moment_count_notice(
