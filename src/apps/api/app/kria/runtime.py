@@ -393,7 +393,11 @@ async def _owned_thread(
         CreationThread.creator_id == creator_id,
     )
     if lock:
-        statement = statement.with_for_update()
+        # populate_existing: a session that already holds this thread from an earlier
+        # transaction (expire_on_commit=False; `submit_turn`'s re-entry after a lazy
+        # approval expiry) must read the row it just locked. A kept `revision` collides
+        # with any event committed in between (uq_creation_thread_events_revision).
+        statement = statement.with_for_update().execution_options(populate_existing=True)
     thread = (await db.execute(statement)).scalar_one_or_none()
     if thread is None:
         raise RuntimeFailure(404, "thread_not_found", "Creation thread not found")
@@ -1807,7 +1811,10 @@ async def _expire_blocking_approval(
     """Lazily expire an overdue pending approval that blocks `submit_turn` (KRI-295).
 
     Returns the thread revision after expiry, or None when nothing was expired
-    (decided/extended meanwhile). The caller must hold NO locks: this re-acquires
+    (decided/extended meanwhile). An approval someone else expired after `submit_turn`
+    saw it pending (the reconcile sweep, between that rollback and these locks) counts
+    as expired here too: its notice is the bump the creator could not have seen, exactly
+    as when this call writes it. The caller must hold NO locks: this re-acquires
     them in canonical order (PlanItem -> Session -> Turn -> Approval -> Execution
     -> Thread), exactly like `decide_approval`. `submit_turn` therefore rolls back
     (releasing its Thread lock) before calling this, rather than locking Thread
@@ -1848,6 +1855,9 @@ async def _expire_blocking_approval(
         if has_stash
         else None
     )
+    # populate_existing on every row read above without a lock (`approval_ref`, the
+    # execution and stash-path session peeks): the reconcile sweep may have expired this
+    # approval in between, and a kept "pending" would expire and announce it twice.
     session = (
         await db.execute(
             select(CreatorAgentSession)
@@ -1856,6 +1866,7 @@ async def _expire_blocking_approval(
                 CreatorAgentSession.creator_id == creator_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     turn = (
@@ -1873,6 +1884,7 @@ async def _expire_blocking_approval(
             select(CreatorAgentApproval)
             .where(CreatorAgentApproval.id == approval_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     execution = None
@@ -1882,9 +1894,14 @@ async def _expire_blocking_approval(
                 select(CreatorAgentExecution)
                 .where(CreatorAgentExecution.id == execution_id)
                 .with_for_update()
+                .execution_options(populate_existing=True)
             )
         ).scalar_one_or_none()
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
+    if approval is not None and approval.status == "expired":  # expired by the sweep meanwhile
+        revision = int(thread.revision)
+        await db.rollback()
+        return revision
     if (
         session is None
         or turn is None
@@ -2059,6 +2076,9 @@ async def decide_approval(
         if needs_plan_item_lock
         else None
     )
+    # populate_existing on every locked re-read of a row peeked above (approval, draft,
+    # execution, and the session on the strategy path): that copy predates the lock, so
+    # a concurrent expiry (the reconcile sweep) or pin change would otherwise go unseen.
     session = (
         await db.execute(
             select(CreatorAgentSession)
@@ -2067,6 +2087,7 @@ async def decide_approval(
                 CreatorAgentSession.creator_id == creator_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if session is None:
@@ -2104,6 +2125,7 @@ async def decide_approval(
                 CreatorEditDraft.thread_id == thread_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     approval = (
@@ -2115,6 +2137,7 @@ async def decide_approval(
                 CreatorAgentApproval.creator_id == creator_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     execution: CreatorAgentExecution | None = None
@@ -2131,6 +2154,7 @@ async def decide_approval(
                     select(CreatorAgentExecution)
                     .where(CreatorAgentExecution.id == execution_id)
                     .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).scalar_one_or_none()
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
