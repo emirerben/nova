@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.19.0] - 2026-10-16
+
+### Changed
+- test(kria): KRI-689 review test follows the KRI-686 moment-ask receipt (main CI red) (#1630) <!-- release-pr: 1630 -->
+
 ## [0.79.18.0] - 2026-10-16
 
 ### Fixed
