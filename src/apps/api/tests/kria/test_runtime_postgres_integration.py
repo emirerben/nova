@@ -3708,3 +3708,178 @@ async def test_kri700_brighten_ask_is_a_couldnt_line_and_never_reaches_the_appro
         assert card == f"Render this draft: {content}"
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_kri705_phone_talking_t1_brief_names_all_seven_asks_and_promises_no_cut(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tigre night T1 (thread D2E99325, 2026-10-16): seven asks, a first reply that named two,
+    and an approval card that said "İstenen kesmeleri yapıp ..." for a plan holding no cut.
+
+    Failure modes written down first, each asserted below:
+      1. an ask with no checker (r2 repeat cut, r5 engine noise) is silent before approval;
+      2. the model's summary ("kesmeleri yapıp") survives onto the draft or the approval card;
+      3. the spoken-word text ask (r4) is a plain "partial" that holds the draft behind
+         "a simpler version?" instead of being answered;
+      4. the 28 s take vs "under 20 s" and the start cut (r1) get no line;
+      5. a plain "can't" blocks the render (it is a format limit, not a simplification);
+      6. English / Turkish copy drifts (the reply must be Turkish for a Turkish chat).
+    """
+    from app.agents._schemas.creator_agent import (
+        CapabilityAvailability,
+        CreatorMediaRef,
+        ResolvedCreatorManifest,
+    )
+
+    user_id, thread_id, _session_id = _seed_runtime_project()
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id)
+        db.execute(
+            update(PlanItem)
+            .where(PlanItem.id == thread.active_plan_item_id)
+            .values(clip_gcs_paths=["u/analysis-proxy-ios-t1.mp4"], edit_format="subtitled")
+        )
+        db.commit()
+    claim = (
+        "Büyük 'ATAKAN' yazısını atlayıp videonun daha sade bir sürümünü hazırlıyorum. "
+        "İstenen kesmeleri yapıp başlığı ve karaoke altyazıları ekleyeceğim."
+    )
+    plan = adapt_creator_action(
+        ProposeStrategy(
+            kind="propose_strategy",
+            strategy=CreativeStrategy(
+                direction="native",
+                edit_format="subtitled",
+                audio_strategy="original_audio",
+                pacing="balanced",
+                render_program="guided",
+                selected_media_ids=[],
+                rationale="Talking edit.",
+                opening_title="Gece 11, tekneyle Tigre'ye",
+                caption_style="karaoke",
+            ),
+            summary=claim,
+        ),
+    )
+    manifest = ResolvedCreatorManifest(
+        item_id="item-1",
+        edit_format="subtitled",
+        render_program="guided",
+        media=[CreatorMediaRef(media_id="clip-1", kind="video", duration_s=28.0)],
+        capabilities={"edit_format:subtitled": CapabilityAvailability(available=True)},
+        context_hash="a" * 64,
+        manifest_hash="b" * 64,
+    )
+    asks = (
+        BriefUpdate(
+            kind="select",
+            scope="global",
+            description="Baştaki sessiz kısmı kes, video “Deniz'im neredesin” diye başlasın",
+        ),
+        BriefUpdate(
+            kind="select",
+            scope="global",
+            description="İkinci “Neredesin”i kes, bir kere sorayım",
+        ),
+        BriefUpdate(
+            kind="text",
+            scope="global",
+            description="Karaoke altyazı; Deniz'in arkadan cevapları da yazılsın",
+            facts={"captions": "word_by_word"},
+        ),
+        BriefUpdate(
+            kind="text",
+            scope="global",
+            literal="ATAKAN",
+            description="Atakan dediğimde ekrana büyük yazı gelsin",
+            facts={"triggers": ["Atakan"]},
+        ),
+        BriefUpdate(
+            kind="audio",
+            scope="global",
+            description="Motor sesini biraz kıs, sesim öne çıksın",
+        ),
+        BriefUpdate(kind="text", scope="title", literal="Gece 11, tekneyle Tigre'ye"),
+        BriefUpdate(
+            kind="timing",
+            scope="global",
+            description="20 saniyenin altında olsun",
+            facts={"duration_s": 20},
+        ),
+    )
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=plan,
+            manifest_hash="a" * 64,
+            context_hash="b" * 64,
+            brief_updates=asks,
+            brief_route="replan",
+            brief_clip_ids=("clip-1",),
+            brief_manifest=manifest,
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+    try:
+        accepted = await _submit(
+            user_id,
+            thread_id,
+            "Baştaki sessiz kısmı kes, video “Deniz'im neredesin” diye başlasın. "
+            "İkinci Neredesin'i kes. Karaoke altyazı olsun. Atakan dediğimde büyük ATAKAN "
+            "yazısı gelsin. Motor sesini kıs. Başlık: Gece 11, tekneyle Tigre'ye. "
+            "20 saniyenin altında olsun.",
+            2,
+        )
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        # (5) every "can't" here is a limit of the format: the draft goes ahead.
+        assert result["status"] == "awaiting_approval"
+        with sync_session() as db:
+            event = db.execute(
+                select(CreationThreadEvent).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "draft_applied",
+                )
+            ).scalar_one()
+            payload = dict(event.payload)
+            content = event.content
+            card = db.execute(
+                select(CreatorAgentApproval.consequence_summary).where(
+                    CreatorAgentApproval.turn_id == uuid.UUID(accepted.turn_id)
+                )
+            ).scalar_one()
+        receipts = {r["requirement_id"]: r for r in payload["requirement_receipts"]}
+        # (1) + (4): every one of the seven asks has a checked line.
+        assert set(receipts) == {f"r{i}" for i in range(1, 8)}, receipts.keys()
+        assert all(r["verification"] == "checked" for r in receipts.values())
+        for plain_cant in ("r2", "r4", "r5"):
+            assert receipts[plain_cant]["status"] == "not_possible", plain_cant
+        assert receipts["r1"]["status"] == "partial"
+        assert receipts["r6"]["status"] == "met"
+        assert "28" in receipts["r7"]["reason"] and "20" in receipts["r7"]["reason"]
+        for text in (
+            "Deniz'im neredesin",
+            "Neredesin",
+            "Karaoke altyazı",
+            "ATAKAN",
+            "Motor sesini",
+            "Gece 11",
+            "20 saniyenin",
+        ):
+            assert text in content, (text, content)
+        # (6) Turkish copy.
+        assert content.startswith("İstediklerinin hepsi videoya giremedi")
+        assert "Yapamadım: Motor sesini biraz kıs" in content
+        # (2) no promise of a cut that no receipt backs, on the reply, change list or card.
+        for said in (content, card, *payload["changes"]):
+            assert "kesmeleri yapıp" not in said, said
+        assert card == f"Render this draft: {content}"
+    finally:
+        await async_engine.dispose()

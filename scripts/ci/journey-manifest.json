@@ -517,6 +517,14 @@
       ]
     },
     {
+      "id": "kri-708-caption-correction",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_caption_correct.py",
+      "paths": [
+        "src/apps/api/app/pipeline/caption_correct.py"
+      ]
+    },
+    {
       "id": "kri-681-named-line-windows",
       "needs_native": false,
       "api_tests": "tests/tasks/test_named_line_windows_montage.py tests/tasks/test_long_take_moments_montage.py",
