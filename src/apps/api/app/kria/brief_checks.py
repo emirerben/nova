@@ -2555,6 +2555,10 @@ _CAPTIONS_WORD_BY_WORD = "words light up as you say them"
 _CLEANUP_DONE = "Speech cleanup cut the long pauses"
 _CLEANUP_NOTHING_TO_CUT = "Speech cleanup found no long pauses to cut"
 _CLEANUP_NOT_RUN = "Speech cleanup didn't run on this video, so the long pauses stay"
+# KRI-700: no draft can brighten or darken the footage (see `wants_light_change`).
+_LIGHT_UNAVAILABLE = (
+    "I can't change how bright or dark clips look in this edit yet, so they keep their own light"
+)
 
 # The Turkish twin of every static reason above (KRI-520). Reasons are written into
 # receipts when a turn runs, in that turn's language, so everything that tells one
@@ -2610,6 +2614,10 @@ _REASON_TR: dict[str, str] = {
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
     _CLEANUP_NOTHING_TO_CUT: "Konuşma temizliği kesilecek uzun bir duraklama bulmadı",
     _CLEANUP_NOT_RUN: ("Konuşma temizliği bu videoda çalışmadı, o yüzden uzun duraklamalar kaldı"),
+    _LIGHT_UNAVAILABLE: (
+        "Bu düzenlemede kliplerin ne kadar aydınlık ya da karanlık göründüğünü henüz "
+        "değiştiremiyorum, o yüzden kendi ışıklarıyla kalıyorlar"
+    ),
     "Some requested text ends before the video does.": "Bazı yazılar video bitmeden kayboluyor.",
 }
 
@@ -2667,6 +2675,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_NOTHING_TO_CUT,
     _CLEANUP_NOT_RUN,
     _BED_STILL_PLAYS,
+    _LIGHT_UNAVAILABLE,
 )
 _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
     *_FORMAT_LIMIT_EN,
@@ -5193,6 +5202,26 @@ def _wants_source_sound_kept(req: BriefRequirement) -> bool:
     )
 
 
+# KRI-700: brightening or darkening the footage itself. No draft can carry it: a strategy has
+# no exposure field, and the phone plans only take the warm `golden_hour` look, which adds
+# contrast and so makes near-black night clips darker, not brighter. The model that read the
+# ask records it as `facts["footage_light"]` ("brighter" / "darker",
+# main_creator._BRIEF_PROMPT_SECTION); the words are never re-read here (KRI-667).
+_FOOTAGE_LIGHT_FACTS = frozenset({"brighter", "darker"})
+
+
+def wants_light_change(req: BriefRequirement) -> bool:
+    """True when the creator asks to brighten or darken the footage itself (KRI-700)."""
+    stated = req.facts.get("footage_light")
+    return isinstance(stated, str) and stated.strip().casefold() in _FOOTAGE_LIGHT_FACTS
+
+
+def _check_light_change(req: BriefRequirement) -> RequirementReceipt:
+    # A limit of every draft, not a simplification: reported as "Couldn't", never the
+    # "should I make a simpler version?" question (`is_format_limit`).
+    return _receipt(req, "not_possible", _LIGHT_UNAVAILABLE)
+
+
 def _check_source_sound(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if facts.source_audio_kept is None or not facts.rendered_montage:
         return _receipt(req, "partial", _CANT_CHECK_MIX)
@@ -5226,7 +5255,7 @@ def _check_source_sound(req: BriefRequirement, facts: PlanFacts) -> RequirementR
 
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
-    if _wants_speaker_framing(req):
+    if _wants_speaker_framing(req) or wants_light_change(req):
         return True
     if _wants_cleanup(req) or _wants_captions(req):
         return True
@@ -5281,6 +5310,10 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_speech_cleanup(req, facts)
     if _wants_speaker_framing(req):
         return _check_speaker_framing(req, facts)
+    if wants_light_change(req) and (facts.rendered_variant or not facts.editor):
+        # KRI-700: a draft or a finished render never brightens the footage. An editor turn
+        # keeps its own receipts (the before/after diff names what its ops changed).
+        return _check_light_change(req)
     if facts.rendered_montage:
         # KRI-546: a finished phone montage shows which files repeat and whether the
         # closing clip's own line plays whole; every other plan keeps its usual path.
@@ -5639,6 +5672,35 @@ def _outcome_reason(reason: str) -> str:
     return _loc(reason)
 
 
+def keeps_model_summary(
+    brief: CreativeBrief, receipts: Iterable[RequirementReceipt | Mapping[str, Any]]
+) -> bool:
+    """True when ``reply_from_receipts`` keeps the model's free-text summary (KRI-700).
+
+    It is kept only when every judged requirement is met and none is left to look at, the
+    same rule as the reply's own branches. Anything else the draft says about itself (its
+    change list, the approval card) must follow the reply, or a summary that promised
+    "brightened footage" reaches the card the reply already corrected.
+    """
+    by_id = {req.id: req for req in brief.requirements}
+    for raw in receipts:
+        receipt = (
+            raw
+            if isinstance(raw, RequirementReceipt)
+            else RequirementReceipt.model_validate(
+                {k: v for k, v in raw.items() if k in RequirementReceipt.model_fields}
+            )
+        )
+        req = by_id.get(receipt.requirement_id)
+        if req is None:
+            continue
+        if receipt.verification == "unchecked":
+            return False
+        if is_judged(req, receipt) and receipt.status != "met":
+            return False
+    return True
+
+
 def reply_from_receipts(
     brief: CreativeBrief,
     receipts: list[RequirementReceipt],
@@ -5742,6 +5804,8 @@ __all__ = [
     "NARRATED_ALIGNMENT_FIELD",
     "NarratedStepFact",
     "asks_caption_language",
+    "keeps_model_summary",
+    "wants_light_change",
     "defers_caption_words_to_phone_render",
     "defers_to_narrated_render",
     "defers_to_unified_montage",
