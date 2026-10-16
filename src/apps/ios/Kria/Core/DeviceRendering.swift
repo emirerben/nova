@@ -12,9 +12,11 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
     /// present for `published` responses; it fences editor polling from a
     /// newer or unrelated device render.
     let publishedGeneration: String?
-    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation" }
-    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil) {
-        self.phase = phase; self.request = request; self.reason = reason; self.reasonCode = reasonCode; self.publishedGeneration = publishedGeneration
+    /// Saved document bound to the immutable recipe, including while its export is pending.
+    let baseGeneration: String?
+    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation", baseGeneration = "base_generation" }
+    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil, baseGeneration: String? = nil) {
+        self.phase = phase; self.request = request; self.reason = reason; self.reasonCode = reasonCode; self.publishedGeneration = publishedGeneration; self.baseGeneration = baseGeneration
     }
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -22,6 +24,7 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
         reason = try container.decodeIfPresent(String.self, forKey: .reason)
         reasonCode = try container.decodeIfPresent(String.self, forKey: .reasonCode)
         publishedGeneration = try container.decodeIfPresent(String.self, forKey: .publishedGeneration)
+        baseGeneration = try container.decodeIfPresent(String.self, forKey: .baseGeneration)
         let raw = try container.decode(JSONValue.self, forKey: .request)
         request = try RecipeJSON.decoder().decode(DeviceRenderRequest.self, from: JSONEncoder().encode(raw))
         try request.recipe.validate()

@@ -33,6 +33,25 @@ final class NativeEditorSessionTests: XCTestCase {
         )) { XCTAssertEqual($0 as? APIError, .conflict) }
     }
 
+    func testPendingDeviceRecipeRequiresExactSavedGenerationAndTarget() throws {
+        let jobID = UUID()
+        let request = deviceRenderRequest(jobID: jobID, revision: 2, digest: "b")
+        let raw = try JSONDecoder().decode(JSONValue.self, from: RecipeJSON.encoder().encode(request))
+        for phase in ["awaiting_device", "syncing", "needs_attention"] {
+            let wire: [String: JSONValue] = ["phase": .string(phase), "request": raw, "base_generation": .string("saved-g2")]
+            let status = try JSONDecoder().decode(DeviceRenderStatusResponse.self, from: JSONEncoder().encode(wire))
+            XCTAssertEqual(try NativeEditorSession.currentDeviceRecipeRequest(status,
+                jobID: jobID, variantID: "variant", generation: "saved-g2"), request)
+            for (job, variant, generation) in [(UUID(), "variant", "saved-g2"), (jobID, "other", "saved-g2"), (jobID, "variant", "older-g1")] {
+                XCTAssertThrowsError(try NativeEditorSession.currentDeviceRecipeRequest(status,
+                    jobID: job, variantID: variant, generation: generation)) { XCTAssertEqual($0 as? APIError, .conflict) }
+            }
+            let legacy = DeviceRenderStatusResponse(phase: phase, request: request)
+            XCTAssertThrowsError(try NativeEditorSession.currentDeviceRecipeRequest(legacy,
+                jobID: jobID, variantID: "variant", generation: "saved-g2"))
+        }
+    }
+
     func testDeviceRecipeWithoutNarrationDoesNotInventAnAudioSource() throws {
         let jobID = UUID()
         let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
@@ -42,6 +61,31 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(try NativeEditorSession.currentDeviceNarrationRequest(
             status, jobID: jobID, variantID: "variant", generation: "generation-1"
         ))
+    }
+
+    /// A silent pending recipe needs no generation-owned audio. The source pool still
+    /// fences picture sources, so reopening a saved edit can build its current preview.
+    func testSilentDeviceEditPreviewsWhilePublicationIsPending() async throws {
+        let threadID = UUID(), jobID = UUID()
+        var authoritative = Self.variant(duration: 2, generation: "generation-1")
+        authoritative["render_destination"] = .string("device")
+        authoritative["render_status"] = .string("awaiting_device")
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: authoritative
+        )
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")
+        let source = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        for phase in ["awaiting_device", "syncing", "needs_attention"] {
+            fake.deviceRenderResponse = DeviceRenderStatusResponse(phase: phase,
+                request: deviceRenderRequest(jobID: jobID, revision: 2, digest: "b"), baseGeneration: "generation-1")
+            let session = NativeEditorSession()
+            await session.load(api: fake, threadID: threadID)
+            await session.prepareFixtureSourcePreview(url: source)
+            XCTAssertEqual(session.sourcePreviewState, .ready, "Silent current edit must preview during \(phase)")
+            XCTAssertTrue(session.hasSourcePreview)
+        }
     }
 
     func testNoNarrationDeviceRecipeIsMemoizedUntilItsGenerationRefreshes() async throws {
@@ -2344,6 +2388,33 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(try session.videoDownloadRoute(deviceLocalFile: olderDeviceFile), .sourcePreview)
     }
 
+    func testQueuedFinishedRecoveryCannotReplacePreviewFailureAfterSave() async throws {
+        let jobID = UUID(), file = FileManager.default.temporaryDirectory.appendingPathComponent("queued-recovery-\(UUID().uuidString).mp4")
+        try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")), to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        var variant = Self.variant(duration: 2, generation: "g1")
+        variant["render_status"] = .string("ready")
+        variant["output_url"] = .string(file.absoluteString)
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant",
+            draftRevision: 0, snapshotHash: "", etag: "", baseJobID: jobID.uuidString, baseGenerationID: "g1",
+            snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: variant)
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+        session.finishedRenderRetryDelays = [.milliseconds(500)]
+        let item = try XCTUnwrap(session.player?.currentItem)
+        session.handlePlayerItemFailure(item, error: NSError(domain: AVFoundationErrorDomain, code: -11800))
+        try FileManager.default.removeItem(at: file)
+        session.selectClip(try XCTUnwrap(session.draft.clips.first).id)
+        session.trimSelected(edge: .trailing, to: 1.5)
+        await session.save()
+        XCTAssertFalse(session.hasUnsavedChanges)
+        let sourceFailure = session.sourcePreviewState
+        XCTAssertTrue(sourceFailure.isFailure)
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertEqual(session.sourcePreviewState, sourceFailure,
+            "A recovery queued before Save must not overwrite the current document's preview error")
+    }
+
     func testHiddenStaleFallbackCannotBeExportedAfterSourcePreviewFailure() async throws {
         let jobID = UUID()
         var variant = Self.variant(duration: 2, generation: "g1")
@@ -2360,6 +2431,12 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNotNil(session.videoDownloadTarget)
         XCTAssertFalse(session.canDisplayCurrentPlayer)
         XCTAssertFalse(session.canDownloadCurrentVideo, "A hidden stale output cannot be exported as the current edit")
+        let sourceFailure = session.sourcePreviewState
+        session.finishedRenderRetryDelays = []
+        let item = try XCTUnwrap(session.player?.currentItem)
+        session.handlePlayerItemFailure(item, error: NSError(domain: AVFoundationErrorDomain, code: -11800))
+        XCTAssertEqual(session.sourcePreviewState, sourceFailure,
+            "A hidden obsolete render must not replace the current source failure with a playback error")
     }
 
     func testDownloadRejectsStaleFinishedRenderWhileCurrentPreviewPrepares() async throws {
@@ -4438,8 +4515,13 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.deviceFetchCount, 1)
         XCTAssertEqual(fake.lastRequest?.guidedRevisionNumber, 7)
         XCTAssertEqual(renderSessions.presentations[key]?.phase, .needsAttention)
-        XCTAssertEqual(session.saveState, .previewPending)
+        guard case .deviceRenderRetryNeeded = session.saveState else {
+            return XCTFail("A renderer preparation failure must stop the indefinite Applying banner: \(session.saveState)")
+        }
         XCTAssertFalse(session.hasUnsavedChanges)
+        await session.retryDeviceRender()
+        XCTAssertEqual(fake.deviceFetchCount, 2, "A local preparation failure retries reconciliation without a server retry or another Save")
+        XCTAssertEqual(fake.commitCount, 1)
     }
 
     /// KRI-227: a save acknowledgement moves the document to the commit generation (`g2`) before the

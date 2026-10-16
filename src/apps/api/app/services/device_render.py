@@ -63,6 +63,8 @@ def device_record(job: Any, variant_id: str) -> dict:
 def device_status(job: Any, variant_id: str) -> DeviceRenderStatus:
     record = device_record(job, variant_id)
     status = DeviceRenderStatus.model_validate(record["status"])
+    # The record owns this binding. A stored response field cannot override it.
+    status = status.model_copy(update={"base_generation": record.get("base_generation")})
     if status.phase != "published":
         return status.model_copy(update={"published_generation": None})
     published_attempt = record.get("published_attempt")
