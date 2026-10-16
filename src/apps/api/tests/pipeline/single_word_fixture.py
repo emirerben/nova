@@ -76,11 +76,55 @@ def talk_recipe(*, caption_style: str, look: PhoneCaptionLook | None, cues=None)
     )
 
 
+# Text layout floats come out of the font engine (glyph advances, run positions) and differ in
+# their last digits between a Mac and the Linux CI image, so they are not part of the digest.
+# What the digest pins is everything else: layer ids and timing, run text and order, glyph
+# ids, sizes, colours, strokes and shadows, karaoke fields and required capabilities.
+_PLATFORM_LAYOUT_RUN_KEYS = frozenset({"x", "baseline_y"})
+
+
+def _stable(value):
+    if isinstance(value, float):
+        return round(value, 3)
+    if isinstance(value, list):
+        return [_stable(item) for item in value]
+    if isinstance(value, dict):
+        if "glyph_id" in value:
+            return {"glyph_id": value["glyph_id"]}
+        return {key: _stable(item) for key, item in value.items()}
+    return value
+
+
+def _stable_runs(value):
+    """Apply the run-key filter to every `runs` list, wherever it sits."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                [
+                    {
+                        k: _stable_runs(v)
+                        for k, v in run.items()
+                        if k not in _PLATFORM_LAYOUT_RUN_KEYS
+                    }
+                    if isinstance(run, dict)
+                    else run
+                    for run in item
+                ]
+                if key == "runs" and isinstance(item, list)
+                else _stable_runs(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_stable_runs(item) for item in value]
+    return value
+
+
 def recipe_digest(recipe) -> str:
     dumped = recipe.model_dump(mode="json")
     # A set on the model: its list order follows PYTHONHASHSEED, its content is the contract.
     dumped["required_capabilities"] = sorted(dumped["required_capabilities"])
-    payload = json.dumps(dumped, sort_keys=True, ensure_ascii=False)
+    payload = json.dumps(_stable(_stable_runs(dumped)), sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(payload.encode()).hexdigest()
 
 

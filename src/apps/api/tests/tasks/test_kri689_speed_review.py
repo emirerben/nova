@@ -251,9 +251,14 @@ def test_the_other_asks_read_exactly_as_before():
     assert "- Done: 20 seconds" in text
     assert receipts["r1"]["status"] == "met"
     assert receipts["r2"]["status"] == "met"
-    for req_id in ("r3", "r5"):
-        assert receipts[req_id]["verification"] == "unchecked"
-    assert "pick the moments where a lit house" in _look_section(text)
+    # r3 asks for eight moments: since KRI-686 that count is checked against the video (it has
+    # four), so it is `checked` and partial. r5 (clip sound) is still not judged here.
+    assert receipts["r3"]["verification"] == "checked"
+    assert receipts["r3"]["status"] == "partial"
+    assert receipts["r5"]["verification"] == "unchecked"
+    # The eight-moments ask is judged now (partial), so it reads as "Partly:", not "have a look".
+    assert "- Partly: pick the moments where a lit house" in text
+    assert "Keep every clip's own sound without any music" in _look_section(text)
 
 
 def test_a_pacing_ask_is_not_reported_as_a_dropped_speed_ask():
