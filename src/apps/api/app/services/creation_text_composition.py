@@ -262,6 +262,15 @@ def snapshot_copy_constraints(
         for cut in snapshot.fast_cuts or []:
             if cut.media_id == label.media_id:
                 constraints[f"clip-label-{cut.cut_id}"] = label.text
+    group_titles = {
+        label.text
+        for label in snapshot.clip_labels or []
+        if label.group_id and label.provenance == "creator"
+    }
+    for row in plan.get("text_elements") or []:
+        # A chapter title that runs across neighbouring clips is one element.
+        if str(row.get("id") or "").startswith("group-title-") and row.get("text") in group_titles:
+            constraints[row["id"]] = row["text"]
     for index, pin in enumerate(snapshot.pinned_texts or []):
         constraints[f"guided-pinned-{index}"] = pin.text
     shot_copy = {_copy_key(value) for value in snapshot.shot_labels or []}

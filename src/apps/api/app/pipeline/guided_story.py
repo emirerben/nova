@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Callable, Mapping
@@ -1413,6 +1414,37 @@ def clip_label_media_ids(snapshot: EditProposalSnapshot) -> frozenset[str]:
     return frozenset(label.media_id for label in snapshot.clip_labels or [] if label.text)
 
 
+GROUP_TITLE_PREFIX = "group-title-"
+
+
+def _group_title_key(group_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", group_id).strip("-") or "group"
+
+
+def group_title_prefix(group_id: str) -> str:
+    """Id prefix of every continuous group title one chapter/intent owns."""
+    return f"{GROUP_TITLE_PREFIX}{_group_title_key(group_id)}-"
+
+
+def _title_stretches(keys: list[Any]) -> list[tuple[Any, int, int]]:
+    """Runs of cuts that sit next to each other in the final order and share a title.
+
+    ``keys[i]`` is cut ``i``'s title identity (``None`` = no shared title). Returns
+    ``(key, first_index, last_index)`` for each maximal run of equal non-None keys, in
+    order. A cut between two cuts of the same chapter that carries a different (or no)
+    title ends the run, so a chapter split across the edit gets one title per stretch.
+    """
+    runs: list[tuple[Any, int, int]] = []
+    for index, key in enumerate(keys):
+        if key is None:
+            continue
+        if runs and runs[-1][0] == key and runs[-1][2] == index - 1:
+            runs[-1] = (key, runs[-1][1], index)
+        else:
+            runs.append((key, index, index))
+    return runs
+
+
 def _text_elements(
     snapshot: EditProposalSnapshot,
     beat_windows: list[dict],
@@ -1600,33 +1632,77 @@ def _base_text_elements(
                     **({"animation_phases": title_phases} if title_phases is not None else {}),
                 ).model_dump(mode="json", exclude_none=True)
             )
-        for cut, window in zip(snapshot.fast_cuts, beat_windows, strict=True):
+        label_group = {
+            label.media_id: label.group_id
+            for label in snapshot.clip_labels or []
+            if label.group_id and label.text
+        }
+        cuts_and_windows = list(zip(snapshot.fast_cuts, beat_windows, strict=True))
+        # One continuous title across neighbouring cuts of the same chapter, not a
+        # copy per clip. A single-cut stretch keeps the ordinary per-clip label.
+        stretch_keys = [
+            (label_group[cut.media_id], label_by_source[cut.media_id])
+            if cut.media_id in label_group and label_by_source.get(cut.media_id)
+            else None
+            for cut, _window in cuts_and_windows
+        ]
+        stretch_at: dict[int, tuple[str, int, int]] = {}
+        stretch_count: dict[str, int] = {}
+        for (group_id, _text), first, last in _title_stretches(stretch_keys):
+            stretch_count[group_id] = stretch_count.get(group_id, 0) + 1
+            title_id = f"{group_title_prefix(group_id)}{stretch_count[group_id]}"
+            stretch_at[first] = (title_id, first, last)
+        in_stretch: set[int] = set()
+        for _title_id, first, last in stretch_at.values():
+            if last > first:
+                in_stretch.update(range(first + 1, last + 1))
+
+        def label_element(element_id: str, text: str, start_s: float, end_s: float) -> dict:
+            return TextElement(
+                id=element_id,
+                text=text,
+                start_s=round(start_s, 3),
+                end_s=round(end_s, 3),
+                role="generative_intro",
+                position="custom",
+                x_frac=label_x,
+                # A bottom pin owns the bottom zone: raise labels out of its way (only
+                # when the snapshot carries one; every other snapshot is unchanged).
+                y_frac=lane_y(label_y, start_s, end_s),
+                font_family=snapshot.font_family or "Fraunces",
+                size_px=58,
+                color=snapshot.text_color or "#FFF8F0",
+                highlight_color="#D9FF70",
+                stroke_width=0,
+                shadow_enabled=True,
+                shadow_style="standard",
+                effect="static",
+                alignment=label_alignment,
+                max_width_frac=0.82,
+            ).model_dump(mode="json", exclude_none=True)
+
+        for index, (cut, window) in enumerate(cuts_and_windows):
             label = label_by_source.get(cut.media_id)
-            if not label:
+            if not label or index in in_stretch:
+                continue
+            stretch = stretch_at.get(index)
+            if stretch is not None and stretch[2] > stretch[1]:
+                label_elements.append(
+                    label_element(
+                        stretch[0],
+                        label,
+                        float(window["start_s"]),
+                        float(cuts_and_windows[stretch[2]][1]["end_s"]),
+                    )
+                )
                 continue
             label_elements.append(
-                TextElement(
-                    id=f"clip-label-{cut.cut_id}",
-                    text=label,
-                    start_s=round(float(window["start_s"]), 3),
-                    end_s=round(float(window["end_s"]), 3),
-                    role="generative_intro",
-                    position="custom",
-                    x_frac=label_x,
-                    # A bottom pin owns the bottom zone: raise labels out of its way (only
-                    # when the snapshot carries one; every other snapshot is unchanged).
-                    y_frac=lane_y(label_y, float(window["start_s"]), float(window["end_s"])),
-                    font_family=snapshot.font_family or "Fraunces",
-                    size_px=58,
-                    color=snapshot.text_color or "#FFF8F0",
-                    highlight_color="#D9FF70",
-                    stroke_width=0,
-                    shadow_enabled=True,
-                    shadow_style="standard",
-                    effect="static",
-                    alignment=label_alignment,
-                    max_width_frac=0.82,
-                ).model_dump(mode="json", exclude_none=True)
+                label_element(
+                    f"clip-label-{cut.cut_id}",
+                    label,
+                    float(window["start_s"]),
+                    float(window["end_s"]),
+                )
             )
         return [
             *title_elements,
@@ -1646,16 +1722,31 @@ def _base_text_elements(
     ):
         text_by_source = {entry.media_id: entry.text for entry in snapshot.montage_text_bindings}
         elements: list[dict] = []
-        for cut, window in zip(snapshot.fast_cuts, beat_windows, strict=True):
+        cuts_and_windows = list(zip(snapshot.fast_cuts, beat_windows, strict=True))
+        # Neighbouring cuts bound to the same words print ONE continuous title across
+        # them, not a copy per cut that blinks at every edit.
+        runs = _title_stretches([text_by_source.get(cut.media_id) for cut, _w in cuts_and_windows])
+        run_at = {first: (last, number) for number, (_t, first, last) in enumerate(runs, start=1)}
+        merged_into: set[int] = set()
+        for _text, first, last in runs:
+            merged_into.update(range(first + 1, last + 1))
+        for index, (cut, window) in enumerate(cuts_and_windows):
             text = text_by_source.get(cut.media_id)
-            if not text:
+            if not text or index in merged_into:
                 continue
+            last_index, number = run_at[index]
+            spans = last_index > index
+            window_end_s = cuts_and_windows[last_index][1]["end_s"] if spans else window["end_s"]
             binding_start_s, binding_end_s = clear_window(
-                float(window["start_s"]), float(window["end_s"]), after_title=False
+                float(window["start_s"]), float(window_end_s), after_title=False
             )
             elements.append(
                 TextElement(
-                    id=f"montage-text-{cut.cut_id}",
+                    id=(
+                        f"{GROUP_TITLE_PREFIX}montage-{number}"
+                        if spans
+                        else f"montage-text-{cut.cut_id}"
+                    ),
                     text=text,
                     start_s=binding_start_s,
                     end_s=binding_end_s,
@@ -2294,7 +2385,9 @@ def _compile_scheduled_execution_plan(
             binding_snapshot, beat_windows, policy, compiler_version=8, clip_windows=clip_windows
         )
         text_elements.extend(
-            element for element in bindings if element["id"].startswith("montage-text-")
+            element
+            for element in bindings
+            if element["id"].startswith(("montage-text-", f"{GROUP_TITLE_PREFIX}montage-"))
         )
     total_s = schedule.total_frames / 30
     song_reference = _song_reference(track, duration_s=total_s)
@@ -4628,7 +4721,7 @@ def _mux_guided_source_audio(
 _GUIDED_OPENING_TEXT_IDS = frozenset({"guided-title"})
 _GUIDED_CLOSING_TEXT_IDS = frozenset({"guided-closing-title"})
 # Per-shot copy the guided compiler binds to one clip's window.
-_GUIDED_CLIP_TEXT_PREFIXES = ("clip-label-", "montage-text-")
+_GUIDED_CLIP_TEXT_PREFIXES = ("clip-label-", "montage-text-", GROUP_TITLE_PREFIX)
 
 
 def _guided_source_audio_evidence(
