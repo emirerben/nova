@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.17.0] - 2026-10-16
+
+### Changed
+- feat(ios): Display Word shows one word at a time from one layer per caption (KRI-671, 1/2) (#1610) <!-- release-pr: 1610 -->
+
 ## [0.79.16.0] - 2026-10-16
 
 ### Changed
