@@ -45,7 +45,9 @@ Candidates come from owned plan-item footage/audio and registered visual pools.
 Upload events/pool timestamps determine newest-first priority, with post creation
 time as the legacy fallback. Old unpinned sources adopt the current generation
 only after full-byte verification and probing; a changed existing generation is
-skipped. Proxies require their stored original descriptor. Both the database
+skipped. Videos require their stored device-bound proxy/original receipt for the
+current phone-only creation flow; older cloud-render video originals are skipped
+and remain available on their existing posts. Both the database
 consumer and the normalized storage namespace must belong to the requested owner.
 
 Each transaction takes the existing owner/reference fence, rechecks the current

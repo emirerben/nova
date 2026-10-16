@@ -212,6 +212,10 @@ def validate(candidate, owner):
         return "invalid_receipt"
     if is_analysis_proxy_path(path) and contract.proxy is None:
         return "proxy_receipt_missing"
+    if candidate.kind == "video" and contract.proxy is None:
+        # The shipped phone-only creation route cannot dispatch cloud footage.
+        # Do not publish a source that can be selected but cannot render a post.
+        return "native_receipt_missing"
     if contract.proxy and contract.proxy.original.kind != candidate.kind:
         return "invalid_receipt"
     if contract.proxy and candidate.kind != "video":

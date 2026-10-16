@@ -262,6 +262,26 @@ async def test_stale_missing_proxy_receipt_and_transfer_budget(world):
     assert not w.reads
 
 
+async def test_cloud_only_video_is_not_offered_as_phone_footage(world):
+    w = world
+    path = w.clip["gcs_path"].replace("analysis-proxy-old", "old-cloud.mov")
+    w.paths[path] = w.paths[w.clip["gcs_path"]]
+    async with AsyncSessionLocal() as db:
+        item = await db.get(PlanItem, w.first)
+        item.clip_assignments = [w.clip, {"gcs_path": path, "source_filename": "old-cloud.mov"}]
+        await db.commit()
+    report = await backfill.run(w.owner, apply=True)
+    assert report["counts"]["created"] == 2
+    assert report["counts"]["native_receipt_missing"] == 1
+    async with AsyncSessionLocal() as db:
+        videos = (
+            await db.scalars(
+                select(MediaAsset).where(MediaAsset.user_id == w.owner, MediaAsset.kind == "video")
+            )
+        ).all()
+        assert len(videos) == 1 and videos[0].original_declared_sha256 == "a" * 64
+
+
 async def test_quota_and_archived_sources_are_not_bypassed(world, monkeypatch):
     w = world
     monkeypatch.setattr(ingest, "ACTIVE_ASSET_LIMIT", 1)
