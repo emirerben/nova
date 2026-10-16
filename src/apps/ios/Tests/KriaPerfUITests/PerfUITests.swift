@@ -109,7 +109,7 @@ final class PerfUITests: XCTestCase {
     func testLaunchToTranscript() {
         warmCache()
         var book = CounterBook()
-        measure(metrics: [interval("launch.toTranscript"), interval("launch.init"), interval("appmodel.init")], options: options) {
+        measure(metrics: [interval("launch.toTranscript"), interval("launch.toPixels"), interval("launch.init"), interval("appmodel.init")], options: options) {
             let app = makeApp()
             app.launch()
             waitForTranscript(app)
@@ -126,7 +126,7 @@ final class PerfUITests: XCTestCase {
         let environment = ["KRIA_FIXTURE_EXPIRED_TOKEN": "1"]
         warmCache(environment)
         var book = CounterBook()
-        measure(metrics: [interval("launch.toTranscript")], options: options) {
+        measure(metrics: [interval("launch.toTranscript"), interval("launch.toPixels")], options: options) {
             let app = makeApp(environment)
             app.launch()
             waitForTranscript(app)
@@ -148,7 +148,7 @@ final class PerfUITests: XCTestCase {
         var next = 10
         var book = CounterBook()
         var before = counters(app)
-        measure(metrics: [interval("chat.open"), interval("drawer.open")], options: options) {
+        measure(metrics: [interval("chat.open"), interval("chat.toPixels"), interval("drawer.open")], options: options) {
             let title = "Chat \(next)"
             next = next == 19 ? 10 : next + 1
             app.buttons["workspace-menu-toggle"].tap()

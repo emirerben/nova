@@ -207,6 +207,10 @@ struct ChatMessageRow: View {
                     .copyableMessage(message.content, previewShape: Self.userBubbleShape)
                     .accessibilityLabel("You: \(message.content)")
                     .accessibilityIdentifier("chat-message-\(message.id)")
+                    .onAppear {
+                        Perf.endOpenOnNextFrame("launch.toPixels")
+                        Perf.endOpenOnNextFrame("chat.toPixels")
+                    }
             }
             .frame(maxWidth: .infinity)
         } else {

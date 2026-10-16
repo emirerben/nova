@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import QuartzCore
 
 /// Performance intervals for launch, screen-open, network, scroll and editor work.
 ///
@@ -37,6 +38,18 @@ enum Perf {
         let key = Registry.key(name, id)
         guard registry.tick(key, needed: needed) else { return }
         end(name, id: id, detail)
+    }
+
+    /// Closes every open interval called `name` on the first display frame after now: what was just laid out is on
+    /// screen. `launch.toTranscript` / `chat.open` end when state is *set*; with a long transcript the main thread
+    /// can then stay busy laying it out for most of a second, so these are the figures that match what a creator sees.
+    /// Call it from the first row's `onAppear`; later calls with nothing open are free.
+    static func endOpenOnNextFrame(_ name: StaticString) {
+        let keys = registry.openKeys(name)
+        guard !keys.isEmpty else { return }
+        DispatchQueue.main.async {
+            FrameWaiter.shared.after { for (id) in keys { end(name, id: id) } }
+        }
     }
 
     /// Milestone for the launch timeline: records milliseconds since `KriaApp.init` the FIRST time `name` is reached,
@@ -80,6 +93,29 @@ enum Perf {
         return "\(method ?? "GET") /" + parts.joined(separator: "/")
     }
 
+    /// Runs a closure on the next display-link tick (one vsync, after the commit that carries the layout).
+    @MainActor private final class FrameWaiter: NSObject {
+        static let shared = FrameWaiter()
+        private var pending: [() -> Void] = []
+        private var link: CADisplayLink?
+
+        func after(_ work: @escaping () -> Void) {
+            pending.append(work)
+            guard link == nil else { return }
+            let link = CADisplayLink(target: self, selector: #selector(tick))
+            link.add(to: .main, forMode: .common)
+            self.link = link
+        }
+
+        @objc private func tick() {
+            link?.invalidate()
+            link = nil
+            let work = pending
+            pending = []
+            for item in work { item() }
+        }
+    }
+
     private final class Registry: @unchecked Sendable {
         private let lock = NSLock()
         private var open: [String: OSSignpostIntervalState] = [:]
@@ -102,6 +138,12 @@ enum Perf {
         func reserve(_ key: String) -> Bool {
             lock.lock(); defer { lock.unlock() }
             return reserved.insert(key).inserted
+        }
+        /// The ids of every open interval named `name` (the part of the key after `#`).
+        func openKeys(_ name: StaticString) -> [String] {
+            lock.lock(); defer { lock.unlock() }
+            let prefix = "\(name)#"
+            return open.keys.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
         }
         func store(_ key: String, _ state: OSSignpostIntervalState) {
             lock.lock(); defer { lock.unlock() }

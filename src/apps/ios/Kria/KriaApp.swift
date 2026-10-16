@@ -11,6 +11,7 @@ import SwiftData
         // synchronous setup in this initializer and `AppModel.init`.
         Perf.mark("app.init")
         Perf.begin("launch.toTranscript")
+        Perf.begin("launch.toPixels")
         Perf.begin("launch.init")
         defer { Perf.end("launch.init") }
         #if DEBUG

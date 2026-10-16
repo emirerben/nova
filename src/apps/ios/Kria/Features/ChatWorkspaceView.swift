@@ -1223,6 +1223,7 @@ private struct CreationWorkspaceView: View {
         .onChange(of: renderShapeScope) { _, scope in renderShapePick.reset(scope: scope) }
         .task {
             Perf.begin("chat.open", id: project.id.uuidString)
+            Perf.begin("chat.toPixels", id: project.id.uuidString)
             Perf.mark("chat.task")
             // KRI-640: a chat New chat just made opens on the thread its create call returned, so it
             // shows without reading itself back first; the poll below still refreshes it.
