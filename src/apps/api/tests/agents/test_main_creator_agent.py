@@ -922,3 +922,160 @@ def test_prompt_documents_the_creative_decision_contract() -> None:
     for key in ("proposed_text", "source_evidence", "opening_title", "closing_title"):
         assert key in prompt
     assert "BESIDE `action`" in prompt
+
+
+# ── KRI-687: prod 2026-10-15, thread 1390E686. A rich multi-part montage prompt ended in "I
+# couldn't turn that into a plan": one story line ran past 120 characters (attempts 2-3) and
+# the first attempt wrote `summary` inside `strategy` as well as beside it (extra_forbidden).
+# Every case feeds raw model JSON through the same `parse` entry point the agent runs. ──
+
+_LONG_STORY_LINE = (
+    "Open with the title for three seconds, then cut through the boat and cabin clips in the "
+    "order they were filmed, and finish on your spoken sign-off."
+)
+
+
+def _story_raw(
+    story_structure: object,
+    *,
+    top_summary: object = "A concise visual story.",
+    nested_summary: object = None,
+    extra_strategy: dict | None = None,
+) -> str:
+    raw = json.loads(_raw(audio_strategy="licensed_music", selected=[]))
+    raw["action"]["strategy"]["story_structure"] = story_structure
+    raw["action"]["summary"] = top_summary
+    if nested_summary is not None:
+        raw["action"]["strategy"]["summary"] = nested_summary
+    raw["action"]["strategy"].update(extra_strategy or {})
+    return json.dumps(raw)
+
+
+def _parse_story(raw: str) -> ProposeStrategy:
+    output = MainCreatorAgent(None).parse(raw, _input())  # type: ignore[arg-type]
+    assert isinstance(output.action, ProposeStrategy)
+    return output.action
+
+
+def test_overlong_story_line_is_trimmed_at_a_word_instead_of_failing_the_turn() -> None:
+    assert len(_LONG_STORY_LINE) > 120
+    lines = ["Hook the viewer", _LONG_STORY_LINE, "Land the payoff"]
+
+    got = _parse_story(_story_raw(lines)).strategy.story_structure
+
+    # Same count and order; only the one over-long line changes.
+    assert len(got) == 3
+    assert got[0] == lines[0] and got[2] == lines[2]
+    assert len(got[1]) <= 120
+    assert got[1].endswith("…")
+    kept = got[1].removesuffix("…")
+    assert _LONG_STORY_LINE.startswith(kept)
+    # Cut between words, never inside one.
+    assert _LONG_STORY_LINE[len(kept)] in " ,;:"
+
+
+def test_overlong_story_line_with_a_sentence_end_keeps_the_whole_first_sentence() -> None:
+    first = "Open on the harbour at sunrise with the title card held for three seconds."
+    line = f"{first} Then cut through the cabin and deck clips in the order they were filmed."
+    assert len(line) > 120
+
+    got = _parse_story(_story_raw([line])).strategy.story_structure
+
+    assert got == [first]
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["x" * 300, "ab" * 70 + " " + "cd" * 90],
+    ids=["one_long_token", "no_space_in_range"],
+)
+def test_overlong_story_line_without_a_usable_boundary_is_still_cut_to_fit(line: str) -> None:
+    got = _parse_story(_story_raw([line])).strategy.story_structure
+
+    assert len(got) == 1
+    assert 0 < len(got[0]) <= 120
+
+
+def test_story_line_padded_with_whitespace_is_only_stripped_not_shortened() -> None:
+    line = "Open with the title"
+    got = _parse_story(_story_raw([f"   {line}" + " " * 150])).strategy.story_structure
+
+    assert got == [line]
+
+
+@pytest.mark.parametrize("bad", [[""], ["   "], ["fine", " \n "], [5], [None]])
+def test_blank_or_non_text_story_lines_are_still_rejected(bad: list) -> None:
+    from app.agents._runtime import SchemaError
+
+    with pytest.raises(SchemaError):
+        MainCreatorAgent(None).parse(_story_raw(bad), _input())  # type: ignore[arg-type]
+
+
+def test_more_than_eight_story_lines_are_still_rejected() -> None:
+    from app.agents._runtime import SchemaError
+
+    lines = [f"beat {n}" for n in range(9)]
+    with pytest.raises(SchemaError):
+        MainCreatorAgent(None).parse(_story_raw(lines), _input())  # type: ignore[arg-type]
+
+
+def test_stored_strategy_schema_stays_strict_about_story_line_length() -> None:
+    from pydantic import ValidationError
+
+    from app.agents._schemas.creator_agent import CreativeStrategy
+
+    with pytest.raises(ValidationError):
+        CreativeStrategy(story_structure=["x" * 121])
+
+
+def test_summary_written_both_beside_and_inside_strategy_keeps_the_documented_one() -> None:
+    action = _parse_story(
+        _story_raw(["Hook"], top_summary="The real summary.", nested_summary="A copy.")
+    )
+
+    assert action.summary == "The real summary."
+
+
+def test_nested_summary_fills_a_blank_summary_beside_strategy() -> None:
+    action = _parse_story(_story_raw(["Hook"], top_summary="", nested_summary="Moved up."))
+
+    assert action.summary == "Moved up."
+
+
+@pytest.mark.parametrize("nested", [["a list", "of bullets"], {"text": "an object"}])
+def test_unusable_nested_summary_is_dropped_when_the_documented_one_exists(nested: object) -> None:
+    action = _parse_story(_story_raw(["Hook"], nested_summary=nested))
+
+    assert action.summary == "A concise visual story."
+
+
+def test_other_unknown_strategy_keys_are_still_rejected() -> None:
+    from app.agents._runtime import SchemaError
+
+    # A misspelt real field (here the SFX one) must stop the turn, not vanish silently.
+    raw = _story_raw(["Hook"], extra_strategy={"licenced_sfx": {"name": "fah"}})
+    with pytest.raises(SchemaError):
+        MainCreatorAgent(None).parse(raw, _input())  # type: ignore[arg-type]
+
+
+def test_render_intent_evidence_written_twice_is_still_rejected() -> None:
+    from app.agents._runtime import SchemaError
+
+    raw = json.loads(_story_raw(["Hook"]))
+    raw["action"]["render_intent_evidence"] = {"opening_title": "A"}
+    raw["action"]["strategy"]["render_intent_evidence"] = {"opening_title": "B"}
+    with pytest.raises(SchemaError):
+        MainCreatorAgent(None).parse(json.dumps(raw), _input())  # type: ignore[arg-type]
+
+
+def test_the_prod_turn_with_both_problems_parses_on_the_first_attempt() -> None:
+    raw = _story_raw(
+        ["Hook the viewer", _LONG_STORY_LINE],
+        top_summary="The real summary.",
+        nested_summary="A copy.",
+    )
+
+    action = _parse_story(raw)
+
+    assert action.summary == "The real summary."
+    assert all(len(line) <= 120 for line in action.strategy.story_structure)
