@@ -8,6 +8,8 @@ remain authoritative for media, strategy and rendering respectively.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -26,7 +28,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -3967,21 +3969,59 @@ async def create_thread(
     return await _response(db, thread)
 
 
+def _encode_thread_cursor(row: CreationThread) -> str:
+    raw = f"{row.updated_at.isoformat()}|{row.id}"
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def _decode_thread_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+        stamp, _, identifier = raw.partition("|")
+        return datetime.fromisoformat(stamp), uuid.UUID(identifier)
+    except (ValueError, binascii.Error, UnicodeDecodeError) as exc:
+        raise RuntimeFailure(400, "cursor_invalid", "That page cursor is not valid.") from exc
+
+
 @router.get("", response_model=list[CreationThreadOut])
 async def list_threads(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
     include_archived: bool = Query(False),
     limit: int = Query(20, ge=1, le=50),
+    cursor: Annotated[str | None, Query()] = None,
+    response: Response = None,  # type: ignore[assignment]  # injected by FastAPI; None in direct calls
 ) -> list[CreationThreadOut]:
+    """Newest first. `cursor` (the `X-Next-Cursor` of the previous page) continues past it, so
+    chats beyond the newest ``limit`` stay reachable. The body is unchanged for a client that
+    sends no cursor; the header is the only addition and appears only when more chats exist."""
     stmt = select(CreationThread).where(CreationThread.creator_id == user.id)
     if not include_archived:
         stmt = stmt.where(CreationThread.status == "active")
-    rows = (
-        (await db.execute(stmt.order_by(CreationThread.updated_at.desc()).limit(limit)))
+    if cursor is not None:
+        stamp, identifier = _decode_thread_cursor(cursor)
+        stmt = stmt.where(
+            or_(
+                CreationThread.updated_at < stamp,
+                and_(CreationThread.updated_at == stamp, CreationThread.id < identifier),
+            )
+        )
+    # One extra row says whether another page exists; `id` breaks ties so a page boundary never
+    # skips a chat.
+    fetched = (
+        (
+            await db.execute(
+                stmt.order_by(CreationThread.updated_at.desc(), CreationThread.id.desc()).limit(
+                    limit + 1
+                )
+            )
+        )
         .scalars()
         .all()
     )
+    rows = list(fetched[:limit])
+    if len(fetched) > limit and response is not None and rows:
+        response.headers["X-Next-Cursor"] = _encode_thread_cursor(rows[-1])
     job_ids = {row.active_job_id for row in rows if row.active_job_id is not None}
     jobs_by_id: dict[uuid.UUID, Job] = {}
     if job_ids:
