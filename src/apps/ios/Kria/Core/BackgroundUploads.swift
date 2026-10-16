@@ -221,6 +221,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 }
 
 @MainActor final class BackgroundUploadCoordinator: NSObject, ObservableObject, URLSessionTaskDelegate, @unchecked Sendable {
+    var libraryAPI: any KriaAPIClient { api }
+    func acceptSavedMediaThread(_ thread: CreationThread) {
+        if let id = UUID(uuidString: thread.id) { attachedThreads[id] = thread }
+        previewVersion += 1
+    }
     static let sessionIdentifier = "com.kria.app.media-uploads"
     @Published private(set) var records: [UploadRecoveryRecord] = []
     @Published private(set) var progress: [UUID: Double] = [:]
@@ -1448,6 +1453,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     }
 
     private func performAttachment(_ record: UploadRecoveryRecord) async {
+        let libraryOwnerAtStart = api.mediaLibraryOwner
         // No `lastError = nil` here: attaches now run concurrently with later enqueues, so a
         // success would erase a sibling clip's failure. Per-clip failures live in `failures`.
         guard records.contains(where: { $0.id == record.id }), !cancellingRecords.contains(record.id) else { return }
@@ -1558,6 +1564,13 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                     await CreationMediaPreview.finalize(recordID: record.id, localURL: URL(fileURLWithPath: record.localFilePath), mediaID: mediaID)
                     previewVersion += 1
                 }
+                if let owner = libraryOwnerAtStart, api.mediaLibraryOwner == owner,
+                   let assetID = CreationAttachedMedia.parse(attachedThread.state ?? [:]).first(where: { $0.id == mediaID })?.libraryAssetID,
+                   let original = (try? SourceAssetStore(project: Self.projectDirectory(record.projectID)).bindings())?.first(where: { $0.mediaID == mediaID })?.original {
+                    // Keep a separate durable link before releasing upload recovery. Failure leaves
+                    // the post original in place for lazy migration when Saved uploads is opened.
+                    try? await MediaLibraryOriginals(owner: owner).retain(assetID: assetID, from: Self.projectDirectory(record.projectID), mediaID: mediaID, original: original)
+                }
                 attachedThreads[record.projectID] = attachedThread
                 // Hand the asset's identity from the (about to be deleted) record to the ledger, so
                 // the clip still shows as chosen the next time the picker opens.
@@ -1647,7 +1660,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         return (try await api.reserveProjectUpload(threadID: projectID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size), nil)
     }
 
-    static func projectDirectory(_ projectID: UUID) -> ProjectDirectory {
+    nonisolated static func projectDirectory(_ projectID: UUID) -> ProjectDirectory {
         let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appending(path: "KriaProjects/\(projectID.uuidString)", directoryHint: .isDirectory)
         return ProjectDirectory(root: root)

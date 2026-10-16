@@ -22,7 +22,29 @@
         "src/apps/api/tests/pipeline/test_library_transcription_cost.py",
         "src/apps/api/tests/routes/test_media_assets.py",
         "src/apps/api/tests/routes/test_media_library_attachments.py",
-        "src/apps/api/tests/services/test_media_library_source_verification.py"
+        "src/apps/api/tests/services/test_media_library_source_verification.py",
+        "src/apps/ios/Kria/Core/MediaLibrary.swift",
+        "src/apps/ios/Kria/Core/SavedMediaReuse.swift",
+        "src/apps/ios/Kria/Features/SavedUploadsView.swift",
+        "src/apps/ios/Tests/KriaTests/MediaLibraryOriginalsTests.swift",
+        "src/apps/ios/Tests/KriaTests/MediaLibraryExportJourneyTests.swift"
+      ]
+    },
+    {
+      "id": "kri-384-ios-library",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_media_assets.py tests/integration/test_media_library_reuse.py",
+      "xctests": [
+        "KriaTests/MediaLibraryOriginalsTests/testReuseSurvivesFirstPostDeletionAndStoreRecreation",
+        "KriaTests/MediaLibraryOriginalsTests/testChangedFileAndWrongFingerprintCannotBeUsedAsAnOriginal",
+        "KriaTests/MediaLibraryExportJourneyTests/testReusedVideoExportsAfterDeletingItsFirstPost"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/MediaLibrary.swift",
+        "src/apps/ios/Kria/Core/SavedMediaReuse.swift",
+        "src/apps/ios/Kria/Features/SavedUploadsView.swift",
+        "src/apps/ios/Tests/KriaTests/MediaLibraryOriginalsTests.swift",
+        "src/apps/ios/Tests/KriaTests/MediaLibraryExportJourneyTests.swift"
       ]
     },
     {
