@@ -4,7 +4,7 @@
     python3 scripts/request-following-review.py --prod
     python3 scripts/request-following-review.py --api-url http://127.0.0.1:8000
 
-Only proxies the existing request-following admin API. Upstream credentials stay
+Reads a private capture store or proxies the review API. Upstream credentials stay
 in this local process. No collection, prompt mutation, or review is automatic.
 """
 

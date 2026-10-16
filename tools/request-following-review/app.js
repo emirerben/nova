@@ -53,12 +53,14 @@ async function loadQueue() {
       button.append(element("span", labels[item.review_state] || item.review_state, `pill ${item.review_state}`));
       button.append(element("span", item.request_preview || `Session ${item.thread_id.slice(0, 8)}`, "case-preview"));
       button.append(element("span", date(item.created_at), "case-meta"));
+      const missing = Object.keys(item.diagnostics.missing || {});
+      if (missing.length) button.append(element("span", `Incomplete: ${missing.join(", ")}`, "signal"));
       const failures = item.diagnostics.failed_turns.length, broken = item.diagnostics.broken_edges.length;
       if (failures || broken) button.append(element("span", `${failures} failed turns · ${broken} broken links`, "signal"));
       button.addEventListener("click", () => { if (!state.busy && mayLeave()) void openCase(item.id); });
       const li = element("li"); li.append(button); $("cases").append(li);
     }
-    $("page-count").textContent = `${queue.items.length} on this page`;
+    $("page-count").textContent = collector.mode === "private_store" ? `${queue.items.length} shown · ${collector.scoped_threads} total` : `${queue.items.length} on this page`;
     $("queue-empty").hidden = queue.items.length > 0;
     $("queue-empty").textContent = state.filter === "all" ? collector.mode === "private_store" ? "No reviewable private captures on this page. Import a current eligibility receipt with each source. Expired and held-out copies stay unavailable." : "No eligible sessions on this page. Collection needs a selected scope and current consent. Held-out sessions stay private." : "No sessions with this review status on this page.";
     show("holdouts", queue.holdout_count ? `${queue.holdout_count} held-out sessions on this page. Their content is withheld.` : "");
@@ -172,10 +174,18 @@ $("export").addEventListener("click", async () => {
   } catch (error) { show("review-error", error.message); }
   finally { setBusy(false); updateSaveHelp(); }
 });
-$("refresh").addEventListener("click", async () => { if (!mayLeave()) return; await loadQueue(); if (state.selected) await openCase(state.selected); });
+async function reconnect() {
+  state.config = await (await fetch("/config", { cache: "no-store" })).json();
+  $("source").textContent = state.config.source;
+}
+$("refresh").addEventListener("click", async () => {
+  if (!mayLeave()) return;
+  try { await reconnect(); state.cursor = null; state.filter = "all"; $("filter").value = "all"; await loadQueue(); if (state.selected) await openCase(state.selected); }
+  catch (error) { show("error", error.message); }
+});
 $("filter").addEventListener("change", async () => { if (!mayLeave()) { $("filter").value = state.filter; return; } state.filter = $("filter").value; state.cursor = null; await loadQueue(); });
 $("first-page").addEventListener("click", async () => { if (mayLeave()) { state.cursor = null; await loadQueue(); } });
 $("next-page").addEventListener("click", async () => { if (mayLeave()) { state.cursor = state.queue.next_cursor; await loadQueue(); } });
 window.addEventListener("beforeunload", event => { if (state.dirty) { event.preventDefault(); event.returnValue = ""; } });
-try { state.config = await (await fetch("/config", { cache: "no-store" })).json(); $("source").textContent = state.config.source; await loadQueue(); }
+try { await reconnect(); await loadQueue(); }
 catch (error) { show("error", `Cannot connect to the local review app. ${error.message}`); $("queue-loading").hidden = true; }
