@@ -2388,6 +2388,39 @@ def _wants_closing(req: BriefRequirement) -> bool:
     return bool(closing_fact or _CLOSING_RE.search(_req_text(req)))
 
 
+def _ending_names_picture(req: BriefRequirement) -> bool:
+    """The ending is said to be a photo, sticker or badge: in the model's `closing` fact, or
+    in a sentence of the ask that says how the edit ENDS (per sentence, so a sticker named
+    elsewhere in a glued requirement does not count)."""
+    if req.facts.get("closing_media"):
+        return True  # a creator-owned picture by definition
+    said = req.facts.get("closing")
+    text = _req_text(req)
+    for mark in ("!", "?", ";", "\n"):
+        text = text.replace(mark, ". ")
+    sentences = [s for s in text.split(". ") if _CLOSING_RE.search(s)]
+    if isinstance(said, str):
+        sentences.append(_fold(said))
+    return any(_VISUAL_RE.search(s) for s in sentences)
+
+
+def _closing_photo_ask(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """A closing photo, sticker or badge ask, as opposed to "end on the arrival clip" (KRI-688).
+
+    The words "End on ..." start the closing-shot check (`closing_media`, a creator-owned
+    picture placed last), but they are just as often an ordering ask about a CLIP, which the
+    `order` checker owns. The check therefore stays on only where the model recorded a
+    `closing` fact, the sentence names a picture, or a closing picture can exist at all:
+    the edit's capabilities say so (only a Talking edit places one; ``reaction_beats_available``
+    is False on every other format) and the model did not record the ending as a `last_clip`.
+    """
+    if not _wants_closing(req):
+        return False
+    if req.facts.get("closing") or _ending_names_picture(req):
+        return True
+    return facts.reaction_beats_available is not False and not req.facts.get("last_clip")
+
+
 def _wants_cleanup(req: BriefRequirement) -> bool:
     """A speech-cleanup ask (pauses, retakes, filler) in the creator's own words."""
     if req.kind not in _CLEANUP_KINDS or _wants_whole_take(req):
@@ -2905,7 +2938,7 @@ def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
 def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Word-triggered pop-ins and the closing shot, from the repaired strategy."""
     wants_beats = _wants_beats(req)
-    wants_closing = _wants_closing(req)
+    wants_closing = _closing_photo_ask(req, facts)
     if facts.reaction_beats is None:
         return _receipt(req, "partial", _CANT_CHECK_BEATS)
     beats = facts.reaction_beats
@@ -3030,17 +3063,28 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                     )
     if wants_closing:
         if facts.closing_visual_id is None:
-            problems.append(
-                say(
-                    en="I couldn't find the closing photo you named",
-                    tr="Söylediğin kapanış fotoğrafını bulamadım",
+            if facts.closing_requested:
+                problems.append(
+                    say(
+                        en="I couldn't find the closing photo you named",
+                        tr="Söylediğin kapanış fotoğrafını bulamadım",
+                    )
                 )
-                if facts.closing_requested
-                else say(
-                    en="This draft doesn't end on the photo you asked for",
-                    tr="Bu taslak istediğin fotoğrafla bitmiyor",
+            elif _ending_names_picture(req):
+                problems.append(
+                    say(
+                        en="This draft doesn't end on the photo you asked for",
+                        tr="Bu taslak istediğin fotoğrafla bitmiyor",
+                    )
                 )
-            )
+            else:
+                # KRI-688: nothing says the ending is a picture; never call it a photo.
+                problems.append(
+                    say(
+                        en="This draft doesn't end the way you asked",
+                        tr="Bu taslak istediğin gibi bitmiyor",
+                    )
+                )
         else:
             delivered = True
             if facts.closing_badge_requested and facts.closing_badge_id is None:
@@ -5388,7 +5432,10 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         # A rendered variant keeps `editor=True` for its text lanes but also carries the
         # render's own pop-in receipt and mix level (`plan_facts_from_phone_variant`): judge
         # those asks.
-        and not (facts.reaction_beats is not None and (_wants_beats(req) or _wants_closing(req)))
+        and not (
+            facts.reaction_beats is not None
+            and (_wants_beats(req) or _closing_photo_ask(req, facts))
+        )
         and not (_wants_bed_under_voice(req) or _wants_bed_muted(req))
         # KRI-541: "clean captions" on a rendered variant is judged against its captions.
         and not (facts.rendered_variant and _wants_captions(req))
@@ -5396,7 +5443,7 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_style(req, facts)
     elif req.kind in _BEAT_KINDS and _wants_speech(req) and facts.speech_sections is not None:
         return _check_speech_excerpts(req, facts)
-    elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _wants_closing(req)):
+    elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _closing_photo_ask(req, facts)):
         return _check_reaction_beats(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_bed_under_voice(req) or _wants_bed_muted(req)):
         return _check_voice_bed(req, facts)
