@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.4.0] - 2026-10-16
+
+### Changed
+- fix(kria): keep Turkish "don't use the dark clips" asks and never drop a skip silently (KRI-680) (#1613) <!-- release-pr: 1613 -->
+
 ## [0.79.3.0] - 2026-10-16
 
 ### Changed
