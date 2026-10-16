@@ -9,6 +9,7 @@ import SwiftData
     init() {
         // Launch ends when the first transcript row is visible (`ChatWorkspaceView`); `launch.init` is the
         // synchronous setup in this initializer and `AppModel.init`.
+        Perf.mark("app.init")
         Perf.begin("launch.toTranscript")
         Perf.begin("launch.init")
         defer { Perf.end("launch.init") }

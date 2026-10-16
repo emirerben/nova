@@ -115,7 +115,7 @@ final class PerfUITests: XCTestCase {
             book.add(counters(app))
             app.terminate()
         }
-        book.report("testLaunchToTranscript", prefixes: ["net ", "auth "])
+        book.report("testLaunchToTranscript", prefixes: ["net ", "auth ", "fullread ", "t "])
     }
 
     /// The same launch after the access token has expired: every first request 401s and waits for a refresh.
@@ -131,7 +131,7 @@ final class PerfUITests: XCTestCase {
             book.add(counters(app))
             app.terminate()
         }
-        book.report("testLaunchExpiredToken", prefixes: ["net ", "auth "])
+        book.report("testLaunchExpiredToken", prefixes: ["net ", "auth ", "fullread ", "t "])
     }
 
     // MARK: Opening chats
@@ -158,7 +158,7 @@ final class PerfUITests: XCTestCase {
             book.add(after.reduce(into: [:]) { $0[$1.key] = $1.value - (before[$1.key] ?? 0) })
             before = after
         }
-        book.report("testOpenOldChatFromDrawer", prefixes: ["net "])
+        book.report("testOpenOldChatFromDrawer", prefixes: ["net ", "fullread "])
     }
 
     // MARK: Scrolling

@@ -39,6 +39,17 @@ enum Perf {
         end(name, id: id, detail)
     }
 
+    /// Milestone for the launch timeline: records milliseconds since `KriaApp.init` the FIRST time `name` is reached,
+    /// readable in the Debug `perf-counters` element as `t <name>`. Release builds compile it to nothing.
+    static func mark(_ name: String) {
+        #if DEBUG
+        PerfCounters.shared.setOnce("t \(name)", Int((ProcessInfo.processInfo.systemUptime - origin) * 1000))
+        #endif
+    }
+    #if DEBUG
+    private static let origin = ProcessInfo.processInfo.systemUptime
+    #endif
+
     /// A point-in-time marker (a rebuild, a cache hit).
     static func event(_ name: StaticString, _ detail: String = "") {
         signposter.emitEvent(name, "\(detail, privacy: .public)")
@@ -116,6 +127,11 @@ final class PerfCounters: @unchecked Sendable {
     func increment(_ key: String, by amount: Int = 1) {
         lock.lock(); defer { lock.unlock() }
         counts[key, default: 0] += amount
+    }
+
+    func setOnce(_ key: String, _ value: Int) {
+        lock.lock(); defer { lock.unlock() }
+        if counts[key] == nil { counts[key] = value }
     }
 
     func snapshot() -> [String: Int] {

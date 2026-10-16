@@ -1519,6 +1519,12 @@ struct KriaAPI: KriaAPIClient {
         Perf.begin("net.request", id: requestID, route)
         #if DEBUG
         PerfCounters.shared.increment("net \(route)")
+        // Which chat a full-projection read was for (last 4 characters of its id): tells re-reading the open chat
+        // apart from sweeping other chats.
+        if route == "GET /creation-threads/:id", request.url?.query?.contains("projection=full") == true,
+           let id = request.url?.lastPathComponent {
+            PerfCounters.shared.increment("fullread \(id.suffix(4))")
+        }
         #endif
         var (data, response) = try await session.data(for: request)
         var retried401 = false

@@ -36,8 +36,11 @@ struct ChatWorkspaceView: View {
             Task { [api = model.api] in await api.prefetchCreationCapabilities() }
         }
         .task {
+            Perf.mark("workspace.task")
             await model.openWorkspace(preferredProjectID: UUID(uuidString: lastProjectID))
+            Perf.mark("workspace.opened")
             await model.sweepAbandonedChats()
+            Perf.mark("sweep.done")
         }
         .onChange(of: model.selectedProject?.id) { previous, identifier in
             lastProjectID = identifier?.uuidString ?? ""
@@ -1220,6 +1223,7 @@ private struct CreationWorkspaceView: View {
         .onChange(of: renderShapeScope) { _, scope in renderShapePick.reset(scope: scope) }
         .task {
             Perf.begin("chat.open", id: project.id.uuidString)
+            Perf.mark("chat.task")
             // KRI-640: a chat New chat just made opens on the thread its create call returned, so it
             // shows without reading itself back first; the poll below still refreshes it.
             if let created = model.takeCreatedThread(project.id) {
@@ -1231,6 +1235,7 @@ private struct CreationWorkspaceView: View {
             // project opens, and retried: a slow or failed fetch must not leave the screen without it.
             async let capabilities: Void = loadCapabilitiesWithRetry()
             await resolveFormat()
+            Perf.mark("format.resolved")
             await pollUntilDismissed()
             await capabilities
         }
@@ -1978,6 +1983,7 @@ private struct CreationWorkspaceView: View {
 
     /// Closes the open and launch intervals the first time a transcript can be seen (later calls are no-ops).
     private func markTranscriptVisible(source: String) {
+        Perf.mark("transcript.visible")
         Perf.end("chat.open", id: project.id.uuidString, "source=\(source)")
         Perf.end("launch.toTranscript", "source=\(source)")
     }
@@ -1991,8 +1997,10 @@ private struct CreationWorkspaceView: View {
         }
         failure = nil
         do {
+            Perf.mark("refresh.start")
             let requestSequence = projectionOrder.begin()
             let thread = try await model.api.project(threadID: project.id)
+            Perf.mark("refresh.fullread")
             apply(thread, requestSequence: requestSequence)
             // The full projection contains the complete transcript. Reveal it
             // before a slow delta or approval request returns, so the user

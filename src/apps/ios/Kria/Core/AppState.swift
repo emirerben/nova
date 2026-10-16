@@ -430,7 +430,9 @@ enum AccountIdentity {
     func takeCreatedThread(_ id: UUID) -> CreationThread? { createdThreads.removeValue(forKey: id) }
     func openWorkspace(preferredProjectID: UUID? = nil) async {
         selectWorkspaceProject(preferredProjectID: preferredProjectID)
+        Perf.mark("workspace.selected")
         uploads.recoverInterruptedPreparations()
+        Perf.mark("uploads.recovered")
         // KRI-640: New chat (even from the empty workspace) then needs no capabilities read on tap.
         let api = api
         async let capabilitiesPrefetch: Void = api.prefetchCreationCapabilities()
