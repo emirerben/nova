@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.0.0] - 2026-10-16
+
+### Added
+- feat(ios): reuse saved uploads across posts (KRI-384) (#1632) <!-- release-pr: 1632 -->
+
 ## [0.79.19.0] - 2026-10-16
 
 ### Changed
