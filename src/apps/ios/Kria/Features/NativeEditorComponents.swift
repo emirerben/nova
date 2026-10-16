@@ -326,6 +326,8 @@ struct NativeEditorContextStrip: View {
     @ObservedObject var session: NativeEditorSession
     let onAdjust: () -> Void
     var onCrop: () -> Void = {}
+    /// KRI-717: opens the Range picker (which part of the source clip plays).
+    var onRange: () -> Void = {}
     let onTransition: () -> Void
     @State private var scrollState = NativeEditorActionScrollState()
 
@@ -339,6 +341,18 @@ struct NativeEditorContextStrip: View {
                 }
                 .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
                 .accessibilityIdentifier("native-editor-adjust")
+
+                // KRI-717: Range sits beside Crop; a photo has no range and a locked render cannot change it.
+                let rangeBlocked = session.sourceWindowBlockedReason(for: session.selection)
+                Button(action: onRange) {
+                    Label("Range", systemImage: "arrow.left.and.right.square")
+                        .frame(minHeight: 44)
+                        .padding(.horizontal, 16)
+                }
+                .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                .disabled(rangeBlocked != nil)
+                .accessibilityIdentifier("native-editor-clip-range")
+                .accessibilityHint(rangeBlocked ?? "Choose which part of the original clip plays")
 
                 // KRI-44: only where the server explicitly lists `clips.source_crop`; legacy cloud variants never show it.
                 if session.serverOffersClipCrop {

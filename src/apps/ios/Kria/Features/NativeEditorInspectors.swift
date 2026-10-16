@@ -387,8 +387,7 @@ private struct NativeSelectedClipInspector: View {
         if overlap + 0.005 < transitionDuration { return "Shortened to \(String(format: "%.2f", overlap))s to fit this clip." }
         return nil
     }
-    @State private var sourceStart = 0.0
-    @State private var sourceEnd = 1.0
+    @State private var showRange = false
     @State private var look = "none"
     @State private var transition = "cut"
     @State private var transitionDuration = 0.1
@@ -408,13 +407,18 @@ private struct NativeSelectedClipInspector: View {
             Section("Order and source window") {
                 Button("Move earlier") { session.moveSelected(by: -0.1) }
                 Button("Move later") { session.moveSelected(by: 0.1) }
-                Button("Slide source earlier") { session.slideSourceWindow(by: -0.1) }
-                Button("Slide source later") { session.slideSourceWindow(by: 0.1) }
-                if let clip {
-                    NativeEditorSlider(session: session, value: $sourceStart, in: 0...max(sourceEnd - 0.1, 0.1), step: 0.1) { Text("Source in") }
-                        .onChange(of: sourceStart) { _, value in session.setClipSourceWindow(clipID: selection.id, startS: value, endS: sourceEnd) }
-                    NativeEditorSlider(session: session, value: $sourceEnd, in: min(sourceStart + 0.1, clip.sourceDuration ?? sourceEnd)...max(clip.sourceDuration ?? sourceEnd, sourceStart + 0.1), step: 0.1) { Text("Source out") }
-                        .onChange(of: sourceEnd) { _, value in session.setClipSourceWindow(clipID: selection.id, startS: sourceStart, endS: value) }
+                if clip != nil {
+                    let blocked = session.sourceWindowBlockedReason(for: selection)
+                    Button { showRange = true } label: {
+                        HStack {
+                            Label("Range…", systemImage: "arrow.left.and.right.square")
+                            Spacer()
+                            if let clip { Text(nativeTimecode(clip.trimIn) + " – " + nativeTimecode(clip.trimOut)).foregroundStyle(.secondary) }
+                        }
+                    }
+                    .disabled(blocked != nil)
+                    .accessibilityIdentifier("native-editor-selected-clip-range")
+                    if let blocked { Text(blocked).font(.footnote).foregroundStyle(.secondary) }
                 }
             }
             .disabled(!session.canEditTimeline)
@@ -467,11 +471,11 @@ private struct NativeSelectedClipInspector: View {
             }
         }
         .onAppear {
-            sourceStart = clip?.trimIn ?? 0; sourceEnd = clip?.trimOut ?? 1
             look = NativeEditorWireContract.lookPresets.contains(slot?.lookPreset ?? "") ? slot?.lookPreset ?? "none" : "none"
             transition = slot?.transitionAfter ?? "cut"
             transitionDuration = min(max(0.1, slot?.transitionDurationS ?? 0.1), 0.3)
         }
+        .sheet(isPresented: $showRange) { NativeSourceWindowSheet(session: session, selection: selection) }
     }
 }
 
