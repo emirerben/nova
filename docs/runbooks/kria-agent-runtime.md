@@ -313,6 +313,19 @@ KRIA_REPLY_LANGUAGE_ENABLED=false --app nova-video` + restart api and worker mac
 Every reply is then English and the Main Creator/copilot prompts are byte-identical to
 before; stored `state.reply_language` values are ignored, not deleted.
 
+Auto-continued turns (KRI-709): when the planner stops on a time budget with its answers
+saved (clip-intent vision cap/deadline, clip understanding or song alignment still
+running), `run_kria_turn` releases the SAME turn (`pending`, lease stamped ~35 s ahead,
+no assistant event) and re-publishes it after 5 s (`_continue_turn`), so the creator never
+has to reply "go ahead". The chat keeps showing "Thinking" until the final run answers.
+`KRIA_TURN_AUTO_CONTINUE_MAX_RUNS` (default 4, counted by `lease_epoch`) caps the runs one
+turn may take, which also bounds the paid Main Creator calls; past it, or if a newer message
+is queued, the turn completes with its old reply. `fly secrets set
+KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 --app nova-video` + restart api and worker restores the
+pre-fix behaviour. Diagnose: `kria_turn_auto_continued` log lines (turn_id, lease_epoch);
+`GET creation-threads/<id>/turns` shows one turn with several lease epochs and one
+assistant event. Guard: `tests/kria/test_turn_auto_continue_postgres.py`.
+
 ## Alerts and release blockers
 
 - expired lease on an active turn;

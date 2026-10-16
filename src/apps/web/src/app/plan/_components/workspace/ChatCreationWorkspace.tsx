@@ -74,6 +74,11 @@ import {
   type SpeechCleanupPendingAction,
 } from "./SpeechCleanupDecisionCard";
 
+// KRI-709: the server re-runs a turn that hit its time budget, up to
+// `kria_turn_auto_continue_max_runs` (4) runs of at most 230 s plus the 5 s countdown and
+// queue delay between them. 18 min covers that worst case with margin.
+const KRIA_TURN_WAIT_MS = 18 * 60 * 1000;
+
 const FORMATS: Array<{ value: CreationFormat; label: string; description: string }> = [
   { value: "montage", label: "Montage", description: "Music-led cuts from your strongest moments." },
   { value: "narrated_planned", label: "Narrated", description: "Let your voice guide the story." },
@@ -593,6 +598,11 @@ export default function ChatCreationWorkspace({
   const queuedMessageRef = useRef<{ threadId: string; message: string } | null>(null);
   const preparedRevisionRef = useRef<string | null>(null);
   const activeThreadIdRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const expectedEditorRenderRef = useRef<{
     threadId: string;
     variantId: string;
@@ -681,8 +691,14 @@ export default function ChatCreationWorkspace({
       "assistant_error",
       "draft_applied",
       "approval_requested",
+      // Cancelled from another client: no assistant event will follow.
+      "turn_cancelled",
     ]);
-    for (let attempt = 0; attempt < 13; attempt += 1) {
+    // KRI-709: the server re-runs a turn that hit its time budget (auto-continuation,
+    // capped at a few runs), so a reply can land minutes after the send. Wait for it
+    // instead of giving up at ~30 s, after which nothing would ever show it.
+    const deadline = Date.now() + KRIA_TURN_WAIT_MS;
+    for (let attempt = 0; Date.now() < deadline && mountedRef.current; attempt += 1) {
       const delta = await getKriaDelta(sourceThread.id, cursor, 100);
       cursor = delta.next_after_sequence;
       const settled = delta.events.some((event) =>
@@ -695,7 +711,8 @@ export default function ChatCreationWorkspace({
         return true;
       }
       if (activeThreadIdRef.current !== sourceThread.id) return false;
-      const delayMs = Math.min(2_500, 1_000 + (attempt * 500));
+      // 1 s ramping to 2.5 s over the first 30 s, then 4 s: a long turn needs no hot loop.
+      const delayMs = attempt < 13 ? Math.min(2_500, 1_000 + (attempt * 500)) : 4_000;
       await new Promise((resolve) => window.setTimeout(resolve, delayMs));
     }
     return false;
@@ -1443,7 +1460,7 @@ export default function ChatCreationWorkspace({
           return;
         }
         const settled = await waitForKriaTurn(sourceThread, accepted.turn_id);
-        if (!settled && activeThreadIdRef.current === sourceThread.id) {
+        if (!settled && mountedRef.current && activeThreadIdRef.current === sourceThread.id) {
           setError("Kria is still working on that. Your request is saved and this chat will keep its place.");
         }
       } else {

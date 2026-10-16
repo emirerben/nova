@@ -59,6 +59,7 @@ from app.kria.editor_receipts import (
 from app.kria.language import is_paraphrase_only
 from app.kria.planner import (
     PlannedKriaTurn,
+    continuation_superseded_reply,
     extract_deferred_brief,
     localized_editor_state_reply,
     plan_live_turn,
@@ -142,6 +143,12 @@ _LEASE_HEARTBEAT_SECONDS = 5
 # for a Main Creator call, and the reconciler would republish it forever.
 _MAX_ABANDONED_CLAIMS = 3
 _DRAFT_BODY_RETENTION = timedelta(days=30)
+# KRI-709: a continued turn is re-published after this delay (its cached vision answers
+# and clip analysis are already saved, so there is nothing to wait for but the worker).
+_CONTINUE_COUNTDOWN_S = 5
+# The continued turn's `lease_expires_at` is `countdown + slack` ahead, so the 60 s
+# reconciler sweep neither republishes it early nor, if the publish was lost, misses it.
+_CONTINUE_LEASE_SLACK_S = 30
 
 
 @dataclass(frozen=True)
@@ -339,6 +346,51 @@ def _complete_response_turn(
         committed=True,
         successor_turn_id=_promote_queued_successor_sync(turn.thread_id),
     )
+
+
+def _continue_turn(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) -> str:
+    """KRI-709: release a turn whose planner stopped on a time budget so it runs again.
+
+    Returns ``"continued"`` (turn is ``pending`` again, caller publishes it),
+    ``"exhausted"`` (this was already run ``kria_turn_auto_continue_max_runs``, or the
+    switch is off: answer with the old reply), ``"successor"`` (the creator already sent
+    a newer message: answer and let it run) or ``"lost"`` (this run no longer owns the
+    turn, e.g. it was cancelled: write nothing).
+
+    Runs are counted by `lease_epoch` (+1 per claim), not by turn age: a message that sat
+    queued behind another turn is old before it ever plans, and every run can pay for a
+    Main Creator call, so the run count is also the spend bound.
+
+    Same lock discipline as `_complete_response_turn`: the turn row under FOR UPDATE and
+    the lease re-checked, so a cancel during planning stays cancelled. No event is
+    written and no brief version persisted: the next run does both.
+    """
+    if lease_epoch >= int(settings.kria_turn_auto_continue_max_runs):
+        return "exhausted"
+    with sync_session() as db:
+        turn = db.execute(
+            select(CreatorAgentTurn).where(CreatorAgentTurn.id == turn_id).with_for_update()
+        ).scalar_one_or_none()
+        database_now = db.execute(select(func.now())).scalar_one()
+        if turn is None or not _owns_turn_lease(
+            turn,
+            lease_owner=lease_owner,
+            lease_epoch=lease_epoch,
+            database_now=database_now,
+        ):
+            db.rollback()
+            return "lost"
+        if _lock_queued_successor(db, turn.thread_id) is not None:
+            db.rollback()
+            return "successor"
+        turn.status = "pending"
+        turn.lease_owner = None
+        turn.lease_expires_at = database_now + timedelta(
+            seconds=_CONTINUE_COUNTDOWN_S + _CONTINUE_LEASE_SLACK_S
+        )
+        db.commit()
+    log.info("kria_turn_auto_continued", turn_id=str(turn_id), lease_epoch=lease_epoch)
+    return "continued"
 
 
 def _bind_thread_language(stack: ExitStack, thread: CreationThread) -> None:
@@ -2226,6 +2278,34 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 )
             )
             planned = _useful_plan(planned, user_message=user_message)
+            if planned.plan.mode == "respond" and planned.continuable:
+                # KRI-709: the planner stopped on a time budget with its answers saved.
+                # Run the same turn again instead of asking the creator to say "go
+                # ahead"; the chat keeps showing "Thinking" (no assistant event yet).
+                outcome = _continue_turn(
+                    identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
+                )
+                if outcome == "lost":
+                    return {"turn_id": turn_id, "status": "ignored"}
+                if outcome == "continued":
+                    try:
+                        run_kria_turn.apply_async(
+                            args=[turn_id],
+                            # Unique per run: the finished run's own id is still on record.
+                            task_id=f"{turn_id}-c{lease_epoch}",
+                            queue="agent-control",
+                            countdown=_CONTINUE_COUNTDOWN_S,
+                        )
+                    except Exception:  # noqa: BLE001 - the reconciler republishes the pending row
+                        log.warning("kria_turn_continue_publish_failed", turn_id=turn_id)
+                    return {"turn_id": turn_id, "status": "continued"}
+                if outcome == "successor":
+                    planned = replace(
+                        planned,
+                        plan=planned.plan.model_copy(
+                            update={"response": continuation_superseded_reply()}
+                        ),
+                    )
             if planned.plan.mode == "respond":
                 completion = _complete_response_turn(
                     identifier,
