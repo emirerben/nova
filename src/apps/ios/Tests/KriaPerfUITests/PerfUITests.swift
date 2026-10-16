@@ -62,6 +62,8 @@ final class PerfUITests: XCTestCase {
         let app = makeApp(reset: true, environment)
         app.launch()
         waitForTranscript(app)
+        // The transcript cache writes a second after the last change; killing the app sooner would lose it.
+        RunLoop.current.run(until: Date().addingTimeInterval(2.5))
         app.terminate()
     }
 
@@ -139,6 +141,18 @@ final class PerfUITests: XCTestCase {
     }
 
     // MARK: Opening chats
+
+    /// Functional guard for the persisted transcript: after a chat has been opened once, relaunching shows its
+    /// messages while every chat read is still ten seconds away. Fails on a build that waits for the network.
+    func testCachedTranscriptShowsBeforeTheNetworkAnswers() {
+        warmCache()
+        let app = makeApp(["KRIA_CHAT_SLOW_READS": "1"])
+        app.launch()
+        XCTAssertTrue(
+            transcriptRows(app).firstMatch.waitForExistence(timeout: 4),
+            "The saved transcript should show without waiting for the (10 s) chat read"
+        )
+    }
 
     /// Opens a chat from the drawer, one never opened before each time (10 to 19, inside the 20 the list returns).
     func testOpenOldChatFromDrawer() {

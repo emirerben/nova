@@ -285,7 +285,11 @@ extension PerfFixture {
             return try! ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         }
         let directory = URL.applicationSupportDirectory.appending(path: "perf", directoryHint: .isDirectory)
-        if resetRequested { try? FileManager.default.removeItem(at: directory) }
+        if resetRequested {
+            try? FileManager.default.removeItem(at: directory)
+            // Synchronous on purpose: the transcript cache must be empty before the first chat opens.
+            try? FileManager.default.removeItem(at: URL.applicationSupportDirectory.appending(path: "Transcripts", directoryHint: .isDirectory))
+        }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return try! ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, url: directory.appending(path: "Kria.store")))
     }

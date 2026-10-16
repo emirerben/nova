@@ -46,6 +46,7 @@ enum ProfileFetchState: Equatable, Sendable {
         guard let identity = localStorageIdentity else { return }
         try? TeleprompterStore.removeAccount(accountID: identity)
         try? MediaLibraryOriginals(owner: identity).removeAccount()
+        Task { await TranscriptCache.shared.removeAccount(owner: identity) }
     }
     private let tokenStore: TokenStore
     private let api: KriaAPIClient
@@ -68,6 +69,7 @@ enum ProfileFetchState: Equatable, Sendable {
                 guard let projectID = notification.object as? UUID,
                       let identity = self?.localStorageIdentity else { return }
                 try? TeleprompterStore.removeProject(accountID: identity, projectID: projectID)
+                Task { await TranscriptCache.shared.remove(owner: identity, threadID: projectID) }
             }
         if isSignedIn {
             Task { [weak self] in await self?.refreshProfile() }
@@ -88,6 +90,8 @@ enum ProfileFetchState: Equatable, Sendable {
     }
     func signOut() {
         let refreshToken = try? tokenStore.read()?.refreshToken
+        // Saved conversations go with an explicit sign-out (read the identity before the session is deleted).
+        if let identity = localStorageIdentity { Task { await TranscriptCache.shared.removeAccount(owner: identity) } }
         // Persist the logical logout before touching Keychain. If secure-item
         // deletion fails, a process restart must not resurrect that session.
         defaults.set(true, forKey: Self.invalidatedSessionKey)
