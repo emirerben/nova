@@ -662,6 +662,16 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # One word at a time for caption `Display: Word` (`karaoke.single_word`, capability
+    # `singleWordText`): the layer's runs are standalone-centred words and only the active one
+    # is drawn. Emitted only when `singleWordText` is in PHONE_RENDER_VERIFIED_FEATURES (fly
+    # secret) AND the compile knows the app build declares `X-Kria-Client-Protocol` >=
+    # `single_word_text_min_client_protocol` (an HTTP Save, or a variant an earlier qualifying
+    # Save stamped); otherwise captions compile to the full-line karaoke sweep, byte-identical
+    # to before. Rollback: remove `singleWordText` from PHONE_RENDER_VERIFIED_FEATURES (+ restart
+    # api and worker). Builds below the protocol get 426 `client_update_required` (feature
+    # `single_word_text`) instead of a recipe they cannot decode.
+    single_word_text_min_client_protocol: int = 11
     # KRI-561: the song-order question is answered on a horizontal song timeline (play the
     # song, drop clips onto song time) instead of the vertical reorder list. Kill switch:
     # `fly secrets set SONG_ORDER_TIMELINE_ENABLED=false` + restart (api): capabilities drop

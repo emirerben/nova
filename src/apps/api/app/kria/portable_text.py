@@ -259,12 +259,18 @@ class TextFadeEnvelope(_TextModel):
 
 class KaraokeContent(_TextModel):
     active_only: bool | None = None
+    # Single-word mode (needs `active_only`; capability `singleWordText`): the layer's runs
+    # are standalone-centred words and only the active one is drawn, so the layer shows ONE
+    # WORD AT A TIME. Wire contract: docs/runbooks/phone-rendering.md "Single-word karaoke".
+    single_word: bool | None = None
 
     @model_serializer(mode="wrap")
     def preserve_legacy_wire_shape(self, handler):
         payload = handler(self)
         if self.active_only is None:
             payload.pop("active_only", None)
+        if self.single_word is None:
+            payload.pop("single_word", None)
         return payload
 
     starts: list[float] = Field(min_length=1, max_length=100)
@@ -278,6 +284,8 @@ class KaraokeContent(_TextModel):
             raise ValueError("karaoke starts must be finite local timestamps")
         if self.active_only and self.starts != sorted(self.starts):
             raise ValueError("active-word starts must be ordered")
+        if self.single_word and not self.active_only:
+            raise ValueError("single-word karaoke requires active-only mode")
         return self
 
 
@@ -434,6 +442,11 @@ class PortableTextLayer(_TextModel):
                 "karaoke requires one solid-color run per timestamp; "
                 "shaping requires active-only mode"
             )
+        if self.karaoke and self.karaoke.single_word:
+            if not 1 <= len(self.runs) <= 100 or any(
+                not run.text or any(char.isspace() for char in run.text) for run in self.runs
+            ):
+                raise ValueError("single-word karaoke requires 1-100 whitespace-free words")
         if (self.effect == "dissolve-out") != (self.dissolve_seed is not None):
             raise ValueError("dissolve requires an explicit renderer seed")
         if (self.effect == "staggered-slice") != (self.staggered is not None):

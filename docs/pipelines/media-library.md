@@ -2,9 +2,33 @@
 
 KRI-384 adds a creator-owned catalogue behind `MEDIA_LIBRARY_ENABLED=false`.
 Collection proposals have a separate `MEDIA_COLLECTION_PROPOSALS_ENABLED=false`
-capability. Backend ingest and reuse are additive. The iOS library, local-original
-migration and collection proposals are subsequent delivery slices. Keep both
-capabilities off until native evidence and pilot approval are recorded.
+capability. Backend ingest and reuse are additive. iOS exposes **Saved uploads**
+inside Add media for footage, visuals/slides, voiceovers and songs when the native
+`media_library` creation capability is true. Collection proposals remain a later
+slice. Keep both flags off until native evidence and pilot approval are recorded.
+
+New native uploads are catalogued automatically while the library flag is on.
+Uploads made before activation are not automatically backfilled; importing them
+again registers them through the verified intake. The picker supports filename
+search, pagination, analysis retry, archive, and restoring expired cloud copies
+from the exact original. Archive hides future selection and preserves posts.
+
+Videos retain full-quality originals under account-scoped Application Support.
+A new post gets an independent media ID and original-file link, with copy fallback.
+Originals survive deleting the first post, relaunch, and sign-out. A different
+account cannot browse them; confirmed account deletion erases the library's local
+copies. Existing post-local originals are migrated lazily using server-authorized
+usage and a full-file hash. Another phone must locate the matching original for
+device-only videos; proxies never become render sources. Cloud-backed originals
+are downloaded and verified when needed. Reuse performs no upload; cloud repair
+is an explicit action and uploads only the required proxy/original.
+
+Native proof and rollout checklist: `docs/reviews/kri-384-ios/verification.md`.
+After deployment and pilot approval, enable `MEDIA_LIBRARY_ENABLED` on API and
+workers and release a new TestFlight build containing the picker. Keep
+`MEDIA_COLLECTION_PROPOSALS_ENABLED=false`. Turning the library flag off hides
+Saved uploads after capability refresh and returns its routes to 404, while
+existing post bindings and original files remain intact.
 
 ## Upload and repair
 

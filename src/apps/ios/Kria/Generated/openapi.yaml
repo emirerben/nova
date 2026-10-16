@@ -1059,6 +1059,11 @@
           "media": {
             "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
           },
+          "media_library": {
+            "default": false,
+            "title": "Media Library",
+            "type": "boolean"
+          },
           "minimum_client_protocol": {
             "default": 2,
             "title": "Minimum Client Protocol",
@@ -4336,6 +4341,12 @@
           },
           "highlight": {
             "$ref": "#/components/schemas/TextInk"
+          },
+          "single_word": {
+            "default": null,
+            "nullable": true,
+            "title": "Single Word",
+            "type": "boolean"
           },
           "starts": {
             "items": {

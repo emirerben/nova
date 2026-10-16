@@ -89,6 +89,7 @@ struct RootView: View {
                     .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
                     .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
             }
+            else if ProcessInfo.processInfo.arguments.contains("-ui-testing-saved-uploads") { SavedUploadsUITestHost() }
             else if ProcessInfo.processInfo.arguments.contains("-device-effects") { DeviceEffectsView() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { BrandPreviewHost() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
