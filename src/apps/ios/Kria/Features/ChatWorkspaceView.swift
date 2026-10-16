@@ -2082,6 +2082,7 @@ private struct CreationWorkspaceView: View {
         threadState = thread.state ?? [:]
         selectedFormat = CreationFormat(thread: thread) ?? selectedFormat
         model.updateProject(thread.summary)
+        if events.contains(where: { $0.role == "user" }) { model.chatKeepers.insert(project.id) }
         scheduleTranscriptSave()
     }
 

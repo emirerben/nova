@@ -221,6 +221,7 @@ enum AccountIdentity {
     /// new chat shows at once instead of reading itself back from the server first.
     private var createdThreads: [UUID: CreationThread] = [:]
     let chatDrafts: ChatDraftStore
+    let chatKeepers = ChatKeeperStore()
     private var collectionGeneration = 0
     init(
         api: KriaAPIClient = KriaAPI(),
@@ -501,12 +502,13 @@ enum AccountIdentity {
     /// Silently deletes a chat the user walked away from without sending anything, staging media,
     /// or leaving unsent text. Any doubt (fetch failure, conflict, still uploading) keeps the chat.
     func discardIfAbandoned(_ id: UUID) async {
-        guard !deletedProjectIDs.contains(id), !reapingChatIDs.contains(id),
+        guard !deletedProjectIDs.contains(id), !reapingChatIDs.contains(id), !chatKeepers.contains(id),
               let project = projects.first(where: { $0.id == id }), project.status == .draft else { return }
         reapingChatIDs.insert(id)
         defer { reapingChatIDs.remove(id) }
-        guard let thread = try? await api.project(threadID: id),
-              AbandonedChat.isEmpty(
+        guard let thread = try? await api.project(threadID: id) else { return }
+        if thread.events.contains(where: { $0.role == "user" }) { chatKeepers.insert(id) }
+        guard AbandonedChat.isEmpty(
                 thread: thread,
                 draft: chatDrafts.draft(for: id),
                 hasPendingUploads: uploads.records.contains { $0.projectID == id }
@@ -519,7 +521,8 @@ enum AccountIdentity {
     /// Cleans up empty chats left by a killed app, keeping whichever chat is open when
     /// `keeping` is given (the app is foregrounded on it).
     func sweepAbandonedChats(keeping: UUID? = nil) async {
-        for project in projects where project.status == .draft && project.id != keeping && !project.awaitsConfirmation {
+        for project in projects where project.status == .draft && project.id != keeping && !project.awaitsConfirmation
+            && !chatKeepers.contains(project.id) {
             await discardIfAbandoned(project.id)
         }
     }
