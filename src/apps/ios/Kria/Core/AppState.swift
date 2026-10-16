@@ -222,6 +222,9 @@ enum AccountIdentity {
     private var createdThreads: [UUID: CreationThread] = [:]
     let chatDrafts: ChatDraftStore
     let chatKeepers = ChatKeeperStore()
+    /// Where the next page of older chats starts; nil when the list is complete.
+    @Published private(set) var projectsNextCursor: String?
+    private var isLoadingMoreProjects = false
     private var collectionGeneration = 0
     init(
         api: KriaAPIClient = KriaAPI(),
@@ -253,12 +256,18 @@ enum AccountIdentity {
         if projects.isEmpty { projectsState = .loading }
         defer { isLoading = false }
         do {
-            let fetched = try await api.projects()
+            let page = try await api.projectsPage(cursor: nil)
             guard generation == collectionGeneration else { return }
-            projects = fetched.filter { !deletedProjectIDs.contains($0.id) }.map { incoming in
+            // Merge, never replace: the first page is only the newest chats, and the cached older ones must stay
+            // reachable (and drop out only when the server stops listing them).
+            let before = projects
+            let fetched = page.projects.filter { !deletedProjectIDs.contains($0.id) }.map { incoming in
                 if let current = projects.first(where: { $0.id == incoming.id }), current.serverRevision > incoming.serverRevision { return current }
                 return incoming
             }
+            projects = ProjectListMerge.apply(existing: projects, page: fetched, isFirstPage: true, hasMore: page.nextCursor != nil)
+            projectsNextCursor = page.nextCursor
+            try? cache?.removeProjects(before.map(\.id).filter { id in !projects.contains { $0.id == id } })
             projectsState = projects.isEmpty ? .empty : .loaded
             errorMessage = nil
             if let selectedProject,
@@ -525,6 +534,20 @@ enum AccountIdentity {
             && !chatKeepers.contains(project.id) {
             await discardIfAbandoned(project.id)
         }
+    }
+    /// The next page of older chats, when the drawer has scrolled to the end of what it has.
+    func loadMoreProjects() async {
+        guard let cursor = projectsNextCursor, !isLoadingMoreProjects else { return }
+        isLoadingMoreProjects = true
+        defer { isLoadingMoreProjects = false }
+        let generation = collectionGeneration
+        guard let page = try? await api.projectsPage(cursor: cursor), generation == collectionGeneration else { return }
+        let before = projects
+        let fetched = page.projects.filter { !deletedProjectIDs.contains($0.id) }
+        projects = ProjectListMerge.apply(existing: projects, page: fetched, isFirstPage: false, hasMore: page.nextCursor != nil)
+        projectsNextCursor = page.nextCursor
+        try? cache?.upsert(fetched)
+        try? cache?.removeProjects(before.map(\.id).filter { id in !projects.contains { $0.id == id } })
     }
     func updateProject(_ project: ProjectSummary) {
         guard !deletedProjectIDs.contains(project.id) else { return }

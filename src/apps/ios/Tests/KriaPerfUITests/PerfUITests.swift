@@ -207,6 +207,22 @@ final class PerfUITests: XCTestCase {
         }
     }
 
+    /// Functional guard for chat-list paging: with 60 chats the drawer must reach Chat 45 by scrolling. Fails on a
+    /// build that only ever loads the newest 20.
+    func testDrawerReachesOlderChats() {
+        let app = makeApp(reset: true)
+        app.launch()
+        waitForTranscript(app)
+        app.buttons["workspace-menu-toggle"].tap()
+        let target = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chat 45'")).firstMatch
+        var swipes = 0
+        while !target.exists, swipes < 30 {
+            app.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(target.exists, "Chat 45 never appeared in the drawer after \(swipes) scrolls")
+    }
+
     // MARK: Scrolling
 
     /// Flicks a 200-message transcript, with plan blocks and a song question mixed in and an upload reporting

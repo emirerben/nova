@@ -123,6 +123,12 @@ struct ProjectsDrawer: View {
                                 ProjectActionsMenu(project: project)
                             }.background(project.id == model.selectedProject?.id ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
                         }
+                        if model.projectsNextCursor != nil {
+                            // Reaching the end of the loaded chats fetches the next older page.
+                            ProgressView().padding(12).frame(maxWidth: .infinity)
+                                .accessibilityIdentifier("drawer-loading-older-chats")
+                                .onAppear { Task { await model.loadMoreProjects() } }
+                        }
                     }
                 }
             }
