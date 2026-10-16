@@ -7,7 +7,10 @@ pure decisions live here, with no I/O so the worker and tests share them:
    play back to back on the main track, each with its own audio and captions)
    and which are FOOTAGE (shown on top as muted full-frame cutaways). Decided
    from each clip's own Whisper transcript: a clip is a speaker when it holds
-   at least `MIN_SPEAKER_WORDS` words at `MIN_SPEAKER_WORDS_PER_S` or more. A
+   at least `MIN_SPEAKER_WORDS` words at `MIN_SPEAKER_WORDS_PER_S` or more,
+   paced over the span the words are actually spoken in (`speech_evidence`),
+   so a take with a quiet lead-in or tail still speaks. Whisper's stock
+   outros ("İzlediğiniz için teşekkürler") never count as words. A
    clip whose audio is silent/inaudible is never a speaker. When no clip
    qualifies, the clip with the most words speaks (the worker's silent-take
    check then refuses a truly silent one) so an edit always has a voice.
@@ -28,13 +31,18 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from app.services.overlay_autoplace import _snap_to_word_start
 
 # A speaker clip: enough words, said at a talking pace. Ambient b-roll that
-# Whisper hears a stray "Thank you." in stays footage.
+# Whisper hears a stray "Thank you." in stays footage. The pace is measured
+# over the spoken span (first word start -> last word end), never shorter than
+# MIN_SPEECH_SPAN_S: the T2 boat take says 10 words in the first 8 s of 15 s
+# (0.67/s over the clip, 1.25/s over the span) and must speak.
 MIN_SPEAKER_WORDS = 6
 MIN_SPEAKER_WORDS_PER_S = 0.8
+MIN_SPEECH_SPAN_S = 2.0
 
 # Mirrors `phone_overlay_grounding._FS_*` (KRI-297) so footage cutaways and
 # full-screen Visuals feel the same.
@@ -57,6 +65,9 @@ class TalkingClipEvidence:
     duration_s: float
     word_count: int
     audible: bool
+    # First word start -> last word end of the counted words; None when the
+    # transcript has no timings (the pace then falls back to the clip duration).
+    speech_span_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -74,7 +85,42 @@ class FootageCutawayWindow:
     end_s: float
 
 
+def speech_evidence(words: Sequence[Any]) -> tuple[int, float | None]:
+    """``(word_count, speech_span_s)`` for one clip's Whisper ``words``.
+
+    Words that form one of Whisper's stock outro hallucinations
+    (`spoken_quotes._OUTRO_HALLUCINATIONS`) are dropped first: ambient b-roll
+    routinely "says" them, and over a spoken span they would read as a burst of
+    fast speech. The span runs from the first kept word's start to the last
+    kept word's end.
+    """
+    from app.services.spoken_quotes import (  # noqa: PLC0415
+        _OUTRO_HALLUCINATIONS,
+        fold_tokens,
+    )
+
+    tokens: list[str] = []
+    owners: list[int] = []
+    for index, word in enumerate(words):
+        for token in fold_tokens(getattr(word, "text", "")):
+            tokens.append(token)
+            owners.append(index)
+    dropped: set[int] = set()
+    for phrase in _OUTRO_HALLUCINATIONS:
+        width = len(phrase)
+        for start in range(len(tokens) - width + 1):
+            if tuple(tokens[start : start + width]) == phrase:
+                dropped.update(owners[start : start + width])
+    kept = [word for index, word in enumerate(words) if index not in dropped]
+    if not kept:
+        return 0, None
+    span_s = float(kept[-1].end_s) - float(kept[0].start_s)
+    return len(kept), max(span_s, 0.0)
+
+
 def _words_per_s(evidence: TalkingClipEvidence) -> float:
+    if evidence.speech_span_s is not None:
+        return evidence.word_count / max(evidence.speech_span_s, MIN_SPEECH_SPAN_S)
     if evidence.duration_s <= 0:
         return 0.0
     return evidence.word_count / evidence.duration_s

@@ -6512,13 +6512,15 @@ def _classify_phone_talking_clips(
     Measures each clip's audio presence (KRI-653: a silent or inaudible clip is
     never a speaker and is not transcribed, so Whisper cannot hallucinate words
     over it) and its Whisper transcript (content-addressed cache, so the speaker
-    the caption pass transcribes again is a cache hit). A transcription failure
+    the caption pass transcribes again is a cache hit), counted and paced over its
+    spoken span by `speech_evidence`. A transcription failure
     scores that clip zero words: it becomes footage instead of failing the job.
     Returns ``(roles, transcripts_by_clip_id)``.
     """
     from app.pipeline.phone_talking_cutaways import (  # noqa: PLC0415
         TalkingClipEvidence,
         classify_talking_clips,
+        speech_evidence,
     )
     from app.pipeline.transcribe import transcribe_whisper_cached  # noqa: PLC0415
     from app.services.clip_speech import audio_presence  # noqa: PLC0415
@@ -6533,6 +6535,7 @@ def _classify_phone_talking_clips(
         duration_s = float(getattr(probe_map.get(path), "duration_s", 0.0) or 0.0)
         audible = audio_presence(path).status not in ("silent", "inaudible")
         word_count = 0
+        speech_span_s: float | None = None
         if audible:
             try:
                 transcript = transcribe_whisper_cached(path, language=caption_language)
@@ -6545,10 +6548,14 @@ def _classify_phone_talking_clips(
                 )
             else:
                 transcripts[cid] = transcript
-                word_count = len(transcript.words or [])
+                word_count, speech_span_s = speech_evidence(transcript.words or [])
         evidence.append(
             TalkingClipEvidence(
-                clip_id=cid, duration_s=duration_s, word_count=word_count, audible=audible
+                clip_id=cid,
+                duration_s=duration_s,
+                word_count=word_count,
+                audible=audible,
+                speech_span_s=speech_span_s,
             )
         )
     return classify_talking_clips(evidence), transcripts
