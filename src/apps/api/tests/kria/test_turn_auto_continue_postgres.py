@@ -31,7 +31,11 @@ from app.kria.planner import (
 from app.kria.runtime import submit_turn
 from app.models import CreationThreadEvent, CreativeBriefVersion, CreatorAgentTurn
 from app.tasks.kria_runtime import reconcile_kria_turns, run_kria_turn
-from tests.kria.test_runtime_postgres_integration import _record_publishes, _seed_runtime_project
+from tests.kria.test_runtime_postgres_integration import (
+    _SWEPT_FIRST,
+    _record_publishes,
+    _seed_runtime_project,
+)
 
 _db_name = make_url(settings.database_url).database or ""
 if not _db_name.endswith("_test"):
@@ -102,6 +106,18 @@ def _assistant_replies(thread_id: uuid.UUID) -> list[str]:
         ]
 
 
+def _sweep_first(turn_id: uuid.UUID) -> None:
+    """The reconciler sweeps the 50 oldest recoverable turns; rows other tests left in this
+    shared database must not push the turn under test out of that window."""
+    with sync_session() as db:
+        db.execute(
+            update(CreatorAgentTurn)
+            .where(CreatorAgentTurn.id == turn_id)
+            .values(created_at=_SWEPT_FIRST)
+        )
+        db.commit()
+
+
 def _publishes(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     """Full `apply_async` kwargs of every `run_kria_turn` publish."""
     published: list[dict] = []
@@ -136,7 +152,9 @@ async def test_pending_turn_runs_again_and_the_creator_only_sees_the_final_answe
         # Stamped ahead so the 60 s sweep leaves it for the countdown.
         assert turn.lease_expires_at > db.execute(select(func.now())).scalar_one()
 
-    # The sweep must not republish the turn while it waits for its countdown.
+    # The sweep must not republish the turn while it waits for its countdown. Seeded first in
+    # the sweep's window (50 oldest rows) so the absence below is the lease stamp's doing.
+    _sweep_first(turn_id)
     swept = _record_publishes(monkeypatch)
     reconcile_kria_turns.run()
     assert [accepted.turn_id] not in swept
@@ -342,6 +360,7 @@ async def test_a_lost_publish_is_recovered_by_the_sweep_once_the_stamp_lapses(
             .values(lease_expires_at=func.now() - timedelta(seconds=1))
         )
         db.commit()
+    _sweep_first(turn_id)
     swept = _record_publishes(monkeypatch)
     reconcile_kria_turns.run()
     assert [str(turn_id)] in swept
