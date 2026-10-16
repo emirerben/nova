@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.8.0] - 2026-10-16
+
+### Fixed
+- fix(clip-picker): settle tapped creator captions with creator-copy bounds (KRI-696) (#1618) <!-- release-pr: 1618 -->
+
 ## [0.79.7.0] - 2026-10-16
 
 ### Changed
