@@ -339,6 +339,7 @@ class CreationMediaCapabilitiesOut(BaseModel):
 
 
 class CreationCapabilitiesOut(BaseModel):
+    media_library: bool = False
     formats: list[CreationFormatCapabilityOut]
     media: CreationMediaCapabilitiesOut
     runtime_versions: list[Literal[1, 2]] = Field(default_factory=lambda: [1])
@@ -3720,6 +3721,7 @@ async def capabilities(
             and (not phone_enabled or settings.kria_runtime_v2_phone_for(user.id))
             else [1]
         ),
+        "media_library": bool(native_client and settings.media_library_enabled),
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,
             recipe_versions=[2] if phone_enabled else [],

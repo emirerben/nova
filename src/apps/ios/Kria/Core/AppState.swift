@@ -42,9 +42,10 @@ enum ProfileFetchState: Equatable, Sendable {
         return SHA256.hash(data: Data(subject.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    func clearTeleprompterAccount() {
+    func clearLocalAccountMedia() {
         guard let identity = localStorageIdentity else { return }
         try? TeleprompterStore.removeAccount(accountID: identity)
+        try? MediaLibraryOriginals(owner: identity).removeAccount()
     }
     private let tokenStore: TokenStore
     private let api: KriaAPIClient

@@ -116,6 +116,16 @@ protocol SlidePostProposalClient: Sendable {
 }
 
 protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
+    func repairSavedMedia(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset
+    var mediaLibraryOwner: String? { get }
+    func savedMedia(query: String, kind: String?, cursor: String?) async throws -> SavedMediaPage
+    func savedMediaAsset(id: UUID) async throws -> SavedMediaAsset
+    func savedMediaAccess(assetID: UUID, sourceID: UUID) async throws -> SavedMediaAccess
+    func archiveSavedMedia(id: UUID) async throws
+    func retrySavedMedia(id: UUID) async throws -> SavedMediaAsset
+    func attachSavedMedia(threadID: UUID, asset: SavedMediaAsset, source: SavedMediaSource, mediaID: String, revision: Int, role: CreationMediaRole) async throws -> CreationThread
+    func attachSavedVisual(itemID: String, asset: SavedMediaAsset, source: SavedMediaSource) async throws -> CreationVisual
+
     func textPreferenceMemory() async throws -> TextPreferenceMemory
     func mutateTextPreferenceMemory(path: String, method: String, body: [String: JSONValue]) async throws -> TextPreferenceOperation
     func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
