@@ -1,0 +1,47 @@
+# Automatic request-following loop: preregistered failures
+
+Scope: scoped, consented metadata capture; human intent review; private export into
+existing incident tooling; scheduled deterministic regression reports. No provider
+calls, prompt changes, automatic ground truth, or claims of rendered-output proof.
+
+Before implementation, the acceptance journey must fail if:
+- disabled/empty scope captures anything, or scope widens through malformed UUIDs;
+- an unconsented creator, deleted thread, or another creator's linked item is captured;
+- repeated collection duplicates unchanged evidence, concurrent collectors race,
+  or the persisted sweep cursor loses sessions/late execution updates;
+- source changes preserve approval, a stale reviewer overwrites newer intent,
+  or exports use stale source content;
+- revoke/re-grant revives an old capture, expiry leaves transcript accessible,
+  or account/thread deletion leaves retained private content;
+- held-out sessions leak request bodies or can become development examples;
+- expectations cite assistant messages or missing source events;
+- a failed turn or ready job is presented as an intent/output verdict;
+- exported intent review skips redaction/incident review in the existing CLI;
+- the daily workflow calls providers, drops failures, or reports recorded evidence
+  as live understanding or rendered-video verification.
+
+Verification: migrated disposable PostgreSQL, task entrypoint -> admin HTTP list,
+detail, review, export -> CLI import -> existing incident tooling. Exercise scope,
+consent, deduplication, cursor wrap, stale source/review, holdout, expiry and deletion.
+Run existing CLI/corpus tests and the offline report runner. Inspect admin UI with
+keyboard and narrow viewport; preserve loading/empty/error states. Record actual
+commands/results separately from this plan. No production collection in verification.
+
+## Executed verification
+
+- Isolated worktree and migrated disposable PostgreSQL `nova_request_learning_auto_test`.
+- Task -> real database -> admin HTTP -> local HTTP proxy -> review/export -> CLI import;
+  promotion correctly refused without full human review. Seven integration journeys pass.
+- Offline runner: 594 passed, two existing expected failures. Report and JUnit at
+  `.request-following-report/`; no live provider calls.
+- Negative report controls: a deliberate JUnit failure with exit code zero, and missing
+  JUnit, both produce failed status.
+- Browser: synthetic session, source selection, intent approval and packet download;
+  desktop and 390px phone layout inspected; no console errors. Local screenshots in
+  `.dev/request-following/review-desktop.png` and `review-mobile.png` (not committed).
+- Production collection, grants, prompts and provider configuration were not changed.
+
+- Ownership negative control: a corrupt cross-account active-job link initially leaked
+  a synthetic marker via raw integrity diagnostics. The collector now removes video
+  metadata for detached jobs; the real-database journey passes and still flags the
+  broken link. The existing operator diagnostics endpoint is unchanged.

@@ -1945,6 +1945,12 @@ class Settings(BaseSettings):
 
     # Account-wide creator memory/direction control plane. Storage and owner
     # routes are additive; prompt/render extraction remains separately wired.
+    # KRI-215: explicit cohort AND current training eligibility are required.
+    request_following_collection_enabled: bool = False
+    request_following_user_ids: list[str] = []
+    request_following_thread_ids: list[str] = []
+    request_following_holdout_thread_ids: list[str] = []
+
     creator_memory_enabled: bool = False
     # KRI-648: stamped only at dispatch; legacy generations are never restyled.
     phone_text_styling_enabled: bool = False

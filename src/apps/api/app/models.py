@@ -4275,3 +4275,52 @@ _TURN_STATE_DONE = frozenset(
 def _clear_turn_editor_state(mapper, connection, target) -> None:  # noqa: ANN001, ARG001
     if target.editor_state is not None and target.status in _TURN_STATE_DONE:
         target.editor_state = null()
+
+
+class RequestFollowingCollector(Base):
+    """One durable round-robin cursor; never contains creator text."""
+
+    __tablename__ = "request_following_collector"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    after_thread_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    last_run_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    summary: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    __table_args__ = (CheckConstraint("id = 1", name="ck_request_following_singleton"),)
+
+
+class RequestFollowingCase(Base):
+    """Immutable source version; review and retirement metadata are mutable.
+
+    Expiry erases private bodies but retains the hash/split ledger until the
+    owning thread is deleted. A new consent never revives an old snapshot.
+    """
+
+    __tablename__ = "request_following_cases"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    source_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    eligibility_key: Mapped[str] = mapped_column(Text, nullable=False)
+    split: Mapped[str] = mapped_column(Text, nullable=False)
+    capture: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    diagnostics: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    review: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    review_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    superseded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    __table_args__ = (
+        Index(
+            "uq_request_following_current",
+            "thread_id",
+            unique=True,
+            postgresql_where=text("superseded = false"),
+        ),
+        CheckConstraint("split IN ('development','holdout')", name="ck_request_following_split"),
+        Index("idx_request_following_queue", "superseded", "created_at", "id"),
+        Index("idx_request_following_expiry", "expires_at"),
+    )

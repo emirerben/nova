@@ -1,0 +1,471 @@
+"""Real DB + task + HTTP journey; failures preregistered before implementation."""
+
+import asyncio
+import os
+import uuid
+from datetime import UTC, datetime, timedelta
+
+import httpx
+import pytest
+from fastapi import FastAPI
+from sqlalchemy import delete, select
+
+from app.config import settings
+from app.database import AsyncSessionLocal, engine
+from app.models import CreationThread, CreationThreadEvent, InternalAccountGrant, User
+
+if not os.environ.get("DATABASE_URL", "").rsplit("/", 1)[-1].endswith("_test"):
+    pytest.skip("Requires disposable migrated PostgreSQL", allow_module_level=True)
+
+
+@pytest.fixture
+async def journey(monkeypatch):
+    from app.models import RequestFollowingCase, RequestFollowingCollector
+    from app.routes import admin_request_following
+
+    owner = uuid.uuid4()
+    thread = uuid.uuid4()
+    grant = uuid.uuid4()
+    monkeypatch.setattr(settings, "request_following_collection_enabled", True)
+    monkeypatch.setattr(settings, "request_following_user_ids", [str(owner)])
+    monkeypatch.setattr(settings, "request_following_thread_ids", [])
+    monkeypatch.setattr(settings, "request_following_holdout_thread_ids", [])
+    monkeypatch.setattr(settings, "admin_api_key", "queue-test-admin")
+    async with AsyncSessionLocal() as db:
+        await db.execute(delete(RequestFollowingCase))
+        await db.execute(delete(RequestFollowingCollector))
+        db.add(User(id=owner, email=f"{owner}@queue.test"))
+        await db.flush()
+        db.add(
+            InternalAccountGrant(
+                id=grant, creator_id=owner, granted_by="test", idempotency_key=str(grant)
+            )
+        )
+        db.add(CreationThread(id=thread, creator_id=owner))
+        await db.flush()
+        db.add(
+            CreationThreadEvent(
+                thread_id=thread,
+                sequence=1,
+                event_type="user_message",
+                role="user",
+                revision=1,
+                content="Keep the title and English subtitles; remove labels.",
+            )
+        )
+        await db.commit()
+    app = FastAPI()
+    app.include_router(admin_request_following.router, prefix="/admin/request-following")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Admin-Token": "queue-test-admin"},
+    ) as client:
+        yield client, owner, thread, grant
+    async with AsyncSessionLocal() as db:
+        await db.execute(delete(User).where(User.id == owner))
+        await db.execute(delete(RequestFollowingCollector))
+        await db.commit()
+    await engine.dispose()
+
+
+async def collect():
+    from app.tasks.request_following import collect_request_following
+
+    return await asyncio.to_thread(collect_request_following.run)
+
+
+async def first(client):
+    response = await client.get("/admin/request-following")
+    assert response.status_code == 200, response.text
+    return response.json()["items"][0]
+
+
+def review(detail):
+    return {
+        "source_sha256": detail["source_sha256"],
+        "review_version": detail["review_version"],
+        "decision": "approved",
+        "reviewer": "Synthetic reviewer",
+        "rationale": "Creator distinguishes labels from subtitles.",
+        "loss_stage": "unknown",
+        "tickets": ["KRI-215"],
+        "expectations": [
+            {
+                "text": "Keep title and English subtitles; remove labels.",
+                "source_pointers": ["/sections/events/0/content"],
+            }
+        ],
+    }
+
+
+async def test_task_queue_review_export_source_change(journey, tmp_path):
+    client, _, thread, _ = journey
+    assert (
+        await client.get("/admin/request-following", headers={"X-Admin-Token": "wrong"})
+    ).status_code == 401
+    from app.models import CreatorAgentTurn
+
+    async with AsyncSessionLocal() as db:
+        event = await db.scalar(
+            select(CreationThreadEvent).where(CreationThreadEvent.thread_id == thread)
+        )
+        db.add(
+            CreatorAgentTurn(
+                thread_id=thread,
+                source_event_id=event.id,
+                client_event_id="synthetic-turn",
+                request_digest="synthetic",
+                status="failed",
+                plan_json={"intent": "remove labels"},
+                error={"code": "synthetic_execution_failure"},
+            )
+        )
+        await db.commit()
+    await collect()
+    case = await first(client)
+    await collect()
+    assert (await first(client))["id"] == case["id"]
+    url = f"/admin/request-following/{case['id']}"
+    detail = (await client.get(url)).json()
+    assert detail["capture"]["sections"]["turns"][0]["plan"]["intent"] == "remove labels"
+    assert detail["diagnostics"]["failed_turns"]
+    assert detail["diagnostics"]["intent_verdict"] == "unassessed"
+    assert detail["review"] is None
+    assert detail["evidence"]["rendered_output"] == "missing"
+    assert (await client.get(url + "/export")).status_code == 409
+    assert (await client.post(url + "/review", json=review(detail))).status_code == 200
+    assert (await client.post(url + "/review", json=review(detail))).status_code == 409
+    packet = (await client.get(url + "/export")).json()
+    assert packet["candidate"]["review"] is None  # intent review cannot approve promotion
+    assert packet["candidate"]["intent_review"]["reviewer"] == "Synthetic reviewer"
+    assert packet["candidate"]["expectations"]
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[5]
+    exported = tmp_path / "export.json"
+    exported.write_text(json.dumps(packet))
+    command = [
+        sys.executable,
+        str(root / "scripts/request-following-loop.py"),
+        "--store",
+        str(tmp_path / "private"),
+    ]
+    imported = subprocess.run(
+        command + ["import-queue", "--input", str(exported)], capture_output=True, text=True
+    )
+    assert imported.returncode == 0, imported.stderr
+    candidate_path = Path(imported.stdout.strip())
+    candidate = json.loads(candidate_path.read_text())
+    assert candidate["review"] is None
+    assert candidate["expectations"] == packet["candidate"]["expectations"]
+    refused = subprocess.run(
+        command + ["promote", "--candidate", str(candidate_path)], capture_output=True, text=True
+    )
+    assert refused.returncode == 1
+    assert "needs human approval" in refused.stderr
+    duplicate = subprocess.run(
+        command + ["import-queue", "--input", str(exported)], capture_output=True, text=True
+    )
+    assert duplicate.returncode == 1
+    assert "Candidate exists" in duplicate.stderr
+    async with AsyncSessionLocal() as db:
+        db.add(
+            CreationThreadEvent(
+                thread_id=thread,
+                sequence=2,
+                event_type="user_message",
+                role="user",
+                revision=2,
+                content="Actually remove the title too.",
+            )
+        )
+        await db.commit()
+    assert (await client.get(url + "/export")).status_code == 409
+    await collect()
+    fresh = await first(client)
+    assert fresh["id"] != case["id"]
+    assert fresh["review_state"] == "unreviewed"
+    assert (await client.get(url + "/export")).status_code == 409
+
+
+async def test_disabled_scope_consent_and_regrant(journey, monkeypatch):
+    client, owner, _, grant = journey
+    monkeypatch.setattr(settings, "request_following_collection_enabled", False)
+    assert (await collect())["status"] == "disabled"
+    monkeypatch.setattr(settings, "request_following_collection_enabled", True)
+    monkeypatch.setattr(settings, "request_following_user_ids", [])
+    assert (await collect())["status"] == "empty_scope"
+    monkeypatch.setattr(settings, "request_following_user_ids", [str(owner), "invalid"])
+    assert (await collect())["status"] == "empty_scope"
+    monkeypatch.setattr(settings, "request_following_user_ids", [str(owner)])
+    async with AsyncSessionLocal() as db:
+        row = await db.get(InternalAccountGrant, grant)
+        row.status = "revoked"
+        await db.commit()
+    await collect()
+    assert (await client.get("/admin/request-following")).json()["items"] == []
+    async with AsyncSessionLocal() as db:
+        row = await db.get(InternalAccountGrant, grant)
+        row.status = "active"
+        await db.commit()
+    await collect()
+    case = await first(client)
+    async with AsyncSessionLocal() as db:
+        row = await db.get(InternalAccountGrant, grant)
+        row.status = "revoked"
+        await db.commit()
+    assert (await client.get(f"/admin/request-following/{case['id']}")).status_code == 404
+    async with AsyncSessionLocal() as db:
+        db.add(
+            InternalAccountGrant(
+                creator_id=owner, granted_by="test", idempotency_key=str(uuid.uuid4())
+            )
+        )
+        await db.commit()
+    assert (await client.get(f"/admin/request-following/{case['id']}")).status_code == 404
+    await collect()
+    assert (await first(client))["id"] != case["id"]
+
+
+async def test_holdout_never_exposes_source_or_changes_split(journey, monkeypatch):
+    client, _, thread, _ = journey
+    monkeypatch.setattr(settings, "request_following_holdout_thread_ids", [str(thread)])
+    await collect()
+    response = (await client.get("/admin/request-following")).json()
+    assert response["items"] == []
+    assert response["holdout_count"] == 1
+    monkeypatch.setattr(settings, "request_following_holdout_thread_ids", [])
+    await collect()
+    assert (await client.get("/admin/request-following")).json()["items"] == []
+    from app.models import RequestFollowingCase
+
+    async with AsyncSessionLocal() as db:
+        case = (
+            await db.scalars(
+                select(RequestFollowingCase).where(RequestFollowingCase.thread_id == thread)
+            )
+        ).first()
+        assert case.capture is None
+        assert (await client.get(f"/admin/request-following/{case.id}")).status_code == 404
+
+
+async def test_expiry_deletion_and_non_creator_expectations(journey):
+    from app.models import RequestFollowingCase
+
+    client, _, thread, _ = journey
+    await collect()
+    case = await first(client)
+    url = f"/admin/request-following/{case['id']}"
+    detail = (await client.get(url)).json()
+    bad = review(detail)
+    bad["expectations"][0]["source_pointers"] = ["/sections/turns/0/plan"]
+    assert (await client.post(url + "/review", json=bad)).status_code == 422
+    async with AsyncSessionLocal() as db:
+        row = await db.get(RequestFollowingCase, uuid.UUID(case["id"]))
+        row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await db.commit()
+    assert (await client.get(url)).status_code == 404
+    await collect()
+    async with AsyncSessionLocal() as db:
+        row = await db.get(RequestFollowingCase, uuid.UUID(case["id"]))
+        assert row.capture is None
+        await db.execute(delete(CreationThread).where(CreationThread.id == thread))
+        await db.commit()
+        assert not (
+            await db.scalars(
+                select(RequestFollowingCase).where(RequestFollowingCase.thread_id == thread)
+            )
+        ).all()
+
+
+async def test_persistent_cursor_concurrency_and_late_changes(journey, monkeypatch):
+    from app.models import RequestFollowingCase, RequestFollowingCollector
+    from app.services import request_following_collection as collection
+
+    client, owner, original, _ = journey
+    monkeypatch.setattr(collection, "BATCH_SIZE", 1)
+    extra = uuid.uuid4()
+    async with AsyncSessionLocal() as db:
+        db.add(CreationThread(id=extra, creator_id=owner))
+        await db.flush()
+        db.add(
+            CreationThreadEvent(
+                thread_id=extra,
+                sequence=1,
+                revision=1,
+                role="user",
+                event_type="user_message",
+                content="Use original sound.",
+            )
+        )
+        await db.commit()
+    # Separate task sessions compete for the same durable cursor lock.
+    results = await asyncio.gather(collect(), collect())
+    assert all(r["status"] in {"busy", "complete"} for r in results)
+    for _ in range(4):
+        await collect()
+    async with AsyncSessionLocal() as db:
+        current = (
+            await db.scalars(
+                select(RequestFollowingCase).where(RequestFollowingCase.superseded.is_(False))
+            )
+        ).all()
+        assert {c.thread_id for c in current} == {original, extra}
+        assert len(current) == 2
+        assert await db.get(RequestFollowingCollector, 1)
+        # A late event may not update the CreationThread timestamp. The sweep
+        # must still discover it after wrapping, without a timestamp watermark.
+        db.add(
+            CreationThreadEvent(
+                thread_id=extra,
+                sequence=2,
+                revision=2,
+                role="user",
+                event_type="user_message",
+                content="Keep all speech.",
+            )
+        )
+        await db.commit()
+    for _ in range(4):
+        await collect()
+    async with AsyncSessionLocal() as db:
+        versions = (
+            await db.scalars(
+                select(RequestFollowingCase).where(RequestFollowingCase.thread_id == extra)
+            )
+        ).all()
+        assert len(versions) == 2
+        assert sum(not c.superseded for c in versions) == 1
+    response = (await client.get("/admin/request-following?limit=1")).json()
+    assert len(response["items"]) == 1 and response["next_cursor"]
+    second = (
+        await client.get(
+            "/admin/request-following", params={"limit": 1, "cursor": response["next_cursor"]}
+        )
+    ).json()
+    assert second["items"][0]["id"] != response["items"][0]["id"]
+
+
+async def test_local_app_real_http_proxy_and_review(journey):
+    """Browser-facing local server -> real API -> PostgreSQL, no mocked responses."""
+    import socket
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import uvicorn
+
+    from app.routes import admin_request_following
+
+    await collect()
+    app = FastAPI()
+    app.include_router(admin_request_following.router, prefix="/admin/request-following")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    upstream_port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="off"))
+    task = asyncio.create_task(server.serve(sockets=[listener]))
+    while not server.started:
+        await asyncio.sleep(0.01)
+    root = Path(__file__).resolve().parents[5]
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            str(root / "scripts/request-following-review.py"),
+            "--api-url",
+            f"http://127.0.0.1:{upstream_port}",
+            "--port",
+            "0",
+            "--no-open",
+        ],
+        cwd=root,
+        env={**os.environ, "ADMIN_API_KEY": "queue-test-admin"},
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        line = await asyncio.wait_for(asyncio.to_thread(process.stdout.readline), timeout=10)
+        url = line.strip().removeprefix("Review app: ")
+        assert url.startswith("http://127.0.0.1:"), line
+        async with httpx.AsyncClient(base_url=url) as client:
+            page = await client.get("/")
+            assert page.status_code == 200 and "What should have happened?" in page.text
+            assert "queue-test-admin" not in page.text
+            config = (await client.get("/config")).json()
+            assert "queue-test-admin" not in str(config)
+            assert (await client.get("/api/cases")).status_code == 403
+            assert (
+                await client.get("/config", headers={"Host": "attacker.test"})
+            ).status_code == 403
+            headers = {"X-Review-Session": config["session"], "Origin": url}
+            queue = (await client.get("/api/cases?review_state=unreviewed", headers=headers)).json()
+            case = queue["items"][0]
+            path = f"/api/cases/{case['id']}"
+            detail = (await client.get(path, headers=headers)).json()
+            assert (
+                await client.post(
+                    path + "/review",
+                    headers={**headers, "Origin": "http://attacker.test"},
+                    json=review(detail),
+                )
+            ).status_code == 403
+            saved = await client.post(path + "/review", headers=headers, json=review(detail))
+            assert saved.status_code == 200, saved.text
+            assert (await client.get("/api/cases?review_state=approved", headers=headers)).json()[
+                "items"
+            ][0]["id"] == case["id"]
+            assert (await client.get(path + "/export", headers=headers)).json()["candidate"][
+                "review"
+            ] is None
+            assert (await client.post("/api/cases", headers=headers, json={})).status_code == 403
+            assert (await client.get("/api/templates", headers=headers)).status_code == 404
+    finally:
+        process.terminate()
+        await asyncio.to_thread(process.wait, timeout=10)
+        server.should_exit = True
+        await task
+        listener.close()
+
+
+async def test_cross_owner_projection_never_captures_foreign_video(journey, monkeypatch):
+    from app.models import Job
+
+    client, _, thread, _ = journey
+    monkeypatch.setattr(settings, "creation_thread_degraded_projection_enabled", True)
+    foreign = uuid.uuid4()
+    job_id = uuid.uuid4()
+    async with AsyncSessionLocal() as db:
+        db.add(User(id=foreign, email=f"{foreign}@queue.test"))
+        await db.flush()
+        db.add(
+            Job(
+                id=job_id,
+                user_id=foreign,
+                raw_storage_path="synthetic",
+                assembly_plan={"variants": [{"variant_id": "FOREIGN-PRIVATE-MARKER"}]},
+            )
+        )
+        await db.flush()
+        row = await db.get(CreationThread, thread)
+        row.active_job_id = job_id
+        await db.commit()
+    try:
+        await collect()
+        case = await first(client)
+        detail = await client.get(f"/admin/request-following/{case['id']}")
+        assert "FOREIGN-PRIVATE-MARKER" not in detail.text
+        assert detail.json()["capture"]["sections"]["integrity"]["video"] is None
+        assert detail.json()["diagnostics"]["broken_edges"]
+    finally:
+        async with AsyncSessionLocal() as db:
+            row = await db.get(CreationThread, thread)
+            row.active_job_id = None
+            await db.flush()
+            await db.execute(delete(Job).where(Job.id == job_id))
+            await db.execute(delete(User).where(User.id == foreign))
+            await db.commit()

@@ -41,3 +41,9 @@ rg -n 'def resolve_editor_base|def build_editor_snapshot' src/apps/api/app/servi
 
 Run backend checks through `scripts/check-api.sh`; usage and runtime-profile
 interpretation are in the [agent navigation runbook](runbooks/agent-navigation.md).
+
+## Request-following review
+
+[Local review app and automatic collection](runbooks/request-following-review-app.md):
+open the private session queue, review creator intent, export a regression packet,
+and inspect daily offline results.
