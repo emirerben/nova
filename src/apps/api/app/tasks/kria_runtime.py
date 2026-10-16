@@ -1193,6 +1193,12 @@ def _complete_draft_turn(
                         )
         if speed_notice:
             reply_text = f"{reply_text}\n{speed_notice}"
+        if brief is not None:
+            # A repeated offer can have no new updates to persist in the response
+            # transaction. Its receipts still name the revision it checked.
+            requirement_receipts = [
+                {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
+            ]
         unmet_ids = [
             str(receipt.get("requirement_id"))
             for receipt in requirement_receipts
@@ -1330,7 +1336,21 @@ def _complete_draft_turn(
             # the approval card follow it, so neither promises what the plan doesn't contain.
             changes = [change for change in changes if change != arguments.summary]
             approval_summary = reply_text
-            document = document.model_copy(update={"changes": changes, "intent": approval_summary})
+            document = document.model_copy(
+                update={
+                    "changes": changes,
+                    **(
+                        {
+                            "intent": say(
+                                en="Simpler version with the agreed omissions.",
+                                tr="Kararlaştırılan eksiklerle daha basit sürüm.",
+                            )
+                        }
+                        if simpler_version_chosen
+                        else {}
+                    ),
+                }
+            )
             snapshot, snapshot_hash = canonical_snapshot(document)
         choice_gate = (
             settings.kria_choice_questions_enabled

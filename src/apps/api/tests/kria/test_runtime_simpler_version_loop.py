@@ -1,4 +1,4 @@
-"""The "different approach, or simpler version?" question is asked once, never in a loop.
+"""Explicitly accepting the simpler edit changes the request approval will render.
 
 Thread 0ef4fdde (2026-10-11, KRI-610): a new creator asked a montage to "explain the
 footages". No plan could put text on each clip, so the brief-binding gate rolled the
@@ -10,10 +10,13 @@ and it never did.
 
 Ways this can go wrong, each pinned below:
 - the second identical refusal asks again (the loop) instead of making the draft;
-- the draft made instead hides the miss (no honest "Couldn't" line);
+- the draft hides the omissions instead of naming what was left out;
 - a clip question between the two refusals makes the breaker forget the first ask;
 - a NEW unmet requirement is waved through because an older one was already asked;
 - the very first refusal stops asking (the gate itself must keep working).
+- unrelated replies or stale offers waive requirements without consent;
+- recovery loses accepted omissions or a repeated offer loses its brief version;
+- the approval binding and real native compiler still enforce the old request.
 """
 
 from __future__ import annotations
@@ -431,6 +434,24 @@ async def test_clip_number_is_not_consent_to_an_earlier_simpler_offer(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_a_repeated_offer_without_new_requirements_remains_answerable(monkeypatch):
+    user_id, thread_id, _ = _seed_runtime_project()
+    replies = await _run_turns(
+        monkeypatch,
+        user_id,
+        thread_id,
+        [
+            ("explain the footages", _planned(_textless_plan(), _summary_ask())),
+            ("What would change?", _planned(_textless_plan())),
+            ("Make this simpler version", _planned(_textless_plan())),
+        ],
+    )
+    assert replies[-1][0] == "awaiting_approval"
+    with sync_session() as db:
+        assert not load_latest_brief_sync(db, thread_id).live()
+
+
+@pytest.mark.asyncio
 async def test_agreed_omissions_survive_a_following_unresolved_choice(monkeypatch):
     user_id, thread_id, _ = _seed_runtime_project()
     await _run_turns(
@@ -522,7 +543,7 @@ async def test_simpler_approval_compiles_and_pins_while_full_request_still_refus
                 render_program="native",
                 selected_media_ids=list(ids),
                 opening_title=title,
-            opening_title_duration_s=2,
+                opening_title_duration_s=2,
                 target_duration_s=6,
             ),
         )

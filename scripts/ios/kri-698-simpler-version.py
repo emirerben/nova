@@ -20,6 +20,7 @@ duration belongs to narration; ripple, scrub, resize and Undo are unaffected.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -41,6 +42,9 @@ def ffmpeg(*args: str) -> bytes:
 
 def prepare(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
+    # A failed fresh export must never leave a previous run's movie as evidence.
+    for name in ("approved", "missing_title"):
+        (out / "cases" / name / "phone.mp4").unlink(missing_ok=True)
     for index, color in enumerate(COLORS, 1):
         ffmpeg(
             "-f",
@@ -102,6 +106,9 @@ def frame(movie: Path, seconds: float) -> Image.Image:
 def compare(out: Path) -> None:
     movie = out / "cases/approved/phone.mp4"
     twin = out / "cases/missing_title/phone.mp4"
+    for path in (movie, twin):
+        if path.stat().st_mtime_ns < path.with_name("recipe.json").stat().st_mtime_ns:
+            raise SystemExit(f"Stale export: {path}; rerun the native exporter")
     frames = [frame(movie, t) for t in (0.8, 2.8, 4.8)]
     differences = [
         float(
@@ -151,10 +158,11 @@ def compare(out: Path) -> None:
         ),
         dtype="<f4",
     )
-    peaks = []
+    peaks, rms = [], []
     for t in (0.8, 2.8, 4.8):
         window = samples[int(t * 48000) : int((t + 0.3) * 48000)]
         spectrum = abs(np.fft.rfft(window))
+        rms.append(float(np.sqrt(np.mean(window**2))))
         peaks.append(float(np.fft.rfftfreq(len(window), 1 / 48000)[spectrum.argmax()]))
     checks = {
         "six_second_narration_length": abs(float(probe["format"]["duration"]) - 6)
@@ -163,14 +171,20 @@ def compare(out: Path) -> None:
         "title_visible_in_approved_window": differences[0] > 0.1,
         "title_ends_when_approved": max(differences[1:]) < 0.1,
         "missing_title_negative_control_detected": differences[0] > 0.1,
-        "narration_throughout": all(abs(peak - 650) < 10 for peak in peaks),
+        "narration_throughout": all(abs(peak - 650) < 10 for peak in peaks)
+        and min(rms) > 0.02,
         "h264_aac": {s["codec_name"] for s in probe["streams"]} >= {"h264", "aac"},
     }
     report = {
+        "pinned_recipe_sha256": hashlib.sha256(
+            movie.with_name("recipe.json").read_bytes()
+        ).hexdigest(),
+        "export_sha256": hashlib.sha256(movie.read_bytes()).hexdigest(),
         "checks": checks,
         "title_frame_difference": differences,
         "clip_color_errors": errors,
         "narration_peak_hz": peaks,
+        "narration_rms": rms,
         "evidence": "Synthetic media; real persisted approval, compiler and macOS native exporter. "
         "No live model, production deployment or physical iPhone claim.",
     }
