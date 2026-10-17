@@ -165,11 +165,16 @@ def test_only_spoken_word_texts_on_voiceover_edits_change() -> None:
             "That exact text isn't in this draft.",
         )
 
-    for edit_format, audio in (("montage", "original_audio"), ("subtitled", "original_audio")):
-        (other,) = _receipts(
-            {**N2_STRATEGY, "edit_format": edit_format, "audio_strategy": audio}, R2
-        )
-        assert (other.status, other.reason) == ("partial", "That exact text isn't in this draft.")
+    (other,) = _receipts(
+        {**N2_STRATEGY, "edit_format": "montage", "audio_strategy": "original_audio"}, R2
+    )
+    assert (other.status, other.reason) == ("partial", "That exact text isn't in this draft.")
+    # KRI-705: a Talking edit has the same gap and says so plainly (a format limit).
+    (talking,) = _receipts(
+        {**N2_STRATEGY, "edit_format": "subtitled", "audio_strategy": "original_audio"}, R2
+    )
+    assert talking.status == "not_possible"
+    assert talking.reason == "A Talking video can't show text at a word you say yet"
 
 
 def test_a_title_that_names_a_spoken_cue_keeps_the_title_check() -> None:

@@ -211,6 +211,39 @@ def _llm_correct_lines(texts: list[str], language: str | None, *, model: str) ->
     return [str(line) for line in lines]
 
 
+# A same-position word edit (case ending, spelling) must still look like the
+# spoken word; anything less is a replacement and is refused.
+_WORD_EDIT_MIN_RATIO = 0.75
+
+
+def _retime_corrected_text(cue: dict[str, Any], new_text: str) -> dict[str, Any] | None:
+    """Apply corrected text onto a timed cue, keeping every word's timing.
+
+    Returns None when the corrected tokens cannot be aligned 1:1 (same count, same
+    order, each a same-length edit of the spoken word) -- the caller then keeps the
+    original timed cue instead of dropping its word list (KRI-708).
+    """
+
+    words = _timed_words(cue)
+    tokens = new_text.split()
+    if words is None or len(tokens) != len(words):
+        return None
+    for word, token in zip(words, tokens):
+        old = _fold(str(word["text"]))
+        new = _fold(token)
+        # Same-length edits only: dropping/adding letters ("Arabası" -> "Araba")
+        # rewords what was said, a vowel/case fix ("Kaçer" -> "Kaçar") does not.
+        if (
+            not new
+            or len(new) != len(old)
+            or SequenceMatcher(None, old, new).ratio() < _WORD_EDIT_MIN_RATIO
+        ):
+            return None
+    for word, token in zip(words, tokens):
+        word["text"] = token
+    return {**cue, "text": new_text, "words": words}
+
+
 def _legacy_correct_caption_cues(
     cues: list[dict[str, Any]],
     language: str | None,
@@ -231,10 +264,20 @@ def _legacy_correct_caption_cues(
     for cue, new_text in zip(cues, corrected):
         stripped = new_text.strip()
         if stripped and stripped != str(cue.get("text", "")).strip():
+            if cue.get("words"):
+                retimed = _retime_corrected_text(cue, stripped)
+                if retimed is None:
+                    log.info(
+                        "caption_correction_unaligned_kept_original",
+                        before=str(cue.get("text", ""))[:120],
+                    )
+                    out.append(cue)
+                    continue
+                changes.append({"before": str(cue.get("text", ""))[:300], "after": stripped[:300]})
+                out.append(retimed)
+                continue
             changes.append({"before": str(cue.get("text", ""))[:300], "after": stripped[:300]})
-            updated = {**cue, "text": stripped}
-            updated.pop("words", None)
-            out.append(updated)
+            out.append({**cue, "text": stripped})
         else:
             out.append(cue)
     log.info("caption_correction_done", cues=len(out), changed=len(changes), model=model)

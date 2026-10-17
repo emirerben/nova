@@ -89,7 +89,7 @@ struct AccountDeletionView: View {
             Button("Delete account", role: .destructive) {
                 Task {
                     if await deletion.confirm(token: token) {
-                        auth.clearTeleprompterAccount()
+                        auth.clearLocalAccountMedia()
                         auth.signOut()
                     }
                 }

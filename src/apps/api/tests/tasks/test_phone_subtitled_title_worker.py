@@ -87,6 +87,47 @@ def test_the_title_moves_off_the_speakers_face(monkeypatch):
     assert job.assembly_plan["variants"][0]["opening_title_placement"]["status"] == "moved"
 
 
+# KRI-706 failure modes, written before the code: (1) a close selfie makes the
+# face band span most of the upper frame, so every top-band row collides and the
+# title kept the default row on the eyes; (2) the band reaches so low that no row
+# under it fits, and the brief receipt still said "text off my face" was met.
+@pytest.mark.parametrize(
+    ("band_bottom", "status"), [(0.647, "moved_below_face"), (0.95, "best_effort")]
+)
+def test_close_selfie_title_lands_below_the_face_or_the_receipt_says_it_collides(
+    monkeypatch, band_bottom, status
+):
+    from app.kria.brief import BriefRequirement
+    from app.kria.brief_checks import check_requirement, plan_facts_from_phone_variant
+
+    _faces(
+        monkeypatch,
+        [ProtectedRegion(0.0, 2.0, NormalizedBox(0.178, 0.065, 0.92, band_bottom), "face")],
+    )
+    job, _snapshot, _session, _binding = _titled(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    placement = variant["opening_title_placement"]
+    assert placement["status"] == status
+    if status == "moved_below_face":
+        assert variant["text_elements"][0]["y_frac"] > band_bottom
+        assert placement["coverage"] <= 0.05
+        return
+    assert placement["face_collision"] is True
+    requirement = BriefRequirement(
+        id="r6",
+        kind="text",
+        scope="title",
+        literal=_TITLE,
+        description="Add a title, the text must not cover my face",
+    )
+    receipt = check_requirement(requirement, plan_facts_from_phone_variant(variant))
+    assert receipt.status == "partial"
+    assert "yüzünün üstüne" in receipt.reason or "your face" in receipt.reason
+
+
 def test_without_a_confirmed_hold_the_title_fades_after_the_first_word(monkeypatch):
     _faces(monkeypatch)
     job, _snapshot, _session, _binding = _titled(

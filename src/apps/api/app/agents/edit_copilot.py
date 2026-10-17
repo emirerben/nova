@@ -41,8 +41,9 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
+# v82 (KRI-716): a group title is one add_text across the stretch, never one per clip.
 # v81 (KRI-667/KRI-669): keep claimed_ops honesty and measured heading placement together.
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-15-v81"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-16-v82"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).

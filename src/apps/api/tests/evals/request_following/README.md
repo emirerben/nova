@@ -33,3 +33,11 @@ Run the free suite from `src/apps/api`:
 GEMINI_API_KEY=test DATABASE_URL="$NOVA_DEV_DATABASE_URL" \
   .venv/bin/python -m pytest tests/evals/request_following -q
 ```
+
+## Learn from real sessions
+
+The [request-following learning loop](../../../../../../docs/runbooks/request-following-learning-loop.md)
+collects private read-only session snapshots, proposes creator-grounded cases,
+tracks review and missing evidence, and promotes approved records into the
+existing incident corpus. Recorded-response replay remains compile/execution
+proof only; it does not measure a changed prompt's provider behavior.

@@ -68,6 +68,7 @@ def fixture(monkeypatch):
     db = AsyncMock()
     db.add = MagicMock()
     db.get.return_value = job
+    db.execute.return_value = scalar(None)
     monkeypatch.setattr(settings, "phone_rendering_enabled", True)
     monkeypatch.setattr(routes.limiter, "enabled", False)
     app.dependency_overrides[get_current_user] = lambda: user

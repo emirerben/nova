@@ -4,6 +4,12 @@ pre-extraction route implementation.
 ``tests/fixtures/guided_timeline_equivalence.json`` was produced by running the
 ORIGINAL ``_guided_v2_revision_for_write`` / ``_project_guided_revision_lanes``
 (git 2cf05f959) over the scenarios below; the route wrappers must reproduce it.
+
+KRI-715: the lane fixtures were regenerated once after ``project_lane_times`` began
+anchoring an interval END one frame early (an interval ending on a cut used to land in
+the NEXT clip: tombstoned when that clip was deleted, zero-length/over-long on reorder).
+Segments, errors and non-interval lanes are unchanged. A text spanning two clips
+(``span-text``) was added to the lane scenarios in the same regeneration.
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ def scenarios(revision):
     return {
         "identity": [_slot(f"s{i + 1}", i, 2.0) for i in range(4)],
         "reorder": [_slot(f"s{i + 1}", i, 2.0) for i in (2, 0, 1, 3)],
+        "swap_first_two": [_slot(f"s{i + 1}", i, 2.0) for i in (1, 0, 2, 3)],
         "trim": [_slot("s1", 0, 1.0, in_s=1.0)] + [_slot(f"s{i + 1}", i, 2.0) for i in range(1, 4)],
         "remove": [
             _slot("s1", 0, 2.0),
@@ -74,7 +81,11 @@ def _lane_raw(revision, bars):
     total = revision["segments"][-1]["output_end_s"]
     return {
         **copy.deepcopy(revision),
-        "text_elements": copy.deepcopy(bars),
+        # KRI-715: one text spanning clips 1-2 (reorder/remove/split must not zero or drop it).
+        "text_elements": [
+            *copy.deepcopy(bars),
+            {"id": "span-text", "text": "Spans", "start_s": 0.0, "end_s": 4.0},
+        ],
         "sound_effects": [{"id": "sfx-1", "at_s": 3.0}, {"id": "sfx-2", "at_s": 7.0}],
         "media_overlays": [{"id": "ov-1", "start_s": 2.0, "end_s": 4.0}],
         "visual_blocks": [{"id": "vb-1", "start_s": 0.0, "end_s": total}],

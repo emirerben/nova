@@ -51,34 +51,31 @@ async def lock_library_owner(db: AsyncSession, owner_id: uuid.UUID) -> None:
         raise HTTPException(404, "Account not found")
 
 
-async def _capacity(db: AsyncSession, owner_id: uuid.UUID, *, exclude_reservation=None) -> None:
+async def _make_catalogue_room(db: AsyncSession, owner_id: uuid.UUID) -> None:
+    """Archive oldest entries in the admission transaction, under the owner fence.
+
+    This only changes catalogue visibility. Sources, facts and existing post
+    references retain their identities and follow the existing retention rules.
+    """
     active = await db.scalar(
         select(func.count())
         .select_from(MediaAsset)
         .where(MediaAsset.user_id == owner_id, MediaAsset.archived_at.is_(None))
     )
-    reserved_query = (
-        select(func.count())
-        .select_from(MediaAssetUploadReservation)
-        .where(
-            MediaAssetUploadReservation.user_id == owner_id,
-            MediaAssetUploadReservation.status == "reserved",
-            MediaAssetUploadReservation.expires_at > datetime.now(UTC),
-            MediaAssetUploadReservation.request_json["repair_asset_id"].astext.is_(None),
+    excess = int(active or 0) - ACTIVE_ASSET_LIMIT + 1
+    if excess <= 0:
+        return
+    oldest = (
+        await db.scalars(
+            select(MediaAsset)
+            .where(MediaAsset.user_id == owner_id, MediaAsset.archived_at.is_(None))
+            .order_by(MediaAsset.created_at, MediaAsset.id)
+            .limit(excess)
         )
-    )
-    if exclude_reservation is not None:
-        reserved_query = reserved_query.where(MediaAssetUploadReservation.id != exclude_reservation)
-    reserved = await db.scalar(reserved_query)
-    if int(active or 0) + int(reserved or 0) >= ACTIVE_ASSET_LIMIT:
-        raise HTTPException(
-            409,
-            {
-                "code": "library_quota",
-                "limit": ACTIVE_ASSET_LIMIT,
-                "message": "Remove an asset before importing more media.",
-            },
-        )
+    ).all()
+    archived_at = datetime.now(UTC)
+    for asset in oldest:
+        asset.archived_at = archived_at
 
 
 def validate_upload_request(payload: dict, *, legacy: bool = False) -> MediaUploadContract:
@@ -115,24 +112,25 @@ async def _repair_target(db: AsyncSession, owner_id: uuid.UUID, payload: dict) -
 
 
 async def _reservation_capacity(db, owner_id, payload, *, exclude_reservation=None):
-    target = await _repair_target(db, owner_id, payload)
-    if target is None:
-        await _capacity(db, owner_id, exclude_reservation=exclude_reservation)
-    else:
-        # Repairs consume no catalogue slot; outstanding upload work is still bounded.
-        pending = await db.scalar(
-            select(func.count())
-            .select_from(MediaAssetUploadReservation)
-            .where(
-                MediaAssetUploadReservation.user_id == owner_id,
-                MediaAssetUploadReservation.status == "reserved",
-                MediaAssetUploadReservation.expires_at > datetime.now(UTC),
-            )
+    await _repair_target(db, owner_id, payload)
+    # Reserving a PUT never displaces saved media. Bound unfinished uploads
+    # separately; only verified unique admission rotates the active catalogue.
+    pending_query = (
+        select(func.count())
+        .select_from(MediaAssetUploadReservation)
+        .where(
+            MediaAssetUploadReservation.user_id == owner_id,
+            MediaAssetUploadReservation.status == "reserved",
+            MediaAssetUploadReservation.expires_at > datetime.now(UTC),
         )
-        if int(pending or 0) >= ACTIVE_ASSET_LIMIT and exclude_reservation is None:
-            raise HTTPException(
-                409, "Too many unfinished library uploads; finish or retry an existing import"
-            )
+    )
+    if exclude_reservation is not None:
+        pending_query = pending_query.where(MediaAssetUploadReservation.id != exclude_reservation)
+    pending = await db.scalar(pending_query)
+    if int(pending or 0) >= ACTIVE_ASSET_LIMIT:
+        raise HTTPException(
+            409, "Too many unfinished library uploads; finish or retry an existing import"
+        )
 
 
 async def reserve_library_upload(
@@ -333,7 +331,6 @@ async def register_verified_source(
     original_declared_sha256: str | None = None,
     original_byte_count: int | None = None,
     metadata: dict | None = None,
-    exclude_reservation: uuid.UUID | None = None,
     repair_asset_id: uuid.UUID | None = None,
 ) -> tuple[MediaAsset, MediaAssetSource]:
     """Admission seam for verified existing upload paths; caller owns commit."""
@@ -403,7 +400,7 @@ async def register_verified_source(
             return existing[0], current_source
         current_source.status = "missing"
     if existing is None and repair is None:
-        await _capacity(db, owner_id, exclude_reservation=exclude_reservation)
+        await _make_catalogue_room(db, owner_id)
     asset = (
         existing[0]
         if existing is not None
@@ -418,6 +415,9 @@ async def register_verified_source(
             original_availability="cloud_backed" if role == "original" else "device_only",
             metadata_json=metadata or {},
             status="pending",
+            # Transaction start can precede another import's commit while
+            # waiting on the owner fence. Age new entries at actual admission.
+            created_at=func.clock_timestamp(),
         )
     )
     if repair is not None:
@@ -614,7 +614,6 @@ async def finalize_library_upload(
             "filename": payload["filename"],
             "upload_contract": payload["upload_contract"],
         },
-        exclude_reservation=row.id,
         repair_asset_id=uuid.UUID(payload["repair_asset_id"])
         if payload.get("repair_asset_id")
         else None,

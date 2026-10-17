@@ -306,6 +306,16 @@ class ClipLabel(BaseModel):
     fact_kind: str | None = Field(default=None, max_length=40)
     inferred: bool = False
     min_display_s: float = Field(gt=0, le=10)
+    # The caption intent whose one title this clip shares with its neighbours
+    # ("group these and add a title"). Cuts of the same group that sit next to
+    # each other in the final order print ONE continuous title, not a copy per
+    # clip. None (every label before this field existed) is omitted, so stored
+    # snapshots and approval hashes stay byte-identical.
+    group_id: str | None = Field(
+        default=None,
+        max_length=100,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class MontageAudioPlan(BaseModel):

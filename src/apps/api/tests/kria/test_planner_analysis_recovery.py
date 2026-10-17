@@ -115,5 +115,7 @@ async def test_pending_analysis_extracts_brief_updates_without_compiling_action(
     assert result.brief_expected_version == prior.version
     assert result.brief_coverage["stage"] == "analysis"
     assert result.brief_coverage["missing_media_ids"] == ["clip-pending"]
+    # KRI-709: analysis still running => the runtime re-runs this turn, no "ask me again".
+    assert result.continuable is True
     compile_action.assert_not_awaited()
     creator_call.assert_awaited_once()

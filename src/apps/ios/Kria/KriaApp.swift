@@ -8,6 +8,25 @@ import SwiftData
     private let container: ModelContainer
     init() {
         #if DEBUG
+        // Opt-in hardware journey: real HTTP/API + scratch database, separate QA bundle.
+        // Never uses a developer's Keychain or connects without both explicit inputs.
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-retry-api"),
+           let address = ProcessInfo.processInfo.environment["KRIA_RETRY_TEST_API_URL"],
+           let baseURL = URL(string: address),
+           let subject = ProcessInfo.processInfo.environment["KRIA_RETRY_TEST_USER_ID"],
+           UUID(uuidString: subject) != nil {
+            let container = Self.fallbackContainer()
+            self.container = container
+            let store = AccountUITestTokenStore()
+            let api = KriaAPI(baseURL: baseURL, tokenStore: store)
+            let auth = AuthStore(tokenStore: store, api: api)
+            let payload = Data("{\"sub\":\"\(subject)\"}".utf8).base64EncodedString()
+            try? auth.signIn(with: MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "fixture-refresh", expiresIn: 3600), displayName: "Retry QA")
+            auth.acceptAIConsent()
+            _auth = StateObject(wrappedValue: auth)
+            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-account") {
             let container = Self.fallbackContainer()
             self.container = container
@@ -89,6 +108,7 @@ struct RootView: View {
                     .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
                     .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
             }
+            else if ProcessInfo.processInfo.arguments.contains("-ui-testing-saved-uploads") { SavedUploadsUITestHost() }
             else if ProcessInfo.processInfo.arguments.contains("-device-effects") { DeviceEffectsView() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { BrandPreviewHost() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {

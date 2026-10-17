@@ -58,6 +58,34 @@ The terminal state determines the wording and safe action:
 Never retry an ambiguous dispatch by creating a new Job. Reconcile the committed
 Job and deterministic task identity first.
 
+## Retry an approved edit (KRI-674)
+
+For a failed runtime-v2 native export, the iPhone sends
+`POST /creation-threads/{thread_id}/render-retries` with `execution_id` and
+`expected_thread_revision`. It never sends a new creator message. The server
+keeps the same turn, draft, source selection and immutable recipe; it creates a
+new receipt and a fresh 30-minute approval. Approval re-pins that exact recipe
+once under a new native revision. Repeated taps and queue redelivery reuse the
+same attempt. Expired unstarted consent can be renewed after revalidation.
+
+A newer request, changed draft/source/ownership/generation, unsupported recipe,
+missing original, or unknown in-flight outcome prevents another export. Old
+receipts and accepted artifacts stay intact. A legacy failure that never saved
+a complete native recipe explicitly asks for a new version and approval; it
+cannot truthfully replay an execution program that does not exist. Cloud frozen
+execution adapters remain follow-up work in KRI-722/KRI-723.
+
+Verification: `bash scripts/check-api.sh test tests/kria/test_render_retry_postgres.py`.
+Use a dedicated scratch database for hardware QA, separate from the automated
+test database (some integration suites truncate it). The DEBUG-only
+`-ui-testing-retry-api` bootstrap accepts an explicit local API URL and fixture
+user UUID through `KRIA_RETRY_TEST_API_URL` / `KRIA_RETRY_TEST_USER_ID`; use a
+separate app bundle and copied originals. It uses real API/worker/device export,
+with an in-memory fixture token store. Its DEBUG-only local storage transport
+requires a matching private host/port and `/kri674-storage/` path; Release keeps
+HTTPS mandatory. Keep the same build installed for a whole attempt so fixture
+file fingerprints stay stable. Never point that fixture at production.
+
 Use the admin helper so the token remains out of shell history:
 
 ```bash
@@ -312,6 +340,19 @@ Turkish replies (KRI-520) have their own kill switch: `fly secrets set
 KRIA_REPLY_LANGUAGE_ENABLED=false --app nova-video` + restart api and worker machines.
 Every reply is then English and the Main Creator/copilot prompts are byte-identical to
 before; stored `state.reply_language` values are ignored, not deleted.
+
+Auto-continued turns (KRI-709): when the planner stops on a time budget with its answers
+saved (clip-intent vision cap/deadline, clip understanding or song alignment still
+running), `run_kria_turn` releases the SAME turn (`pending`, lease stamped ~35 s ahead,
+no assistant event) and re-publishes it after 5 s (`_continue_turn`), so the creator never
+has to reply "go ahead". The chat keeps showing "Thinking" until the final run answers.
+`KRIA_TURN_AUTO_CONTINUE_MAX_RUNS` (default 4, counted by `lease_epoch`) caps the runs one
+turn may take, which also bounds the paid Main Creator calls; past it, or if a newer message
+is queued, the turn completes with its old reply. `fly secrets set
+KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 --app nova-video` + restart api and worker restores the
+pre-fix behaviour. Diagnose: `kria_turn_auto_continued` log lines (turn_id, lease_epoch);
+`GET creation-threads/<id>/turns` shows one turn with several lease epochs and one
+assistant event. Guard: `tests/kria/test_turn_auto_continue_postgres.py`.
 
 ## Alerts and release blockers
 

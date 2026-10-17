@@ -532,6 +532,11 @@ class PlannedKriaTurn:
     # receipts reply still says it when it replaces the model's summary.
     policy_notices: tuple[str, ...] = ()
     creative_copy_resolution: dict | None = None
+    # KRI-709: the plan is a "still checking, come back later" reply, and the work behind
+    # it can still progress (cached vision answers, clip analysis or song alignment in
+    # flight). The runtime re-runs the same turn instead of asking the creator to say
+    # "go ahead". Server-only: never reaches `KriaTurnPlan`, which forbids extra fields.
+    continuable: bool = False
 
 
 def adapt_creator_action(
@@ -722,6 +727,15 @@ def _clip_intent_pending_reply() -> str:
     return say(en=_CLIP_INTENT_PENDING_REPLY, tr=_CLIP_INTENT_PENDING_REPLY_TR)
 
 
+def continuation_superseded_reply() -> str:
+    """KRI-709: a turn the runtime would have re-run, closed because the creator already
+    sent a newer message. Asks for nothing: that message is the next turn."""
+    return say(
+        en="I'm still checking some of your clips. I'll carry on with your new message.",
+        tr="Kliplerinden bazılarını hâlâ kontrol ediyorum. Yeni mesajınla devam edeceğim.",
+    )
+
+
 def _labels_need_voiceover_reply() -> str:
     return say(
         en="Those labels need a recorded voiceover with guided visuals.",
@@ -823,6 +837,8 @@ class _SongGateResult:
     plan: KriaTurnPlan | None = None
     resolved_takes: list[dict[str, Any]] | None = None
     strategy: Any | None = None
+    # KRI-709: `plan` is the alignment-still-running reply, which the runtime may re-run.
+    pending: bool = False
 
 
 _SONG_PENDING_REPLY = (
@@ -961,7 +977,7 @@ async def _song_order_gate(
             await asyncio.to_thread(enqueue_user_song_alignment, item_id)
         remaining = deadline - loop.time()
         if remaining <= 0:
-            return _SongGateResult(plan=_song_pending_plan())
+            return _SongGateResult(plan=_song_pending_plan(), pending=True)
         await asyncio.sleep(min(_SONG_ALIGNMENT_POLL_S, remaining))
 
     # KRI-580: the creator said which stretch of the song they filmed in; a take is only matched
@@ -2461,6 +2477,7 @@ async def _plan_creator_action(
                 plan=gate.plan,
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
+                continuable=gate.pending,
             )
         if gate.strategy is not None:
             # The model flipped away from lip-sync mid-exchange and the gate kept it:
@@ -2661,6 +2678,11 @@ async def _plan_creator_action(
                 ),
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
+                # KRI-709: only a budget/deadline stop continues. A question for the
+                # creator or a provider failure needs their reply or a fresh attempt.
+                continuable=(
+                    planned.resolution.status == "pending" and not planned.resolution.needs_creator
+                ),
             )
         if settings.clip_intent_exclude_enabled:
             # KRI-667: "Skip the quad bike clip" leaves the clips the resolver confidently
@@ -3972,6 +3994,7 @@ async def _plan_live_turn(
                     ),
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
+                    continuable=True,
                     brief_updates=pre_extracted_updates,
                     brief_expected_version=prior_brief.version if prior_brief else 0,
                     brief_coverage={
@@ -4260,6 +4283,7 @@ async def _plan_live_turn(
             ),
             manifest_hash=manifest.manifest_hash,
             context_hash=manifest.context_hash,
+            continuable=True,
             brief_updates=updates,
             brief_expected_version=prior_brief.version if prior_brief else 0,
             brief_coverage={
