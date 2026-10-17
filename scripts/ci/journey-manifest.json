@@ -700,12 +700,16 @@
     {
       "id": "kri-736-save-after-delete",
       "needs_native": false,
-      "api_tests": "tests/routes/test_phone_guided_clip_delete_text_fit.py tests/routes/test_phone_guided_clip_delete_order_contract.py",
+      "api_tests": "tests/routes/test_phone_guided_clip_delete_text_fit.py tests/routes/test_phone_guided_clip_delete_order_contract.py tests/routes/test_phone_manual_edits_win.py",
       "paths": [
         "src/apps/api/app/pipeline/phone_authored_timeline.py",
         "src/apps/api/app/services/authored_text_fit.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/phone_editor.py",
         "src/apps/api/tests/routes/test_phone_guided_clip_delete_text_fit.py",
-        "src/apps/api/tests/routes/test_phone_guided_clip_delete_order_contract.py"
+        "src/apps/api/tests/routes/test_phone_guided_clip_delete_order_contract.py",
+        "src/apps/api/tests/routes/test_phone_manual_edits_win.py",
+        "src/apps/api/tests/services/test_phone_editor_render_contract.py"
       ]
     }
   ]
