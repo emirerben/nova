@@ -58,7 +58,9 @@ from app.pipeline.phone_subtitled_plan import (
 from app.pipeline.phone_voiceover_cut import replace_voiceover_cut
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
+    AudioChoiceError,
     CreatorRenderContractError,
+    TextPlacementError,
     TextRequirement,
     decline_payload,
     read_render_contract,
@@ -232,9 +234,10 @@ def _text_requirements_for_save(
     (the strategy's opening title and the brief's literal), so ALL matches are kept: the
     specific role (opening > closing > clip) with its approved ``duration_s``, and the
     generic ``any`` presence check beside it. An opening or closing role is verified
-    against the recompiled recipe, so an edit that moves the opening text out of its
-    window, or holds it for less than the approved time, is refused instead of silently
-    accepted. A shot-scoped role is kept only while the timeline is untouched: a reorder
+    against the recompiled recipe; when the creator's manual edit moved the text out of
+    that window, or holds it for less than the approved time, ``_relax_requirement``
+    degrades exactly that role to ``any`` (KRI-736: the creator's own edit wins) and the
+    Save recompiles. A shot-scoped role is kept only while the timeline is untouched: a reorder
     invalidates the shot it was pinned to, and it degrades to ``any`` (never to nothing).
     Anything the contract never asked for stays ``any``.
     """
@@ -280,6 +283,78 @@ def _normal_text(value: object) -> str:
     return " ".join(str(value or "").split()).casefold()
 
 
+def _relaxed_receipt(exc: CreatorRenderContractError) -> dict[str, str]:
+    if isinstance(exc, TextPlacementError):
+        return {
+            "requirement": "exact_text",
+            "role": exc.requirement.role,
+            "text": exc.requirement.text,
+        }
+    return {"requirement": str(getattr(exc, "field", ""))}
+
+
+def _relax_requirement(
+    staged: _StagedJob, variant_id: str, exc: CreatorRenderContractError
+) -> bool:
+    """KRI-736: the creator's manual edit wins over an approved requirement it moved past.
+
+    * ``TextPlacementError``: an opening / closing / shot-scoped text no longer sits where its
+      role says because the creator moved, re-timed or re-worded it. That one requirement
+      becomes the generic ``any`` presence check on the same words, so the text itself must
+      still be on screen (never dropped, never silently ignored).
+    * ``AudioChoiceError``: the creator muted / un-muted camera sound, so the stale
+      ``original_audio`` / ``audio_source_ids`` choice is cleared.
+
+    Re-stamps the length policy against the new digest, like the rebind does. Returns False
+    when there is nothing narrower to relax (the refusal then stands).
+    """
+    assembly = staged.assembly_plan
+    revisions = assembly.get(CONTRACT_REVISIONS_FIELD)
+    if not isinstance(revisions, dict) or not isinstance(revisions.get(variant_id), dict):
+        return False
+    contract = read_render_contract({CONTRACT_FIELD: revisions[variant_id]})
+    if contract is None:
+        return False
+    changes: dict[str, Any]
+    if isinstance(exc, TextPlacementError):
+        failed = exc.requirement
+        if failed.role == "any" or failed not in contract.exact_texts:
+            return False
+        generic = TextRequirement(role="any", text=failed.text)
+        relaxed: list[TextRequirement] = []
+        for item in contract.exact_texts:
+            replacement = generic if item == failed else item
+            if replacement not in relaxed:
+                relaxed.append(replacement)
+        changes = {"exact_texts": tuple(relaxed)}
+    elif isinstance(exc, AudioChoiceError) and exc.field == "original_audio":
+        if contract.original_audio is None:
+            return False
+        changes = {"original_audio": None}
+    elif isinstance(exc, AudioChoiceError) and exc.field == "audio_source_ids":
+        if not contract.audio_source_ids:
+            return False
+        changes = {"audio_source_ids": ()}
+    else:
+        return False
+    from app.services.length_policy_state import (  # noqa: PLC0415
+        read_length_policy,
+        stamp_length_policy,
+    )
+
+    length_policy = read_length_policy(assembly, contract)
+    rebound = contract.rebind(**changes)
+    assembly[CONTRACT_REVISIONS_FIELD] = {**revisions, variant_id: rebound.model_dump(mode="json")}
+    if length_policy is not None:
+        staged.assembly_plan = stamp_length_policy(
+            assembly,
+            (staged.all_candidates or {}).get("creator_strategy") or {},
+            rebound,
+            mode=length_policy.check_mode,
+        )
+    return True
+
+
 def _authored_timeline_order(variant: dict, prep: dict) -> tuple[str, ...]:
     """The cut's source ids, in play order, for an AUTHORED timeline Save.
 
@@ -299,6 +374,12 @@ def _authored_timeline_order(variant: dict, prep: dict) -> tuple[str, ...]:
     active = [row for row in rows if isinstance(row, dict) and not row.get("removed")]
     media_ids = tuple(str(row["media_id"]) for row in active if row.get("media_id"))
     return media_ids if active and len(media_ids) == len(active) else ()
+
+
+def _collapse_adjacent(order: tuple[str, ...]) -> tuple[str, ...]:
+    """The verifier reads the cut as a sequence of SOURCES, so a clip the creator split
+    into adjacent pieces is one entry (``verify_phone_recipe`` collapses the same runs)."""
+    return tuple(item for index, item in enumerate(order) if index == 0 or order[index - 1] != item)
 
 
 def _rebind_editor_render_contract(
@@ -393,7 +474,9 @@ def _rebind_editor_render_contract(
             # resolved slots, not a client index, name each source.
             order = _authored_timeline_order(variant, prep)
         if order:
-            changes.update(order_ids=order, order_required=True, order_basis="editor")
+            changes.update(
+                order_ids=_collapse_adjacent(order), order_required=True, order_basis="editor"
+            )
         elif contract.order_required:
             # The legacy slot form uses clip indices.  Mapping those indices
             # back to source ids here would re-create routing logic and could
@@ -412,6 +495,183 @@ def _rebind_editor_render_contract(
             rebound,
             mode=length_policy.check_mode,
         )
+
+
+def _compile_editor_commit(
+    job: Any,
+    staged: _StagedJob,
+    variant_id: str,
+    prep: dict,
+    sfx_catalog_paths: Mapping[str, str] | None,
+) -> None:
+    """Recompile the staged variant onto the device and pin it (raises on a refusal)."""
+    previous = device_status(job, variant_id).request
+    assembly = staged.assembly_plan
+    variant = next(v for v in assembly["variants"] if v.get("variant_id") == variant_id)
+    if variant.get("editor_timeline_mode") == "authored":
+        from app.pipeline.phone_authored_timeline import compile_phone_authored_timeline
+
+        recipe = compile_phone_authored_timeline(staged, variant, previous.recipe)
+        recipe = with_drawings(recipe, variant.get("drawings"))
+        validate_phone_pilot_recipe(recipe, allow_editor_media=True)
+        request = make_device_request(
+            job_id=job.id,
+            variant_id=variant_id,
+            revision=previous.identity.recipe_revision + 1,
+            recipe=recipe,
+        )
+        pin_device_request(staged, request, base_generation=prep["generation"])
+        variant = next(
+            v for v in staged.assembly_plan["variants"] if v.get("variant_id") == variant_id
+        )
+        variant["render_status"] = "awaiting_device"
+        variant["duration_s"] = recipe.duration
+    elif is_phone_subtitled_editor_variant(variant):
+        _compile_subtitled_editor_commit(
+            staged,
+            assembly,
+            variant,
+            variant_id,
+            prep=prep,
+            previous=previous,
+            sfx_catalog_paths=sfx_catalog_paths or {},
+        )
+    elif is_phone_narrated_editor_variant(variant):
+        _compile_narrated_editor_commit(
+            staged,
+            assembly,
+            variant,
+            variant_id,
+            prep=prep,
+            previous=previous,
+            sfx_catalog_paths=sfx_catalog_paths or {},
+        )
+    elif is_phone_voiceover_montage_editor_variant(variant, assembly):
+        _compile_voiceover_montage_editor_commit(
+            staged,
+            assembly,
+            variant,
+            variant_id,
+            prep=prep,
+            previous=previous,
+            sfx_catalog_paths=sfx_catalog_paths or {},
+        )
+    elif variant.get("resolved_archetype") == "speech_montage":
+        # KRI-282: a spoken-excerpt montage has no guided plan to recompile; fail
+        # closed with a reason instead of a KeyError on the missing plan.
+        raise ValueError(
+            "a spoken-excerpt montage can't be re-rendered from the server editor; "
+            "edit its timeline in the app"
+        )
+    else:
+        worker_plan = (
+            variant.get(PHONE_EDITOR_PLAN_FIELD) or assembly["guided_story_execution_plan"]
+        )
+        plan = copy.deepcopy(variant.get(PHONE_EDITOR_SAVED_PLAN_FIELD) or worker_plan)
+        revision = prep.get("guided_revision")
+        render_sections = {key for key, value in prep["sections"].items() if value}
+        if not (render_sections - {"text_elements", "drawings"}):
+            # A text-only save keeps the approved plan's device-verified timing
+            # program and swaps just the text lane, whether it came from a
+            # legacy guided editor or the v2 revision contract. Re-projecting
+            # through `compile_guided_runtime_plan` re-clocks every moment and
+            # transition onto 1/30 s frames, which `compile_phone_guided_plan`
+            # rejects as a different program from the millisecond timing the
+            # phone was pinned against -- so under guided editor v2 every phone
+            # text edit was a 422 `unsupported_phone_edit` (2026-09-19 chat-edit
+            # incident, job d9a965b0). Other approved lanes, including the
+            # contextual and narration label lanes, are preserved untouched.
+            # KRI-589: a drawings-only Save is the same kind of save -- the
+            # drawings compile onto the recipe after the plan, not into it.
+            plan["text_elements"] = variant.get("text_elements") or []
+        elif revision is not None:
+            plan = compile_guided_runtime_plan(
+                # A worker that repaired the approved plan for the phone (KRI-286)
+                # pins the repaired one: recompiling from the canonical plan
+                # would re-introduce what the repair removed.
+                worker_plan,
+                assembly["guided_edit"],
+                revision,
+                admitted_sources=editor_sources_for_variant(variant),
+            )
+        else:
+            raise ValueError("phone editor requires a canonical guided revision")
+        bindings = tuple(
+            PhoneSourceBinding.model_validate(row) for row in assembly[PHONE_SOURCES_FIELD]
+        ) + editor_source_bindings(variant)
+        # Reuse approved and asynchronously admitted receipts; Save never
+        # downloads or hashes media while holding its database locks.
+        visuals = tuple(
+            PhoneVisualBinding.model_validate(row)
+            for row in assembly.get(PHONE_VISUALS_FIELD) or []
+        ) + editor_visual_bindings(variant)
+        # Narration is already pinned in the previous immutable recipe. Never
+        # re-download/hash on Save, nor silently drop its audio when adding media.
+        narration = None
+        if plan.get("narration") is not None:
+            voice = next(
+                asset
+                for asset in previous.recipe.asset_manifest.assets
+                if asset.kind == "voiceover"
+            )
+            media = next(asset for asset in previous.recipe.assets if asset.id == voice.id)
+            narration = PhoneNarrationBed(
+                plan_item_id=voice.plan_item_id,
+                generation=voice.generation,
+                fingerprint=voice.fingerprint,
+                duration_s=media.duration,
+            )
+        # KRI-374: a creator song is pinned in the previous immutable recipe too
+        # (never re-hashed on Save). The song window was already re-fitted to the
+        # committed duration (`compile_guided_runtime_plan`); a lip-sync take is
+        # re-synced to its pinned delta, and a retimed one is refused, because the
+        # song is the master clock and a take at another speed drifts off it.
+        song = None
+        if plan.get("user_song") is not None:
+            refuse_lipsync_rate_change(plan)
+            # The device-measured length of each take: a take dragged later in
+            # the cut can need footage that was never filmed. That is refused
+            # here (422 + reason), not silently shortened at compile time.
+            plan = resync_lipsync_moments(
+                plan,
+                source_durations={
+                    binding.media_id: float(binding.original.duration_s) for binding in bindings
+                },
+            )
+            song = _pinned_song_bed(previous.recipe, plan["user_song"])
+        allow_editor_media = bool(plan.get("editor_visual_blocks"))
+        recipe = compile_phone_guided_plan(
+            GuidedStoryExecutionPlan.model_validate(plan),
+            bindings,
+            visuals=visuals,
+            narration=narration,
+            allow_editor_media=allow_editor_media,
+            song=song,
+            sound_effects=_guided_sound_effects(plan, previous.recipe, visuals),
+            # KRI-306/285: an editor Save keeps (or changes) the bars; without
+            # this every guided Save would silently drop a letterbox.
+            landscape_fit=_resolved_landscape_fit(
+                variant, previous.recipe, prep.get("landscape_fit_override")
+            ),
+        )
+        # KRI-589: the revision is the guided variant's canonical lanes.
+        recipe = with_drawings(recipe, revision.get("drawings") if revision is not None else None)
+        validate_phone_pilot_recipe(recipe, allow_editor_media=allow_editor_media)
+        request = make_device_request(
+            job_id=job.id,
+            variant_id=variant_id,
+            revision=previous.identity.recipe_revision + 1,
+            recipe=recipe,
+        )
+        pin_device_request(staged, request, base_generation=prep["generation"])
+        for variant in staged.assembly_plan["variants"]:
+            if variant.get("variant_id") == variant_id:
+                variant["render_status"] = "awaiting_device"
+                variant["render_destination"] = "device"
+                variant["duration_s"] = plan["resolved_duration_s"]
+                variant[PHONE_EDITOR_SAVED_PLAN_FIELD] = plan
+                variant.update(song_reference_variant_fields(plan))
+    staged.status = "awaiting_device"
 
 
 def prepare_phone_editor_commit(
@@ -475,175 +735,31 @@ def prepare_phone_editor_commit(
                 None,
             ),
         )
-        previous = device_status(job, variant_id).request
-        assembly = staged.assembly_plan
-        variant = next(v for v in assembly["variants"] if v.get("variant_id") == variant_id)
-        if variant.get("editor_timeline_mode") == "authored":
-            from app.pipeline.phone_authored_timeline import compile_phone_authored_timeline
-
-            recipe = compile_phone_authored_timeline(staged, variant, previous.recipe)
-            recipe = with_drawings(recipe, variant.get("drawings"))
-            validate_phone_pilot_recipe(recipe, allow_editor_media=True)
-            request = make_device_request(
-                job_id=job.id,
-                variant_id=variant_id,
-                revision=previous.identity.recipe_revision + 1,
-                recipe=recipe,
-            )
-            pin_device_request(staged, request, base_generation=prep["generation"])
-            variant = next(
-                v for v in staged.assembly_plan["variants"] if v.get("variant_id") == variant_id
-            )
-            variant["render_status"] = "awaiting_device"
-            variant["duration_s"] = recipe.duration
-        elif is_phone_subtitled_editor_variant(variant):
-            _compile_subtitled_editor_commit(
-                staged,
-                assembly,
-                variant,
-                variant_id,
-                prep=prep,
-                previous=previous,
-                sfx_catalog_paths=sfx_catalog_paths or {},
-            )
-        elif is_phone_narrated_editor_variant(variant):
-            _compile_narrated_editor_commit(
-                staged,
-                assembly,
-                variant,
-                variant_id,
-                prep=prep,
-                previous=previous,
-                sfx_catalog_paths=sfx_catalog_paths or {},
-            )
-        elif is_phone_voiceover_montage_editor_variant(variant, assembly):
-            _compile_voiceover_montage_editor_commit(
-                staged,
-                assembly,
-                variant,
-                variant_id,
-                prep=prep,
-                previous=previous,
-                sfx_catalog_paths=sfx_catalog_paths or {},
-            )
-        elif variant.get("resolved_archetype") == "speech_montage":
-            # KRI-282: a spoken-excerpt montage has no guided plan to recompile; fail
-            # closed with a reason instead of a KeyError on the missing plan.
-            raise ValueError(
-                "a spoken-excerpt montage can't be re-rendered from the server editor; "
-                "edit its timeline in the app"
-            )
-        else:
-            worker_plan = (
-                variant.get(PHONE_EDITOR_PLAN_FIELD) or assembly["guided_story_execution_plan"]
-            )
-            plan = copy.deepcopy(variant.get(PHONE_EDITOR_SAVED_PLAN_FIELD) or worker_plan)
-            revision = prep.get("guided_revision")
-            render_sections = {key for key, value in prep["sections"].items() if value}
-            if not (render_sections - {"text_elements", "drawings"}):
-                # A text-only save keeps the approved plan's device-verified timing
-                # program and swaps just the text lane, whether it came from a
-                # legacy guided editor or the v2 revision contract. Re-projecting
-                # through `compile_guided_runtime_plan` re-clocks every moment and
-                # transition onto 1/30 s frames, which `compile_phone_guided_plan`
-                # rejects as a different program from the millisecond timing the
-                # phone was pinned against -- so under guided editor v2 every phone
-                # text edit was a 422 `unsupported_phone_edit` (2026-09-19 chat-edit
-                # incident, job d9a965b0). Other approved lanes, including the
-                # contextual and narration label lanes, are preserved untouched.
-                # KRI-589: a drawings-only Save is the same kind of save -- the
-                # drawings compile onto the recipe after the plan, not into it.
-                plan["text_elements"] = variant.get("text_elements") or []
-            elif revision is not None:
-                plan = compile_guided_runtime_plan(
-                    # A worker that repaired the approved plan for the phone (KRI-286)
-                    # pins the repaired one: recompiling from the canonical plan
-                    # would re-introduce what the repair removed.
-                    worker_plan,
-                    assembly["guided_edit"],
-                    revision,
-                    admitted_sources=editor_sources_for_variant(variant),
+        staged_before_compile = copy.deepcopy(staged.assembly_plan)
+        relaxed: list[dict[str, str]] = []
+        while True:
+            try:
+                _compile_editor_commit(job, staged, variant_id, prep, sfx_catalog_paths)
+                break
+            except (TextPlacementError, AudioChoiceError) as exc:
+                # KRI-736: a MANUAL editor Save is the creator's own choice, so it wins over
+                # where an approved text sits (opening / closing / shot) and over the
+                # camera-sound toggles. Relax exactly the requirement that no longer holds
+                # (a text keeps its `any` presence check) and recompile from the
+                # pre-compile staged state. Automatic callers never reach this loop.
+                staged.assembly_plan = copy.deepcopy(staged_before_compile)
+                if not _relax_requirement(staged, variant_id, exc):
+                    raise
+                relaxed.append(_relaxed_receipt(exc))
+                staged_before_compile = copy.deepcopy(staged.assembly_plan)
+                log.warning(
+                    "phone_editor_commit_requirement_relaxed",
+                    job_id=str(job.id),
+                    variant_id=variant_id,
+                    **relaxed[-1],
                 )
-            else:
-                raise ValueError("phone editor requires a canonical guided revision")
-            bindings = tuple(
-                PhoneSourceBinding.model_validate(row) for row in assembly[PHONE_SOURCES_FIELD]
-            ) + editor_source_bindings(variant)
-            # Reuse approved and asynchronously admitted receipts; Save never
-            # downloads or hashes media while holding its database locks.
-            visuals = tuple(
-                PhoneVisualBinding.model_validate(row)
-                for row in assembly.get(PHONE_VISUALS_FIELD) or []
-            ) + editor_visual_bindings(variant)
-            # Narration is already pinned in the previous immutable recipe. Never
-            # re-download/hash on Save, nor silently drop its audio when adding media.
-            narration = None
-            if plan.get("narration") is not None:
-                voice = next(
-                    asset
-                    for asset in previous.recipe.asset_manifest.assets
-                    if asset.kind == "voiceover"
-                )
-                media = next(asset for asset in previous.recipe.assets if asset.id == voice.id)
-                narration = PhoneNarrationBed(
-                    plan_item_id=voice.plan_item_id,
-                    generation=voice.generation,
-                    fingerprint=voice.fingerprint,
-                    duration_s=media.duration,
-                )
-            # KRI-374: a creator song is pinned in the previous immutable recipe too
-            # (never re-hashed on Save). The song window was already re-fitted to the
-            # committed duration (`compile_guided_runtime_plan`); a lip-sync take is
-            # re-synced to its pinned delta, and a retimed one is refused, because the
-            # song is the master clock and a take at another speed drifts off it.
-            song = None
-            if plan.get("user_song") is not None:
-                refuse_lipsync_rate_change(plan)
-                # The device-measured length of each take: a take dragged later in
-                # the cut can need footage that was never filmed. That is refused
-                # here (422 + reason), not silently shortened at compile time.
-                plan = resync_lipsync_moments(
-                    plan,
-                    source_durations={
-                        binding.media_id: float(binding.original.duration_s) for binding in bindings
-                    },
-                )
-                song = _pinned_song_bed(previous.recipe, plan["user_song"])
-            allow_editor_media = bool(plan.get("editor_visual_blocks"))
-            recipe = compile_phone_guided_plan(
-                GuidedStoryExecutionPlan.model_validate(plan),
-                bindings,
-                visuals=visuals,
-                narration=narration,
-                allow_editor_media=allow_editor_media,
-                song=song,
-                sound_effects=_guided_sound_effects(plan, previous.recipe, visuals),
-                # KRI-306/285: an editor Save keeps (or changes) the bars; without
-                # this every guided Save would silently drop a letterbox.
-                landscape_fit=_resolved_landscape_fit(
-                    variant, previous.recipe, prep.get("landscape_fit_override")
-                ),
-            )
-            # KRI-589: the revision is the guided variant's canonical lanes.
-            recipe = with_drawings(
-                recipe, revision.get("drawings") if revision is not None else None
-            )
-            validate_phone_pilot_recipe(recipe, allow_editor_media=allow_editor_media)
-            request = make_device_request(
-                job_id=job.id,
-                variant_id=variant_id,
-                revision=previous.identity.recipe_revision + 1,
-                recipe=recipe,
-            )
-            pin_device_request(staged, request, base_generation=prep["generation"])
-            for variant in staged.assembly_plan["variants"]:
-                if variant.get("variant_id") == variant_id:
-                    variant["render_status"] = "awaiting_device"
-                    variant["render_destination"] = "device"
-                    variant["duration_s"] = plan["resolved_duration_s"]
-                    variant[PHONE_EDITOR_SAVED_PLAN_FIELD] = plan
-                    variant.update(song_reference_variant_fields(plan))
-        staged.status = "awaiting_device"
+        if relaxed:
+            prep["requirements_relaxed"] = relaxed
     except LipsyncSyncError as exc:
         # The message is written for the creator (it says what to undo).
         log.warning(
