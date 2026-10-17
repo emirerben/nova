@@ -67,9 +67,12 @@ from app.services.device_narration_binding import authorized_device_narration
 from app.services.device_render import (
     apply_device_failure_variant_update,
     apply_retry_variant_reset,
+    approved_export_sources,
     approved_runtime_generation,
+    checked_export_report,
     device_record,
     device_status,
+    export_source_digest,
     fail_first_render_on_refusal,
     has_accepted_artifact,
     mark_device_failed,
@@ -184,7 +187,7 @@ async def _refuse_publication(
         mark_device_failed(
             job,
             refusal.variant_id,
-            reason_code="unsupported_recipe",
+            reason_code="export_failed" if stage == "actual_export" else "unsupported_recipe",
             detail=str(refusal.cause)[:500],
         )
     except (KeyError, ValueError):
@@ -263,6 +266,18 @@ async def get_device_render(
     except KeyError as exc:
         raise HTTPException(404, "Device recipe unavailable") from exc
     record, status = _record(job, status.request.identity)
+    verification_required = "actual_export_policy" in record
+    if verification_required:
+        from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+        if (current_client_protocol() or 0) < 12:
+            raise HTTPException(
+                426, detail={"code": "client_update_required", "feature": "export_verification"}
+            )
+        if status.phase == "published" and not checked_export_report(
+            record, status, str(record.get("published_attempt") or "")
+        ):
+            raise HTTPException(409, "This export has no matching successful output check")
     from app.services.phone_text_styling import (
         PHONE_TEXT_STYLE_FIELD,
         require_phone_text_style_client,
@@ -291,6 +306,7 @@ async def get_device_render(
         )
     status = DeviceRenderStatusOut(
         **status.model_dump(),
+        output_verification_required=verification_required,
         retry_requires_approval=(
             status.phase != "published"
             and await _runtime_retry_execution(db, job, record) is not None
@@ -836,6 +852,8 @@ def _verify_export(
     brand_tail: str = "none",
     *,
     poster_job_id: uuid.UUID | None = None,
+    source_bindings: dict | None = None,
+    verification_report: dict | None = None,
 ) -> str | None:
     """Verify the phone's export; with ``poster_job_id``, also publish its poster.
 
@@ -852,7 +870,20 @@ def _verify_export(
             if hashlib.file_digest(source, "sha256").hexdigest() != expected_sha256:
                 raise ValueError("export checksum mismatch")
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(local)],
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-protocol_whitelist",
+                "file,pipe",
+                "-f",
+                "mov",
+                "-show_streams",
+                "-show_format",
+                "-of",
+                "json",
+                str(local),
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -906,6 +937,39 @@ def _verify_export(
             0.1, 2 / recipe.frame_rate
         ):
             raise ValueError("export duration mismatch")
+        if verification_report is not None:
+            from app.services.actual_export_verification import (
+                verify_actual_export,  # noqa: PLC0415
+            )
+
+            sources = {}
+            total_size = 0
+            try:
+                for index, (media_id, binding) in enumerate((source_bindings or {}).items()):
+                    target = Path(directory) / f"reference-{index}.mp4"
+                    storage.download_generation_to_file(
+                        binding.proxy_path, str(target), generation=binding.generation
+                    )
+                    total_size += target.stat().st_size
+                    if total_size > 128 * 1024 * 1024:
+                        raise ValueError("reference download budget")
+                    sources[media_id] = target
+                verification_report.update(
+                    verify_actual_export(local, status, sources, brand_tail=brand_tail)
+                )
+            except Exception as exc:  # noqa: BLE001 - uncertainty blocks publication
+                verification_report.update(
+                    status="partial",
+                    checks=[
+                        {
+                            "kind": "evidence",
+                            "status": "missing",
+                            "reason": type(exc).__name__,
+                        }
+                    ],
+                )
+            if verification_report.get("status") != "checked":
+                return None
         if poster_job_id is None:
             return None
         # Reuse the verified download: phone renders never pass through a
@@ -943,14 +1007,45 @@ async def complete_device_export(
     if status.phase == "published":
         if record.get("published_attempt") != attempt_id:
             raise HTTPException(409, "Another export was published")
+        if not checked_export_report(record, status, attempt_id):
+            raise HTTPException(409, "This export has no matching successful output check")
         return DeviceExportCompleteOut(identity=body.identity)
     if status.phase != "syncing":
         raise HTTPException(409, "Render no longer accepts completion")
     attempt = record["attempts"].get(attempt_id)
     if attempt is None:
         raise HTTPException(409, "Export was not reserved")
+    verification_report: dict | None = {} if "actual_export_policy" in record else None
+    policy = record.get("actual_export_policy")
+    bindings = (
+        approved_export_sources(job, status.request) if verification_report is not None else None
+    )
+    sources_digest = export_source_digest(bindings) if bindings is not None else None
+    if verification_report is not None:
+        supported_policy = isinstance(policy, dict) and policy.get("version") == 1
+        if not supported_policy or policy.get("source_receipts_digest") != sources_digest:
+            verification_report.update(
+                status="rejected" if supported_policy else "unsupported",
+                checks=[{"kind": "authority", "status": "failed"}],
+            )
+            record["attempts"][attempt_id]["actual_export_verification"] = verification_report
+            save_device_record(job, body.identity.variant_id, record)
+            cause = CreatorRenderContractError(
+                "I couldn't confirm this export belongs to your approved edit.",
+                decline_reason="evidence_missing" if supported_policy else "capability_unavailable",
+                field_path="source_identity" if supported_policy else "render_verifier",
+                alternative="Review and approve a new edit before exporting again.",
+            )
+            await _refuse_publication(db, job, _ContractRefusal(cause, body.identity.variant_id))
+            raise HTTPException(422, "Export verification authority changed")
+    verify_kwargs = (
+        {"source_bindings": bindings, "verification_report": verification_report}
+        if verification_report is not None
+        else {}
+    )
     # Do not hold database locks while downloading/probing the MP4. Reacquire the full fence below.
     await db.rollback()
+    metadata = None
     try:
         metadata = await asyncio.to_thread(storage.object_metadata, attempt["path"])
         if (
@@ -968,15 +1063,25 @@ async def complete_device_export(
             status,
             attempt.get("brand_tail", "none"),
             poster_job_id=job_id,
+            **verify_kwargs,
         )
     except FileNotFoundError as exc:
         raise HTTPException(409, "Export upload has not finished") from exc
     except (ValueError, KeyError, subprocess.SubprocessError) as exc:
-        raise HTTPException(422, "Export does not match the approved recipe") from exc
+        if verification_report is None:
+            raise HTTPException(422, "Export does not match the approved recipe") from exc
+        verification_report.update(
+            status="rejected", checks=[{"kind": "format", "status": "failed"}]
+        )
+        poster_path = None
     # A short-lived (5-min) default TTL here would expire long before playback:
     # match the playback TTL every other read path re-signs against (see
     # PLAYBACK_URL_TTL_MIN docstring in generative_jobs.py).
-    url = await asyncio.to_thread(storage.signed_get_url, attempt["path"], PLAYBACK_URL_TTL_MIN)
+    url = (
+        await asyncio.to_thread(storage.signed_get_url, attempt["path"], PLAYBACK_URL_TTL_MIN)
+        if verification_report is None or verification_report.get("status") == "checked"
+        else None
+    )
     job = await _owned_job(db, user_id, job_id)
     try:
         record, status = _record(job, body.identity)
@@ -986,9 +1091,58 @@ async def complete_device_export(
     if status.phase == "published":
         if record.get("published_attempt") != attempt_id:
             raise HTTPException(409, "Another export was published")
+        if not checked_export_report(record, status, attempt_id):
+            raise HTTPException(409, "This export has no matching successful output check")
         return DeviceExportCompleteOut(identity=body.identity)
     if status.phase != "syncing":
         raise HTTPException(409, "Render no longer accepts completion")
+    if verification_report is not None:
+        # Fence the source/policy snapshot again after downloading and decoding.
+        if (
+            record.get("actual_export_policy") != policy
+            or export_source_digest(approved_export_sources(job, status.request)) != sources_digest
+        ):
+            raise HTTPException(409, "Export verification authority changed")
+        verification_report.update(
+            artifact_path=attempt["path"],
+            storage_generation=str(metadata.generation) if metadata is not None else None,
+            source_receipts_digest=sources_digest,
+        )
+        record["attempts"][attempt_id]["actual_export_verification"] = verification_report
+        if not checked_export_report(record, status, attempt_id):
+            if verification_report.get("status") == "checked":
+                verification_report["status"] = "rejected"
+                verification_report.setdefault("checks", []).append(
+                    {"kind": "authority", "status": "failed"}
+                )
+            else:
+                verification_report["status"] = verification_report.get("status") or "partial"
+            save_device_record(job, body.identity.variant_id, record)
+            failed = next(
+                (
+                    row.get("kind")
+                    for row in verification_report.get("checks", [])
+                    if row.get("status") != "passed"
+                ),
+                "output",
+            )
+            cause = CreatorRenderContractError(
+                "I couldn't confirm this export belongs to your approved edit."
+                if failed == "authority"
+                else (
+                    f"I couldn't confirm the exported video's {failed} matches your approved edit."
+                ),
+                decline_reason="evidence_missing",
+                field_path="export_verification",
+                alternative=(
+                    "Retry this same approved edit; the output must pass its checks "
+                    "before it can replace your video."
+                ),
+            )
+            await _refuse_publication(
+                db, job, _ContractRefusal(cause, body.identity.variant_id), stage="actual_export"
+            )
+            raise HTTPException(422, "Export does not match the approved recipe")
     try:
         # This is deliberately inside the reacquired owner/row fence.  The
         # byte probe above only proves the file against the recipe; publication
@@ -1035,6 +1189,11 @@ async def complete_device_export(
             "poster_path": poster_path,
             "output_url": url,
             "render_destination": "device",
+            **(
+                {"actual_export_verification": verification_report}
+                if verification_report is not None
+                else {}
+            ),
             **finished_durations(status.request.recipe.duration, attempt.get("brand_tail", "none")),
         }
         if v.get("variant_id") == body.identity.variant_id

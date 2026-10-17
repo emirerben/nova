@@ -267,7 +267,7 @@ jobs:
         # apt-install.sh kills and retries a stalled mirror within minutes; the
         # step cap sits above the slowest green install (32 min, slow mirror).
         timeout-minutes: 40
-        run: sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1
+        run: sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -376,7 +376,7 @@ jobs:
         run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
       - name: Install deterministic media dependencies
         timeout-minutes: 40
-        run: sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1
+        run: sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -442,7 +442,7 @@ jobs:
       - name: Install portable journey runtime libraries
         run: |
           sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
-          sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1
+          sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
       - name: Install offline journey dependencies
         if: needs.changes.outputs.journey == 'true'
         working-directory: src/apps/api
@@ -458,7 +458,10 @@ jobs:
         run: |
           python3 -m pytest tests/services/test_length_policy_state.py \
             tests/services/test_creator_render_contract.py \
-            tests/services/test_cloud_render_contract.py -q
+            tests/services/test_cloud_render_contract.py \
+            tests/integration/test_actual_export_verification.py \
+            tests/integration/test_actual_export_completion.py \
+            tests/routes/test_actual_export_publication.py -q
           python3 ../../../scripts/ci/replay-creator-contracts.py \
             --snapshot ../../../scripts/ci/fixtures/kri492-creator-contracts.json \
             --candidate-sha "$KRIA_JOURNEY_HEAD_SHA" --export-outcomes \

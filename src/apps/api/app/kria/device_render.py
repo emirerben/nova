@@ -72,6 +72,8 @@ class DeviceRenderStatusOut(DeviceRenderStatus):
     # A runtime-approved program needs fresh consent; a newer manual Save
     # on the same Job has its own generation and retains direct recovery.
     retry_requires_approval: bool = False
+    # Read-time hint; older strict worker status records remain readable.
+    output_verification_required: bool = False
 
 
 class DeviceAssetDownloadBody(_DeviceModel):
