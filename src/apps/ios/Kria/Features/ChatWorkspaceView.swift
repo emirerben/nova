@@ -23,7 +23,7 @@ struct ChatWorkspaceView: View {
             close: { setDrawerOpen(false) },
             drawer: ProjectsDrawer(
                 close: { setDrawerOpen(false) },
-                openGallery: { setDrawerOpen(false); showsGallery = true },
+                openGallery: { setDrawerOpen(false); Perf.begin("gallery.open"); showsGallery = true },
                 openAccount: { setDrawerOpen(false); showsAccount = true }
             ),
             content: workspace
@@ -36,8 +36,11 @@ struct ChatWorkspaceView: View {
             Task { [api = model.api] in await api.prefetchCreationCapabilities() }
         }
         .task {
+            Perf.mark("workspace.task")
             await model.openWorkspace(preferredProjectID: UUID(uuidString: lastProjectID))
+            Perf.mark("workspace.opened")
             await model.sweepAbandonedChats()
+            Perf.mark("sweep.done")
         }
         .onChange(of: model.selectedProject?.id) { previous, identifier in
             lastProjectID = identifier?.uuidString ?? ""
@@ -107,6 +110,7 @@ struct ChatWorkspaceView: View {
     }
 
     private func commitDrawer(_ isOpen: Bool) {
+        if isOpen { Perf.begin("drawer.open") }
         drawerMounted = true
         showsProjects = isOpen
     }
@@ -560,7 +564,8 @@ private struct CreationWorkspaceView: View {
     }
 
     private var timeline: [ChatTimelineEntry] {
-        ChatTimeline.build(
+        Perf.event("timeline.build")
+        return ChatTimeline.build(
             events: events, pending: pendingMessages, stage: stageAnchor,
             suppressedMessageIDs: suppressedTimelineMessages,
             uploads: activeUploadIDs.compactMap { uploadAnchors[$0] },
@@ -579,7 +584,10 @@ private struct CreationWorkspaceView: View {
     }
 
     /// KRI-443: the live plan feed, reduced from the thread's `plan_block` events.
-    private var planFeed: PlanBlockFeedState { PlanBlockFeedState.reduce(events: events) }
+    private var planFeed: PlanBlockFeedState {
+        Perf.event("planFeed.reduce")
+        return PlanBlockFeedState.reduce(events: events)
+    }
 
     private var showsPlanFeed: Bool {
         PlanFeedVisibility.shows(
@@ -1214,16 +1222,21 @@ private struct CreationWorkspaceView: View {
         }
         .onChange(of: renderShapeScope) { _, scope in renderShapePick.reset(scope: scope) }
         .task {
+            Perf.begin("chat.open", id: project.id.uuidString)
+            Perf.begin("chat.toPixels", id: project.id.uuidString)
+            Perf.mark("chat.task")
             // KRI-640: a chat New chat just made opens on the thread its create call returned, so it
             // shows without reading itself back first; the poll below still refreshes it.
             if let created = model.takeCreatedThread(project.id) {
                 apply(created)
                 initialConversationLoaded = true
+                markTranscriptVisible(source: "created")
             }
             // History should not wait for the independent capability request. Requested as soon as the
             // project opens, and retried: a slow or failed fetch must not leave the screen without it.
             async let capabilities: Void = loadCapabilitiesWithRetry()
             await resolveFormat()
+            Perf.mark("format.resolved")
             await pollUntilDismissed()
             await capabilities
         }
@@ -1969,20 +1982,33 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// Closes the open and launch intervals the first time a transcript can be seen (later calls are no-ops).
+    private func markTranscriptVisible(source: String) {
+        Perf.mark("transcript.visible")
+        Perf.end("chat.open", id: project.id.uuidString, "source=\(source)")
+        Perf.end("launch.toTranscript", "source=\(source)")
+    }
+
     private func refreshNow() async {
         defer {
-            if !Task.isCancelled { initialConversationLoaded = true }
+            if !Task.isCancelled {
+                initialConversationLoaded = true
+                markTranscriptVisible(source: "network")
+            }
         }
         failure = nil
         do {
+            Perf.mark("refresh.start")
             let requestSequence = projectionOrder.begin()
             let thread = try await model.api.project(threadID: project.id)
+            Perf.mark("refresh.fullread")
             apply(thread, requestSequence: requestSequence)
             // The full projection contains the complete transcript. Reveal it
             // before a slow delta or approval request returns, so the user
             // never sees an empty ready state followed by old AI messages.
             if fullThread != nil, !Task.isCancelled {
                 initialConversationLoaded = true
+                markTranscriptVisible(source: "network")
             }
             if thread.runtimeVersion == 2 {
                 _ = try await refreshDelta()

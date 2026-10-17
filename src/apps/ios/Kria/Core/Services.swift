@@ -1514,8 +1514,23 @@ struct KriaAPI: KriaAPIClient {
     }
     /// Sends `request`, refreshing an expired access token once.
     private func send(_ request: inout URLRequest, storedSession: MobileSession?, requiresAuth: Bool) async throws -> (Data, URLResponse) {
+        let route = Perf.routeTemplate(method: request.httpMethod, path: request.url?.path ?? "")
+        let requestID = UUID().uuidString
+        Perf.begin("net.request", id: requestID, route)
+        #if DEBUG
+        PerfCounters.shared.increment("net \(route)")
+        // Which chat a full-projection read was for (last 4 characters of its id): tells re-reading the open chat
+        // apart from sweeping other chats.
+        if route == "GET /creation-threads/:id", request.url?.query?.contains("projection=full") == true,
+           let id = request.url?.lastPathComponent {
+            PerfCounters.shared.increment("fullread \(id.suffix(4))")
+        }
+        #endif
         var (data, response) = try await session.data(for: request)
+        var retried401 = false
+        defer { Perf.end("net.request", id: requestID, "\(route) \((response as? HTTPURLResponse)?.statusCode ?? 0) retried401=\(retried401)") }
         if requiresAuth, let http = response as? HTTPURLResponse, http.statusCode == 401, let storedSession {
+            retried401 = true
             let refreshed: MobileSession
             do {
                 refreshed = try await refreshCoordinator.refresh(

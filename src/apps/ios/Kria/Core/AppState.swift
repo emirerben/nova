@@ -224,16 +224,20 @@ enum AccountIdentity {
         cache: CacheRepository? = nil,
         chatDrafts: ChatDraftStore = ChatDraftStore()
     ) {
+        Perf.begin("appmodel.init")
+        defer { Perf.end("appmodel.init") }
         self.chatDrafts = chatDrafts
         self.api = api
         self.editorOperations = editorOperations
         self.uploads = BackgroundUploadCoordinator(api: api)
         self.deviceRenders = DeviceRenderSessions(api: api)
         self.cache = cache
+        Perf.begin("cache.load")
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {
             projects = cached.map(\.summary).filter { !deletedProjectIDs.contains($0.id) }
             projectsState = .loaded
         }
+        Perf.end("cache.load")
     }
     func loadProjects() async {
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {
@@ -426,7 +430,9 @@ enum AccountIdentity {
     func takeCreatedThread(_ id: UUID) -> CreationThread? { createdThreads.removeValue(forKey: id) }
     func openWorkspace(preferredProjectID: UUID? = nil) async {
         selectWorkspaceProject(preferredProjectID: preferredProjectID)
+        Perf.mark("workspace.selected")
         uploads.recoverInterruptedPreparations()
+        Perf.mark("uploads.recovered")
         // KRI-640: New chat (even from the empty workspace) then needs no capabilities read on tap.
         let api = api
         async let capabilitiesPrefetch: Void = api.prefetchCreationCapabilities()
