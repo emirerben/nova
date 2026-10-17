@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.18.0] - 2026-10-17
+
+### Changed
+- feat(ios): perf benchmark harness - signposts, fixtures, KriaPerfUITests, bench.sh (KRI-710) (#1641) <!-- release-pr: 1641 -->
+
 ## [0.80.17.0] - 2026-10-17
 
 ### Changed
