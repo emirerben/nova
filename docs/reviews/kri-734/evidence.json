@@ -1,0 +1,68 @@
+{
+  "scope": "KRI-734 first simple-cut phone adapter; all-adapter ticket remains open",
+  "base_sha": "9e8b1aa2b4775d4e5c03220170a807b0009e1f17",
+  "verifier_version": "phone-simple-cut-v1",
+  "source_sha256": {
+    "src/apps/api/app/services/actual_export_verification.py": "d0e437c300e8c4c64702fa3acf3665d464d3496ef40fef1f3bb6c8201b8923c0",
+    "src/apps/api/app/services/device_render.py": "028453a61399329895633ed893670a4cf3c335858dee4cd48d50a0a1180d6dbe",
+    "src/apps/api/app/routes/device_render.py": "75affeb4ed4755d166cc777c02b23d865cce9f0346a6a4712fea01930f19603a",
+    "src/apps/api/app/kria/render_retry.py": "b34d8a5729edf124b3882ce5613bcd61c4b138ba79566fcb0b9bf4b4346a2379",
+    "src/apps/api/app/kria/device_render.py": "33bdefcb1f18c5d97a95aaaf66e1c75523c89f23b1e4f172717ccfce04b05e99",
+    "src/apps/api/app/tasks/kria_runtime.py": "1595a5c0da4a1cd335ca1c71128d0f2644f37ddfe548a199f734a0b6667754db",
+    "src/apps/ios/Kria/Core/DeviceRenderSessions.swift": "02485d021b10e778873c9eab82523a027f4f88b453e6df5fb56d3d3f45e5e353",
+    "src/apps/ios/Kria/Core/DeviceRendering.swift": "79eed620a2bc069ca6fe345512b67fd747f5b8b4d3e267a47a0cede548072ffc",
+    "src/apps/ios/Kria/Core/Services.swift": "94bd852941c4d40a320af6ea6ea5e386493a7f0a1fc0ab86922f13fbe0fcbade",
+    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift": "019ef0705822f125a1f33b8c4400df1d24939cc65eff2d5867ec4659093d9699"
+  },
+  "offline": {
+    "focused_api_passed": 384,
+    "ci_selector_tests_passed": 41,
+    "ci_selector_subtests_passed": 150,
+    "media_negative_controls": 12,
+    "model_calls": 0,
+    "paid_model_spend_usd": 0,
+    "mapped_reliability_passed": 512,
+    "preship": "all green"
+  },
+  "native_presentation": {
+    "passed": 26,
+    "failed": 0,
+    "skipped": 0,
+    "client_protocol": 12,
+    "fresh_physical_canary": false
+  },
+  "retained_physical_export_rechecked_locally": {
+    "result": "checked",
+    "file_sha256": "3d15eb008867621ed9e290b98ef87567367b4419daa11f8bc800a0827f3c2e55",
+    "file_size_bytes": 5299669,
+    "recipe_digest": "eb17069e0f0f0d429d7f1bf2d7b1282d354af0625d006468e49b821a95e41263",
+    "pinned_analysis_proxy_count": 2,
+    "edit_duration_s": 5.0,
+    "file_duration_s": 6.6,
+    "picture_samples": 12,
+    "max_mean_pixel_error": 0.00421,
+    "min_local_ssim": 0.982309,
+    "min_audio_correlation": 0.995794,
+    "audio_gain_range": [
+      0.99277,
+      0.998425
+    ],
+    "text_checks": 4,
+    "title_absent_in_brand_tail": true
+  },
+  "timeline": {
+    "jest_passed": 209,
+    "desktop_passed": 28,
+    "mobile_passed": 42,
+    "browser_workers": 1,
+    "initial_parallel_run": "27 cold Next.js chunk-load/performance timeouts; assertions unchanged in successful serial rerun"
+  },
+  "deployment": "Not deployed; verification disabled by default and pilot allowlist empty",
+  "remaining": [
+    "fresh protocol-12 physical-device canary after authorized deployment",
+    "prepared snapshot migration KRI-722/723",
+    "speech/music/effects/cloud/slides KRI-724/725 and remaining KRI-734 adapter proof",
+    "sampled frames are not an every-frame or subjective-creative guarantee"
+  ],
+  "review": "Inline source, test, scope and documentation review by the implementing agent; no subagents or independent review claimed."
+}

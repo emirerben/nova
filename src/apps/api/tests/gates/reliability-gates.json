@@ -1508,6 +1508,65 @@
         "KRI-674 live-device verification"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-734-actual-phone-export",
+      "tickets": [
+        "KRI-734"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-734",
+      "symptom": "An internally valid native recipe and format-correct MP4 can publish different picture, text or sound. A failed replacement can settle completed from its last-good artifact.",
+      "boundary": "publication",
+      "journey": "kri-492-length-ownership",
+      "paths": [
+        "src/apps/api/app/services/actual_export_verification.py",
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/api/app/services/device_render.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/ios/Kria/Core/DeviceRenderSessions.swift",
+        "src/apps/ios/Kria/Core/DeviceRendering.swift",
+        "src/apps/ios/Kria/Features/DeviceRenderPanel.swift"
+      ],
+      "regression_tests": [
+        "tests/integration/test_actual_export_verification.py",
+        "tests/integration/test_actual_export_completion.py",
+        "tests/routes/test_actual_export_publication.py",
+        "tests/kria/test_runtime_phone_v2.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": "phone_actual_export_verification_enabled",
+      "evidence": {
+        "offline_replay": "Before publication edits, seven completion controls accepted unchecked/missing evidence; two observer controls completed unchecked/failed replacements. Real FFmpeg/Tesseract positives and ten wrong source/window/order/text/position/time/rate/audio negatives exercise decoded bytes. HTTP completion checks use real media; DB/storage transport are doubles.",
+        "live_model": "No model calls or paid evaluation. Existing approved recipe is the authority.",
+        "native_output": "Retained physical-iPhone KRI-674 export passes the new verifier locally: exact recorded recipe digest and file checksum, 5s edit plus 1.6s brand tail. This is a new check of an existing export, not a fresh device canary.",
+        "production": "Not deployed or enrolled. Explicit protocol-12 pilot and all-fleet verifier revision required."
+      },
+      "neighbours_covered": [
+        "wrong source and order",
+        "wrong source window",
+        "missing/moved/short/overlong static title",
+        "double/muted sound",
+        "playback-rate duration mismatch",
+        "last-good retention",
+        "rejected completion fast path",
+        "old native share UI refused",
+        "exact retry retains required checks after enrollment disabled"
+      ],
+      "neighbours_gap": [
+        "fresh protocol-12 device canary after deployment",
+        "prepared execution snapshots (KRI-722/723)",
+        "speech/music/effects/cloud/slides (KRI-724/725)",
+        "sampled picture checks are not an every-frame perceptual guarantee"
+      ],
+      "follow_ups": [
+        "KRI-734 remains open for additional promoted adapters and fresh device/cloud proof",
+        "KRI-722",
+        "KRI-723",
+        "KRI-724",
+        "KRI-725"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

@@ -35,9 +35,9 @@ from app.models import (
 from app.services.creation_thread_titles import conversation_revision_matches
 from app.services.creator_render_contract import CreatorRenderContractError
 from app.services.device_render import (
-    CONTRACT_DECLINE_FIELD,
     apply_retry_variant_reset,
     approved_runtime_generation,
+    device_contract_blocks_retry,
     device_record,
     device_status,
     retry_device_render,
@@ -57,7 +57,7 @@ def retry_program_available(job: Job, execution: CreatorAgentExecution) -> bool:
         record, status = device_record(job, variant), device_status(job, variant)
         return (
             status.phase == "needs_attention"
-            and not record.get(CONTRACT_DECLINE_FIELD)
+            and not device_contract_blocks_retry(record)
             and status.reason_code not in _NEEDS_CHANGE | _MISSING_ORIGINAL
         )
     except (KeyError, ValueError, TypeError):
@@ -256,7 +256,7 @@ def _validate(rows, *, creator_id, source, source_approval, retry=None, accepted
             "An original video is unavailable on this iPhone. "
             "Restore the original before retrying; your edit is saved.",
         )
-    if record.get(CONTRACT_DECLINE_FIELD) or status.reason_code in _NEEDS_CHANGE:
+    if device_contract_blocks_retry(record) or status.reason_code in _NEEDS_CHANGE:
         raise _failure(
             "render_retry_requires_change",
             "This failure needs a change before another render. Your approved edit has been kept.",

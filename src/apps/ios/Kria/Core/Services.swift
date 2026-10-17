@@ -1000,7 +1000,9 @@ private enum KriaClientProtocolContract {
     /// 11 (single-word captions): draws the recipe's `karaoke.single_word` text layers (one word on screen at a time,
     /// one layer per cue). The server emits that mode only to this protocol and answers 426 `client_update_required`
     /// to older builds, which cannot decode the key.
-    static let version = 11
+    /// 12 (KRI-734): withholds unverified local exports from playback/Save/Share
+    /// when the server declares `output_verification_required`.
+    static let version = 12
     static let header = "X-Kria-Client-Protocol"
 }
 

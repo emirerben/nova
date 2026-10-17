@@ -15,10 +15,12 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
     /// Saved document bound to the immutable recipe, including while its export is pending.
     let baseGeneration: String?
     let retryRequiresApproval: Bool
-    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation", baseGeneration = "base_generation", retryRequiresApproval = "retry_requires_approval" }
-    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil, baseGeneration: String? = nil, retryRequiresApproval: Bool = false) {
+    let outputVerificationRequired: Bool
+    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation", baseGeneration = "base_generation", retryRequiresApproval = "retry_requires_approval", outputVerificationRequired = "output_verification_required" }
+    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil, baseGeneration: String? = nil, retryRequiresApproval: Bool = false, outputVerificationRequired: Bool = false) {
         self.phase = phase; self.request = request; self.reason = reason; self.reasonCode = reasonCode; self.publishedGeneration = publishedGeneration; self.baseGeneration = baseGeneration
         self.retryRequiresApproval = retryRequiresApproval
+        self.outputVerificationRequired = outputVerificationRequired
     }
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -28,6 +30,7 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
         publishedGeneration = try container.decodeIfPresent(String.self, forKey: .publishedGeneration)
         baseGeneration = try container.decodeIfPresent(String.self, forKey: .baseGeneration)
         retryRequiresApproval = try container.decodeIfPresent(Bool.self, forKey: .retryRequiresApproval) ?? false
+        outputVerificationRequired = try container.decodeIfPresent(Bool.self, forKey: .outputVerificationRequired) ?? false
         let raw = try container.decode(JSONValue.self, forKey: .request)
         request = try RecipeJSON.decoder().decode(DeviceRenderRequest.self, from: JSONEncoder().encode(raw))
         try request.recipe.validate()

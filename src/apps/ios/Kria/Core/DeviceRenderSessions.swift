@@ -35,6 +35,7 @@ struct DeviceRenderPresentation: Equatable, Sendable {
     /// Real export progress (0...1) while `phase == .rendering`; nil when the exporter has reported none.
     /// Drives the live plan feed (KRI-443); never shown as a number.
     var exportProgress: Double?
+    var outputVerificationPending: Bool = false
 }
 
 /// Short label for the editor's top-of-preview device-render affordance
@@ -66,6 +67,7 @@ enum DeviceRenderButtonTitle {
     typealias ReportPreparationFailure = @Sendable (UUID, Error) async -> Void
     private(set) var presentations: [DeviceRenderKey: DeviceRenderPresentation] = [:]
     private(set) var retryApprovalKeys: Set<DeviceRenderKey> = []
+    private var verificationKeys: Set<DeviceRenderKey> = []
     func retryNeedsApproval(_ key: DeviceRenderKey) -> Bool { retryApprovalKeys.contains(key) }
     @ObservationIgnored private let fetch: Fetch
     @ObservationIgnored private let factory: Factory
@@ -120,6 +122,8 @@ enum DeviceRenderButtonTitle {
             guard status.request.identity.jobID == key.jobID,
                   status.request.identity.variantID == key.variantID else { throw APIError.invalidResponse }
             let request = status.request
+            if status.outputVerificationRequired { verificationKeys.insert(key) }
+            else { verificationKeys.remove(key) }
             if status.retryRequiresApproval { retryApprovalKeys.insert(key) }
             else { retryApprovalKeys.remove(key) }
             if requests[key] != request {
@@ -141,12 +145,14 @@ enum DeviceRenderButtonTitle {
             if status.phase == "needs_attention" || decision.route != .local {
                 // Preserve a finished export and its receipt when rollout is paused.
                 observations.removeValue(forKey: key)?.cancel()
+                let unchecked = status.outputVerificationRequired && saved?.phase != .synced
                 presentations[key] = DeviceRenderPresentation(
-                    phase: saved?.outputURL == nil ? .needsAttention : .localReady,
-                    localFile: saved?.request == request ? saved?.outputURL : nil,
+                    phase: (saved?.outputURL == nil || (unchecked && status.phase == "needs_attention")) ? .needsAttention : .localReady,
+                    localFile: !unchecked && saved?.request == request ? saved?.outputURL : nil,
                     message: status.reason ?? decision.reason,
                     reasonCode: status.reasonCode,
-                    requiresServerRetry: status.phase == "needs_attention"
+                    requiresServerRetry: status.phase == "needs_attention",
+                    outputVerificationPending: unchecked && status.phase != "needs_attention"
                 )
                 return
             }
@@ -259,7 +265,7 @@ enum DeviceRenderButtonTitle {
         tickets[key] = nil
         observations.removeValue(forKey: key)?.cancel()
         try? await entries[key]?.cancelByUser()
-        if let saved = await entries[key]?.snapshot() { presentations[key] = Self.presentation(saved) }
+        if let saved = await entries[key]?.snapshot() { presentations[key] = presentation(saved, for: key) }
     }
 
     func stopAll() async {
@@ -268,13 +274,14 @@ enum DeviceRenderButtonTitle {
         observations.removeAll()
         for coordinator in entries.values { try? await coordinator.cancel() }
         entries.removeAll(); requests.removeAll(); presentations.removeAll(); retryApprovalKeys.removeAll()
+        verificationKeys.removeAll()
     }
 
     private func observe(_ key: DeviceRenderKey, coordinator: DeviceRenderCoordinator) async {
         let initial = await coordinator.observationSnapshot()
         guard !Task.isCancelled, requests[key] == initial.receipt?.request else { return }
         if let saved = initial.receipt {
-            var presentation = Self.presentation(saved)
+            var presentation = presentation(saved, for: key)
             presentation.exportProgress = initial.exportProgress
             presentations[key] = presentation
         }
@@ -284,7 +291,7 @@ enum DeviceRenderButtonTitle {
                 let state = await coordinator.observationSnapshot()
                 guard let saved = state.receipt, !Task.isCancelled, let self,
                       self.requests[key] == saved.request else { return }
-                var presentation = Self.presentation(saved)
+                var presentation = self.presentation(saved, for: key)
                 presentation.exportProgress = state.exportProgress
                 if self.presentations[key] != presentation { self.presentations[key] = presentation }
                 if ![.preparing, .rendering, .syncing].contains(saved.phase), !state.isBusy {
@@ -303,6 +310,18 @@ enum DeviceRenderButtonTitle {
                 ? "This edit couldn’t finish on your iPhone. Your project is saved."
                 : "Your video is ready on this iPhone. Syncing didn’t finish; you can retry without rendering again.")
         )
+    }
+
+    private func presentation(_ receipt: DeviceRenderReceipt, for key: DeviceRenderKey) -> DeviceRenderPresentation {
+        var value = Self.presentation(receipt)
+        if verificationKeys.contains(key) && receipt.phase != .synced {
+            value.localFile = nil
+            value.outputVerificationPending = [.localReady, .syncing].contains(receipt.phase)
+            if receipt.error != nil {
+                value.message = "This export hasn't passed its checks yet. Your approved edit is saved."
+            }
+        }
+        return value
     }
 
     static func decision(_ recipe: KriaMediaEngine.EditRecipe, capabilities: PhoneRenderingCapabilities) -> CapabilityDecision {

@@ -171,6 +171,26 @@ def contract_decline(job: Any, variant_id: str) -> dict | None:
     return decline if isinstance(decline, dict) else None
 
 
+def device_contract_blocks_retry(record: dict) -> bool:
+    """An unsupported recipe needs a change; failed measured output can be retried.
+
+    This does not approve dispatch: KRI-674 still locks/revalidates the saved
+    draft, source generation, immutable recipe, capabilities and fresh consent.
+    """
+    decline = record.get(CONTRACT_DECLINE_FIELD)
+    if not decline:
+        return False
+    policy = record.get("actual_export_policy")
+    return not (
+        isinstance(policy, dict)
+        and policy.get("version") == 1
+        and isinstance(decline, dict)
+        and decline.get("stage") == "actual_export"
+        and decline.get("field_path") == "export_verification"
+        and decline.get("decline_reason") == "evidence_missing"
+    )
+
+
 def _brief_digest_for_generation(assembly: dict, generation: str) -> str | None:
     """Return the contract-format digest of the authority pinned for this revision."""
     raw = (assembly.get("creator_brief_bindings") or {}).get(generation)
@@ -244,6 +264,54 @@ def _approved_source_bindings(assembly: dict, variant_id: str) -> dict[str, Phon
     if len(result) != len(bindings):
         raise CreatorRenderContractError("This edit has conflicting approved source files.")
     return result
+
+
+def approved_export_sources(
+    job: Any, request: DeviceRenderRequest
+) -> dict[str, PhoneSourceBinding]:
+    """Only the immutable source receipts referenced by this exact request."""
+    bindings = _approved_source_bindings(job.assembly_plan or {}, request.identity.variant_id)
+    manifest = getattr(request.recipe, "asset_manifest", None)
+    ids = (
+        {asset.media_id for asset in manifest.assets if isinstance(asset, OriginalRenderAsset)}
+        if manifest
+        else set()
+    )
+    if not ids <= bindings.keys():
+        raise CreatorRenderContractError("This export's approved source evidence is unavailable.")
+    return {media_id: bindings[media_id] for media_id in sorted(ids)}
+
+
+def export_source_digest(bindings: dict[str, PhoneSourceBinding]) -> str:
+    payload = {key: value.model_dump(mode="json") for key, value in sorted(bindings.items())}
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def checked_export_report(record: dict, status: DeviceRenderStatus, attempt_id: str) -> bool:
+    """No ready-state fast path may revive missing, stale or rejected evidence."""
+    if "actual_export_policy" not in record:
+        return True  # historical/unpromoted adapter; not a verified-output claim
+    from app.services.actual_export_verification import VERIFIER_VERSION  # noqa: PLC0415
+
+    policy = record.get("actual_export_policy")
+    attempt = (record.get("attempts") or {}).get(attempt_id) or {}
+    report = attempt.get("actual_export_verification") or {}
+    return bool(
+        isinstance(policy, dict)
+        and policy.get("version") == 1
+        and report.get("status") == "checked"
+        and report.get("verifier_version") == VERIFIER_VERSION
+        and report.get("identity") == status.request.identity.model_dump(mode="json")
+        and report.get("sha256") == attempt.get("sha256")
+        and report.get("file_size_bytes") == attempt.get("size")
+        and report.get("artifact_path") == attempt.get("path")
+        and report.get("storage_generation")
+        and policy.get("source_receipts_digest") == report.get("source_receipts_digest")
+        and report.get("checks")
+        and all(row.get("status") == "passed" for row in report["checks"])
+    )
 
 
 def _verify_recipe_source_identity(
@@ -393,6 +461,28 @@ def pin_device_request(
         )
     if narration_binding is not None:
         record["narration_binding"] = copy.deepcopy(narration_binding)
+    from app.config import settings  # noqa: PLC0415
+
+    # Record-only envelope: strict recipe/status schemas stay readable by old workers.
+    # Existing requests are not silently enrolled during a rolling deployment.
+    if (
+        settings.phone_actual_export_verification_enabled
+        and contract_receipt is not None
+        and getattr(job, "user_id", None) in settings.phone_actual_export_verification_user_ids
+    ):
+        from app.services.actual_export_verification import (  # noqa: PLC0415
+            POLICY_KEY,
+            unsupported_reasons,
+        )
+
+        reasons = unsupported_reasons(request.recipe)
+        if not reasons:
+            record[POLICY_KEY] = {
+                "version": 1,
+                "source_receipts_digest": export_source_digest(
+                    approved_export_sources(job, request)
+                ),
+            }
     save_device_record(
         job,
         request.identity.variant_id,
@@ -474,6 +564,11 @@ def retry_device_render(job: Any, variant_id: str) -> DeviceRenderStatus:
         base_generation=record["base_generation"],
         narration_binding=record.get("narration_binding"),
     )
+    # A kill-switch change can stop enrollment, never waive an accepted check.
+    if "actual_export_policy" in record:
+        retried = device_record(job, variant_id)
+        retried["actual_export_policy"] = copy.deepcopy(record["actual_export_policy"])
+        save_device_record(job, variant_id, retried)
     return device_status(job, variant_id)
 
 
