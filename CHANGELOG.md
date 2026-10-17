@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.23.0] - 2026-10-17
+
+### Changed
+- fix(editor): manual editor edits win over the approved opening/closing text rules on Save (KRI-736) (#1655) <!-- release-pr: 1655 -->
+
 ## [0.80.22.0] - 2026-10-17
 
 ### Changed

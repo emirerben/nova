@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import copy
-
 import pytest
-from fastapi import HTTPException
 
 from app.routes import generative_jobs as gj
 from app.services.creator_render_contract import (
@@ -84,24 +81,15 @@ def test_an_edit_that_keeps_the_opening_text_in_the_opening_window_is_accepted(m
     assert device_status(job, "guided_story").request.identity.recipe_revision == 2
 
 
-def test_an_edit_that_moves_the_opening_text_out_of_the_opening_window_is_refused(monkeypatch):
+def test_an_edit_that_moves_the_opening_text_out_of_the_opening_window_is_accepted(monkeypatch):
+    """KRI-736: the creator's own placement wins; the words stay a required presence check."""
     job = phone_job(monkeypatch)
     _opening_contract(job)
-    before = device_status(job, "guided_story").request
-    variants_before = copy.deepcopy(job.assembly_plan["variants"])
 
-    with pytest.raises(HTTPException) as caught:
-        save(job, text="Before", start_s=1.0, end_s=3.0)  # text unchanged, moved later
+    save(job, text="Before", start_s=1.0, end_s=3.0)  # text unchanged, moved later
 
-    assert caught.value.status_code == 422
-    assert caught.value.detail["code"] == "unsupported_phone_edit"
-    # The refusal says what was violated, typed, so the client can explain it.
-    assert caught.value.detail["decline_reason"] == "evidence_missing"
-    assert caught.value.detail["field_path"] == "opening_title"
-    # The refusal leaves the approved edit exactly as it was.
-    assert device_status(job, "guided_story").request == before
-    assert job.assembly_plan["variants"] == variants_before
-    assert CONTRACT_REVISIONS_FIELD not in job.assembly_plan
+    assert [(t.role, t.text) for t in _revised(job).exact_texts] == [("any", "Before")]
+    assert device_status(job, "guided_story").request.identity.recipe_revision == 2
 
 
 def test_an_element_that_was_never_a_requirement_stays_unplaced(monkeypatch):
@@ -148,18 +136,18 @@ def _prod_shape_contract(job, text="Before", hold=2.0):
     return contract
 
 
-def test_the_duplicate_shape_still_refuses_an_opening_title_pushed_out_of_its_window(
+def test_the_duplicate_shape_relaxes_an_opening_title_the_creator_pushed_out_of_its_window(
     monkeypatch,
 ):
     job = phone_job(monkeypatch)
     _prod_shape_contract(job)
-    before = device_status(job, "guided_story").request
 
-    with pytest.raises(HTTPException) as caught:
-        save(job, text="Before", start_s=1.0, end_s=3.0)
+    save(job, text="Before", start_s=1.0, end_s=3.0)
 
-    assert caught.value.detail["field_path"] == "opening_title"
-    assert device_status(job, "guided_story").request == before
+    # [opening X (2.0 s), any X] collapses to the one presence check, never to nothing.
+    assert [(t.role, t.text, t.duration_s) for t in _revised(job).exact_texts] == [
+        ("any", "Before", None)
+    ]
 
 
 def test_the_duplicate_shape_keeps_both_requirements_through_a_retyped_title(monkeypatch):
@@ -174,14 +162,15 @@ def test_the_duplicate_shape_keeps_both_requirements_through_a_retyped_title(mon
     ]
 
 
-def test_the_approved_on_screen_minimum_is_reverified_after_an_edit(monkeypatch):
+def test_a_hold_the_creator_shortened_below_the_approved_minimum_is_accepted(monkeypatch):
     job = phone_job(monkeypatch)
     _prod_shape_contract(job)
 
-    with pytest.raises(HTTPException) as caught:
-        save(job, text="Before", start_s=0, end_s=1.0)  # a 1 s hold under a 2.0 s approval
+    save(job, text="Before", start_s=0, end_s=1.0)  # a 1 s hold under a 2.0 s approval
 
-    assert caught.value.detail["field_path"] == "opening_title_duration_s"
+    assert [(t.role, t.text, t.duration_s) for t in _revised(job).exact_texts] == [
+        ("any", "Before", None)
+    ]
 
 
 def test_a_row_the_contract_never_asked_for_stays_any_beside_the_duplicate_shape(monkeypatch):
