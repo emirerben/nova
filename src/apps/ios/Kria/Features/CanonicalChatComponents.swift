@@ -447,6 +447,23 @@ enum FootageStageCopy {
     }
 }
 
+/// Per-upload progress, read by the views that draw it rather than held as `@State` by the whole workspace: a
+/// progress tick used to re-evaluate the entire chat screen (every row, the composer, the timeline), several times
+/// a second for as long as anything uploaded. Observation re-runs only the bodies that read `values`.
+@Observable final class UploadProgressStore {
+    var values: [UUID: Double] = [:]
+}
+
+/// One upload's progress bar. Reading the store here, not in the parent, keeps a tick local to the bar.
+struct UploadProgressBar: View {
+    let store: UploadProgressStore
+    let recordID: UUID
+
+    var body: some View {
+        ProgressView(value: store.values[recordID] ?? 0).frame(width: 60).tint(KriaColor.ink)
+    }
+}
+
 struct FootageStage: View {
     let format: CreationFormat
     let mediaCount: Int
@@ -457,7 +474,7 @@ struct FootageStage: View {
     var preparingCount = 0
     /// `BackgroundUploadCoordinator.previewVersion`, so thumbnails re-read from disk as they appear.
     var previewVersion = 0
-    let progress: [UUID: Double]
+    let progress: UploadProgressStore
     let addFootage: () -> Void
     let changeFormat: () -> Void
     var attachedMedia: [CreationAttachedMedia] = []
@@ -480,7 +497,7 @@ struct FootageStage: View {
     /// One bar for every clip on its way. With uploads overlapping, showing only the first upload's
     /// progress would misrepresent the rest; a clip still being prepared counts as 0.
     private var overallProgress: Double {
-        FootageReadiness.overallProgress(uploads: uploads.map { progress[$0.id] ?? 0 }, preparingCount: preparingCount)
+        FootageReadiness.overallProgress(uploads: uploads.map { progress.values[$0.id] ?? 0 }, preparingCount: preparingCount)
     }
     private var visualsReadiness: FootageReadiness {
         FootageReadiness(attachedCount: format.usesVisualPool ? visualCount : 0, pendingCount: uploads.count + preparingCount)
@@ -579,7 +596,7 @@ struct FootageStage: View {
                             CreationRecordThumbnail(recordID: record.id, version: previewVersion)
                             Text(BackgroundUploadCoordinator.displayFilename(record.filename)).font(KriaFont.body(12)).lineLimit(1)
                             Spacer()
-                            ProgressView(value: progress[record.id] ?? 0).tint(KriaColor.ink).frame(width: 60)
+                            ProgressView(value: progress.values[record.id] ?? 0).tint(KriaColor.ink).frame(width: 60)
                         }
                     }
                 }

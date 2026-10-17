@@ -1407,6 +1407,65 @@
       ],
       "red_control": "not_applicable",
       "journey": "kri-492-length-ownership"
+    },
+    {
+      "id": "kri-674-per-clip-camera-audio",
+      "tickets": [
+        "KRI-674"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-674",
+      "symptom": "A five-second flag/scarf montage preserving original camera audio was approved, then rejected for having no speech because every named audio source selected the spoken-excerpt lane.",
+      "boundary": "dispatch",
+      "paths": [
+        "src/apps/api/app/agents/_schemas/creator_agent.py",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/services/creator_capabilities.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/app/services/render_route.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/tests/agents/test_main_creator_voice_mode.py",
+        "src/apps/api/tests/kria/test_voice_flag_gating.py",
+        "src/apps/api/tests/services/test_phone_speech_montage_job.py",
+        "src/apps/api/tests/tasks/test_voice_behind_footage_dispatch.py"
+      ],
+      "regression_tests": [
+        "tests/agents/test_main_creator_voice_mode.py",
+        "tests/kria/test_voice_flag_gating.py",
+        "tests/services/test_creator_render_contract.py",
+        "tests/services/test_phone_speech_montage_job.py",
+        "tests/services/test_render_route.py",
+        "tests/services/test_render_route_invariance.py",
+        "tests/tasks/test_voice_behind_footage_dispatch.py",
+        "tests/tasks/test_route_shadow_dispatch.py",
+        "tests/tasks/test_unified_montage_dispatch.py"
+      ],
+      "harness": "mocked_internal",
+      "kill_switch": null,
+      "journey": "kri-492-length-ownership",
+      "evidence": {
+        "offline_replay": "Before implementation: parser/policy/worker/flag checks 4 failed and 27 passed; direct speech entry attempted transcription of a non-speaking source; adapter source-evidence declaration failed once. After fix: 704 focused checks pass. Real strategy/contract/worker code, with renderer entries recorded; real compiled-recipe audio verifier guards source mismatch.",
+        "live_model": "Not run for the new Main Creator v61 guidance. The separate Brief Extractor timeout fix v11 is deployed and reached live approval.",
+        "native_output": "Pending actual iPhone export with per-clip sound, exact source-window/audio comparison and immutable retry proof.",
+        "production": "Not deployed; prior live job failed before any device recipe or export."
+      },
+      "neighbours_covered": [
+        "Explicit per-clip sound retains named audio IDs without requiring a speaker",
+        "Continuous voice, selected excerpts and absent historical mode retain their existing lane",
+        "Unstamped jobs ignore the new delivery mode",
+        "Speech-excerpt flag off still permits ordinary per-clip sound; plan-authority flag off does not advertise it",
+        "Unknown mode remains unset; unused field remains omitted and JSON schema unchanged",
+        "Wrong, muted or extra audible source still fails compiled-recipe verification",
+        "Optional diagnostics import failure cannot prevent ordinary rendering"
+      ],
+      "neighbours_gap": [
+        "Renderer entries in the dispatch guard are recorders; model behavior and physical video/audio are separate release checks."
+      ],
+      "follow_ups": [
+        "KRI-674 live-device verification"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

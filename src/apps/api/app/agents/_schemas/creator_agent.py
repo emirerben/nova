@@ -292,8 +292,8 @@ SongSyncMode = Literal["background", "lipsync"]
 # KRI-479: how a creator-named camera-audio source is used under a montage.
 # "continuous" = ONE clip's voice plays straight through the whole edit while the
 # other clips are the (silent) picture; "excerpts" = chosen lines from the
-# speaker (the spoken-excerpt montage). Absent = today's behaviour, unchanged.
-VoiceMode = Literal["continuous", "excerpts"]
+# speaker; "per_clip" = each picture clip keeps its own sound. Absent stays legacy.
+VoiceMode = Literal["continuous", "excerpts", "per_clip"]
 ExecutionContract = Literal["guided_voiceover_v1"]
 MediaScope = Literal["all", "selected"]
 CaptionStyle = Literal["none", "clean", "kinetic", "karaoke", "editorial", "auto"]
@@ -527,7 +527,7 @@ class CreativeStrategy(_CreatorModel):
         if value is None:
             return None
         text = str(value).strip().casefold()
-        return text if text in {"continuous", "excerpts"} else None
+        return text if text in {"continuous", "excerpts", "per_clip"} else None
 
     @field_validator("song_sync", mode="before")
     @classmethod

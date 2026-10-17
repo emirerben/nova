@@ -52,7 +52,7 @@
     {
       "id": "kri-492-length-ownership",
       "needs_native": true,
-      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py tests/kria/test_render_retry_postgres.py",
+      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py tests/kria/test_render_retry_postgres.py tests/agents/test_main_creator_voice_mode.py tests/kria/test_voice_flag_gating.py tests/services/test_phone_speech_montage_job.py tests/services/test_render_route.py tests/services/test_render_route_invariance.py tests/tasks/test_route_shadow_dispatch.py tests/tasks/test_unified_montage_dispatch.py tests/tasks/test_voice_behind_footage_dispatch.py",
       "paths": [
         "src/apps/api/app/services/length_policy.py",
         "src/apps/api/app/services/length_policy_state.py",
@@ -95,7 +95,14 @@
         "src/apps/ios/Kria/Features/NativeEditorComponents.swift",
         "src/apps/api/app/kria/device_render.py",
         "src/apps/ios/Kria/Core/DeviceRenderSessions.swift",
-        "src/apps/ios/Kria/Core/DeviceRendering.swift"
+        "src/apps/ios/Kria/Core/DeviceRendering.swift",
+        "src/apps/api/app/services/creator_capabilities.py",
+        "src/apps/api/app/services/render_route.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/tests/agents/test_main_creator_voice_mode.py",
+        "src/apps/api/tests/kria/test_voice_flag_gating.py",
+        "src/apps/api/tests/services/test_phone_speech_montage_job.py",
+        "src/apps/api/tests/tasks/test_voice_behind_footage_dispatch.py"
       ]
     },
     {
@@ -700,12 +707,16 @@
     {
       "id": "kri-736-save-after-delete",
       "needs_native": false,
-      "api_tests": "tests/routes/test_phone_guided_clip_delete_text_fit.py tests/routes/test_phone_guided_clip_delete_order_contract.py",
+      "api_tests": "tests/routes/test_phone_guided_clip_delete_text_fit.py tests/routes/test_phone_guided_clip_delete_order_contract.py tests/routes/test_phone_manual_edits_win.py",
       "paths": [
         "src/apps/api/app/pipeline/phone_authored_timeline.py",
         "src/apps/api/app/services/authored_text_fit.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/phone_editor.py",
         "src/apps/api/tests/routes/test_phone_guided_clip_delete_text_fit.py",
-        "src/apps/api/tests/routes/test_phone_guided_clip_delete_order_contract.py"
+        "src/apps/api/tests/routes/test_phone_guided_clip_delete_order_contract.py",
+        "src/apps/api/tests/routes/test_phone_manual_edits_win.py",
+        "src/apps/api/tests/services/test_phone_editor_render_contract.py"
       ]
     }
   ]

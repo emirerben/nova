@@ -409,6 +409,8 @@ private struct CreationWorkspaceView: View {
     @State private var scrollRequest = 0
     @State private var finishedEditSuggestionUpdate = 0
     @State private var finishedEditSuggestionRefresh = 0
+    /// Values derived from the transcript, kept between redraws (see `ChatDerivedMemo`).
+    @State private var derived = ChatDerivedMemo()
     @State private var hasHistoryBaseline = false
     /// False only while the transcript on screen came from the on-disk cache and the server has not answered yet:
     /// the question cards stay read-only, because a cached "active" question may already be answered elsewhere.
@@ -427,7 +429,8 @@ private struct CreationWorkspaceView: View {
     @State private var fullThread: CreationThread?
     @State private var pendingAction: CreationActionIdentity?
     @State private var uploadRecords: [UploadRecoveryRecord] = []
-    @State private var uploadProgress: [UUID: Double] = [:]
+    /// Reference-typed and observed by the progress bars alone: see `UploadProgressStore`.
+    @State private var uploadProgress = UploadProgressStore()
     /// What the coordinator is still preparing, and the assets the user has chosen. `uploadRecords`
     /// alone is blind to a clip until it is prepared AND reserved, so without these Continue would
     /// be enabled while chosen clips were still on their way.
@@ -567,14 +570,39 @@ private struct CreationWorkspaceView: View {
         return ids
     }
 
+    /// The merged, sorted, parsed transcript. Building it parses every event, and one redraw reads it several times
+    /// (the body, the scroll token, each question card), so the result is kept until one of its inputs changes.
     private var timeline: [ChatTimelineEntry] {
+        let stage = stageAnchor
+        let suppressed = suppressedTimelineMessages
+        let uploads = activeUploadIDs.compactMap { uploadAnchors[$0] }
+        // A pending message that carries a song answer also changes how its card reads: always rebuild for those.
+        let cacheable = !pendingMessages.contains { $0.songOrder != nil || $0.songRange != nil }
+        var hasher = Hasher()
+        hasher.combine(ChatFingerprint.events(events))
+        for message in pendingMessages {
+            hasher.combine(message.id); hasher.combine(message.content)
+            hasher.combine(message.afterSequence); hasher.combine(message.localOrder)
+        }
+        hasher.combine(stage?.id); hasher.combine(stage?.afterSequence)
+        for id in suppressed.sorted() { hasher.combine(id) }
+        for upload in uploads { hasher.combine(upload.id); hasher.combine(upload.afterSequence); hasher.combine(upload.localOrder) }
+        for requestID in completedThoughtSummaries.keys.sorted() {
+            hasher.combine(requestID)
+            for summary in completedThoughtSummaries[requestID] ?? [] {
+                hasher.combine(summary.id); hasher.combine(summary.status.rawValue); hasher.combine(summary.text)
+            }
+        }
+        let key = hasher.finalize()
+        if cacheable, derived.timelineKey == key { return derived.timeline }
         Perf.event("timeline.build")
-        return ChatTimeline.build(
-            events: events, pending: pendingMessages, stage: stageAnchor,
-            suppressedMessageIDs: suppressedTimelineMessages,
-            uploads: activeUploadIDs.compactMap { uploadAnchors[$0] },
-            thoughtSummaries: completedThoughtSummaries
+        let built = ChatTimeline.build(
+            events: events, pending: pendingMessages, stage: stage,
+            suppressedMessageIDs: suppressed, uploads: uploads, thoughtSummaries: completedThoughtSummaries
         )
+        derived.timelineKey = cacheable ? key : nil
+        derived.timeline = built
+        return built
     }
 
     /// The newest reply that carries requirement receipts; a new one means the brief may have changed.
@@ -584,13 +612,23 @@ private struct CreationWorkspaceView: View {
 
     /// The newest assistant event that carries a clip picker, if any.
     private var latestClipQuestionID: String? {
-        events.last { ChatTranscriptMessage.from(event: $0)?.clipQuestion != nil }?.id
+        let key = ChatFingerprint.events(events)
+        if derived.clipQuestionKey == key { return derived.clipQuestionID }
+        let found = events.last { ChatTranscriptMessage.from(event: $0)?.clipQuestion != nil }?.id
+        derived.clipQuestionKey = key
+        derived.clipQuestionID = found
+        return found
     }
 
     /// KRI-443: the live plan feed, reduced from the thread's `plan_block` events.
     private var planFeed: PlanBlockFeedState {
+        let key = ChatFingerprint.events(events)
+        if derived.feedKey == key, let feed = derived.feed { return feed }
         Perf.event("planFeed.reduce")
-        return PlanBlockFeedState.reduce(events: events)
+        let reduced = PlanBlockFeedState.reduce(events: events)
+        derived.feedKey = key
+        derived.feed = reduced
+        return reduced
     }
 
     private var showsPlanFeed: Bool {
@@ -895,7 +933,7 @@ private struct CreationWorkspaceView: View {
                      ?? uploadInFlight[recordID]?.filename ?? "Preparing media…")
                     .font(KriaFont.body(12)).lineLimit(1)
                 Spacer()
-                ProgressView(value: uploadProgress[recordID] ?? 0).frame(width: 60).tint(KriaColor.ink)
+                UploadProgressBar(store: uploadProgress, recordID: recordID)
             }
             .accessibilityIdentifier("chat-upload-\(recordID.uuidString)")
             .id(entry.id)
@@ -1313,7 +1351,7 @@ private struct CreationWorkspaceView: View {
         }
         #endif
         .onReceive(model.uploads.$previewVersion) { previewVersion = $0 }
-        .onReceive(model.uploads.$progress) { uploadProgress = $0 }
+        .onReceive(model.uploads.$progress) { uploadProgress.values = $0 }
         .onReceive(model.uploads.$attachedThreads) { threads in
             guard let thread = threads[project.id] else { return }
             apply(thread)
@@ -2379,6 +2417,27 @@ enum ChatMessageRole: Equatable { case user, assistant }
 /// Keeps append-only history stable while full projections and forward deltas
 /// overlap. Event IDs are authoritative; sequence determines display/cursor
 /// order, with the ID tie-breaker making equal-sequence responses deterministic.
+/// Reference-typed so reading or filling it from `body` mutates no `@State` and never invalidates the view. A hit
+/// needs the key of every input to match, so it can never return something built from older data.
+final class ChatDerivedMemo {
+    var timelineKey: Int?
+    var timeline: [ChatTimelineEntry] = []
+    var feedKey: Int?
+    var feed: PlanBlockFeedState?
+    var clipQuestionKey: Int?
+    var clipQuestionID: String?
+}
+
+/// Cheap identity of a transcript: events are append-only, so id and revision say whether any of them changed.
+enum ChatFingerprint {
+    static func events(_ events: [ThreadEvent]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(events.count)
+        for event in events { hasher.combine(event.id); hasher.combine(event.sequence); hasher.combine(event.revision) }
+        return hasher.finalize()
+    }
+}
+
 enum ChatTranscriptHistory {
     static func merge(_ existing: [ThreadEvent], with incoming: [ThreadEvent]) -> [ThreadEvent] {
         var byID: [String: ThreadEvent] = [:]
