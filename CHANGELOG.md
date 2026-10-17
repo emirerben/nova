@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.19.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save accepts text with a null role (KRI-736) (#1652) <!-- release-pr: 1652 -->
+
 ## [0.80.18.0] - 2026-10-17
 
 ### Changed
