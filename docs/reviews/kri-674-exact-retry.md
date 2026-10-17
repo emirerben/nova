@@ -26,7 +26,7 @@ all specialist output before approval remain KRI-722/KRI-723 work.
 Automated evidence: real HTTP, Postgres and normal approval/dispatch/observer
 code; no paid model calls. A failing planner sentinel forbids accidental new
 creative planning. Cases cover duplicates/concurrent taps, consent expiry,
-lost dispatch acknowledgement, foreign owner, stale draft/request/generation,
+lost dispatch acknowledgement (including a capability pause after acceptance), foreign owner, stale draft/request/generation,
 unknown work, unsupported recipe, missing original and missing saved program.
 Red controls observed the missing endpoint (404), misleading observer retry,
 expired consent replay, wrong-generation recovery and stale accepted receipt.

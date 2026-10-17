@@ -215,9 +215,13 @@ def _validate(rows, *, creator_id, source, source_approval, retry=None, accepted
         )
     from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
 
-    if not phone_rendering_allowed_for_job(
-        job
-    ) or status.request.recipe.required_capabilities - set(settings.phone_render_verified_features):
+    # Accepted recovery only finishes delivery bookkeeping; the program was
+    # already pinned under consent. A temporary rollout pause must not retire it.
+    if not accepted and (
+        not phone_rendering_allowed_for_job(job)
+        or status.request.recipe.required_capabilities
+        - set(settings.phone_render_verified_features)
+    ):
         raise _failure(
             "render_retry_capability_unavailable",
             "This edit's iPhone rendering features are temporarily unavailable. "

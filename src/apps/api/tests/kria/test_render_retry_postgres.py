@@ -403,7 +403,7 @@ def test_expired_consent_is_renewed_for_the_same_prepared_retry(client):
         assert db.get(CreatorAgentApproval, uuid.UUID(first["approval_id"])).status == "expired"
 
 
-def test_lost_acknowledgement_resumes_the_accepted_attempt_without_repinning(client):
+def test_lost_acknowledgement_resumes_the_accepted_attempt_without_repinning(client, monkeypatch):
     from app.tasks.kria_runtime import _claim_approval_dispatch
 
     case = seed_failed()
@@ -422,6 +422,9 @@ def test_lost_acknowledgement_resumes_the_accepted_attempt_without_repinning(cli
     assert response.status_code == 200, response.text
     claim = _claim_approval_dispatch(uuid.UUID(accepted["approval_id"]))
     assert claim is not None
+    # Pausing device features after acceptance must not strand the delivery
+    # receipt: recovery only finishes bookkeeping for the already-pinned attempt.
+    monkeypatch.setattr(settings, "phone_render_verified_features", [])
     with sync_session() as db:
         identity = device_status(db.get(Job, case.job_id), "first").request.identity
     assert execute_kria_approval.run(accepted["approval_id"])["status"] == "dispatched"
