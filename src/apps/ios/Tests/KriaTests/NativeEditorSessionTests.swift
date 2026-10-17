@@ -5683,9 +5683,12 @@ final class NativeEditorSessionTests: XCTestCase {
 /// Re-checks `condition` every 25 ms until it holds or `timeout` passes, and returns whether it held.
 /// Waits on the real AVFoundation compositor or on a task reaching a fake's gate used fixed loops of
 /// 100 × 25 ms; a busy CI simulator sometimes needed longer, failing PRs that changed no iOS code
-/// (runs 38877653553, 38465843981). Only the budget grows: callers still assert what they checked.
+/// (runs 38877653553, 38465843981). Under heavy local CPU load a real frame took up to 15 s, and CI
+/// ran one setup step ~87× slower than an idle Mac (#1634), so the default matches that PR's 60 s.
+/// A met condition returns at once, so passing runs are no slower; a real regression still fails,
+/// just after the deadline. Only the budget grows: callers still assert what they checked.
 @MainActor
-private func waitUntil(timeout: Duration = .seconds(10), _ condition: () -> Bool) async -> Bool {
+private func waitUntil(timeout: Duration = .seconds(60), _ condition: () -> Bool) async -> Bool {
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
         if condition() { return true }
