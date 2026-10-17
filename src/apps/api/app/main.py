@@ -379,6 +379,9 @@ app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(
     admin_request_following.router, prefix="/admin/request-following", tags=["admin"]
 )
+app.include_router(
+    admin_request_following.report_router, prefix="/request-following-report", tags=["reports"]
+)
 app.include_router(admin_jobs.router, prefix="/admin/jobs", tags=["admin-jobs"])
 app.include_router(admin_kria.router, prefix="/admin/kria", tags=["admin-kria"])
 app.include_router(
