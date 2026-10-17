@@ -732,19 +732,20 @@ def test_editor_edit_with_no_render_section_ignores_a_stale_device_record() -> N
     assert _device_render_state(job, execution) is None
 
 
-def test_device_render_failure_points_the_creator_at_the_phone_not_chat_retry() -> None:
+def test_device_render_failure_offers_the_saved_edit_retry() -> None:
     job = _device_job()
     mark_device_failed(job, VARIANT, reason_code="thermal", detail="")
     _, execution, events = _observe(
         job,
         {"target_variant_id": VARIANT, "result": {"editor_prep": {"device_recipe_revision": 1}}},
     )
-    assert execution.error["recovery"] == "manual"
-    assert execution.error["retryable"] is False
+    assert execution.error["recovery"] == "retry"
+    assert execution.error["retryable"] is True
     failed = events[-1]
-    assert failed["payload"]["recovery"] == "manual"
+    assert failed["payload"]["recovery"] == "retry"
     assert "iPhone" in failed["content"]
-    assert "retry without rebuilding" not in failed["content"]
+    assert "Retry the same edit" in failed["content"]
+    assert "after reviewing its approval" in failed["content"]
 
 
 def test_a_cloud_render_failure_keeps_the_chat_retry_recovery() -> None:
@@ -1460,8 +1461,9 @@ def test_a_device_failure_with_no_recorded_refusal_keeps_the_phone_retry_copy() 
 
     _, execution, events = _observe_refusal(job)
 
-    assert execution.error["recovery"] == "manual"
-    assert "tap Retry" in events[-1]["content"]
+    assert execution.error["recovery"] == "retry"
+    assert "Retry the same edit" in events[-1]["content"]
+    assert "after reviewing its approval" in events[-1]["content"]
     assert "decline_reason" not in execution.error
 
 

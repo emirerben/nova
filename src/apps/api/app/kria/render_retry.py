@@ -462,7 +462,6 @@ async def prepare_render_retry(
                     ).get("landscape_fit", "fill"),
                 },
             },
-            "creator_request": (source.result or {}).get("creator_request", ""),
         },
     )
     db.add(execution)
@@ -668,5 +667,4 @@ def claim_render_retry(approval_id: uuid.UUID):  # noqa: ANN201
             target_job_id=job.id,
             target_variant_id=execution.target_variant_id,
             target_generation_id=execution.target_generation_id,
-            creator_request=(execution.result or {}).get("creator_request", ""),
         )

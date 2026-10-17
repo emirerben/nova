@@ -207,7 +207,7 @@ class _ApprovalDispatchClaim:
     target_job_id: uuid.UUID | None
     target_variant_id: str | None
     target_generation_id: str | None
-    creator_request: str
+    creator_request: str = ""
     brief_binding: dict[str, Any] | None = None
     preflight_analysis_id: uuid.UUID | None = None
     speech_cleanup_analysis_id: uuid.UUID | None = None
