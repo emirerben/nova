@@ -28,7 +28,7 @@ import struct
 import uuid
 from copy import deepcopy
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import (
     BaseModel,
@@ -532,6 +532,28 @@ class TextElement(BaseModel):
         migrated["effect"] = "static"
         migrated.setdefault("theme_transition", {"type": "giant-title-wipe"})
         return migrated
+
+    # Fields that have a non-null default and no "unset" meaning. The iOS editor
+    # encodes a text it created itself with an explicit JSON ``"role": null``
+    # (NativeEditorDocument.encodeText), which the strict Literal refused and 422'd
+    # the whole Save (KRI-736). Null here means "not set": drop it so the field takes
+    # the exact default an ABSENT key gets (never a different persisted value).
+    _NULL_MEANS_DEFAULT: ClassVar[tuple[str, ...]] = (
+        "role",
+        "position",
+        "wrap_lines",
+        "removed",
+        "behind_subject",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_means_default(cls, data: object) -> object:
+        if not isinstance(data, dict) or not any(
+            key in data and data[key] is None for key in cls._NULL_MEANS_DEFAULT
+        ):
+            return data
+        return {k: v for k, v in data.items() if not (k in cls._NULL_MEANS_DEFAULT and v is None)}
 
     @field_validator("id", mode="before")
     @classmethod
