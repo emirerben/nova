@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.22.0] - 2026-10-17
+
+### Changed
+- perf(ios): saved transcript, early token refresh, quieter sweep, reachable older chats (KRI-711) (#1651) <!-- release-pr: 1651 -->
+
 ## [0.80.21.0] - 2026-10-17
 
 ### Fixed

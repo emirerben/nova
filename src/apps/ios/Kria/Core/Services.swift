@@ -145,6 +145,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread
     func deleteProject(_ project: ProjectSummary) async throws
     func projects() async throws -> [ProjectSummary]
+    /// One page of chats, newest first. `nextCursor` is nil on the last page.
+    func projectsPage(cursor: String?) async throws -> ProjectPage
     func project(threadID: UUID) async throws -> CreationThread
     func creationCapabilities() async throws -> CreationCapabilities
     /// KRI-640: the last capabilities read for this session if it is at most `maxAge` seconds old, else nil. Never touches the network.
@@ -268,8 +270,18 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func uploadFile(to reservation: UploadReservation, fileURL: URL) async throws
 }
 
+/// A page of the chat list. An older server never sends a cursor, which reads as "that was everything".
+struct ProjectPage: Sendable {
+    let projects: [ProjectSummary]
+    let nextCursor: String?
+}
+
 extension KriaAPIClient {
     func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted { throw APIError.unsupported }
+    /// Substitutes that only know the unpaged list: one page, nothing after it.
+    func projectsPage(cursor: String?) async throws -> ProjectPage {
+        ProjectPage(projects: cursor == nil ? try await projects() : [], nextCursor: nil)
+    }
     func textPreferenceMemory() async throws -> TextPreferenceMemory { throw APIError.unsupported }
     func mutateTextPreferenceMemory(path: String, method: String, body: [String: JSONValue]) async throws -> TextPreferenceOperation { throw APIError.unsupported }
     /// Decisions that carry no video-shape pick (denials, and threads that offered none).
@@ -1098,7 +1110,14 @@ struct KriaAPI: KriaAPIClient {
     let tokenStore: TokenStore
     let session: URLSession
     private let capabilitiesCache = CreationCapabilitiesCache()
-    private var capabilitiesOwner: String { (try? tokenStore.read())?.refreshToken ?? "" }
+    /// Who the cached capabilities belong to. The account (`sub`) rather than the refresh token: that token rotates on
+    /// every refresh, and a rotation between two concurrent callers made the second one miss the first one's
+    /// in-flight read and repeat it.
+    private var capabilitiesOwner: String {
+        guard let session = try? tokenStore.read() else { return "" }
+        let claims = Self.jwtClaims(session.accessToken)
+        return ["sub", "user_id", "email"].compactMap { claims?[$0] as? String }.first ?? session.refreshToken
+    }
     /// Compile-time integration seam generated from the server-owned OpenAPI
     /// subset. Handwritten request policy currently wraps it with Keychain
     /// refresh/retry behavior; endpoint DTO drift still fails this target.
@@ -1151,7 +1170,15 @@ struct KriaAPI: KriaAPIClient {
     }
     func textPreferenceMemory() async throws -> TextPreferenceMemory { try await request(path: "me/memory", method: "GET", bodyData: nil, decode: TextPreferenceMemory.self) }
     func mutateTextPreferenceMemory(path: String, method: String, body: [String: JSONValue]) async throws -> TextPreferenceOperation { try await request(path: path, method: method, bodyData: JSONEncoder().encode(body), decode: TextPreferenceOperation.self) }
-    func projects() async throws -> [ProjectSummary] { try await request(path: "creation-threads", method: "GET", bodyData: nil, decode: [CreationThread].self).map(\.summary) }
+    func projects() async throws -> [ProjectSummary] { try await projectsPage(cursor: nil).projects }
+    func projectsPage(cursor: String?) async throws -> ProjectPage {
+        let result = try await requestWithResponse(
+            path: "creation-threads", method: "GET",
+            query: cursor.map { [URLQueryItem(name: "cursor", value: $0)] } ?? [],
+            bodyData: nil, decode: [CreationThread].self
+        )
+        return ProjectPage(projects: result.value.map(\.summary), nextCursor: result.response.value(forHTTPHeaderField: "X-Next-Cursor"))
+    }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
     func creationCapabilities() async throws -> CreationCapabilities {
         try await capabilitiesCache.fetch(owner: capabilitiesOwner) { try await fetchCreationCapabilities() }
@@ -1417,6 +1444,11 @@ struct KriaAPI: KriaAPIClient {
     }
 
     func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil) async throws -> T {
+        try await requestWithResponse(path: path, method: method, query: query, headers: headers, bodyData: bodyData, decode: decode, requiresAuth: requiresAuth, timeoutInterval: timeoutInterval).value
+    }
+
+    /// `request`, also returning the HTTP response, for the few routes that answer in headers as well as the body.
+    func requestWithResponse<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil) async throws -> (value: T, response: HTTPURLResponse) {
         var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)
         components?.queryItems = query.isEmpty ? nil : query
         // URLComponents preserves `+` in query-item values, while FastAPI
@@ -1434,7 +1466,12 @@ struct KriaAPI: KriaAPIClient {
         if let acceptLanguage = Self.acceptLanguage() { request.setValue(acceptLanguage, forHTTPHeaderField: "Accept-Language") }
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
-        let storedSession = requiresAuth ? try tokenStore.read() : nil
+        var storedSession = requiresAuth ? try tokenStore.read() : nil
+        // A token that is about to expire (or already has) is refreshed BEFORE the request, instead of the request
+        // failing with a 401 and being replayed: after any idle period that is two round trips off every launch.
+        if requiresAuth, let current = storedSession, Self.isExpiringSoon(current.accessToken) {
+            storedSession = try await refreshAhead(of: current)
+        }
         if let token = storedSession?.accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let bodyData { request.httpBody = bodyData; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         var (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth)
@@ -1509,9 +1546,45 @@ struct KriaAPI: KriaAPIClient {
             let problem = Self.decodeProblem(from: data)
             throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data), retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init), code: problem?.code, problemMessage: problem?.message))
         }
-        if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return empty }
-        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return try decoder.decode(T.self, from: data)
+        if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return (empty, http) }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return (try decoder.decode(T.self, from: data), http)
     }
+    /// How close to its `exp` an access token is refreshed ahead of a request.
+    static let proactiveRefreshWindow: TimeInterval = 60
+
+    /// True when the token is a JWT whose `exp` is within `proactiveRefreshWindow` (or past). Anything else, such as
+    /// a dev-auth token with no `exp`, is left to the 401 path.
+    static func isExpiringSoon(_ accessToken: String, now: Date = .now) -> Bool {
+        guard let exp = (jwtClaims(accessToken)?["exp"] as? NSNumber)?.doubleValue else { return false }
+        return Date(timeIntervalSince1970: exp).timeIntervalSince(now) < proactiveRefreshWindow
+    }
+
+    /// The payload of a JWT, or nil for anything that is not one.
+    static func jwtClaims(_ token: String) -> [String: Any]? {
+        let parts = token.split(separator: ".")
+        guard parts.count >= 2 else { return nil }
+        var value = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        value += String(repeating: "=", count: (4 - value.count % 4) % 4)
+        guard let data = Data(base64Encoded: value) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    /// Rotates the session through the same coordinator the 401 path uses, so concurrent callers share one rotation
+    /// and the single-use refresh token is never replayed (KRI-119).
+    private func refreshAhead(of current: MobileSession) async throws -> MobileSession {
+        do {
+            return try await refreshCoordinator.refresh(
+                failedAccessToken: current.accessToken, baseURL: baseURL, tokenStore: tokenStore, session: session
+            )
+        } catch let error as APIError where error == .sessionExpired {
+            clearExpiredSession()
+            throw error
+        } catch {
+            // Offline or a server hiccup: send with the token we have; the 401 path retries the refresh if it matters.
+            return current
+        }
+    }
+
     /// Sends `request`, refreshing an expired access token once.
     private func send(_ request: inout URLRequest, storedSession: MobileSession?, requiresAuth: Bool) async throws -> (Data, URLResponse) {
         let route = Perf.routeTemplate(method: request.httpMethod, path: request.url?.path ?? "")

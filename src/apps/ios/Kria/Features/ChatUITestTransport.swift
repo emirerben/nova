@@ -31,6 +31,10 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     private var delayedResponse: DispatchWorkItem?
     override func startLoading() {
+        if PerfFixture.isFullProjectionRead(request) {
+            Perf.mark("fixture.full.arrived")
+            PerfCounters.shared.setOnce("fixture fullDelayMS", Int(PerfFixture.delay(for: request) * 1000))
+        }
         // `KRIA_SLIDE_POST_CAPS=slow`: capabilities answer after 6s (the slide editor must not wait for them).
         let slowCapabilities = request.url?.path.hasSuffix("/capabilities") == true
             && ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "slow"
@@ -51,6 +55,7 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
         } else { finishLoading() }
     }
     private func finishLoading() {
+        if PerfFixture.isFullProjectionRead(request) { Perf.mark("fixture.full.sent") }
         if let perf = PerfFixture.respond(request) {
             guard let url = request.url,
                   let response = HTTPURLResponse(url: url, statusCode: perf.status, httpVersion: nil, headerFields: perf.headers.merging(["Content-Type": "application/json"]) { first, _ in first }) else {
