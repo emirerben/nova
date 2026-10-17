@@ -862,7 +862,8 @@
       "id": "kri-546-montage-receipts",
       "tickets": [
         "KRI-546",
-        "KRI-651"
+        "KRI-651",
+        "KRI-674"
       ],
       "symptom": "Phone Montage render-ready reply said 'Do\u011frulayamad\u0131m' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
       "boundary": "publication",
@@ -886,7 +887,9 @@
         "src/apps/api/app/agents/clip_intent_planner.py",
         "src/apps/api/app/services/clip_intent_planning.py",
         "src/apps/api/app/routes/creator_agent.py",
-        "src/apps/api/prompts/clip_intent_planner.txt"
+        "src/apps/api/prompts/clip_intent_planner.txt",
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/tests/kria/test_brief_provider_recovery_postgres.py"
       ],
       "regression_tests": [
         "tests/kria/test_brief_montage_render_asks.py",
@@ -900,8 +903,8 @@
       "harness": "real_reply",
       "kill_switch": null,
       "evidence": {
-        "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read",
-        "live_model": "n/a",
+        "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read; KRI-674 follow-up timeout: stalled Pro transport causes both EN/TR healthy rendered follow-ups to fail before the fix (2 failed, 2 passed); Flash-first preserves successful clarification and single-call unknown recovery (4 passed).",
+        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17\u201314.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
         "native_output": "Berlin re-run job a7d69a5b (2026-10-08) was the incident; post-fix phone re-send pending; KRI-651: native simulator export and pixel checks passed 2026-10-13 (exact hook, color emoji, no context caption)",
         "production": "merged 2026-10-08"
       },
@@ -918,7 +921,8 @@
         "EN/TR saved opening and closing placement reaches plan approval through real clip inventory",
         "one-clip caption and raw mixed requests remain inventoried even when absent from the brief or candidates",
         "later placement changes and stale copy do not inherit prior approval",
-        "narrow follow-up extractor provider failure remains typed with saved footage"
+        "narrow follow-up extractor provider failure remains typed with saved footage",
+        "narrow rendered follow-up chooses the interactive model before contact; provider outcome unknown still stops without fallback or brief mutation"
       ],
       "neighbours_gap": [
         "approved/published generation lineage is not a typed invariant at the publication boundary (KRI-577 item 1)",
