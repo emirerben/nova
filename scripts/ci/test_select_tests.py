@@ -794,7 +794,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/device_render.py",
-                (True, "covered", "kri-669-gameday"),
+                (True, "covered", "kri-492-length-ownership,kri-669-gameday"),
             ),
             (
                 "src/apps/api/app/pipeline/pinned_text.py",

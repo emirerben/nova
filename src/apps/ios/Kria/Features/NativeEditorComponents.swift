@@ -70,6 +70,7 @@ struct NativeEditorTopBar: View {
 
 struct NativeEditorSaveBanner: View {
     @ObservedObject var session: NativeEditorSession
+    var retryApproved: (() -> Void)? = nil
 
     @ViewBuilder var body: some View {
         switch session.saveState {
@@ -105,7 +106,10 @@ struct NativeEditorSaveBanner: View {
         case .deviceRenderRetryNeeded(let message):
             VStack(spacing: 0) {
                 banner(title: "Saved — iPhone render needs a retry", detail: message, systemImage: "arrow.clockwise", tint: .orange)
-                Button("Retry device render") { Task { await session.retryDeviceRender() } }
+                Button(retryApproved == nil ? "Retry device render" : "Review retry in chat") {
+                    if let retryApproved { retryApproved() }
+                    else { Task { await session.retryDeviceRender() } }
+                }
                     .font(KriaFont.body(12).weight(.semibold))
                     .foregroundStyle(KriaColor.ink)
                     .frame(maxWidth: .infinity, minHeight: 44)
