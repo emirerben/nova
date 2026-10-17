@@ -2,6 +2,216 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.23.0] - 2026-10-17
+
+### Changed
+- fix(editor): manual editor edits win over the approved opening/closing text rules on Save (KRI-736) (#1655) <!-- release-pr: 1655 -->
+
+## [0.80.22.0] - 2026-10-17
+
+### Changed
+- perf(ios): saved transcript, early token refresh, quieter sweep, reachable older chats (KRI-711) (#1651) <!-- release-pr: 1651 -->
+
+## [0.80.21.0] - 2026-10-17
+
+### Fixed
+- KRI-674: prevent follow-up AI timeouts before render approval (#1653) <!-- release-pr: 1653 -->
+
+## [0.80.20.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save no longer rejects a clip window within 50ms of the source end (KRI-736) (#1654) <!-- release-pr: 1654 -->
+
+## [0.80.19.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save accepts text with a null role (KRI-736) (#1652) <!-- release-pr: 1652 -->
+
+## [0.80.18.0] - 2026-10-17
+
+### Changed
+- feat(ios): perf benchmark harness - signposts, fixtures, KriaPerfUITests, bench.sh (KRI-710) (#1641) <!-- release-pr: 1641 -->
+
+## [0.80.17.0] - 2026-10-17
+
+### Changed
+- Connect reviewed video exports to daily request-following reports (#1649) <!-- release-pr: 1649 -->
+
+## [0.80.16.0] - 2026-10-17
+
+### Fixed
+- KRI-674: Retry the approved native edit without replanning (#1647) <!-- release-pr: 1647 -->
+
+## [0.80.15.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save never fails because a text ends past the new timeline (KRI-736) (#1650) <!-- release-pr: 1650 -->
+
+## [0.80.14.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save after deleting a clip no longer fails with unsupported_phone_edit (KRI-736) (#1648) <!-- release-pr: 1648 -->
+
+## [0.80.13.0] - 2026-10-17
+
+### Changed
+- feat(media): backfill historical uploads into Saved uploads (#1640) <!-- release-pr: 1640 -->
+
+## [0.80.12.0] - 2026-10-17
+
+### Changed
+- test(ios): scrub seek-latency test waits up to 60 s for the real frame (#1634) <!-- release-pr: 1634 -->
+
+## [0.80.11.0] - 2026-10-17
+
+### Changed
+- fix(ci): make daily request-following reports downloadable (#1645) <!-- release-pr: 1645 -->
+
+## [0.80.10.0] - 2026-10-17
+
+### Changed
+- fix(editor): text follows every clip delete/trim/extend (KRI-715) (#1631) <!-- release-pr: 1631 -->
+
+## [0.80.9.0] - 2026-10-16
+
+### Changed
+- feat(media): automatically keep the newest 500 saved uploads (#1643) <!-- release-pr: 1643 -->
+
+## [0.80.8.0] - 2026-10-16
+
+### Changed
+- fix(kria): Tigre night T1 Talking fixes (KRI-703: 704, 705, 706, 708) (#1633) <!-- release-pr: 1633 -->
+
+## [0.80.7.0] - 2026-10-16
+
+### Changed
+- fix(montage): grouped title is one continuous block across the group (KRI-716) (#1637) <!-- release-pr: 1637 -->
+
+## [0.80.6.0] - 2026-10-16
+
+### Changed
+- feat(ios): choose the part of a clip to use with a slide-and-resize window (KRI-717) (#1638) <!-- release-pr: 1638 -->
+
+## [0.80.5.0] - 2026-10-16
+
+### Changed
+- Add a local request-review app and automatic regression loop (#1635) <!-- release-pr: 1635 -->
+
+## [0.80.4.0] - 2026-10-16
+
+### Changed
+- fix(kria): render the approved simpler edit (KRI-698) (#1639) <!-- release-pr: 1639 -->
+
+## [0.80.3.0] - 2026-10-16
+
+### Changed
+- Add a reviewed request-following learning loop (#1629) <!-- release-pr: 1629 -->
+
+## [0.80.2.0] - 2026-10-16
+
+### Changed
+- fix(kria): re-run a turn that hit its time budget instead of asking for "go ahead" (KRI-709) (#1628) <!-- release-pr: 1628 -->
+
+## [0.80.1.0] - 2026-10-16
+
+### Changed
+- feat(api): Display Word saves as one word at a time (karaoke.single_word) (KRI-683, 2/2) (#1627) <!-- release-pr: 1627 -->
+
+## [0.80.0.0] - 2026-10-16
+
+### Added
+- feat(ios): reuse saved uploads across posts (KRI-384) (#1632) <!-- release-pr: 1632 -->
+
+## [0.79.19.0] - 2026-10-16
+
+### Changed
+- test(kria): KRI-689 review test follows the KRI-686 moment-ask receipt (main CI red) (#1630) <!-- release-pr: 1630 -->
+
+## [0.79.18.0] - 2026-10-16
+
+### Fixed
+- fix: recover saved iPhone edits while rendering is pending (#1626) <!-- release-pr: 1626 -->
+
+## [0.79.17.0] - 2026-10-16
+
+### Changed
+- feat(ios): Display Word shows one word at a time from one layer per caption (KRI-671, 1/2) (#1610) <!-- release-pr: 1610 -->
+
+## [0.79.16.0] - 2026-10-16
+
+### Changed
+- fix(kria): repair an over-long story line instead of failing the turn (KRI-687) (#1621) <!-- release-pr: 1621 -->
+
+## [0.79.15.0] - 2026-10-16
+
+### Changed
+- fix(kria): read "eight of them, about 2 seconds each" as a moment ask (KRI-686) (#1625) <!-- release-pr: 1625 -->
+
+## [0.79.14.0] - 2026-10-16
+
+### Changed
+- fix(kria): tell the creator before render that phone montages can't change clip speed (KRI-689) (#1624) <!-- release-pr: 1624 -->
+
+## [0.79.13.0] - 2026-10-16
+
+### Changed
+- fix(kria): judge a glued music + ending ask by its parts and never call a clip ending a photo (KRI-688) (#1623) <!-- release-pr: 1623 -->
+
+## [0.79.12.0] - 2026-10-16
+
+### Fixed
+- fix(kria): a brighten ask gets an honest "Couldn't" and never reaches the approval card (KRI-700) (#1622) <!-- release-pr: 1622 -->
+
+## [0.79.11.0] - 2026-10-16
+
+### Changed
+- fix(kria): say a voiceover edit can't show text on a spoken word (KRI-699) (#1620) <!-- release-pr: 1620 -->
+
+## [0.79.10.0] - 2026-10-16
+
+### Changed
+- fix(kria): name the missing text when a phone render is refused (KRI-701) (#1619) <!-- release-pr: 1619 -->
+
+## [0.79.9.0] - 2026-10-16
+
+### Changed
+- fix(montage): cut named-line clips on the line, never call a missed line met (KRI-681) (#1616) <!-- release-pr: 1616 -->
+
+## [0.79.8.0] - 2026-10-16
+
+### Fixed
+- fix(clip-picker): settle tapped creator captions with creator-copy bounds (KRI-696) (#1618) <!-- release-pr: 1618 -->
+
+## [0.79.7.0] - 2026-10-16
+
+### Changed
+- fix(kria): keep quoted clip asks after the first turn (KRI-677) (#1617) <!-- release-pr: 1617 -->
+
+## [0.79.6.0] - 2026-10-16
+
+### Changed
+- feat(clips): measured brightness so "skip the very dark clips" matches (KRI-680) (#1615) <!-- release-pr: 1615 -->
+
+## [0.79.5.0] - 2026-10-16
+
+### Changed
+- fix(clip-intents): 4-word creator labels settle, unusable label text never loops the picker (KRI-678) (#1614) <!-- release-pr: 1614 -->
+
+## [0.79.4.0] - 2026-10-16
+
+### Changed
+- fix(kria): keep Turkish "don't use the dark clips" asks and never drop a skip silently (KRI-680) (#1613) <!-- release-pr: 1613 -->
+
+## [0.79.3.0] - 2026-10-16
+
+### Changed
+- fix(kria): song follows the creator's length and music mood (KRI-679) (#1612) <!-- release-pr: 1612 -->
+
+## [0.79.2.0] - 2026-10-16
+
+### Changed
+- fix(kria): never re-ask the wording of a title the creator quoted (KRI-682) (#1611) <!-- release-pr: 1611 -->
+
 ## [0.79.1.0] - 2026-10-15
 
 ### Fixed

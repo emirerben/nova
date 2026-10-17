@@ -732,19 +732,20 @@ def test_editor_edit_with_no_render_section_ignores_a_stale_device_record() -> N
     assert _device_render_state(job, execution) is None
 
 
-def test_device_render_failure_points_the_creator_at_the_phone_not_chat_retry() -> None:
+def test_device_render_failure_offers_the_saved_edit_retry() -> None:
     job = _device_job()
     mark_device_failed(job, VARIANT, reason_code="thermal", detail="")
     _, execution, events = _observe(
         job,
         {"target_variant_id": VARIANT, "result": {"editor_prep": {"device_recipe_revision": 1}}},
     )
-    assert execution.error["recovery"] == "manual"
-    assert execution.error["retryable"] is False
+    assert execution.error["recovery"] == "retry"
+    assert execution.error["retryable"] is True
     failed = events[-1]
-    assert failed["payload"]["recovery"] == "manual"
+    assert failed["payload"]["recovery"] == "retry"
     assert "iPhone" in failed["content"]
-    assert "retry without rebuilding" not in failed["content"]
+    assert "Retry the same edit" in failed["content"]
+    assert "after reviewing its approval" in failed["content"]
 
 
 def test_a_cloud_render_failure_keeps_the_chat_retry_recovery() -> None:
@@ -1058,6 +1059,102 @@ def test_a_deterministic_phone_decline_stays_an_ask_and_shows_the_alternative() 
     assert events[-1]["payload"]["decline_reason"] == "evidence_missing"
 
 
+# --- KRI-701: a phone plan refused for missing evidence names it, never blames the iPhone --
+#
+# Failure modes: the "your iPhone can't render yet" line is shown for a text the phone can
+# draw; the reply offers two opposite paths ("start a new edit" + "I can rebuild"); the
+# missing text is never named; Turkish chats fall back to English or lose the name; a very
+# long text floods the reply; a real capability gap (no typed decline) loses its line.
+
+_CANT_RENDER = "your iPhone can't render yet"
+_MISSING_TEXT_DECLINE = {
+    "decline_reason": "evidence_missing",
+    "field_path": "brief:text",
+    "alternative": "I can rebuild the edit so it shows this, or you can relax the requirement.",
+    "missing_text": "1 · leave before 11",
+    "failure_reason": "phone_plan_unsupported",
+}
+
+
+def test_a_missing_text_refusal_names_the_text_and_asks_one_question() -> None:
+    job = _declined_job(
+        "phone_plan_unsupported",
+        decline=dict(_MISSING_TEXT_DECLINE),
+        detail="This edit is missing confirmed on-screen text.",
+    )
+    _, execution, events = _observe(job, {})
+
+    assert (execution.error["recovery"], execution.error["field_path"]) == (
+        "ask_user",
+        "brief:text",
+    )
+    content = events[-1]["content"]
+    assert "“1 · leave before 11”" in content
+    assert content.count("?") == 1
+    for contradiction in (_CANT_RENDER, "Start a new edit", "relax the requirement"):
+        assert contradiction not in content
+
+
+def test_a_missing_text_refusal_in_turkish_keeps_the_name_and_turkish_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(kria_runtime, "thread_reply_language", lambda _thread: "tr")
+    job = _declined_job(
+        "phone_plan_unsupported",
+        decline=dict(_MISSING_TEXT_DECLINE, missing_text="1 · 23'ten önce çık"),
+        detail="This edit is missing confirmed on-screen text.",
+    )
+    _, _execution, events = _observe(job, {})
+
+    content = events[-1]["content"]
+    assert "“1 · 23'ten önce çık” yazısı düzenlemede yok" in content
+    assert "iPhone" not in content
+    assert "isn't in the edit" not in content
+
+
+def test_a_long_missing_text_is_shortened_in_the_reply() -> None:
+    job = _declined_job(
+        "phone_plan_unsupported",
+        decline=dict(_MISSING_TEXT_DECLINE, missing_text="word " * 200),
+        detail="This edit is missing confirmed on-screen text.",
+    )
+    _, _execution, events = _observe(job, {})
+
+    content = events[-1]["content"]
+    assert "…”" in content
+    assert len(content) < 300
+
+
+def test_an_unnamed_phone_evidence_gap_says_what_was_lacking_not_an_iphone_limit() -> None:
+    job = _declined_job(
+        "phone_plan_unsupported",
+        decline={
+            "decline_reason": "evidence_missing",
+            "field_path": "shot_labels[]",
+            "alternative": (
+                "I can rebuild the edit so it shows this, or you can relax the requirement."
+            ),
+            "failure_reason": "phone_plan_unsupported",
+        },
+        detail="This edit put confirmed text in the wrong place.",
+    )
+    _, _execution, events = _observe(job, {})
+
+    content = events[-1]["content"]
+    assert content.startswith("This edit put confirmed text in the wrong place.")
+    assert "I can rebuild the edit so it shows this" in content
+    assert _CANT_RENDER not in content
+    assert "Start a new edit" not in content
+
+
+def test_an_untyped_phone_plan_failure_keeps_the_capability_line() -> None:
+    """A real capability gap carries no evidence decline: the iPhone line stays."""
+    job = _declined_job("phone_plan_unsupported", detail="unsupported effect: glitch")
+    _, _execution, events = _observe(job, {})
+
+    assert _CANT_RENDER in events[-1]["content"]
+
+
 def test_a_cloud_publication_evidence_gap_is_a_repair_retry() -> None:
     job = _declined_job("creator_render_contract_unverified")
     job.assembly_plan = {
@@ -1295,6 +1392,27 @@ def test_a_refused_edit_says_what_failed_what_was_kept_and_a_next_step_that_exis
     assert job.assembly_plan["variants"][0] == good  # nothing about the live version changed
 
 
+def test_a_refused_device_edit_names_the_missing_text() -> None:
+    from app.services.creator_render_contract import CreatorRenderContractError
+    from app.services.device_render import record_contract_decline
+
+    job = _refused_job("evidence_missing")
+    exc = CreatorRenderContractError(
+        "This edit is missing confirmed on-screen text.",
+        decline_reason="evidence_missing",
+        field_path="brief:text",
+        missing_text="2 · stay on the left",
+    )
+    record_contract_decline(job, VARIANT, exc, stage="publication")
+
+    _outcome, _execution, events = _observe_refusal(job)
+
+    text = events[-1]["content"]
+    assert text.startswith("The text “2 · stay on the left” isn't in that edit.")
+    assert "not applied" in text
+    assert "missing confirmed on-screen text" not in text
+
+
 @pytest.mark.parametrize("reason", ["needs_choice", "requirement_conflict"])
 def test_a_refusal_that_needs_a_new_decision_asks_the_specific_question(reason) -> None:
     job = _refused_job(
@@ -1343,8 +1461,9 @@ def test_a_device_failure_with_no_recorded_refusal_keeps_the_phone_retry_copy() 
 
     _, execution, events = _observe_refusal(job)
 
-    assert execution.error["recovery"] == "manual"
-    assert "tap Retry" in events[-1]["content"]
+    assert execution.error["recovery"] == "retry"
+    assert "Retry the same edit" in events[-1]["content"]
+    assert "after reviewing its approval" in events[-1]["content"]
     assert "decline_reason" not in execution.error
 
 

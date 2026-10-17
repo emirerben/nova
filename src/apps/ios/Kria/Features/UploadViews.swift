@@ -18,6 +18,7 @@ import KriaMediaEngine
 /// a time. There is no live start, no preselection and no un-choosing there; the attached list
 /// below the picker is the duplicate guard.
 struct FootagePickerView: View {
+    let libraryEnabled: Bool
     let projectID: UUID
     let maximumClipCount: Int
     let attachedClipCount: Int
@@ -45,6 +46,8 @@ struct FootagePickerView: View {
     @ObservedObject private var uploads: BackgroundUploadCoordinator
     /// Upload rows say when they are waiting for a connection (KRI-294).
     @ObservedObject private var network = NetworkReachability.shared
+    @State private var showingSavedUploads = false
+    @State private var savedUploadsAdded = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showingPhotosPicker = false
     @State private var showingFileImporter = false
@@ -69,8 +72,10 @@ struct FootagePickerView: View {
         onSelectionCompleted: (() -> Void)? = nil,
         onAudioFileSelected: ((URL) -> Void)? = nil,
         showsHeading: Bool = true,
-        titleOverride: String? = nil
+        titleOverride: String? = nil,
+        libraryEnabled: Bool = false
     ) {
+        self.libraryEnabled = libraryEnabled
         self.titleOverride = titleOverride
         self.onPickerFilled = onPickerFilled
         self.onSelectionCompleted = onSelectionCompleted
@@ -104,7 +109,7 @@ struct FootagePickerView: View {
         if role == .song { return "Only use songs you have the rights to. Kria uploads the full file to analyze and render it with your video." }
         guard role != .voiceover else { return nil }
         switch destination {
-        case .phone: return "Kria uploads a smaller copy of each video to plan your edit. Full-quality originals stay on this iPhone."
+        case .phone: return libraryEnabled ? "Uploads are saved for reuse. Kria analyzes a smaller video copy; full-quality originals stay on this iPhone." : "Kria uploads a smaller copy of each video to plan your edit. Full-quality originals stay on this iPhone."
         case .cloud: return "Kria uploads the full-quality originals you choose and keeps them with this project."
         // A phone-rendered project still uploads Visuals at full quality (so the AI can plan around them)
         // and downloads them again to render. That is the disclosure the per-upload screen carried for
@@ -168,6 +173,23 @@ struct FootagePickerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if showsHeading { KriaSectionLabel(title: "Add \(displayTitle.lowercased())") }
+            if libraryEnabled {
+                Button { showingSavedUploads = true } label: {
+                    Label("Saved uploads", systemImage: "square.stack").frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .buttonStyle(KriaSecondaryButtonStyle())
+                .accessibilityIdentifier("saved-uploads-open")
+                .disabled(selectionCapacity.remaining == 0 || !destination.canUpload)
+                .sheet(isPresented: $showingSavedUploads, onDismiss: {
+                    if savedUploadsAdded { savedUploadsAdded = false; onSelectionCompleted?() }
+                }) {
+                    SavedUploadsView(projectID: projectID, itemID: itemID, role: role, destination: destination,
+                                     capacity: selectionCapacity.remaining, uploads: uploads) {
+                        savedUploadsAdded = true
+                    }
+                }
+            }
+
             if !role.isAudio {
             Button { beginImport(source: .photos) } label: {
                 Label("Choose from Photos", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity, minHeight: 48)

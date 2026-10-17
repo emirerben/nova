@@ -21,6 +21,8 @@ from app.kria.api_schemas import (
     DraftUndoBody,
     DraftWriteBody,
     KriaProblemOut,
+    RenderRetryBody,
+    RenderRetryOut,
     SubmitTurnBody,
     ThreadDeltaOut,
     TurnAccepted,
@@ -160,6 +162,38 @@ async def create_turn(
                 error_class=type(exc).__name__,
             )
     return response
+
+
+@router.post("/{thread_id}/render-retries", response_model=RenderRetryOut, status_code=202)
+@limiter.limit("12/minute")
+async def retry_runtime_render(
+    request: Request,
+    thread_id: str,
+    body: RenderRetryBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
+) -> RenderRetryOut | JSONResponse:
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
+    from app.kria.render_retry import prepare_render_retry  # noqa: PLC0415
+
+    try:
+        _runtime_enabled(user)
+        return await prepare_render_retry(
+            db,
+            thread_id=_uuid(
+                thread_id, code="thread_not_found", message="Creation thread not found"
+            ),
+            creator_id=user.id,
+            body=body,
+        )
+    except RuntimeFailure as failure:
+        await db.rollback()
+        return _problem(request, failure)
 
 
 @router.get(

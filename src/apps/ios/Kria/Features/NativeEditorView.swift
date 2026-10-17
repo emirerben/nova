@@ -26,6 +26,7 @@ struct NativeEditorView: View {
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
     @State private var showsDeviceRender = false
+    @State private var opensRetryConversation = false
     @State private var showsOriginalsRecovery = false
     @State private var showsConversation = false
     /// KRI-589: Draw mode. `appendingTo` is the drawing "Draw more" adds to; nil starts a new drawing.
@@ -156,9 +157,18 @@ struct NativeEditorView: View {
                     if case .textCreation = panel { changePanel(to: nil) }
                 }
             }
-            .sheet(isPresented: $showsDeviceRender) {
+            .sheet(isPresented: $showsDeviceRender, onDismiss: {
+                if opensRetryConversation {
+                    opensRetryConversation = false
+                    reviewRetryInChat()
+                }
+            }) {
                 if let key = session.deviceRenderKey {
                     DeviceRenderPanel(key: key, sessions: model.deviceRenders,
+                        retryApproved: model.deviceRenders.retryNeedsApproval(key) ? {
+                            opensRetryConversation = true
+                            showsDeviceRender = false
+                        } : nil,
                         retry: { await session.refreshDeviceRender(retry: true) })
                         .padding(20)
                         .presentationDetents([.medium, .large])
@@ -307,7 +317,8 @@ struct NativeEditorView: View {
                 .transition(shouldReduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             }
             VStack(spacing: 0) {
-                NativeEditorSaveBanner(session: session)
+                NativeEditorSaveBanner(session: session,
+                    retryApproved: session.deviceRenderKey.map { model.deviceRenders.retryNeedsApproval($0) } == true ? { reviewRetryInChat() } : nil)
                 NativeEditorExportBanner(exporter: exporter)
                 if let message = session.cloudEditorUnavailableMessage {
                     Label(message, systemImage: "lock")
@@ -571,6 +582,7 @@ struct NativeEditorView: View {
                                     session: session,
                                     onAdjust: { inspector = .adjust },
                                     onCrop: { inspector = .crop(selection) },
+                                    onRange: { inspector = .sourceWindow(selection) },
                                     onTransition: { inspector = .selection(selection) }
                                 )
                                     .transition(panelTransition)
@@ -945,6 +957,11 @@ struct NativeEditorView: View {
         return nil
     }
 
+    private func reviewRetryInChat() {
+        if conversation != nil { showsConversation = true }
+        else { requestBack() }
+    }
+
     private func requestBack() {
         if session.pendingText != nil { session.cancelTextCreation(); resignKeyboard(); return }
         if panel != nil { changePanel(to: nil); return }
@@ -1000,6 +1017,8 @@ private enum NativeEditorInspector: Identifiable {
     case adjust
     /// KRI-44: the shared Crop editor for the selected clip.
     case crop(EditorSelection)
+    /// KRI-717: the Range picker for the selected clip's source window.
+    case sourceWindow(EditorSelection)
     /// KRI-306: Vertical / Landscape and Black bars / Crop for the finished video.
     case videoShape
 
@@ -1009,6 +1028,7 @@ private enum NativeEditorInspector: Identifiable {
         case .selection(let selection): return "selection-\(selection.kind.rawValue)-\(selection.id)"
         case .adjust: return "adjust"
         case .crop(let selection): return "crop-\(selection.kind.rawValue)-\(selection.id)"
+        case .sourceWindow(let selection): return "range-\(selection.kind.rawValue)-\(selection.id)"
         case .videoShape: return "video-shape"
         }
     }
@@ -1030,6 +1050,7 @@ private enum NativeEditorInspector: Identifiable {
             }
         case .adjust: return "Adjust"
         case .crop: return "Crop"
+        case .sourceWindow: return "Range"
         case .videoShape: return "Video shape"
         }
     }
@@ -1057,6 +1078,7 @@ private struct NativeEditorInspectorView: View {
                 case .selection(let selection): NativeSelectionInspector(selection: selection, session: session)
                 case .adjust: NativeAdjustInspector(session: session)
                 case .crop(let selection): NativeCropSheet(session: session, selection: selection, embedded: true)
+                case .sourceWindow(let selection): NativeSourceWindowSheet(session: session, selection: selection, embedded: true)
                 case .videoShape: NativeVideoShapeInspector(session: session)
                 }
             }

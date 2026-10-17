@@ -33,10 +33,65 @@ final class NativeKaraokePainter: @unchecked Sendable {
     }
 }
 
+/// `KaraokeContent.singleWord`: one word on screen at a time (see the wire contract on `KaraokeContent`).
+/// A word's bitmap is painted when it first becomes the active word and only the current one is kept, so a cue
+/// activates for the cost of one word (like a one-word layer) instead of two bitmaps per word.
+final class NativeSingleWordPainter: @unchecked Sendable {
+    private let layer: PortableTextLayer
+    private let content: KaraokeContent
+    private let assetURLs: [String: URL]
+    private let canvas: CGSize
+    private let maxBitmapBytes: Int
+    private let lock = NSLock()
+    private var current: (index: Int, bitmap: RecipeTextLayer)?
+    private(set) var bitmapBytes = 0
+
+    init(layer: PortableTextLayer, content: KaraokeContent, assetURLs: [String: URL], canvas: CGSize, maxBitmapBytes: Int) {
+        self.layer = layer; self.content = content; self.assetURLs = assetURLs; self.canvas = canvas; self.maxBitmapBytes = maxBitmapBytes
+    }
+
+    /// The index of the word shown at a layer-local time, or nil before the first word starts.
+    func activeIndex(localTime: Double) -> Int? { content.starts.lastIndex(where: { localTime >= $0 }) }
+
+    private func bitmap(for index: Int) throws -> RecipeTextLayer {
+        if let current, current.index == index { return current.bitmap }
+        let run = layer.runs[index]
+        let drawn = PositionedTextRun(text: run.text, fontAssetID: run.fontAssetID, fontSize: run.fontSize,
+            x: run.x, baselineY: run.baselineY, letterSpacing: run.letterSpacing, shaped: run.shaped,
+            fill: content.highlight, stroke: run.stroke, strokeWidth: run.strokeWidth,
+            blurLayers: run.blurLayers, glyphs: run.glyphs, fontVariations: run.fontVariations)
+        let made = try RecipeTextLayer.make(NativeDiscreteRevealPainter.paintingLayer(layer, runs: [drawn]),
+                                            assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: maxBitmapBytes)
+        current = (index, made)
+        bitmapBytes = max(bitmapBytes, Int(made.frame.width * made.frame.height * 4) * 2)
+        return made
+    }
+
+    /// The active word at its absolute canvas position (the layer's frame is the whole canvas).
+    func image(localTime: Double) throws -> CIImage {
+        lock.lock(); defer { lock.unlock() }
+        guard let index = activeIndex(localTime: localTime) else { return CIImage.empty() }
+        let made = try bitmap(for: index)
+        return made.image.transformed(by: CGAffineTransform(translationX: made.frame.minX, y: made.frame.minY))
+    }
+}
+
 extension RecipeTextLayer {
+    static func makeSingleWord(_ layer: PortableTextLayer, content: KaraokeContent, assetURLs: [String: URL], canvas: CGSize, maxBitmapBytes: Int) throws -> Self {
+        let painter = NativeSingleWordPainter(layer: layer, content: content, assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: maxBitmapBytes)
+        // Paint the first word now so a layer that cannot be painted fails at build time, and to size the cache.
+        _ = try painter.image(localTime: content.starts.first ?? 0)
+        return Self(image: CIImage.empty(), frame: CGRect(origin: .zero, size: canvas), start: layer.start, end: layer.end,
+                    animation: .none, selectionBounds: try PortableTextVectorPainter(layer: layer, assetURLs: assetURLs, canvas: canvas).selectionBounds,
+                    portable: layer, portableAnchor: CGPoint(x: layer.anchorX, y: canvas.height - layer.anchorY), singleWord: painter)
+    }
+
     static func makeKaraoke(_ layer: PortableTextLayer, assetURLs: [String: URL], canvas: CGSize, maxBitmapBytes: Int) throws -> Self {
         guard let content = layer.karaoke else { throw RecipeError.invalidTimeline }
         try content.validate(runs: layer.runs)
+        if content.singleWord == true {
+            return try makeSingleWord(layer, content: content, assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: maxBitmapBytes)
+        }
         var words: [NativeKaraokePainter.Word] = []
         var retained = 0
         var bounds = CGRect.null

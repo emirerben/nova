@@ -281,7 +281,7 @@ def section_of_text_bar(bar: dict[str, Any], *, clip_bar_ids: frozenset[str] = f
     if (
         bar.get("clip_id")
         or bar_id in clip_bar_ids
-        or bar_id.startswith(("clip-label-", "montage-text-"))
+        or bar_id.startswith(("clip-label-", "montage-text-", "group-title-"))
     ):
         return "clips"
     return "overlays"

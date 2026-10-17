@@ -195,6 +195,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `COPILOT_HONEST_REPLIES_ENABLED` — default `true` (KRI-186 kill switch); `false` ⇒ legacy chat-edit reply + stateless copilot. Guard: `test_flag_off_is_byte_identical_to_legacy`. Apply: fly secret + restart.
 - `EDIT_WIDE_LOOKS_ENABLED` — off; rollout: `docs/pipelines/generative.md`.
 - `CLIP_INTENTS_ENABLED` / `CLIP_FACTS_ENABLED` — **ON in prod** (code default `false`); intents since 2026-10-01. Rollout/rollback: `docs/pipelines/clip-understanding.md`.
+- `CLIP_EXPOSURE_FACT_ENABLED` — default `false` (KRI-680); measured brightness in clip records. `docs/pipelines/clip-understanding.md`.
 - `EDIT_PROPOSAL_SEMANTIC_ENABLED` — `false`; requires 0107 + v8 on API/workers. See `docs/pipelines/guided-edit.md`.
 - `ORIENTATION_NORMALIZE_ENABLED` — defaults to `true`. Set to `false` and restart workers to make `normalize_orientation` a no-op (safety valve for orientation regressions).
 - `LYRIC_DYNAMIC_CROSSFADE_ENABLED` — defaults `true`. **WARNING: `false` re-introduces the stacked-text bug — emergency rollback ONLY**, full narrative + apply command in agents/DECISIONS.md "Kill-switch incidents". Guard: `tests/pipeline/test_lyric_injector_no_stacking.py::test_kill_switch_disabled_reproduces_pre_fix_output`.
@@ -249,7 +250,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Framework: Next.js (auto-detected)
 - Root directory: `src/apps/web/`
 - Deploy: auto-deploys on push to `main` via GitHub integration. **Do NOT run `vercel --prod` from a feature branch** — it pushes your local working tree to production. For an emergency manual deploy: `git checkout main && git pull`, then `cd src/apps/web && vercel --prod`.
-- Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXTAUTH_SECRET, ADMIN_BASIC_AUTH_USER, ADMIN_BASIC_AUTH_PASSWORD). NEXT_PUBLIC_GOOGLE_CLIENT_ID + NEXT_PUBLIC_GOOGLE_PICKER_API_KEY were removed in v0.7.8.2 with the dead `/template/[id]` route (Drive picker gone; NextAuth uses server-side GOOGLE_CLIENT_ID).
+- Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXTAUTH_SECRET, ADMIN_BASIC_AUTH_USER, ADMIN_BASIC_AUTH_PASSWORD).
 - **`ADMIN_BASIC_AUTH_USER` + `ADMIN_BASIC_AUTH_PASSWORD` are MANDATORY.** They gate `/admin/*` and `/api/admin/*` via `src/apps/web/src/middleware.ts`. Without them, every admin page returns 503 — fail-closed by design.
 - Preview deploys: full API access via regex CORS (`allow_origin_regex` in `main.py`)
 

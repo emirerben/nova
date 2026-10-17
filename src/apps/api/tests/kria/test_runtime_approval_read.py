@@ -44,6 +44,7 @@ def _approval(thread_id: uuid.UUID, creator_id: uuid.UUID) -> SimpleNamespace:
         target_ownership_epoch=2,
         consequence_summary="Render the tighter matcha cut.",
         cost_summary="One render",
+        execution_ids=[],
         status="pending",
         expires_at=datetime.now(UTC) + timedelta(minutes=30),
     )

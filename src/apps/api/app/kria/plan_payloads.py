@@ -34,7 +34,7 @@ log = structlog.get_logger()
 # variants are a "fade" to the creator; wipes stay unmapped (null, never a guess).
 _RECIPE_TRANSITIONS: dict[str, str] = {"fade_black": "fade", "fade_white": "fade"}
 
-_CLIP_TEXT_PREFIXES = ("clip-label-", "montage-text-")
+_CLIP_TEXT_PREFIXES = ("clip-label-", "montage-text-", "group-title-")
 _MOTION_FPS = 30.0
 
 TrackMeta = Callable[[str], dict[str, Any] | None]

@@ -24,6 +24,7 @@ from app.pipeline.phone_captions import (
     compile_caption_layers,
 )
 from app.pipeline.phone_editor_visuals import compile_editor_media_track
+from app.pipeline.phone_recipe_shared import snap_text_overshoot, timeline_end_s
 from app.pipeline.phone_subtitled_plan import _compile_overlay_track, _compile_sfx_track
 from app.pipeline.phone_voiceover_montage_plan import voiceover_music_gain
 from app.services.authored_editor import explicit_authored_slots
@@ -187,6 +188,13 @@ def compile_phone_authored_timeline(
             look=caption_look_from_variant(variant),
         )
     )
+    # KRI-736: `render_presentation` clamps every text to the cut's total, but the burn
+    # dict then rounds its end UP to 3 decimals (`build_intro_overlay`). A cut whose total
+    # is not millisecond-exact (frame-based phone durations: 7.4333333 x 3 = 22.2999999)
+    # leaves a text that ends there ~0.1 ms past the clips, and `EditRecipeV2` compares
+    # strictly, so the Save hard-failed `unsupported_phone_edit` ("text layer exceeds the
+    # timeline"). Every other phone compiler snaps this; a real overrun still fails.
+    snap_text_overshoot(layers, timeline_end_s(clips))
     for font_id, font in caption_font_assets(layers).items():
         manifest[font_id] = font
         assets[font_id] = MediaAsset(

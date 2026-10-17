@@ -504,6 +504,7 @@ class UnifiedMontagePlan:
                     "provenance": label.provenance,
                     "fact_kind": label.fact_kind,
                     "inferred": label.inferred,
+                    **({"group_id": label.group_id} if label.group_id else {}),
                 }
                 for label in (self.snapshot.clip_labels or [])
             ],
@@ -531,7 +532,10 @@ class UnifiedMontagePlan:
         }
 
         if self.snapshot.text_composition is not None:
-            from app.pipeline.guided_story import compile_proposal_execution_plan
+            from app.pipeline.guided_story import (
+                compile_proposal_execution_plan,
+                group_title_prefix,
+            )
 
             texts = compile_proposal_execution_plan(self.snapshot)["text_elements"]
 
@@ -559,6 +563,14 @@ class UnifiedMontagePlan:
                     None,
                 )
                 text = wording(f"clip-label-{cut.cut_id}") if cut else None
+                if text is None and label.get("group_id"):
+                    # One continuous title covers the whole stretch: read it back from
+                    # the first group-title element of the chapter.
+                    prefix = group_title_prefix(label["group_id"])
+                    first = next(
+                        (row["id"] for row in texts if str(row["id"]).startswith(prefix)), None
+                    )
+                    text = wording(first) if first else None
                 if text is not None:
                     actual_labels.append({**label, "text": text})
             record["labels"] = actual_labels
@@ -1243,6 +1255,7 @@ def plan_unified_montage(
     # never the text's place in the creator's list (shots are rarely listed in
     # upload order). The clips they did not describe then get no text at all.
     described = _described_shot_labels(strategy, clip_intents_enabled)
+    chapter_titles, described_titles = _chapter_group_ids(strategy, clip_intents_enabled)
     start_fact = _first(view.facts, _START_KEYS)
     end_fact = _first(view.facts, _END_KEYS)
 
@@ -1257,10 +1270,14 @@ def plan_unified_montage(
     )
     for index, clip in enumerate(ordered):
         chosen: tuple[str, str, str | None, bool] | None = None  # text, provenance, kind, inferred
+        group_id: str | None = None
         if clip.ref_id in view.clip_literals:
             chosen = (view.clip_literals[clip.ref_id], "creator", None, False)
         elif clip.ref_id in described:
             chosen = (described[clip.ref_id], "creator", None, False)
+            shared = described_titles.get(clip.ref_id)
+            if shared is not None and shared[1] == described[clip.ref_id]:
+                group_id = shared[0]
         elif not described and index < len(positional):
             chosen = (positional[index], "creator", None, False)
         elif (
@@ -1276,6 +1293,11 @@ def plan_unified_montage(
         elif clip.ref_id in intent_labels:
             text, creator_text = intent_labels[clip.ref_id]
             chosen = (text, "creator" if creator_text else "fact", None, not creator_text)
+            # A chapter title shared with the neighbouring clips of its chapter prints
+            # once across them; a sport tag or placeholder that won the clip does not.
+            chapter = chapter_titles.get(clip.ref_id)
+            if chapter is not None and chapter[1] == text:
+                group_id = chapter[0]
         elif described:
             pass
         elif view.wants_per_clip_text and view.per_clip_text_is_time:
@@ -1326,6 +1348,7 @@ def plan_unified_montage(
             fact_kind=chosen[2],
             inferred=chosen[3],
             min_display_s=min_display_s(len(text)),
+            group_id=group_id,
         )
 
     # ── title and typography ─────────────────────────────────────────────────
@@ -1963,6 +1986,54 @@ def _label_rows(
     return rows, placeholders
 
 
+def _chapter_captions(strategy: Mapping[str, Any]) -> list[tuple[str, str, list[str]]]:
+    """(group id, the creator's chapter title, member media ids) per caption intent.
+
+    The group id is the intent's own id: clips of one chapter that sit next to each
+    other in the final order share ONE continuous title instead of a copy per clip.
+    """
+    out: list[tuple[str, str, list[str]]] = []
+    for index, intent in enumerate(strategy.get("resolved_clip_intents") or []):
+        if not _is_resolved(intent, "caption") or intent.get("creator_text"):
+            continue
+        text = _nfc(intent.get("caption_text"))
+        if text and intent.get("caption_grounding") == "creator_text":
+            group_id = _nfc(intent.get("intent_id")) or f"caption-{index + 1}"
+            out.append((group_id, text, _members(intent)))
+    return out
+
+
+def _chapter_group_ids(
+    strategy: Mapping[str, Any], enabled: bool
+) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, str]]]:
+    """(chapter titles, described titles): media_id -> (group id, text) of a shared title.
+
+    The first maps the chapter-name captions ``_intent_labels`` prints; the second maps
+    the creator's own words matched to SEVERAL clips (``_described_shot_labels``), which
+    are the same words on every member and so also read as one title across neighbours.
+    """
+    if not enabled:
+        return {}, {}
+    chapters: dict[str, tuple[str, str]] = {}
+    for group_id, text, members in _chapter_captions(strategy):
+        for media_id in members:
+            chapters[media_id] = (group_id, text)
+    described: dict[str, tuple[str, str]] = {}
+    for index, intent in enumerate(strategy.get("resolved_clip_intents") or []):
+        if not _is_resolved(intent, "caption") or not intent.get("creator_text"):
+            continue
+        if intent.get("caption_grounding") != "creator_text":
+            continue
+        text = _nfc(intent.get("caption_text"))
+        members = _members(intent)
+        if not text or len(members) < 2:
+            continue
+        group_id = _nfc(intent.get("intent_id")) or f"caption-{index + 1}"
+        for media_id in members:
+            described.setdefault(media_id, (group_id, text))
+    return chapters, described
+
+
 def _intent_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, tuple[str, bool]]:
     """media_id -> (text, creator_wrote_it) from server-verified label intents."""
     if not enabled:
@@ -1970,13 +2041,9 @@ def _intent_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, tupl
     rows, placeholders = _label_rows(strategy)
     # KRI-282: "a text for the pub" prints the chapter's own name, in the creator's
     # words, on that chapter's clips, over a broader sport tag.
-    for intent in strategy.get("resolved_clip_intents") or []:
-        if not _is_resolved(intent, "caption") or intent.get("creator_text"):
-            continue
-        text = _nfc(intent.get("caption_text"))
-        if text and intent.get("caption_grounding") == "creator_text":
-            for media_id in _members(intent):
-                rows[media_id] = (text, True)
+    for _group_id, text, members in _chapter_captions(strategy):
+        for media_id in members:
+            rows[media_id] = (text, True)
     # A placeholder ("Name", for the creator to replace) is the more specific
     # ask -- "individual shots of people" -- so it wins over a broader label on the
     # same clip (a sport tag). It prints as the creator's own request, never inferred.

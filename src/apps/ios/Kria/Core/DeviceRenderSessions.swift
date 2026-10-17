@@ -63,10 +63,14 @@ enum DeviceRenderButtonTitle {
     typealias Fetch = @Sendable (UUID, String) async throws -> DeviceRenderStatusResponse
     typealias Factory = @MainActor (DeviceRenderKey, DeviceRenderRequest) throws -> DeviceRenderCoordinator
     typealias RetryFailure = @Sendable (UUID, DeviceRenderIdentity) async throws -> DeviceRenderRetryAck
+    typealias ReportPreparationFailure = @Sendable (UUID, Error) async -> Void
     private(set) var presentations: [DeviceRenderKey: DeviceRenderPresentation] = [:]
+    private(set) var retryApprovalKeys: Set<DeviceRenderKey> = []
+    func retryNeedsApproval(_ key: DeviceRenderKey) -> Bool { retryApprovalKeys.contains(key) }
     @ObservationIgnored private let fetch: Fetch
     @ObservationIgnored private let factory: Factory
     @ObservationIgnored private let retryFailure: RetryFailure
+    @ObservationIgnored private let reportPreparationFailure: ReportPreparationFailure
     @ObservationIgnored private let projectDirectory: @MainActor (UUID) -> ProjectDirectory
     @ObservationIgnored private var entries: [DeviceRenderKey: DeviceRenderCoordinator] = [:]
     @ObservationIgnored private var requests: [DeviceRenderKey: DeviceRenderRequest] = [:]
@@ -90,13 +94,19 @@ enum DeviceRenderButtonTitle {
                 publisher: DeviceExportPublisher(api: api),
                 failureReporter: APIDeviceRenderFailureReporter(api: api)
             )
-        }, retryFailure: { jobID, identity in try await api.retryDeviceRenderFailure(jobID: jobID, identity: identity) })
+        }, retryFailure: { jobID, identity in try await api.retryDeviceRenderFailure(jobID: jobID, identity: identity) },
+        reportPreparationFailure: { jobID, error in
+            let report = NativePreviewDiagnostics.previewFailure(error: error, sourceState: "device_render_preparation")
+            try? await api.reportPlaybackFailure(jobID: jobID, report: report)
+        })
     }
 
     init(fetch: @escaping Fetch, factory: @escaping Factory,
          retryFailure: @escaping RetryFailure = { _, _ in throw APIError.unsupported },
+         reportPreparationFailure: @escaping ReportPreparationFailure = { _, _ in },
          projectDirectory: @escaping @MainActor (UUID) -> ProjectDirectory = { BackgroundUploadCoordinator.projectDirectory($0) }) {
-        self.fetch = fetch; self.factory = factory; self.retryFailure = retryFailure; self.projectDirectory = projectDirectory
+        self.fetch = fetch; self.factory = factory; self.retryFailure = retryFailure
+        self.reportPreparationFailure = reportPreparationFailure; self.projectDirectory = projectDirectory
     }
 
     func reconcile(_ key: DeviceRenderKey, capabilities: PhoneRenderingCapabilities, retry: Bool = false) async {
@@ -110,6 +120,8 @@ enum DeviceRenderButtonTitle {
             guard status.request.identity.jobID == key.jobID,
                   status.request.identity.variantID == key.variantID else { throw APIError.invalidResponse }
             let request = status.request
+            if status.retryRequiresApproval { retryApprovalKeys.insert(key) }
+            else { retryApprovalKeys.remove(key) }
             if requests[key] != request {
                 observations.removeValue(forKey: key)?.cancel()
                 if let previous = entries[key] { try await previous.cancel() }
@@ -151,10 +163,20 @@ enum DeviceRenderButtonTitle {
         } catch {
             guard tickets[key] == ticket else { return }
             var presentation = presentations[key] ?? DeviceRenderPresentation(phase: .needsAttention)
+            // A completed or stopped previous request is not success for a new
+            // save whose preparation just failed. Keep an actual in-flight
+            // coordinator observable; otherwise clear the stale output identity.
+            let active = await entries[key]?.observationSnapshot()
+            guard tickets[key] == ticket else { return }
+            if active?.isBusy != true || active?.receipt?.request != requests[key] {
+                presentation = DeviceRenderPresentation(phase: .needsAttention)
+            }
             presentation.message = RequestFailureCause(error) == .connection
                 ? "Kria couldn’t prepare this edit on your iPhone. Your project is saved. Try again when you’re connected."
                 : "Kria couldn’t prepare this edit on your iPhone. Your project is saved. \(error.localizedDescription)"
             presentations[key] = presentation
+            let report = reportPreparationFailure
+            Task { await report(key.jobID, error) }
         }
     }
 
@@ -245,7 +267,7 @@ enum DeviceRenderButtonTitle {
         for observer in observations.values { observer.cancel() }
         observations.removeAll()
         for coordinator in entries.values { try? await coordinator.cancel() }
-        entries.removeAll(); requests.removeAll(); presentations.removeAll()
+        entries.removeAll(); requests.removeAll(); presentations.removeAll(); retryApprovalKeys.removeAll()
     }
 
     private func observe(_ key: DeviceRenderKey, coordinator: DeviceRenderCoordinator) async {

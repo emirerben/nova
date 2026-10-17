@@ -162,6 +162,18 @@ class TurnCancelBody(_StrictBody):
     expected_thread_revision: int = Field(ge=0)
 
 
+class RenderRetryBody(_StrictBody):
+    execution_id: uuid.UUID
+    expected_thread_revision: int = Field(ge=0)
+
+
+class RenderRetryOut(BaseModel):
+    turn_id: str
+    approval_id: str
+    thread_revision: int
+    replayed: bool = False
+
+
 class TurnCancelled(BaseModel):
     turn_id: str
     thread_revision: int
@@ -218,6 +230,7 @@ class ApprovalSnapshotOut(BaseModel):
     cost_summary: str | None = None
     expires_at: datetime
     approval_fingerprint: str = Field(min_length=64, max_length=64)
+    retry_of_execution_id: str | None = None
 
 
 class DraftWriteBody(_StrictBody):

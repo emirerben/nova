@@ -662,6 +662,16 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # One word at a time for caption `Display: Word` (`karaoke.single_word`, capability
+    # `singleWordText`): the layer's runs are standalone-centred words and only the active one
+    # is drawn. Emitted only when `singleWordText` is in PHONE_RENDER_VERIFIED_FEATURES (fly
+    # secret) AND the compile knows the app build declares `X-Kria-Client-Protocol` >=
+    # `single_word_text_min_client_protocol` (an HTTP Save, or a variant an earlier qualifying
+    # Save stamped); otherwise captions compile to the full-line karaoke sweep, byte-identical
+    # to before. Rollback: remove `singleWordText` from PHONE_RENDER_VERIFIED_FEATURES (+ restart
+    # api and worker). Builds below the protocol get 426 `client_update_required` (feature
+    # `single_word_text`) instead of a recipe they cannot decode.
+    single_word_text_min_client_protocol: int = 11
     # KRI-561: the song-order question is answered on a horizontal song timeline (play the
     # song, drop clips onto song time) instead of the vertical reorder list. Kill switch:
     # `fly secrets set SONG_ORDER_TIMELINE_ENABLED=false` + restart (api): capabilities drop
@@ -779,6 +789,14 @@ class Settings(BaseSettings):
     kria_runtime_v2_phone_enabled: bool = False
     kria_runtime_v2_phone_user_ids: list[UUID] = Field(default_factory=list)
     kria_turn_lease_seconds: int = Field(default=15, ge=10, le=120)
+    # KRI-709: a turn whose planner stopped on a time budget ("still checking your
+    # clips") is re-run by the server instead of asking the creator to say "go ahead".
+    # Caps the runs one turn may take (each can pay for a Main Creator call plus vision),
+    # counted by `lease_epoch`, so a turn that waited queued is not shortchanged. Past
+    # it the old "come back later" reply is sent (the AI really is stuck). 0 or 1 = off,
+    # byte-identical to the pre-fix behaviour.
+    # Apply: fly secret KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 + restart (api + worker).
+    kria_turn_auto_continue_max_runs: int = Field(default=4, ge=0, le=8)
     # KRI-188: thread-level Creative Brief ledger + deterministic scope router +
     # per-requirement receipts on runtime-v2 turns. False (default): the planner,
     # router, draft validation, dispatch request and replies are byte-identical
@@ -943,6 +961,14 @@ class Settings(BaseSettings):
     # See docs/pipelines/clip-understanding.md. Apply: `fly secrets set
     # CLIP_INTENTS_ENABLED=true --app nova-video` + restart api + worker.
     clip_intents_enabled: bool = False
+    # KRI-680: measure each analysed video's brightness (mean luma + share of near-black
+    # frames, subprocess FFmpeg on the analysis copy; app/services/clip_exposure.py) and
+    # put it in the clip record as words ("very dark, almost nothing visible (...)") so
+    # "skip the very dark clips" can be matched. False (default): nothing is measured and
+    # stored measurements are ignored, byte-identical to before. Clips analysed while it
+    # was off have no measurement (no backfill). Apply: `fly secrets set
+    # CLIP_EXPOSURE_FACT_ENABLED=true --app nova-video` + restart api + worker.
+    clip_exposure_fact_enabled: bool = False
     # KRI-151: durable semantic preparation before the first footage-based plan.
     creator_clip_preparation_enabled: bool = False
     # Chat-turn budget for the on-demand vision re-query (download + File API
@@ -1937,6 +1963,14 @@ class Settings(BaseSettings):
 
     # Account-wide creator memory/direction control plane. Storage and owner
     # routes are additive; prompt/render extraction remains separately wired.
+    # KRI-215: explicit cohort AND current training eligibility are required.
+    request_following_collection_enabled: bool = False
+    request_following_report_token: str = ""
+    request_following_all_users: bool = False
+    request_following_user_ids: list[str] = []
+    request_following_thread_ids: list[str] = []
+    request_following_holdout_thread_ids: list[str] = []
+
     creator_memory_enabled: bool = False
     # KRI-648: stamped only at dispatch; legacy generations are never restyled.
     phone_text_styling_enabled: bool = False

@@ -101,6 +101,102 @@ enum KriaCropGeometry {
     }
 }
 
+// MARK: - Source window geometry
+
+/// Pure math for the Range picker (KRI-717): which part of a long source clip a slot plays.
+///
+/// A window is the slot's `in_s` (source seconds) and `duration_s` (OUTPUT seconds). At playback rate `r` it
+/// covers `length * r` seconds of source, so the source span is `[start, start + length * r]`. The bound is the
+/// server's (`guided_timeline.py`: `in_s >= 0` and `in_s + duration * rate <= source + 0.05`). Every function
+/// takes and returns a whole window, so a view can derive each frame of a drag from the window it began with.
+enum KriaSourceWindowGeometry {
+    /// Shortest a slot may be (the session's `minimumClipDuration` and the server's `TIMELINE_INVALID_DURATION`).
+    static let minimumLength = 0.1
+    /// Slack the server allows past the end of the source.
+    static let boundsTolerance = 0.05
+
+    struct Window: Equatable {
+        /// Source seconds where the slot starts playing (`in_s`).
+        var start: Double
+        /// Output seconds the slot lasts (`duration_s`).
+        var length: Double
+    }
+
+    private static func safeRate(_ rate: Double) -> Double { rate.isFinite && rate > 0 ? rate : 1 }
+
+    /// Source seconds the window covers.
+    static func sourceSpan(_ window: Window, rate: Double) -> Double { window.length * safeRate(rate) }
+
+    /// Source second where the window ends.
+    static func sourceEnd(_ window: Window, rate: Double) -> Double { window.start + sourceSpan(window, rate: rate) }
+
+    /// The server's bound check, for callers that want to ask before they write.
+    static func isWithinBounds(_ window: Window, rate: Double, sourceDuration: Double?) -> Bool {
+        guard window.start >= 0, window.length >= minimumLength - 1e-9 else { return false }
+        guard let sourceDuration else { return true }
+        return sourceEnd(window, rate: rate) <= sourceDuration + boundsTolerance + 1e-9
+    }
+
+    /// Slide: moves the in-point by `delta` source seconds and keeps the length. Clamped to `[0, source - span]`.
+    static func slid(_ window: Window, by delta: Double, rate: Double, sourceDuration: Double?) -> Window {
+        guard delta.isFinite else { return window }
+        var start = max(0, window.start + delta)
+        if let sourceDuration {
+            // A slot longer than its footage (slowed narration) has no room: it stays at the start.
+            start = min(start, max(0, sourceDuration - sourceSpan(window, rate: rate)))
+        }
+        return Window(start: start, length: window.length)
+    }
+
+    /// Left handle: moves the in-point by `delta` source seconds and keeps the source end, so the length changes.
+    /// The window never shrinks below `minimumLength` or runs before the start of the source.
+    static func resizedLeading(_ window: Window, by delta: Double, rate: Double) -> Window {
+        guard delta.isFinite else { return window }
+        let rate = safeRate(rate)
+        let end = sourceEnd(window, rate: rate)
+        let start = min(max(0, window.start + delta), max(0, end - minimumLength * rate))
+        return Window(start: start, length: max(minimumLength, (end - start) / rate))
+    }
+
+    /// Right handle: moves the source end by `delta` source seconds and keeps the in-point, so the length changes.
+    /// The end stops at the end of the source; a slot that already overruns it may still shrink smoothly.
+    static func resizedTrailing(_ window: Window, by delta: Double, rate: Double, sourceDuration: Double?) -> Window {
+        guard delta.isFinite else { return window }
+        let rate = safeRate(rate)
+        let end = sourceEnd(window, rate: rate)
+        let floor = window.start + minimumLength * rate
+        var next = max(floor, end + delta)
+        if let sourceDuration { next = min(next, max(floor, sourceDuration, end)) }
+        return Window(start: window.start, length: max(minimumLength, (next - window.start) / rate))
+    }
+
+    /// Where the window sits on a strip `width` points wide, as `(x, width)` in points.
+    static func stripSpan(_ window: Window, rate: Double, sourceDuration: Double, width: Double) -> (x: Double, width: Double) {
+        guard sourceDuration > 0, width > 0 else { return (0, 0) }
+        let x = min(max(0, window.start / sourceDuration), 1) * width
+        let right = min(max(0, sourceEnd(window, rate: rate) / sourceDuration), 1) * width
+        return (x, max(0, right - x))
+    }
+
+    /// Thumbnail count for a filmstrip `width` points wide (web `filmstripZoomBucket`: one tile per ~56 points).
+    static func tileCount(width: Double, tileWidth: Double = 56, maximum: Int = 24) -> Int {
+        guard width > 0, maximum > 0 else { return 0 }
+        return max(1, min(maximum, Int((width / tileWidth).rounded())))
+    }
+
+    /// Source seconds to sample for `count` tiles: the middle of each equal slice of the source.
+    static func sampleTimes(sourceDuration: Double, count: Int) -> [Double] {
+        guard sourceDuration > 0, count > 0 else { return [] }
+        return (0..<count).map { (Double($0) + 0.5) / Double(count) * sourceDuration }
+    }
+
+    /// "3.0s – 5.0s · 2.0s": the source range, then how long the slot lasts.
+    static func label(_ window: Window, rate: Double) -> String {
+        func seconds(_ value: Double) -> String { String(format: "%.1fs", (value * 10).rounded() / 10) }
+        return "\(seconds(window.start)) – \(seconds(sourceEnd(window, rate: rate))) · \(seconds(window.length))"
+    }
+}
+
 // MARK: - Frame loading
 
 /// Loads the real UPRIGHT frame a crop is drawn on: a photo with its EXIF orientation applied, or a video frame

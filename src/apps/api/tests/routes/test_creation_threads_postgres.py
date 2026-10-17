@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from fastapi import Response
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, OperationalError
@@ -32,7 +35,7 @@ from app.models import (
     PlanItem,
     User,
 )
-from app.routes.creation_threads import delete_thread
+from app.routes.creation_threads import delete_thread, list_threads
 
 _database_name = make_url(settings.database_url).database or ""
 if not _database_name.endswith("_test"):
@@ -401,3 +404,78 @@ async def test_delete_thread_removes_project_job_learning_rows_and_preserves_unr
             .all()
         )
         assert "edit_artifacts_append_only" in trigger_names
+
+
+@pytest.mark.asyncio
+async def test_list_pages_through_every_chat_once_newest_first_including_tied_timestamps() -> None:
+    """KRI-711: chats past the newest page stay reachable; a boundary never skips or repeats one.
+
+    Two chats share each of the first two timestamps, so the (updated_at, id) tiebreak is what
+    keeps the pages exact. Another creator's chat and an archived chat must never appear."""
+    await async_engine.dispose()
+    owner_id, other_id = uuid.uuid4(), uuid.uuid4()
+    newest = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+    stamps = [newest, newest, newest - timedelta(hours=1), newest - timedelta(hours=1)]
+    stamps += [newest - timedelta(hours=2), newest - timedelta(hours=3)]
+    mine = [
+        CreationThread(id=uuid.uuid4(), creator_id=owner_id, state={}, updated_at=stamp)
+        for stamp in stamps
+    ]
+    archived = CreationThread(
+        id=uuid.uuid4(),
+        creator_id=owner_id,
+        state={},
+        status="archived",
+        updated_at=newest + timedelta(hours=1),
+    )
+    foreign = CreationThread(
+        id=uuid.uuid4(), creator_id=other_id, state={}, updated_at=newest + timedelta(hours=2)
+    )
+    try:
+        async with AsyncSessionLocal() as db:
+            db.add_all(
+                [
+                    User(id=owner_id, email=f"list-page-{owner_id}@example.test"),
+                    User(id=other_id, email=f"list-page-{other_id}@example.test"),
+                ]
+            )
+            await db.flush()
+            db.add_all([*mine, archived, foreign])
+            await db.commit()
+
+        expected = [
+            str(row.id)
+            for row in sorted(mine, key=lambda row: (row.updated_at, row.id), reverse=True)
+        ]
+        seen: list[str] = []
+        cursor: str | None = None
+        pages = 0
+        async with AsyncSessionLocal() as db:
+            while True:
+                response = Response()
+                page = await list_threads(
+                    SimpleNamespace(id=owner_id),
+                    db,
+                    include_archived=False,
+                    limit=2,
+                    cursor=cursor,
+                    response=response,
+                )
+                pages += 1
+                seen.extend(item.id for item in page)
+                cursor = response.headers.get("x-next-cursor")
+                if cursor is None:
+                    break
+                assert len(page) == 2, "only the last page may be short"
+                assert pages < 10, "the cursor must make progress"
+
+        assert seen == expected
+        assert pages == 3
+    finally:
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                delete(CreationThread).where(CreationThread.creator_id.in_((owner_id, other_id)))
+            )
+            await db.execute(delete(User).where(User.id.in_((owner_id, other_id))))
+            await db.commit()
+        await async_engine.dispose()

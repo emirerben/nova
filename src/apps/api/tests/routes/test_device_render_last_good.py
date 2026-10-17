@@ -99,12 +99,42 @@ def test_an_accepted_edit_replaces_the_pinned_state_and_only_the_pin(monkeypatch
     assert [item.text for item in revised.exact_texts] == ["After"]
 
 
+def _unverifiable_sources(monkeypatch) -> None:
+    """The approved source files can no longer be proven: a failure no editor edit relaxes."""
+
+    def unverifiable(*args, **kwargs):
+        raise CreatorRenderContractError("I couldn't verify this edit's approved source files.")
+
+    monkeypatch.setattr(svc, "_approved_source_bindings", unverifiable)
+
+
+def test_moving_the_opening_title_is_the_creators_call_and_is_accepted(monkeypatch):
+    """KRI-736: a manual Save wins over the approved opening placement (it used to be a 422).
+
+    The words stay a required presence check (role degrades to `any`), the pin advances and
+    the previous artifact stays on the variant until the new export is published."""
+    job = _published_job(monkeypatch)
+    published = copy.deepcopy(job.assembly_plan["variants"][0])
+
+    save(job, generation="attempt-1", text="Before", start_s=1.0, end_s=3.0)
+
+    assert device_status(job, VARIANT).request.identity.recipe_revision == 2
+    revised = read_render_contract(
+        {CONTRACT_FIELD: job.assembly_plan[CONTRACT_REVISIONS_FIELD][VARIANT]}
+    )
+    assert [(item.role, item.text) for item in revised.exact_texts] == [("any", "Before")]
+    variant = job.assembly_plan["variants"][0]
+    for key in ("video_path", "poster_path", "output_url"):
+        assert variant[key] == published[key]
+
+
 def test_a_contract_failing_edit_leaves_the_published_artifact_byte_identical(monkeypatch):
     job = _published_job(monkeypatch)
+    _unverifiable_sources(monkeypatch)
     before = _snapshot(job)
 
     with pytest.raises(HTTPException) as caught:
-        save(job, generation="attempt-1", text="Before", start_s=1.0, end_s=3.0)
+        save(job, generation="attempt-1", text="After", start_s=0, end_s=3)
 
     assert caught.value.status_code == 422
     assert _snapshot(job) == before  # request, receipts, published attempt, video, poster, URL
@@ -150,14 +180,21 @@ def test_a_transient_refusal_does_not_poison_the_next_valid_attempt(monkeypatch)
 
 
 def test_the_guard_is_what_protects_the_artifact(monkeypatch):
-    """Mutation control: with the contract check off, the same failing edit replaces the
-    pinned state. The tests above therefore depend on the guard, not on luck."""
+    """Mutation control: the same contract-failing edit is refused with the guard on and
+    replaces the pinned state once ONLY the guard is switched off. The tests above therefore
+    depend on the guard, not on luck."""
     job = _published_job(monkeypatch)
+    _unverifiable_sources(monkeypatch)
     before = _snapshot(job)
+
+    with pytest.raises(HTTPException):
+        save(job, generation="attempt-1", text="After", start_s=0, end_s=3)
+    assert _snapshot(job) == before
+
     monkeypatch.setattr(svc, "_verify_contract_pin", lambda *a, **k: None)
     monkeypatch.setattr("app.services.phone_editor.pin_device_request", svc.pin_device_request)
 
-    save(job, generation="attempt-1", text="Before", start_s=1.0, end_s=3.0)
+    save(job, generation="attempt-1", text="After", start_s=0, end_s=3)
 
     assert _snapshot(job) != before
     assert device_status(job, VARIANT).request.identity.recipe_revision == 2
@@ -267,6 +304,9 @@ def test_a_retry_that_cannot_be_re_pinned_records_why_and_keeps_the_state(fixtur
         )
 
     monkeypatch.setattr(svc, "_verify_contract_pin", refuse_the_repin)
+    # This legacy job has no runtime execution; the upload query's earlier
+    # stubbed result does not represent a CreatorAgentExecution.
+    fixture.db.execute.return_value = scalar(None)
     response = fixture.client.post(
         f"/me/jobs/{job.id}/device-render/retry",
         json={"identity": before_request.identity.model_dump(mode="json")},

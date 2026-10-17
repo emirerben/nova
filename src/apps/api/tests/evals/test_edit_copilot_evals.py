@@ -80,6 +80,26 @@ def test_vague_length_capability_contract_runs_through_eval(name: str) -> None:
     assert "allowed_op_families" in prompt
 
 
+def test_group_title_is_one_spanning_add_text_without_clip_id() -> None:
+    """KRI-716: a title for grouped clips is one text over the stretch, not a copy per clip."""
+    from app.agents.edit_copilot import EditCopilotAgent
+
+    fixture = _fixture("kri716_group_title_is_one_add_text")
+    input_model = EditCopilotAgent.Input.model_validate(fixture.input)
+    prompt = EditCopilotAgent(None).render_prompt(input_model)
+    assert "GROUP TITLES" in prompt
+
+    result = run_eval(fixture)
+    assert result.passed, f"{result.fixture_id}: {result.summary()} {result.error}"
+    assert result.output is not None
+    ops = result.output["ops"]
+    assert [op["op"] for op in ops] == ["add_text"]
+    slots = fixture.input["variant_snapshot"]["slots"]
+    assert "clip_id" not in ops[0]
+    assert ops[0]["start_s"] == slots[1]["output_start_s"]
+    assert ops[0]["end_s"] == slots[3]["output_end_s"]
+
+
 def test_kria_bulk_followup_replays_typed_image_selector() -> None:
     """The fourth turn must preserve the image referent and stay bulk/atomic."""
     fixture = _fixture("kria_bulk_followup_satisfiable")

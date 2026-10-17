@@ -94,7 +94,8 @@ class CreatorRenderContractError(UnsupportedPhonePlan):
     ``decline_reason`` / ``field_path`` / ``alternative`` are optional so that
     legacy raise sites keep working; typed sites let the reason survive every
     layer between the verifier and the creator thread (see
-    ``decline_payload``).
+    ``decline_payload``). ``missing_text`` is the confirmed on-screen text the
+    edit lacks, so the chat can name it (KRI-701).
     """
 
     def __init__(
@@ -104,11 +105,40 @@ class CreatorRenderContractError(UnsupportedPhonePlan):
         decline_reason: DeclineReason | None = None,
         field_path: str | None = None,
         alternative: str | None = None,
+        missing_text: str | None = None,
     ) -> None:
         super().__init__(message)
         self.decline_reason = decline_reason
         self.field_path = field_path
         self.alternative = alternative
+        self.missing_text = missing_text
+
+
+class TextPlacementError(CreatorRenderContractError):
+    """A confirmed text IS on screen, but not where its approved role requires.
+
+    Carries the failed requirement so a MANUAL editor Save (the creator moved, re-timed or
+    re-worded the text on purpose) can relax exactly that role to ``any`` (KRI-736) while
+    every automatic caller keeps treating it as the ordinary refusal it subclasses.
+    """
+
+    def __init__(self, message: str, *, requirement: TextRequirement, **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+        self.requirement = requirement
+
+
+class AudioChoiceError(CreatorRenderContractError):
+    """The camera-sound requirement no longer matches what the edit plays.
+
+    ``field`` is the contract field (``original_audio`` or ``audio_source_ids``). A MANUAL
+    editor Save (the creator muted or un-muted a clip, or moved the camera-sound level)
+    clears that field instead of refusing (KRI-736); automatic callers see the ordinary
+    refusal this subclasses.
+    """
+
+    def __init__(self, message: str, *, field: str, **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+        self.field = field
 
 
 def decline_payload(exc: BaseException) -> dict[str, str]:
@@ -118,7 +148,7 @@ def decline_payload(exc: BaseException) -> dict[str, str]:
     if reason not in DECLINE_REASONS:
         return {}
     payload = {"decline_reason": str(reason)}
-    for key in ("field_path", "alternative"):
+    for key in ("field_path", "alternative", "missing_text"):
         value = getattr(exc, key, None)
         if isinstance(value, str) and value:
             payload[key] = value
@@ -1331,7 +1361,11 @@ def read_render_contract(assembly: Mapping[str, Any]) -> CreatorRenderContract |
 
 
 def _phone_decline(
-    requirement: str, message: str, *, field_path: str | None = None
+    requirement: str,
+    message: str,
+    *,
+    field_path: str | None = None,
+    missing_text: str | None = None,
 ) -> CreatorRenderContractError:
     """A typed refusal for ``requirement`` using the declared phone-verifier reason."""
 
@@ -1341,6 +1375,37 @@ def _phone_decline(
         decline_reason=decline.reason,
         field_path=field_path or REQUIREMENT_FIELD_PATHS[requirement],
         alternative=decline.alternative or None,
+        missing_text=missing_text,
+    )
+
+
+def _placement_decline(
+    requirement: TextRequirement, message: str, *, field_path: str
+) -> CreatorRenderContractError:
+    """The ``exact_texts`` refusal for a text whose words are present but misplaced."""
+
+    typed = _phone_decline("exact_texts", message, field_path=field_path)
+    if requirement.role == "any":
+        return typed  # nothing narrower to relax: a plain presence/hold failure
+    return TextPlacementError(
+        message,
+        requirement=requirement,
+        decline_reason=typed.decline_reason,
+        field_path=typed.field_path,
+        alternative=typed.alternative,
+    )
+
+
+def _audio_decline(requirement: str, message: str) -> CreatorRenderContractError:
+    """A camera-sound refusal that remembers which contract field it came from."""
+
+    typed = _phone_decline(requirement, message)
+    return AudioChoiceError(
+        message,
+        field=requirement,
+        decline_reason=typed.decline_reason,
+        field_path=typed.field_path,
+        alternative=typed.alternative,
     )
 
 
@@ -1687,7 +1752,7 @@ def verify_phone_recipe(
         # A bed that names the camera's file plays the camera audio too.
         original_ids.add(bed_asset.media_id)
     if contract.original_audio == "forbid" and original_ids:
-        raise _phone_decline(
+        raise _audio_decline(
             "original_audio", "This edit can't use the camera audio you turned off."
         )
     if (contract.original_audio == "require" or contract.audio_source_ids) and source_audio is None:
@@ -1696,9 +1761,9 @@ def verify_phone_recipe(
             "I couldn't verify audio in the approved source files.",
         )
     if contract.original_audio == "require" and not original_ids:
-        raise _phone_decline("original_audio", "This edit needs audible camera audio.")
+        raise _audio_decline("original_audio", "This edit needs audible camera audio.")
     if contract.audio_source_ids and original_ids != set(contract.audio_source_ids):
-        raise _phone_decline(
+        raise _audio_decline(
             "audio_source_ids", "This edit couldn't keep the confirmed camera-audio sources."
         )
 
@@ -1789,6 +1854,7 @@ def verify_phone_recipe(
                 "exact_texts",
                 "This edit is missing confirmed on-screen text.",
                 field_path=text_field_path(requirement),
+                missing_text=requirement.text,
             )
         if requirement.duration_s is not None:
             matches = [
@@ -1797,8 +1863,8 @@ def verify_phone_recipe(
                 if row["end_s"] - row["start_s"] + frame >= requirement.duration_s
             ]
             if not matches:
-                raise _phone_decline(
-                    "exact_texts",
+                raise _placement_decline(
+                    requirement,
                     "This edit couldn't keep confirmed text on screen long enough.",
                     field_path=(
                         "opening_title_duration_s"
@@ -1835,8 +1901,8 @@ def verify_phone_recipe(
             ):
                 matches = []
         if not matches:
-            raise _phone_decline(
-                "exact_texts",
+            raise _placement_decline(
+                requirement,
                 "This edit put confirmed text in the wrong place.",
                 field_path=text_field_path(requirement),
             )
