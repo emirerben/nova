@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.14.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save after deleting a clip no longer fails with unsupported_phone_edit (KRI-736) (#1648) <!-- release-pr: 1648 -->
+
 ## [0.80.13.0] - 2026-10-17
 
 ### Changed
