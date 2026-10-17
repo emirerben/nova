@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.15.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save never fails because a text ends past the new timeline (KRI-736) (#1650) <!-- release-pr: 1650 -->
+
 ## [0.80.14.0] - 2026-10-17
 
 ### Changed
