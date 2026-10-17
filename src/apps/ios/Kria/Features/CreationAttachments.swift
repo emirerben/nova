@@ -275,6 +275,9 @@ struct AttachmentSheet: View {
                 if visualLeft, pollsVisuals { Task { await loadVisuals() } }
             }
             .onReceive(model.uploads.$inFlight) { inFlight = $0 }
+            .onReceive(model.uploads.$attachedThreads) { threads in
+                if threads[projectID] != nil, pollsVisuals { Task { await loadVisuals() } }
+            }
             // Un-choosing a visual in the picker removes it server-side; refresh the pool now rather
             // than on the next poll, or the picker would keep showing it as chosen for a few seconds.
             .onReceive(model.uploads.$photoSelections) { _ in if role == .visual { Task { await loadVisuals() } } }
@@ -328,7 +331,7 @@ struct AttachmentSheet: View {
                 }.buttonStyle(KriaPrimaryButtonStyle()).accessibilityIdentifier("teleprompter-open")
                     .disabled(auth.localStorageIdentity == nil)
             }
-            FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximumClipCount, attachedClipCount: existing(for: .clip), attachedMediaIDs: attachedMediaIDs(for: .clip), role: .clip, itemID: itemID, limit: capabilities?.media?["clips"], destination: uploadDestination(for: .clip), onPickerFilled: nil, onSelectionCompleted: advanceAfterFootageSelection, showsHeading: false)
+            FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximumClipCount, attachedClipCount: existing(for: .clip), attachedMediaIDs: attachedMediaIDs(for: .clip), role: .clip, itemID: itemID, limit: capabilities?.media?["clips"], destination: uploadDestination(for: .clip), onPickerFilled: nil, onSelectionCompleted: advanceAfterFootageSelection, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true)
                 .id(AttachmentStep.footage)
             attachedList(role: .clip)
         }
@@ -456,7 +459,7 @@ struct AttachmentSheet: View {
             if uploadDestination(for: .visual).canUpload, !usesVisualPoolOnly { Text(visualsCaption).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc) }
             if pool == nil, error == nil { ProgressView(usesVisualPoolOnly ? SlideMediaCopy.loading : "Loading overlays…") }
             if pool != nil {
-                FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], destination: uploadDestination(for: .visual), onPickerFilled: nil, onSelectionCompleted: nil, showsHeading: false, titleOverride: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil)
+                FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], destination: uploadDestination(for: .visual), onPickerFilled: nil, onSelectionCompleted: nil, showsHeading: false, titleOverride: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil, libraryEnabled: capabilities?.mediaLibrary == true)
                     .id(AttachmentStep.overlays)
                 if let summary = VisualPreparationSummary(assets: pool?.assets ?? [], uploading: uploadingVisualCount, online: network.isOnline, slowIDs: preparation.slowIDs, surface: .addMediaSheet, nounOverride: usesVisualPoolOnly ? SlideMediaCopy.preparingNoun : nil) {
                     VisualPreparationSummaryView(summary: summary)
@@ -478,7 +481,7 @@ struct AttachmentSheet: View {
                     if recorder.isImporting {
                         ProgressView("Opening audio…")
                     } else {
-                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .voiceover), attachedClipCount: existing(for: .voiceover), attachedMediaIDs: attachedMediaIDs(for: .voiceover), role: .voiceover, itemID: itemID, limit: capabilities?.media?["voiceover"], destination: uploadDestination(for: .voiceover), onAudioFileSelected: recorder.importFile, showsHeading: false)
+                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .voiceover), attachedClipCount: existing(for: .voiceover), attachedMediaIDs: attachedMediaIDs(for: .voiceover), role: .voiceover, itemID: itemID, limit: capabilities?.media?["voiceover"], destination: uploadDestination(for: .voiceover), onAudioFileSelected: recorder.importFile, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true)
                     }
                     if existing(for: .voiceover) > 0 || pendingRecords.contains(where: { $0.projectID == projectID && $0.role == .voiceover }) || inFlight.values.contains(where: { $0.projectID == projectID && $0.role == .voiceover }) {
                         Button("Continue with voiceover") { advance() }.frame(minHeight: 44)
@@ -497,7 +500,7 @@ struct AttachmentSheet: View {
                     if songPreview.isImporting {
                         ProgressView("Opening song…")
                     } else {
-                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .song), attachedClipCount: existing(for: .song), attachedMediaIDs: attachedMediaIDs(for: .song), role: .song, itemID: itemID, limit: capabilities?.songLimit, destination: uploadDestination(for: .song), onAudioFileSelected: songPreview.importFile, showsHeading: false)
+                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .song), attachedClipCount: existing(for: .song), attachedMediaIDs: attachedMediaIDs(for: .song), role: .song, itemID: itemID, limit: capabilities?.songLimit, destination: uploadDestination(for: .song), onAudioFileSelected: songPreview.importFile, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true)
                     }
                     Button(hasSongOrPendingSong ? "Continue" : "Skip, no song") { advance() }
                         .font(KriaFont.body(14).weight(.medium)).foregroundStyle(hasSongOrPendingSong ? KriaColor.ink : KriaColor.zinc)

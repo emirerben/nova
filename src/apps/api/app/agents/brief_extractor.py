@@ -23,7 +23,8 @@ from app.pipeline.prompt_loader import load_prompt
 
 # v9 (KRI-667/KRI-669): shared brief preserves heading and language-neutral ask facts.
 # v10 (KRI-700): shared brief records `footage_light` for brighten / darken asks.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-16-v10"
+# v11 (KRI-674 follow-up): timing examples satisfy the non-empty content contract.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-17-v11"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -52,6 +53,12 @@ _NARROW_BRIEF_SECTION = (
     )
     .replace(" and `expected_version`", "")
     .replace("`target_requirement_id`, and\n`expected_version`", "`target_requirement_id`")
+    .replace(
+        'ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", '
+        '"facts": {"duration_s":\nN}})',
+        'ALWAYS add a `timing` requirement with `scope`: "global", `literal`: null,\n'
+        '`description`: the creator\'s own length request, and `facts`: {"duration_s": N}',
+    )
 )
 # KRI-543: lets a style ask about existing text be checked instead of "can't verify". Extractor
 # only: the main planner's brief section (and so its prompt version) stays untouched.
@@ -74,6 +81,12 @@ the same. "Center the title" -> {"style_intent": {"set": [{"field": "alignment",
 "center"}], "target": "title"}}.
 """
 _NARROW_BRIEF_SECTION += _STYLE_INTENT_SECTION
+_NARROW_BRIEF_SECTION += """
+Every add/change update needs a non-empty `literal` or `description`, including
+timing updates that have `duration_s` in `facts`. Keep all independently requested
+constraints in each response, including a schema-correction response; correcting
+one invalid field must not remove the other requested changes.
+"""
 
 
 class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
@@ -81,19 +94,25 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
         name="nova.creator.brief_extractor",
         prompt_id="brief_extractor",
         prompt_version=BRIEF_EXTRACTOR_PROMPT_VERSION,
-        model="gemini-3.1-pro-preview",
-        fallback_models=("gemini-3.6-flash",),
+        # This step extracts a small ledger update, not a new editorial plan.
+        # Choose the interactive model before provider contact: an unknown Pro
+        # outcome cannot safely fall through to Flash after its 60s deadline.
+        model="gemini-3.6-flash",
+        fallback_models=("gemini-3.1-pro-preview",),
         max_attempts=3,
         backoff_s=(2.0,),
         timeout_s=60.0,
-        thinking_level="low",
+        thinking_level="medium",
         sensitive_io=True,
         schema_retry_limit=2,
     )
     Input = BriefExtractionInput
     Output = BriefExtractionOutput
     response_json = True
-    max_output_tokens = 2_048
+    # Gemini shares this allowance between reasoning and the visible answer.
+    # The 12k-contract/40-message probe used 2,650 + 443 tokens; 2,048 truncated
+    # the response and spent another call before the edit could be approved.
+    max_output_tokens = 4_096
 
     def render_prompt(self, input: BriefExtractionInput) -> str:  # noqa: A002
         return load_prompt(

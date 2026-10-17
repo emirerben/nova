@@ -110,7 +110,10 @@
       "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload",
       "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference",
       "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
-      "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss"
+      "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss",
+      "KriaUITests/SavedUploadsUITests/testReuseAcrossTwoPostsWithoutAnotherUpload",
+      "KriaUITests/SavedUploadsUITests/testSearchPaginationAndRetry",
+      "KriaUITests/SavedUploadsUITests/testPhotoReuseAcrossPosts"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -209,7 +212,8 @@
       "KriaUITests/DrawingJourneyUITests/testDrawDoneTrimSaveReopenPersists",
       "KriaUITests/DrawingJourneyUITests/testAnimationTabKeepsItsLayoutWhateverTheEntranceIs",
       "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability",
-      "KriaUITests/GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview"
+      "KriaUITests/GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview",
+      "KriaUITests/NativeSourceWindowUITests/testRangeSheetSlidesAndResizesTheWindow"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -316,6 +320,11 @@
     "src/apps/ios/Tests/KriaUITests/TeleprompterUITests.swift": "creation",
     "src/apps/ios/Kria/Features/TeleprompterReviewFixture.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/GamedayAddClipUITests.swift": "editor",
-    "src/apps/ios/Kria/Features/TextPreferencesView.swift": "creation"
+    "src/apps/ios/Kria/Features/TextPreferencesView.swift": "creation",
+    "src/apps/ios/Kria/Core/MediaLibrary.swift": "creation",
+    "src/apps/ios/Kria/Core/SavedMediaReuse.swift": "creation",
+    "src/apps/ios/Kria/Features/SavedUploadsView.swift": "creation",
+    "src/apps/ios/Kria/Features/SavedUploadsUITestFixture.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/SavedUploadsUITests.swift": "creation"
   }
 }

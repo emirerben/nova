@@ -2,6 +2,121 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.22.0] - 2026-10-17
+
+### Changed
+- perf(ios): saved transcript, early token refresh, quieter sweep, reachable older chats (KRI-711) (#1651) <!-- release-pr: 1651 -->
+
+## [0.80.21.0] - 2026-10-17
+
+### Fixed
+- KRI-674: prevent follow-up AI timeouts before render approval (#1653) <!-- release-pr: 1653 -->
+
+## [0.80.20.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save no longer rejects a clip window within 50ms of the source end (KRI-736) (#1654) <!-- release-pr: 1654 -->
+
+## [0.80.19.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save accepts text with a null role (KRI-736) (#1652) <!-- release-pr: 1652 -->
+
+## [0.80.18.0] - 2026-10-17
+
+### Changed
+- feat(ios): perf benchmark harness - signposts, fixtures, KriaPerfUITests, bench.sh (KRI-710) (#1641) <!-- release-pr: 1641 -->
+
+## [0.80.17.0] - 2026-10-17
+
+### Changed
+- Connect reviewed video exports to daily request-following reports (#1649) <!-- release-pr: 1649 -->
+
+## [0.80.16.0] - 2026-10-17
+
+### Fixed
+- KRI-674: Retry the approved native edit without replanning (#1647) <!-- release-pr: 1647 -->
+
+## [0.80.15.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save never fails because a text ends past the new timeline (KRI-736) (#1650) <!-- release-pr: 1650 -->
+
+## [0.80.14.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save after deleting a clip no longer fails with unsupported_phone_edit (KRI-736) (#1648) <!-- release-pr: 1648 -->
+
+## [0.80.13.0] - 2026-10-17
+
+### Changed
+- feat(media): backfill historical uploads into Saved uploads (#1640) <!-- release-pr: 1640 -->
+
+## [0.80.12.0] - 2026-10-17
+
+### Changed
+- test(ios): scrub seek-latency test waits up to 60 s for the real frame (#1634) <!-- release-pr: 1634 -->
+
+## [0.80.11.0] - 2026-10-17
+
+### Changed
+- fix(ci): make daily request-following reports downloadable (#1645) <!-- release-pr: 1645 -->
+
+## [0.80.10.0] - 2026-10-17
+
+### Changed
+- fix(editor): text follows every clip delete/trim/extend (KRI-715) (#1631) <!-- release-pr: 1631 -->
+
+## [0.80.9.0] - 2026-10-16
+
+### Changed
+- feat(media): automatically keep the newest 500 saved uploads (#1643) <!-- release-pr: 1643 -->
+
+## [0.80.8.0] - 2026-10-16
+
+### Changed
+- fix(kria): Tigre night T1 Talking fixes (KRI-703: 704, 705, 706, 708) (#1633) <!-- release-pr: 1633 -->
+
+## [0.80.7.0] - 2026-10-16
+
+### Changed
+- fix(montage): grouped title is one continuous block across the group (KRI-716) (#1637) <!-- release-pr: 1637 -->
+
+## [0.80.6.0] - 2026-10-16
+
+### Changed
+- feat(ios): choose the part of a clip to use with a slide-and-resize window (KRI-717) (#1638) <!-- release-pr: 1638 -->
+
+## [0.80.5.0] - 2026-10-16
+
+### Changed
+- Add a local request-review app and automatic regression loop (#1635) <!-- release-pr: 1635 -->
+
+## [0.80.4.0] - 2026-10-16
+
+### Changed
+- fix(kria): render the approved simpler edit (KRI-698) (#1639) <!-- release-pr: 1639 -->
+
+## [0.80.3.0] - 2026-10-16
+
+### Changed
+- Add a reviewed request-following learning loop (#1629) <!-- release-pr: 1629 -->
+
+## [0.80.2.0] - 2026-10-16
+
+### Changed
+- fix(kria): re-run a turn that hit its time budget instead of asking for "go ahead" (KRI-709) (#1628) <!-- release-pr: 1628 -->
+
+## [0.80.1.0] - 2026-10-16
+
+### Changed
+- feat(api): Display Word saves as one word at a time (karaoke.single_word) (KRI-683, 2/2) (#1627) <!-- release-pr: 1627 -->
+
+## [0.80.0.0] - 2026-10-16
+
+### Added
+- feat(ios): reuse saved uploads across posts (KRI-384) (#1632) <!-- release-pr: 1632 -->
+
 ## [0.79.19.0] - 2026-10-16
 
 ### Changed

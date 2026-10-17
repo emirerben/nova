@@ -131,9 +131,67 @@ def test_no_place_or_landmark_text_when_the_creator_chose_the_text():
 
 
 def test_chapter_text_is_the_creators_own_name_for_it_and_the_placeholder_wins():
-    texts = _texts(_plan())
+    plan = _plan()
+    texts = _texts(plan)
     assert texts["c5"] == texts["c6"] == "The Pub"
     assert texts["c4"] == "Name"  # a person shot inside a sport group keeps the stand-in
+    # The chapter's clips share one title: they carry the same group id (the
+    # placeholder that won c4 and the sport tags do not).
+    groups = {label.media_id: label.group_id for label in plan.snapshot.clip_labels}
+    assert groups == {
+        "c1": None,
+        "c2": None,
+        "c3": None,
+        "c4": None,
+        "c5": "cap1",
+        "c6": "cap1",
+    }
+
+
+def test_chapter_title_is_one_continuous_element_across_its_adjacent_clips():
+    """KRI-716: "The Pub" on two neighbouring clips is ONE title, not a copy per clip."""
+    from app.pipeline.guided_story import compile_proposal_execution_plan
+
+    plan = _plan()
+    cuts = {cut.media_id: cut.cut_id for cut in plan.snapshot.fast_cuts}
+    elements = compile_proposal_execution_plan(plan.snapshot)["text_elements"]
+    by_id = {row["id"]: row for row in elements}
+    pub = [row for row in elements if row["text"] == "The Pub"]
+    assert [row["id"] for row in pub] == ["group-title-cap1-1"]
+    # Runs from the first member cut's start to the last member cut's end.
+    first = by_id.get(f"clip-label-{cuts['c4']}")  # the neighbouring stand-in is untouched
+    assert first is not None and first["text"] == "Name"
+    assert pub[0]["start_s"] == first["end_s"] == 25.0
+    assert pub[0]["end_s"] == 35.0
+    assert f"clip-label-{cuts['c5']}" not in by_id
+    assert f"clip-label-{cuts['c6']}" not in by_id
+    # The planner record reports the text that actually draws on each member clip.
+    record_labels = {row["media_id"]: row["text"] for row in plan.record()["labels"]}
+    assert record_labels["c5"] == record_labels["c6"] == "The Pub"
+
+
+def test_chapter_clips_that_are_not_neighbours_get_one_title_per_stretch():
+    from app.pipeline.guided_story import compile_proposal_execution_plan
+
+    strategy = _strategy()
+    # c5 and c7 are the pub; c6 sits between them (in the sport group, so a different text).
+    strategy["resolved_clip_intents"][4]["assignments"] = _assign("c5", "c7")
+    strategy["resolved_clip_intents"][0]["assignments"] = _assign("c6")
+    strategy["resolved_clip_intents"][2]["assignments"] = _assign("c3")
+    plan = plan_unified_montage(
+        [clip(i) for i in range(8)],
+        BriefView(wants_per_clip_text=True),
+        strategy=strategy,
+        clip_intents_enabled=True,
+    )
+    elements = compile_proposal_execution_plan(plan.snapshot)["text_elements"]
+    by_id = {row["id"]: row["text"] for row in elements}
+    # The sport tag on c6 splits the chapter: two one-clip stretches, so two ordinary
+    # per-clip labels and no spanning element.
+    assert by_id["clip-label-unified-cut-6"] == "The Pub"
+    assert by_id["clip-label-unified-cut-7"] == "soccer"
+    assert by_id["clip-label-unified-cut-8"] == "The Pub"
+    assert not any(i.startswith("group-title-") for i in by_id)
 
 
 def test_outcomes_report_each_request_truthfully():
@@ -235,3 +293,24 @@ def test_chapter_name_caption_requires_the_creators_own_words_for_the_same_chapt
         )
         is None
     )
+
+
+def test_a_chapter_split_by_another_title_gets_one_spanning_title_per_stretch():
+    from app.pipeline.guided_story import compile_proposal_execution_plan
+
+    strategy = _strategy()
+    strategy["resolved_clip_intents"][4]["assignments"] = _assign("c1", "c2", "c5", "c6")
+    strategy["resolved_clip_intents"][0]["assignments"] = _assign("c3")
+    strategy["resolved_clip_intents"][2]["assignments"] = []
+    strategy["resolved_clip_intents"][3]["assignments"] = _assign("c3", value="soccer")
+    plan = plan_unified_montage(
+        [clip(i) for i in range(8)],
+        BriefView(wants_per_clip_text=True),
+        strategy=strategy,
+        clip_intents_enabled=True,
+    )
+    elements = compile_proposal_execution_plan(plan.snapshot)["text_elements"]
+    spans = {
+        row["id"]: (row["start_s"], row["end_s"]) for row in elements if row["text"] == "The Pub"
+    }
+    assert spans == {"group-title-cap1-1": (5.0, 15.0), "group-title-cap1-2": (25.0, 35.0)}

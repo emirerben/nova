@@ -14,9 +14,11 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
     let publishedGeneration: String?
     /// Saved document bound to the immutable recipe, including while its export is pending.
     let baseGeneration: String?
-    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation", baseGeneration = "base_generation" }
-    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil, baseGeneration: String? = nil) {
+    let retryRequiresApproval: Bool
+    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation", baseGeneration = "base_generation", retryRequiresApproval = "retry_requires_approval" }
+    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil, baseGeneration: String? = nil, retryRequiresApproval: Bool = false) {
         self.phase = phase; self.request = request; self.reason = reason; self.reasonCode = reasonCode; self.publishedGeneration = publishedGeneration; self.baseGeneration = baseGeneration
+        self.retryRequiresApproval = retryRequiresApproval
     }
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -25,6 +27,7 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
         reasonCode = try container.decodeIfPresent(String.self, forKey: .reasonCode)
         publishedGeneration = try container.decodeIfPresent(String.self, forKey: .publishedGeneration)
         baseGeneration = try container.decodeIfPresent(String.self, forKey: .baseGeneration)
+        retryRequiresApproval = try container.decodeIfPresent(Bool.self, forKey: .retryRequiresApproval) ?? false
         let raw = try container.decode(JSONValue.self, forKey: .request)
         request = try RecipeJSON.decoder().decode(DeviceRenderRequest.self, from: JSONEncoder().encode(raw))
         try request.recipe.validate()
@@ -166,6 +169,21 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
     let api: any KriaAPIClient
     // A separate session keeps API Bearer credentials out of storage PUT requests.
     var uploadSession: URLSession = URLSession(configuration: .ephemeral)
+    private static func acceptsStorageURL(_ url: URL) -> Bool {
+        if url.scheme == "https" { return true }
+        #if DEBUG
+        // Explicit scratch-API hardware journey only. Release storage stays HTTPS.
+        guard ProcessInfo.processInfo.arguments.contains("-ui-testing-retry-api"),
+              let address = ProcessInfo.processInfo.environment["KRIA_RETRY_TEST_API_URL"],
+              let base = URL(string: address), let host = base.host,
+              host == "localhost" || host == "127.0.0.1" || host.hasPrefix("192.168.") || host.hasPrefix("10."),
+              base.scheme == "http", url.scheme == "http", url.host == host,
+              url.port == base.port, url.path.hasPrefix("/kri674-storage/") else { return false }
+        return true
+        #else
+        return false
+        #endif
+    }
     func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool {
         do {
             let status = try await api.deviceRender(jobID: identity.jobID, variantID: identity.variantID)
@@ -184,7 +202,7 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         }
         let fingerprint = try await Task.detached { try SHA256Fingerprinter().fingerprint(file: file) }.value
         let reservation = try await api.reserveDeviceExport(DeviceExportUploadBody(identity: identity, attemptID: attemptID, fileSizeBytes: fingerprint.byteCount, sha256: fingerprint.hex, brandTail: brandTail))
-        guard reservation.attemptID == attemptID, reservation.uploadURL.scheme == "https", reservation.expiresAt > Date() else { throw APIError.invalidResponse }
+        guard reservation.attemptID == attemptID, Self.acceptsStorageURL(reservation.uploadURL), reservation.expiresAt > Date() else { throw APIError.invalidResponse }
         var put = URLRequest(url: reservation.uploadURL)
         put.httpMethod = "PUT"
         for (name, value) in reservation.uploadHeaders { put.setValue(value, forHTTPHeaderField: name) }

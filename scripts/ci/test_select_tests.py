@@ -19,6 +19,15 @@ ALL = {"api", "ios", "ios_ui", "shared_motion"}
 
 
 class ClassificationTests(unittest.TestCase):
+    def test_learning_loop_docs_map_to_an_executed_journey(self):
+        path = "src/apps/api/tests/evals/request_following/README.md"
+        matches = [j for j in ci.JOURNEYS
+                   if any(ci.matches_journey_path(path, prefix) for prefix in j["paths"])]
+        self.assertEqual([j["id"] for j in matches], ["kri-215-learning-loop"])
+        workflow = (SCRIPT.parents[2] / ".github/workflows/ci.yml").read_text()
+        self.assertIn("contains(needs.changes.outputs.journey_ids, 'kri-215-learning-loop')", workflow)
+        self.assertIn("pytest tests/incidents/test_request_following_loop.py", workflow)
+
     def test_manifest_native_routing_is_conservative_and_mixed_safe(self):
         self.assertFalse(ci.journey_native_for_ids(["kri-577-reliability-gates"]))
         self.assertFalse(ci.journey_native_for_ids(["kri-384-library-ingest"]))
@@ -744,6 +753,10 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-628-opening-cut,kri-681-named-line-windows"),
             ),
             (
+                "src/apps/api/app/pipeline/caption_correct.py",
+                (True, "covered", "kri-708-caption-correction"),
+            ),
+            (
                 "src/apps/api/app/pipeline/phone_talking_cutaways.py",
                 (True, "covered", "kri-719-talking-multi-clip"),
             ),
@@ -789,7 +802,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/device_render.py",
-                (True, "covered", "kri-669-gameday"),
+                (True, "covered", "kri-492-length-ownership,kri-669-gameday"),
             ),
             (
                 "src/apps/api/app/pipeline/pinned_text.py",

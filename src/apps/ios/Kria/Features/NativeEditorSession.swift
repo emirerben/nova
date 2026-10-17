@@ -2041,7 +2041,8 @@ struct NativeEditorTemporaryVideo {
         isSaving = true
         saveState = .saving
         loadState = .loading
-        defer { isSaving = false }
+        Perf.begin("editor.open", id: editorJobID.uuidString)
+        defer { isSaving = false; Perf.end("editor.open", id: editorJobID.uuidString) }
         do {
             let receipt: OpenInEditorResponse? = if planItemID == nil {
                 try await api.openJobInEditor(jobID: editorJobID)
@@ -2389,6 +2390,8 @@ struct NativeEditorTemporaryVideo {
 
     func prepareSourcePreview() async {
         guard let api, let jobID, let variantKey else { return }
+        Perf.begin("editor.preview", id: jobID.uuidString)
+        defer { Perf.end("editor.preview", id: jobID.uuidString) }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
         let sequence = sourcePreviewSequence
@@ -3452,8 +3455,11 @@ struct NativeEditorTemporaryVideo {
         guard canEditTimeline, let id = selectedClipID, let index = clipSlotIndex(id.uuidString), document.clips.indices.contains(index) else { return }
         let slot = document.clips[index]
         let length = max(minimumClipDuration, slot.durationS ?? minimumClipDuration)
-        let sourceEnd = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"]) ?? slot.inS + length
-        let start = min(max(0, slot.inS + offset), max(0, sourceEnd - length))
+        // The source span is the length times the real rate, or the slide could write a window the server refuses.
+        let found = sourceWindowSlot(for: EditorSelection(kind: .clip, id: id.uuidString))
+        let span = length * (found.map { effectiveSourceRate(slot: $0.slot, clip: $0.clip) } ?? 1)
+        let sourceEnd = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"]) ?? slot.inS + span
+        let start = min(max(0, slot.inS + offset), max(0, sourceEnd - span))
         transactDocument(section: .timeline) { $0.clips[index].inS = start }
     }
 
@@ -5798,6 +5804,88 @@ struct NativeEditorTemporaryVideo {
         return await KriaCropFrameLoader.image(at: url, time: time)
     }
 
+    // MARK: Source window / Range (KRI-717)
+
+    /// Everything the Range sheet needs to draw and edit one clip's source window.
+    struct SourceWindowContext: Equatable {
+        var window: KriaSourceWindowGeometry.Window
+        var rate: Double
+        /// Nil when the server did not say; the sheet then asks the file itself.
+        var sourceDuration: Double?
+        var url: URL
+    }
+
+    private var stillImageURLs: [URL: Bool] = [:]
+    private func isStill(_ url: URL) -> Bool {
+        if let known = stillImageURLs[url] { return known }
+        let value = NativeDownloadedMedia.isStillImage(url)
+        stillImageURLs[url] = value
+        return value
+    }
+
+    private func sourceWindowSlot(for selection: EditorSelection?) -> (slot: EditorTimelineSlot, clip: EditorClip)? {
+        guard let selection, selection.kind == .clip,
+              let clip = timelineClips.first(where: { $0.id.uuidString == selection.id }),
+              let slot = document.clips.first(where: { $0.id == clip.slotID }) else { return nil }
+        return (slot, clip)
+    }
+
+    /// Why Range is greyed out for the selected clip, or nil when it is available.
+    func sourceWindowBlockedReason(for selection: EditorSelection?) -> String? {
+        guard let found = sourceWindowSlot(for: selection) else { return "Select a clip to choose its range." }
+        if !canEditTimeline || !canEdit(.timeline) { return "Clip edits are locked for this render." }
+        let kind = found.slot.raw["media_kind"]?.stringValue ?? found.slot.raw["kind"]?.stringValue
+        if kind == "image" { return "Photos have no range to choose." }
+        if let url = found.clip.sourceClipIndex.flatMap({ resolvedSources?[$0] })?.url, isStill(url) { return "Photos have no range to choose." }
+        return nil
+    }
+
+    /// Output seconds the slot lasts, as the render compiler reads it (`durationS`, else the projected span).
+    private func sourceWindowLength(slot: EditorTimelineSlot, clip: EditorClip) -> Double {
+        max(minimumClipDuration, slot.durationS ?? (clip.trimOut - clip.trimIn))
+    }
+
+    /// The playback rate the clip really plays at, derived the way the render compiler and the server do: an
+    /// explicit `playback_rate`, else projected source span / slot length. That covers slowed narrated clips
+    /// (`native_source_span_s`, no `playback_rate`) and older retimes that live only in the source span.
+    private func effectiveSourceRate(slot: EditorTimelineSlot, clip: EditorClip) -> Double {
+        if let explicit = slot.raw["playback_rate"]?.numberValue, explicit.isFinite, explicit > 0 { return explicit }
+        let derived = (clip.trimOut - clip.trimIn) / sourceWindowLength(slot: slot, clip: clip)
+        return derived.isFinite && derived > 0 ? derived : 1
+    }
+
+    func sourceWindowContext(for selection: EditorSelection?) -> SourceWindowContext? {
+        guard let found = sourceWindowSlot(for: selection),
+              let url = found.clip.sourceClipIndex.flatMap({ resolvedSources?[$0] })?.url else { return nil }
+        return SourceWindowContext(
+            window: .init(start: max(0, found.slot.inS), length: sourceWindowLength(slot: found.slot, clip: found.clip)),
+            rate: effectiveSourceRate(slot: found.slot, clip: found.clip),
+            sourceDuration: found.clip.sourceDuration,
+            url: url
+        )
+    }
+
+    /// Writes a window from the Range sheet. A window the server would refuse (`TIMELINE_SOURCE_BOUNDS`) is
+    /// ignored rather than staged, so one bad drag can never block Save. Wrap a whole drag in
+    /// `beginTransaction()` / `endTransaction()` for a single undo step.
+    @discardableResult
+    func setSourceWindow(for selection: EditorSelection, _ window: KriaSourceWindowGeometry.Window, rate: Double, sourceDuration: Double?) -> Bool {
+        guard sourceWindowBlockedReason(for: selection) == nil, let found = sourceWindowSlot(for: selection) else { return false }
+        let current = KriaSourceWindowGeometry.Window(start: max(0, found.slot.inS), length: sourceWindowLength(slot: found.slot, clip: found.clip))
+        // A slot that already overruns its footage may still shrink toward a valid window, even if it is not valid yet.
+        let shrinks = window.start >= 0 && window.length >= KriaSourceWindowGeometry.minimumLength - 1e-9
+            && KriaSourceWindowGeometry.sourceEnd(window, rate: rate) <= KriaSourceWindowGeometry.sourceEnd(current, rate: rate) + 1e-9
+        guard KriaSourceWindowGeometry.isWithinBounds(window, rate: rate, sourceDuration: sourceDuration) || shrinks else { return false }
+        let moved = abs(window.start - current.start) > 1e-6, resized = abs(window.length - current.length) > 1e-6
+        guard moved || resized else { return true }
+        // A pure slide writes `in_s` alone, so a beat-bound slot keeps `duration_beats`; a new length is a fixed length.
+        mutateClip(clipID: selection.id) { slot in
+            slot.inS = max(0, window.start)
+            if resized { slot.durationS = max(minimumClipDuration, window.length); slot.durationBeats = nil }
+        }
+        return true
+    }
+
     func operationCapability(_ key: String) -> EditorCapability? { document.capabilities[key] }
     func operationCapabilityReason(_ key: String) -> String? { document.capabilities[key]?.reason }
     func readOnlyReason(forOperation key: String) -> String? { operationCapabilityReason(key) }
@@ -6201,7 +6289,29 @@ struct NativeEditorTemporaryVideo {
     }
 
     private var carriesGuidedLabelsWithTimeline: Bool {
-        changedSections.contains(.timeline) && canEditSection(.text) && GuidedLabelRebase.hasLabels(document.textElements)
+        changedSections.contains(.timeline) && canEditSection(.text)
+            && GuidedLabelRebase.hasLabels(document.textElements, includeFreeText: ridesGuidedTimeline)
+    }
+
+    /// A guided story times EVERY text on its absolute output seconds, so any clip-timing edit
+    /// must re-time all of it (chat / creator text, group titles, `montage-text-*`), not just the
+    /// per-clip labels. Other archetypes keep their own text rules.
+    private var ridesGuidedTimeline: Bool { previewVariant["resolved_archetype"] == .string("guided_story") }
+
+    /// Source media ids by `clip_index`, for slots that do not carry a `media_id` themselves
+    /// (the server resolves them from the guided revision's `sources[clip_index]`).
+    private var mediaIDsByClipIndex: [Int: String] {
+        var result: [Int: String] = [:]
+        // The variant's own clip pool names every clip's media (resolved or not); the resolved
+        // source pool only fills in what it lacks.
+        for clip in previewVariant["user_timeline"]?.objectValue?["clips"]?.arrayValue ?? [] {
+            if let object = clip.objectValue, let index = object["clip_index"]?.numberValue,
+               let mediaID = object["media_id"]?.stringValue, !mediaID.isEmpty { result[Int(index)] = mediaID }
+        }
+        for clip in sourcePool?.clips ?? [] where result[clip.clipIndex] == nil {
+            if let mediaID = clip.nativeSource?.mediaID { result[clip.clipIndex] = mediaID }
+        }
+        return result
     }
 
     private func commitRequest(sections: [String: JSONValue]?, baseGeneration: String) -> EditorCommitRequest {
@@ -6385,16 +6495,23 @@ struct NativeEditorTemporaryVideo {
         let start = min(max(0, index), clips.count - 1)
         for i in start..<clips.count { let length = max(minimumClipDuration, clips[i].end - clips[i].start); let previousEnd = i == 0 ? 0 : clips[i - 1].end; clips[i].start = previousEnd; clips[i].end = previousEnd + length }
     }
-    /// Retimes the per-clip label bars onto their clips after any change to clip
+    /// Retimes the text that rides the guided timeline (clip labels, titles and, on a guided
+    /// story, every other text: see `GuidedLabelRebase`) after any change to clip
     /// timing (trim, extend, reorder, delete, transition overlap, add). Runs inside the
     /// same transaction as the timeline edit, so one Undo reverts both, and the text lane
     /// then differs from the clean document and is saved alongside `timeline_slots`.
     /// No-op unless a window actually moved and the text lane is editable.
     private func rebaseGuidedLabels(_ next: inout EditorDocument, from previous: EditorDocument) {
-        guard GuidedLabelRebase.hasLabels(next.textElements), canEditSection(.text),
-              previous.clips != next.clips,
-              GuidedLabelRebase.windows(of: previous.clips) != GuidedLabelRebase.windows(of: next.clips) else { return }
-        next.textElements = GuidedLabelRebase.rebase(next.textElements, oldSlots: previous.clips, newSlots: next.clips)
+        let freeText = ridesGuidedTimeline
+        guard GuidedLabelRebase.hasLabels(next.textElements, includeFreeText: freeText), canEditSection(.text),
+              previous.clips != next.clips else { return }
+        let media = mediaIDsByClipIndex
+        guard GuidedLabelRebase.windows(of: previous.clips, mediaByClipIndex: media)
+                != GuidedLabelRebase.windows(of: next.clips, mediaByClipIndex: media) else { return }
+        next.textElements = GuidedLabelRebase.rebase(
+            next.textElements, oldSlots: previous.clips, newSlots: next.clips,
+            mediaByClipIndex: media, includeFreeText: freeText
+        )
     }
     private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil, isCurrent: Bool = true) {
         // A completed cloud render remains a useful, non-editable fallback

@@ -71,6 +71,7 @@ from app.services.phone_editor_sources import (
     editor_visual_bindings,
 )
 from app.services.phone_rollout import (
+    SINGLE_WORD_CAPTIONS_STAMP,
     freehand_drawing_client_supported,
     phone_guided_sfx_supported,
     phone_narrated_caption_edits_supported,
@@ -79,6 +80,9 @@ from app.services.phone_rollout import (
     phone_subtitled_title_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
+    recipe_has_single_word_text,
+    single_word_text_client_supported,
+    single_word_text_verified,
     text_bend_client_supported,
     validate_phone_pilot_recipe,
 )
@@ -277,6 +281,27 @@ def _normal_text(value: object) -> str:
     return " ".join(str(value or "").split()).casefold()
 
 
+def _authored_timeline_order(variant: dict, prep: dict) -> tuple[str, ...]:
+    """The cut's source ids, in play order, for an AUTHORED timeline Save.
+
+    Deleting a clip from a guided story converts it to an authored timeline
+    (`stage_initial_authored_baseline`), which has no guided revision. Its
+    resolved slots are the editor's own: `resolve_authored_phone_slots` stamps
+    each with the `media_id` of the pinned source catalog entry it indexes, so
+    this is the server's identification of every slot's source, never a guess
+    from a client clip index. Empty (so the caller still refuses an
+    order-required contract) unless EVERY active slot carries one.
+    """
+    if variant.get("editor_timeline_mode") != "authored":
+        return ()
+    rows = prep.get("timeline_override")
+    if not isinstance(rows, list):
+        return ()
+    active = [row for row in rows if isinstance(row, dict) and not row.get("removed")]
+    media_ids = tuple(str(row["media_id"]) for row in active if row.get("media_id"))
+    return media_ids if active and len(media_ids) == len(active) else ()
+
+
 def _rebind_editor_render_contract(
     staged: _StagedJob,
     variant_id: str,
@@ -364,6 +389,10 @@ def _rebind_editor_render_contract(
         order = tuple(
             str(row["media_id"]) for row in slots if isinstance(row, dict) and row.get("media_id")
         )
+        if not order and contract.order_required:
+            # Authored cut (a deleted/trimmed/reordered guided story): the
+            # resolved slots, not a client index, name each source.
+            order = _authored_timeline_order(variant, prep)
         if order:
             changes.update(order_ids=order, order_required=True, order_basis="editor")
         elif contract.order_required:
@@ -647,6 +676,7 @@ def prepare_phone_editor_commit(
         # KRI-646: the recompiled recipe pins bent text (`textLayers[].bend`) that this app
         # build cannot decode or draw; nothing is committed.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
+    _settle_single_word_captions(staged, variant_id)
     job.assembly_plan = staged.assembly_plan
     job.status = staged.status
     if "started_at" in vars(staged):
@@ -665,6 +695,34 @@ def prepare_phone_editor_commit(
             "after": style_snapshot(after_variant, learning_sections or set()),
         }
     return {**prep, "render_destination": "device", "render_task_id": None}
+
+
+def _settle_single_word_captions(staged: Any, variant_id: str) -> None:
+    """One-word captions: refuse a build that cannot decode them, remember one that can.
+
+    The recompiled recipe pins `karaoke.single_word` only when the compile knew the build
+    could decode it, so the 426 below is the belt for a recipe that reached an older build
+    some other way. The stamp is for the next compile that has NO request (a worker applying
+    a chat edit): it cannot see the app build, so it trusts the last Save's answer. Written
+    only while the feature is verified and only inside a request, so with the feature off the
+    committed assembly plan is exactly what it was.
+    """
+    from app.services.client_protocol import in_http_request
+
+    recipe = device_status(staged, variant_id).request.recipe
+    if recipe_has_single_word_text(recipe) and not single_word_text_client_supported():
+        raise HTTPException(
+            426, detail={"code": "client_update_required", "feature": "single_word_text"}
+        )
+    if not in_http_request() or not single_word_text_verified():
+        return
+    qualifies = single_word_text_client_supported(require_client=True)
+    for row in staged.assembly_plan.get("variants") or []:
+        if isinstance(row, dict) and row.get("variant_id") == variant_id:
+            if qualifies:
+                row[SINGLE_WORD_CAPTIONS_STAMP] = True
+            else:
+                row.pop(SINGLE_WORD_CAPTIONS_STAMP, None)
 
 
 def _guided_sound_effects(

@@ -14,6 +14,23 @@ Ways this can go wrong (written before the code, per the repo testing rules):
 9. Too many clips for a short take: some silently vanish.
 10. A clip shorter than the 0.5 s flicker floor is "placed" and then dropped
     by the compiler without a receipt.
+
+Speaking pace over the spoken span (T2 boat kit, measured with local
+whisper.cpp medium), written before the change:
+11. A real take with a quiet lead-in or tail (T2_01: 10 words in the first 8 s
+    of a 15 s clip, 0.67 words/s over the whole clip) is muted as footage and
+    the creator's words are lost.
+12. Measuring over the spoken span lets a short hallucination burst (T2_03
+    "Altyazı M.K.", T2_04 "İzlediğiniz için teşekkürler": 2-3 words inside 2 s)
+    clear the pace bar -- the word floor must still keep them footage.
+13. On a long ambient clip, two stock Whisper outros stacked together reach
+    the word floor inside a few seconds, which the old whole-clip pace diluted
+    away -- known outro phrases must not count as speech.
+14. A tiny span (two words 50 ms apart) gives an absurd pace in the receipt.
+15. Words scattered thinly across a long clip (crowd chatter) become a speaker
+    once the span is used instead of the duration.
+16. A clip without word timings (no span) silently changes behaviour; it must
+    keep the whole-clip pace.
 """
 
 from __future__ import annotations
@@ -27,13 +44,120 @@ from app.pipeline.phone_talking_cutaways import (
     TalkingClipEvidence,
     classify_talking_clips,
     schedule_footage_cutaways,
+    speech_evidence,
+)
+from app.pipeline.transcribe import Word
+
+
+def _clip(clip_id, duration_s, words, audible=True, span_s=None):
+    return TalkingClipEvidence(
+        clip_id=clip_id,
+        duration_s=duration_s,
+        word_count=words,
+        audible=audible,
+        speech_span_s=span_s,
+    )
+
+
+def _words(*timed):
+    return [Word(text=text, start_s=start, end_s=end, confidence=1.0) for start, end, text in timed]
+
+
+# The T2 boat kit, as local whisper.cpp medium heard it.
+T2_01_WORDS = _words(
+    (0.00, 0.72, "-Dönmek"),
+    (0.72, 1.62, "istiyorsan"),
+    (1.62, 2.00, "dön."),
+    (2.00, 2.37, "-Aa"),
+    (2.37, 3.60, "kaldık."),
+    (3.60, 4.21, "Tekne"),
+    (4.21, 6.00, "çalışmıyor."),
+    (6.00, 6.50, "-Tekne"),
+    (6.50, 7.68, "çalışmıyor"),
+    (7.68, 8.00, "lan."),
+)
+T2_03_WORDS = _words((0.00, 0.97, "Altyazı"), (0.97, 2.00, "M.K."))
+T2_04_WORDS = _words(
+    (0.00, 0.81, "İzlediğiniz"), (0.81, 1.13, "için"), (1.13, 2.00, "teşekkürler.")
 )
 
 
-def _clip(clip_id, duration_s, words, audible=True):
-    return TalkingClipEvidence(
-        clip_id=clip_id, duration_s=duration_s, word_count=words, audible=audible
+def _measured(clip_id, duration_s, words):
+    count, span = speech_evidence(words)
+    return _clip(clip_id, duration_s, count, span_s=span)
+
+
+def test_t2_boat_take_with_a_quiet_tail_speaks_and_river_clips_stay_footage():
+    roles = classify_talking_clips(
+        [
+            _measured("T2_01", 15.0, T2_01_WORDS),
+            _measured("T2_03", 12.0, T2_03_WORDS),
+            _measured("T2_04", 14.0, T2_04_WORDS),
+        ]
     )
+    assert roles.speakers == ("T2_01",)
+    assert roles.footage == ("T2_03", "T2_04")
+    t2_01 = roles.receipt[0]
+    assert t2_01["word_count"] == 10
+    assert t2_01["words_per_s"] == 1.25  # 10 words over the 8 s actually spoken
+    assert "fallback" not in t2_01
+
+
+def test_t2_take_scored_over_the_whole_clip_alone_would_be_footage():
+    # The pre-fix measurement: 10 words / 15 s = 0.67 words/s. Without a span the
+    # whole-clip pace still applies, so the boat take needs its span to speak.
+    roles = classify_talking_clips([_clip("T2_01", 15.0, 10), _clip("other", 10.0, 30)])
+    assert roles.footage == ("T2_01",)
+
+
+def test_stock_whisper_outros_do_not_count_as_speech():
+    assert speech_evidence(T2_04_WORDS) == (0, None)
+    stacked = _words(
+        (20.0, 20.8, "Abone"),
+        (20.8, 21.4, "olmayı"),
+        (21.4, 22.0, "unutmayın."),
+        (22.0, 22.8, "İzlediğiniz"),
+        (22.8, 23.1, "için"),
+        (23.1, 23.6, "teşekkür"),
+        (23.6, 24.0, "ederim."),
+    )
+    assert speech_evidence(stacked) == (0, None)
+    roles = classify_talking_clips(
+        [_measured("river", 30.0, stacked), _measured("T2_01", 15.0, T2_01_WORDS)]
+    )
+    assert roles.footage == ("river",)
+
+
+def test_real_words_around_an_outro_still_count_with_their_own_span():
+    words = _words(
+        (1.0, 1.4, "Çocuklar"),
+        (1.4, 1.8, "parkta"),
+        (1.8, 2.3, "oynuyor"),
+        (9.0, 9.8, "İzlediğiniz"),
+        (9.8, 10.1, "için"),
+        (10.1, 10.9, "teşekkürler."),
+    )
+    count, span = speech_evidence(words)
+    assert count == 3
+    assert span == pytest.approx(1.3)
+
+
+def test_a_tiny_span_reports_a_sane_pace():
+    roles = classify_talking_clips([_clip("blip", 10.0, 6, span_s=0.05)])
+    # Floored to MIN_SPEECH_SPAN_S, not 120 words/s.
+    assert roles.receipt[0]["words_per_s"] <= 6 / 2.0
+
+
+def test_words_scattered_across_a_long_clip_stay_footage():
+    # Crowd chatter: 8 words spread over 55 s of a 60 s clip.
+    roles = classify_talking_clips(
+        [_clip("talk", 10.0, 25, span_s=9.0), _clip("crowd", 60.0, 8, span_s=55.0)]
+    )
+    assert roles.footage == ("crowd",)
+
+
+def test_no_words_means_no_span():
+    assert speech_evidence([]) == (0, None)
 
 
 def test_two_talking_clips_and_two_footage_clips_keep_upload_order():

@@ -65,6 +65,8 @@ enum DeviceRenderButtonTitle {
     typealias RetryFailure = @Sendable (UUID, DeviceRenderIdentity) async throws -> DeviceRenderRetryAck
     typealias ReportPreparationFailure = @Sendable (UUID, Error) async -> Void
     private(set) var presentations: [DeviceRenderKey: DeviceRenderPresentation] = [:]
+    private(set) var retryApprovalKeys: Set<DeviceRenderKey> = []
+    func retryNeedsApproval(_ key: DeviceRenderKey) -> Bool { retryApprovalKeys.contains(key) }
     @ObservationIgnored private let fetch: Fetch
     @ObservationIgnored private let factory: Factory
     @ObservationIgnored private let retryFailure: RetryFailure
@@ -118,6 +120,8 @@ enum DeviceRenderButtonTitle {
             guard status.request.identity.jobID == key.jobID,
                   status.request.identity.variantID == key.variantID else { throw APIError.invalidResponse }
             let request = status.request
+            if status.retryRequiresApproval { retryApprovalKeys.insert(key) }
+            else { retryApprovalKeys.remove(key) }
             if requests[key] != request {
                 observations.removeValue(forKey: key)?.cancel()
                 if let previous = entries[key] { try await previous.cancel() }
@@ -263,7 +267,7 @@ enum DeviceRenderButtonTitle {
         for observer in observations.values { observer.cancel() }
         observations.removeAll()
         for coordinator in entries.values { try? await coordinator.cancel() }
-        entries.removeAll(); requests.removeAll(); presentations.removeAll()
+        entries.removeAll(); requests.removeAll(); presentations.removeAll(); retryApprovalKeys.removeAll()
     }
 
     private func observe(_ key: DeviceRenderKey, coordinator: DeviceRenderCoordinator) async {

@@ -862,7 +862,8 @@
       "id": "kri-546-montage-receipts",
       "tickets": [
         "KRI-546",
-        "KRI-651"
+        "KRI-651",
+        "KRI-674"
       ],
       "symptom": "Phone Montage render-ready reply said 'Do\u011frulayamad\u0131m' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
       "boundary": "publication",
@@ -886,7 +887,9 @@
         "src/apps/api/app/agents/clip_intent_planner.py",
         "src/apps/api/app/services/clip_intent_planning.py",
         "src/apps/api/app/routes/creator_agent.py",
-        "src/apps/api/prompts/clip_intent_planner.txt"
+        "src/apps/api/prompts/clip_intent_planner.txt",
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/tests/kria/test_brief_provider_recovery_postgres.py"
       ],
       "regression_tests": [
         "tests/kria/test_brief_montage_render_asks.py",
@@ -900,8 +903,8 @@
       "harness": "real_reply",
       "kill_switch": null,
       "evidence": {
-        "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read",
-        "live_model": "n/a",
+        "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read; KRI-674 follow-up timeout: stalled Pro transport causes both EN/TR healthy rendered follow-ups to fail before the fix (2 failed, 2 passed); Flash-first preserves successful clarification and single-call unknown recovery (4 passed).",
+        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17\u201314.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
         "native_output": "Berlin re-run job a7d69a5b (2026-10-08) was the incident; post-fix phone re-send pending; KRI-651: native simulator export and pixel checks passed 2026-10-13 (exact hook, color emoji, no context caption)",
         "production": "merged 2026-10-08"
       },
@@ -918,7 +921,8 @@
         "EN/TR saved opening and closing placement reaches plan approval through real clip inventory",
         "one-clip caption and raw mixed requests remain inventoried even when absent from the brief or candidates",
         "later placement changes and stale copy do not inherit prior approval",
-        "narrow follow-up extractor provider failure remains typed with saved footage"
+        "narrow follow-up extractor provider failure remains typed with saved footage",
+        "narrow rendered follow-up chooses the interactive model before contact; provider outcome unknown still stops without fallback or brief mutation"
       ],
       "neighbours_gap": [
         "approved/published generation lineage is not a typed invariant at the publication boundary (KRI-577 item 1)",
@@ -1296,6 +1300,113 @@
         "physical original-project post-deploy resend"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-709-auto-continue",
+      "tickets": [
+        "KRI-709"
+      ],
+      "symptom": "A long multi-clip request replied 'Reply \"go ahead\" in a moment and I'll pick up where I left off' although nothing was stuck; only a new message restarted the work.",
+      "boundary": "model_budget",
+      "status": "open_pr",
+      "owner": "KRI-709",
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/web/src/app/plan/_components/workspace/ChatCreationWorkspace.tsx"
+      ],
+      "regression_tests": [
+        "tests/kria/test_turn_auto_continue_postgres.py",
+        "tests/kria/test_planner.py::test_pending_vision_is_not_reported_as_a_match_failure",
+        "tests/kria/test_planner_analysis_recovery.py",
+        "tests/kria/test_planner_song_order.py::test_alignment_missing_returns_the_song_pending_reply"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Postgres-backed run_kria_turn: pending -> continued -> one final reply; run cap, queued-turn age, brief written once, newer message, cancel and lost publish covered. Lever is an int cap, not a bool: KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 restores the old reply (test_kill_switch_keeps_the_old_reply_byte_identical).",
+        "live_model": "n/a",
+        "native_output": "unknown",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "clip-intent vision cap or deadline",
+        "clip understanding still running",
+        "song alignment still running",
+        "a second message sent during the wait (KRI-552 class)",
+        "cancel during planning",
+        "lost broker publish"
+      ],
+      "neighbours_gap": [
+        "iOS device re-send of a long multi-clip request after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-698-simpler-approval",
+      "tickets": [
+        "KRI-698",
+        "KRI-674"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-698",
+      "symptom": "Accepting the simpler version left omitted rule text mandatory in the approved brief; native pinning then refused the export.",
+      "boundary": "persistence",
+      "paths": [
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/kria/brief_binding.py",
+        "src/apps/api/tests/kria/test_runtime_simpler_version_loop.py",
+        "src/apps/api/app/kria/render_retry.py",
+        "src/apps/api/app/routes/kria_runtime.py",
+        "src/apps/api/tests/kria/test_render_retry_postgres.py",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
+        "src/apps/ios/Kria/Features/DeviceRenderPanel.swift",
+        "src/apps/ios/Kria/Features/CreationConfirmationStage.swift",
+        "src/apps/ios/Kria/Features/CanonicalChatComponents.swift",
+        "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift",
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/ios/Kria/Features/NativeEditorView.swift",
+        "src/apps/ios/Kria/Features/NativeEditorComponents.swift",
+        "src/apps/api/app/kria/device_render.py",
+        "src/apps/ios/Kria/Core/DeviceRenderSessions.swift",
+        "src/apps/ios/Kria/Core/DeviceRendering.swift"
+      ],
+      "regression_tests": [
+        "tests/kria/test_runtime_simpler_version_loop.py",
+        "tests/kria/test_brief_binding.py",
+        "tests/kria/test_request_binding_journey.py",
+        "tests/kria/test_render_retry_postgres.py"
+      ],
+      "harness": "mocked_internal",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Red before fix: durable brief stayed v1, declined/unrelated/stale replies reached approval. Real Postgres, approval, dispatch claim, native compiler, immutable pin and publication authority guard; planner output replayed. KRI-674: typed HTTP/real Postgres consent and dispatch journeys; model entrypoint is a failing sentinel, not replayed planner output.",
+        "live_model": "Not run; no paid calls.",
+        "native_output": "scripts/ios/kri-698-simpler-version.py prepares the exact pinned recipe for AudioParityFixtureTests and verifies actual MP4 title, length, clip order and audio; synthetic sources, macOS AVFoundation. Physical iPhone/original N2 footage pending. KRI-674: physical iPhone13Pro Retry/approval/AVFoundation/upload/publication passed on a local scratch backend; exact recipe, revision2->3, one turn, zero AgentRuns, 6.6s H264/AAC; stale completion409. See docs/reviews/kri-674-exact-retry.md.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "explicit omission changes durable brief and approval binding",
+        "refusal/unrelated reply/clip number cannot waive",
+        "stale brief and new missing requirement require another choice",
+        "later request restores text",
+        "accepted omissions survive a subsequent unresolved choice",
+        "unwaived text and missing retained title still fail verification",
+        "pin redelivery is idempotent",
+        "KRI-674: frozen native recipe retry keeps turn/draft/recipe; fresh expiring consent; concurrent taps; lost queue acknowledgement; newer request refusal; no-program legacy failure is explicit."
+      ],
+      "neighbours_gap": [
+        "Planner output is replayed at _plan_with_live_agent; fresh model behavior is not measured.",
+        "Original N2 phone source files are unavailable on this host; physical-device replay remains pending.",
+        "KRI-674: cloud prepared-execution adapters and legacy pre-plan failures require KRI-722/KRI-723."
+      ],
+      "follow_ups": [
+        "KRI-721",
+        "KRI-734"
+      ],
+      "red_control": "not_applicable",
+      "journey": "kri-492-length-ownership"
     }
   ]
 }

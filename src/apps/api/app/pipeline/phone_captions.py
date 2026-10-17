@@ -177,6 +177,13 @@ class PhoneCaptionLook:
     shadow_color: str | None = None
     shadow_opacity: float | None = None
     shadow_enabled: bool | None = None
+    # One word on screen at a time for ``style="word"`` with an explicit
+    # ``highlight_spoken_word`` (`karaoke.single_word`, capability
+    # ``singleWordText``). False (the default) is today's full-line karaoke sweep,
+    # byte-for-byte. `caption_look_from_variant` sets it only when
+    # `phone_rollout.single_word_captions_enabled` says the feature is verified AND the
+    # app build is known to decode it.
+    single_word: bool = False
 
 
 _DEFAULT_CAPTION_LOOK = PhoneCaptionLook()
@@ -360,7 +367,15 @@ def caption_look_from_variant(variant: dict) -> PhoneCaptionLook:
         shadow_color=_clean_hex_or_none(editor_style.get("shadow_color")),
         shadow_opacity=_shadow_opacity_or_none(editor_style.get("shadow_opacity")),
         shadow_enabled=shadow_enabled,
+        single_word=_single_word_enabled(variant),
     )
+
+
+def _single_word_enabled(variant: dict) -> bool:
+    # Imported here: `phone_rollout` imports the recipe models this module's importers load.
+    from app.services.phone_rollout import single_word_captions_enabled
+
+    return single_word_captions_enabled(variant)
 
 
 def compile_caption_layers(
@@ -443,12 +458,21 @@ def compile_caption_layers(
     canvas = PipelineCanvas(width=canvas_width, height=canvas_height)
     layers: list[PortableTextLayer] = []
     overlays: list[dict[str, Any]] = []
+    # What each cue became: a flat index into `layers`, or the one-word group whose
+    # per-word layers sit at `layers[first:first + count]` until they are merged below.
+    entries: list[int | _SingleWordCue] = []
+    one_word_at_a_time = (
+        resolved_look.single_word
+        and style == "word"
+        and resolved_look.highlight_spoken_word is not None
+    )
     for index, cue in enumerate(prepared):
         overlay = _base_overlay(cue, resolved_look)
         use_karaoke = "words" in cue and (
             style == "word" or resolved_look.highlight_spoken_word is True
         )
         word_timings = _relative_word_timings(cue, cue["words"]) if use_karaoke else []
+        layer_id = f"{id_prefix}-{index}"
         if word_timings:
             overlay["effect"] = "karaoke-line"
             overlay["highlight_color"] = (
@@ -457,18 +481,172 @@ def compile_caption_layers(
                 else resolved_look.highlight_color
             )
             overlay["word_timings"] = word_timings
+            if one_word_at_a_time:
+                try:
+                    group = _compile_single_word_cue(
+                        overlay, word_timings, layer_id=layer_id, canvas=canvas, first=len(layers)
+                    )
+                except Exception as exc:  # noqa: BLE001 - untrusted transcript/edited cue content
+                    raise UnsupportedPhonePlan(f"unable to compile caption cue: {exc}") from exc
+                if group is not None:
+                    entries.append(group)
+                    layers.extend(group.layers)
+                    overlays.extend(group.overlays)
+                    continue
+                # A word that cannot stay on one line: this cue is today's full-line karaoke.
         else:
             overlay["effect"] = "pop-in"
-        layer_id = f"{id_prefix}-{index}"
         try:
             layer, _font = compile_text_overlay(overlay, layer_id=layer_id, canvas=canvas)
         except Exception as exc:  # noqa: BLE001 - untrusted transcript/edited cue content
             raise UnsupportedPhonePlan(f"unable to compile caption cue: {exc}") from exc
+        entries.append(len(layers))
         layers.append(layer)
         overlays.append(overlay)
+    # One-word cues were laid out word by word, so the keep-out pass treats each word as the
+    # one-word caption it would be on its own.
     resolved = _make_room_for_watermark(layers, overlays, canvas=canvas, look=resolved_look)
+    if any(isinstance(entry, _SingleWordCue) for entry in entries):
+        resolved = _merge_single_word_cues(entries, resolved)
+        if len(resolved) > MAX_CAPTION_LAYERS:
+            raise UnsupportedPhonePlan(
+                f"{len(resolved)} caption layers would exceed the phone recipe's "
+                f"{MAX_CAPTION_LAYERS}-text-layer cap"
+            )
     remember_caption_bounds(resolved, canvas=canvas)
     return resolved
+
+
+# A karaoke layer holds at most this many words (`KaraokeContent.starts`); a longer cue is
+# sent as consecutive layers.
+_SINGLE_WORD_LAYER_WORDS = 100
+# Smallest on-screen time a word gets when the timings overlap (matches `_relative_word_timings`).
+_MIN_WORD_S = 0.01
+
+
+@dataclass(slots=True)
+class _SingleWordCue:
+    """One cue shown a word at a time: its per-word standalone layers, before merging."""
+
+    layer_id: str
+    first: int  # index of this cue's first per-word layer in the flat layer list
+    layers: list[PortableTextLayer]
+    overlays: list[dict[str, Any]]
+    cue_start: float
+    starts: list[float]  # layer-local to `cue_start`, one per word
+    end: float  # absolute
+
+
+def _compile_single_word_cue(
+    overlay: dict[str, Any],
+    word_timings: list[dict],
+    *,
+    layer_id: str,
+    canvas: Any,
+    first: int,
+) -> _SingleWordCue | None:
+    """Lay out each word of the cue STANDALONE, as the one-word caption it would be alone.
+
+    Every word goes through the same karaoke layout the full line uses, with a single
+    word, so it carries the line's font, size, tracking, stroke and shadow and sits
+    centred (or anchored) on its own line at the caption anchor. Returns None when a
+    word is wider than the caption frame (it would wrap): the caller sends that cue as
+    full-line karaoke instead.
+    """
+    from app.pipeline import text_overlay_skia as cloud
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    resolved = cloud._resolve_typeface_for_overlay(overlay)
+    size = cloud._resolve_font_size_px(overlay)
+    font = _caption_font(resolved.typeface, size)
+    spacing = cloud._overlay_letter_spacing_px(overlay, size)
+    max_width = cloud._overlay_max_width_px(overlay, canvas)
+    if any(
+        any(char.isspace() for char in entry["text"])
+        or cloud._measure_line(font, entry["text"], spacing) > max_width
+        for entry in word_timings
+    ):
+        return None
+
+    # Non-decreasing starts that each leave the word a frame on screen; a word the
+    # overlap pushed past the cue's end is dropped (it would never show).
+    cue_duration = overlay["end_s"] - overlay["start_s"]
+    kept: list[dict] = []
+    starts: list[float] = []
+    for entry in word_timings:
+        start = max(entry["start_s"], starts[-1] + _MIN_WORD_S if starts else 0.0)
+        if start + _MIN_WORD_S > cue_duration + 1e-9:
+            continue
+        kept.append(entry)
+        starts.append(round(start, 3))
+    if not kept:
+        return None
+    last_end = min(cue_duration, max(kept[-1]["end_s"], starts[-1] + _MIN_WORD_S))
+    end = min(overlay["end_s"], overlay["start_s"] + last_end)
+
+    layers: list[PortableTextLayer] = []
+    overlays: list[dict[str, Any]] = []
+    for number, entry in enumerate(kept):
+        word_overlay = {
+            **overlay,
+            "word_timings": [{"text": entry["text"], "start_s": 0.0, "end_s": 1.0}],
+        }
+        layer, _font = compile_text_overlay(
+            word_overlay, layer_id=f"{layer_id}-word-{number}", canvas=canvas
+        )
+        if len(layer.runs) != 1 or layer.runs[0].text != entry["text"]:
+            return None
+        layers.append(layer)
+        overlays.append(word_overlay)
+    return _SingleWordCue(
+        layer_id=layer_id,
+        first=first,
+        layers=layers,
+        overlays=overlays,
+        cue_start=overlay["start_s"],
+        starts=starts,
+        end=end,
+    )
+
+
+def _merge_single_word_cues(
+    entries: list[int | _SingleWordCue], resolved: list[PortableTextLayer]
+) -> list[PortableTextLayer]:
+    """One `single_word` karaoke layer per cue (per 100 words) from its resolved word layers."""
+    from app.kria.portable_text import KaraokeContent
+
+    merged: list[PortableTextLayer] = []
+    for entry in entries:
+        if not isinstance(entry, _SingleWordCue):
+            merged.append(resolved[entry])
+            continue
+        words = resolved[entry.first : entry.first + len(entry.layers)]
+        anchor = words[0]
+        assert anchor.karaoke is not None
+        absolute = [entry.cue_start + start for start in entry.starts]
+        for part, lower in enumerate(range(0, len(words), _SINGLE_WORD_LAYER_WORDS)):
+            upper = min(lower + _SINGLE_WORD_LAYER_WORDS, len(words))
+            merged.append(
+                PortableTextLayer(
+                    id=entry.layer_id if part == 0 else f"{entry.layer_id}-part-{part}",
+                    start=absolute[lower],
+                    end=absolute[upper] if upper < len(words) else entry.end,
+                    anchor_x=anchor.anchor_x,
+                    anchor_y=anchor.anchor_y,
+                    rotation_degrees=anchor.rotation_degrees,
+                    runs=[layer.runs[0] for layer in words[lower:upper]],
+                    effect="karaoke-line",
+                    karaoke=KaraokeContent(
+                        starts=[
+                            round(value - absolute[lower], 3) for value in absolute[lower:upper]
+                        ],
+                        highlight=anchor.karaoke.highlight,
+                        active_only=True,
+                        single_word=True,
+                    ),
+                )
+            )
+    return merged
 
 
 def watermark_keepout_rect(canvas_width: float, canvas_height: float) -> Box:

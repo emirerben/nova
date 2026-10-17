@@ -489,3 +489,172 @@ def test_verified_bytes_reject_invalid_image_and_size(monkeypatch, tmp_path):
     with pytest.raises(HTTPException) as error:
         ingest.verified_source_metadata("path", "42", "image", payload())
     assert error.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_full_500_library_rotates_only_after_verified_finalize(owner, monkeypatch):
+    # Real capacity, not a reduced stand-in: reservation and invalid media cannot
+    # remove any of the historical uploads before a successful verified import.
+    now = datetime.now(UTC)
+    ids = sorted([uuid.uuid4() for _ in range(500)])
+    async with AsyncSessionLocal() as db:
+        db.add_all(
+            MediaAsset(
+                id=identifier,
+                user_id=owner,
+                kind="image",
+                status="ready",
+                created_at=now - timedelta(days=1),
+                last_used_at=now if index == 0 else None,
+            )
+            for index, identifier in enumerate(ids)
+        )
+        await db.commit()
+        reservation = await ingest.reserve_library_upload(db, owner, payload())
+        assert (
+            len(
+                (
+                    await db.scalars(
+                        select(MediaAsset.id).where(
+                            MediaAsset.user_id == owner, MediaAsset.archived_at.is_(None)
+                        )
+                    )
+                ).all()
+            )
+            == 500
+        )
+
+    def invalid(*args, **kwargs):
+        raise HTTPException(422, "Invalid uploaded image")
+
+    monkeypatch.setattr(ingest, "verified_source_metadata", invalid)
+    monkeypatch.setattr(
+        ingest.storage, "object_metadata", lambda path: SimpleNamespace(generation="42", size=12)
+    )
+    async with AsyncSessionLocal() as db:
+        with pytest.raises(HTTPException, match="Invalid uploaded image"):
+            await ingest.finalize_library_upload(db, owner, reservation.id, "bad")
+        await db.rollback()
+        assert (await db.get(MediaAsset, ids[0])).archived_at is None
+
+    monkeypatch.setattr(
+        ingest,
+        "verified_source_metadata",
+        lambda *args, **kwargs: dict(
+            uploaded_sha256="a" * 64,
+            byte_count=12,
+            content_type="image/png",
+            generation="42",
+            role="original",
+            metadata={},
+        ),
+    )
+    async with AsyncSessionLocal() as db:
+        imported, source = await ingest.finalize_library_upload(db, owner, reservation.id, "ok")
+        assert (await db.get(MediaAsset, ids[0])).archived_at is not None
+        active = set(
+            (
+                await db.scalars(
+                    select(MediaAsset.id).where(
+                        MediaAsset.user_id == owner, MediaAsset.archived_at.is_(None)
+                    )
+                )
+            ).all()
+        )
+        assert active == set(ids[1:]) | {imported.id}
+        retry, _ = await ingest.finalize_library_upload(db, owner, reservation.id, "retry")
+        assert retry.id == imported.id
+        # A fresh upload of the same bytes coalesces without a second eviction.
+        duplicate = await ingest.reserve_library_upload(db, owner, payload("duplicate"))
+        reused, same = await ingest.finalize_library_upload(db, owner, duplicate.id, "duplicate")
+        assert reused.id == imported.id and same.id == source.id
+        assert (
+            set(
+                (
+                    await db.scalars(
+                        select(MediaAsset.id).where(
+                            MediaAsset.user_id == owner, MediaAsset.archived_at.is_(None)
+                        )
+                    )
+                ).all()
+            )
+            == active
+        )
+
+
+@pytest.mark.asyncio
+async def test_rotation_rolls_back_with_caller_transaction(owner, monkeypatch):
+    monkeypatch.setattr(ingest, "ACTIVE_ASSET_LIMIT", 1)
+    values = dict(
+        owner_id=owner,
+        kind="image",
+        byte_count=12,
+        content_type="image/png",
+        role="original",
+        generation="42",
+    )
+    async with AsyncSessionLocal() as db:
+        old, _ = await ingest.register_verified_source(
+            db, object_path=f"users/{owner}/old.png", uploaded_sha256="a" * 64, **values
+        )
+        old_id = old.id
+        await db.commit()
+        new, _ = await ingest.register_verified_source(
+            db, object_path=f"users/{owner}/rejected.png", uploaded_sha256="b" * 64, **values
+        )
+        new_id = new.id
+        await db.rollback()
+        assert (await db.get(MediaAsset, old_id)).archived_at is None
+        assert await db.get(MediaAsset, new_id) is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_unique_imports_rotate_under_owner_lock(owner, monkeypatch):
+    monkeypatch.setattr(ingest, "ACTIVE_ASSET_LIMIT", 2)
+    async with AsyncSessionLocal() as db:
+        old = MediaAsset(
+            user_id=owner,
+            kind="image",
+            status="ready",
+            created_at=datetime.now(UTC) - timedelta(days=1),
+        )
+        db.add(old)
+        await db.commit()
+        old_id = old.id
+
+    async def import_one(index):
+        async with AsyncSessionLocal() as db:
+            asset, _ = await ingest.register_verified_source(
+                db,
+                owner_id=owner,
+                kind="image",
+                byte_count=12,
+                content_type="image/png",
+                role="original",
+                generation="42",
+                uploaded_sha256=str(index) * 64,
+                object_path=f"users/{owner}/{index}.png",
+            )
+            await db.commit()
+            return asset.id
+
+    imported = await asyncio.gather(*(import_one(index) for index in range(1, 5)))
+    async with AsyncSessionLocal() as db:
+        active = (
+            await db.scalars(
+                select(MediaAsset)
+                .where(MediaAsset.user_id == owner, MediaAsset.archived_at.is_(None))
+                .order_by(MediaAsset.created_at.desc(), MediaAsset.id.desc())
+            )
+        ).all()
+        newest = (
+            await db.scalars(
+                select(MediaAsset.id)
+                .where(MediaAsset.user_id == owner)
+                .order_by(MediaAsset.created_at.desc(), MediaAsset.id.desc())
+                .limit(2)
+            )
+        ).all()
+        assert len(active) == 2 and [asset.id for asset in active] == newest
+        assert set(newest) <= set(imported)
+        assert (await db.get(MediaAsset, old_id)).archived_at is not None

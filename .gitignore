@@ -43,6 +43,7 @@ out/
 .derived-device/
 src/apps/ios/.derived-data/
 src/apps/ios/.derived-data-sim/
+src/apps/ios/.derived-data-perf/
 src/apps/ios/.device-derived/
 src/apps/ios/.build/
 src/apps/ios/**/.build/
@@ -93,3 +94,5 @@ src/apps/ios/Packages/*/.swiftpm/
 !brand/social/dist/
 !brand/social/dist/**
 brand/social/dist/**/*.mov
+
+.request-following-report/

@@ -37,6 +37,7 @@ from app.kria.device_render import (
     DeviceRenderFailureOut,
     DeviceRenderIdentity,
     DeviceRenderStatus,
+    DeviceRenderStatusOut,
     DeviceRetryBody,
     DeviceRetryOut,
     finished_durations,
@@ -49,7 +50,14 @@ from app.kria.render_assets import (
     VoiceoverRenderAsset,
 )
 from app.limiter import limiter
-from app.models import ContentPlan, Job, PlanItem, PlanItemAsset, TemporaryMediaUpload
+from app.models import (
+    ContentPlan,
+    CreatorAgentExecution,
+    Job,
+    PlanItem,
+    PlanItemAsset,
+    TemporaryMediaUpload,
+)
 from app.routes.generative_jobs import PLAYBACK_URL_TTL_MIN
 from app.schemas.edit_proposal import NarrationTrack
 from app.services.content_plan_persona import PlanPersonaOwnershipError, load_owned_plan_persona
@@ -77,6 +85,8 @@ from app.services.guided_speech_cleanup import (
 from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.phone_rollout import (
     freehand_drawing_client_supported,
+    recipe_has_single_word_text,
+    single_word_text_client_supported,
     text_bend_client_supported,
 )
 from app.services.render_library import catalog_path, inspect_library_asset
@@ -218,13 +228,27 @@ def _record(job: Job, identity: DeviceRenderIdentity) -> tuple[dict, DeviceRende
     return record, status
 
 
-@router.get("/jobs/{job_id}/device-render", response_model=DeviceRenderStatus)
+async def _runtime_retry_execution(db: AsyncSession, job: Job, record: dict) -> uuid.UUID | None:
+    return (
+        await db.execute(
+            select(CreatorAgentExecution.id)
+            .where(
+                CreatorAgentExecution.target_job_id == job.id,
+                CreatorAgentExecution.tool_name == "render.request",
+                CreatorAgentExecution.target_generation_id == record.get("base_generation"),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+@router.get("/jobs/{job_id}/device-render", response_model=DeviceRenderStatusOut)
 async def get_device_render(
     job_id: uuid.UUID,
     user: CurrentUser,
     variant_id: str = Query(..., min_length=1, max_length=160),
     db: AsyncSession = Depends(get_db),
-) -> DeviceRenderStatus:
+) -> DeviceRenderStatusOut:
     job = await _owned_job(db, user.id, job_id)
     try:
         status = device_status(job, variant_id)
@@ -250,6 +274,20 @@ async def get_device_render(
     ):
         # KRI-646: same for bent text; an older build cannot decode `bend`.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
+    if not single_word_text_client_supported() and recipe_has_single_word_text(
+        status.request.recipe
+    ):
+        # One-word captions (`karaoke.single_word`): an older build cannot decode the key.
+        raise HTTPException(
+            426, detail={"code": "client_update_required", "feature": "single_word_text"}
+        )
+    status = DeviceRenderStatusOut(
+        **status.model_dump(),
+        retry_requires_approval=(
+            status.phase != "published"
+            and await _runtime_retry_execution(db, job, record) is not None
+        ),
+    )
     now = datetime.now(UTC)
     last_polled_raw = record.get("last_polled_at")
     should_touch = True
@@ -754,12 +792,18 @@ async def retry_device_export(
     identity = body.identity
     job = await _owned_job(db, user.id, job_id)
     try:
-        _, status = _record(job, identity)
+        record, status = _record(job, identity)
     except _ContractRefusal as refusal:
         await _refuse_publication(db, job, refusal, stage="retry")
         raise
     if status.phase != "needs_attention":
         raise HTTPException(409, "Render is not awaiting a retry")
+    runtime_execution = await _runtime_retry_execution(db, job, record)
+    if runtime_execution is not None:
+        raise HTTPException(
+            409,
+            "Open this project's chat and review Retry approved edit before rendering again.",
+        )
     try:
         new_status = retry_device_render(job, identity.variant_id)
     except CreatorRenderContractError as exc:
