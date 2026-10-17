@@ -253,6 +253,31 @@ final class PerfUITests: XCTestCase {
         print("PERF testScrollLongTranscript timeline.build=\(Double(rebuilds) / Double(iterations)) planFeed.reduce=\(Double(feeds) / Double(iterations))")
     }
 
+    /// The same flicks with nothing else going on (no upload ticks, no plan blocks, no song card): what plain
+    /// scrolling a long transcript costs.
+    func testScrollQuietTranscript() {
+        warmCache()
+        let app = makeApp()
+        app.launch()
+        waitForTranscript(app)
+        let scroll = app.scrollViews.firstMatch
+        XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+        var metrics: [XCTMetric] = [
+            XCTOSSignpostMetric.scrollDecelerationMetric,
+            XCTOSSignpostMetric.scrollDraggingMetric,
+            XCTCPUMetric(application: app),
+        ]
+        if #available(iOS 26, *) { metrics.append(XCTHitchMetric(application: app)) }
+        let before = counters(app)
+        measure(metrics: metrics, options: options) {
+            for _ in 0..<4 { scroll.swipeDown(velocity: .fast) }
+            for _ in 0..<4 { scroll.swipeUp(velocity: .fast) }
+        }
+        let after = counters(app)
+        let rebuilds = (after["timeline.build"] ?? 0) - (before["timeline.build"] ?? 0)
+        print("PERF testScrollQuietTranscript timeline.build=\(Double(rebuilds) / Double(iterations))")
+    }
+
     // MARK: Gallery
 
     /// On a physical iPhone `AsyncImage` does not go through the fixture's URL protocol (the posters never reach

@@ -38,7 +38,8 @@ def test_the_prompt_teaches_voice_mode_only_while_the_route_can_render(monkeypat
     for flag in FLAGS:
         monkeypatch.setattr(settings, flag, False)
         prompt = MainCreatorAgent(None).render_prompt(_phone_input())  # type: ignore[arg-type]
-        assert "VOICE MODE" not in prompt and "voice_mode" not in prompt, flag
+        assert "VOICE MODE" not in prompt and '"continuous"' not in prompt, flag
+        assert ('"per_clip"' in prompt) is (flag == "speech_excerpt_montage_enabled")
         monkeypatch.setattr(settings, flag, True)
 
 
@@ -61,6 +62,29 @@ def test_voice_mode_is_repaired_away_when_the_route_is_off(monkeypatch, flag):
     assert compile_strategy_to_plan(manifest, strategy).strategy.voice_mode == "continuous"
     monkeypatch.setattr(settings, flag, False)
     assert compile_strategy_to_plan(manifest, strategy).strategy.voice_mode is None
+
+
+def test_per_clip_camera_audio_does_not_need_the_speech_excerpt_renderer(monkeypatch):
+    """The ordinary montage keeps each picture clip's sound, including ambient audio."""
+    from app.services import creator_capabilities
+    from app.services.creator_capabilities import compile_strategy_to_plan, resolve_creator_manifest
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(settings, "kria_plan_authority_enabled", True)
+    monkeypatch.setattr(settings, "speech_excerpt_montage_enabled", False)
+    manifest = resolve_creator_manifest(
+        item_id="i",
+        edit_format="montage",
+        media=[{"media_id": f"m{i}", "kind": "video", "duration_s": 9.0} for i in range(2)],
+    )
+    strategy = CreativeStrategy(
+        audio_strategy="original_audio",
+        voice_mode="per_clip",
+        montage_audio={"preserve_source_audio": True, "source_media_ids": ["m0", "m1"]},
+    )
+    kept = compile_strategy_to_plan(manifest, strategy).strategy
+    assert kept.voice_mode == "per_clip"
+    assert kept.montage_audio.source_media_ids == ["m0", "m1"]
 
 
 @pytest.mark.asyncio

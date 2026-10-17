@@ -108,13 +108,17 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
-def verdict(base: dict, new: dict) -> tuple[str, float]:
+HIGHER_IS_BETTER = ("Frame Rate", "Frame Count")
+
+
+def verdict(base: dict, new: dict, key: str = "") -> tuple[str, float]:
     delta = new["median"] - base["median"]
     noise = 2 * max(base["mad"], new["mad"])
-    # Lower is better for every duration/ratio metric XCTest reports here.
     if abs(delta) <= noise:
         return "noise", delta
-    return ("improved" if delta < 0 else "regressed"), delta
+    # Durations, CPU, hitches: lower is better. Frame rate and frame count: higher is better.
+    better = delta > 0 if any(word in key for word in HIGHER_IS_BETTER) else delta < 0
+    return ("improved" if better else "regressed"), delta
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
@@ -127,7 +131,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     print("|---|---|---|---|---|")
     for key in sorted(set(base["metrics"]) & set(new["metrics"])):
         b, n = base["metrics"][key], new["metrics"][key]
-        word, delta = verdict(b, n)
+        word, delta = verdict(b, n, key)
         percent = (delta / b["median"] * 100) if b["median"] else 0.0
         print(f"| {key} | {fmt(b['median'], b['unit'])} | {fmt(n['median'], n['unit'])} | {percent:+.0f}% | {word} |")
     for key in sorted(set(base["counters"]) & set(new["counters"])):

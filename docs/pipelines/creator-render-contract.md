@@ -1150,3 +1150,32 @@ bash scripts/check-api.sh test tests/kria/test_order_verdicts.py tests/routes/te
 bash scripts/check-api.sh test tests/tasks/test_unified_montage_dispatch.py tests/tasks/test_phone_format_matrix.py tests/tasks/test_generative_build.py tests/tasks/test_guided_story_build.py tests/routes/test_device_render.py tests/routes/test_phone_editor_commit.py -q
 bash scripts/preship-check.sh
 ```
+
+## Per-clip camera sound (KRI-674 live verification)
+
+A named camera-audio source can mean ambient sound kept with its picture; it does
+not necessarily mean spoken excerpts. Main Creator v61 can set `voice_mode` to
+`per_clip` when the creator asks for each clip's own sound. This uses the ordinary
+phone montage planner and keeps `audio_source_ids` intact. The compiled recipe
+must prove exactly those sources are audible; missing, muted or extra audio still
+fails verification. No speech detector or request-word matching chooses the lane.
+
+The new value is omitted unless chosen, like the existing voice modes. Explicit
+`continuous` and `excerpts`, and an absent historical mode, keep their established
+interpretation. Workers honor `per_clip` only on plan-authority jobs. This ordinary
+camera-sound mode does not need `SPEECH_EXCERPT_MONTAGE_ENABLED`; Main Creator only
+learns it when plan authority and the phone source-audio capability are available.
+The API and workers must deploy together; the strict pinned contract and native
+recipe schemas do not change.
+
+The route resolver and both worker entry points share the audio-mode decision in
+`creator_render_contract`. A diagnostics import failure cannot become a dependency
+of ordinary rendering. A saved guided picture plan still refuses a spoken-excerpt
+requirement; it can retain named sources only with explicit per-clip audio intent.
+
+Regression evidence crosses real parse/policy, contract projection and dispatch,
+with renderer entries recorded, plus the existing compiled-recipe audio verifier.
+The guards were red before the fix. Fresh Main Creator behavior and actual iPhone
+export/retry/publication remain separate verification steps; these offline checks
+are not a production-video pass. A failed pre-recipe job still needs a new version
+and fresh approval; this change never rewrites an old approved render contract.

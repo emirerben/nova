@@ -44,7 +44,7 @@ struct BrandPreviewHost: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
                             switch state {
-                            case "footage": FootageStage(format: .montage, mediaCount: 2, maximumClipCount: 10, uploads: [], progress: [:], addFootage: {}, changeFormat: {})
+                            case "footage": FootageStage(format: .montage, mediaCount: 2, maximumClipCount: 10, uploads: [], progress: UploadProgressStore(), addFootage: {}, changeFormat: {})
                             case "direction": DirectionStage(approval: approval, format: .montage, isBusy: false, decide: { _, _, _ in }, retrySpeechCheck: { _ in })
                             case "rendering": RenderingStage()
                             case "phone-rendering": DeviceRenderStatusCard(presentation: DeviceRenderPresentation(phase: .rendering), retry: {}, stop: {})

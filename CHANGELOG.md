@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.25.0] - 2026-10-17
+
+### Changed
+- perf(ios): stop the chat redrawing everything on every upload tick (KRI-712) (#1660) <!-- release-pr: 1660 -->
+
+## [0.80.24.0] - 2026-10-17
+
+### Fixed
+- Keep each clip's camera sound without requiring speech (KRI-674) (#1656) <!-- release-pr: 1656 -->
+
 ## [0.80.23.0] - 2026-10-17
 
 ### Changed
