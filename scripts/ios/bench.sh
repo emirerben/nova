@@ -19,9 +19,10 @@
 # a relocatable test bundle, so a baseline survives later rebuilds and other worktrees.
 #
 # NETWORK MODEL. The fixtures answer after KRIA_PERF_LATENCY_MS (default 150) plus KRIA_PERF_FULL_PROJECTION_MS
-# (default 600) on the full chat read. Both are assumptions: set them to test other conditions, e.g.
-#   TEST_RUNNER_KRIA_PERF_LATENCY_MS=400 TEST_RUNNER_KRIA_PERF_FULL_PROJECTION_MS=30 scripts/ios/bench.sh ...
-# The real handler measured ~2 ms for a 200-event chat, so the 600 ms default is a deliberately heavy case.
+# (default 30) on the full chat read. Both are assumptions: set them to test other conditions, e.g.
+#   TEST_RUNNER_KRIA_PERF_LATENCY_MS=400 scripts/ios/bench.sh ...            # cellular-like
+#   TEST_RUNNER_KRIA_PERF_FULL_PROJECTION_MS=600 scripts/ios/bench.sh ...    # a deliberately heavy server
+# The real handler measured ~2 ms for a 200-event draft chat; chats with finished renders were not measured.
 #
 # Results: test-results/ios/bench/<label>-<sha>-<dest>.json (+ .log). Compare with `--compare`, or let `--vs` do it.
 # Simulator: KRIA_SIMULATOR_ID, else the one named "Kria Perf" (xcrun simctl create "Kria Perf" "iPhone 17 Pro"),
