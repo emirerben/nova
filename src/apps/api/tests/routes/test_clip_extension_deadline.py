@@ -101,7 +101,12 @@ async def _extension_journey(monkeypatch, *, captured_shape=False):
     assert recipe.duration == pytest.approx(5), "later one-second clips must survive"
     word_layers = [row for row in recipe.text_layers if "::sequence-" in row.id]
     if captured_shape:
-        assert word_layers[0].end == pytest.approx(ends[0]), "preserve short opening words"
+        # Opening words now follow their footage through the projector (they used to be
+        # edge-anchored and left untouched), which snaps to the 1/30s grid like every other
+        # word: a 0.15s end lands within one frame. What matters is the word stays short.
+        assert word_layers[0].end == pytest.approx(ends[0], abs=1 / 30), (
+            "preserve short opening words"
+        )
     label_layer = next(row for row in recipe.text_layers if "::sequence-" not in row.id)
     assert [row.start for row in word_layers] == pytest.approx(
         starts, abs=1 / 30 if captured_shape else 1e-6

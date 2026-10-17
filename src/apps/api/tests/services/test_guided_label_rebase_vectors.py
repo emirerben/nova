@@ -322,6 +322,121 @@ def _cases() -> list[dict[str, Any]]:
         ],
     )
 
+    # KRI-715: ordinary (non-label, non-title) text follows the footage it sits over through
+    # source time, instead of staying at its old absolute seconds.
+    def free_text(
+        text_id: str, start: float, end: float, text: str = "Free text", **extra: Any
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": text_id,
+                "text": text,
+                "start_s": start,
+                "end_s": end,
+                "role": "generative_intro",
+                "position": "custom",
+                "x_frac": 0.5,
+                "y_frac": 0.4,
+                "size_px": 64,
+                **extra,
+            }
+        ]
+
+    shorten_tail = _base_slots([2.0, 2.0, 2.0, 2.0, 1.0])
+    add(
+        "free_text_follows_extend",
+        base,
+        extend,
+        flush,
+        extra=free_text("kria-text-late", 6.0, 8.0),
+    )
+    add(
+        "free_text_spanning_clips_middle_clip_deleted",
+        base,
+        delete,
+        flush,
+        "text over clips 1-3 survives a delete of clip 2 and keeps its start",
+        free_text("kria-text-span", 1.0, 5.0),
+    )
+    add(
+        "free_text_start_in_deleted_clip_survives",
+        base,
+        delete,
+        flush,
+        "any surviving part keeps the text: it starts where its first surviving clip does",
+        free_text("kria-text-tail", 3.0, 5.0),
+    )
+    add(
+        "free_text_entirely_in_deleted_clip_is_dropped",
+        base,
+        delete,
+        flush,
+        extra=free_text("kria-text-gone", 2.2, 3.8),
+    )
+    add(
+        "free_text_ending_on_a_cut_into_a_deleted_clip_survives",
+        base,
+        delete,
+        flush,
+        "the end is anchored one frame early so a cut boundary never reads as the next clip",
+        free_text("kria-text-on-cut", 0.0, 2.0),
+    )
+    add(
+        "free_text_near_old_tail_after_shorten_stays_visible",
+        base,
+        shorten_tail,
+        flush,
+        extra=free_text("kria-text-end-a", 8.5, 10.0) + free_text("kria-text-end-b", 9.2, 10.0),
+    )
+    add(
+        "group_title_touching_start_follows_footage_not_edge",
+        base,
+        delete,
+        flush,
+        "only titles/pins edge-anchor; a group title over the first clips follows them",
+        free_text("group-title-0", 0.0, 6.0),
+    )
+    add(
+        "group_title_over_whole_video_tracks_whole_video",
+        base,
+        extend,
+        flush,
+        extra=free_text("group-title-1", 0.0, 10.0),
+    )
+    montage = lambda start, end, n, **kw: free_text(  # noqa: E731
+        f"montage-text-cut-{n}", start, end, f"Montage {n}", **kw
+    )
+    add(
+        "montage_text_follows_its_clip_on_reorder",
+        base,
+        reorder,
+        flush,
+        extra=montage(2.0, 4.0, 2, segment_id="s2"),
+    )
+    add(
+        "montage_text_dropped_with_its_deleted_clip",
+        base,
+        delete,
+        flush,
+        extra=montage(2.0, 4.0, 2, segment_id="s2"),
+    )
+    add(
+        "montage_text_stretched_over_several_clips_is_a_span_not_collapsed",
+        base,
+        delete,
+        flush,
+        "a montage text the creator stretched across clips 2-4 keeps its span when clip 2 goes",
+        montage(2.0, 8.0, 2, segment_id="s2"),
+    )
+    add(
+        "montage_text_without_segment_follows_by_time",
+        base,
+        delete,
+        flush,
+        "no segment/media link: ordinary timed text, not silently dropped",
+        montage(4.0, 6.0, 3),
+    )
+
     return cases
 
 
