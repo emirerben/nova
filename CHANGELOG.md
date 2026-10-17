@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.26.0] - 2026-10-17
+
+### Fixed
+- fix: require approval for whole-job render retries (KRI-674) (#1661) <!-- release-pr: 1661 -->
+
 ## [0.80.25.0] - 2026-10-17
 
 ### Changed
