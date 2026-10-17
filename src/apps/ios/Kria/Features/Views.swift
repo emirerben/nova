@@ -110,8 +110,8 @@ struct ProjectPosterView: View {
 
     var body: some View {
         Group {
-            if let posterURL = project.posterURL {
-                AsyncImage(url: posterURL) { phase in
+            if let posterURL = project.posterURL, let cacheKey = project.posterCacheKey {
+                CachedPosterImage(url: posterURL, key: cacheKey) { phase in
                     ProjectPosterContent(phase: phase.error != nil && isRecovering ? .empty : phase, title: project.workspaceTitle)
                         .onAppear { report(phase) }
                         .onChange(of: phase.image != nil) { _, _ in report(phase) }
@@ -128,7 +128,7 @@ struct ProjectPosterView: View {
 
     private func report(_ phase: AsyncImagePhase) {
         if phase.image != nil {
-            Perf.end("poster.load", id: project.id.uuidString, "tier=asyncimage")
+            Perf.end("poster.load", id: project.id.uuidString, "tier=cache")
             Perf.tick("gallery.open", needed: 6)
             onLoad?(true)
         }
@@ -287,6 +287,13 @@ struct GalleryView: View {
                                     .buttonStyle(.plain)
                                     .accessibilityLabel("Open \(project.workspaceTitle), \(project.workspaceStatusLabel)")
                                 }
+                            }
+                            if model.libraryNextCursor != nil {
+                                // Inside the lazy grid on purpose: it only appears once the grid has scrolled to it,
+                                // and that is what fetches the next page of older videos.
+                                ProgressView().frame(maxWidth: .infinity, minHeight: 44)
+                                    .accessibilityIdentifier("gallery-loading-older")
+                                    .onAppear { Task { await model.loadMoreLibrary() } }
                             }
                         }
                     }
