@@ -685,6 +685,17 @@
         "src/apps/api/tests/fixtures/agent_evals/clip_intent_planner/golden/kri716_group_and_add_a_title.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kri716_group_title_is_one_add_text.json"
       ]
+    },
+    {
+      "id": "kri-736-save-after-delete",
+      "needs_native": false,
+      "api_tests": "tests/routes/test_phone_guided_clip_delete_text_fit.py tests/routes/test_phone_guided_clip_delete_order_contract.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_authored_timeline.py",
+        "src/apps/api/app/services/authored_text_fit.py",
+        "src/apps/api/tests/routes/test_phone_guided_clip_delete_text_fit.py",
+        "src/apps/api/tests/routes/test_phone_guided_clip_delete_order_contract.py"
+      ]
     }
   ]
 }
