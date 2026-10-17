@@ -2469,10 +2469,13 @@ struct NativeEditorTemporaryVideo {
                 if NativePhoneNarratedSource.applies(variant: previewVariant, document: document) {
                     phoneNarratedSeeds = await loadPhoneNarratedSeeds(pool: pool, generation: generation, sequence: sequence)
                 }
-                sources = try await resolver.resolve(pool, generation: generation,
-                    requiredIndices: Set(timelineClips.compactMap(\.sourceClipIndex) + (phoneTalkingIndices ?? [])
-                        + phoneTalkingCutaways.map(\.clipIndex)
-                        + document.clipAudio.map(\.sourceClipIndex) + phoneNarratedSeeds.map(\.clipIndex)))
+                // Built up in steps: one long `+` chain times out the type checker on CI.
+                var requiredIndices = Set<Int>(timelineClips.compactMap(\.sourceClipIndex))
+                requiredIndices.formUnion(phoneTalkingIndices ?? [])
+                requiredIndices.formUnion(phoneTalkingCutaways.map(\.clipIndex))
+                requiredIndices.formUnion(document.clipAudio.map(\.sourceClipIndex))
+                requiredIndices.formUnion(phoneNarratedSeeds.map(\.clipIndex))
+                sources = try await resolver.resolve(pool, generation: generation, requiredIndices: requiredIndices)
             }
             guard sequence == sourcePreviewSequence, !Task.isCancelled,
                   document.revision.baseGeneration == generation else { return }
