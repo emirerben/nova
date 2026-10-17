@@ -118,7 +118,7 @@ struct ChatWorkspaceView: View {
     private func drawerSettled() {
         if showsProjects {
             // Refresh the gallery count once the slide has come to rest, not while it runs.
-            Task { await model.loadLibrary() }
+            Task { await model.loadLibraryIfStale() }
         } else {
             drawerMounted = false
         }

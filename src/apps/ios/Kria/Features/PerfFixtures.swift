@@ -276,6 +276,19 @@ final class PerfPosterURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 extension PerfFixture {
+    /// The picture for a gallery poster URL (`https://fixture-posters.invalid/<id>.jpg?sig=...`), or nil for any other
+    /// URL. Served to the poster cache directly, so it works on a physical phone too, where `AsyncImage` bypasses the
+    /// fixture's URL protocol. Waits the fixture latency and counts as one "network" fetch.
+    static func posterData(for url: URL) async throws -> Data? {
+        guard url.host == PerfPosterURLProtocol.host else { return nil }
+        PerfCounters.shared.increment("poster.network")
+        try await Task.sleep(for: .milliseconds(max(latencyMS, 0)))
+        let names = ["montage", "voiceover", "broll", "talking", "trulli-street", "lisbon"]
+        let name = names[abs(url.lastPathComponent.hashValue) % names.count]
+        guard let file = Bundle.main.url(forResource: name, withExtension: "jpg") else { throw URLError(.fileDoesNotExist) }
+        return try Data(contentsOf: file)
+    }
+
     /// SwiftData container for `-ui-testing-chat`. In memory by default; `KRIA_PERF_DISK_STORE=1` keeps it on disk so
     /// a second launch finds the chats the first one cached.
     static func container() -> ModelContainer {
@@ -289,6 +302,8 @@ extension PerfFixture {
             try? FileManager.default.removeItem(at: directory)
             // Synchronous on purpose: the transcript cache must be empty before the first chat opens.
             try? FileManager.default.removeItem(at: URL.applicationSupportDirectory.appending(path: "Transcripts", directoryHint: .isDirectory))
+            // And the gallery's poster pictures, so a "first open" really has to fetch them.
+            try? FileManager.default.removeItem(at: URL.cachesDirectory.appending(path: "LibraryPosters", directoryHint: .isDirectory))
         }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return try! ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, url: directory.appending(path: "Kria.store")))

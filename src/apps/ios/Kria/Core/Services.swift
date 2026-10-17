@@ -163,6 +163,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func removeVisual(itemID: String, assetID: String) async throws
     func retryVisual(itemID: String, assetID: String) async throws -> CreationVisual
     func library() async throws -> [ProjectSummary]
+    /// One page of the library, newest first. `nextCursor` is nil on the last page.
+    func libraryPage(cursor: String?, limit: Int) async throws -> LibraryPage
     func refreshLibraryPosters(jobIDs: [UUID], brokenJobIDs: [UUID]) async throws -> [LibraryPoster]
     func createThread(message: String?) async throws -> CreationThread
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession
@@ -270,6 +272,12 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func uploadFile(to reservation: UploadReservation, fileURL: URL) async throws
 }
 
+/// A page of the library (finished and in-progress videos).
+struct LibraryPage: Sendable {
+    let projects: [ProjectSummary]
+    let nextCursor: String?
+}
+
 /// A page of the chat list. An older server never sends a cursor, which reads as "that was everything".
 struct ProjectPage: Sendable {
     let projects: [ProjectSummary]
@@ -278,6 +286,10 @@ struct ProjectPage: Sendable {
 
 extension KriaAPIClient {
     func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted { throw APIError.unsupported }
+    /// Substitutes that only know the whole library: everything as the first page, nothing after it.
+    func libraryPage(cursor: String?, limit: Int) async throws -> LibraryPage {
+        LibraryPage(projects: cursor == nil ? try await library() : [], nextCursor: nil)
+    }
     /// Substitutes that only know the unpaged list: one page, nothing after it.
     func projectsPage(cursor: String?) async throws -> ProjectPage {
         ProjectPage(projects: cursor == nil ? try await projects() : [], nextCursor: nil)
@@ -1214,19 +1226,22 @@ struct KriaAPI: KriaAPIClient {
     func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse {
         try await request(path: "plan-items/\(itemID)/slide-post/thought-summaries", method: "GET", bodyData: nil, decode: KriaThoughtSummaryResponse.self)
     }
+    func libraryPage(cursor: String?, limit: Int) async throws -> LibraryPage {
+        var query = [URLQueryItem(name: "limit", value: String(limit))]
+        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        let page = try await request(path: "me/jobs", method: "GET", query: query, bodyData: nil, decode: LibraryResponse.self)
+        var seenJobIDs = Set<String>()
+        return LibraryPage(projects: page.jobs.filter { seenJobIDs.insert($0.id).inserted }.map(\.summary), nextCursor: page.nextCursor)
+    }
+    /// The whole library, every page in turn, for callers that must see all of it (the editor looking up a source).
     func library() async throws -> [ProjectSummary] {
         var summaries: [ProjectSummary] = []
-        var seenJobIDs = Set<String>()
+        var seenJobIDs = Set<UUID>()
         var seenCursors = Set<String>()
         var cursor: String?
-
         while true {
-            var query = [URLQueryItem(name: "limit", value: "60")]
-            if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
-            let page = try await request(path: "me/jobs", method: "GET", query: query, bodyData: nil, decode: LibraryResponse.self)
-            for job in page.jobs where seenJobIDs.insert(job.id).inserted {
-                summaries.append(job.summary)
-            }
+            let page = try await libraryPage(cursor: cursor, limit: 60)
+            for project in page.projects where seenJobIDs.insert(project.id).inserted { summaries.append(project) }
             guard let nextCursor = page.nextCursor else { return summaries }
             guard seenCursors.insert(nextCursor).inserted else { throw APIError.invalidResponse }
             cursor = nextCursor

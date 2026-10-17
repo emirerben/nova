@@ -101,7 +101,7 @@ struct ProjectsDrawer: View {
                     KriaIcon(.gallery)
                     Text("Gallery").font(KriaFont.body(15).weight(.medium))
                     Spacer()
-                    Text("\(model.libraryProjects.count) \(model.libraryProjects.count == 1 ? "video" : "videos")").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    Text("\(model.libraryProjects.count)\(model.libraryNextCursor == nil ? "" : "+") \(model.libraryProjects.count == 1 && model.libraryNextCursor == nil ? "video" : "videos")").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 }.frame(minHeight: 44).padding(.horizontal, 12)
             }
             VStack(alignment: .leading, spacing: 10) {
