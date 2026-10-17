@@ -373,3 +373,128 @@ async def test_placeholder_label_selection_prints_the_system_placeholder(monkeyp
     resolver.assert_not_called()
     (a,) = result.resolution.intents[0].assignments
     assert (a.value, a.grounding) == ("Name", "placeholder")
+
+
+# ── KRI-697: answers stay bound to the intent across reworded rows ───────────
+#
+# Failure modes this guards (written before the fix):
+# 1. the planner rewords `attribute` but keeps `intent_id` -> answer lost, row re-asked;
+# 2. a new `intent_id` but the same creator-written text -> answer lost;
+# 3. an older exact-key answer beats a newer reworded one -> stale answer re-applied;
+# 4. a generic id ("g1", "intent_2") reused for another intent -> wrong answer applied;
+# 5. the same creator text under an incompatible op -> answer crosses ops;
+# 6. questions persisted before the fix (no identity fields) -> must still fold/match.
+
+_RULE3 = "3 · 20 minutes of darkness"
+
+
+def _rule3_question(qid: str, label: str) -> dict:
+    """Prod thread FEFCCF5C events #14/#16/#18: one caption row, reworded each turn."""
+    intent = _rule3(label)
+    return {
+        "version": 1,
+        "question_id": qid,
+        "allow_none": True,
+        "categories": [
+            {
+                "key": intent_key(intent),
+                "label": label,
+                "op": "caption",
+                "intent_id": "caption_rule3_text",
+                "creator_text": _RULE3,
+                "candidate_media_ids": ["m1", "m2", "m3", "m4", "m5"],
+                "suggested_media_ids": [],
+            }
+        ],
+    }
+
+
+def _rule3(attribute: str, intent_id: str = "caption_rule3_text") -> ClipIntent:
+    return ClipIntent(intent_id=intent_id, op="caption", attribute=attribute, creator_text=_RULE3)
+
+
+_TURN1 = f'when I say "{_RULE3}"'
+_TURN2 = f'clips when creator says "{_RULE3}"'
+_TURN3 = "the clip for rule 3"
+
+
+def _rule3_thread() -> list:
+    k1, k2 = intent_key(_rule3(_TURN1)), intent_key(_rule3(_TURN2))
+    return [
+        ("assistant", {"clip_question": _rule3_question("q14", _TURN1)}),
+        (
+            "user",
+            {
+                "clip_selection": {
+                    "question_id": "q14",
+                    "answers": [{"key": k1, "media_ids": ["m5"]}],
+                }
+            },
+        ),
+        ("assistant", {"clip_question": _rule3_question("q16", _TURN2)}),
+        ("user", {"clip_selection": {"question_id": "q16", "none_keys": [k2]}}),
+    ]
+
+
+def test_prod_three_turn_none_survives_a_reworded_row() -> None:
+    """Tigre N2: "None of these" on turn 2 must still hold when turn 3 says "rule 3"."""
+    sel = fold_clip_selections(_rule3_thread())
+    entry = sel.match(_rule3(_TURN3))
+    assert entry is not None and entry.none is True
+    # Same intent under the turn-1 wording: the LATER "none" wins over the older tap.
+    assert sel.match(_rule3(_TURN1)).none is True
+    settled, remaining, dropped = service.apply_creator_selections(
+        [_rule3(_TURN3)], clips=_clips(), selections=sel, creator_request=_RULE3
+    )
+    assert (settled, remaining, dropped) == ([], [], {"caption_rule3_text"})
+
+
+def test_creator_text_binds_when_the_intent_id_changes() -> None:
+    sel = fold_clip_selections(_rule3_thread()[:2])
+    entry = sel.match(_rule3(_TURN3, intent_id="rule_three_caption"))
+    assert entry is not None and entry.media_ids == ("m5",)
+
+
+def test_identity_never_crosses_ops_or_generic_ids() -> None:
+    sel = fold_clip_selections(_rule3_thread())
+    # Same creator text, incompatible op.
+    assert (
+        sel.match(
+            ClipIntent(
+                intent_id="caption_rule3_text", op="label", attribute=_TURN3, creator_text=_RULE3
+            )
+        )
+        is None
+    )
+    # A generic id reused for a different intent never inherits an answer.
+    for generic_id in ["g1", "intent_2", "include_1", "clip_1", "media_2", "slot_3"]:
+        question = _question()
+        for cat in question["categories"]:
+            cat["intent_id"] = generic_id
+        generic = fold_clip_selections(
+            [
+                ("assistant", {"clip_question": question}),
+                (
+                    "user",
+                    {"clip_selection": {"question_id": "q1", "none_keys": ["group:dodgeball"]}},
+                ),
+            ]
+        )
+        assert (
+            generic.match(ClipIntent(intent_id=generic_id, op="group", attribute="pub videos"))
+            is None
+        ), generic_id
+
+
+@pytest.mark.asyncio
+async def test_question_categories_carry_the_intent_identity(monkeypatch) -> None:
+    monkeypatch.setattr(service.settings, "kria_clip_selection_questions_enabled", True)
+    _no_candidates(monkeypatch)
+    result = await resolve_clip_intents_for_turn(
+        intents=[_dodgeball()],
+        creator_request="group dodgeball",
+        clips=_clips(),
+        run_context=RunContext(),
+    )
+    (cat,) = result.clip_question["categories"]
+    assert cat["intent_id"] == "g1" and "creator_text" not in cat
