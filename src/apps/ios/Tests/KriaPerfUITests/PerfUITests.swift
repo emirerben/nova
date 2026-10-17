@@ -280,16 +280,6 @@ final class PerfUITests: XCTestCase {
 
     // MARK: Gallery
 
-    /// On a physical iPhone `AsyncImage` does not go through the fixture's URL protocol (the posters never reach
-    /// `PerfPosterURLProtocol`, `poster.network` stays 0), so the baseline gallery cannot be measured there. The
-    /// simulator measures it; the poster cache that replaces `AsyncImage` takes an injectable session and is
-    /// measurable on both.
-    private func skipGalleryOnDevice() throws {
-        #if !targetEnvironment(simulator)
-        throw XCTSkip("AsyncImage bypasses the fixture URL protocol on a physical device; gallery is measured on the simulator")
-        #endif
-    }
-
     /// The first poster on screen. On failure the accessibility tree is printed, so a missing poster can be told
     /// apart from a gallery that never opened.
     private func waitForPoster(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
@@ -320,8 +310,7 @@ final class PerfUITests: XCTestCase {
     }
 
     /// Gallery to the first screen of posters, 200 videos, posters re-signed on every fetch.
-    func testGalleryOpen() throws {
-        try skipGalleryOnDevice()
+    func testGalleryOpen() {
         warmCache(["KRIA_GALLERY_ITEMS": "200"])
         let app = makeApp(["KRIA_GALLERY_ITEMS": "200"])
         app.launch()
@@ -333,9 +322,40 @@ final class PerfUITests: XCTestCase {
         }
     }
 
+    /// Tapping Gallery straight after launch, with a 200-video library (by default): the list has to load before anything can be
+    /// drawn. A fresh launch each time, nothing cached (not even posters).
+    func testGalleryOpenRightAfterLaunch() {
+        // `TEST_RUNNER_KRIA_PERF_GALLERY_ITEMS=600` tries a bigger library: the old code waited for every page.
+        let items = ProcessInfo.processInfo.environment["KRIA_PERF_GALLERY_ITEMS"] ?? "200"
+        measure(metrics: [interval("gallery.open")], options: options) {
+            let app = makeApp(reset: true, ["KRIA_GALLERY_ITEMS": items])
+            app.launch()
+            waitForTranscript(app)
+            openGallery(app)
+            waitForPoster(app)
+            app.terminate()
+        }
+    }
+
+    /// Functional guard for library paging: with 200 videos the gallery reaches video 150 by scrolling. Fails on a
+    /// build that never loads past what it fetched first.
+    func testGalleryReachesOlderVideos() {
+        let app = makeApp(reset: true, ["KRIA_GALLERY_ITEMS": "200"])
+        app.launch()
+        waitForTranscript(app)
+        openGallery(app)
+        waitForPoster(app)
+        let target = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Cut 150'")).firstMatch
+        var swipes = 0
+        while !target.exists, swipes < 60 {
+            app.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(target.exists, "Cut 150 never appeared in the gallery after \(swipes) scrolls")
+    }
+
     /// Reopening the gallery should not fetch posters it already showed; reports the network fetches per reopen.
-    func testGalleryReopenPosterFetches() throws {
-        try skipGalleryOnDevice()
+    func testGalleryReopenPosterFetches() {
         let environment = ["KRIA_GALLERY_ITEMS": "200"]
         let app = makeApp(reset: true, environment)
         app.launch()

@@ -47,6 +47,7 @@ enum ProfileFetchState: Equatable, Sendable {
         try? TeleprompterStore.removeAccount(accountID: identity)
         try? MediaLibraryOriginals(owner: identity).removeAccount()
         Task { await TranscriptCache.shared.removeAccount(owner: identity) }
+        Task.detached { SlidePostImageCache.library.removeAll() }
     }
     private let tokenStore: TokenStore
     private let api: KriaAPIClient
@@ -92,6 +93,7 @@ enum ProfileFetchState: Equatable, Sendable {
         let refreshToken = try? tokenStore.read()?.refreshToken
         // Saved conversations go with an explicit sign-out (read the identity before the session is deleted).
         if let identity = localStorageIdentity { Task { await TranscriptCache.shared.removeAccount(owner: identity) } }
+        Task.detached { SlidePostImageCache.library.removeAll() }
         // Persist the logical logout before touching Keychain. If secure-item
         // deletion fails, a process restart must not resurrect that session.
         defaults.set(true, forKey: Self.invalidatedSessionKey)
@@ -202,6 +204,11 @@ enum AccountIdentity {
     @Published var errorMessage: String?
     @Published private(set) var projectsState: ProjectCollectionState = .idle
     @Published private(set) var libraryState: ProjectCollectionState = .idle
+    /// Where the next page of older videos starts; nil when the whole library is loaded.
+    @Published private(set) var libraryNextCursor: String?
+    private var lastLibraryLoad: Date?
+    private var isLoadingMoreLibrary = false
+    static let libraryPageSize = 24
     @Published private(set) var libraryPosterRecoveryVersion = 0
     @Published private(set) var recoveringPosterIDs: Set<UUID> = []
     @Published private(set) var posterLoadRevisions: [UUID: Int] = [:]
@@ -294,15 +301,19 @@ enum AccountIdentity {
             #endif
         }
     }
+    /// The newest videos only: the first page shows as soon as it arrives instead of after every page of a large
+    /// library, and older ones follow as the grid scrolls (`loadMoreLibrary`).
     func loadLibrary() async {
         let generation = collectionGeneration
         librarySnapshot += 1
         let snapshot = librarySnapshot
         if libraryProjects.isEmpty { libraryState = .loading }
         do {
-            let fetched = try await api.library()
+            let page = try await api.libraryPage(cursor: nil, limit: Self.libraryPageSize)
             guard generation == collectionGeneration, snapshot == librarySnapshot, !Task.isCancelled else { return }
-            libraryProjects = fetched
+            libraryProjects = ProjectListMerge.apply(existing: libraryProjects, page: page.projects, isFirstPage: true, hasMore: page.nextCursor != nil)
+            libraryNextCursor = page.nextCursor
+            lastLibraryLoad = .now
             libraryState = libraryProjects.isEmpty ? .empty : .loaded
             errorMessage = nil
             libraryPosterRecoveryVersion += 1
@@ -313,6 +324,23 @@ enum AccountIdentity {
             libraryState = libraryProjects.isEmpty ? .failed(error.localizedDescription) : .loaded
             libraryPosterRecoveryVersion += 1
         }
+    }
+    /// Refreshes the library only when the last load is older than `maxAge` (opening the drawer used to reload
+    /// every page each time just to update the "N videos" label).
+    func loadLibraryIfStale(maxAge: TimeInterval = 60) async {
+        if let last = lastLibraryLoad, Date.now.timeIntervalSince(last) < maxAge, !libraryProjects.isEmpty { return }
+        await loadLibrary()
+    }
+    /// The next page of older videos, when the grid has scrolled to the end of what it has.
+    func loadMoreLibrary() async {
+        guard let cursor = libraryNextCursor, !isLoadingMoreLibrary else { return }
+        isLoadingMoreLibrary = true
+        defer { isLoadingMoreLibrary = false }
+        let generation = collectionGeneration
+        guard let page = try? await api.libraryPage(cursor: cursor, limit: Self.libraryPageSize), generation == collectionGeneration else { return }
+        libraryProjects = ProjectListMerge.apply(existing: libraryProjects, page: page.projects, isFirstPage: false, hasMore: page.nextCursor != nil)
+        libraryNextCursor = page.nextCursor
+        libraryPosterRecoveryVersion += 1
     }
     func beginLibraryPosterRecovery() {
         galleryIsVisible = true
