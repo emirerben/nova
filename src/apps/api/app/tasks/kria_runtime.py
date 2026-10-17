@@ -207,7 +207,7 @@ class _ApprovalDispatchClaim:
     target_job_id: uuid.UUID | None
     target_variant_id: str | None
     target_generation_id: str | None
-    creator_request: str
+    creator_request: str = ""
     brief_binding: dict[str, Any] | None = None
     preflight_analysis_id: uuid.UUID | None = None
     speech_cleanup_analysis_id: uuid.UUID | None = None
@@ -2789,6 +2789,11 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
     leaves ``accepted`` as the recovery ledger for the minute reconciler.
     """
 
+    from app.kria.render_retry import claim_render_retry  # noqa: PLC0415
+
+    handled, retry_claim = claim_render_retry(approval_id)
+    if handled:
+        return retry_claim
     with sync_session() as db, ExitStack() as language:
         approval_ref = db.get(CreatorAgentApproval, approval_id)
         if approval_ref is None or not approval_ref.execution_ids:
@@ -4351,7 +4356,12 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
         publish_preflight_after_commit(preflight_analysis_id)
 
     dispatch_reason: str | None = None
-    if getattr(claim, "draft_kind", "strategy") == "editor":
+    if getattr(claim, "draft_kind", "strategy") == "retry":
+        # Claim committed the same recipe under a new device identity. There is
+        # no planner, media analysis or broker render task to invoke.
+        outcome = "dispatched"
+        result_job_id = str(claim.target_job_id)
+    elif getattr(claim, "draft_kind", "strategy") == "editor":
         if (
             claim.target_job_id is None
             or claim.target_variant_id is None
@@ -5288,6 +5298,16 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 deterministic = True
         recovery = "manual" if device_failed else ("ask_user" if deterministic else "retry")
         retryable = not device_failed and not deterministic
+        from app.kria.render_retry import retry_program_available  # noqa: PLC0415
+
+        exact_retry_available = retry_program_available(job, execution)
+        native_without_program = bool((job.assembly_plan or {}).get("native_device_only")) and (
+            not device_failed and not deterministic and not exact_retry_available
+        )
+        if device_failed and exact_retry_available:
+            recovery, retryable = "retry", True
+        elif native_without_program:
+            recovery, retryable = "ask_user", False
         if device_decline is not None:
             # The contract refused this edit, so the phone's own Retry (which re-pins the
             # same refused recipe) is a dead end, and nothing re-runs it automatically.
@@ -5381,15 +5401,35 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     job, str(execution.target_variant_id or "") or None
                 ),
             )
-        elif device_failed:
+        elif device_failed and exact_retry_available:
             failure_content = say(
                 en=(
                     "Your iPhone couldn't finish the render. Your approved edit is still "
-                    "saved: open the project on your iPhone and tap Retry."
+                    "saved. Retry the same edit on your iPhone after reviewing its approval."
                 ),
                 tr=(
                     "iPhone'un videoyu tamamlayamadı. Onayladığın düzenleme hâlâ kayıtlı: "
-                    'projeyi iPhone\'unda açıp "Retry" düğmesine dokun.'
+                    "iPhone'unda aynı düzenlemeyi yeniden denemeden önce onayını gözden geçir."
+                ),
+            )
+        elif device_failed:
+            failure_content = say(
+                en="Your iPhone stopped this export. Your approved edit is saved. "
+                "Check the device error before trying again.",
+                tr="iPhone'un bu dışa aktarımı durdurdu. Onayladığın düzenleme kayıtlı. "
+                "Yeniden denemeden önce cihazdaki hatayı kontrol et.",
+            )
+        elif native_without_program:
+            failure_content = say(
+                en=(
+                    "The render stopped before a complete render plan was saved. "
+                    "Your approved direction and footage are safe. "
+                    "Ask for a new version and review its approval."
+                ),
+                tr=(
+                    "Video, eksiksiz oluşturma planı kaydedilmeden durdu. "
+                    "Onayladığın yön ve görüntüler güvende. "
+                    "Yeni bir sürüm isteyip onayını gözden geçir."
                 ),
             )
         elif recovery_message is not None:

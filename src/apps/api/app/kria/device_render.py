@@ -66,6 +66,14 @@ class DeviceRenderStatus(_DeviceModel):
     published_generation: str | None = None
 
 
+class DeviceRenderStatusOut(DeviceRenderStatus):
+    # Read-time hint only. The persisted status stays readable by previous
+    # workers throughout a rolling deploy.
+    # A runtime-approved program needs fresh consent; a newer manual Save
+    # on the same Job has its own generation and retains direct recovery.
+    retry_requires_approval: bool = False
+
+
 class DeviceAssetDownloadBody(_DeviceModel):
     identity: DeviceRenderIdentity
     asset_id: str = Field(min_length=1, max_length=160)

@@ -2021,8 +2021,20 @@ async def decide_approval(
         if decision == "approve"
         else None
     )
+    retry_execution = None
+    if getattr(approval_ref, "execution_ids", None):
+        retry_execution = await db.get(
+            CreatorAgentExecution, uuid.UUID(str(approval_ref.execution_ids[0]))
+        )
+    is_render_retry = bool(
+        retry_execution is not None
+        and isinstance((retry_execution.result or {}).get("render_retry"), dict)
+    )
     is_strategy_approval = bool(
-        document_peek is not None and document_peek.kind == "strategy" and document_peek.strategy
+        document_peek is not None
+        and document_peek.kind == "strategy"
+        and document_peek.strategy
+        and not is_render_retry
     )
     # A deny (or, further below, a lazy expiry) must reverse an already
     # -committed strategy media mutation, if this approval's render execution
@@ -2242,6 +2254,25 @@ async def decide_approval(
             recovery="refresh_replan",
             current_revision=int(thread.revision),
         )
+    if (
+        is_render_retry
+        and decision == "approve"
+        and (body.output_orientation is not None or body.landscape_fit is not None)
+    ):
+        retry_shape = retry_execution.result["render_retry"].get("render_shape", {})
+        if any(
+            value is not None and value != retry_shape.get(key)
+            for key, value in (
+                ("output_orientation", body.output_orientation),
+                ("landscape_fit", body.landscape_fit),
+            )
+        ):
+            raise RuntimeFailure(
+                409,
+                "render_retry_requires_change",
+                "Retry keeps the approved video shape. Ask for a new version to change it.",
+                phase="approval",
+            )
     if decision == "approve" and (
         draft.draft_revision != body.expected_draft_revision or not draft.is_head
     ):
@@ -2306,8 +2337,10 @@ async def decide_approval(
     # and applied at claim time (`_claim_approval_dispatch`), so a deny -- which
     # never reaches the claim -- has nothing to undo.
     render_shape_stash: dict[str, str] | None = None
-    if decision == "approve" and (
-        body.output_orientation is not None or body.landscape_fit is not None
+    if (
+        decision == "approve"
+        and not is_render_retry
+        and (body.output_orientation is not None or body.landscape_fit is not None)
     ):
         render_shape_stash = await _validated_render_shape(
             db,
@@ -2435,6 +2468,12 @@ async def read_approval(
     ).scalar_one_or_none()
     if approval is None:
         raise RuntimeFailure(404, "approval_not_found", "Approval not found", phase="approval")
+    retry_of_execution_id = None
+    if approval.execution_ids:
+        execution = await db.get(CreatorAgentExecution, uuid.UUID(str(approval.execution_ids[0])))
+        result = getattr(execution, "result", None)
+        if isinstance(result, dict) and isinstance(result.get("render_retry"), dict):
+            retry_of_execution_id = result["render_retry"].get("source_execution_id")
     return ApprovalSnapshotOut(
         approval_id=str(approval.id),
         turn_id=str(approval.turn_id),
@@ -2445,6 +2484,7 @@ async def read_approval(
         cost_summary=approval.cost_summary,
         expires_at=approval.expires_at,
         approval_fingerprint=approval_fingerprint(approval),
+        retry_of_execution_id=retry_of_execution_id,
     )
 
 

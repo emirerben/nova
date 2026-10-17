@@ -26,6 +26,7 @@ struct NativeEditorView: View {
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
     @State private var showsDeviceRender = false
+    @State private var opensRetryConversation = false
     @State private var showsOriginalsRecovery = false
     @State private var showsConversation = false
     /// KRI-589: Draw mode. `appendingTo` is the drawing "Draw more" adds to; nil starts a new drawing.
@@ -156,9 +157,18 @@ struct NativeEditorView: View {
                     if case .textCreation = panel { changePanel(to: nil) }
                 }
             }
-            .sheet(isPresented: $showsDeviceRender) {
+            .sheet(isPresented: $showsDeviceRender, onDismiss: {
+                if opensRetryConversation {
+                    opensRetryConversation = false
+                    reviewRetryInChat()
+                }
+            }) {
                 if let key = session.deviceRenderKey {
                     DeviceRenderPanel(key: key, sessions: model.deviceRenders,
+                        retryApproved: model.deviceRenders.retryNeedsApproval(key) ? {
+                            opensRetryConversation = true
+                            showsDeviceRender = false
+                        } : nil,
                         retry: { await session.refreshDeviceRender(retry: true) })
                         .padding(20)
                         .presentationDetents([.medium, .large])
@@ -307,7 +317,8 @@ struct NativeEditorView: View {
                 .transition(shouldReduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             }
             VStack(spacing: 0) {
-                NativeEditorSaveBanner(session: session)
+                NativeEditorSaveBanner(session: session,
+                    retryApproved: session.deviceRenderKey.map { model.deviceRenders.retryNeedsApproval($0) } == true ? { reviewRetryInChat() } : nil)
                 NativeEditorExportBanner(exporter: exporter)
                 if let message = session.cloudEditorUnavailableMessage {
                     Label(message, systemImage: "lock")
@@ -944,6 +955,11 @@ struct NativeEditorView: View {
     private func blockedReason(_ deletion: NativeEditorSession.TextDeletion) -> String? {
         if case let .blocked(reason) = deletion { return reason }
         return nil
+    }
+
+    private func reviewRetryInChat() {
+        if conversation != nil { showsConversation = true }
+        else { requestBack() }
     }
 
     private func requestBack() {
