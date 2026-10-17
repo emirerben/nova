@@ -2025,6 +2025,11 @@
             "title": "Base Generation",
             "type": "string"
           },
+          "output_verification_required": {
+            "default": false,
+            "title": "Output Verification Required",
+            "type": "boolean"
+          },
           "phase": {
             "enum": [
               "awaiting_device",

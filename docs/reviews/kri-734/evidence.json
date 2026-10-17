@@ -12,7 +12,8 @@
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift": "02485d021b10e778873c9eab82523a027f4f88b453e6df5fb56d3d3f45e5e353",
     "src/apps/ios/Kria/Core/DeviceRendering.swift": "79eed620a2bc069ca6fe345512b67fd747f5b8b4d3e267a47a0cede548072ffc",
     "src/apps/ios/Kria/Core/Services.swift": "ab7e83e8f26e4dd5841ce650de02a447c583b6fca2ca27ec85392c0f8781be80",
-    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift": "019ef0705822f125a1f33b8c4400df1d24939cc65eff2d5867ec4659093d9699"
+    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift": "019ef0705822f125a1f33b8c4400df1d24939cc65eff2d5867ec4659093d9699",
+    "src/apps/ios/Kria/Generated/openapi.yaml": "153c2f4711d22b5b83745b956203530406d35bad2e979fe5e60a35a1fbc6c617"
   },
   "offline": {
     "focused_api_passed": 388,
@@ -26,7 +27,8 @@
     "format_negative_controls": 1,
     "local_decoder_invariants": 1,
     "stale_authority_negative_controls": 2,
-    "exact_ci_profile_passed": 33
+    "exact_ci_profile_passed": 33,
+    "generated_mobile_contract_check": "passed after refreshing output_verification_required"
   },
   "native_presentation": {
     "passed": 26,
@@ -34,7 +36,8 @@
     "skipped": 0,
     "client_protocol": 12,
     "fresh_physical_canary": false,
-    "integrated_with_current_main": true
+    "integrated_with_current_main": true,
+    "after_generated_schema_refresh": true
   },
   "retained_physical_export_rechecked_locally": {
     "result": "checked",
