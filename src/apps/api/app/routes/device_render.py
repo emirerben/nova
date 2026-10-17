@@ -255,13 +255,6 @@ async def get_device_render(
     except KeyError as exc:
         raise HTTPException(404, "Device recipe unavailable") from exc
     record, status = _record(job, status.request.identity)
-    status = DeviceRenderStatusOut(
-        **status.model_dump(),
-        retry_requires_approval=(
-            status.phase != "published"
-            and await _runtime_retry_execution(db, job, record) is not None
-        ),
-    )
     from app.services.phone_text_styling import (
         PHONE_TEXT_STYLE_FIELD,
         require_phone_text_style_client,
@@ -288,6 +281,13 @@ async def get_device_render(
         raise HTTPException(
             426, detail={"code": "client_update_required", "feature": "single_word_text"}
         )
+    status = DeviceRenderStatusOut(
+        **status.model_dump(),
+        retry_requires_approval=(
+            status.phase != "published"
+            and await _runtime_retry_execution(db, job, record) is not None
+        ),
+    )
     now = datetime.now(UTC)
     last_polled_raw = record.get("last_polled_at")
     should_touch = True
