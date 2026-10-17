@@ -1153,7 +1153,12 @@ final class NativeEditorSessionTests: XCTestCase {
             context.draw(cropped, in: CGRect(x: 0, y: 0, width: 9, height: 16))
             return pixels.enumerated().filter { $0.offset % 4 != 3 }.map { Double($0.element) }
         }
-        func distance(_ a: [Double], _ b: [Double]) -> Double { zip(a, b).map { abs($0 - $1) }.reduce(0, +) / Double(a.count) }
+        // A plain loop: the zip/map/reduce one-liner times out the type checker on CI.
+        func distance(_ a: [Double], _ b: [Double]) -> Double {
+            var total: Double = 0
+            for (x, y) in zip(a, b) { total += abs(x - y) }
+            return total / Double(a.count)
+        }
         let speakerURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         let footageURL = try XCTUnwrap(Bundle.main.url(forResource: "istanbul", withExtension: "mp4"))
         let midCutaway = try await frame(item.asset, at: 2.25, composition: composition)
