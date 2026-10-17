@@ -37,6 +37,7 @@ from app.kria.device_render import (
     DeviceRenderFailureOut,
     DeviceRenderIdentity,
     DeviceRenderStatus,
+    DeviceRenderStatusOut,
     DeviceRetryBody,
     DeviceRetryOut,
     finished_durations,
@@ -227,19 +228,40 @@ def _record(job: Job, identity: DeviceRenderIdentity) -> tuple[dict, DeviceRende
     return record, status
 
 
-@router.get("/jobs/{job_id}/device-render", response_model=DeviceRenderStatus)
+async def _runtime_retry_execution(db: AsyncSession, job: Job, record: dict) -> uuid.UUID | None:
+    return (
+        await db.execute(
+            select(CreatorAgentExecution.id)
+            .where(
+                CreatorAgentExecution.target_job_id == job.id,
+                CreatorAgentExecution.tool_name == "render.request",
+                CreatorAgentExecution.target_generation_id == record.get("base_generation"),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+@router.get("/jobs/{job_id}/device-render", response_model=DeviceRenderStatusOut)
 async def get_device_render(
     job_id: uuid.UUID,
     user: CurrentUser,
     variant_id: str = Query(..., min_length=1, max_length=160),
     db: AsyncSession = Depends(get_db),
-) -> DeviceRenderStatus:
+) -> DeviceRenderStatusOut:
     job = await _owned_job(db, user.id, job_id)
     try:
         status = device_status(job, variant_id)
     except KeyError as exc:
         raise HTTPException(404, "Device recipe unavailable") from exc
     record, status = _record(job, status.request.identity)
+    status = DeviceRenderStatusOut(
+        **status.model_dump(),
+        retry_requires_approval=(
+            status.phase != "published"
+            and await _runtime_retry_execution(db, job, record) is not None
+        ),
+    )
     from app.services.phone_text_styling import (
         PHONE_TEXT_STYLE_FIELD,
         require_phone_text_style_client,
@@ -770,22 +792,13 @@ async def retry_device_export(
     identity = body.identity
     job = await _owned_job(db, user.id, job_id)
     try:
-        _, status = _record(job, identity)
+        record, status = _record(job, identity)
     except _ContractRefusal as refusal:
         await _refuse_publication(db, job, refusal, stage="retry")
         raise
     if status.phase != "needs_attention":
         raise HTTPException(409, "Render is not awaiting a retry")
-    runtime_execution = (
-        await db.execute(
-            select(CreatorAgentExecution.id)
-            .where(
-                CreatorAgentExecution.target_job_id == job.id,
-                CreatorAgentExecution.tool_name == "render.request",
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    runtime_execution = await _runtime_retry_execution(db, job, record)
     if runtime_execution is not None:
         raise HTTPException(
             409,

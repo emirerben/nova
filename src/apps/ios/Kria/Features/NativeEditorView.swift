@@ -165,7 +165,7 @@ struct NativeEditorView: View {
             }) {
                 if let key = session.deviceRenderKey {
                     DeviceRenderPanel(key: key, sessions: model.deviceRenders,
-                        retryApproved: project.runtimeVersion == 2 ? {
+                        retryApproved: model.deviceRenders.retryNeedsApproval(key) ? {
                             opensRetryConversation = true
                             showsDeviceRender = false
                         } : nil,
@@ -318,7 +318,7 @@ struct NativeEditorView: View {
             }
             VStack(spacing: 0) {
                 NativeEditorSaveBanner(session: session,
-                    retryApproved: project.runtimeVersion == 2 ? { reviewRetryInChat() } : nil)
+                    retryApproved: session.deviceRenderKey.map { model.deviceRenders.retryNeedsApproval($0) } == true ? { reviewRetryInChat() } : nil)
                 NativeEditorExportBanner(exporter: exporter)
                 if let message = session.cloudEditorUnavailableMessage {
                     Label(message, systemImage: "lock")

@@ -11,8 +11,11 @@ the accepted attempt once. Expired unstarted consent can be renewed, but newer
 requests, changed source/draft/generation or ownership block stale recovery.
 An accepted stale retry receipt is retired without changing the newer session.
 
-The older device retry route refuses runtime-managed renders, so an old client
-or the editor cannot re-pin them without fresh consent. Editor retry controls
+The older device retry route refuses the exact runtime-approved generation, so
+an old client or the editor cannot re-pin it without fresh consent. A newer
+manual Save on the same job keeps direct recovery. A read-time API hint carries
+that distinction to the phone without changing the strict persisted status.
+Editor retry controls for chat-approved renders
 open the project conversation; chat waits for the failed execution projection
 instead of falling back to the old route before its observer catches up.
 

@@ -238,7 +238,12 @@ def test_legacy_device_retry_cannot_bypass_runtime_approval(client):
     case = seed_failed()
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=case.user_id)
     with sync_session() as db:
-        identity = device_status(db.get(Job, case.job_id), "first").request.identity
+        job = db.get(Job, case.job_id)
+        identity = device_status(job, "first").request.identity
+        assert "retry_requires_approval" not in device_record(job, "first")["status"]
+    status = http.get(f"/me/jobs/{case.job_id}/device-render?variant_id=first")
+    assert status.status_code == 200, status.text
+    assert status.json()["retry_requires_approval"] is True
     response = http.post(
         f"/me/jobs/{case.job_id}/device-render/retry",
         json={"identity": identity.model_dump(mode="json")},
@@ -259,6 +264,36 @@ def test_legacy_device_retry_cannot_bypass_runtime_approval(client):
             )
             == 1
         )
+    publish.assert_not_called()
+
+
+def test_a_new_manual_editor_generation_keeps_direct_device_retry(client):
+    http, publish = client
+    case = seed_failed()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=case.user_id)
+    with sync_session() as db:
+        job = db.get(Job, case.job_id)
+        record = copy.deepcopy(device_record(job, "first"))
+        record["base_generation"] = "manual-save-generation"
+        save_device_record(job, "first", record)
+        assembly = copy.deepcopy(job.assembly_plan)
+        assembly["variants"][0]["render_generation_id"] = "manual-save-generation"
+        job.assembly_plan = assembly
+        identity = device_status(job, "first").request.identity
+        db.commit()
+    status = http.get(f"/me/jobs/{case.job_id}/device-render?variant_id=first")
+    assert status.status_code == 200, status.text
+    assert status.json()["retry_requires_approval"] is False
+    response = http.post(
+        f"/me/jobs/{case.job_id}/device-render/retry",
+        json={"identity": identity.model_dump(mode="json")},
+    )
+    assert response.status_code == 200, response.text
+    with sync_session() as db:
+        status = device_status(db.get(Job, case.job_id), "first")
+        assert status.request.identity.recipe_revision == identity.recipe_revision + 1
+        assert status.request.recipe.model_dump(mode="json") == case.recipe
+        assert db.get(CreatorAgentExecution, case.execution_id).status == "failed"
     publish.assert_not_called()
 
 

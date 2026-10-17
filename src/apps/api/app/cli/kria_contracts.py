@@ -38,6 +38,7 @@ from app.kria.device_render import (
     DeviceRenderFailureOut,
     DeviceRenderIdentity,
     DeviceRenderStatus,
+    DeviceRenderStatusOut,
     DeviceRetryBody,
     DeviceRetryOut,
 )
@@ -155,6 +156,7 @@ MOBILE_API_MODELS = (
     DeviceAssetDownloadBody,
     DeviceAssetDownloadOut,
     DeviceRenderStatus,
+    DeviceRenderStatusOut,
     DeviceRenderCapabilities,
     DeviceExportReservationBody,
     DeviceExportReservationOut,
@@ -919,7 +921,7 @@ def mobile_openapi_json() -> str:
                             "schema": {"type": "string", "minLength": 1, "maxLength": 160},
                         }
                     ],
-                    "responses": _json_responses(DeviceRenderStatus),
+                    "responses": _json_responses(DeviceRenderStatusOut),
                 },
             },
             "/me/jobs/{job_id}/device-render/assets": {

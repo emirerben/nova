@@ -2016,6 +2016,59 @@
         "title": "DeviceRenderStatus",
         "type": "object"
       },
+      "DeviceRenderStatusOut": {
+        "additionalProperties": false,
+        "properties": {
+          "base_generation": {
+            "default": null,
+            "nullable": true,
+            "title": "Base Generation",
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "awaiting_device",
+              "syncing",
+              "published",
+              "needs_attention"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "published_generation": {
+            "default": null,
+            "nullable": true,
+            "title": "Published Generation",
+            "type": "string"
+          },
+          "reason": {
+            "default": null,
+            "nullable": true,
+            "title": "Reason",
+            "type": "string"
+          },
+          "reason_code": {
+            "default": null,
+            "nullable": true,
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/DeviceRenderRequest"
+          },
+          "retry_requires_approval": {
+            "default": false,
+            "title": "Retry Requires Approval",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "phase",
+          "request"
+        ],
+        "title": "DeviceRenderStatusOut",
+        "type": "object"
+      },
       "DeviceRetryBody": {
         "additionalProperties": false,
         "description": "Identity of the ``needs_attention`` record to re-pin (wrapped like the other bodies).",
@@ -12925,7 +12978,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DeviceRenderStatus"
+                  "$ref": "#/components/schemas/DeviceRenderStatusOut"
                 }
               }
             },

@@ -1485,7 +1485,7 @@ private struct CreationWorkspaceView: View {
                 planFeedView
             } else if let deviceRenderKey {
                 DeviceRenderPanel(key: deviceRenderKey, sessions: model.deviceRenders,
-                    retryApproved: project.runtimeVersion == 2 ? { await retryApprovedRender() } : nil) {
+                    retryApproved: model.deviceRenders.retryNeedsApproval(deviceRenderKey) ? { await retryApprovedRender() } : nil) {
                     await refreshCapabilities()
                     await refreshDeviceRender(retry: true)
                 }
