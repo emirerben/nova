@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from google.api_core.exceptions import NotFound
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
@@ -67,6 +67,7 @@ from app.services.device_narration_binding import authorized_device_narration
 from app.services.device_render import (
     apply_device_failure_variant_update,
     apply_retry_variant_reset,
+    approved_runtime_generation,
     device_record,
     device_status,
     fail_first_render_on_refusal,
@@ -229,13 +230,20 @@ def _record(job: Job, identity: DeviceRenderIdentity) -> tuple[dict, DeviceRende
 
 
 async def _runtime_retry_execution(db: AsyncSession, job: Job, record: dict) -> uuid.UUID | None:
+    generation = record.get("base_generation")
+    generation_targets = [CreatorAgentExecution.target_generation_id == generation]
+    # Only the original whole-job generation can inherit its null target.
+    # A later manual Save must retain its independent device retry path.
+    original_generation = approved_runtime_generation(job, None)
+    if original_generation is not None and original_generation == generation:
+        generation_targets.append(CreatorAgentExecution.target_generation_id.is_(None))
     return (
         await db.execute(
             select(CreatorAgentExecution.id)
             .where(
                 CreatorAgentExecution.target_job_id == job.id,
                 CreatorAgentExecution.tool_name == "render.request",
-                CreatorAgentExecution.target_generation_id == record.get("base_generation"),
+                or_(*generation_targets),
             )
             .limit(1)
         )

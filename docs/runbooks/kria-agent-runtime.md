@@ -68,6 +68,14 @@ new receipt and a fresh 30-minute approval. Approval re-pins that exact recipe
 once under a new native revision. Repeated taps and queue redelivery reuse the
 same attempt. Expired unstarted consent can be renewed after revalidation.
 
+An initial whole-job approval precedes generation creation, so its execution
+may have no variant or generation target. The phone approval hint, direct-retry
+fence and locked exact-retry validation resolve that original generation from
+the Job's stored `creator_generation_id`. A later manual editor Save pins a
+different base generation and retains its direct device retry. Do not substitute
+the variant's published generation: publication replaces it with the output
+attempt ID, while the original creator authority stays unchanged.
+
 A newer request, changed draft/source/ownership/generation, unsupported recipe,
 missing original, or unknown in-flight outcome prevents another export. Old
 receipts and accepted artifacts stay intact. A legacy failure that never saved

@@ -33,6 +33,20 @@ CONTRACT_REVISIONS_FIELD = "creator_render_revisions"
 # pinned request, its contract receipts, the published attempt). Recovery reads it.
 CONTRACT_DECLINE_FIELD = "contract_decline"
 
+
+def approved_runtime_generation(job: Any, execution_generation: str | None) -> str | None:
+    """Resolve an initial whole-job intent to its stored original generation.
+
+    Whole-job approval precedes generation creation, so its execution target
+    is null. The original creator generation stays pinned on the Job; a
+    variant's generation can later identify publication or a manual edit.
+    """
+    if execution_generation is not None:
+        return execution_generation
+    generation = (job.assembly_plan or {}).get("creator_generation_id")
+    return generation if isinstance(generation, str) and generation else None
+
+
 # Human-readable fallback when the reporter (phone client or reaper) sends an
 # empty detail string. Keyed by reason_code; "timed_out" is the reaper's own
 # stale-timeout report (app/tasks/device_render_reaper.py).
