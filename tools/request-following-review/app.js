@@ -1,3 +1,4 @@
+import { clearMedia, loadMedia, expectations, renderOutcomes, serializeOutcomes, outcomeDraft, restoreOutcomeDraft } from "./outcomes.js";
 const $ = id => document.getElementById(id);
 const state = { config: null, queue: null, detail: null, cursor: null, filter: "all", selected: null, pointers: new Set(), dirty: false, busy: false, load: 0 };
 const labels = { unreviewed: "Needs review", approved: "Intent approved", needs_clarification: "Needs clarification", rejected: "Rejected", superseded: "New capture available" };
@@ -19,11 +20,11 @@ async function api(path = "", init = {}) {
   if (!response.ok) throw new Error(messages[data.detail] || (typeof data.detail === "string" ? data.detail : "Check the review fields and try again."));
   return data;
 }
-function mayLeave() { return !state.dirty || confirm("Discard the changes to this unsaved review?"); }
+function mayLeave() { return !state.dirty || confirm("Leave this unsaved review? A draft stays in this tab."); }
 function setBusy(value) {
   state.busy = value;
   $("refresh").disabled = value; $("filter").disabled = value;
-  $("save").disabled = value; $("export").disabled = value;
+  $("save-next").disabled = value; $("save").disabled = value; $("export").disabled = value;
   $("review-fields").disabled = value || state.detail?.review_state === "superseded";
   document.querySelectorAll(".case-button, .pager button, .message input").forEach(node => { node.disabled = value; });
   $("review").setAttribute("aria-busy", String(value));
@@ -34,9 +35,20 @@ async function loadQueue() {
   if (state.cursor) params.set("cursor", state.cursor);
   try {
     state.queue = await api(`?${params}`);
+    if (state.config.batch?.length) {
+      const all = await Promise.all(state.config.batch.map(async proposal => {
+        try { const item=await api(`/${proposal.id}`); if(proposal.title)item.request_preview=proposal.title; return item; }
+        catch { return {id:proposal.id,thread_id:proposal.id,created_at:new Date().toISOString(),review_state:"unavailable",request_preview:"Session unavailable — refresh collection",diagnostics:{missing:{},failed_turns:[],broken_edges:[]}}; }
+      }));
+      state.queue.items = all.filter(item => state.filter === "all" || item.review_state === state.filter);
+      state.queue.next_cursor = null;
+    }
     const queue = state.queue, collector = queue.collector;
     const configured = collector.all_users || collector.scoped_users + collector.scoped_threads > 0;
-    if (collector.mode === "private_store") {
+    if (collector.mode === "prepared_copy") {
+      $("collection-summary").textContent = `Prepared review batch · ${collector.scoped_threads} downloaded exports · local drafts only`;
+      $("collection-detail").replaceChildren(element("p", "These copies were downloaded from eligible sessions. Drafts enter the daily report only after the server rechecks the current conversation, eligibility and export."));
+    } else if (collector.mode === "private_store") {
       $("collection-summary").textContent = `Private captures · ${collector.scoped_threads} sessions ready for review`;
       $("collection-detail").replaceChildren(element("p", "This app reads downloaded copies and saves reviews locally. It does not change production or grant consent."));
     } else {
@@ -70,7 +82,7 @@ async function loadQueue() {
 }
 async function openCase(id) {
   const request = ++state.load;
-  state.selected = id; state.dirty = false;
+  clearMedia(); state.selected = id; state.dirty = false;
   $("choose").hidden = true; $("case-detail").hidden = true; $("detail-loading").hidden = false;
   show("error", ""); show("review-error", ""); show("notice", "");
   setBusy(true);
@@ -79,6 +91,29 @@ async function openCase(id) {
     if (request !== state.load) return;
     state.detail = detail;
     renderCase(detail);
+    const prepared=detail.source_mode==="prepared_copy";
+    $("save").textContent=prepared ? "Save review draft" : "Save review";
+    $("save-next").textContent=prepared ? "Save draft and next →" : "Save and next →";
+    if(prepared) $("export").hidden=true;
+    $("source").textContent=prepared ? "Prepared copies · drafts only" : state.config.source;
+    const proposal = state.config.batch?.find(p => p.id === id && p.source_sha256 === detail.source_sha256);
+    if (proposal?.title) $("case-title").textContent=proposal.title;
+    show("inspection-hint",proposal?.observation || "");
+    $("output-disclaimer").textContent=prepared ? "Drafts are saved privately on this computer. They enter the daily report only after current eligibility, conversation and export are revalidated." : "Only saved output verdicts count in the daily review report. Unsure stays unresolved. Tests and fixes still need their own verification.";
+    if (!detail.review && proposal) {
+      $("expected").value = proposal.expectations.map(e=>e.text).join("\n");
+      state.pointers = new Set(proposal.expectations.flatMap(e=>e.source_pointers));
+      document.querySelectorAll(".message.creator input").forEach(input=>{input.checked=state.pointers.has(input.dataset.pointer);});
+      $("rationale").value = "Confirmed against the selected creator messages and the current export.";
+      $("reviewer").value = sessionStorage.getItem("reviewer-name") || "";
+      show("notice", "Proposed instructions are ready. Check them, then choose verdicts after watching. Nothing has been approved.");
+    }
+    await loadMedia(api, detail, proposal);
+    restoreDraft();
+    const batchIndex=state.config.batch?.findIndex(p=>p.id===id) ?? -1;
+    $("save-next").hidden=batchIndex<0 || batchIndex===state.config.batch.length-1;
+    if(batchIndex>=0) $("case-date").textContent=`Review ${batchIndex+1} of ${state.config.batch.length} · `+$("case-date").textContent;
+    history.replaceState(null,"",`/?case=${encodeURIComponent(id)}`);
     $("case-detail").hidden = false;
     $("case-title").focus({ preventScroll: true });
     if (matchMedia("(max-width:700px)").matches) $("review").scrollIntoView({ behavior: "auto", block: "start" });
@@ -103,8 +138,8 @@ function renderCase(detail) {
     const li = element("li", "", `message ${creator ? "creator" : "assistant"}`);
     if (creator) {
       const pointer = `/sections/events/${index}/content`;
-      const label = element("label"); const checkbox = element("input"); checkbox.type = "checkbox"; checkbox.checked = state.pointers.has(pointer);
-      checkbox.addEventListener("change", () => { checkbox.checked ? state.pointers.add(pointer) : state.pointers.delete(pointer); state.dirty = true; updateSaveHelp(); });
+      const label = element("label"); const checkbox = element("input"); checkbox.type = "checkbox"; checkbox.dataset.pointer = pointer; checkbox.checked = state.pointers.has(pointer);
+      checkbox.addEventListener("change", () => { checkbox.checked ? state.pointers.add(pointer) : state.pointers.delete(pointer); state.dirty = true; saveDraft(); updateSaveHelp(); });
       label.append(checkbox, document.createTextNode(`Creator message ${event.sequence}`)); li.append(label);
     } else li.append(element("div", `${event.actor} · message ${event.sequence}`, "role"));
     li.append(element("p", event.content)); $("conversation").append(li);
@@ -135,30 +170,68 @@ function renderCase(detail) {
   state.dirty = false;
   updateSaveHelp();
 }
+function showSelectedInstructions() {
+  $("selected-instructions").replaceChildren();
+  for(const pointer of [...state.pointers].sort((a,b)=>Number(a.split("/")[3])-Number(b.split("/")[3]))) {
+    const index=Number(pointer.split("/")[3]);
+    const event=state.detail?.capture.sections.events?.[index];
+    if(event?.actor==="user" && event.content) {
+      const previous=state.detail.capture.sections.events[index-1];
+      if(event.content.length<50 && previous?.actor==="assistant" && previous.content) {
+        const context=element("p",`Context for this reply: ${previous.content}`,"small muted");$("selected-instructions").append(context);
+      }
+      const quote=element("blockquote",event.content);$("selected-instructions").append(quote);
+    }
+  }
+  if(!state.pointers.size) $("selected-instructions").append(element("p","Open the conversation above and select the relevant creator messages.","small muted"));
+}
 function updateSaveHelp() {
   if (!state.detail) return;
+  showSelectedInstructions();
   const approve = $("decision").value === "approved";
   const incomplete = Object.keys(state.detail.capture.missing).length > 0;
   $("expected").required = approve;
   const unsupported = approve && (!state.pointers.size || incomplete);
   $("save").disabled = state.busy || unsupported || state.detail.review_state === "superseded";
+  $("save-next").disabled = $("save").disabled;
   $("save-help").textContent = unsupported ? "Select at least one creator message and use a complete capture to approve intent." : `Private capture expires ${date(state.detail.expires_at)}.`;
 }
-$("review-form").addEventListener("input", () => { state.dirty = true; });
+function draftKey() { return `review-draft:${state.detail.id}:${state.detail.source_sha256}:${state.detail.review_version}`; }
+function saveDraft() {
+  if(!state.detail) return;
+  const fields={}; for(const id of ["expected","decision","reviewer","rationale","stage","tickets"]) fields[id]=$(id).value;
+  try { sessionStorage.setItem(draftKey(),JSON.stringify({fields,pointers:[...state.pointers],outcomes:outcomeDraft()})); } catch { show("review-error","This browser could not preserve the draft. Keep this tab open until you save."); }
+}
+function restoreDraft() {
+  try {
+    const draft=JSON.parse(sessionStorage.getItem(draftKey()) || "null");if(!draft)return;
+    Object.entries(draft.fields).forEach(([id,value])=>{if($(id))$(id).value=value;});
+    state.pointers=new Set(draft.pointers);renderOutcomes(null);restoreOutcomeDraft(draft.outcomes);
+    document.querySelectorAll(".message.creator input").forEach(input=>{input.checked=state.pointers.has(input.dataset.pointer);});
+    state.dirty=true;show("notice","Your unsaved draft was restored. It has not entered the daily report.");
+  } catch { show("review-error","Could not restore this draft. Recheck the fields before saving."); }
+}
+$("review-form").addEventListener("input", () => { state.dirty = true; saveDraft(); });
+$("review-form").addEventListener("change", () => { state.dirty = true; saveDraft(); });
 $("decision").addEventListener("change", () => { state.dirty = true; updateSaveHelp(); });
 $("review-form").addEventListener("submit", async event => {
   event.preventDefault();
   if (state.busy) return;
   show("review-error", ""); show("notice", "");
   const detail = state.detail;
-  const body = { source_sha256: detail.source_sha256, review_version: detail.review_version, decision: $("decision").value, reviewer: $("reviewer").value, rationale: $("rationale").value, loss_stage: $("stage").value, tickets: $("tickets").value.split(/[,\s]+/).filter(Boolean), expectations: $("expected").value.trim() ? [{ text: $("expected").value, source_pointers: [...state.pointers] }] : [] };
+  const body = { source_sha256: detail.source_sha256, review_version: detail.review_version, decision: $("decision").value, reviewer: $("reviewer").value, rationale: $("rationale").value, loss_stage: $("stage").value, tickets: $("tickets").value.split(/[,\s]+/).filter(Boolean), expectations: expectations().map(text=>({text,source_pointers:[...state.pointers]})) };
   if (body.expectations.length && !state.pointers.size) { show("review-error", "Select the creator messages that support this expected outcome."); return; }
+  try { body.outcome_review=serializeOutcomes(); }
+  catch(error) { show("review-error",error.message); return; }
+  if(body.outcome_review && body.decision!=="approved") { show("review-error","Choose Approve intent to confirm these instructions before recording output verdicts.");return; }
+  const next = event.submitter?.id==="save-next" ? state.config.batch?.[state.config.batch.findIndex(p=>p.id===detail.id)+1]?.id : null;
   setBusy(true);
   try {
     await api(`/${detail.id}/review`, { method: "POST", body: JSON.stringify(body) });
+    sessionStorage.removeItem(draftKey());sessionStorage.setItem("reviewer-name",body.reviewer);
     state.dirty = false;
-    await loadQueue(); await openCase(detail.id);
-    show("notice", "Review saved. The expected outcome is recorded; execution and video evidence still need their own checks.");
+    await loadQueue(); await openCase(next || detail.id);
+    show("notice", detail.source_mode==="prepared_copy" ? "Review draft saved locally. It enters the daily report only after the server rechecks the conversation and export." : body.outcome_review ? "Export review saved. Current verdicts will appear in the daily report." : "Intent review saved. The output is still unverified.");
   } catch (error) { show("review-error", error.message); }
   finally { setBusy(false); updateSaveHelp(); }
 });
@@ -187,5 +260,9 @@ $("filter").addEventListener("change", async () => { if (!mayLeave()) { $("filte
 $("first-page").addEventListener("click", async () => { if (mayLeave()) { state.cursor = null; await loadQueue(); } });
 $("next-page").addEventListener("click", async () => { if (mayLeave()) { state.cursor = state.queue.next_cursor; await loadQueue(); } });
 window.addEventListener("beforeunload", event => { if (state.dirty) { event.preventDefault(); event.returnValue = ""; } });
-try { await reconnect(); await loadQueue(); }
+try { await reconnect(); await loadQueue();
+  const requested=new URLSearchParams(location.search).get("case");
+  const first=requested || state.config.batch?.[0]?.id;
+  if(first && /^[a-f0-9-]{36}$/.test(first)) await openCase(first);
+}
 catch (error) { show("error", `Cannot connect to the local review app. ${error.message}`); $("queue-loading").hidden = true; }

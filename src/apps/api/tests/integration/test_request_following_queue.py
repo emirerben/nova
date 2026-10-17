@@ -402,7 +402,8 @@ async def test_local_app_real_http_proxy_and_review(journey):
         assert url.startswith("http://127.0.0.1:"), line
         async with httpx.AsyncClient(base_url=url) as client:
             page = await client.get("/")
-            assert page.status_code == 200 and "What should have happened?" in page.text
+            assert page.status_code == 200
+            assert "Did the final video follow the request?" in page.text
             assert "queue-test-admin" not in page.text
             config = (await client.get("/config")).json()
             assert "queue-test-admin" not in str(config)
@@ -515,3 +516,278 @@ async def test_all_users_scope_still_requires_recorded_eligibility(journey, monk
         async with AsyncSessionLocal() as db:
             await db.execute(delete(User).where(User.id.in_([eligible, ineligible])))
             await db.commit()
+
+
+@pytest.fixture
+async def output_journey(journey, monkeypatch, tmp_path):
+    """Real persisted thread/plan/job and a real local MP4 object."""
+    import subprocess
+
+    from app.models import ContentPlan, Job, Persona, PlanItem
+    from app.routes import admin_request_following
+
+    client, owner, thread, grant = journey
+    monkeypatch.setattr(settings, "request_following_report_token", "report-read-only")
+    monkeypatch.setattr(settings, "storage_provider", "local")
+    monkeypatch.setattr(settings, "e2e_fixtures", True)
+    monkeypatch.setattr(settings, "local_storage_root", str(tmp_path))
+    monkeypatch.setattr(settings, "local_storage_base_url", "http://127.0.0.1:8000/dev-qa/storage")
+    client._transport.app.include_router(
+        admin_request_following.report_router, prefix="/request-following-report"
+    )
+    plan_id, item_id, job_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    path = f"generative-jobs/{job_id}/review.mp4"
+    media = tmp_path / path
+    media.parent.mkdir(parents=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=180x320:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(media),
+        ],
+        check=True,
+    )
+    async with AsyncSessionLocal() as db:
+        persona = Persona(user_id=owner)
+        db.add(persona)
+        await db.flush()
+        db.add(ContentPlan(id=plan_id, user_id=owner, persona_id=persona.id))
+        await db.flush()
+        item = PlanItem(id=item_id, content_plan_id=plan_id, idea="Fixture export", position=0)
+        db.add(item)
+        await db.flush()
+        db.add(
+            Job(
+                id=job_id,
+                user_id=owner,
+                content_plan_item_id=item_id,
+                raw_storage_path="fixture",
+                status="variants_ready",
+                mode="generative",
+                assembly_plan={
+                    "variants": [
+                        {
+                            "variant_id": "original_text",
+                            "render_status": "ready",
+                            "video_path": path,
+                        }
+                    ]
+                },
+            )
+        )
+        await db.flush()
+        item.current_job_id = job_id
+        row = await db.get(CreationThread, thread)
+        row.content_plan_id = plan_id
+        row.active_plan_item_id = item_id
+        row.active_job_id = job_id
+        await db.commit()
+    await collect()
+    case = await first(client)
+    yield client, case, media, grant, job_id
+    async with AsyncSessionLocal() as db:
+        row = await db.get(CreationThread, thread)
+        row.active_job_id = row.active_plan_item_id = row.content_plan_id = None
+        await db.flush()
+        item = await db.get(PlanItem, item_id)
+        item.current_job_id = None
+        await db.flush()
+        await db.execute(delete(Job).where(Job.id == job_id))
+        await db.execute(delete(ContentPlan).where(ContentPlan.id == plan_id))
+        await db.commit()
+
+
+async def outcome_body(client, case):
+    url = f"/admin/request-following/{case['id']}"
+    body = review((await client.get(url)).json())
+    media = await client.get(url + "/media")
+    assert media.status_code == 200, media.text
+    assert media.json()["status"] == "available"
+    body["expectations"] += [
+        {
+            "text": "Remove labels PRIVATE-SECRET-REQUEST",
+            "source_pointers": ["/sections/events/0/content"],
+        }
+    ]
+    body["outcome_review"] = {
+        "artifact": media.json()["artifact"],
+        "watched": True,
+        "listened": True,
+        "outcomes": [
+            {
+                "expectation_index": 0,
+                "category": "captions",
+                "verdict": "missed",
+                "note": "PRIVATE-REVIEW-NOTE",
+                "time_s": 0.2,
+            },
+            {
+                "expectation_index": 1,
+                "category": "labels",
+                "verdict": "unclear",
+                "note": "Cannot judge all frames",
+            },
+        ],
+    }
+    return url, body
+
+
+async def test_actual_export_review_reloads_and_enters_private_safe_daily_report(output_journey):
+    client, case, _, _, _ = output_journey
+    url, body = await outcome_body(client, case)
+    assert (await client.post(url + "/review", json=body)).status_code == 200
+    detail = (await client.get(url)).json()
+    assert detail["review"]["outcome_review"]["outcomes"][0]["verdict"] == "missed"
+    assert detail["evidence"]["rendered_output"] == "recorded_human_review_recheck_media"
+    headers = {"X-Report-Token": "report-read-only"}
+    report = await client.get("/request-following-report", headers=headers)
+    assert report.status_code == 200, report.text
+    data = report.json()
+    assert data["counts"]["export_reviewed_sessions"] == 1
+    assert data["requirements"] == {
+        "met": 0,
+        "partial": 0,
+        "missed": 1,
+        "unclear": 1,
+        "creator_changed": 0,
+        "total": 2,
+    }
+    assert data["next_actions"][0]["category"] == "captions"
+    assert data["next_actions"][0]["sessions"] == 1
+    for private in (
+        "PRIVATE-SECRET",
+        "PRIVATE-REVIEW",
+        "queue.test",
+        "source_pointers",
+        "video_path",
+        "storage.googleapis.com",
+    ):
+        assert private not in report.text
+    assert (
+        await client.get("/request-following-report", headers={"X-Report-Token": "wrong"})
+    ).status_code == 401
+    # Report credential cannot be used as an admin credential.
+    assert (await client.get(url, headers={"X-Admin-Token": "report-read-only"})).status_code == 401
+    assert (await client.post(url + "/review", json=body)).status_code == 409
+
+
+async def test_output_review_requires_actual_viewing_and_complete_verdicts(output_journey):
+    import copy
+
+    client, case, _, _, _ = output_journey
+    url, body = await outcome_body(client, case)
+    for mutate in (
+        lambda b: b["outcome_review"].update(watched=False),
+        lambda b: b["outcome_review"].update(outcomes=b["outcome_review"]["outcomes"][:1]),
+        lambda b: b["outcome_review"]["outcomes"][1].update(expectation_index=0),
+        lambda b: b["outcome_review"]["artifact"].update(job_id=str(uuid.uuid4())),
+    ):
+        bad = copy.deepcopy(body)
+        mutate(bad)
+        response = await client.post(url + "/review", json=bad)
+        assert response.status_code in {409, 422}, response.text
+    assert (await client.get(url)).json()["review"] is None
+    # An ordinary approved intent must not be reported as verified output.
+    body.pop("outcome_review")
+    assert (await client.post(url + "/review", json=body)).status_code == 200
+    data = (
+        await client.get(
+            "/request-following-report", headers={"X-Report-Token": "report-read-only"}
+        )
+    ).json()
+    assert data["counts"]["export_reviewed_sessions"] == 0
+    assert data["requirements"]["total"] == 0
+
+
+async def test_changed_export_rejects_save_and_retires_old_verdict(output_journey):
+    client, case, media, _, _ = output_journey
+    url, body = await outcome_body(client, case)
+    assert (await client.post(url + "/review", json=body)).status_code == 200
+    media.write_bytes(media.read_bytes() + b"changed-object-generation")
+    body["review_version"] = 1
+    assert (await client.post(url + "/review", json=body)).status_code == 409
+    data = (
+        await client.get(
+            "/request-following-report", headers={"X-Report-Token": "report-read-only"}
+        )
+    ).json()
+    assert data["counts"]["stale_output_reviews"] == 1
+    assert data["counts"]["export_reviewed_sessions"] == 0
+    assert not data["next_actions"]
+
+
+async def test_revocation_hides_review_media_and_report(output_journey):
+    client, case, _, grant, _ = output_journey
+    url, body = await outcome_body(client, case)
+    assert (await client.post(url + "/review", json=body)).status_code == 200
+    async with AsyncSessionLocal() as db:
+        row = await db.get(InternalAccountGrant, grant)
+        row.status = "revoked"
+        row.revoked_at = datetime.now(UTC)
+        await db.commit()
+    assert (await client.get(url + "/media")).status_code == 404
+    data = (
+        await client.get(
+            "/request-following-report", headers={"X-Report-Token": "report-read-only"}
+        )
+    ).json()
+    assert data["counts"]["captured_sessions"] == 0
+    assert data["counts"]["export_reviewed_sessions"] == 0
+    assert case["id"] not in str(data)
+
+
+async def test_foreign_media_path_and_unfinished_output_never_play(output_journey):
+    from app.models import Job
+
+    client, case, _, _, job_id = output_journey
+    async with AsyncSessionLocal() as db:
+        job = await db.get(Job, job_id)
+        job.assembly_plan = {
+            "variants": [
+                {
+                    "variant_id": "original_text",
+                    "render_status": "ready",
+                    "video_path": f"generative-jobs/{uuid.uuid4()}/foreign.mp4",
+                }
+            ]
+        }
+        await db.commit()
+    await collect()
+    current = await first(client)
+    response = await client.get(f"/admin/request-following/{current['id']}/media")
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert "url" not in response.json()
+
+
+async def test_manual_creator_changes_are_excluded_from_ai_failures(output_journey):
+    client, case, _, _, _ = output_journey
+    url, body = await outcome_body(client, case)
+    body["outcome_review"]["outcomes"][0]["verdict"] = "creator_changed"
+    body["outcome_review"]["listened"] = False
+    response = await client.post(url + "/review", json=body)
+    assert response.status_code == 200, response.text
+    report = (
+        await client.get(
+            "/request-following-report", headers={"X-Report-Token": "report-read-only"}
+        )
+    ).json()
+    assert report["counts"]["export_reviewed_sessions"] == 1
+    assert report["requirements"]["creator_changed"] == 1
+    assert report["requirements"]["unclear"] == 1
+    assert report["requirements"]["met"] == report["requirements"]["missed"] == 0
+    assert report["next_actions"] == []
