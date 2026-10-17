@@ -110,6 +110,92 @@ def prepare_authored_editor_commit(
     return prep
 
 
+# The phone clamps its own windows with this slack (KriaSourceWindowGeometry.boundsTolerance,
+# also the guided-v2 rule): a window it considers legal may end up to 50 ms past the source.
+SOURCE_BOUNDS_TOLERANCE_S = 0.05
+# Overshoot at or below this was always persisted untouched (frame rounding); keep it so.
+_SOURCE_BOUNDS_EXACT_S = 0.001
+
+
+def _out_of_bounds_error(
+    slot: Any,
+    *,
+    order: int,
+    duration: float | None,
+    rate: float,
+    bound: Any,
+    reason: str,
+) -> HTTPException:
+    """`TIMELINE_OUT_OF_BOUNDS` with the numbers needed to diagnose it from the 422 log."""
+    source_duration = float(bound) if bound is not None else None
+    overshoot = (
+        round(float(slot.in_s) + float(duration) * rate - source_duration, 4)
+        if source_duration is not None and duration is not None
+        else None
+    )
+    return HTTPException(
+        422,
+        detail={
+            "code": "TIMELINE_OUT_OF_BOUNDS",
+            "reason": reason,
+            "slot_id": slot.slot_id,
+            "slot_order": order,
+            "clip_index": slot.clip_index,
+            "in_s": round(float(slot.in_s), 4),
+            "duration_s": round(float(duration), 4) if duration is not None else None,
+            "rate": round(rate, 4),
+            "source_duration_s": round(source_duration, 4) if source_duration is not None else None,
+            "overshoot_s": overshoot,
+        },
+    )
+
+
+def _fit_window_to_source(
+    slot: Any,
+    *,
+    order: int,
+    duration: float,
+    rate: float,
+    bound: Any,
+    minimum_duration: float,
+) -> float:
+    """Return the slot duration, shortened if the window overshoots the source by <= 50 ms.
+
+    A window the phone considers legal can end a few ms past the catalog duration; shorten it
+    so the renderer never reads past the source end. Anything further out is refused.
+    """
+    import math
+
+    if bound is None:
+        raise _out_of_bounds_error(
+            slot, order=order, duration=duration, rate=rate, bound=bound, reason="source_unmeasured"
+        )
+    source_duration = float(bound)
+    end = slot.in_s + duration * rate
+    if end <= source_duration + _SOURCE_BOUNDS_EXACT_S:
+        return duration
+    if slot.in_s >= source_duration or end > source_duration + SOURCE_BOUNDS_TOLERANCE_S:
+        raise _out_of_bounds_error(
+            slot,
+            order=order,
+            duration=duration,
+            rate=rate,
+            bound=bound,
+            reason="source_window_too_short",
+        )
+    fitted = math.floor((source_duration - slot.in_s) / rate * 1e6) / 1e6
+    if fitted < minimum_duration:
+        raise _out_of_bounds_error(
+            slot,
+            order=order,
+            duration=duration,
+            rate=rate,
+            bound=bound,
+            reason="source_window_too_short",
+        )
+    return fitted
+
+
 def resolve_authored_phone_slots(job: Any, variant: dict, slots: list[Any]) -> list[dict]:
     """Resolve explicit placements against the original/admitted receipt catalog."""
     import math
@@ -151,10 +237,15 @@ def resolve_authored_phone_slots(job: Any, variant: dict, slots: list[Any]) -> l
         ):
             raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
         bound = source.get("duration_s")
-        if source["kind"] == "video" and (
-            bound is None or slot.in_s + duration * rate > float(bound) + 0.001
-        ):
-            raise HTTPException(422, detail={"code": "TIMELINE_OUT_OF_BOUNDS"})
+        if source["kind"] == "video":
+            duration = _fit_window_to_source(
+                slot,
+                order=len(resolved),
+                duration=duration,
+                rate=rate,
+                bound=bound,
+                minimum_duration=minimum_duration,
+            )
         if slot.look_preset not in (None, "none") or slot.look_adjustments is not None:
             raise HTTPException(422, detail={"code": "phone_edit_unsupported"})
         total += duration
@@ -339,9 +430,16 @@ def resolve_authored_cloud_slots(job: Any, variant: dict, slots: list[Any]) -> l
         if (
             source["source_kind"] == "video"
             and bound is not None
-            and slot.in_s + duration * rate > float(bound) + 0.05
+            and slot.in_s + duration * rate > float(bound) + SOURCE_BOUNDS_TOLERANCE_S
         ):
-            raise HTTPException(422, detail={"code": "TIMELINE_OUT_OF_BOUNDS"})
+            raise _out_of_bounds_error(
+                slot,
+                order=len(resolved),
+                duration=duration,
+                rate=rate,
+                bound=bound,
+                reason="source_window_too_short",
+            )
         preset = normalize_look_preset(
             slot.look_preset if slot.look_preset is not None else old.get("look_preset")
         )
