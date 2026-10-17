@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.16.0] - 2026-10-17
+
+### Fixed
+- KRI-674: Retry the approved native edit without replanning (#1647) <!-- release-pr: 1647 -->
+
 ## [0.80.15.0] - 2026-10-17
 
 ### Changed
