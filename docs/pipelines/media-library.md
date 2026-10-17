@@ -8,8 +8,9 @@ inside Add media for footage, visuals/slides, voiceovers and songs when the nati
 slice. Keep both flags off until native evidence and pilot approval are recorded.
 
 New native uploads are catalogued automatically while the library flag is on.
-Uploads made before activation are not automatically backfilled; importing them
-again registers them through the verified intake. The picker supports filename
+Uploads made before activation are not automatically backfilled. Operators can
+adopt retained, provably owned uploads with `scripts.backfill_media_library`
+(below); importing them again also uses the verified intake. The picker supports filename
 search, pagination, analysis retry, archive, and restoring expired cloud copies
 from the exact original. Archive hides future selection and preserves posts.
 
@@ -29,6 +30,37 @@ workers and release a new TestFlight build containing the picker. Keep
 `MEDIA_COLLECTION_PROPOSALS_ENABLED=false`. Turning the library flag off hides
 Saved uploads after capability refresh and returns its routes to 404, while
 existing post bindings and original files remain intact.
+
+## Historical uploads
+
+From `src/apps/api`, run `python -m scripts.backfill_media_library --email EMAIL
+--report /tmp/library-dry-run.json` for a metadata-only preview. After reviewing
+the scoped account, availability, ordering and byte count, repeat with `--apply`.
+`--max-bytes` defaults to 1 GiB of attempted downloads per run; a run stops at the
+budget or the existing 500-active-asset quota. Repeating it preserves completed
+work. The limit applies after exact-byte deduplication. It scans at most 5,000
+candidate identities by default (`--max-candidates`, maximum 10,000).
+
+Candidates come from owned plan-item footage/audio and registered visual pools.
+Upload events/pool timestamps determine newest-first priority, with post creation
+time as the legacy fallback. Old unpinned sources adopt the current generation
+only after full-byte verification and probing; a changed existing generation is
+skipped. Videos require their stored device-bound proxy/original receipt for the
+current phone-only creation flow; older cloud-render video originals are skipped
+and remain available on their existing posts. Both the database
+consumer and the normalized storage namespace must belong to the requested owner.
+
+Each transaction takes the existing owner/reference fence, rechecks the current
+consumer and source, and adds catalogue identities and usage references only.
+It never rewrites posts, copies/deletes cloud objects, revives archived media or
+dispatches AI analysis. Verified bytes are ready to reuse; compatible facts remain
+independent and are read through the existing versioned cache. Native device-only
+videos still require their matching full-quality originals on the phone. Existing
+thread usage lets the shipped iOS client migrate those originals lazily.
+
+The report separates missing, changed, unsupported, unowned, archived, quota and
+transfer-budget cases. Keep account identifiers and detailed reports outside Git.
+Verification contract: `docs/reviews/kri-384-backfill/verification.md`.
 
 ## Upload and repair
 

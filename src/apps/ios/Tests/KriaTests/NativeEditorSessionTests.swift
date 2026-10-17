@@ -2926,11 +2926,14 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.prepareFixtureSourcePreview(url: url)
         XCTAssertTrue(session.previewInstrumentation.snapshot().isEmpty)
         session.seek(to: 0.5)
-        for _ in 0..<100 {
-            if session.scrubPreviewFrame != nil { break }
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        XCTAssertNotNil(session.scrubPreviewFrame)
+        // A real AVFoundation decode of the bundled clip. A CI simulator still
+        // draining earlier tests' exports missed the old fixed 2.5 s poll
+        // (PRs 1622, 1624, 1625); locally under heavy CPU overload the frame
+        // took up to 15 s. The wait returns as soon as the frame lands, and
+        // the frame and its latency event land in the same main-actor step.
+        let started = ContinuousClock.now
+        let framed = await waitUntil(timeout: .seconds(60)) { session.scrubPreviewFrame != nil }
+        XCTAssertTrue(framed, "No scrub frame after \(ContinuousClock.now - started)")
         let events = session.previewInstrumentation.snapshot()
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events.first?.name, .seekLatency)
