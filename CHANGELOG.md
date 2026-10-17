@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.21.0] - 2026-10-17
+
+### Fixed
+- KRI-674: prevent follow-up AI timeouts before render approval (#1653) <!-- release-pr: 1653 -->
+
 ## [0.80.20.0] - 2026-10-17
 
 ### Changed
