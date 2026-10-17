@@ -1373,7 +1373,7 @@
       "evidence": {
         "offline_replay": "Red before fix: durable brief stayed v1, declined/unrelated/stale replies reached approval. Real Postgres, approval, dispatch claim, native compiler, immutable pin and publication authority guard; planner output replayed. KRI-674: typed HTTP/real Postgres consent and dispatch journeys; model entrypoint is a failing sentinel, not replayed planner output.",
         "live_model": "Not run; no paid calls.",
-        "native_output": "scripts/ios/kri-698-simpler-version.py prepares the exact pinned recipe for AudioParityFixtureTests and verifies actual MP4 title, length, clip order and audio; synthetic sources, macOS AVFoundation. Physical iPhone/original N2 footage pending.",
+        "native_output": "scripts/ios/kri-698-simpler-version.py prepares the exact pinned recipe for AudioParityFixtureTests and verifies actual MP4 title, length, clip order and audio; synthetic sources, macOS AVFoundation. Physical iPhone/original N2 footage pending. KRI-674: physical iPhone13Pro Retry/approval/AVFoundation/upload/publication passed on a local scratch backend; exact recipe, revision2->3, one turn, zero AgentRuns, 6.6s H264/AAC; stale completion409. See docs/reviews/kri-674-exact-retry.md.",
         "production": "Not deployed."
       },
       "neighbours_covered": [

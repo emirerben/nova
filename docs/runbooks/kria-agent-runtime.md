@@ -81,7 +81,10 @@ test database (some integration suites truncate it). The DEBUG-only
 `-ui-testing-retry-api` bootstrap accepts an explicit local API URL and fixture
 user UUID through `KRIA_RETRY_TEST_API_URL` / `KRIA_RETRY_TEST_USER_ID`; use a
 separate app bundle and copied originals. It uses real API/worker/device export,
-with an in-memory fixture token store. Never point that fixture at production.
+with an in-memory fixture token store. Its DEBUG-only local storage transport
+requires a matching private host/port and `/kri674-storage/` path; Release keeps
+HTTPS mandatory. Keep the same build installed for a whole attempt so fixture
+file fingerprints stay stable. Never point that fixture at production.
 
 Use the admin helper so the token remains out of shell history:
 
