@@ -70,8 +70,9 @@ enum GuidedLabelRebase {
         }
     }
 
-    /// True when the text lane has anything to follow. `includeFreeText` is true for a guided
-    /// story, where every text rides the timeline; anywhere else only the guided ids do.
+    /// True when the text lane has anything to follow. `includeFreeText` is true for every
+    /// clip-timeline video (a guided story or any montage-family edit), where every text rides the
+    /// timeline; speech-timed archetypes (subtitled / narrated / talking head) only follow the guided ids.
     /// Required (no default) so a caller can never disagree with `rebase` about the archetype.
     static func hasLabels(_ elements: [EditorTextElement], includeFreeText: Bool) -> Bool {
         elements.contains { isGuidedText($0, includeFreeText: includeFreeText) }
@@ -91,7 +92,7 @@ enum GuidedLabelRebase {
         element.id.hasPrefix(labelPrefix) && !isUntouched(element)
     }
 
-    /// Per-shot montage copy. Clip-bound like a label, but only on a guided story: other
+    /// Per-shot montage copy. Clip-bound like a label on every clip-timeline video; speech-timed
     /// archetypes' `montage-text-*` bars keep their own timing.
     static func isMontageText(_ element: EditorTextElement) -> Bool {
         element.id.hasPrefix(montageTextPrefix) && !isUntouched(element)
