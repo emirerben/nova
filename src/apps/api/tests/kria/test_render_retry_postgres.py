@@ -233,6 +233,35 @@ def recover(http, case, revision=3):
     )
 
 
+def test_legacy_device_retry_cannot_bypass_runtime_approval(client):
+    http, publish = client
+    case = seed_failed()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=case.user_id)
+    with sync_session() as db:
+        identity = device_status(db.get(Job, case.job_id), "first").request.identity
+    response = http.post(
+        f"/me/jobs/{case.job_id}/device-render/retry",
+        json={"identity": identity.model_dump(mode="json")},
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == (
+        "Open this project's chat and review Retry approved edit before rendering again."
+    )
+    with sync_session() as db:
+        status = device_status(db.get(Job, case.job_id), "first")
+        assert status.request.identity == identity
+        assert status.phase == "needs_attention"
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(CreatorAgentApproval)
+                .where(CreatorAgentApproval.thread_id == case.thread_id)
+            )
+            == 1
+        )
+    publish.assert_not_called()
+
+
 def test_retry_reuses_turn_draft_and_recipe_with_fresh_consent(client, monkeypatch):
     http, publish = client
     case = seed_failed()

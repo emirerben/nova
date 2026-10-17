@@ -17,7 +17,14 @@ struct DeviceRenderPanel: View {
         VStack(spacing: 12) {
         DeviceRenderStatusCard(
             presentation: sessions.presentations[key] ?? DeviceRenderPresentation(phase: .preparing),
-            retry: { Task { await retry() } },
+            retry: { Task {
+                // Re-sending an existing local file needs no new render consent.
+                // Every fresh runtime export goes through its approval, including
+                // a local failure whose server observer has not caught up yet.
+                if let retryApproved, sessions.presentations[key]?.phase != .localReady {
+                    await retryApproved()
+                } else { await retry() }
+            } },
             stop: { Task { await sessions.cancel(key) } },
             retryNeedsAttention: {
                 if let retryApproved { await retryApproved() }

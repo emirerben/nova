@@ -49,7 +49,14 @@ from app.kria.render_assets import (
     VoiceoverRenderAsset,
 )
 from app.limiter import limiter
-from app.models import ContentPlan, Job, PlanItem, PlanItemAsset, TemporaryMediaUpload
+from app.models import (
+    ContentPlan,
+    CreatorAgentExecution,
+    Job,
+    PlanItem,
+    PlanItemAsset,
+    TemporaryMediaUpload,
+)
 from app.routes.generative_jobs import PLAYBACK_URL_TTL_MIN
 from app.schemas.edit_proposal import NarrationTrack
 from app.services.content_plan_persona import PlanPersonaOwnershipError, load_owned_plan_persona
@@ -769,6 +776,21 @@ async def retry_device_export(
         raise
     if status.phase != "needs_attention":
         raise HTTPException(409, "Render is not awaiting a retry")
+    runtime_execution = (
+        await db.execute(
+            select(CreatorAgentExecution.id)
+            .where(
+                CreatorAgentExecution.target_job_id == job.id,
+                CreatorAgentExecution.tool_name == "render.request",
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if runtime_execution is not None:
+        raise HTTPException(
+            409,
+            "Open this project's chat and review Retry approved edit before rendering again.",
+        )
     try:
         new_status = retry_device_render(job, identity.variant_id)
     except CreatorRenderContractError as exc:

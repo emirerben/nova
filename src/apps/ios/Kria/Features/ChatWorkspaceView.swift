@@ -1485,7 +1485,7 @@ private struct CreationWorkspaceView: View {
                 planFeedView
             } else if let deviceRenderKey {
                 DeviceRenderPanel(key: deviceRenderKey, sessions: model.deviceRenders,
-                    retryApproved: fullThread?.failedRenderExecutionID == nil ? nil : { await retryApprovedRender() }) {
+                    retryApproved: project.runtimeVersion == 2 ? { await retryApprovedRender() } : nil) {
                     await refreshCapabilities()
                     await refreshDeviceRender(retry: true)
                 }
@@ -1945,9 +1945,14 @@ private struct CreationWorkspaceView: View {
     }
 
     private func retryApprovedRender() async {
-        guard !isActing, !isSending, let executionID = fullThread?.failedRenderExecutionID else { return }
+        guard !isActing, !isSending else { return }
         isActing = true
         defer { isActing = false }
+        if fullThread?.failedRenderExecutionID == nil { await refreshNow() }
+        guard let executionID = fullThread?.failedRenderExecutionID else {
+            failure = ChatFailure("The render status is still updating. Your edit is saved. Refresh the project before retrying.")
+            return
+        }
         do {
             let accepted = try await model.api.retryApprovedRender(threadID: project.id,
                 executionID: executionID, expectedRevision: threadRevision)

@@ -1360,7 +1360,10 @@
         "src/apps/ios/Kria/Features/DeviceRenderPanel.swift",
         "src/apps/ios/Kria/Features/CreationConfirmationStage.swift",
         "src/apps/ios/Kria/Features/CanonicalChatComponents.swift",
-        "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift"
+        "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift",
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/ios/Kria/Features/NativeEditorView.swift",
+        "src/apps/ios/Kria/Features/NativeEditorComponents.swift"
       ],
       "regression_tests": [
         "tests/kria/test_runtime_simpler_version_loop.py",
