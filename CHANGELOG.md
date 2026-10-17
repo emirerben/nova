@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.27.0] - 2026-10-17
+
+### Changed
+- feat(talking): several videos on iPhone Talking edits, flag off (KRI-719, phase 1) (#1636) <!-- release-pr: 1636 -->
+
 ## [0.80.26.0] - 2026-10-17
 
 ### Fixed
