@@ -87,10 +87,6 @@ final class CreationChatFixture: @unchecked Sendable {
     static let shared = CreationChatFixture()
     private let lock = NSLock()
     private var threads: [String: [String: Any]] = [:]
-    init() {
-        // `KRIA_CHAT_SEED_THREADS` (perf): an account that already has chats.
-        PerfFixture.seedThreads(runtime: ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1, into: &threads)
-    }
     private var renders: [String: Int] = [:]
     private var preparations: [String: Int] = [:]
     private var planVersions: [String: Int] = [:]
@@ -291,6 +287,10 @@ final class CreationChatFixture: @unchecked Sendable {
             return slideResponse(request, itemID: parts[1], parts: parts, body: body)
         }
         if parts.first == "plan-items" { return response(["assets": [], "max_assets": 10]) }
+        // `KRIA_CHAT_SEED_THREADS` (perf): an account that already has chats, each built the first time it is asked for.
+        if parts.count >= 2, threads[parts[1]] == nil, let index = PerfFixture.seededIndex(of: parts[1]) {
+            threads[parts[1]] = PerfFixture.seededThread(index, runtime: runtime)
+        }
         guard parts.count >= 2, var thread = threads[parts[1]] else { return response(["detail": "Fixture route missing"], status: 404) }
         let id = parts[1]
         if parts.count == 3, parts[2] == "brief" { return response(Self.fixtureBrief(threadID: id)) }

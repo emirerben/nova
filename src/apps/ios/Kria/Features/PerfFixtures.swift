@@ -114,10 +114,10 @@ enum PerfFixture {
     }
 
     /// Chat `index` of the seeded account (0 is the newest). Every chat carries the long-history transcript.
-    static func seededThread(_ index: Int, runtime: Int) -> [String: Any] {
+    static func seededThread(_ index: Int, runtime: Int, includeEvents: Bool = true) -> [String: Any] {
         let id = seededThreadID(index)
         let count = longHistoryCount ?? 12
-        let events: [[String: Any]] = (0..<count).map { sequence in
+        let events: [[String: Any]] = !includeEvents ? [] : (0..<count).map { sequence in
             let isUser = sequence.isMultiple(of: 2)
             return [
                 "id": UUID().uuidString, "sequence": sequence, "revision": sequence + 1,
@@ -136,8 +136,13 @@ enum PerfFixture {
         ]
     }
 
-    static func seedThreads(runtime: Int, into threads: inout [String: [String: Any]]) {
-        for index in 0..<seedThreadCount { threads[seededThreadID(index)] = seededThread(index, runtime: runtime) }
+    /// The seeded chat a thread id names, if any. Chats are built when first asked for, not up front: building 60 chats
+    /// of 200 events on the first request would put hundreds of milliseconds of fixture CPU in front of every
+    /// response, and the benchmark would measure the fixture instead of the app.
+    static func seededIndex(of id: String) -> Int? {
+        guard seedThreadCount > 0, id.uppercased().hasPrefix("5EED0000-0000-4000-8000-"),
+              let index = Int(id.suffix(12)), index < seedThreadCount else { return nil }
+        return index
     }
 
     /// `GET /creation-threads`: newest first, `limit` (default 20, max 50) and an opaque `cursor`. The next page's
@@ -148,9 +153,7 @@ enum PerfFixture {
         let runtime = env["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1
         let end = min(offset + limit, seedThreadCount)
         let rows: [[String: Any]] = (offset..<max(offset, end)).map { index in
-            var row = seededThread(index, runtime: runtime)
-            row["events"] = [] // list rows carry state but not the transcript
-            return row
+            seededThread(index, runtime: runtime, includeEvents: false) // list rows carry state, not the transcript
         }
         var headers: [String: String] = [:]
         if end < seedThreadCount { headers["X-Next-Cursor"] = "o\(end)" }
