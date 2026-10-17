@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.13.0] - 2026-10-17
+
+### Changed
+- feat(media): backfill historical uploads into Saved uploads (#1640) <!-- release-pr: 1640 -->
+
 ## [0.80.12.0] - 2026-10-17
 
 ### Changed
