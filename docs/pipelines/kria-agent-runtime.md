@@ -178,6 +178,20 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   `tests/kria/test_kri667_no_new_intent_regexes.py` ratchets the `re.*` count of
   every creator-wording module down (exempt a non-wording regex with
   `# kri667: <why>`). Pins: `tests/kria/test_kri667_structured_ask_facts.py`.
+- **Clip speed (KRI-689).** The phone montage plays every clip at natural speed
+  (`phone_guided_plan` refuses a `playback_rate` other than 1). A speed ask ("speed the
+  river shots up 2x", slow motion, time-lapse, "2 kat hızlandır") used to be dropped
+  silently and only listed under "Have a look at these in the video" after the render.
+  `brief_checks.clip_speed_notice` now adds one plain sentence to the draft reply and the
+  approval card for a draft the unified montage will render, and the render-ready review
+  reports the ask as "Couldn't" with the same reason (a format limit: it never asks
+  "simpler version?" and never blocks the approved render). `kria/speed_ask.py` reads
+  `facts.playback_rate` (or `speed`) first; the Main Creator is not asked for it yet, so
+  today the narrow EN/TR wording fallback decides. Next step: ask for the fact in the
+  Main Creator / extractor prompt, then delete the wording fallback. Pins:
+  `tests/kria/test_kri689_clip_speed_ask.py`, `tests/kria/test_kri689_speed_notice_postgres.py`,
+  `tests/tasks/test_kri689_speed_review.py`, the KRI-689 cases in
+  `tests/tasks/test_unified_montage_dispatch.py`.
 - **Cost.** With a render present the flag adds one Main Creator call to
   editor-op turns (the planner extracts requirements before the router runs).
   If that call fails, a plain edit falls back to the legacy copilot-first path
@@ -278,6 +292,16 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   takes but refuses overlapping windows. Moments that don't fit fall back to one
   window per take, with a notice. Incident: cabin kit M2, prod thread 6605cf61.
   Guard: `tests/tasks/test_long_take_moments_montage.py`.
+  KRI-686: the count may sit apart from the noun ("eight of them", "8 in total", "sekiz
+  tane") and a per-moment length ("about 2 seconds each", "her biri 2 saniye") is
+  `MomentAsk.each_s` (<= 3s also means `short`; it sizes the moments when no count is
+  given). Read by tokens, not patterns (KRI-667 ratchet); a recorded
+  `facts.moment_count` / `facts.moment_length_s` decides first. "no dark stretches"
+  sets `excludes`, so that half of the ask stays an honest "can't check". When a take's
+  analysis has no `best_moments` (the model may return `[]` for uniform footage) the
+  moment path spreads windows over the take (`moment_fill`); the plain one-window
+  selector falls back to the take's first seconds (`analysis_fallback`). Incident:
+  boat kit M2, thread 1390E686. Guard: `tests/tasks/test_moment_ask_wording.py`.
 - *Clips ruled out by length (KRI-623)*: "from the long takes", "skip the short
   clips", "uzun çekimlerden", "kısa klipleri kullanma" leave clips out whatever the
   Main Creator picked. `app/kria/clip_scope.py` reads the live brief's `select` asks

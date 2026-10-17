@@ -992,7 +992,9 @@ def _summary_block(plan: dict[str, Any], section: str) -> dict[str, Any]:
             for t in (plan.get("text_elements") or [])
             if isinstance(t, dict)
             and t.get("text")
-            and not str(t.get("id") or "").startswith(("clip-label-", "montage-text-"))
+            and not str(t.get("id") or "").startswith(
+                ("clip-label-", "montage-text-", "group-title-")
+            )
         ]
         return block("title", "decided", str(texts[0]["text"])) if texts else _skipped("title")
     if section == "clips":

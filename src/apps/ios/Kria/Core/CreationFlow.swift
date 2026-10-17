@@ -5,6 +5,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     let formats: [CreationFormatCapability]
     var media: [String: CreationMediaLimit]? = nil
     var runtimeVersions: [Int]? = nil
+    var mediaLibrary: Bool? = nil
     var visualsEnabled: Bool? = nil
     var phoneRendering: PhoneRenderingCapabilities? = nil
     /// Server accepts the editor's unsaved state with a chat turn (nil/false = legacy flush-then-send).
@@ -82,6 +83,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case formats, media
         case runtimeVersions = "runtime_versions", visualsEnabled = "visuals_enabled"
+        case mediaLibrary = "media_library"
         case phoneRendering = "phone_rendering"
         case editorStateTurns = "editor_state_turns", editorStateMaxBytes = "editor_state_max_bytes"
         case slidePostRichText = "slide_post_rich_text"
@@ -112,6 +114,7 @@ extension CreationCapabilities {
         formats = try container.decode([CreationFormatCapability].self, forKey: .formats)
         media = try container.decodeIfPresent([String: CreationMediaLimit?].self, forKey: .media)?.compactMapValues { $0 }
         runtimeVersions = try container.decodeIfPresent([Int].self, forKey: .runtimeVersions)
+        mediaLibrary = try container.decodeIfPresent(Bool.self, forKey: .mediaLibrary)
         visualsEnabled = try container.decodeIfPresent(Bool.self, forKey: .visualsEnabled)
         phoneRendering = try container.decodeIfPresent(PhoneRenderingCapabilities.self, forKey: .phoneRendering)
         editorStateTurns = try container.decodeIfPresent(Bool.self, forKey: .editorStateTurns)
@@ -181,6 +184,7 @@ enum CreationMediaRole: String, Codable, CaseIterable, Sendable {
 }
 
 struct CreationVisual: Codable, Sendable, Identifiable {
+    var libraryAssetID: UUID? = nil
     let id: String
     let kind: String
     let status: String
@@ -209,6 +213,7 @@ struct CreationVisual: Codable, Sendable, Identifiable {
         return displayURL
     }
     enum CodingKeys: String, CodingKey {
+        case libraryAssetID = "library_asset_id"
         case id, kind, status, retryable
         case gcsPath = "gcs_path", sourceURL = "source_url", durationS = "duration_s", mediaStatus = "media_status"
         case sourceFilename = "source_filename", displayURL = "display_url", previewURL = "preview_url"
@@ -301,6 +306,7 @@ struct CreationAttachedMedia: Identifiable {
     let filename: String
     let kind: String
     let previewURL: URL?
+    var libraryAssetID: UUID? = nil
     var uploadPurpose: String = UploadPurpose.cloudRenderSource.rawValue
     /// The name the creator knows, for every label (KRI-518): the server keeps the upload's
     /// `<UUID>-<original>` name, so `filename` read "F7B6D371-1487-…-T2_01_footage.mp4" in the chat.
@@ -327,7 +333,7 @@ struct CreationAttachedMedia: Identifiable {
             }
             let role = fields["role"]?.stringValue
             let range = role == "song" ? SongFilmingRange.parse(fields["song_range"]) : nil
-            return Self(id: id, filename: fields["filename"]?.stringValue ?? "Attached media", kind: fields["kind"]?.stringValue ?? "video", previewURL: url.flatMap(URL.init(string:)), uploadPurpose: purpose, durationS: duration, role: role, filmingRange: range)
+            return Self(id: id, filename: fields["filename"]?.stringValue ?? "Attached media", kind: fields["kind"]?.stringValue ?? "video", previewURL: url.flatMap(URL.init(string:)), libraryAssetID: fields["library_asset_id"]?.stringValue.flatMap(UUID.init(uuidString:)), uploadPurpose: purpose, durationS: duration, role: role, filmingRange: range)
         }
     }
     /// The attached song, if the server reports one (KRI-374): a `media` entry with `role == "song"`, or a

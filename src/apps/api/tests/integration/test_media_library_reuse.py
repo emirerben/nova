@@ -215,7 +215,25 @@ async def test_photo_reuse_edit_archive_and_native_hash_verification(world, monk
         assert first.aspect == second.aspect == 1.0
         assert first.analysis["aspect"] == second.analysis["aspect"] == 1.0
         assert _asset_upright_aspect(first) == _asset_upright_aspect(second) == 1.0
-        await ingest.archive_library_asset(db, w.owner, w.image)
+        # Uploading a third unique asset automatically removes the oldest saved
+        # entry, even while both posts reference it. Their pins must survive.
+        monkeypatch.setattr(ingest, "ACTIVE_ASSET_LIMIT", 2)
+        image = await db.get(MediaAsset, w.image)
+        image.created_at = datetime.now(UTC) - timedelta(days=1)
+        await db.commit()
+        await ingest.register_verified_source(
+            db,
+            owner_id=w.owner,
+            kind="audio",
+            object_path=f"users/{w.owner}/media-library/new-song.mp3",
+            generation="44",
+            uploaded_sha256="f" * 64,
+            byte_count=12,
+            content_type="audio/mpeg",
+            role="original",
+        )
+        await db.commit()
+        assert (await db.get(MediaAsset, w.image)).archived_at is not None
         with pytest.raises(HTTPException):
             await project_library_visual(db, owner_id=w.owner, item_id=w.items[0], asset_id=w.image)
         await db.rollback()
@@ -242,7 +260,7 @@ async def test_photo_reuse_edit_archive_and_native_hash_verification(world, monk
         assert {ref.plan_item_id for ref in refs} == set(w.items)
     print(
         "posts=2 source_analysis_calls=1 upload_calls=0 independent_edit_state=verified "
-        "archive_existing_render=verified"
+        "automatic_rotation_existing_render=verified"
     )
 
 
@@ -870,6 +888,25 @@ async def test_editor_library_footage_keeps_original_and_checks_owner_generation
         "user_id": str(w.owner),
         "source_id": "analysis-proxy-editor.mp4",
     }
+    # An existing post's bound source remains editable after automatic rotation.
+    monkeypatch.setattr(ingest, "ACTIVE_ASSET_LIMIT", 2)
+    async with AsyncSessionLocal() as db:
+        video = await db.get(MediaAsset, w.video)
+        video.created_at = datetime.now(UTC) - timedelta(days=1)
+        await db.commit()
+        await ingest.register_verified_source(
+            db,
+            owner_id=w.owner,
+            kind="audio",
+            object_path=f"users/{w.owner}/media-library/new-song.mp3",
+            generation="44",
+            uploaded_sha256="f" * 64,
+            byte_count=12,
+            content_type="audio/mpeg",
+            role="original",
+        )
+        await db.commit()
+        assert (await db.get(MediaAsset, w.video)).archived_at is not None
     source, binding = editor._prepare_footage(record)
     assert source["generation"] == "43" and binding.original.sha256 == "a" * 64
     with pytest.raises(editor.AdmissionError, match="library_source_unavailable"):

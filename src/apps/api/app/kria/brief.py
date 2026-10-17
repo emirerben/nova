@@ -1173,9 +1173,24 @@ def applicable_requirements(
     return result
 
 
+def _render_fact(value: Any) -> str:
+    """One fact value as the creator wrote it; non-text values keep a compact JSON form.
+
+    KRI-677: ``json.dumps`` rendered a quoted spoken line as ``\\"Hadi gidelim\\" dediğimiz
+    iskele klibi``. The Main Creator copied that escaped form into ``source_quote`` and
+    the clip-intent planner, which verifies quotes against the creator's own words,
+    rejected the ask on every turn after the first.
+    """
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def _render_requirement(req: BriefRequirement) -> str:
     facts = (
-        " facts=" + json.dumps(req.facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        " facts={"
+        + "; ".join(f"{key}: {_render_fact(req.facts[key])}" for key in sorted(req.facts))
+        + "}"
         if req.facts
         else ""
     )

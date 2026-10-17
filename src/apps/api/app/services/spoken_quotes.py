@@ -16,6 +16,17 @@ has:
 * ``ground_closing_quote`` -- the source window of a quoted closing line, from the timed
   segments, else from word timings; ``status="not_found"`` when neither has it.
 * ``is_outro_hallucination`` -- whisper's "thanks for watching" on trailing silence.
+
+KRI-681 (Tigre night M1, thread 133bdded): "tam 20 dakika sürdü dediğim klip en sonda
+olsun ve o cümle duyulsun" names the line without quote marks, and the clip's one timed
+segment ran 3.8-13.6 s, so the closing cut played 0-2.2 s and the line was never heard:
+
+* ``said_line`` -- the longest run of an ask's words the seated clip's transcript says,
+  so an unquoted line grounds on the clip's own words, never on a guess at grammar.
+* a line found inside a long timed segment is narrowed to the line itself (word-timed
+  pass, else its place in the segment's text).
+* ``described_line_moments`` -- "the clip where the boat won't start: keep its sound"
+  seats that clip's window on the sentence that says it ("tekne çalışmıyor").
 """
 
 from __future__ import annotations
@@ -82,6 +93,29 @@ SENTENCE_REACH_S = 2.5
 # The longest run of timed segments one quote may span.
 _MAX_SEGMENT_RUN = 3
 WHISPER_TIMEOUT_S = 45.0
+# KRI-681: a found line longer than this is a long segment that also holds other words;
+# it is narrowed to the line. A line placed by its share of the segment's text keeps this
+# much extra either side, since speech is not spoken at an even rate.
+LONG_LINE_S = 5.0
+ESTIMATE_LEAD_S = 1.0
+ESTIMATE_TAIL_S = 0.6
+# An unquoted line is at least two content words (a number, or 4+ letters), so "the
+# river" never grounds on a clip that happens to say "the river".
+_CONTENT_MIN_CHARS = 4
+_MIN_CONTENT_WORDS = 2
+_MAX_ASK_WORDS = 24
+# A described clip matches a sentence on two word stems: "teknenin çalışmadığı" and
+# "tekne çalışmıyor" share "tekne" and "calis".
+_STEM_CHARS = 5
+_MIN_SHARED_STEMS = 2
+# A described sentence's window: the sentence with a breath either side, at least this
+# long so a short call ("Amigo Sergio") still reads as a shot.
+DESCRIBED_MOMENT_MIN_S = 2.5
+# Segment times run a little late on a quiet start (the boat clip's "Tekne" at 3.6 s was
+# timed 4.04 s), so a described sentence keeps more breath before it than after.
+DESCRIBED_LEAD_S = 0.8
+_CLAUSE_BREAKS = ",;:.!?\n"
+_EDGE_PUNCTUATION = "\"'“”‘’«»„()[]{},;:.!?…"
 
 # whisper-1's trailing-silence inventions, folded: never a line anyone said.
 _OUTRO_HALLUCINATIONS = (
@@ -178,6 +212,39 @@ def transcript_says(analysis: Mapping[str, Any] | None, quote: str) -> bool:
     return any(_says(fold_tokens(text), target) for text in _transcripts(analysis))
 
 
+def _content(token: str) -> bool:
+    return token.isdigit() or len(token) >= _CONTENT_MIN_CHARS
+
+
+def said_line(text: str | None, analysis: Mapping[str, Any] | None) -> str | None:
+    """The longest run of ``text``'s words the clip's transcript says word for word (KRI-681).
+
+    "tam 20 dakika sürdü dediğim klip" on a clip that says "... tam 20 dakika sürdü ha"
+    gives "tam 20 dakika sürdü". None when no run of two content words is said.
+    """
+    words = [
+        word.strip(_EDGE_PUNCTUATION)
+        for word in str(text or "").split()[:_MAX_ASK_WORDS]
+        if word.strip(_EDGE_PUNCTUATION)
+    ]
+    folded = [fold_tokens(word) for word in words]
+    transcripts = [fold_tokens(text) for text in _transcripts(analysis)]
+    if not transcripts:
+        return None
+    best: tuple[int, str] | None = None
+    for first in range(len(words)):
+        for last in range(len(words), first, -1):
+            tokens = [token for word in folded[first:last] for token in word]
+            if best is not None and len(tokens) <= best[0]:
+                break
+            if sum(_content(token) for token in tokens) < _MIN_CONTENT_WORDS:
+                continue
+            if any(_find_all(transcript, tokens) for transcript in transcripts):
+                best = (len(tokens), " ".join(words[first:last]))
+                break
+    return best[1] if best is not None else None
+
+
 def is_outro_hallucination(text: str, analysis: Mapping[str, Any] | None = None) -> bool:
     """whisper's "thanks for watching" that the clip's own (Gemini) transcript never heard."""
     tokens = fold_tokens(text)
@@ -240,19 +307,50 @@ def regound_quoted_intents(
     return out, moved
 
 
-def closing_quote_request(strategy: Mapping[str, Any]) -> tuple[str, str, str] | None:
-    """(intent id, media id, quote) of a resolved "end on the moment I say '...'" ask."""
+def _snapshot_row(
+    media_snapshot: Mapping[str, Any] | None, media_id: str
+) -> Mapping[str, Any] | None:
+    if not isinstance(media_snapshot, Mapping):
+        return None
+    return next(
+        (
+            row
+            for row in media_snapshot.get("clip_assignments") or []
+            if isinstance(row, Mapping) and row.get("media_id") == media_id
+        ),
+        None,
+    )
+
+
+def _row_analysis(row: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    analysis = row.get("analysis") if isinstance(row, Mapping) else None
+    return analysis if isinstance(analysis, Mapping) else {}
+
+
+def closing_quote_request(
+    strategy: Mapping[str, Any], media_snapshot: Mapping[str, Any] | None = None
+) -> tuple[str, str, str] | None:
+    """(intent id, media id, line) of a resolved "end on the moment I say ..." ask.
+
+    A quoted line is taken as written. An unquoted one (KRI-681) is the run of the ask's
+    words the seated clip says, read off ``media_snapshot``.
+    """
     for row in strategy.get("resolved_clip_intents") or []:
         if not isinstance(row, Mapping):
             continue
         if row.get("op") != "order" or row.get("position") != "last":
             continue
         assignments = [a for a in row.get("assignments") or [] if isinstance(a, Mapping)]
-        quote = spoken_quote(str(row.get("attribute") or ""))
-        if row.get("status", "resolved") != "resolved" or len(assignments) != 1 or not quote:
+        if row.get("status", "resolved") != "resolved" or len(assignments) != 1:
             continue
         media_id = assignments[0].get("media_id")
-        if isinstance(media_id, str) and media_id:
+        if not isinstance(media_id, str) or not media_id:
+            continue
+        attribute = str(row.get("attribute") or "")
+        quote = spoken_quote(attribute) or said_line(
+            attribute, _row_analysis(_snapshot_row(media_snapshot, media_id))
+        )
+        if quote:
             return str(row.get("intent_id") or ""), media_id, quote
     return None
 
@@ -263,12 +361,8 @@ def _number(value: object) -> float | None:
     return float(value)
 
 
-def locate_in_segments(
-    quote: str, segments: Sequence[Mapping[str, Any]], duration_s: float
-) -> tuple[float, float] | None:
-    """The shortest run of timed sentences that says ``quote``, padded, else None."""
-    target = fold_tokens(quote)
-    rows = sorted(
+def _timed_rows(segments: Sequence[Mapping[str, Any]]) -> list[tuple[float, float, str]]:
+    return sorted(
         (
             (start, end, str(row.get("text") or ""))
             for row in segments
@@ -278,6 +372,14 @@ def locate_in_segments(
         ),
         key=lambda row: row[0],
     )
+
+
+def locate_in_segments(
+    quote: str, segments: Sequence[Mapping[str, Any]], duration_s: float
+) -> tuple[float, float] | None:
+    """The shortest run of timed sentences that says ``quote``, padded, else None."""
+    target = fold_tokens(quote)
+    rows = _timed_rows(segments)
     for run in range(1, _MAX_SEGMENT_RUN + 1):
         for first in range(0, len(rows) - run + 1):
             window = rows[first : first + run]
@@ -285,6 +387,59 @@ def locate_in_segments(
                 start = max(0.0, window[0][0] - SEGMENT_LEAD_S)
                 end = min(duration_s, window[-1][1] + SEGMENT_TAIL_S)
                 return round(start, 3), round(end, 3)
+    return None
+
+
+def _token_offsets(text: str) -> list[tuple[str, int, int]]:
+    """Each folded token of ``text`` with the character span of the word it came from."""
+    out: list[tuple[str, int, int]] = []
+    cursor = 0
+    for word in text.split():
+        start = text.find(word, cursor)
+        cursor = start + len(word)
+        out.extend((token, start, cursor) for token in fold_tokens(word))
+    return out
+
+
+def _token_span(tokens: list[str], target: list[str]) -> tuple[int, int] | None:
+    width = len(target)
+    for first in range(len(tokens) - width + 1):
+        if width and tokens[first : first + width] == target:
+            return first, first + width - 1
+    from app.services.speech_segments import _fuzzy_span  # noqa: PLC0415
+
+    fuzzy = _fuzzy_span(tokens, target)
+    return (fuzzy[0], fuzzy[1]) if fuzzy is not None else None
+
+
+def estimate_in_segments(
+    quote: str, segments: Sequence[Mapping[str, Any]], duration_s: float
+) -> tuple[float, float] | None:
+    """The quote's window inside the one timed segment that says it (KRI-681).
+
+    For a segment that also holds other sentences when no word timings are at hand: the
+    line's place is its share of the segment's text, kept ``ESTIMATE_LEAD_S`` /
+    ``ESTIMATE_TAIL_S`` wider, and runs to the segment's end when that is close. Never
+    leaves the segment.
+    """
+    target = fold_tokens(quote)
+    for start, end, text in _timed_rows(segments):
+        offsets = _token_offsets(text)
+        span = _token_span([token for token, _a, _b in offsets], target)
+        if span is None or not text:
+            continue
+        seconds, length = end - start, len(text)
+        line_start = start + seconds * offsets[span[0]][1] / length
+        line_end = start + seconds * offsets[span[1]][2] / length
+        low = max(0.0, start - SEGMENT_LEAD_S, line_start - ESTIMATE_LEAD_S)
+        high = (
+            end + SEGMENT_TAIL_S
+            if end - line_end <= SENTENCE_REACH_S
+            else line_end + ESTIMATE_TAIL_S
+        )
+        high = min(duration_s, end + SEGMENT_TAIL_S, high)
+        if high > low:
+            return round(low, 3), round(high, 3)
     return None
 
 
@@ -330,6 +485,38 @@ def transcribe_stored_quote(
     return words, str(getattr(transcript, "language", "") or "")
 
 
+async def _word_span(
+    transcribe: Transcribe | None,
+    row: Mapping[str, Any],
+    quote: str,
+    duration_s: float,
+    timeout_s: float,
+) -> tuple[float, float] | None:
+    """The line's window from a word-timed whisper pass of the stored proxy, else None."""
+    gcs_path = row.get("gcs_path") or row.get("proxy_path")
+    if transcribe is None or not isinstance(gcs_path, str) or not gcs_path:
+        return None
+    language = str(_speech(_row_analysis(row)).get("language") or "").strip().lower()
+    try:
+        words, _language = await asyncio.wait_for(
+            asyncio.to_thread(
+                transcribe,
+                gcs_path,
+                language=language if re.fullmatch(r"[a-z]{2}", language) else None,
+                prompt=quote,
+            ),
+            timeout=timeout_s,
+        )
+    except Exception as exc:  # noqa: BLE001 - a missed line is reported, never fatal
+        log.warning(
+            "closing_quote_transcribe_failed",
+            media_id=row.get("media_id"),
+            error=type(exc).__name__,
+        )
+        words = []
+    return locate_in_words(quote, words, duration_s)
+
+
 async def ground_closing_quote(
     strategy: Mapping[str, Any],
     media_snapshot: Mapping[str, Any] | None,
@@ -337,24 +524,19 @@ async def ground_closing_quote(
     transcribe: Transcribe | None = transcribe_stored_quote,
     timeout_s: float = WHISPER_TIMEOUT_S,
 ) -> dict[str, Any] | None:
-    """Where the quoted closing line is said, as the length plan's pinned closing window.
+    """Where the closing line is said, as the length plan's pinned closing window.
 
-    ``None`` when the strategy ends on no quoted line. Otherwise a record with
+    ``None`` when the strategy ends on no named line. Otherwise a record with
     ``status="found"`` and the padded source window, or ``status="not_found"`` (never a
     guessed window) when neither the timed segments nor a word-timed pass has the line.
+    A line inside a long segment (KRI-681) is narrowed to the line: by word timings when
+    a word-timed pass has it, else by its place in the segment's text.
     """
-    request = closing_quote_request(strategy)
+    request = closing_quote_request(strategy, media_snapshot)
     if request is None or not isinstance(media_snapshot, Mapping):
         return None
     intent_id, media_id, quote = request
-    row = next(
-        (
-            row
-            for row in media_snapshot.get("clip_assignments") or []
-            if isinstance(row, Mapping) and row.get("media_id") == media_id
-        ),
-        None,
-    )
+    row = _snapshot_row(media_snapshot, media_id)
     record: dict[str, Any] = {
         "intent_id": intent_id,
         "media_id": media_id,
@@ -364,29 +546,22 @@ async def ground_closing_quote(
     duration_s = _number(row.get("duration_s")) if row is not None else None
     if row is None or row.get("kind", "video") != "video" or not duration_s:
         return record
-    analysis = row.get("analysis") if isinstance(row.get("analysis"), Mapping) else {}
-    span = locate_in_segments(quote, _segments(analysis), duration_s)
+    segments = _segments(_row_analysis(row))
+    span = locate_in_segments(quote, segments, duration_s)
     source = "segments"
-    gcs_path = row.get("gcs_path") or row.get("proxy_path")
-    if span is None and transcribe is not None and isinstance(gcs_path, str) and gcs_path:
-        language = str(_speech(analysis).get("language") or "").strip().lower()
-        try:
-            words, _language = await asyncio.wait_for(
-                asyncio.to_thread(
-                    transcribe,
-                    gcs_path,
-                    language=language if re.fullmatch(r"[a-z]{2}", language) else None,
-                    prompt=quote,
-                ),
-                timeout=timeout_s,
-            )
-        except Exception as exc:  # noqa: BLE001 - a missed line is reported, never fatal
-            log.warning(
-                "closing_quote_transcribe_failed", media_id=media_id, error=type(exc).__name__
-            )
-            words = []
-        span = locate_in_words(quote, words, duration_s)
+    if span is None:
+        span = await _word_span(transcribe, row, quote, duration_s, timeout_s)
         source = "words"
+    elif span[1] - span[0] > LONG_LINE_S:
+        narrowed = await _word_span(transcribe, row, quote, duration_s, timeout_s)
+        source = "words"
+        if narrowed is None:
+            narrowed = estimate_in_segments(quote, segments, duration_s)
+            source = "segment_estimate"
+        if narrowed is not None and narrowed[1] - narrowed[0] < span[1] - span[0]:
+            span = narrowed
+        else:
+            source = "segments"
     if span is None:
         log.info("closing_quote_not_found", media_id=media_id)
         return record
@@ -394,6 +569,76 @@ async def ground_closing_quote(
         "closing_quote_found", media_id=media_id, source=source, start_s=span[0], end_s=span[1]
     )
     return {**record, "status": "found", "source": source, "start_s": span[0], "end_s": span[1]}
+
+
+def _stems(text: object) -> set[str]:
+    return {
+        token if token.isdigit() else token[:_STEM_CHARS]
+        for token in fold_tokens(text)
+        if token.isdigit() or len(token) >= _STEM_CHARS
+    }
+
+
+def _clauses(text: str) -> list[str]:
+    for mark in _CLAUSE_BREAKS:
+        text = text.replace(mark, "\n")
+    return [clause for clause in text.split("\n") if clause.strip()]
+
+
+def described_line_moments(
+    texts: Sequence[str],
+    media_snapshot: Mapping[str, Any] | None,
+    *,
+    skip_ids: Sequence[str] = (),
+) -> dict[str, tuple[float, float]]:
+    """The spoken sentence each ask describes a clip by, as that clip's source window.
+
+    "Teknenin çalışmadığı klipte kendi sesi açık kalsın" names no line, but the boat clip
+    says "tekne çalışmıyor" (KRI-681). Each clause of ``texts`` (the creator's audio and
+    order asks) is matched on word stems against every timed sentence; the clip with the
+    one best match (two shared stems or more) gets that sentence, padded to at least
+    ``DESCRIBED_MOMENT_MIN_S``. A tie between clips moves nothing; the first ask to seat
+    a clip wins; ``skip_ids`` (a held closing line) are never touched.
+    """
+    rows = [
+        row
+        for row in (media_snapshot or {}).get("clip_assignments") or []
+        if isinstance(row, Mapping)
+        and isinstance(row.get("media_id"), str)
+        and row["media_id"] not in skip_ids
+        and row.get("kind", "video") == "video"
+        and _number(row.get("duration_s"))
+    ]
+    sentences = [
+        (row["media_id"], float(row["duration_s"]), start, end, _stems(text))
+        for row in rows
+        for start, end, text in _timed_rows(_segments(_row_analysis(row)))
+    ]
+    out: dict[str, tuple[float, float]] = {}
+    for text in texts:
+        for clause in _clauses(str(text or "")):
+            want = _stems(clause)
+            hits = [
+                (len(want & stems), media_id, duration, start, end)
+                for media_id, duration, start, end, stems in sentences
+                if len(want & stems) >= _MIN_SHARED_STEMS
+            ]
+            if not hits:
+                continue
+            top = max(hit[0] for hit in hits)
+            best = [hit for hit in hits if hit[0] == top]
+            if len({hit[1] for hit in best}) != 1:
+                log.info("described_line_ambiguous", media_ids=sorted({h[1] for h in best}))
+                continue
+            _shared, media_id, duration, start, end = min(best, key=lambda hit: hit[3])
+            if media_id in out:
+                continue
+            low = max(0.0, start - DESCRIBED_LEAD_S)
+            high = min(duration, max(end + SEGMENT_TAIL_S, low + DESCRIBED_MOMENT_MIN_S))
+            low = max(0.0, min(low, high - DESCRIBED_MOMENT_MIN_S))
+            out[media_id] = (round(low, 3), round(high, 3))
+            log.info("described_line_seated", media_id=media_id, start_s=low, end_s=high)
+    return out
 
 
 def closing_quote_notice(record: Mapping[str, Any] | None) -> str | None:
@@ -425,6 +670,8 @@ def closing_quote_notice(record: Mapping[str, Any] | None) -> str | None:
 __all__ = [
     "closing_quote_notice",
     "closing_quote_request",
+    "described_line_moments",
+    "estimate_in_segments",
     "ground_closing_quote",
     "is_outro_hallucination",
     "locate_in_segments",
@@ -432,6 +679,7 @@ __all__ = [
     "quoted_phrases",
     "quoted_spans",
     "regound_quoted_intents",
+    "said_line",
     "spoken_quote",
     "transcribe_stored_quote",
     "transcript_says",

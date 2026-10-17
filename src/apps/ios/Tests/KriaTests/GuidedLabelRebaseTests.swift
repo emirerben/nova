@@ -55,7 +55,7 @@ final class GuidedLabelRebaseVectorTests: XCTestCase {
         for vector in file.cases {
             let before = vector.labelsBefore.map(Self.element)
             let after = GuidedLabelRebase.rebase(
-                before, oldSlots: vector.oldSlots.map(Self.slot), newSlots: vector.newSlots.map(Self.slot)
+                before, oldSlots: vector.oldSlots.map(Self.slot), newSlots: vector.newSlots.map(Self.slot), includeFreeText: true
             )
             XCTAssertEqual(after.map(\.id), vector.labelsAfter.compactMap { $0["id"]?.stringValue }, vector.name)
             for (actual, expected) in zip(after, vector.labelsAfter) {
@@ -70,7 +70,7 @@ final class GuidedLabelRebaseVectorTests: XCTestCase {
         let file = try vectors()
         let vector = try XCTUnwrap(file.cases.first { $0.name == "extend_clip1_by_0_533" })
         let before = vector.labelsBefore.map(Self.element)
-        let after = GuidedLabelRebase.rebase(before, oldSlots: vector.oldSlots.map(Self.slot), newSlots: vector.newSlots.map(Self.slot))
+        let after = GuidedLabelRebase.rebase(before, oldSlots: vector.oldSlots.map(Self.slot), newSlots: vector.newSlots.map(Self.slot), includeFreeText: true)
         let volatile: Set<String> = ["start_s", "end_s", "segment_id"]
         for (old, new) in zip(before, after) {
             XCTAssertEqual(old.text, new.text)
@@ -80,18 +80,56 @@ final class GuidedLabelRebaseVectorTests: XCTestCase {
         XCTAssertEqual(after.filter(GuidedLabelRebase.isClipLabel).count, 5)
     }
 
-    func testLabelWithNoIdentifiableSlotStaysPutOnThePhone() throws {
+    func testLabelWithNoIdentifiableSlotIsProjectedAsOrdinaryTextOnAGuidedStory() throws {
         let file = try vectors()
         let vector = try XCTUnwrap(file.cases.first { $0.name == "extend_clip1_by_0_533" })
         let orphan = EditorTextElement(id: "clip-label-unified-cut-9", text: "Mystery", startS: 5, endS: 6, raw: ["id": .string("clip-label-unified-cut-9")])
-        let after = GuidedLabelRebase.rebase([orphan], oldSlots: vector.oldSlots.map(Self.slot), newSlots: vector.newSlots.map(Self.slot))
-        XCTAssertEqual(after, [orphan])
+        let after = GuidedLabelRebase.rebase([orphan], oldSlots: vector.oldSlots.map(Self.slot), newSlots: vector.newSlots.map(Self.slot), includeFreeText: true)
+        XCTAssertEqual(after.first?.startS ?? -1, 5.533, accuracy: 0.002, "follows the footage it sat over instead of staying put")
+        XCTAssertEqual(after.first?.endS ?? -1, 6.533, accuracy: 0.002)
+        let notGuided = GuidedLabelRebase.rebase([orphan], oldSlots: vector.oldSlots.map(Self.slot), newSlots: vector.newSlots.map(Self.slot), includeFreeText: false)
+        XCTAssertEqual(notGuided, [orphan], "outside a guided story an unidentifiable bar is left alone")
+    }
+
+    func testMontageTextIsLeftAloneOutsideAGuidedStory() throws {
+        let file = try vectors()
+        let vector = try XCTUnwrap(file.cases.first { $0.name == "extend_clip1_by_0_533" })
+        let bar = EditorTextElement(id: "montage-text-cut-2", text: "Shot", startS: 2, endS: 4, raw: ["id": .string("montage-text-cut-2"), "segment_id": .string("s2")])
+        XCTAssertFalse(GuidedLabelRebase.hasLabels([bar], includeFreeText: false))
+        XCTAssertEqual(GuidedLabelRebase.rebase([bar], oldSlots: vector.oldSlots.map(Self.slot), newSlots: vector.newSlots.map(Self.slot), includeFreeText: false), [bar])
+    }
+
+    func testTextOverlappingNoClipIsLeftWhereItIsNotDropped() throws {
+        let file = try vectors()
+        let vector = try XCTUnwrap(file.cases.first { $0.name == "extend_clip1_by_0_533" })
+        let stale = EditorTextElement(id: "kria-text-stale", text: "Past the end", startS: 40, endS: 42, raw: ["id": .string("kria-text-stale")])
+        let after = GuidedLabelRebase.rebase([stale], oldSlots: vector.oldSlots.map(Self.slot), newSlots: vector.newSlots.map(Self.slot), includeFreeText: true)
+        XCTAssertEqual(after, [stale])
+    }
+
+    /// The editor's guided timeline slots name their source by clip_index only, so a
+    /// `clip-label-media-<id>` bar without a segment_id must resolve through the source pool.
+    func testMediaLinkedLabelResolvesThroughSourcePoolWhenSlotsCarryNoMediaID() throws {
+        let file = try vectors()
+        let vector = try XCTUnwrap(file.cases.first { $0.name == "media_link_without_segment_id_follows_by_overlap" })
+        func bare(_ row: [String: JSONValue]) -> EditorTimelineSlot {
+            var slot = Self.slot(row); slot.raw = [:]; return slot
+        }
+        let media = Dictionary(uniqueKeysWithValues: (0..<5).map { ($0, "m\($0)") })
+        let before = vector.labelsBefore.map(Self.element)
+        let withPool = GuidedLabelRebase.rebase(before, oldSlots: vector.oldSlots.map(bare), newSlots: vector.newSlots.map(bare), mediaByClipIndex: media, includeFreeText: true)
+        let withoutPool = GuidedLabelRebase.rebase(before, oldSlots: vector.oldSlots.map(bare), newSlots: vector.newSlots.map(bare), includeFreeText: true)
+        for (actual, expected) in zip(withPool, vector.labelsAfter) {
+            XCTAssertEqual(actual.startS, expected["start_s"]?.numberValue ?? .nan, accuracy: file.toleranceS, actual.id)
+            XCTAssertEqual(actual.endS, expected["end_s"]?.numberValue ?? .nan, accuracy: file.toleranceS, actual.id)
+        }
+        XCTAssertLessThan(withoutPool.filter { $0.id.hasPrefix("clip-label-media-m") }.count, 5, "documents why the pool is needed: labels were dropped without it")
     }
 
     func testEmptyNewTimelineNeverWipesTheLabels() throws {
         let vector = try XCTUnwrap(vectors().cases.first)
         let before = vector.labelsBefore.map(Self.element)
-        XCTAssertEqual(GuidedLabelRebase.rebase(before, oldSlots: vector.oldSlots.map(Self.slot), newSlots: []), before)
+        XCTAssertEqual(GuidedLabelRebase.rebase(before, oldSlots: vector.oldSlots.map(Self.slot), newSlots: [], includeFreeText: true), before)
     }
 }
 
@@ -111,7 +149,12 @@ final class GuidedLabelRippleSessionTests: XCTestCase {
                  "size_px": .number(58), "x_frac": .number(0.5), "y_frac": .number(0.78), "color": .string("#FFF8F0")])
     }
 
-    private static func variant(includeLabels: Bool = true) -> [String: JSONValue] {
+    private static func free(_ id: String, _ start: Double, _ end: Double, text: String = "Free") -> JSONValue {
+        .object(["id": .string(id), "text": .string(text), "start_s": .number(start), "end_s": .number(end),
+                 "role": .string("generative_intro"), "position": .string("custom"), "x_frac": .number(0.5), "y_frac": .number(0.4)])
+    }
+
+    private static func variant(includeLabels: Bool = true, extraText: [JSONValue] = [], archetype: String = "guided_story") -> [String: JSONValue] {
         var textElements: [JSONValue] = [
             .object(["id": .string("guided-title"), "text": .string("Weekend"), "start_s": .number(0), "end_s": .number(8), "role": .string("generative_intro")]),
             .object(["id": .string("guided-closing-title"), "text": .string("See you"), "start_s": .number(6), "end_s": .number(8), "role": .string("generative_outro")]),
@@ -119,25 +162,26 @@ final class GuidedLabelRippleSessionTests: XCTestCase {
         if includeLabels {
             textElements += [label(1, 0, 2), label(2, 2, 4), label(3, 4, 6), label(4, 6, 8)]
         }
+        textElements += extraText
         textElements.append(.object(["id": .string("caption-1"), "text": .string("spoken"), "start_s": .number(2.5), "end_s": .number(3.5),
                                      "source_params": .object(["source": .string("caption_cue")])]))
         let userTimelineSlots = (1...4).map { slot("s\($0)", Double($0 - 1)) }
         return [
             "variant_id": .string("initial"), "render_generation_id": .string("g1"), "render_status": .string("ready"),
             "duration_s": .number(8), "output_url": .string("file:///tmp/kria-label-ripple.mp4"),
-            "resolved_archetype": .string("guided_story"), "base_video_path": .string("base.mp4"),
+            "resolved_archetype": .string(archetype), "base_video_path": .string("base.mp4"),
             "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(true)]),
             "user_timeline": .object(["slots": .array(userTimelineSlots)]),
             "text_elements": .array(textElements),
         ]
     }
 
-    private func loaded(includeLabels: Bool = true) async -> (NativeEditorSession, EditorCommitSpy) {
+    private func loaded(includeLabels: Bool = true, extraText: [JSONValue] = [], archetype: String = "guided_story") async -> (NativeEditorSession, EditorCommitSpy) {
         let bootstrap = DraftSnapshot(draftID: "d1", itemID: "item", variantKey: "initial", draftRevision: 1, snapshotHash: "h", etag: "e",
             baseJobID: Self.jobID, baseGenerationID: "g1",
             snapshot: ["kind": .string("editor"), "editor_payload": .object(["base_generation": .string("g1"), "sections": .object([:])])],
             canUndo: false, createdAt: .now)
-        let fake = EditorCommitSpy(draftSnapshot: bootstrap, authoritativeVariant: Self.variant(includeLabels: includeLabels),
+        let fake = EditorCommitSpy(draftSnapshot: bootstrap, authoritativeVariant: Self.variant(includeLabels: includeLabels, extraText: extraText, archetype: archetype),
             commitResponse: EditorCommitResponse(ok: true, generation: "g2",
                 sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: true, mix: false),
                 revisionNumber: 4, revisionHash: "r4", expectedDuration: nil))
@@ -178,7 +222,7 @@ final class GuidedLabelRippleSessionTests: XCTestCase {
         let originalText = session.document.textElements
         let originalClips = session.document.clips
         XCTAssertFalse(session.document.textElements.contains(where: GuidedLabelRebase.isClipLabel))
-        XCTAssertTrue(GuidedLabelRebase.hasLabels(session.document.textElements), "title-only guided stories still use the rebase transaction")
+        XCTAssertTrue(GuidedLabelRebase.hasLabels(session.document.textElements, includeFreeText: true), "title-only guided stories still use the rebase transaction")
 
         session.setClipTiming(clipID: "s1", durationS: 2.533)
         let title = try XCTUnwrap(session.document.textElements.first { $0.id == "guided-title" })
@@ -279,6 +323,80 @@ final class GuidedLabelRippleSessionTests: XCTestCase {
         XCTAssertEqual(rebasedTitle.startS, 0, accuracy: 0.001)
         XCTAssertEqual(rebasedTitle.endS, 8.533, accuracy: 0.001)
         XCTAssertEqual(session.document.textElements.first { $0.id == "caption-1" }, caption)
+    }
+
+    /// KRI-715: a montage with a group title, a chat-added text and per-shot copy, none of them a
+    /// `clip-label-*`. Every clip edit used to leave all of this at its old seconds.
+    private static let montageText: [JSONValue] = [
+        free("group-title-0", 0, 6, text: "Group title"),
+        free("kria-chat-1", 3, 5, text: "Chat text"),
+        .object(["id": .string("montage-text-cut-2"), "text": .string("Shot 2"), "start_s": .number(2), "end_s": .number(4),
+                 "segment_id": .string("s2"), "role": .string("generative_intro"), "position": .string("custom")]),
+        free("kria-late", 6.5, 7.5, text: "Late"),
+    ]
+
+    private func text(_ session: NativeEditorSession, _ id: String) -> EditorTextElement? {
+        session.document.textElements.first { $0.id == id }
+    }
+
+    func testDeletingAMiddleClipKeepsEveryTextAndMovesIt() async throws {
+        let (session, _) = await loaded(includeLabels: false, extraText: Self.montageText)
+        let original = session.document.textElements
+        session.removeClip(clipID: "s2")
+        let group = try XCTUnwrap(text(session, "group-title-0"))
+        XCTAssertEqual(group.startS, 0, accuracy: 0.04)
+        XCTAssertEqual(group.endS, 4, accuracy: 0.04, "the group title shrinks with the group, still one block")
+        let chat = try XCTUnwrap(text(session, "kria-chat-1"), "a text starting in the deleted clip survives while any clip under it does")
+        XCTAssertEqual(chat.startS, 2, accuracy: 0.04)
+        XCTAssertEqual(chat.endS, 3, accuracy: 0.04)
+        XCTAssertNil(text(session, "montage-text-cut-2"), "per-shot copy goes with its own clip")
+        let late = try XCTUnwrap(text(session, "kria-late"))
+        XCTAssertEqual(late.startS, 4.5, accuracy: 0.04)
+        XCTAssertEqual(late.endS, 5.5, accuracy: 0.04)
+        XCTAssertTrue(session.dirtySections.contains(.text))
+        session.undo()
+        XCTAssertEqual(session.document.textElements, original, "one Undo restores the clip and all of its text")
+        XCTAssertFalse(session.canUndo)
+    }
+
+    func testShorteningAndExtendingAClipMoveFreeTextWithTheFootage() async throws {
+        let (session, _) = await loaded(includeLabels: false, extraText: Self.montageText)
+        session.setClipTiming(clipID: "s1", durationS: 1.0)
+        XCTAssertEqual(text(session, "kria-late")?.startS ?? -1, 5.5, accuracy: 0.04)
+        XCTAssertEqual(text(session, "kria-late")?.endS ?? -1, 6.5, accuracy: 0.04)
+        XCTAssertEqual(text(session, "group-title-0")?.endS ?? -1, 5, accuracy: 0.04)
+        XCTAssertEqual(text(session, "kria-chat-1")?.startS ?? -1, 2, accuracy: 0.04)
+        session.setClipTiming(clipID: "s1", durationS: 2.533)
+        XCTAssertEqual(text(session, "kria-late")?.startS ?? -1, 7.033, accuracy: 0.04)
+        XCTAssertEqual(text(session, "montage-text-cut-2")?.startS ?? -1, 2.533, accuracy: 0.04)
+        XCTAssertEqual(text(session, "group-title-0")?.endS ?? -1, 6.533, accuracy: 0.04)
+    }
+
+    func testTextPastTheNewEndAfterAShortenStaysVisibleAtTheTail() async throws {
+        let (session, _) = await loaded(includeLabels: false, extraText: [Self.free("kria-tail", 7.2, 8, text: "Tail")])
+        session.setClipTiming(clipID: "s4", durationS: 1.0)
+        let tail = try XCTUnwrap(text(session, "kria-tail"))
+        XCTAssertLessThanOrEqual(tail.endS, 7.0 + 0.001)
+        XCTAssertGreaterThan(tail.endS - tail.startS, 0.1)
+        XCTAssertGreaterThanOrEqual(tail.startS, 0)
+    }
+
+    func testSaveSendsRetimedFreeTextWithTheTimeline() async throws {
+        let (session, fake) = await loaded(includeLabels: false, extraText: Self.montageText)
+        session.removeClip(clipID: "s2")
+        await session.save()
+        let request = try XCTUnwrap(fake.lastRequest)
+        let rows = try XCTUnwrap(request.textElements).compactMap(\.objectValue)
+        let late = try XCTUnwrap(rows.first { $0["id"]?.stringValue == "kria-late" })
+        XCTAssertEqual(late["start_s"]?.numberValue ?? -1, 4.5, accuracy: 0.04, "the server skips projecting authored text, so the phone must send it re-timed")
+        XCTAssertNil(rows.first { $0["id"]?.stringValue == "montage-text-cut-2" })
+    }
+
+    func testFreeTextIsLeftAloneOutsideAGuidedStory() async throws {
+        let (session, _) = await loaded(includeLabels: false, extraText: Self.montageText, archetype: "montage")
+        session.removeClip(clipID: "s2")
+        XCTAssertEqual(text(session, "kria-late")?.startS, 6.5)
+        XCTAssertEqual(text(session, "kria-chat-1")?.startS, 3)
     }
 
     func testEditsThatMoveNoWindowLeaveTextClean() async throws {

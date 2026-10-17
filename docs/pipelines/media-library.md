@@ -2,9 +2,65 @@
 
 KRI-384 adds a creator-owned catalogue behind `MEDIA_LIBRARY_ENABLED=false`.
 Collection proposals have a separate `MEDIA_COLLECTION_PROPOSALS_ENABLED=false`
-capability. Backend ingest and reuse are additive. The iOS library, local-original
-migration and collection proposals are subsequent delivery slices. Keep both
-capabilities off until native evidence and pilot approval are recorded.
+capability. Backend ingest and reuse are additive. iOS exposes **Saved uploads**
+inside Add media for footage, visuals/slides, voiceovers and songs when the native
+`media_library` creation capability is true. Collection proposals remain a later
+slice. Keep both flags off until native evidence and pilot approval are recorded.
+
+New native uploads are catalogued automatically while the library flag is on.
+Uploads made before activation are not automatically backfilled. Operators can
+adopt retained, provably owned uploads with `scripts.backfill_media_library`
+(below); importing them again also uses the verified intake. The picker supports filename
+search, pagination, analysis retry, archive, and restoring expired cloud copies
+from the exact original. Archive hides future selection and preserves posts.
+
+Videos retain full-quality originals under account-scoped Application Support.
+A new post gets an independent media ID and original-file link, with copy fallback.
+Originals survive deleting the first post, relaunch, and sign-out. A different
+account cannot browse them; confirmed account deletion erases the library's local
+copies. Existing post-local originals are migrated lazily using server-authorized
+usage and a full-file hash. Another phone must locate the matching original for
+device-only videos; proxies never become render sources. Cloud-backed originals
+are downloaded and verified when needed. Reuse performs no upload; cloud repair
+is an explicit action and uploads only the required proxy/original.
+
+Native proof and rollout checklist: `docs/reviews/kri-384-ios/verification.md`.
+After deployment and pilot approval, enable `MEDIA_LIBRARY_ENABLED` on API and
+workers and release a new TestFlight build containing the picker. Keep
+`MEDIA_COLLECTION_PROPOSALS_ENABLED=false`. Turning the library flag off hides
+Saved uploads after capability refresh and returns its routes to 404, while
+existing post bindings and original files remain intact.
+
+## Historical uploads
+
+From `src/apps/api`, run `python -m scripts.backfill_media_library --email EMAIL
+--report /tmp/library-dry-run.json` for a metadata-only preview. After reviewing
+the scoped account, availability, ordering and byte count, repeat with `--apply`.
+`--max-bytes` defaults to 1 GiB of attempted downloads per run; a run stops at the
+budget or the existing 500-active-asset quota. Repeating it preserves completed
+work. The limit applies after exact-byte deduplication. It scans at most 5,000
+candidate identities by default (`--max-candidates`, maximum 10,000).
+
+Candidates come from owned plan-item footage/audio and registered visual pools.
+Upload events/pool timestamps determine newest-first priority, with post creation
+time as the legacy fallback. Old unpinned sources adopt the current generation
+only after full-byte verification and probing; a changed existing generation is
+skipped. Videos require their stored device-bound proxy/original receipt for the
+current phone-only creation flow; older cloud-render video originals are skipped
+and remain available on their existing posts. Both the database
+consumer and the normalized storage namespace must belong to the requested owner.
+
+Each transaction takes the existing owner/reference fence, rechecks the current
+consumer and source, and adds catalogue identities and usage references only.
+It never rewrites posts, copies/deletes cloud objects, revives archived media or
+dispatches AI analysis. Verified bytes are ready to reuse; compatible facts remain
+independent and are read through the existing versioned cache. Native device-only
+videos still require their matching full-quality originals on the phone. Existing
+thread usage lets the shipped iOS client migrate those originals lazily.
+
+The report separates missing, changed, unsupported, unowned, archived, quota and
+transfer-budget cases. Keep account identifiers and detailed reports outside Git.
+Verification contract: `docs/reviews/kri-384-backfill/verification.md`.
 
 ## Upload and repair
 
@@ -22,9 +78,18 @@ Finalization downloads the pinned generation, verifies the full uploaded hash
 and length, and checks the actual media. Device declarations never prove the
 uploaded-byte identity. No automatic video-original backup is added.
 
-The limit is 500 active catalogue assets per creator. Live new-import reservations
-consume capacity; owner locking serializes admission and duplicate finalization.
-Existing per-file and per-post limits still apply. Compatible imports coalesce
+Saved uploads keeps the newest 500 active catalogue assets per creator. A verified,
+unique import atomically archives the oldest active entry by upload/admission time
+(`created_at`, then `id` for ties). Reusing an old upload does not reset its age.
+Rotation hides it from future library selection; sources, reusable facts, local
+originals and existing post references remain intact. Existing posts keep working
+under the normal storage retention rules. No physical deletion runs during rotation.
+
+Reservations do not displace saved items. Up to 500 unfinished uploads are allowed
+independently of the active catalogue; failed or abandoned imports do not rotate it.
+Owner locking serializes admission and duplicate finalization. An attachment that
+rolls back also rolls back its archive changes. Duplicate imports and repairs do
+not consume another slot. Existing per-file and per-post limits still apply. Compatible imports coalesce
 after verifying the canonical cloud copy. Matching reimports can add a fresh
 source to an existing catalogue asset after cloud expiry. To repair at capacity,
 pass `repair_asset_id`: original bytes must match their verified identity, and a
@@ -82,7 +147,8 @@ uploads. Sign-out/local-original behavior belongs to the iOS slice.
 
 ## Evidence
 
-Real PostgreSQL tests cover quota races, duplicate finalization, ownership,
+Real PostgreSQL tests cover automatic rotation at 500, concurrent admission, rollback,
+duplicate finalization, ownership,
 cleanup claims, repair, durable facts/version invalidation and shared-post erasure.
 Reuse tests record provider counts and check independent edits, archived-source
 binding, original hash rejection and two chat bindings without uploads.

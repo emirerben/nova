@@ -106,6 +106,7 @@ struct ProjectsDrawer: View {
             }
             VStack(alignment: .leading, spacing: 10) {
                 Text("Recent chats").font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk).padding(.horizontal, 12)
+                    .onAppear { Perf.end("drawer.open") }
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 3) {
                         if model.projects.isEmpty {
@@ -121,6 +122,12 @@ struct ProjectsDrawer: View {
                                 }.buttonStyle(.plain)
                                 ProjectActionsMenu(project: project)
                             }.background(project.id == model.selectedProject?.id ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        if model.projectsNextCursor != nil {
+                            // Reaching the end of the loaded chats fetches the next older page.
+                            ProgressView().padding(12).frame(maxWidth: .infinity)
+                                .accessibilityIdentifier("drawer-loading-older-chats")
+                                .onAppear { Task { await model.loadMoreProjects() } }
                         }
                     }
                 }
@@ -206,6 +213,10 @@ struct ChatMessageRow: View {
                     .copyableMessage(message.content, previewShape: Self.userBubbleShape)
                     .accessibilityLabel("You: \(message.content)")
                     .accessibilityIdentifier("chat-message-\(message.id)")
+                    .onAppear {
+                        Perf.endOpenOnNextFrame("launch.toPixels")
+                        Perf.endOpenOnNextFrame("chat.toPixels")
+                    }
             }
             .frame(maxWidth: .infinity)
         } else {
@@ -654,8 +665,8 @@ struct DirectionStage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             AssistantHeading(
-                title: "Here’s the direction I’ll use",
-                bodyText: "I’ve shaped a clear creative direction from your footage and what you told me."
+                title: approval.retryOfExecutionID == nil ? "Here’s the direction I’ll use" : "Retry your approved edit",
+                bodyText: approval.retryOfExecutionID == nil ? "I’ve shaped a clear creative direction from your footage and what you told me." : "This reruns the saved edit with the same clips, text, timing and audio."
             )
 
             VStack(alignment: .leading, spacing: 14) {
@@ -668,11 +679,12 @@ struct DirectionStage: View {
                     .foregroundStyle(KriaColor.ink)
                     .copyableMessage(directionTitle, previewShape: RoundedRectangle(cornerRadius: 8))
 
-                Rectangle().fill(KriaColor.line).frame(height: 1)
-
-                DirectionRow(label: "Format", value: "\(format?.title ?? "Video") · short-form")
-                DirectionRow(label: "Rhythm", value: "Natural, intentional")
-                DirectionRow(label: "Opening", value: "The story, right away")
+                if approval.retryOfExecutionID == nil {
+                    Rectangle().fill(KriaColor.line).frame(height: 1)
+                    DirectionRow(label: "Format", value: "\(format?.title ?? "Video") · short-form")
+                    DirectionRow(label: "Rhythm", value: "Natural, intentional")
+                    DirectionRow(label: "Opening", value: "The story, right away")
+                }
             }
             .padding(16)
             .background(KriaColor.sage)
@@ -692,7 +704,7 @@ struct DirectionStage: View {
 
             cleanupActions
 
-            Button("Change direction") { decide("deny", nil, nil) }
+            Button(approval.retryOfExecutionID == nil ? "Change direction" : "Cancel retry") { decide("deny", nil, nil) }
                 .buttonStyle(CanonicalSecondaryButtonStyle())
                 .disabled(isBusy)
         }
@@ -703,7 +715,7 @@ struct DirectionStage: View {
         let resolution = cleanupResolution
         switch resolution.offer {
         case .plain:
-            Button("Create this video") { decide("approve", nil, resolution.analysisID) }
+            Button(approval.retryOfExecutionID == nil ? "Create this video" : "Retry approved edit") { decide("approve", nil, resolution.analysisID) }
                 .buttonStyle(CanonicalPrimaryButtonStyle())
                 .disabled(isBusy)
         case .checking:

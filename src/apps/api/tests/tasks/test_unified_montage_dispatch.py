@@ -1270,3 +1270,73 @@ def test_initial_creation_composes_full_request_before_pinning_phone_plan(harnes
     assert [
         row["text"] for row in compiled["text_elements"] if "::sequence-" in row["id"]
     ] == title.split()
+
+
+# --- KRI-689: a clip-speed ask the phone montage cannot honour is a "Couldn't", never a block ---
+
+
+def _speed_brief(description: str = "Speed the river shots up 2x") -> CreativeBrief:
+    return CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r4",
+                kind="order",
+                scope="global",
+                description="in the order I filmed",
+                facts={"key": "capture_time"},
+            ),
+            BriefRequirement(id="r5", kind="style", scope="global", description=description),
+        ],
+    )
+
+
+def test_a_bound_montage_with_a_speed_ask_renders_and_records_the_couldnt(harness):
+    """The creator was told at the draft and approved: the render must not block on it."""
+    from app.kria.brief_binding import BriefBinding
+
+    brief = _speed_brief()
+    job, *_ = harness(brief=brief)
+    job.assembly_plan["creator_brief_binding"] = BriefBinding.create(
+        uuid.uuid4(), brief
+    ).model_dump(mode="json")
+
+    planned = gb._run_phone_unified_montage_job(
+        str(job.id), copy.deepcopy(job.assembly_plan), job.all_candidates, ownership_epoch=3
+    )
+
+    assert planned is not None and isinstance(planned["guided_edit"], dict)
+    assert "request_recovery" not in job.assembly_plan
+    receipts = {
+        row["requirement_id"]: row for row in planned["unified_montage"]["requirement_receipts"]
+    }
+    assert receipts["r4"]["status"] == "met"
+    assert receipts["r5"]["status"] == "not_possible"
+    assert receipts["r5"]["verification"] == "checked"
+    assert receipts["r5"]["reason"].startswith("I can't change clip speed on your iPhone yet")
+
+
+def test_an_unbound_montage_records_the_same_receipt(harness):
+    job, *_ = harness(brief=_speed_brief())
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    receipts = {
+        row["requirement_id"]: row
+        for row in job.assembly_plan["unified_montage"]["requirement_receipts"]
+    }
+    assert receipts["r5"]["status"] == "not_possible"
+    assert receipts["r5"]["reason"].startswith("I can't change clip speed on your iPhone yet")
+
+
+def test_a_pacing_ask_is_not_recorded_as_a_dropped_speed_ask(harness):
+    job, *_ = harness(brief=_speed_brief("Fast pacing"))
+
+    gb._run_generative_job(str(job.id))
+
+    receipts = {
+        row["requirement_id"]: row
+        for row in job.assembly_plan["unified_montage"]["requirement_receipts"]
+    }
+    assert "r5" not in receipts or receipts["r5"]["status"] != "not_possible"

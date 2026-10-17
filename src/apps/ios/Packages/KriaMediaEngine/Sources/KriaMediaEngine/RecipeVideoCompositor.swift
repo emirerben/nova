@@ -68,6 +68,7 @@ struct RecipeTextLayer: @unchecked Sendable {
     var staggered: NativeStaggeredPainter? = nil
     var dissolve: NativeDissolveRenderer? = nil
     var karaoke: NativeKaraokePainter? = nil
+    var singleWord: NativeSingleWordPainter? = nil
     var giantTitle: NativeGiantTitlePainter? = nil
 
     static func make(_ text: TextTreatment, start: Double, end: Double, canvas: CGSize) throws -> Self {
@@ -293,6 +294,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     var image = state.revealProgress >= 1 ? text.image : try text.handwriting?.image(progress: state.revealProgress) ?? text.image
                     if let painter = text.discreteReveal { image = try painter.image(localTime: time - text.start, settled: text.image) }
                     if let painter = text.karaoke { image = painter.image(localTime: time - text.start) }
+                    if let painter = text.singleWord { image = try painter.image(localTime: time - text.start) }
                     if let painter = text.dissolve { image = try painter.image(source: text.image, localTime: time - text.start, duration: text.end - text.start) }
                     if let painter = text.staggered { image = try painter.image(localTime: time - text.start, settled: text.image) }
                     if let painter = text.smoothReveal { image = try painter.image(localTime: time - text.start, settled: text.image) }

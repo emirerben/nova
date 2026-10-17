@@ -1,0 +1,378 @@
+{
+ "_source": "prod thread 133BDDED (2026-10-15, Tigre night boat kit M1), job d232ede5: creator_brief_binding.media_snapshot.clip_assignments, trimmed to duration + analysis (KRI-681). Ids are the kit file names.",
+ "clips": [
+  {
+   "media_id": "m1_10",
+   "duration_s": 12.0,
+   "analysis": {
+    "transcript": "",
+    "best_moments": [
+     {
+      "end_s": 7.5,
+      "energy": 5.0,
+      "start_s": 4.5,
+      "description": "lights and reflections along shoreline"
+     },
+     {
+      "end_s": 11.5,
+      "energy": 4.0,
+      "start_s": 9.0,
+      "description": "panning past distant lights and trees"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": false,
+      "transcript": ""
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_04",
+   "duration_s": 7.0,
+   "analysis": {
+    "transcript": "no creo que esté, pero me ha pasado a esta hora, a esta hora es por",
+    "best_moments": [
+     {
+      "end_s": 1.0,
+      "energy": 2.0,
+      "start_s": 0.0,
+      "description": "viewing dark screen"
+     },
+     {
+      "end_s": 6.0,
+      "energy": 3.0,
+      "start_s": 4.5,
+      "description": "camera movement over water"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "language": "es",
+      "transcript": "no creo que esté, pero me ha pasado a esta hora, a esta hora es por",
+      "segments": [
+       {
+        "text": "No creo que esté, pero me ha pasado, a esta hora, a esta hora es muy...",
+        "end_s": 6.98,
+        "start_s": 0.0
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_03",
+   "duration_s": 16.0,
+   "analysis": {
+    "transcript": "Çocuklar parkta oynuyor arkadaşlar. Tigre merkeze gelmiş bulunmaktayız. Yaklaşık 20 dakika sürdü. Tam 20 dakika sürdü ha.",
+    "best_moments": [],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "language": "tr",
+      "transcript": "Çocuklar parkta oynuyor arkadaşlar. Tigre merkeze gelmiş bulunmaktayız. Yaklaşık 20 dakika sürdü. Tam 20 dakika sürdü ha.",
+      "segments": [
+       {
+        "text": "Çocuklar parkta oynuyor arkadaşlar, Tigre merkeze gelmiş bulunmaktayız yaklaşık 20 dakika sürdü, tam 20 dakika sürdü ha.",
+        "end_s": 13.64,
+        "start_s": 3.78
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_09",
+   "duration_s": 11.0,
+   "analysis": {
+    "transcript": "",
+    "best_moments": [
+     {
+      "end_s": 4.5,
+      "energy": 5.0,
+      "start_s": 1.4,
+      "description": "panning across illuminated buildings"
+     },
+     {
+      "end_s": 10.9,
+      "energy": 6.0,
+      "start_s": 6.0,
+      "description": "panning along moored boats with reflections"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": false,
+      "transcript": ""
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_05",
+   "duration_s": 14.0,
+   "analysis": {
+    "transcript": "",
+    "best_moments": [
+     {
+      "end_s": 3.0,
+      "energy": 5.0,
+      "start_s": 0.0,
+      "description": "Ferris wheel and dark structures"
+     },
+     {
+      "end_s": 8.0,
+      "energy": 6.0,
+      "start_s": 3.0,
+      "description": "Amusement rides from water"
+     },
+     {
+      "end_s": 13.0,
+      "energy": 5.0,
+      "start_s": 8.0,
+      "description": "Panoramic view of theme park"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": false,
+      "transcript": ""
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_12",
+   "duration_s": 12.0,
+   "analysis": {
+    "transcript": "",
+    "best_moments": [
+     {
+      "end_s": 2.5,
+      "energy": 5.0,
+      "start_s": 0.0,
+      "description": "boat moves along water"
+     },
+     {
+      "end_s": 5.8,
+      "energy": 5.5,
+      "start_s": 2.8,
+      "description": "approaching illuminated shore"
+     },
+     {
+      "end_s": 11.0,
+      "energy": 6.0,
+      "start_s": 8.0,
+      "description": "passing dock with bright lights"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": false,
+      "transcript": ""
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_01",
+   "duration_s": 12.0,
+   "analysis": {
+    "transcript": "",
+    "best_moments": [
+     {
+      "end_s": 6.0,
+      "energy": 4.0,
+      "start_s": 0.0,
+      "description": "boat cruising on dark river"
+     },
+     {
+      "end_s": 15.0,
+      "energy": 5.0,
+      "start_s": 8.0,
+      "description": "lights reflecting on water"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": false,
+      "transcript": ""
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_07",
+   "duration_s": 12.0,
+   "analysis": {
+    "transcript": "",
+    "best_moments": [
+     {
+      "end_s": 3.0,
+      "energy": 5.0,
+      "start_s": 0.0,
+      "description": "boat moves past illuminated buildings"
+     },
+     {
+      "end_s": 7.5,
+      "energy": 6.0,
+      "start_s": 4.0,
+      "description": "boat glides along lighted shore"
+     },
+     {
+      "end_s": 12.0,
+      "energy": 4.0,
+      "start_s": 9.0,
+      "description": "water reflects shoreline lights"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": false,
+      "transcript": ""
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_02",
+   "duration_s": 15.0,
+   "analysis": {
+    "transcript": "Tek dönmek istiyorsan dön. A, kaldık la tekne çalışmıyor. Tekne çalışmıyor lan.",
+    "best_moments": [],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "language": "tr",
+      "transcript": "Tek dönmek istiyorsan dön. A, kaldık la tekne çalışmıyor. Tekne çalışmıyor lan.",
+      "segments": [
+       {
+        "text": "Dönmek istiyorsan dön.",
+        "end_s": 1.62,
+        "start_s": 0.0
+       },
+       {
+        "text": "Aaa kaldık lan tekne çalışmıyor.",
+        "end_s": 5.5,
+        "start_s": 4.04
+       },
+       {
+        "text": "Tekne çalışmıyor lan.",
+        "end_s": 8.46,
+        "start_s": 6.26
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_08",
+   "duration_s": 10.0,
+   "analysis": {
+    "transcript": "Hadi bakalım, Bismillah.",
+    "best_moments": [],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "language": "tr",
+      "transcript": "Hadi bakalım, Bismillah.",
+      "segments": [
+       {
+        "text": "Altyazı M.K.",
+        "end_s": 8.36,
+        "start_s": 8.12
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_11",
+   "duration_s": 15.0,
+   "analysis": {
+    "transcript": "Ay, yardım et. Bisikletle gidip gelmemiz gerekiyor. Amigo Sergio! Amigo, amigo, amigo!",
+    "best_moments": [],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "language": "tr",
+      "transcript": "Ay, yardım et. Bisikletle gidip gelmemiz gerekiyor. Amigo Sergio! Amigo, amigo, amigo!",
+      "segments": [
+       {
+        "text": "Tamam.",
+        "end_s": 0.16,
+        "start_s": 0.0
+       },
+       {
+        "text": "Tamam.",
+        "end_s": 2.68,
+        "start_s": 1.84
+       },
+       {
+        "text": "Tutsana.",
+        "end_s": 3.64,
+        "start_s": 3.22
+       },
+       {
+        "text": "Bir saate gidip gelmemiz gerekiyor.",
+        "end_s": 5.62,
+        "start_s": 3.92
+       },
+       {
+        "text": "Amigo Sergio.",
+        "end_s": 12.0,
+        "start_s": 11.16
+       },
+       {
+        "text": "Amigo, amigo, amigo.",
+        "end_s": 13.88,
+        "start_s": 12.44
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_06",
+   "duration_s": 8.0,
+   "analysis": {
+    "transcript": "Vatan almaya gidiyoruz.",
+    "best_moments": [
+     {
+      "end_s": 2.0,
+      "energy": 3.0,
+      "start_s": 0.0,
+      "description": "camera moving through trees"
+     },
+     {
+      "end_s": 4.8,
+      "energy": 7.0,
+      "start_s": 3.4,
+      "description": "speaker states 'Vatan almaya gidiyoruz'"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "language": "tr",
+      "transcript": "Vatan almaya gidiyoruz.",
+      "segments": [
+       {
+        "text": "Atakan'ı almaya gidiyoruz.",
+        "end_s": 3.92,
+        "start_s": 2.48
+       }
+      ]
+     }
+    }
+   }
+  }
+ ]
+}
