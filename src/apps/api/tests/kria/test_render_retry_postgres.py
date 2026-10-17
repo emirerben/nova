@@ -49,8 +49,10 @@ from app.tasks.kria_runtime import execute_kria_approval
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 
 
-def seed_failed(*, snapshot=True, reason="export_failed"):
+def seed_failed(*, snapshot=True, reason="export_failed", whole_job=False):
     user_id, thread_id, session_id = _seed_runtime_project()
+    execution_variant_id = None if whole_job else "first"
+    execution_generation_id = None if whole_job else "approved"
     with sync_session() as db:
         thread = db.get(CreationThread, thread_id)
         session = db.get(CreatorAgentSession, session_id)
@@ -65,6 +67,7 @@ def seed_failed(*, snapshot=True, reason="export_failed"):
             status="awaiting_device" if snapshot else "processing_failed",
             assembly_plan={
                 "native_device_only": True,
+                "creator_generation_id": "approved",
                 "variants": [
                     {
                         "variant_id": "first",
@@ -141,8 +144,8 @@ def seed_failed(*, snapshot=True, reason="export_failed"):
             target_draft_id=draft.id,
             target_draft_revision=1,
             target_job_id=job.id,
-            target_variant_id="first",
-            target_generation_id="approved",
+            target_variant_id=execution_variant_id,
+            target_generation_id=execution_generation_id,
             target_ownership_epoch=0,
             status="failed",
             error={"code": "device_render_failed", "recovery": "manual", "retryable": False},
@@ -158,8 +161,8 @@ def seed_failed(*, snapshot=True, reason="export_failed"):
             draft_id=draft.id,
             draft_revision=1,
             target_job_id=job.id,
-            target_variant_id="first",
-            target_generation_id="approved",
+            target_variant_id=execution_variant_id,
+            target_generation_id=execution_generation_id,
             target_ownership_epoch=0,
             execution_ids=[str(execution.id)],
             consequence_summary="Render this exact edit",
@@ -174,8 +177,8 @@ def seed_failed(*, snapshot=True, reason="export_failed"):
         thread.active_job_id = job.id
         thread.revision = 3
         session.target_job_id = job.id
-        session.target_variant_id = "first"
-        session.target_generation_id = "approved"
+        session.target_variant_id = execution_variant_id
+        session.target_generation_id = execution_generation_id
         session.status = "awaiting_feedback"
         db.commit()
         return SimpleNamespace(
@@ -233,12 +236,16 @@ def recover(http, case, revision=3):
     )
 
 
-def test_legacy_device_retry_cannot_bypass_runtime_approval(client):
+@pytest.mark.parametrize("whole_job", [False, True], ids=["variant", "whole-job"])
+@pytest.mark.parametrize("source_status", ["failed", "dispatched"])
+def test_legacy_device_retry_cannot_bypass_runtime_approval(client, whole_job, source_status):
     http, publish = client
-    case = seed_failed()
+    case = seed_failed(whole_job=whole_job)
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=case.user_id)
     with sync_session() as db:
         job = db.get(Job, case.job_id)
+        db.get(CreatorAgentExecution, case.execution_id).status = source_status
+        db.commit()
         identity = device_status(job, "first").request.identity
         assert "retry_requires_approval" not in device_record(job, "first")["status"]
     status = http.get(f"/me/jobs/{case.job_id}/device-render?variant_id=first")
@@ -267,9 +274,10 @@ def test_legacy_device_retry_cannot_bypass_runtime_approval(client):
     publish.assert_not_called()
 
 
-def test_a_new_manual_editor_generation_keeps_direct_device_retry(client):
+@pytest.mark.parametrize("whole_job", [False, True], ids=["variant", "whole-job"])
+def test_a_new_manual_editor_generation_keeps_direct_device_retry(client, whole_job):
     http, publish = client
-    case = seed_failed()
+    case = seed_failed(whole_job=whole_job)
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=case.user_id)
     with sync_session() as db:
         job = db.get(Job, case.job_id)
@@ -297,9 +305,10 @@ def test_a_new_manual_editor_generation_keeps_direct_device_retry(client):
     publish.assert_not_called()
 
 
-def test_retry_reuses_turn_draft_and_recipe_with_fresh_consent(client, monkeypatch):
+@pytest.mark.parametrize("whole_job", [False, True], ids=["variant", "whole-job"])
+def test_retry_reuses_turn_draft_and_recipe_with_fresh_consent(client, monkeypatch, whole_job):
     http, publish = client
-    case = seed_failed()
+    case = seed_failed(whole_job=whole_job)
     # Any accidental new creative planning or analysis is a real failure.
     from app.tasks import kria_runtime
 
