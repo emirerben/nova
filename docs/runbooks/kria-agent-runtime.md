@@ -171,12 +171,29 @@ color emoji to its existing shaped renderer. The regression/export recipe is
 ### Rendered follow-up routing
 
 Once a draft has a rendered snapshot, the planner first runs the narrow
-`nova.creator.brief_extractor` prompt (`2026-10-08-v3`) to turn the follow-up into
+`nova.creator.brief_extractor` prompt (`2026-10-17-v11`) to turn the follow-up into
 typed brief requirements. Text and style changes, plus timing scoped to a
 title, can stay on the current snapshot through editor operations. Broad clip
 timing, stale or unsupported targets, and clarifying outcomes remain in the
 recovery path; they do not silently create a replacement video. An explicit
 full replan or structured clip picker is the path that invokes Main Creator.
+
+The narrow extractor uses `gemini-3.6-flash` first, medium reasoning and a
+4,096-token shared reasoning/answer budget. Pro remains a fallback after a
+definitive transient failure. The 60-second per-call timeout, shared turn
+deadline and unknown-outcome fence still apply: an unknown call never triggers
+an overlapping fallback. Main Creator's model and budget are separate.
+
+KRI-674 follow-up evidence, 2026-10-17: two production extractions on Pro stopped
+at 60 seconds before creating an approval or render. Synthetic checks of the
+final narrow configuration covered EN/TR title changes, ambiguous retry and a
+compound rebuild with a 12,000-character contract plus 40 context messages.
+All four kept their checked requirements in one call, 3.17–14.60 seconds,
+$0.031400 settled in total. Earlier low-budget probes dropped style constraints
+or truncated; these are failed candidates, not passing evidence. The corrected
+prompt requires a description for timing facts and preserves other constraints
+during schema repair. These are live-model checks, not a production iPhone retry
+receipt; that export remains a separate release verification step.
 
 The follow-up binds to the current plan item and draft version before saving.
 Keep that binding and save in the same atomic completion path so a stale turn
