@@ -23,7 +23,7 @@ struct ChatWorkspaceView: View {
             close: { setDrawerOpen(false) },
             drawer: ProjectsDrawer(
                 close: { setDrawerOpen(false) },
-                openGallery: { setDrawerOpen(false); showsGallery = true },
+                openGallery: { setDrawerOpen(false); Perf.begin("gallery.open"); showsGallery = true },
                 openAccount: { setDrawerOpen(false); showsAccount = true }
             ),
             content: workspace
@@ -36,8 +36,11 @@ struct ChatWorkspaceView: View {
             Task { [api = model.api] in await api.prefetchCreationCapabilities() }
         }
         .task {
+            Perf.mark("workspace.task")
             await model.openWorkspace(preferredProjectID: UUID(uuidString: lastProjectID))
+            Perf.mark("workspace.opened")
             await model.sweepAbandonedChats()
+            Perf.mark("sweep.done")
         }
         .onChange(of: model.selectedProject?.id) { previous, identifier in
             lastProjectID = identifier?.uuidString ?? ""
@@ -107,6 +110,7 @@ struct ChatWorkspaceView: View {
     }
 
     private func commitDrawer(_ isOpen: Bool) {
+        if isOpen { Perf.begin("drawer.open") }
         drawerMounted = true
         showsProjects = isOpen
     }
@@ -377,6 +381,7 @@ private struct CreationWorkspaceView: View {
     let openAccount: () -> Void
 
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var auth: AuthStore
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
@@ -405,6 +410,9 @@ private struct CreationWorkspaceView: View {
     @State private var finishedEditSuggestionUpdate = 0
     @State private var finishedEditSuggestionRefresh = 0
     @State private var hasHistoryBaseline = false
+    /// False only while the transcript on screen came from the on-disk cache and the server has not answered yet:
+    /// the question cards stay read-only, because a cached "active" question may already be answered elsewhere.
+    @State private var transcriptIsFresh = true
     @StateObject private var responsePresentation = ChatResponsePresentation()
     @Environment(\.scenePhase) private var scenePhase
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
@@ -560,7 +568,8 @@ private struct CreationWorkspaceView: View {
     }
 
     private var timeline: [ChatTimelineEntry] {
-        ChatTimeline.build(
+        Perf.event("timeline.build")
+        return ChatTimeline.build(
             events: events, pending: pendingMessages, stage: stageAnchor,
             suppressedMessageIDs: suppressedTimelineMessages,
             uploads: activeUploadIDs.compactMap { uploadAnchors[$0] },
@@ -579,7 +588,10 @@ private struct CreationWorkspaceView: View {
     }
 
     /// KRI-443: the live plan feed, reduced from the thread's `plan_block` events.
-    private var planFeed: PlanBlockFeedState { PlanBlockFeedState.reduce(events: events) }
+    private var planFeed: PlanBlockFeedState {
+        Perf.event("planFeed.reduce")
+        return PlanBlockFeedState.reduce(events: events)
+    }
 
     private var showsPlanFeed: Bool {
         PlanFeedVisibility.shows(
@@ -898,7 +910,7 @@ private struct CreationWorkspaceView: View {
     /// that no later user message has answered; read-only (with the counts, if known) afterwards.
     private func clipSelectionMode(for message: ChatTranscriptMessage) -> ClipSelectionCardMode? {
         // The payload only exists when the server supports it, so an unloaded capability snapshot never hides it.
-        guard ClipSelectionAvailability.isAvailable(capabilities: capabilities),
+        guard transcriptIsFresh, ClipSelectionAvailability.isAvailable(capabilities: capabilities),
               let question = message.clipQuestion else { return nil }
         let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
             if case .message(let message) = entry.content { message } else { nil }
@@ -932,7 +944,7 @@ private struct CreationWorkspaceView: View {
     /// Order card only when the server advertises `song_order_questions`. Interactive on the newest question
     /// that no later user message has answered; read-only afterwards; hidden once a newer question replaced it.
     private func songOrderMode(for message: ChatTranscriptMessage) -> SongOrderCardMode? {
-        guard capabilities?.songOrderQuestionsEnabled == true,
+        guard transcriptIsFresh, capabilities?.songOrderQuestionsEnabled == true,
               let question = message.songOrderQuestion else { return nil }
         let entries = timeline.compactMap { entry -> SongOrderFold.Entry? in
             guard case .message(let message) = entry.content else { return nil }
@@ -957,7 +969,7 @@ private struct CreationWorkspaceView: View {
     /// `song_range_questions` (and the song affordance). Interactive on the newest question no `song_range`
     /// has answered; read-only once answered; hidden once a newer question replaced it or the server closed it.
     private func songRangeMode(for message: ChatTranscriptMessage) -> SongRangeCardMode? {
-        guard capabilities?.songRangeQuestionsEnabled == true,
+        guard transcriptIsFresh, capabilities?.songRangeQuestionsEnabled == true,
               let question = message.songRangeQuestion else { return nil }
         let entries = timeline.compactMap { entry -> SongRangeFold.Entry? in
             guard case .message(let message) = entry.content else { return nil }
@@ -981,7 +993,7 @@ private struct CreationWorkspaceView: View {
     /// Options only when the server advertises `choice_questions`. Interactive on the newest question that no
     /// later user message has answered; read-only (with the choice made, if known) afterwards.
     private func choiceQuestionMode(for message: ChatTranscriptMessage) -> ChoiceQuestionCardMode? {
-        guard capabilities?.choiceQuestionsEnabled == true,
+        guard transcriptIsFresh, capabilities?.choiceQuestionsEnabled == true,
               let question = message.choiceQuestion else { return nil }
         let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
             if case .message(let message) = entry.content { message } else { nil }
@@ -1214,16 +1226,23 @@ private struct CreationWorkspaceView: View {
         }
         .onChange(of: renderShapeScope) { _, scope in renderShapePick.reset(scope: scope) }
         .task {
+            Perf.begin("chat.open", id: project.id.uuidString)
+            Perf.begin("chat.toPixels", id: project.id.uuidString)
+            Perf.mark("chat.task")
             // KRI-640: a chat New chat just made opens on the thread its create call returned, so it
             // shows without reading itself back first; the poll below still refreshes it.
             if let created = model.takeCreatedThread(project.id) {
                 apply(created)
                 initialConversationLoaded = true
+                markTranscriptVisible(source: "created")
+            } else {
+                await restoreCachedTranscript()
             }
             // History should not wait for the independent capability request. Requested as soon as the
             // project opens, and retried: a slow or failed fetch must not leave the screen without it.
             async let capabilities: Void = loadCapabilitiesWithRetry()
             await resolveFormat()
+            Perf.mark("format.resolved")
             await pollUntilDismissed()
             await capabilities
         }
@@ -1969,26 +1988,71 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// Shows the transcript this device saved last time while the network answers. Events only: the mutable
+    /// projection (state, job, variants) still comes from the server, and nothing here can be acted on until it has.
+    private func restoreCachedTranscript() async {
+        guard let owner = auth.localStorageIdentity,
+              let cached = await TranscriptCache.shared.load(owner: owner, threadID: project.id),
+              !cached.events.isEmpty, !Task.isCancelled, events.isEmpty else { return }
+        events = ChatTranscriptHistory.merge(events, with: cached.events)
+        observeResponses()
+        // The server's first projection is still the baseline: a reply that landed while the app was closed must
+        // not fire a reveal or haptic as if it had just arrived.
+        hasHistoryBaseline = false
+        afterSequence = ChatTranscriptHistory.nextAfterSequence(current: afterSequence, response: afterSequence, events: events)
+        transcriptIsFresh = false
+        initialConversationLoaded = true
+        markTranscriptVisible(source: "cache")
+    }
+
+    /// Saves what the server last confirmed (debounced and written off the main thread by the cache).
+    private func scheduleTranscriptSave() {
+        guard transcriptIsFresh, !events.isEmpty, let owner = auth.localStorageIdentity else { return }
+        let transcript = CachedTranscript(
+            threadID: project.id, savedAt: .now, revision: threadRevision,
+            runtimeVersion: currentProject.runtimeVersion, events: Array(events.suffix(TranscriptCache.maxEvents))
+        )
+        Task { await TranscriptCache.shared.save(owner: owner, transcript) }
+    }
+
+    /// Closes the open and launch intervals the first time a transcript can be seen (later calls are no-ops).
+    private func markTranscriptVisible(source: String) {
+        Perf.mark("transcript.visible")
+        Perf.end("chat.open", id: project.id.uuidString, "source=\(source)")
+        Perf.end("launch.toTranscript", "source=\(source)")
+    }
+
     private func refreshNow() async {
         defer {
-            if !Task.isCancelled { initialConversationLoaded = true }
+            if !Task.isCancelled {
+                initialConversationLoaded = true
+                markTranscriptVisible(source: "network")
+            }
         }
         failure = nil
         do {
+            Perf.mark("refresh.start")
             let requestSequence = projectionOrder.begin()
             let thread = try await model.api.project(threadID: project.id)
+            Perf.mark("refresh.fullread")
             apply(thread, requestSequence: requestSequence)
+            transcriptIsFresh = true
             // The full projection contains the complete transcript. Reveal it
             // before a slow delta or approval request returns, so the user
             // never sees an empty ready state followed by old AI messages.
             if fullThread != nil, !Task.isCancelled {
                 initialConversationLoaded = true
+                markTranscriptVisible(source: "network")
             }
             if thread.runtimeVersion == 2 {
                 _ = try await refreshDelta()
             }
         } catch is CancellationError {
             // The view went away mid-request; leave the last-known state as-is.
+        } catch let APIError.requestFailed(status, _) where status == 404 {
+            // Deleted elsewhere: the saved copy must not outlive the chat.
+            if let owner = auth.localStorageIdentity { await TranscriptCache.shared.remove(owner: owner, threadID: project.id) }
+            if !isUITesting { failure = ChatFailure("Kria couldn’t refresh this conversation.", error: APIError.requestFailed(status: 404)) }
         } catch {
             if !isUITesting {
                 failure = ChatFailure("Kria couldn’t refresh this conversation.", error: error)
@@ -2018,6 +2082,8 @@ private struct CreationWorkspaceView: View {
         threadState = thread.state ?? [:]
         selectedFormat = CreationFormat(thread: thread) ?? selectedFormat
         model.updateProject(thread.summary)
+        if events.contains(where: { $0.role == "user" }) { model.chatKeepers.insert(project.id) }
+        scheduleTranscriptSave()
     }
 
     @discardableResult private func refreshDelta() async throws -> Bool {
@@ -2087,6 +2153,7 @@ private struct CreationWorkspaceView: View {
             await editorSession.adoptLatestJob(thread.summary, api: model.api)
         }
         if !fresh.isEmpty, !isThinking { await editorSession.synchronizePromptRevision() }
+        if !fresh.isEmpty { scheduleTranscriptSave() }
         return !fresh.isEmpty || threadRevision > revisionBeforeDelta
     }
 

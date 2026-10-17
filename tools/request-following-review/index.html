@@ -11,7 +11,7 @@
   <a class="skip-link" href="#workspace">Skip to review</a>
   <header class="topbar"><a class="brand" href="/">kria <span>/ request review</span></a><div class="top-actions"><span id="source" class="pill">Connecting</span><button id="refresh" class="quiet">Refresh</button></div></header>
   <main id="workspace">
-    <section class="intro"><div><p class="eyebrow">LEARN FROM REAL REQUESTS</p><h1>What should have happened?</h1><p class="lede">Read one session. Correct the expected edit. Turn it into a test that catches the same mistake.</p></div><a id="regressions" class="text-link" href="https://github.com/emirerben/nova/actions/workflows/request-following-regressions.yml" target="_blank" rel="noreferrer">Daily test results ↗</a></section>
+    <section class="intro"><div><p class="eyebrow">LEARN FROM REAL REQUESTS</p><h1>Did the final video follow the request?</h1><p class="lede">Watch one export, check the proposed instructions, and save what worked or was missed.</p></div><a id="regressions" class="text-link" href="https://github.com/emirerben/nova/actions/workflows/request-following-regressions.yml" target="_blank" rel="noreferrer">Daily test results ↗</a></section>
     <div id="error" class="notice error" role="alert" hidden></div>
     <div id="notice" class="notice" role="status" hidden></div>
     <details class="collection"><summary id="collection-summary">Connecting to collection…</summary><div id="collection-detail"></div></details>
@@ -32,19 +32,29 @@
         <div id="case-detail" hidden>
           <header class="case-heading"><div><p id="case-date" class="eyebrow"></p><h2 id="case-title" tabindex="-1"></h2></div><span id="review-state" class="pill"></span></header>
           <div id="case-diagnostics" class="notice" hidden></div>
-          <div class="review-section"><div class="section-heading"><span class="step-number">01</span><div><h3>What the creator asked</h3><p>Select the creator messages that support your expected outcome.</p></div></div><ol id="conversation" class="conversation"></ol></div>
-          <div class="review-section"><div class="section-heading"><span class="step-number">02</span><div><h3>What the AI did</h3><p>Recorded decisions and tool results. A completed turn does not prove the edit was right.</p></div></div><div id="turns"></div><details class="technical"><summary>Saved edit and capture details</summary><pre id="saved-evidence"></pre></details><div class="evidence-note"><strong>Final video: not verified</strong><p>This capture contains metadata, not a verified video export. Understanding and saved execution are also unassessed until their own checks run.</p></div></div>
+          <details class="review-section"><summary>Read the creator conversation</summary><div class="section-heading"><span class="step-number">01</span><div><h3>What the creator asked</h3><p>Select the creator messages that support your expected outcome.</p></div></div><ol id="conversation" class="conversation"></ol></details>
+          <details class="review-section"><summary>Recorded AI decisions and saved edit</summary><div class="section-heading"><span class="step-number">02</span><div><h3>What the AI did</h3><p>Recorded decisions and tool results. A completed turn does not prove the edit was right.</p></div></div><div id="turns"></div><details class="technical"><summary>Saved edit and capture details</summary><pre id="saved-evidence"></pre></details></details>
+          <section class="review-section actual-context"><div id="media-preview" hidden><h3>Check the actual export</h3><p id="media-status" class="small muted" role="status"></p><video id="export-video" controls playsinline preload="auto" aria-label="Current video export"></video></div><h3>Instructions to judge against</h3><p class="small muted">Exact creator messages supporting this checklist. Later corrections replace earlier requests. Judge personal taste only when it was requested.</p><div id="selected-instructions"></div><p id="inspection-hint" class="small muted" hidden></p></section>
           <form id="review-form" class="review-section">
-            <div class="section-heading"><span class="step-number">03</span><div><h3>What should the edit do?</h3><p>Write the expected outcome in your own words. Nothing is approved automatically.</p></div></div>
+            <div class="section-heading"><div><h3>Did it follow each instruction?</h3><p>Judge the request, not personal taste. Use “Changed by me” for an intentional manual edit, or “Unsure” if you cannot verify it.</p></div></div>
             <fieldset id="review-fields">
-              <label for="expected">Expected outcome</label><textarea id="expected" rows="4" maxlength="2000" aria-describedby="expected-help" placeholder="Keep the title and English subtitles. Remove the other labels."></textarea><p id="expected-help" class="small muted">Use the selected creator messages. Resolve ambiguity before approving.</p>
+              <details class="technical"><summary>Check or edit proposed instructions</summary><label for="expected">Expected outcome</label><textarea id="expected" rows="4" maxlength="2000" aria-describedby="expected-help" placeholder="Keep the title and English subtitles. Remove the other labels."></textarea><p id="expected-help" class="small muted">One instruction per line. Proposed instructions are editable; confirm them against the selected creator messages.</p></details>
+              <section id="output-review" class="output-review" hidden>
+                <label class="check-label"><input id="include-outcomes" type="checkbox"> Record export review verdicts</label>
+                <fieldset id="output-verdicts" disabled>
+                  <div id="requirement-outcomes"></div>
+                  <label class="check-label"><input id="watched" type="checkbox"> I watched this export</label>
+                  <label class="check-label"><input id="listened" type="checkbox"> I listened with sound</label>
+                </fieldset>
+              </section>
               <div class="form-row"><div><label for="decision">Decision</label><select id="decision"><option value="needs_clarification">Needs clarification</option><option value="approved">Approve intent</option><option value="rejected">Reject this case</option></select></div><div><label for="reviewer">Your name <span class="muted">(required)</span></label><input id="reviewer" required maxlength="120" autocomplete="name"></div></div>
               <label for="rationale">Why this outcome? <span class="muted">(required)</span></label><textarea id="rationale" rows="2" required maxlength="4000" placeholder="The follow-up makes it clear that subtitles should remain."></textarea>
-              <details class="technical"><summary>Where did it go wrong? Add issue links</summary><div class="form-row"><div><label for="stage">Where the request was lost</label><select id="stage"><option value="unknown">Not sure yet</option value="understanding">Understanding the request</option><option value="handoff">Passing it to another agent</option><option value="operations">Choosing editing operations</option><option value="persistence">Saving the edit</option><option value="rendering">Rendering the video</option></select></div><div><label for="tickets">Related issues</label><input id="tickets" placeholder="KRI-215, KRI-598"></div></div></details>
+              <details class="technical"><summary>Where did it go wrong? Add issue links</summary><div class="form-row"><div><label for="stage">Where the request was lost</label><select id="stage"><option value="unknown">Not sure yet</option><option value="understanding">Understanding the request</option><option value="handoff">Passing it to another agent</option><option value="operations">Choosing editing operations</option><option value="persistence">Saving the edit</option><option value="rendering">Rendering the video</option></select></div><div><label for="tickets">Related issues</label><input id="tickets" placeholder="KRI-215, KRI-598"></div></div></details>
+
             </fieldset>
             <p id="review-error" class="error-text" role="alert" hidden></p><p id="save-help" class="small muted"></p>
-            <div class="review-actions"><button id="save" class="primary" type="submit">Save review</button><button id="export" type="button" class="secondary" hidden>Export for a fixing PR</button></div>
-            <p class="small muted">This approves the expected outcome only. Tests, redaction, and prompt changes still need their own review.</p>
+            <div class="review-actions"><button id="save" class="primary" type="submit">Save review</button><button id="save-next" type="submit" class="secondary" hidden>Save and next →</button><button id="export" type="button" class="secondary" hidden>Export for a fixing PR</button></div>
+            <p id="output-disclaimer" class="small muted">Only saved output verdicts count in the daily review report. Unsure stays unresolved. Tests and fixes still need their own verification.</p>
           </form>
         </div>
       </section>

@@ -45,5 +45,6 @@ interpretation are in the [agent navigation runbook](runbooks/agent-navigation.m
 ## Request-following review
 
 [Local review app and automatic collection](runbooks/request-following-review-app.md):
-open the private session queue, review creator intent, export a regression packet,
+open the private session queue, review creator intent and actual exports, report
+confirmed misses separately from manual edits, export a regression packet,
 and inspect daily offline results.

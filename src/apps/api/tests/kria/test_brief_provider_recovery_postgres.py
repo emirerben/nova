@@ -4,6 +4,10 @@ Failure matrix, declared before the fixture:
 - An unknown provider outcome must never become a completed clarification.
 - Extraction must not contact Main Creator or Copilot after an unknown outcome.
 - The shared turn deadline must bound the extractor's provider call.
+- A stalled Pro provider must not prevent a responsive narrow extraction from
+  completing; choose the interactive model before contacting the provider.
+- The shared thinking/answer budget must fit a complete compound extraction,
+  rather than consuming the turn with truncated responses.
 - Creator-visible recovery must preserve EN/TR, hide private provider details,
   and retain the submitted request, footage, rendered generation, and typed brief.
 
@@ -36,6 +40,7 @@ from app.models import (
     PlanItem,
 )
 from app.tasks.kria_runtime import run_kria_turn
+from tests.agents.conftest import max_tokens_response
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 
 
@@ -128,8 +133,20 @@ async def test_rendered_followup_provider_unknown_fails_once_without_losing_the_
         def invoke(self, **kwargs):
             calls.append(kwargs)
             assert "request_scope" in kwargs["prompt"], "expected the narrow Brief Extractor"
-            if unknown:
+            # KRI-674 production follow-up: Pro failed before approval twice at
+            # 60s. Simulate that provider boundary, without waiting or billing.
+            # Unknown work must still never trigger another model call.
+            if unknown or kwargs["model"] == "gemini-3.1-pro-preview":
                 raise ProviderOutcomeUnknownError("PRIVATE extractor result unknown")
+            # Live synthetic 12k contract/40-message case: 2,650 thought +
+            # 443 answer tokens. Gemini counts both against the same budget.
+            if kwargs["max_output_tokens"] < 3_093:
+                return ModelInvocation(
+                    raw_text='{"brief_updates": [',
+                    tokens_thoughts=1_963,
+                    tokens_out=78,
+                    raw_response=max_tokens_response(),
+                )
             return ModelInvocation(
                 raw_text=json.dumps(
                     {"brief_updates": [], "request_scope": "clarify", "clarification": question}

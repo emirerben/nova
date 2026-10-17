@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.22.0] - 2026-10-17
+
+### Changed
+- perf(ios): saved transcript, early token refresh, quieter sweep, reachable older chats (KRI-711) (#1651) <!-- release-pr: 1651 -->
+
+## [0.80.21.0] - 2026-10-17
+
+### Fixed
+- KRI-674: prevent follow-up AI timeouts before render approval (#1653) <!-- release-pr: 1653 -->
+
+## [0.80.20.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save no longer rejects a clip window within 50ms of the source end (KRI-736) (#1654) <!-- release-pr: 1654 -->
+
+## [0.80.19.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save accepts text with a null role (KRI-736) (#1652) <!-- release-pr: 1652 -->
+
+## [0.80.18.0] - 2026-10-17
+
+### Changed
+- feat(ios): perf benchmark harness - signposts, fixtures, KriaPerfUITests, bench.sh (KRI-710) (#1641) <!-- release-pr: 1641 -->
+
+## [0.80.17.0] - 2026-10-17
+
+### Changed
+- Connect reviewed video exports to daily request-following reports (#1649) <!-- release-pr: 1649 -->
+
 ## [0.80.16.0] - 2026-10-17
 
 ### Fixed

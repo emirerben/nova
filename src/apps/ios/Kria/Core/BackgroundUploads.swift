@@ -930,6 +930,20 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     }
 
     #if DEBUG
+    /// Perf fixture (`KRIA_FIXTURE_UPLOAD_TICKS=1`): an upload that reports progress ten times a second. No record
+    /// or in-flight entry exists, so no row appears; the redraw of the chat it causes is what is being measured.
+    func startProgressTicksForTesting() {
+        let id = UUID()
+        Task { @MainActor [weak self] in
+            var value = 0.0
+            while !Task.isCancelled, let self {
+                value = value >= 1 ? 0 : value + 0.01
+                self.progress[id] = value
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+
     /// UI-test fixture: a record whose upload failed on the way (network), still listed for Retry.
     func seedFailedUploadForTesting(projectID: UUID) {
         let record = UploadRecoveryRecord(

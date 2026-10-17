@@ -1975,6 +1975,7 @@ class Settings(BaseSettings):
     # routes are additive; prompt/render extraction remains separately wired.
     # KRI-215: explicit cohort AND current training eligibility are required.
     request_following_collection_enabled: bool = False
+    request_following_report_token: str = ""
     request_following_all_users: bool = False
     request_following_user_ids: list[str] = []
     request_following_thread_ids: list[str] = []

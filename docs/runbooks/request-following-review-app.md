@@ -44,8 +44,9 @@ from `.env` only in the local Python process. For a local API, use
 
 An intent approval does not certify the final video or approve a fixture for git.
 Failed turns are execution diagnostics, not proof that the AI misunderstood a request.
-The app labels understanding and persisted execution as unassessed, and final video
-as unverified. It does not download videos. Reviewer names are attributed human input;
+The app labels understanding and persisted execution as unassessed. Live API mode can
+play a generation-pinned current export and record a separate output review (below).
+File-store mode still reviews intent only. Reviewer names are attributed human input;
 the shared admin credential does not establish individual identity.
 
 Import the exported packet into the existing private regression workflow:
@@ -134,8 +135,86 @@ fly secrets set --app nova-video \
   REQUEST_FOLLOWING_ALL_USERS=true
 ```
 
-That command changes production and restarts processes; it has **not** been run.
+That command changes production and restarts processes; inspect current configuration
+before using it. Do not reapply an already active scope merely to verify it.
 Verify API and worker use the deployed revision and flags, then inspect the first
 collector summary. Ineligible accounts are skipped; never manufacture consent to
 increase coverage. To pause new capture, set `REQUEST_FOLLOWING_COLLECTION_ENABLED=false`;
 retention cleanup continues. Scope/holdout metadata stays intact.
+
+
+## Review actual exports and connect them to the daily report
+
+Live API mode offers the current finished export only when the thread, current plan
+item, job owner and object path agree. The player uses a 15-minute URL pinned to the
+stored object generation. A ready flag alone is not video proof. Missing objects,
+changed sources and foreign paths never become playable review evidence.
+
+1. Select the creator messages establishing the **final** request. Later corrections
+   replace earlier instructions. Assistant claims that an edit is done are not proof.
+2. Write one expectation per line, or correct the prepared checklist. Accepted wording
+   can be understood using the preceding assistant proposal plus the creator's acceptance.
+3. Watch the actual export. Choose **Met**, **Partly met**, **Missed**, **Unsure**, or
+   **Changed by me** for each requirement. The last option excludes intentional manual
+   edits from AI failure counts. Judge taste only where the creator requested it.
+4. Confirm viewing and, for concrete audio/caption judgements, listening. Approve the
+   intent and save. Empty verdicts cannot be submitted. Uncertain and creator-edited
+   instructions remain separate; neither is treated as success or failure.
+5. Save and next advances only after a successful save. Failed saves keep the fields;
+   drafts survive reload in this browser tab's session storage. A new source/review
+   version does not silently inherit an old draft. Close the tab to clear its drafts.
+
+The server binds the outcome to job, variant, generation, byte count and MD5 (when
+available). It rechecks the source, eligibility and object at save and report time.
+It cannot prove a reviewer actually watched every frame or listened; those are explicit
+reviewer attestations. No semantic model runs. A recorded review label on a detail
+response does not assert the object is still current; `/media` and the report revalidate.
+
+### Prepare 10–20 cases for guided review
+
+Use `--batch /private/path/proposals.json` in live API mode. The mode-600 file must
+stay outside the repo. The manifest is an array of up to 20 objects containing `id`,
+`source_sha256`, optional `title`, and `expectations` with `text`, `category` and
+`source_pointers` (creator messages). Proposals apply only to the matching current
+source hash and never prefill verdicts or approve intent. Keep raw captures, downloaded
+videos and these proposed requirements private. A deep link `/?case=CASE_UUID` opens
+a report reference without paging through the queue.
+
+Prepared offline copies may be reviewed as **local drafts only**. They are not current
+server evidence: recheck existing eligibility, source hash, review version and exact
+export identity before publishing any draft. Do not refresh hashes or generations to
+make an old verdict pass. A source/object conflict needs a fresh review.
+
+### Read-only live report credential and rollout
+
+Set a new random `REQUEST_FOLLOWING_REPORT_TOKEN` on the API and as the GitHub
+repository secret of the same name. Use a secret manager/stdin; never commit it or
+reuse `ADMIN_PROD_API_KEY`. Deploy through the approved **Fly Deploy** workflow.
+No migration or collection-scope change is needed. Blank/mismatched report credentials
+return 401; the report token cannot read conversations, obtain media or save reviews.
+
+On schedule or manual dispatch **from main**, the workflow fetches
+`GET /request-following-report` with `X-Report-Token`. Pull-request runs never receive
+the credential or call production. Downloadable `reviewed-sessions.json` and
+`reviewed-sessions.md` are added to the existing 14-day artifact and summary.
+Missing configuration, stale/malformed responses and HTTP failure fail this step
+visibly, while the existing offline report remains available.
+
+The projection covers current eligible development captures with creator request
+activity in the last 14 days. It includes collection/review coverage, five verdict
+counts, evidence dates, stale/unavailable/invalid reviews, and partial/missed categories
+ranked by affected sessions. The bounded scan says when more than 1,000 current captures
+exist. No population success percentage is inferred from selected review cases.
+
+Only controlled category/verdict vocabulary, numeric counts, timestamps and opaque
+case UUIDs leave the private API. The client rebuilds this allowlisted schema before
+writing CI artifacts: creator identities, exact request text, free-form notes, signed
+URLs and storage paths never enter the report. Open the private case to inspect exact
+wording and reproduce a miss before proposing a fix. Historical replay KPIs remain a
+separate section and are not relabelled as today's production quality.
+
+After rollout, save a real reviewed case and run the workflow from main. Download the
+artifact and confirm that case/category appears, and that unreviewed/manual-change
+requirements have not become AI failures. Revocation/source changes/replaced objects
+must remove old verdicts from the next report. Removing the report token disables
+report access; it does not disable collection or delete private reviews.

@@ -15,6 +15,7 @@ from starlette.requests import Request
 from app.agents._schemas.persona import Persona as PersonaSchema
 from app.auth import get_current_user, is_native_client, kria_client_protocol
 from app.config import settings
+from app.kria.runtime import RuntimeFailure
 from app.main import app
 from app.models import ContentPlan, CreatorAgentSession, Job, PlanItem
 from app.models import Persona as PersonaRow
@@ -33,6 +34,7 @@ from app.routes.creation_threads import (
     _available_formats,
     _client_id,
     _creator_agent_projection,
+    _decode_thread_cursor,
     _exclude_referenced_project_storage,
     _fill_default_title_if_needed,
     _format_clip_limit,
@@ -4735,6 +4737,64 @@ async def test_list_returns_lightweight_project_summaries() -> None:
     assert len(output) == 1
     assert output[0].events == []
     assert output[0].job is None
+
+
+def _list_row(updated_at: datetime) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=uuid.uuid4(),
+        status="active",
+        revision=1,
+        state={},
+        content_plan_id=None,
+        active_plan_item_id=None,
+        active_creator_agent_session_id=None,
+        active_job_id=None,
+        created_at=updated_at,
+        updated_at=updated_at,
+    )
+
+
+def _list_db(rows: list[SimpleNamespace]) -> Mock:
+    result = Mock()
+    result.scalars.return_value.all.return_value = rows
+    db = Mock()
+    db.execute = AsyncMock(return_value=result)
+    db.get = AsyncMock(return_value=None)
+    return db
+
+
+@pytest.mark.asyncio
+async def test_list_sets_no_cursor_header_when_every_chat_fits_on_the_page() -> None:
+    response = Response()
+    rows = [_list_row(datetime.now(UTC)) for _ in range(2)]
+    output = await list_threads(
+        SimpleNamespace(id=uuid.uuid4()), _list_db(rows), limit=2, response=response
+    )
+    assert len(output) == 2
+    assert "x-next-cursor" not in response.headers
+
+
+@pytest.mark.asyncio
+async def test_list_returns_exactly_limit_rows_and_a_cursor_for_the_next_page() -> None:
+    response = Response()
+    base = datetime(2026, 10, 1, tzinfo=UTC)
+    rows = [_list_row(base - timedelta(hours=index)) for index in range(3)]
+    output = await list_threads(
+        SimpleNamespace(id=uuid.uuid4()), _list_db(rows), limit=2, response=response
+    )
+    assert [item.id for item in output] == [str(rows[0].id), str(rows[1].id)]
+    stamp, identifier = _decode_thread_cursor(response.headers["x-next-cursor"])
+    assert (stamp, identifier) == (rows[1].updated_at, rows[1].id)
+
+
+@pytest.mark.asyncio
+async def test_list_rejects_a_malformed_cursor() -> None:
+    with pytest.raises(RuntimeFailure) as raised:
+        await list_threads(
+            SimpleNamespace(id=uuid.uuid4()), _list_db([]), limit=2, cursor="not-a-cursor"
+        )
+    assert raised.value.code == "cursor_invalid"
 
 
 @pytest.mark.asyncio

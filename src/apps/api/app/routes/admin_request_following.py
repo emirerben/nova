@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,9 +23,27 @@ from app.services.request_following_collection import (
     scope,
     source_capture,
 )
+from app.services.request_following_outcomes import (
+    OutcomeReview,
+    activity_at,
+    current_export,
+    daily_report,
+    validate_outcome,
+)
 
 router = APIRouter(dependencies=[Depends(_require_admin)])
+report_router = APIRouter()
 DB = Annotated[AsyncSession, Depends(get_db)]
+
+
+@report_router.get("")
+async def report(db: DB, x_report_token: str = Header(default="")):
+    import hmac
+
+    expected = settings.request_following_report_token
+    if not expected or not hmac.compare_digest(x_report_token, expected):
+        raise HTTPException(401, "Unauthorized")
+    return await daily_report(db)
 
 
 class Expectation(BaseModel):
@@ -44,6 +62,7 @@ class ReviewIn(BaseModel):
     ] = "unknown"
     expectations: list[Expectation] = Field(default_factory=list, max_length=50)
     tickets: list[str] = Field(default_factory=list, max_length=20)
+    outcome_review: OutcomeReview | None = None
 
     @field_validator("reviewer", "rationale")
     @classmethod
@@ -81,6 +100,7 @@ def summary(case):
         if case.superseded
         else (case.review or {}).get("decision", "unreviewed"),
         "review_version": case.review_version,
+        "activity_at": activity_at(case),
         "diagnostics": case.diagnostics,
     }
 
@@ -178,9 +198,18 @@ async def detail(case_id: uuid.UUID, db: DB):
         "evidence": {
             "understanding": "unassessed",
             "persisted_execution": "unassessed",
-            "rendered_output": "missing",
+            "rendered_output": "recorded_human_review_recheck_media"
+            if (case.review or {}).get("outcome_review")
+            else "missing",
         },
     }
+
+
+@router.get("/{case_id}/media")
+async def media(case_id: uuid.UUID, db: DB, variant_id: str | None = Query(None, max_length=120)):
+    case = await get_case(db, case_id)
+    await require_current(db, case)
+    return await current_export(db, case, variant_id)
 
 
 @router.post("/{case_id}/review")
@@ -193,6 +222,7 @@ async def save_review(case_id: uuid.UUID, body: ReviewIn, db: DB):
         validate_intent(case.capture, body.model_dump())
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
+    await validate_outcome(db, case, body)
     case.review_version += 1
     case.review = {
         **body.model_dump(),

@@ -106,6 +106,7 @@ struct ProjectsDrawer: View {
             }
             VStack(alignment: .leading, spacing: 10) {
                 Text("Recent chats").font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk).padding(.horizontal, 12)
+                    .onAppear { Perf.end("drawer.open") }
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 3) {
                         if model.projects.isEmpty {
@@ -121,6 +122,12 @@ struct ProjectsDrawer: View {
                                 }.buttonStyle(.plain)
                                 ProjectActionsMenu(project: project)
                             }.background(project.id == model.selectedProject?.id ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        if model.projectsNextCursor != nil {
+                            // Reaching the end of the loaded chats fetches the next older page.
+                            ProgressView().padding(12).frame(maxWidth: .infinity)
+                                .accessibilityIdentifier("drawer-loading-older-chats")
+                                .onAppear { Task { await model.loadMoreProjects() } }
                         }
                     }
                 }
@@ -206,6 +213,10 @@ struct ChatMessageRow: View {
                     .copyableMessage(message.content, previewShape: Self.userBubbleShape)
                     .accessibilityLabel("You: \(message.content)")
                     .accessibilityIdentifier("chat-message-\(message.id)")
+                    .onAppear {
+                        Perf.endOpenOnNextFrame("launch.toPixels")
+                        Perf.endOpenOnNextFrame("chat.toPixels")
+                    }
             }
             .frame(maxWidth: .infinity)
         } else {
