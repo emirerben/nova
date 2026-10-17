@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.17.0] - 2026-10-17
+
+### Changed
+- Connect reviewed video exports to daily request-following reports (#1649) <!-- release-pr: 1649 -->
+
 ## [0.80.16.0] - 2026-10-17
 
 ### Fixed
