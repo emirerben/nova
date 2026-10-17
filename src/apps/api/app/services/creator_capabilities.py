@@ -1075,7 +1075,12 @@ def compile_strategy_to_plan(
     shape_notices = [*shape_notices, *song_notices]
     # KRI-479: a stray `voice_mode` (no camera-audio montage) is dropped; a no-op otherwise.
     strategy, voice_notices = repair_creator_voice_mode(
-        strategy, route_available=settings.voice_behind_footage_enabled
+        strategy,
+        route_available=(
+            settings.kria_plan_authority_enabled
+            if strategy.voice_mode == "per_clip"
+            else settings.voice_behind_footage_enabled
+        ),
     )
     shape_notices = [*shape_notices, *voice_notices]
     try:

@@ -87,7 +87,8 @@ log = structlog.get_logger()
 # v59 combines these facts with KRI-669 heading groups and relative sizes.
 # KRI-700: a brighten / darken ask carries `footage_light`, so the server can say no draft
 # changes the footage's light instead of the summary promising it (v60).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-16-v60"
+# v61 (KRI-674 live verification): per-clip camera sound is not spoken excerpts.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-17-v61"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -300,12 +301,22 @@ invent or quote lyrics, and never promise cuts matched to lyrics.
 """.strip("\n")
 
 
-# KRI-479: how a named camera-audio clip is used under a montage. Rendered into the
-# `$voice_mode_section` slot (the last on the `$clip_intents_section` line) ONLY when the
-# manifest advertises `phone_source_audio` and the route can render for new jobs
-# (`Settings.voice_behind_footage_enabled`); "" otherwise, so every prompt without that
-# capability is byte-identical to before this field existed (pinned by
-# tests/agents/test_main_creator_user_song.py).
+# Camera-audio guidance uses `$voice_mode_section` only on a phone source-audio
+# manifest. Per-clip sound needs plan authority; the spoken modes additionally
+# need the voice route. Other manifests keep the same prompt bytes.
+_PER_CLIP_AUDIO_PROMPT_SECTION = """
+PER-CLIP CAMERA AUDIO
+When `montage_audio.preserve_source_audio` is true and the creator wants each picture clip's
+own sound kept with that clip, set `voice_mode`: "per_clip" inside `strategy`. This includes
+ambient sound, crowd noise, and speech simply kept with its own picture. For example,
+"simple cuts with the original camera audio" means "per_clip"; nobody needs to be talking.
+Keep `montage_audio.source_media_ids` when the creator names particular audio sources; never
+invent or clear those ids to change the route. This mode does not select spoken quotes,
+extract sentences, or put one clip's voice under other footage. Those are the spoken modes
+below when available. Choose from what the creator asks for, not merely whether speech was
+detected. Say plainly in `summary` that each clip keeps its own sound.
+""".strip("\n")
+
 _VOICE_MODE_PROMPT_SECTION = """
 VOICE MODE (iPhone montage that keeps a clip's own sound)
 When `montage_audio.preserve_source_audio` is true you may also set `voice_mode` inside
@@ -320,11 +331,11 @@ not sure.
 - "excerpts" -- chosen lines or quotes from the speaker cut over the footage. Use it when the
   creator asks for particular lines, quotes or moments from what someone says.
 Do NOT set "continuous" when the creator asks you to pick the best quote, line or moment; asks
-for a talking-head or subtitled edit, or to cut to the speaker and back; wants the sound of
-several clips; names no particular clip as the voice; or the request is ambiguous. Leave
-`voice_mode` null in those cases ("excerpts" only for chosen lines). Never invent a clip as the
-voice. Say in `summary`, in plain words, which clip's voice plays and whether it plays straight
-through.
+for a talking-head or subtitled edit, or to cut to the speaker and back; names no particular
+clip as the voice; or the request is ambiguous. Use "per_clip" for each clip's own sound with
+its picture, "excerpts" for chosen lines, and null when the request is ambiguous. Never invent
+a clip as the voice. For a spoken mode, say in `summary`, in plain words, which clip's voice
+plays and whether it plays straight through.
 """.strip("\n")
 
 
@@ -601,11 +612,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 "\n" + _USER_SONG_PROMPT_SECTION if input.capability_manifest.has_user_song else ""
             ),
             # KRI-479: "" (no `phone_source_audio`) adds no bytes; same line-suffix trick.
-            voice_mode_section=(
-                "\n" + _VOICE_MODE_PROMPT_SECTION
-                if _voice_mode_available(input.capability_manifest)
-                else ""
-            ),
+            voice_mode_section=_camera_audio_mode_section(input.capability_manifest),
         )
         # KRI-520: the reply-language instruction goes last, where it wins over the
         # English examples above. "" for English/unknown: byte-identical prompt.
@@ -868,8 +875,21 @@ def _story_shapes_available(manifest: ResolvedCreatorManifest) -> bool:
     return bool(guided is not None and guided.available)
 
 
+def _camera_audio_mode_section(manifest: ResolvedCreatorManifest) -> str:
+    capability = manifest.capabilities.get("phone_source_audio")
+    if capability is None or not capability.available:
+        return ""
+    sections = []
+    # Per-clip sound uses the ordinary montage renderer, not the speech lane.
+    if settings.kria_plan_authority_enabled:
+        sections.append(_PER_CLIP_AUDIO_PROMPT_SECTION)
+    if _voice_mode_available(manifest):
+        sections.append(_VOICE_MODE_PROMPT_SECTION)
+    return "\n" + "\n\n".join(sections) if sections else ""
+
+
 def _voice_mode_available(manifest: ResolvedCreatorManifest) -> bool:
-    """KRI-479: teach `voice_mode` only on a phone manifest that can keep source audio.
+    """KRI-479: teach spoken modes only while the phone voice route is available.
 
     `compile_strategy_to_plan` (`repair_creator_voice_mode`) drops a stray value
     regardless of whether the model saw this guidance.

@@ -49,6 +49,7 @@ from app.services.creator_render_contract import (
     AdapterDeclaration,
     CreatorRenderContract,
     DeclineReason,
+    camera_audio_requires_speech,
     read_render_contract,
     text_field_path,
 )
@@ -169,7 +170,7 @@ class PlanFacts:
     song_sync: str | None = None
     render_program: str | None = None
     guided_voiceover: bool = False
-    # KRI-479: `continuous` | `excerpts` (an enumerated value; anything else reads as None).
+    # Camera-audio delivery mode; unrecognised values read as None.
     voice_mode: str | None = None
 
 
@@ -379,6 +380,17 @@ def _resolve_phone(inp: RouteInputs, fmt: str, drivers: list[str]) -> RouteResol
     voice = contract.require_voiceover
     if inp.guided_snapshot_present:
         drivers.append("guided_edit")
+        if camera_audio_requires_speech(contract.has_audio_sources, inp.plan.voice_mode):
+            # A saved picture plan is not an excerpt plan. Retain the existing
+            # refusal unless the approved audio mode explicitly keeps clip sound.
+            return _refuse(
+                "capability_unavailable",
+                REQUIREMENT_FIELD_PATHS["audio_source_ids"],
+                "Ask for a spoken-excerpt montage, which can keep that camera audio.",
+                [*drivers, "contract.audio_source_ids"]
+                if "contract.audio_source_ids" not in drivers
+                else drivers,
+            )
         return _adapter_gate("phone", Route.GUIDED_STORY, contract, drivers)
     drivers.append("edit_format")
     if fmt not in inp.capabilities.phone_supported_formats:
@@ -391,7 +403,7 @@ def _resolve_phone(inp: RouteInputs, fmt: str, drivers: list[str]) -> RouteResol
     if fmt in GUIDED_EDIT_FORMATS:
         if voice:
             return _adapter_gate("phone", Route.VOICEOVER_MONTAGE, contract, drivers)
-        if contract.has_audio_sources:
+        if camera_audio_requires_speech(contract.has_audio_sources, inp.plan.voice_mode):
             if inp.plan.voice_mode == "continuous" and contract.audio_source_count == 1:
                 # One named clip's voice straight through under the other clips.
                 return _adapter_gate(
