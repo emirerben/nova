@@ -53,6 +53,35 @@ def test_every_phone_gate_reason_has_turkish_copy() -> None:
         assert english not in turkish
 
 
+def test_talking_clip_count_refusal_names_the_cap_when_multi_clip_is_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-719: with multi-clip Talking live the refusal means "more than 10", so neither
+    language may still say "exactly one clip"."""
+    from app.config import settings
+    from app.services.phone_rollout import PHONE_TALKING_HEAD_FEATURES
+
+    reason = "subtitled_clip_count_unsupported"
+    off_en = kr._phone_gate_refusal_copy(reason)
+    with reply_language_for("tr"):
+        off_tr = kr._phone_gate_refusal_copy(reason)
+    assert "exactly one clip" in off_en
+    assert "tam olarak tek klip" in off_tr
+
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", True)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(PHONE_TALKING_HEAD_FEATURES)
+    )
+    monkeypatch.setattr(settings, "talking_multi_clip_enabled", True)
+    on_en = kr._phone_gate_refusal_copy(reason)
+    with reply_language_for("tr"):
+        on_tr = kr._phone_gate_refusal_copy(reason)
+    assert "10 clips" in on_en and "exactly one clip" not in on_en
+    assert "10 klip" in on_tr and "tek klip" not in on_tr
+
+
 def test_every_job_failure_code_has_turkish_copy() -> None:
     assert set(JOB_FAILURE_MESSAGES) == set(kr._JOB_FAILURE_MESSAGES_TR)
     for code, english in JOB_FAILURE_MESSAGES.items():

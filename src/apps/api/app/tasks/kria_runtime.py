@@ -3907,7 +3907,21 @@ def _phone_gate_refusal_copy(reason: str) -> str:
     from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
 
     english = PHONE_GATE_MESSAGES.get(reason, (None, None))[1]
-    message = say(en=english or "", tr=_PHONE_GATE_MESSAGES_TR.get(reason) or english or "")
+    turkish = _PHONE_GATE_MESSAGES_TR.get(reason)
+    if reason == "subtitled_clip_count_unsupported":
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            TALKING_MULTI_CLIP_MAX_CLIPS,
+            phone_talking_multi_clip_supported,
+        )
+
+        if phone_talking_multi_clip_supported():
+            # KRI-719: the reason now means "more than the cap", not "not one".
+            turkish = (
+                "Kameraya konuşma videoları iPhone'unda en fazla "
+                f"{TALKING_MULTI_CLIP_MAX_CLIPS} klipten oluşturulur. Fazla klipleri kaldır "
+                "ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+            )
+    message = say(en=english or "", tr=turkish or english or "")
     lead = message or say(
         en="That kind of edit isn't available for iPhone renders yet.",
         tr="Bu tür bir düzenleme iPhone'da henüz kullanılamıyor.",

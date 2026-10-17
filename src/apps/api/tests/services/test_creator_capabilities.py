@@ -2906,3 +2906,68 @@ def test_voiceover_reaction_beats_stay_talking_only_without_every_gate(
     entry = manifest.capabilities[capabilities.CAPABILITY_REACTION_BEATS]
     assert entry.available is False
     assert entry.reason_code == "phone_talking_only"
+
+
+# --- KRI-719: multi-clip Talking to camera ------------------------------------
+
+
+def _enable_multi_clip_talking(monkeypatch, *, flag: bool = True) -> None:
+    from app.services.phone_rollout import PHONE_TALKING_HEAD_FEATURES
+
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    monkeypatch.setattr(
+        capabilities.settings,
+        "phone_render_verified_features",
+        ["narrationAudio", *PHONE_TALKING_HEAD_FEATURES],
+    )
+    monkeypatch.setattr(capabilities.settings, "talking_multi_clip_enabled", flag)
+
+
+def _talking_media(count: int) -> list[dict[str, str]]:
+    return [{"media_id": f"phone-{n}", "kind": "video"} for n in range(count)]
+
+
+@pytest.mark.parametrize("count", [2, 3, 10])
+def test_phone_subtitled_multi_clip_flag_off_stays_unavailable(monkeypatch, count) -> None:
+    _enable_multi_clip_talking(monkeypatch, flag=False)
+    manifest = _phone_manifest(monkeypatch, "subtitled", _talking_media(count))
+    entry = manifest.capabilities["phone_format:subtitled"]
+    assert entry.available is False
+    assert "exactly one clip" in entry.reason
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 10])
+def test_phone_subtitled_multi_clip_flag_on_is_available(monkeypatch, count) -> None:
+    _enable_multi_clip_talking(monkeypatch)
+    manifest = _phone_manifest(monkeypatch, "subtitled", _talking_media(count))
+    assert manifest.capabilities["phone_format:subtitled"].available is True
+
+
+def test_phone_subtitled_eleven_clips_unavailable_even_with_flag(monkeypatch) -> None:
+    _enable_multi_clip_talking(monkeypatch)
+    manifest = _phone_manifest(monkeypatch, "subtitled", _talking_media(11))
+    entry = manifest.capabilities["phone_format:subtitled"]
+    assert entry.available is False
+    assert "1 to 10 clips" in entry.reason
+
+
+def test_phone_subtitled_multi_clip_with_voiceover_stays_unavailable(monkeypatch) -> None:
+    """Talking is spined by the clips' own audio: a recorded voiceover never mixes in."""
+    _enable_multi_clip_talking(monkeypatch)
+    manifest = _phone_manifest(monkeypatch, "subtitled", _talking_media(3), has_voiceover=True)
+    assert manifest.capabilities["phone_format:subtitled"].available is False
+
+
+def test_phone_subtitled_multi_clip_flag_on_compiles_native(monkeypatch) -> None:
+    _enable_multi_clip_talking(monkeypatch)
+    manifest = _phone_manifest(monkeypatch, "subtitled", _talking_media(3))
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="subtitled",
+            audio_strategy="original_audio",
+            selected_media_ids=["phone-0", "phone-1", "phone-2"],
+        ),
+    )
+    assert plan.strategy.render_program == "native"

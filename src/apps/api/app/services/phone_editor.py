@@ -49,6 +49,7 @@ from app.pipeline.phone_recipe_shared import (
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, ResolvedSoundEffect, lane_names
 from app.pipeline.phone_subtitled_plan import (
     SFX_DUCK_RECEIPT_FIELD,
+    additional_speakers_from_recipe,
     compile_phone_subtitled_plan,
     cutaways_from_recipe,
     landscape_fit_from_recipe,
@@ -1089,11 +1090,15 @@ def _compile_subtitled_editor_commit(
     # the speaker is whichever one plays on the main track, and its cutaways
     # carry over from the pinned recipe unchanged (captions/lanes share the
     # same timeline, and the editor never moves a cutaway).
+    # KRI-719: a multi-clip Talking edit can also play several speakers back
+    # to back; they carry over in their pinned order, like the cutaways.
     speaker = bindings[0]
     cutaways: tuple = ()
+    additional_speakers: tuple = ()
     if isinstance(previous.recipe, EditRecipeV2):
         speaker = speaker_binding_from_recipe(previous.recipe, bindings)
         cutaways = cutaways_from_recipe(previous.recipe, bindings)
+        additional_speakers = additional_speakers_from_recipe(previous.recipe, bindings)
     elif len(bindings) != 1:
         raise ValueError("multi-clip phone Talking edits need a pinned recipe")
     keep_segments = (
@@ -1129,6 +1134,7 @@ def _compile_subtitled_editor_commit(
         keep_segments=keep_segments,
         caption_look=caption_look,
         cutaways=cutaways,
+        additional_speakers=additional_speakers,
         landscape_fit=landscape_fit,
         # KRI-467: the staged row's text (already this Save's, when it carries
         # a text section), in the cut-timeline seconds the cues use.

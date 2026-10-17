@@ -20,6 +20,7 @@ from app.pipeline.phone_subtitled_plan import (
     CUTAWAY_TRACK_ID,
     SFX_SPEECH_DUCK_GAIN,
     PhoneCutaway,
+    additional_speakers_from_recipe,
     compile_phone_subtitled_plan,
     cutaways_from_recipe,
     landscape_fit_from_recipe,
@@ -1738,3 +1739,101 @@ def test_talking_captions_clear_the_device_watermark(monkeypatch, style):
         settings, "phone_render_verified_features", list(recipe.required_capabilities)
     )
     validate_phone_pilot_recipe(recipe)
+
+
+# --- KRI-719: several speakers back to back ----------------------------------
+
+
+def test_additional_speakers_play_back_to_back_with_their_own_audio():
+    first = _binding("take1", duration_s=10.0)
+    second = _binding("take2", duration_s=6.0, width=1920, height=1080)
+    recipe = compile_phone_subtitled_plan(
+        (first,),
+        caption_cues=[*_CUES, {"text": "Second take", "start_s": 11.0, "end_s": 12.0}],
+        additional_speakers=(second,),
+        landscape_fit="fit",
+        cutaways=(_cutaway("broll", 8.0, 12.0),),
+    )
+    main = recipe.tracks[0].clips
+    assert [(c.source_asset_id, c.timeline_start, c.source_duration) for c in main] == [
+        ("take1", 0.0, 10.0),
+        ("take2", 10.0, 6.0),
+    ]
+    assert all(c.volume != 0 for c in main)
+    # Each speaker keeps its own framing: the landscape take is letterboxed.
+    assert main[0].transform.scale == 1
+    assert main[1].transform.scale == pytest.approx(0.31640625)
+    assert recipe.duration == pytest.approx(16.0)
+    # A cutaway may cover the join between two speakers.
+    assert [(c.source_asset_id, c.timeline_start) for c in recipe.tracks[1].clips] == [
+        ("broll", 8.0)
+    ]
+    recipe.model_validate(recipe.model_dump(mode="json"))
+
+
+def test_additional_speakers_empty_is_byte_identical():
+    bindings = (_binding(duration_s=10.0),)
+    assert (
+        compile_phone_subtitled_plan(
+            bindings, caption_cues=_CUES, additional_speakers=()
+        ).model_dump_json()
+        == compile_phone_subtitled_plan(bindings, caption_cues=_CUES).model_dump_json()
+    )
+
+
+def test_only_the_first_speaker_carries_the_cleanup_cut():
+    first = _binding("take1", duration_s=10.0)
+    second = _binding("take2", duration_s=5.0)
+    recipe = compile_phone_subtitled_plan(
+        (first,),
+        caption_cues=_CUES,
+        keep_segments=[(0.0, 4.0), (6.0, 10.0)],
+        additional_speakers=(second,),
+    )
+    main = recipe.tracks[0].clips
+    assert [(c.source_asset_id, c.timeline_start, c.source_duration) for c in main] == [
+        ("take1", 0.0, 4.0),
+        ("take1", 4.0, 4.0),
+        ("take2", 8.0, 5.0),
+    ]
+
+
+@pytest.mark.parametrize(
+    "extra, cutaways, match",
+    [
+        ((_binding("take1"),), (), "cannot play twice"),
+        ((_binding("take2", duration_s=301.0),), (), "capped at 5 minutes"),
+        ((_binding("take2"),), (_cutaway("take2", 2.0, 4.0),), "reuse the speaker"),
+    ],
+)
+def test_additional_speaker_rejections(extra, cutaways, match):
+    with pytest.raises(UnsupportedPhonePlan, match=match):
+        compile_phone_subtitled_plan(
+            (_binding("take1", duration_s=10.0),),
+            caption_cues=_CUES,
+            additional_speakers=extra,
+            cutaways=cutaways,
+        )
+
+
+def test_speakers_and_cutaways_read_back_for_an_editor_save():
+    first = _binding("take1", duration_s=10.0)
+    second = _binding("take2", duration_s=6.0)
+    cutaways = (_cutaway("broll", 3.0, 6.0),)
+    # Bindings come back in upload order, which need not be play order.
+    bindings = (second, cutaways[0].binding, first)
+    recipe = compile_phone_subtitled_plan(
+        (first,), caption_cues=_CUES, additional_speakers=(second,), cutaways=cutaways
+    )
+    assert speaker_binding_from_recipe(recipe, bindings) == first
+    assert additional_speakers_from_recipe(recipe, bindings) == (second,)
+    assert cutaways_from_recipe(recipe, bindings) == cutaways
+    recompiled = compile_phone_subtitled_plan(
+        (speaker_binding_from_recipe(recipe, bindings),),
+        caption_cues=_CUES,
+        additional_speakers=additional_speakers_from_recipe(recipe, bindings),
+        cutaways=cutaways_from_recipe(recipe, bindings),
+    )
+    assert recompiled.model_dump_json() == recipe.model_dump_json()
+    single = compile_phone_subtitled_plan((first,), caption_cues=_CUES)
+    assert additional_speakers_from_recipe(single, (first,)) == ()

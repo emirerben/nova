@@ -6270,3 +6270,152 @@ async def test_manual_rename_accepts_an_intervening_generated_title(monkeypatch)
     assert thread.title == "Summer Memories"
     assert thread.state["title_source"] == "user"
     db.commit.assert_awaited_once()
+
+
+# --- KRI-719: multi-clip Talking to camera clip cap ---------------------------
+
+
+def _enable_multi_clip_talking(monkeypatch: pytest.MonkeyPatch, *, flag: bool = True) -> None:
+    from app.services.phone_rollout import PHONE_TALKING_HEAD_FEATURES
+
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", True)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(PHONE_TALKING_HEAD_FEATURES)
+    )
+    monkeypatch.setattr(settings, "talking_multi_clip_enabled", flag)
+
+
+def test_talking_clip_limit_stays_one_without_the_multi_clip_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_multi_clip_talking(monkeypatch, flag=False)
+    assert _format_clip_limit("subtitled") == 1
+
+
+def test_talking_clip_limit_is_ten_with_the_multi_clip_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routes.creation_threads import _media_capabilities
+
+    _enable_multi_clip_talking(monkeypatch)
+    assert _format_clip_limit("subtitled") == 10
+    # Other formats are untouched.
+    assert _format_clip_limit("montage") == 50
+    item = SimpleNamespace(edit_format="subtitled", voiceover_gcs_path=None, song_gcs_path=None)
+    assert _media_capabilities(item=item, clip_count=3, visual_count=0)["clips"]["max"] == 10
+
+
+def test_talking_clip_limit_needs_the_device_features_not_just_the_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flag alone must not raise the cap while the phone cannot render cutaways."""
+    _enable_multi_clip_talking(monkeypatch)
+    monkeypatch.setattr(settings, "phone_render_verified_features", [])
+    assert _format_clip_limit("subtitled") == 1
+
+
+@pytest.mark.asyncio
+async def test_capability_manifest_advertises_ten_talking_clips_only_with_the_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def talking_max(manifest: dict) -> int:
+        return next(f["max_clips"] for f in manifest["formats"] if f["edit_format"] == "subtitled")
+
+    _enable_multi_clip_talking(monkeypatch, flag=False)
+    off = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=True)
+    assert talking_max(off) == 1
+    _enable_multi_clip_talking(monkeypatch)
+    on = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=True)
+    assert talking_max(on) == 10
+
+
+@pytest.mark.asyncio
+async def test_talking_upload_reservation_enforces_ten_clip_limit_with_the_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_multi_clip_talking(monkeypatch)
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        active_plan_item_id=uuid.uuid4(),
+    )
+    item = SimpleNamespace(
+        edit_format="subtitled",
+        clip_gcs_paths=[f"users/u/existing-{n}.mp4" for n in range(10)],
+    )
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+
+    with pytest.raises(HTTPException, match="capped at 10 clips") as exc:
+        await upload_urls(
+            _request(),
+            str(thread.id),
+            UploadBody(
+                files=[
+                    UploadFile(
+                        filename="clip-11.mp4",
+                        content_type="video/mp4",
+                        file_size_bytes=10,
+                        client_upload_id="clip-11",
+                    )
+                ]
+            ),
+            user,
+            db,
+        )
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_talking_attachment_enforces_ten_clip_limit_with_the_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_multi_clip_talking(monkeypatch)
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_plan_item_id=uuid.uuid4(),
+        state={"media": [], "media_count": 10},
+    )
+    item = SimpleNamespace(
+        edit_format="subtitled",
+        current_job_id=None,
+        clip_gcs_paths=[f"users/u/clip-{n}.mp4" for n in range(10)],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+    )
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda path: SimpleNamespace(size=100, content_type="video/mp4"),
+    )
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+
+    with pytest.raises(HTTPException, match="capped at 10 clips") as exc:
+        await attach_media(
+            _request(),
+            str(thread.id),
+            AttachBody(
+                media=[MediaInput(media_id="clip-11.mp4", kind="video")],
+                client_event_id="attach-eleventh-talking",
+                expected_revision=0,
+            ),
+            user,
+            db,
+        )
+    assert exc.value.status_code == 409

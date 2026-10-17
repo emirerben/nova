@@ -757,6 +757,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-708-caption-correction"),
             ),
             (
+                "src/apps/api/app/pipeline/phone_talking_cutaways.py",
+                (True, "covered", "kri-719-talking-multi-clip"),
+            ),
+            (
+                "src/apps/api/tests/pipeline/test_phone_talking_cutaways.py",
+                (True, "covered", "kri-719-talking-multi-clip"),
+            ),
+            (
                 "src/apps/api/app/services/length_planning.py",
                 (True, "covered", "kri-681-named-line-windows"),
             ),
