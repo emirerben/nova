@@ -2510,6 +2510,7 @@ def _run_generative_job_impl(
                     REQUIREMENT_VERSION_FIELD,
                     CreatorRenderContractError,
                     check_phone_dispatch_contract,
+                    job_requires_camera_speech,
                     read_render_contract,
                     speech_edit_not_built,
                 )
@@ -2524,7 +2525,7 @@ def _run_generative_job_impl(
                     raise CreatorRenderContractError(
                         "This edit lost its approved requirements; please try again."
                     )
-                required_speech = bool(contract and contract.audio_source_ids)
+                required_speech = job_requires_camera_speech(contract, candidates)
                 if contract is not None:
                     # A recording's mere presence cannot override the approved
                     # soundtrack. Historical jobs retain their original dispatch.

@@ -37,6 +37,7 @@ from app.config import settings
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
+    job_requires_camera_speech,
     read_render_contract,
     verify_phone_recipe,
 )
@@ -101,7 +102,9 @@ def run_phone_speech_montage_job(
     """See the module docstring. ``run_planner`` / ``load_words`` are test seams."""
     contract = read_render_contract(snapshot)
     speech_required = bool(
-        contract and contract.audio_source_ids and contract.original_audio != "forbid"
+        job_requires_camera_speech(contract, all_candidates)
+        and contract
+        and contract.original_audio != "forbid"
     )
     if contract is not None and not speech_required:
         return False

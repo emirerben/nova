@@ -655,14 +655,9 @@ ADAPTER_DECLARATIONS: dict[str, AdapterDeclaration] = {
             require_voiceover=_VOICE_CONFLICT,
         ),
         # _run_phone_unified_montage_job -> _run_phone_guided_job.
-        _phone(
-            "phone_guided_unified_montage",
-            set(),
-            audio_source_ids=Decline(
-                "capability_unavailable",
-                "Ask for a spoken-excerpt montage, which can keep that camera audio.",
-            ),
-        ),
+        # Keep the exact source-id requirement. The shared phone verifier
+        # refuses a compiled recipe that cannot prove the required sources.
+        _phone("phone_guided_unified_montage", set()),
         # _run_phone_voiceover_montage_job: routed to when the contract needs the voice.
         _phone(
             "phone_voiceover_montage",
@@ -1473,6 +1468,30 @@ def stamped_plan_contract(
     if not candidates or candidates.get(PLAN_AUTHORITY_FIELD) is None:
         return None
     return read_render_contract(assembly)
+
+
+def camera_audio_requires_speech(has_audio_sources: bool, voice_mode: str | None) -> bool:
+    """Named camera sound only needs spoken excerpts when that is its delivery mode."""
+    return has_audio_sources and voice_mode != "per_clip"
+
+
+def job_requires_camera_speech(
+    contract: CreatorRenderContract | None, candidates: Mapping[str, Any]
+) -> bool:
+    """Read the approved audio mode without introducing a renderer/shadow dependency.
+
+    Only plan-authority jobs may opt into per-clip sound. An absent mode or
+    an unstamped job keeps its historical spoken-excerpt interpretation.
+    """
+    strategy = candidates.get("creator_strategy")
+    mode = (
+        strategy.get("voice_mode")
+        if candidates.get(PLAN_AUTHORITY_FIELD) is not None and isinstance(strategy, Mapping)
+        else None
+    )
+    return camera_audio_requires_speech(
+        bool(contract and contract.audio_source_ids), mode if isinstance(mode, str) else None
+    )
 
 
 def plan_voiceover_path(contract: CreatorRenderContract | None, attached: str | None) -> str | None:

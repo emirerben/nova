@@ -138,6 +138,30 @@ def _contract(world, **requirements):
     return contract
 
 
+def test_per_clip_camera_audio_is_not_sent_to_the_spoken_excerpt_planner(world):
+    """A typed ambient-sound montage retains its source requirements in its own lane."""
+    from app.services.creator_render_contract import PLAN_AUTHORITY_FIELD
+
+    _contract(world, audio_source_ids=("b0", "b1"), original_audio="require")
+    world.candidates.update(
+        {
+            PLAN_AUTHORITY_FIELD: 1,
+            "creator_strategy": {"voice_mode": "per_clip"},
+        }
+    )
+    before = dict(world.snapshot)
+    handled = job_module.run_phone_speech_montage_job(
+        JOB_ID,
+        world.snapshot,
+        world.candidates,
+        ownership_epoch=3,
+        run_planner=lambda _: pytest.fail("Ambient audio must not request spoken excerpts"),
+        load_words=lambda _: pytest.fail("Ambient audio must not be transcribed for this lane"),
+    )
+    assert handled is False
+    assert world.snapshot == before and world.db.commits == 0
+
+
 def test_approved_source_and_duration_reach_planner_without_live_request(world, monkeypatch):
     from app.services.creator_render_contract import CreatorRenderContractError
 
