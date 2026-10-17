@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.10.0] - 2026-10-17
+
+### Changed
+- fix(editor): text follows every clip delete/trim/extend (KRI-715) (#1631) <!-- release-pr: 1631 -->
+
 ## [0.80.9.0] - 2026-10-16
 
 ### Changed
