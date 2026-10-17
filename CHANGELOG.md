@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.28.0] - 2026-10-17
+
+### Changed
+- perf(ios): gallery posters are remembered and the library loads a page at a time (KRI-713) (#1662) <!-- release-pr: 1662 -->
+
 ## [0.80.27.0] - 2026-10-17
 
 ### Changed
