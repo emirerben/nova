@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.20.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save no longer rejects a clip window within 50ms of the source end (KRI-736) (#1654) <!-- release-pr: 1654 -->
+
 ## [0.80.19.0] - 2026-10-17
 
 ### Changed
