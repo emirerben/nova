@@ -22,6 +22,7 @@ import unicodedata
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from itertools import groupby
 from typing import Any, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -43,7 +44,6 @@ _MEMBERSHIP_OPS = frozenset({"group", "include"})
 # words AND not as one word plus digits ("clip_1", "media2"): a re-plan may reuse those
 # positional ids for a different intent. A descriptive id ("caption_rule3_text") binds.
 _GENERIC_ID_WORDS = frozenset({*get_args(ClipIntentOp), "intent", "item"})
-_POSITIONAL_ID = re.compile(r"[a-z]+[_-]?\d*")
 
 
 class _Strict(BaseModel):
@@ -114,10 +114,13 @@ def _identities(intent_id: object, creator_text: object) -> list[str]:
     out: list[str] = []
     if isinstance(intent_id, str):
         folded = intent_id.casefold()
-        words = re.findall(r"[a-z]+", folded)
-        if not _POSITIONAL_ID.fullmatch(folded) and any(
-            len(w) >= 4 and w not in _GENERIC_ID_WORDS for w in words
-        ):
+        words = ["".join(run) for alpha, run in groupby(folded, str.isalpha) if alpha]
+        # One word, then an optional separator and digits: "clip_1", "media2", "slot".
+        tail = folded.removeprefix(words[0]) if len(words) == 1 else None
+        if tail is not None and tail[:1] in ("_", "-"):
+            tail = tail[1:]
+        positional = tail is not None and (tail == "" or tail.isdigit())
+        if not positional and any(len(w) >= 4 and w not in _GENERIC_ID_WORDS for w in words):
             out.append(f"id:{intent_id}")
     if isinstance(creator_text, str) and (text := "-".join(_words(creator_text))):
         out.append(f"text:{text}")
