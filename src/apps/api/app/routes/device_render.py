@@ -870,7 +870,20 @@ def _verify_export(
             if hashlib.file_digest(source, "sha256").hexdigest() != expected_sha256:
                 raise ValueError("export checksum mismatch")
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(local)],
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-protocol_whitelist",
+                "file,pipe",
+                "-f",
+                "mov",
+                "-show_streams",
+                "-show_format",
+                "-of",
+                "json",
+                str(local),
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -1008,6 +1021,23 @@ async def complete_device_export(
         approved_export_sources(job, status.request) if verification_report is not None else None
     )
     sources_digest = export_source_digest(bindings) if bindings is not None else None
+    if verification_report is not None:
+        supported_policy = isinstance(policy, dict) and policy.get("version") == 1
+        if not supported_policy or policy.get("source_receipts_digest") != sources_digest:
+            verification_report.update(
+                status="rejected" if supported_policy else "unsupported",
+                checks=[{"kind": "authority", "status": "failed"}],
+            )
+            record["attempts"][attempt_id]["actual_export_verification"] = verification_report
+            save_device_record(job, body.identity.variant_id, record)
+            cause = CreatorRenderContractError(
+                "I couldn't confirm this export belongs to your approved edit.",
+                decline_reason="evidence_missing" if supported_policy else "capability_unavailable",
+                field_path="source_identity" if supported_policy else "render_verifier",
+                alternative="Review and approve a new edit before exporting again.",
+            )
+            await _refuse_publication(db, job, _ContractRefusal(cause, body.identity.variant_id))
+            raise HTTPException(422, "Export verification authority changed")
     verify_kwargs = (
         {"source_bindings": bindings, "verification_report": verification_report}
         if verification_report is not None
@@ -1015,6 +1045,7 @@ async def complete_device_export(
     )
     # Do not hold database locks while downloading/probing the MP4. Reacquire the full fence below.
     await db.rollback()
+    metadata = None
     try:
         metadata = await asyncio.to_thread(storage.object_metadata, attempt["path"])
         if (
@@ -1074,12 +1105,18 @@ async def complete_device_export(
             raise HTTPException(409, "Export verification authority changed")
         verification_report.update(
             artifact_path=attempt["path"],
-            storage_generation=str(metadata.generation),
+            storage_generation=str(metadata.generation) if metadata is not None else None,
             source_receipts_digest=sources_digest,
         )
         record["attempts"][attempt_id]["actual_export_verification"] = verification_report
         if not checked_export_report(record, status, attempt_id):
-            verification_report["status"] = verification_report.get("status") or "partial"
+            if verification_report.get("status") == "checked":
+                verification_report["status"] = "rejected"
+                verification_report.setdefault("checks", []).append(
+                    {"kind": "authority", "status": "failed"}
+                )
+            else:
+                verification_report["status"] = verification_report.get("status") or "partial"
             save_device_record(job, body.identity.variant_id, record)
             failed = next(
                 (
@@ -1090,7 +1127,11 @@ async def complete_device_export(
                 "output",
             )
             cause = CreatorRenderContractError(
-                f"I couldn't confirm the exported video's {failed} matches your approved edit.",
+                "I couldn't confirm this export belongs to your approved edit."
+                if failed == "authority"
+                else (
+                    f"I couldn't confirm the exported video's {failed} matches your approved edit."
+                ),
                 decline_reason="evidence_missing",
                 field_path="export_verification",
                 alternative=(

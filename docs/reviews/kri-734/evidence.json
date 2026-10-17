@@ -1,35 +1,40 @@
 {
   "scope": "KRI-734 first simple-cut phone adapter; all-adapter ticket remains open",
-  "base_sha": "9e8b1aa2b4775d4e5c03220170a807b0009e1f17",
+  "base_sha": "8d590072286e8b9489d9e61a4fa4db3be14b7dfa",
   "verifier_version": "phone-simple-cut-v1",
   "source_sha256": {
-    "src/apps/api/app/services/actual_export_verification.py": "d0e437c300e8c4c64702fa3acf3665d464d3496ef40fef1f3bb6c8201b8923c0",
-    "src/apps/api/app/services/device_render.py": "028453a61399329895633ed893670a4cf3c335858dee4cd48d50a0a1180d6dbe",
-    "src/apps/api/app/routes/device_render.py": "75affeb4ed4755d166cc777c02b23d865cce9f0346a6a4712fea01930f19603a",
+    "src/apps/api/app/services/actual_export_verification.py": "39391cad7e656a9b9d4d908eebd3a8ddf51bad28894a78f85e2b1540bca39b78",
+    "src/apps/api/app/services/device_render.py": "7109ba44f2f6ecb280caf66bfc4c056143cc2d80b73e2136a2df5beb6eff0961",
+    "src/apps/api/app/routes/device_render.py": "3ed3b1703bfb163def14a830f93ada0ff91a5845136437f1f0c2a18fb1a93e5c",
     "src/apps/api/app/kria/render_retry.py": "b34d8a5729edf124b3882ce5613bcd61c4b138ba79566fcb0b9bf4b4346a2379",
     "src/apps/api/app/kria/device_render.py": "33bdefcb1f18c5d97a95aaaf66e1c75523c89f23b1e4f172717ccfce04b05e99",
     "src/apps/api/app/tasks/kria_runtime.py": "1595a5c0da4a1cd335ca1c71128d0f2644f37ddfe548a199f734a0b6667754db",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift": "02485d021b10e778873c9eab82523a027f4f88b453e6df5fb56d3d3f45e5e353",
     "src/apps/ios/Kria/Core/DeviceRendering.swift": "79eed620a2bc069ca6fe345512b67fd747f5b8b4d3e267a47a0cede548072ffc",
-    "src/apps/ios/Kria/Core/Services.swift": "94bd852941c4d40a320af6ea6ea5e386493a7f0a1fc0ab86922f13fbe0fcbade",
+    "src/apps/ios/Kria/Core/Services.swift": "ab7e83e8f26e4dd5841ce650de02a447c583b6fca2ca27ec85392c0f8781be80",
     "src/apps/ios/Kria/Features/DeviceRenderPanel.swift": "019ef0705822f125a1f33b8c4400df1d24939cc65eff2d5867ec4659093d9699"
   },
   "offline": {
-    "focused_api_passed": 384,
+    "focused_api_passed": 388,
     "ci_selector_tests_passed": 41,
     "ci_selector_subtests_passed": 150,
     "media_negative_controls": 12,
     "model_calls": 0,
     "paid_model_spend_usd": 0,
     "mapped_reliability_passed": 512,
-    "preship": "all green"
+    "preship": "all green",
+    "format_negative_controls": 1,
+    "local_decoder_invariants": 1,
+    "stale_authority_negative_controls": 2,
+    "exact_ci_profile_passed": 33
   },
   "native_presentation": {
     "passed": 26,
     "failed": 0,
     "skipped": 0,
     "client_protocol": 12,
-    "fresh_physical_canary": false
+    "fresh_physical_canary": false,
+    "integrated_with_current_main": true
   },
   "retained_physical_export_rechecked_locally": {
     "result": "checked",
@@ -64,5 +69,6 @@
     "speech/music/effects/cloud/slides KRI-724/725 and remaining KRI-734 adapter proof",
     "sampled frames are not an every-frame or subjective-creative guarantee"
   ],
-  "review": "Inline source, test, scope and documentation review by the implementing agent; no subagents or independent review claimed."
+  "review": "Inline source, test, scope and documentation review by the implementing agent; no subagents or independent review claimed.",
+  "initial_base_sha": "9e8b1aa2b4775d4e5c03220170a807b0009e1f17"
 }

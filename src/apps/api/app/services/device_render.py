@@ -471,13 +471,13 @@ def pin_device_request(
         and getattr(job, "user_id", None) in settings.phone_actual_export_verification_user_ids
     ):
         from app.services.actual_export_verification import (  # noqa: PLC0415
-            POLICY_KEY,
+            POLICY_FIELD,
             unsupported_reasons,
         )
 
         reasons = unsupported_reasons(request.recipe)
         if not reasons:
-            record[POLICY_KEY] = {
+            record[POLICY_FIELD] = {
                 "version": 1,
                 "source_receipts_digest": export_source_digest(
                     approved_export_sources(job, request)

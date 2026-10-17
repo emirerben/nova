@@ -1159,7 +1159,8 @@ Keep it off until the full API/worker fleet contains the verifier and a protocol
 client has passed its canary. A read-time `output_verification_required` hint makes
 that client withhold the local candidate from playback/Save/Share until publication;
 an older client gets 426 for an enrolled request. Historical unmarked requests
-retain their previous behavior. Turning enrollment off does not waive checks for
+are not enrolled retroactively in picture/audio/OCR checks; all uploads still
+must decode as local ISO media. Turning enrollment off does not waive checks for
 already stamped requests, including exact retries. Roll back enrollment, not the
 verifier code while stamped work remains outstanding.
 
@@ -1169,6 +1170,8 @@ unsupported or missing evidence cannot replace the last accepted video/poster.
 The report stays beside the rejected attempt. Completion retries cannot revive it;
 an exact render retry needs existing consent and fresh checks. Failed replacement
 receipts cannot borrow their previous ready variant to claim success.
+Changed source receipts require a reviewed new edit; they cannot enter an exact
+retry loop. A measured match with a stale request identity is recorded as rejected.
 
 The first promoted shape is one contiguous original-video track, hard cuts, rate
 1, identity transform/cover fit, static positioned text and original or muted

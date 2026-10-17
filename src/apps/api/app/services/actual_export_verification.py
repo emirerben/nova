@@ -26,9 +26,11 @@ from app.kria.recipes_v2 import EditRecipeV2
 from app.pipeline.cloud_render_evidence import normalize_text
 
 VERIFIER_VERSION = "phone-simple-cut-v1"
-POLICY_KEY = "actual_export_policy"
-REPORT_KEY = "actual_export_verification"
+POLICY_FIELD = "actual_export_policy"
 SAMPLE_RATE = 8000
+# Both the phone export and its analysis proxies are local ISO media files.
+# Do not autodetect a disguised playlist/container or let a decoder fetch URLs.
+_LOCAL_MP4_INPUT = ("-protocol_whitelist", "file,pipe", "-f", "mov")
 
 
 def unsupported_reasons(recipe) -> list[str]:
@@ -115,12 +117,35 @@ def _run(arguments: list[str], *, data: bytes | None = None) -> bytes:
 
 def _probe(path: Path) -> dict:
     return json.loads(
-        _run(["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)])
+        _run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                *_LOCAL_MP4_INPUT,
+                "-show_streams",
+                "-show_format",
+                "-of",
+                "json",
+                str(path),
+            ]
+        )
     )
 
 
 def _frame(path: Path, at: float, *, size: tuple[int, int] | None = None) -> Image.Image:
-    args = ["ffmpeg", "-v", "error", "-ss", str(round(at, 6)), "-i", str(path), "-frames:v", "1"]
+    args = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-ss",
+        str(round(at, 6)),
+        *_LOCAL_MP4_INPUT,
+        "-i",
+        str(path),
+        "-frames:v",
+        "1",
+    ]
     if size:
         width, height = size
         args += [
@@ -140,6 +165,7 @@ def _audio(path: Path, start: float, duration: float) -> np.ndarray:
             "error",
             "-ss",
             str(start),
+            *_LOCAL_MP4_INPUT,
             "-i",
             str(path),
             "-t",

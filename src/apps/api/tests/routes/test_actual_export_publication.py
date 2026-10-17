@@ -9,7 +9,12 @@ from types import SimpleNamespace
 import pytest
 
 from app.routes import device_render as routes
-from app.services.device_render import device_record, save_device_record
+from app.services.device_render import (
+    approved_export_sources,
+    device_record,
+    export_source_digest,
+    save_device_record,
+)
 from tests.routes.test_device_render import (  # noqa: F401
     body,
     fixture,
@@ -44,7 +49,12 @@ def test_unchecked_export_cannot_publish_or_replace_last_good(
     last_good = copy.deepcopy(fixture.job.assembly_plan["variants"][0])
     record = device_record(fixture.job, "first")
     reservation = record["attempts"][attempt]
-    record["actual_export_policy"] = {"version": 1}
+    record["actual_export_policy"] = {
+        "version": 1,
+        "source_receipts_digest": export_source_digest(
+            approved_export_sources(fixture.job, fixture.request)
+        ),
+    }
     save_device_record(fixture.job, "first", record)
 
     def verify(*args, **kwargs):
@@ -112,3 +122,44 @@ def test_required_output_check_is_declared_and_old_share_ui_is_refused(
     assert response.status_code == expected, response.text
     if expected == 200:
         assert response.json()["output_verification_required"] is True
+
+
+@pytest.mark.parametrize("stale", ["source_receipts", "identity"])
+def test_measured_output_with_stale_authority_never_keeps_a_checked_receipt(
+    fixture, monkeypatch, stale
+):
+    mock_storage(fixture, monkeypatch)
+    attempt, _ = prepared(fixture)
+    record = device_record(fixture.job, "first")
+    digest = export_source_digest(approved_export_sources(fixture.job, fixture.request))
+    record["actual_export_policy"] = {
+        "version": 1,
+        "source_receipts_digest": "a" * 64 if stale == "source_receipts" else digest,
+    }
+    reservation = record["attempts"][attempt]
+    save_device_record(fixture.job, "first", record)
+    identity = fixture.request.identity.model_dump(mode="json")
+    if stale == "identity":
+        identity["recipe_revision"] += 1
+
+    def verify(*args, **kwargs):
+        kwargs["verification_report"].update(
+            status="checked",
+            identity=identity,
+            verifier_version="phone-simple-cut-v1",
+            sha256=reservation["sha256"],
+            file_size_bytes=reservation["size"],
+            checks=[{"kind": "duration", "status": "passed"}],
+        )
+
+    monkeypatch.setattr(routes, "_verify_export", verify)
+    response = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/complete", json=body(fixture, attempt)
+    )
+    assert response.status_code == 422, response.text
+    stored = device_record(fixture.job, "first")
+    assert stored["attempts"][attempt]["actual_export_verification"]["status"] == "rejected"
+    if stale == "source_receipts":
+        assert stored["status"]["reason_code"] == "unsupported_recipe", (
+            "Changed authority needs re-approval, not an exact retry loop"
+        )

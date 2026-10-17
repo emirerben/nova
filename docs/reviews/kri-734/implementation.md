@@ -26,6 +26,9 @@ already stamped request. Retry must retain the required verification policy.
   small. A matching H.264 round trip may differ by 1–2 decoded colour codes.
 * Text must stop at its approved end, including before the fixed brand tail.
 * Missing decoder/OCR/source evidence and unsupported operations: never checked.
+* A file named `.mp4` containing Matroska, or a playlist referencing other files,
+  cannot pass the upload boundary. Decode only local ISO media with explicit
+  file/pipe protocols; never trust a filename or H.264/AAC stream labels alone.
 * A failed replacement keeps the previous video, poster and URL. The rejected
   attempt cannot become successful on a repeated completion request.
 * Stale completion after an editor revision cannot publish. Exact retry rechecks
@@ -33,6 +36,9 @@ already stamped request. Retry must retain the required verification policy.
 * Reports bind output checksum/storage generation, request revision/digest,
   source receipt digest, verifier version and measured checks. No signed URLs,
   transcripts or source images are retained in reports.
+* A measured match with stale request identity is rejected, including its saved
+  report. Changed source receipts require a reviewed new edit, not an exact-retry
+  loop. Unknown verification policies remain unsupported.
 
 Picture checks sample the source/output clock, including near cuts; they are
 sampled evidence, not an assertion that every pixel/frame has been inspected.

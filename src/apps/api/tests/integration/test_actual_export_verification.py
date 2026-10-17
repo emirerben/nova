@@ -9,7 +9,9 @@ from __future__ import annotations
 import copy
 import shutil
 import subprocess
+import threading
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -311,3 +313,47 @@ def test_dark_footage_cannot_pass_just_because_every_pixel_is_near_black(exports
         assert any(c["kind"] == "picture" and c["status"] == "failed" for c in report["checks"]), (
             report
         )
+
+
+def test_uploaded_media_cannot_make_the_verifier_fetch_a_playlist_url(exports):
+    """Real demux boundary: a file named MP4 is still untrusted input bytes."""
+    root, sources, recipe = exports
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            self.send_error(404)
+
+        def log_message(self, *args):
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        runner = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
+        runner.start()
+        try:
+            playlist = root / "not-a-real-mp4.mp4"
+            playlist.write_text(
+                "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n"
+                "#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:1.0,\n"
+                f"http://127.0.0.1:{server.server_port}/segment.ts\n#EXT-X-ENDLIST\n"
+            )
+            report = verify_actual_export(playlist, status(recipe), sources)
+            assert report["status"] != "checked"
+            assert requests == [], "Uploaded media must never cause decoder network requests"
+        finally:
+            server.shutdown()
+            runner.join(timeout=1)
+
+
+def test_matching_codecs_and_pixels_in_a_non_mp4_container_are_not_ready(exports):
+    root, sources, recipe = exports
+    recipe = copy.deepcopy(recipe)
+    recipe.audio.original_volume = 0
+    candidate = encode(root, sources, gain=0)
+    disguised = root / "matroska-named-mp4.mp4"
+    ffmpeg("-i", candidate, "-c", "copy", "-f", "matroska", disguised)
+    report = verify_actual_export(disguised, status(recipe), sources)
+    assert report["status"] != "checked", "A format the iPhone cannot play must never be ready"
