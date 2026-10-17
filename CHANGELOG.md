@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.11.0] - 2026-10-17
+
+### Changed
+- fix(ci): make daily request-following reports downloadable (#1645) <!-- release-pr: 1645 -->
+
 ## [0.80.10.0] - 2026-10-17
 
 ### Changed
