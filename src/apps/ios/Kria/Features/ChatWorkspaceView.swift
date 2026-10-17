@@ -1111,7 +1111,8 @@ private struct CreationWorkspaceView: View {
             isChoosingFormat: isChoosingFormat,
             hasFormat: selectedFormat != nil,
             preparationIsActive: fullThread?.preparationIsActive == true,
-            preparationFailed: fullThread?.preparationFailed == true
+            preparationFailed: fullThread?.preparationFailed == true,
+            approvedRenderRetryPending: approval?.retryOfExecutionID != nil
         )
     }
 
@@ -1447,8 +1448,8 @@ private struct CreationWorkspaceView: View {
                 DirectionStage(
                     approval: approval,
                     format: selectedFormat,
-                    speechCleanup: fullThread?.speechCleanup,
-                    renderShape: renderShapePicker,
+                    speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
+                    renderShape: approval.retryOfExecutionID == nil ? renderShapePicker : nil,
                     isBusy: isActing || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     decide: decide,
@@ -1483,7 +1484,8 @@ private struct CreationWorkspaceView: View {
             if feedHostsDeviceBuild {
                 planFeedView
             } else if let deviceRenderKey {
-                DeviceRenderPanel(key: deviceRenderKey, sessions: model.deviceRenders) {
+                DeviceRenderPanel(key: deviceRenderKey, sessions: model.deviceRenders,
+                    retryApproved: fullThread?.failedRenderExecutionID == nil ? nil : { await retryApprovedRender() }) {
                     await refreshCapabilities()
                     await refreshDeviceRender(retry: true)
                 }
@@ -1566,7 +1568,11 @@ private struct CreationWorkspaceView: View {
                         bodyText: fullThread?.lastAssistantErrorContent
                             ?? fullThread?.job?.failureMessage
                             ?? "Your direction and footage are safe. Refresh the project or tell me what you want to change.",
-                        retry: { Task { await send(message: "Try generating this edit again") } },
+                        retryLabel: fullThread?.failedRenderExecutionID == nil ? "Refresh project" : "Retry approved edit",
+                        retry: { Task {
+                            if fullThread?.failedRenderExecutionID != nil { await retryApprovedRender() }
+                            else { await refreshNow() }
+                        } },
                         nonRetryableReasonCode: fullThread?.lastAssistantErrorCode
                     ).id("failed")
                 }
@@ -1938,6 +1944,26 @@ private struct CreationWorkspaceView: View {
         await model.deviceRenders.reconcile(deviceRenderKey, capabilities: phoneRendering, retry: retry)
     }
 
+    private func retryApprovedRender() async {
+        guard !isActing, !isSending, let executionID = fullThread?.failedRenderExecutionID else { return }
+        isActing = true
+        defer { isActing = false }
+        do {
+            let accepted = try await model.api.retryApprovedRender(threadID: project.id,
+                executionID: executionID, expectedRevision: threadRevision)
+            threadRevision = max(threadRevision, accepted.threadRevision)
+            await refreshNow()
+            if let approvalID = UUID(uuidString: accepted.approvalID) {
+                let snapshot = try await model.api.approval(threadID: project.id, approvalID: approvalID)
+                if snapshot.status == "pending" { approval = snapshot }
+            }
+        } catch {
+            await refreshNow()
+            failure = ChatFailure((error as? APIError)?.conflictDetail
+                ?? "Kria couldn’t prepare this exact retry. Your edit is still saved.", error: error)
+        }
+    }
+
     private func refreshNow() async {
         defer {
             if !Task.isCancelled { initialConversationLoaded = true }
@@ -2159,7 +2185,7 @@ private struct CreationWorkspaceView: View {
         isActing = true
         let offerBefore = SpeechCleanupOffer.resolve(fullThread?.speechCleanup)
         // Only an approval carries the video shape, and only when the server offered one.
-        let shape = decision == "approve"
+        let shape = decision == "approve" && approval.retryOfExecutionID == nil
             ? renderShapePicker.map { $0.offer.wire(for: $0.choice.wrappedValue) }
             : nil
         Task {
@@ -2232,8 +2258,12 @@ enum WorkspaceStage {
         isChoosingFormat: Bool,
         hasFormat: Bool,
         preparationIsActive: Bool = false,
-        preparationFailed: Bool = false
+        preparationFailed: Bool = false,
+        approvedRenderRetryPending: Bool = false
     ) -> WorkspaceStage {
+        // A failed native job retains awaiting_device until consent re-pins it.
+        // Its fresh retry approval must be visible before any new export starts.
+        if approvedRenderRetryPending && awaitsNewPlanConfirmation { return .direction }
         if preparationIsActive { return .rendering }
         if preparationFailed { return .failed }
         switch status {

@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct DeviceRenderPanel: View {
     let key: DeviceRenderKey
     let sessions: DeviceRenderSessions
+    var retryApproved: (() async -> Void)? = nil
     let retry: () async -> Void
     @State private var showsSourceRecovery = false
     /// KRI-211: the attention state is caused by originals that are not on this
@@ -19,8 +20,11 @@ struct DeviceRenderPanel: View {
             retry: { Task { await retry() } },
             stop: { Task { await sessions.cancel(key) } },
             retryNeedsAttention: {
-                let ok = await sessions.retryNeedsAttention(key)
-                if ok { await retry() }
+                if let retryApproved { await retryApproved() }
+                else {
+                    let ok = await sessions.retryNeedsAttention(key)
+                    if ok { await retry() }
+                }
             },
             originalsMissing: originalsMissing
         )

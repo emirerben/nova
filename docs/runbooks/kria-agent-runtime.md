@@ -58,6 +58,31 @@ The terminal state determines the wording and safe action:
 Never retry an ambiguous dispatch by creating a new Job. Reconcile the committed
 Job and deterministic task identity first.
 
+## Retry an approved edit (KRI-674)
+
+For a failed runtime-v2 native export, the iPhone sends
+`POST /creation-threads/{thread_id}/render-retries` with `execution_id` and
+`expected_thread_revision`. It never sends a new creator message. The server
+keeps the same turn, draft, source selection and immutable recipe; it creates a
+new receipt and a fresh 30-minute approval. Approval re-pins that exact recipe
+once under a new native revision. Repeated taps and queue redelivery reuse the
+same attempt. Expired unstarted consent can be renewed after revalidation.
+
+A newer request, changed draft/source/ownership/generation, unsupported recipe,
+missing original, or unknown in-flight outcome prevents another export. Old
+receipts and accepted artifacts stay intact. A legacy failure that never saved
+a complete native recipe explicitly asks for a new version and approval; it
+cannot truthfully replay an execution program that does not exist. Cloud frozen
+execution adapters remain follow-up work in KRI-722/KRI-723.
+
+Verification: `bash scripts/check-api.sh test tests/kria/test_render_retry_postgres.py`.
+Use a dedicated scratch database for hardware QA, separate from the automated
+test database (some integration suites truncate it). The DEBUG-only
+`-ui-testing-retry-api` bootstrap accepts an explicit local API URL and fixture
+user UUID through `KRIA_RETRY_TEST_API_URL` / `KRIA_RETRY_TEST_USER_ID`; use a
+separate app bundle and copied originals. It uses real API/worker/device export,
+with an in-memory fixture token store. Never point that fixture at production.
+
 Use the admin helper so the token remains out of shell history:
 
 ```bash

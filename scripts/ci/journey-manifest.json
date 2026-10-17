@@ -50,7 +50,7 @@
     {
       "id": "kri-492-length-ownership",
       "needs_native": true,
-      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py",
+      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py tests/kria/test_render_retry_postgres.py",
       "paths": [
         "src/apps/api/app/services/length_policy.py",
         "src/apps/api/app/services/length_policy_state.py",
@@ -79,7 +79,15 @@
         "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift",
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/tests/kria/test_runtime_simpler_version_loop.py",
-        "scripts/ios/kri-698-simpler-version.py"
+        "scripts/ios/kri-698-simpler-version.py",
+        "src/apps/api/app/kria/render_retry.py",
+        "src/apps/api/app/routes/kria_runtime.py",
+        "src/apps/api/tests/kria/test_render_retry_postgres.py",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
+        "src/apps/ios/Kria/Features/DeviceRenderPanel.swift",
+        "src/apps/ios/Kria/Features/CreationConfirmationStage.swift",
+        "src/apps/ios/Kria/Features/CanonicalChatComponents.swift",
+        "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift"
       ]
     },
     {

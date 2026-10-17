@@ -166,6 +166,21 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
     let api: any KriaAPIClient
     // A separate session keeps API Bearer credentials out of storage PUT requests.
     var uploadSession: URLSession = URLSession(configuration: .ephemeral)
+    private static func acceptsStorageURL(_ url: URL) -> Bool {
+        if url.scheme == "https" { return true }
+        #if DEBUG
+        // Explicit scratch-API hardware journey only. Release storage stays HTTPS.
+        guard ProcessInfo.processInfo.arguments.contains("-ui-testing-retry-api"),
+              let address = ProcessInfo.processInfo.environment["KRIA_RETRY_TEST_API_URL"],
+              let base = URL(string: address), let host = base.host,
+              host == "localhost" || host == "127.0.0.1" || host.hasPrefix("192.168.") || host.hasPrefix("10."),
+              base.scheme == "http", url.scheme == "http", url.host == host,
+              url.port == base.port, url.path.hasPrefix("/kri674-storage/") else { return false }
+        return true
+        #else
+        return false
+        #endif
+    }
     func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool {
         do {
             let status = try await api.deviceRender(jobID: identity.jobID, variantID: identity.variantID)
@@ -184,7 +199,7 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         }
         let fingerprint = try await Task.detached { try SHA256Fingerprinter().fingerprint(file: file) }.value
         let reservation = try await api.reserveDeviceExport(DeviceExportUploadBody(identity: identity, attemptID: attemptID, fileSizeBytes: fingerprint.byteCount, sha256: fingerprint.hex, brandTail: brandTail))
-        guard reservation.attemptID == attemptID, reservation.uploadURL.scheme == "https", reservation.expiresAt > Date() else { throw APIError.invalidResponse }
+        guard reservation.attemptID == attemptID, Self.acceptsStorageURL(reservation.uploadURL), reservation.expiresAt > Date() else { throw APIError.invalidResponse }
         var put = URLRequest(url: reservation.uploadURL)
         put.httpMethod = "PUT"
         for (name, value) in reservation.uploadHeaders { put.setValue(value, forHTTPHeaderField: name) }

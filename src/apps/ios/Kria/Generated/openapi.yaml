@@ -259,6 +259,12 @@
             "title": "Expires At",
             "type": "string"
           },
+          "retry_of_execution_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Retry Of Execution Id",
+            "type": "string"
+          },
           "status": {
             "enum": [
               "pending",
@@ -7704,6 +7710,55 @@
         "title": "RenderFingerprint",
         "type": "object"
       },
+      "RenderRetryBody": {
+        "additionalProperties": false,
+        "properties": {
+          "execution_id": {
+            "format": "uuid",
+            "title": "Execution Id",
+            "type": "string"
+          },
+          "expected_thread_revision": {
+            "minimum": 0,
+            "title": "Expected Thread Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "execution_id",
+          "expected_thread_revision"
+        ],
+        "title": "RenderRetryBody",
+        "type": "object"
+      },
+      "RenderRetryOut": {
+        "properties": {
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "replayed": {
+            "default": false,
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "thread_revision": {
+            "title": "Thread Revision",
+            "type": "integer"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "approval_id",
+          "thread_revision"
+        ],
+        "title": "RenderRetryOut",
+        "type": "object"
+      },
       "RenderShapeDefaultOut": {
         "properties": {
           "landscape_fit": {
@@ -12312,6 +12367,78 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PlanSectionUndoOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/creation-threads/{thread_id}/render-retries": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "retryApprovedRender",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenderRetryBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenderRetryOut"
                 }
               }
             },

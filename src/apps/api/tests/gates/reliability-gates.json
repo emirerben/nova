@@ -1342,7 +1342,8 @@
     {
       "id": "kri-698-simpler-approval",
       "tickets": [
-        "KRI-698"
+        "KRI-698",
+        "KRI-674"
       ],
       "status": "open_pr",
       "owner": "KRI-698",
@@ -1351,17 +1352,26 @@
       "paths": [
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/app/kria/brief_binding.py",
-        "src/apps/api/tests/kria/test_runtime_simpler_version_loop.py"
+        "src/apps/api/tests/kria/test_runtime_simpler_version_loop.py",
+        "src/apps/api/app/kria/render_retry.py",
+        "src/apps/api/app/routes/kria_runtime.py",
+        "src/apps/api/tests/kria/test_render_retry_postgres.py",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
+        "src/apps/ios/Kria/Features/DeviceRenderPanel.swift",
+        "src/apps/ios/Kria/Features/CreationConfirmationStage.swift",
+        "src/apps/ios/Kria/Features/CanonicalChatComponents.swift",
+        "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift"
       ],
       "regression_tests": [
         "tests/kria/test_runtime_simpler_version_loop.py",
         "tests/kria/test_brief_binding.py",
-        "tests/kria/test_request_binding_journey.py"
+        "tests/kria/test_request_binding_journey.py",
+        "tests/kria/test_render_retry_postgres.py"
       ],
       "harness": "mocked_internal",
       "kill_switch": null,
       "evidence": {
-        "offline_replay": "Red before fix: durable brief stayed v1, declined/unrelated/stale replies reached approval. Real Postgres, approval, dispatch claim, native compiler, immutable pin and publication authority guard; planner output replayed.",
+        "offline_replay": "Red before fix: durable brief stayed v1, declined/unrelated/stale replies reached approval. Real Postgres, approval, dispatch claim, native compiler, immutable pin and publication authority guard; planner output replayed. KRI-674: typed HTTP/real Postgres consent and dispatch journeys; model entrypoint is a failing sentinel, not replayed planner output.",
         "live_model": "Not run; no paid calls.",
         "native_output": "scripts/ios/kri-698-simpler-version.py prepares the exact pinned recipe for AudioParityFixtureTests and verifies actual MP4 title, length, clip order and audio; synthetic sources, macOS AVFoundation. Physical iPhone/original N2 footage pending.",
         "production": "Not deployed."
@@ -1373,11 +1383,13 @@
         "later request restores text",
         "accepted omissions survive a subsequent unresolved choice",
         "unwaived text and missing retained title still fail verification",
-        "pin redelivery is idempotent"
+        "pin redelivery is idempotent",
+        "KRI-674: frozen native recipe retry keeps turn/draft/recipe; fresh expiring consent; concurrent taps; lost queue acknowledgement; newer request refusal; no-program legacy failure is explicit."
       ],
       "neighbours_gap": [
         "Planner output is replayed at _plan_with_live_agent; fresh model behavior is not measured.",
-        "Original N2 phone source files are unavailable on this host; physical-device replay remains pending."
+        "Original N2 phone source files are unavailable on this host; physical-device replay remains pending.",
+        "KRI-674: cloud prepared-execution adapters and legacy pre-plan failures require KRI-722/KRI-723."
       ],
       "follow_ups": [
         "KRI-721",

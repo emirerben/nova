@@ -17,6 +17,8 @@ from app.kria.api_schemas import (
     DraftUndoBody,
     DraftWriteBody,
     KriaProblemOut,
+    RenderRetryBody,
+    RenderRetryOut,
     SubmitTurnBody,
     ThreadDeltaOut,
     TurnAccepted,
@@ -122,6 +124,8 @@ class SlidePostMutationResponse(BaseModel):
 
 
 API_MODELS = (
+    RenderRetryBody,
+    RenderRetryOut,
     SubmitTurnBody,
     TurnAccepted,
     TurnCancelBody,
@@ -577,6 +581,15 @@ def mobile_openapi_json() -> str:
                     "security": bearer,
                     "requestBody": _json_request(SubmitTurnBody),
                     "responses": _json_responses(TurnAccepted, status_code="202"),
+                },
+            },
+            "/creation-threads/{thread_id}/render-retries": {
+                "parameters": [thread_id],
+                "post": {
+                    "operationId": "retryApprovedRender",
+                    "security": bearer,
+                    "requestBody": _json_request(RenderRetryBody),
+                    "responses": _json_responses(RenderRetryOut, status_code="202"),
                 },
             },
             "/creation-threads/{thread_id}/messages": {

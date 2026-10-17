@@ -222,6 +222,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     /// KRI-443: Stop on the live plan feed. A 409 `turn_not_cancellable` means the render can no longer be stopped.
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
+    func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted
     /// `speechCleanupAware` must always be sent `true` from this client build --
     /// it tells the server this decision understands the `speech_cleanup_*` 409
     /// codes and the `speech_cleanup` thread projection, so gating the decision
@@ -268,6 +269,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
 }
 
 extension KriaAPIClient {
+    func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted { throw APIError.unsupported }
     func textPreferenceMemory() async throws -> TextPreferenceMemory { throw APIError.unsupported }
     func mutateTextPreferenceMemory(path: String, method: String, body: [String: JSONValue]) async throws -> TextPreferenceOperation { throw APIError.unsupported }
     /// Decisions that carry no video-shape pick (denials, and threads that offered none).
@@ -868,8 +870,18 @@ struct ApprovalSnapshot: Codable, Sendable, Identifiable {
     let costSummary: String?
     let expiresAt: Date
     let approvalFingerprint: String
+    var retryOfExecutionID: String? = nil
     var id: String { approvalID }
-    enum CodingKeys: String, CodingKey { case status; case approvalID = "approval_id"; case turnID = "turn_id"; case draftID = "draft_id"; case draftRevision = "draft_revision"; case consequenceSummary = "consequence_summary"; case costSummary = "cost_summary"; case expiresAt = "expires_at"; case approvalFingerprint = "approval_fingerprint" }
+    enum CodingKeys: String, CodingKey { case status; case approvalID = "approval_id"; case turnID = "turn_id"; case draftID = "draft_id"; case draftRevision = "draft_revision"; case consequenceSummary = "consequence_summary"; case costSummary = "cost_summary"; case expiresAt = "expires_at"; case approvalFingerprint = "approval_fingerprint"; case retryOfExecutionID = "retry_of_execution_id" }
+}
+struct RenderRetryAccepted: Codable, Sendable {
+    let turnID: String
+    let approvalID: String
+    let threadRevision: Int
+    let replayed: Bool
+    enum CodingKeys: String, CodingKey {
+        case turnID = "turn_id", approvalID = "approval_id", threadRevision = "thread_revision", replayed
+    }
 }
 enum JSONValue: Codable, Equatable, Sendable {
     case string(String), number(Double), bool(Bool), object([String: JSONValue]), array([JSONValue]), null
@@ -1322,6 +1334,11 @@ struct KriaAPI: KriaAPIClient {
         try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel-render", method: "POST", bodyData: try JSONEncoder().encode(CancelRenderRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
     }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)", method: "GET", bodyData: nil, decode: ApprovalSnapshot.self) }
+    func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted {
+        try await request(path: "creation-threads/\(threadID.uuidString)/render-retries", method: "POST",
+            bodyData: JSONSerialization.data(withJSONObject: ["execution_id": executionID.uuidString,
+                "expected_thread_revision": expectedRevision]), decode: RenderRetryAccepted.self)
+    }
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit)), decode: ApprovalResponse.self) }
     func playbackURL(jobID: UUID) async throws -> URL { let response = try await request(path: "me/jobs/\(jobID.uuidString)/playback-url", method: "GET", bodyData: nil, decode: PlaybackResponse.self); guard let url = URL(string: response.videoURL) else { throw APIError.invalidResponse }; return url }
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws {

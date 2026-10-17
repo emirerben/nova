@@ -88,6 +88,18 @@ extension CreationThread {
     var lastAssistantErrorCode: String? {
         events.last(where: { Self.assistantFailureEventTypes.contains($0.eventType) })?.payload?["code"]?.stringValue
     }
+    /// Recovery targets the failed receipt itself; it must never become a chat request.
+    var failedRenderExecutionID: UUID? {
+        guard runtimeVersion == 2,
+              let event = events.last(where: { Self.assistantFailureEventTypes.contains($0.eventType) }),
+              ["assistant_render_failed", "agent_assistant_render_failed"].contains(event.eventType),
+              event.payload?["recovery"]?.stringValue == "retry",
+              let execution = event.payload?["execution_id"]?.stringValue,
+              let index = events.firstIndex(where: { $0.id == event.id }),
+              !events.suffix(from: events.index(after: index)).contains(where: { $0.role == "user" })
+        else { return nil }
+        return UUID(uuidString: execution)
+    }
     var lastAssistantErrorMessage: String? {
         events.last(where: { Self.assistantFailureEventTypes.contains($0.eventType) })?.payload?["message"]?.stringValue
     }
