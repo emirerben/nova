@@ -37,6 +37,7 @@ from app.services.creator_render_contract import CreatorRenderContractError
 from app.services.device_render import (
     CONTRACT_DECLINE_FIELD,
     apply_retry_variant_reset,
+    approved_runtime_generation,
     device_record,
     device_status,
     retry_device_render,
@@ -205,7 +206,8 @@ def _validate(rows, *, creator_id, source, source_approval, retry=None, accepted
         None,
     )
     if (
-        record.get("base_generation") != source.target_generation_id
+        record.get("base_generation")
+        != approved_runtime_generation(job, source.target_generation_id)
         or variant_row is None
         or variant_row.get("render_generation_id") != record.get("base_generation")
     ):

@@ -1409,6 +1409,48 @@
       "journey": "kri-492-length-ownership"
     },
     {
+      "id": "kri-674-whole-job-retry-consent",
+      "tickets": [
+        "KRI-674"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-674",
+      "symptom": "An initial whole-job native render has no execution generation target. The phone retry gate treated it as legacy, while typed exact recovery rejected its stored original generation as stale.",
+      "boundary": "dispatch",
+      "journey": "kri-492-length-ownership",
+      "paths": [
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/api/app/services/device_render.py",
+        "src/apps/api/app/kria/render_retry.py",
+        "src/apps/api/tests/kria/test_render_retry_postgres.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_render_retry_postgres.py"
+      ],
+      "harness": "mocked_internal",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Before product changes on b841d07fa, real-Postgres HTTP cases produced 3 failures / 5 passes: whole-job failed/dispatched approval hints were false and typed recovery returned stale. The shared original-generation binding passes the full 25-case retry suite. Planning is a failing sentinel; dispatch is recorded, not a live renderer.",
+        "live_model": "Not needed for this ownership-only change; no paid model diagnostics run.",
+        "native_output": "The preceding live check produced an inspected original-footage export with the same semantic recipe/digest, but no new runtime approval/receipt. This does not qualify the fresh-consent retry path. A new controlled-failure cycle remains pending after this fix.",
+        "production": "Not deployed; fresh production-account retry with explicit approval remains pending."
+      },
+      "neighbours_covered": [
+        "initial whole-job source has null variant/generation targets",
+        "local failure before the runtime observer finishes still requires approval",
+        "variant-scoped runtime retries remain fenced",
+        "later manual editor generations retain direct native retry for both original source scopes",
+        "typed whole-job recovery reuses the turn, approved draft and recipe with fresh consent and no planner"
+      ],
+      "neighbours_gap": [
+        "fresh production-account approval-to-export cycle after deployment"
+      ],
+      "follow_ups": [
+        "KRI-734"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-674-per-clip-camera-audio",
       "tickets": [
         "KRI-674"
