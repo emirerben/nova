@@ -280,6 +280,27 @@ def _normal_text(value: object) -> str:
     return " ".join(str(value or "").split()).casefold()
 
 
+def _authored_timeline_order(variant: dict, prep: dict) -> tuple[str, ...]:
+    """The cut's source ids, in play order, for an AUTHORED timeline Save.
+
+    Deleting a clip from a guided story converts it to an authored timeline
+    (`stage_initial_authored_baseline`), which has no guided revision. Its
+    resolved slots are the editor's own: `resolve_authored_phone_slots` stamps
+    each with the `media_id` of the pinned source catalog entry it indexes, so
+    this is the server's identification of every slot's source, never a guess
+    from a client clip index. Empty (so the caller still refuses an
+    order-required contract) unless EVERY active slot carries one.
+    """
+    if variant.get("editor_timeline_mode") != "authored":
+        return ()
+    rows = prep.get("timeline_override")
+    if not isinstance(rows, list):
+        return ()
+    active = [row for row in rows if isinstance(row, dict) and not row.get("removed")]
+    media_ids = tuple(str(row["media_id"]) for row in active if row.get("media_id"))
+    return media_ids if active and len(media_ids) == len(active) else ()
+
+
 def _rebind_editor_render_contract(
     staged: _StagedJob,
     variant_id: str,
@@ -367,6 +388,10 @@ def _rebind_editor_render_contract(
         order = tuple(
             str(row["media_id"]) for row in slots if isinstance(row, dict) and row.get("media_id")
         )
+        if not order and contract.order_required:
+            # Authored cut (a deleted/trimmed/reordered guided story): the
+            # resolved slots, not a client index, name each source.
+            order = _authored_timeline_order(variant, prep)
         if order:
             changes.update(order_ids=order, order_required=True, order_basis="editor")
         elif contract.order_required:
