@@ -20,8 +20,9 @@ enum ChatUITestTransport {
 
 /// UI fixtures must never read or rotate a developer's Keychain session.
 struct ChatUITestTokenStore: TokenStore {
-    func read() throws -> MobileSession? { nil }
-    func write(_ session: MobileSession) throws {}
+    // `KRIA_FIXTURE_EXPIRED_TOKEN=1` (perf): an in-memory expired session, so the 401 -> refresh path runs.
+    func read() throws -> MobileSession? { PerfFixture.expiredToken ? PerfTokenState.shared.current : nil }
+    func write(_ session: MobileSession) throws { if PerfFixture.expiredToken { PerfTokenState.shared.store(session) } }
     func delete() throws {}
 }
 
@@ -30,6 +31,10 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     private var delayedResponse: DispatchWorkItem?
     override func startLoading() {
+        if PerfFixture.isFullProjectionRead(request) {
+            Perf.mark("fixture.full.arrived")
+            PerfCounters.shared.setOnce("fixture fullDelayMS", Int(PerfFixture.delay(for: request) * 1000))
+        }
         // `KRIA_SLIDE_POST_CAPS=slow`: capabilities answer after 6s (the slide editor must not wait for them).
         let slowCapabilities = request.url?.path.hasSuffix("/capabilities") == true
             && ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "slow"
@@ -42,9 +47,26 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
             let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
             delayedResponse = work
             DispatchQueue.global().asyncAfter(deadline: .now() + (slowRead ? 10 : slowCapabilities ? 6 : 5), execute: work)
+        } else if PerfFixture.delay(for: request) > 0 {
+            // Concurrent queue: parallel requests overlap the way they do on a real network.
+            let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
+            delayedResponse = work
+            DispatchQueue.global().asyncAfter(deadline: .now() + PerfFixture.delay(for: request), execute: work)
         } else { finishLoading() }
     }
     private func finishLoading() {
+        if PerfFixture.isFullProjectionRead(request) { Perf.mark("fixture.full.sent") }
+        if let perf = PerfFixture.respond(request) {
+            guard let url = request.url,
+                  let response = HTTPURLResponse(url: url, statusCode: perf.status, httpVersion: nil, headerFields: perf.headers.merging(["Content-Type": "application/json"]) { first, _ in first }) else {
+                client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+                return
+            }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: perf.data)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
         let fixture: (Int, Data)? = ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] != nil
             ? CreationChatFixture.shared.respond(request)
             : (503, Data())
@@ -236,8 +258,8 @@ final class CreationChatFixture: @unchecked Sendable {
             }
             if request.httpMethod == "POST" {
                 let id = UUID().uuidString
-                let fixtureEvents: [[String: Any]] = ProcessInfo.processInfo.environment["KRIA_CHAT_LONG_HISTORY"] == "1"
-                    ? (0..<24).map { index in
+                let fixtureEvents: [[String: Any]] = PerfFixture.longHistoryCount != nil
+                    ? (0..<(PerfFixture.longHistoryCount ?? 24)).map { index in
                         ["id": UUID().uuidString, "sequence": index, "revision": index + 1,
                          "role": index.isMultiple(of: 2) ? "user" : "assistant",
                          "event_type": index.isMultiple(of: 2) ? "user_message" : "assistant_response",
@@ -270,6 +292,10 @@ final class CreationChatFixture: @unchecked Sendable {
             return slideResponse(request, itemID: parts[1], parts: parts, body: body)
         }
         if parts.first == "plan-items" { return response(["assets": [], "max_assets": 10]) }
+        // `KRIA_CHAT_SEED_THREADS` (perf): an account that already has chats, each built the first time it is asked for.
+        if parts.count >= 2, threads[parts[1]] == nil, let index = PerfFixture.seededIndex(of: parts[1]) {
+            threads[parts[1]] = PerfFixture.seededThread(index, runtime: runtime)
+        }
         guard parts.count >= 2, var thread = threads[parts[1]] else { return response(["detail": "Fixture route missing"], status: 404) }
         let id = parts[1]
         if parts.count == 3, parts[2] == "brief" { return response(Self.fixtureBrief(threadID: id)) }

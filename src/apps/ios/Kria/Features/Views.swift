@@ -123,10 +123,15 @@ struct ProjectPosterView: View {
             }
         }
         .clipped()
+        .onAppear { Perf.begin("poster.load", id: project.id.uuidString) }
     }
 
     private func report(_ phase: AsyncImagePhase) {
-        if phase.image != nil { onLoad?(true) }
+        if phase.image != nil {
+            Perf.end("poster.load", id: project.id.uuidString, "tier=asyncimage")
+            Perf.tick("gallery.open", needed: 6)
+            onLoad?(true)
+        }
         else if phase.error != nil { onLoad?(false) }
     }
 }

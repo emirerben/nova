@@ -305,6 +305,11 @@ def project_lane_times(
     fps = GUIDED_FPS
     old_raw = copy.deepcopy(baseline_lanes if baseline_lanes is not None else raw)
     project = make_time_projector(old_segments, new_segments)
+    segment_end = {
+        str(segment.get("segment_id")): float(segment.get("output_end_s") or 0.0)
+        for segment in new_segments
+    }
+    new_total = max(segment_end.values(), default=0.0)
 
     tombstones = list(raw.get("tombstones") or [])
     lane_time_fields = {
@@ -352,8 +357,18 @@ def project_lane_times(
             if str(value.get("id") or "") not in current_lane_ids:
                 projected_values.append(value)
                 continue
-            start = project(float(value[start_field]))
-            end = project(float(value.get(end_field, value[start_field])))
+            start_value = float(value[start_field])
+            end_value = float(value.get(end_field, start_value))
+            # The projector is right-biased on exact boundaries, so an interval that
+            # ENDS on a cut would land in the next clip (and be tombstoned when that
+            # clip is gone). Anchor the end one frame early and add the frame back,
+            # exactly like ``rebase_guided_text``. Deliberate difference: this path
+            # (lanes a client did NOT author) still tombstones an interval whose
+            # start or end sits in a deleted clip, while ``rebase_guided_text``
+            # (authored text) keeps whatever part survives.
+            ranged = end_value - start_value > 1e-6
+            start = project(start_value)
+            end = project(max(start_value, end_value - 1.0 / fps)) if ranged else start
             if start is None or end is None:
                 tombstones.append(
                     {
@@ -367,7 +382,19 @@ def project_lane_times(
                 continue
             updated = dict(value)
             updated[start_field] = start[0]
-            updated[end_field] = max(start[0], end[0])
+            if ranged:
+                end_cap = min(new_total, segment_end.get(end[1], new_total))
+                new_end = max(start[0], min(end_cap, round(end[0] + 1.0 / fps, 6)))
+                if new_end - start[0] <= 0.5 / fps:
+                    # An interval spanning clips that reorder projects inverted/tiny: fall
+                    # back to the window of the clip it starts in (never a zero-length
+                    # record, which the commit rejects), like ``rebase_guided_text``.
+                    new_end = min(new_total, segment_end.get(start[1], new_total))
+                    if new_end - start[0] <= 0.5 / fps:
+                        new_end = min(new_total, start[0] + 0.2)
+                updated[end_field] = new_end
+            else:
+                updated[end_field] = start[0]
             updated["segment_id"] = start[1]
             projected_values.append(updated)
         raw[lane] = projected_values

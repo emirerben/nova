@@ -10772,6 +10772,20 @@ def _prepare_editor_commit(
     resolved_slots: list[dict] | None = None
     if payload.timeline_slots is not None and not guided_v2:
         resolved_slots = resolve_timeline_slots_for_edit(job, variant, payload.timeline_slots)
+        if validated_elements is not None and variant.get("editor_timeline_mode") == "authored":
+            # KRI-736: a text window past the new total can never compile (the recipe
+            # validator is zero-tolerance). Fit it here so a Save from ANY app build
+            # persists a lane that fits the cut it ships with.
+            from app.services.authored_text_fit import (  # noqa: PLC0415
+                authored_text_fit_inputs,
+                fit_text_to_timeline,
+            )
+
+            validated_elements = fit_text_to_timeline(
+                validated_elements,
+                old_rows=authored_text_fit_inputs(job, variant),
+                new_rows=resolved_slots,
+            )
 
     if payload.remove_music:
         # Removal is its own section: combining it with a swap or a song-window

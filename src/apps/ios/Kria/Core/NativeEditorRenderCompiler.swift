@@ -36,10 +36,6 @@ enum NativeEditorRenderError: Error, Equatable {
     static let deviceCardMaxYFraction = 0.62
     /// The engine's text-layer cap (`EditRecipe.validate`). A recipe over it is refused whole.
     static let maxTextLayers = KriaMediaEngine.EditRecipe.maxTextLayers
-    /// Headroom kept under the cap when deciding whether captions can expand to one layer per word. Titles and
-    /// pinned text are compiled before the caption block and counted exactly; this covers text added by the
-    /// engine/branding and edits staged between recompiles, so a long talk never lands on the cap itself.
-    static let textLayerReserve = 24
 
     init(fontDirectory: URL) throws {
         handwritingLayout = try AuthoredHandwritingLayout(url: fontDirectory.appendingPathComponent("handwriting-strokes.json"))
@@ -593,13 +589,6 @@ enum NativeEditorRenderError: Error, Equatable {
                 shadows: meta["shadow_enabled"] == .bool(false) ? [] : [TextBlurLayer(color: try ink(appearance["shadow_color"], fallback: "#000000", alpha: appearance["shadow_opacity"]?.numberValue ?? 0.5), sigma: 0, dx: 1, dy: 1)],
                 bottomAligned: appearance["position_y_frac"] == nil, fontVariations: fontInstances[family] ?? [:])
             var previousWordEnd = 0.0
-            // `Display: Word` with an explicit highlight setting draws ONE LAYER PER SPOKEN WORD. The engine
-            // refuses a recipe over `maxTextLayers`, which a long Talking cut (hundreds of words) passes, and a
-            // refused recipe means no preview at all. Titles and pinned text are already in `text`, so past the
-            // budget captions fall back to the single karaoke-line layer per cue (what the server builds for
-            // word style): the whole line shows, the spoken word highlighted, instead of one word at a time.
-            let projectedWordLayers = document.captionCues.reduce(0) { $0 + $1.text.split(whereSeparator: \.isWhitespace).count }
-            let expandsPerWord = text.count + projectedWordLayers + Self.textLayerReserve <= Self.maxTextLayers
             // KRI-202: two caption_cues rows can reach the client already
             // overlapping in time (the cloud's own de-overlap guard,
             // `phone_captions._prepare_cues`, runs on a compiled copy the
@@ -651,17 +640,21 @@ enum NativeEditorRenderError: Error, Equatable {
                         starts.append(start)
                     }
                     guard let first = starts.first, first < total else { continue }
-                    if wordStyle, expandsPerWord, let highlighted = explicitHighlight {
-                        for index in tokens.indices {
-                            let start = max(item.start, starts[index])
-                            let end = min(total, cueEnd, index + 1 < starts.count ? starts[index + 1] : previousWordEnd)
-                            guard end > start else { continue }
-                            var style = captionStyle
-                            if highlighted { style.color = try ink(meta["highlight_color"], fallback: "#C5F82A") }
-                            text.append(try AuthoredTextLayout.compile(id: "caption-" + cue.id + "-word-" + String(index),
-                                text: tokens[index], start: start, end: end, style: style, fontURL: font, canvas: canvas))
+                    // `Display: Word` with an explicit highlight setting shows ONE WORD AT A TIME. It is one layer per
+                    // cue (`KaraokeContent.singleWord`), not one per word, so a long talk stays far under the engine's
+                    // text-layer cap and the preview builds quickly. A word too long to stay on one line falls back
+                    // to the cue's full-line karaoke layer.
+                    if wordStyle, let highlighted = explicitHighlight {
+                        let layerEnd = min(total, min(cueEnd, previousWordEnd))
+                        if layerEnd > first,
+                           let singles = try AuthoredTextLayout.compileSingleWords(id: "caption-" + cue.id, text: cue.text,
+                               start: first, end: layerEnd, starts: starts.map { $0 - first },
+                               highlight: highlighted ? try ink(meta["highlight_color"], fallback: "#C5F82A") : captionStyle.color,
+                               style: captionStyle, fontURL: font, canvas: canvas) {
+                            text.append(contentsOf: singles)
+                            continue
                         }
-                        continue
+                        if layerEnd <= first { continue }
                     }
                     text.append(try AuthoredTextLayout.compileHighlightedWords(id: "caption-" + cue.id, text: cue.text,
                         start: first, end: min(total, explicitHighlight == nil ? previousWordEnd : min(cueEnd, previousWordEnd)), starts: starts.map { $0 - first },

@@ -187,27 +187,53 @@ public struct TextRevealBounds: Codable, Equatable, Sendable {
     }
 }
 
+/// Word-by-word text on one layer.
+///
+/// Default (`singleWord` absent/false): the runs are the words of ONE wrapped line, all drawn; `starts[i]` is when
+/// word `i` changes colour. `activeOnly` makes only the current word take `highlight` (otherwise the highlight
+/// sweeps cumulatively).
+///
+/// SINGLE-WORD WIRE CONTRACT (`single_word: true`, JSON key `single_word`, decoded as `singleWord`; requires
+/// `active_only: true`; recipe capability `singleWordText`). One layer per caption cue shows ONE WORD AT A TIME:
+///  - `runs[i]` is word `i` (no whitespace) laid out STANDALONE, exactly as a one-word centred caption layer of the
+///    same style would be: `x` / `baseline_y` are absolute canvas pixels in the same space as any other run, so the
+///    word is centred at the caption anchor on its own line (it is NOT a slice of the wrapped line). Every run shares
+///    the layer's `anchor_x` / `anchor_y`; the layer needs no special frame or box.
+///  - `starts[i]` is word `i`'s start, in seconds LOCAL to the layer (0 = `layer.start`), non-decreasing,
+///    `starts.count == runs.count`, 1...100 words. Word `i` is on screen for `[starts[i], starts[i+1])`; the last word
+///    stays until `layer.end`; before `starts[0]` nothing is drawn. Words never overlap; there are no gaps.
+///  - Colour: every word is painted in `highlight`; `runs[i].fill` is ignored. For "highlight spoken word" off the
+///    server sends the plain caption colour as `highlight`.
+///  - Stroke, stroke width, blur/shadow layers, glyphs and font variations come from each run, so a word carries its
+///    own stroke and shadow; hidden words draw nothing, shadow included.
+///  - `effect` is `karaoke-line`: no entrance animation (today's per-word layers have none either), alpha 1, scale 1.
+///    Case transforms and emphasis are applied by the author before layout (the runs are drawn as given).
 public struct KaraokeContent: Codable, Equatable, Sendable {
     public let starts: [Double]
     public let highlight: TextInk
     public let activeOnly: Bool?
-    public init(starts: [Double], highlight: TextInk, activeOnly: Bool? = nil) {
-        self.starts = starts; self.highlight = highlight; self.activeOnly = activeOnly
+    /// See the contract above. nil/false = today's full-line behaviour.
+    public let singleWord: Bool?
+    public init(starts: [Double], highlight: TextInk, activeOnly: Bool? = nil, singleWord: Bool? = nil) {
+        self.starts = starts; self.highlight = highlight; self.activeOnly = activeOnly; self.singleWord = singleWord
     }
-    private enum CodingKeys: String, CodingKey { case starts, highlight, activeOnly }
+    private enum CodingKeys: String, CodingKey { case starts, highlight, activeOnly, singleWord }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["starts", "highlight", "activeOnly"])
+        try rejectUnknownAssetFields(decoder, allowed: ["starts", "highlight", "activeOnly", "singleWord"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         starts = try c.decode([Double].self, forKey: .starts)
         highlight = try c.decode(TextInk.self, forKey: .highlight)
         activeOnly = try c.decodeIfPresent(Bool.self, forKey: .activeOnly)
+        singleWord = try c.decodeIfPresent(Bool.self, forKey: .singleWord)
     }
     func validate(runs: [PositionedTextRun]) throws {
         try highlight.validate()
+        if singleWord == true && activeOnly != true { throw RecipeError.invalidTimeline }
         if activeOnly == true && starts != starts.sorted() { throw RecipeError.invalidTimeline }
         guard (1...100).contains(starts.count), starts.count == runs.count,
               starts.allSatisfy({ $0.isFinite && (0...1800).contains($0) }),
               runs.allSatisfy({ (!$0.shaped || activeOnly == true) && $0.gradient == nil }) else { throw RecipeError.invalidTimeline }
+        if singleWord == true { guard runs.allSatisfy({ !$0.text.contains(where: \.isWhitespace) && !$0.text.isEmpty }) else { throw RecipeError.invalidTimeline } }
     }
 }
 

@@ -387,6 +387,28 @@ def _overdue(approval_id: uuid.UUID, *, ago: timedelta = timedelta(minutes=1)) -
         db.commit()
 
 
+def _runtime_clock_past_expiry(monkeypatch: pytest.MonkeyPatch, approval_id: uuid.UUID) -> None:
+    """Expire the approval for the runtime's lazy checks only, never in the database.
+
+    xdist workers share one database, and any other worker's `reconcile_kria_turns` sweep
+    expires every pending approval already past `expires_at` by the database clock. A row
+    made overdue with `_overdue` can be swept between this test's revision read and its
+    decision (`thread_revision_stale`). Moving only `app.kria.runtime`'s clock keeps the
+    row out of every sweep while `decide_approval` / `_expire_blocking_approval` still see
+    it as expired.
+    """
+    with sync_session() as db:
+        expires_at = db.get(CreatorAgentApproval, approval_id).expires_at
+    ahead = expires_at - datetime.now(UTC) + timedelta(minutes=1)
+
+    class _PastExpiry(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001, ANN206
+            return datetime.now(tz) + ahead
+
+    monkeypatch.setattr("app.kria.runtime.datetime", _PastExpiry)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", _LANGUAGES)
 async def test_a_stale_approval_tells_the_chat_in_its_language_but_the_409_stays_english(
@@ -423,7 +445,7 @@ async def test_approving_an_expired_approval_closes_it_in_the_chat_language(
     monkeypatch: pytest.MonkeyPatch, language: str | None
 ) -> None:
     ctx = await _draft_with_approval(monkeypatch, language)
-    _overdue(ctx["approval_id"])
+    _runtime_clock_past_expiry(monkeypatch, ctx["approval_id"])
 
     with pytest.raises(RuntimeFailure) as failure:
         await _approve(ctx)
@@ -444,7 +466,7 @@ async def test_the_lazy_expiry_before_a_new_message_uses_the_chat_language(
     monkeypatch: pytest.MonkeyPatch, language: str | None
 ) -> None:
     ctx = await _draft_with_approval(monkeypatch, language)
-    _overdue(ctx["approval_id"])
+    _runtime_clock_past_expiry(monkeypatch, ctx["approval_id"])
 
     async with AsyncSessionLocal() as db:
         revision = await _expire_blocking_approval(

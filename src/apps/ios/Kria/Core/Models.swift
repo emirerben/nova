@@ -190,6 +190,29 @@ struct RenderReceipt: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+/// How a page of the chat list folds into the list already on screen (the cached one, plus earlier pages).
+///
+/// A page is authoritative for the stretch of time it covers: a chat in that stretch the server did not return was
+/// deleted or archived, so it goes. Chats older than the page are kept (they were cached, or come from a page not
+/// loaded yet); only the last page, which has nothing after it, may drop those too.
+enum ProjectListMerge {
+    static func apply(
+        existing: [ProjectSummary], page: [ProjectSummary], isFirstPage: Bool, hasMore: Bool
+    ) -> [ProjectSummary] {
+        let returned = Set(page.map(\.id))
+        let oldest = page.map(\.updatedAt).min()
+        let newest = page.map(\.updatedAt).max()
+        let kept = existing.filter { project in
+            guard !returned.contains(project.id) else { return false } // replaced by the page's copy below
+            guard let oldest, let newest else { return hasMore } // an empty page covers nothing: only the end drops rows
+            if project.updatedAt < oldest { return hasMore } // older than the page
+            if project.updatedAt > newest { return !isFirstPage } // newer than the page: an earlier page owns it
+            return false // inside the page's span but not returned: gone
+        }
+        return (page + kept).sorted { $0.updatedAt > $1.updatedAt }
+    }
+}
+
 @MainActor struct CacheRepository {
     let context: ModelContext
     init(context: ModelContext) { self.context = context }
@@ -218,6 +241,11 @@ struct RenderReceipt: Codable, Identifiable, Hashable, Sendable {
         }
         guard cached.serverRevision == expectedServerRevision else { throw CacheConflictError.staleProject(expected: expectedServerRevision, actual: cached.serverRevision) }
         cached.title = project.title; cached.statusRaw = project.status.rawValue; cached.updatedAt = project.updatedAt; cached.posterURLString = project.posterURL?.absoluteString; cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID; cached.outputVariantID = project.outputVariantID; cached.activePlanItemID = project.activePlanItemID; cached.editFormat = project.editFormat; cached.slideCount = project.slideCount
+        try context.save()
+    }
+    /// Drops cached chats the server no longer lists (deleted or archived elsewhere).
+    func removeProjects(_ ids: [UUID]) throws {
+        for id in ids { try context.delete(model: CachedProject.self, where: #Predicate { $0.id == id }) }
         try context.save()
     }
     func removeProject(_ id: UUID) throws {

@@ -267,6 +267,9 @@ def test_a_retry_that_cannot_be_re_pinned_records_why_and_keeps_the_state(fixtur
         )
 
     monkeypatch.setattr(svc, "_verify_contract_pin", refuse_the_repin)
+    # This legacy job has no runtime execution; the upload query's earlier
+    # stubbed result does not represent a CreatorAgentExecution.
+    fixture.db.execute.return_value = scalar(None)
     response = fixture.client.post(
         f"/me/jobs/{job.id}/device-render/retry",
         json={"identity": before_request.identity.model_dump(mode="json")},

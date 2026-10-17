@@ -36,9 +36,12 @@ from app.kria.brief_binding import BriefBindingRequestTooLongError
 from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
     build_receipts,
+    clip_speed_notice,
+    defers_caption_words_to_phone_render,
     describe_text_look,
     is_judged,
     judged_at_render,
+    keeps_model_summary,
     needs_creator_choice,
     plan_facts_from_editor_payload,
     plan_facts_from_phone_variant,
@@ -57,6 +60,7 @@ from app.kria.editor_receipts import (
 from app.kria.language import is_paraphrase_only
 from app.kria.planner import (
     PlannedKriaTurn,
+    continuation_superseded_reply,
     extract_deferred_brief,
     localized_editor_state_reply,
     plan_live_turn,
@@ -101,10 +105,13 @@ from app.services.choice_questions import (
     KEEP_OPEN_REASON,
     MAX_ASKS_PER_QUESTION,
     ChoiceCapability,
+    ConflictCandidate,
+    ConflictOption,
     answered_brief,
     build_choice_question,
     choice_question_text,
     count_asks,
+    match_open_choice,
     open_conflicts,
     tag_event,
 )
@@ -140,6 +147,12 @@ _LEASE_HEARTBEAT_SECONDS = 5
 # for a Main Creator call, and the reconciler would republish it forever.
 _MAX_ABANDONED_CLAIMS = 3
 _DRAFT_BODY_RETENTION = timedelta(days=30)
+# KRI-709: a continued turn is re-published after this delay (its cached vision answers
+# and clip analysis are already saved, so there is nothing to wait for but the worker).
+_CONTINUE_COUNTDOWN_S = 5
+# The continued turn's `lease_expires_at` is `countdown + slack` ahead, so the 60 s
+# reconciler sweep neither republishes it early nor, if the publish was lost, misses it.
+_CONTINUE_LEASE_SLACK_S = 30
 
 
 @dataclass(frozen=True)
@@ -194,7 +207,7 @@ class _ApprovalDispatchClaim:
     target_job_id: uuid.UUID | None
     target_variant_id: str | None
     target_generation_id: str | None
-    creator_request: str
+    creator_request: str = ""
     brief_binding: dict[str, Any] | None = None
     preflight_analysis_id: uuid.UUID | None = None
     speech_cleanup_analysis_id: uuid.UUID | None = None
@@ -337,6 +350,51 @@ def _complete_response_turn(
         committed=True,
         successor_turn_id=_promote_queued_successor_sync(turn.thread_id),
     )
+
+
+def _continue_turn(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) -> str:
+    """KRI-709: release a turn whose planner stopped on a time budget so it runs again.
+
+    Returns ``"continued"`` (turn is ``pending`` again, caller publishes it),
+    ``"exhausted"`` (this was already run ``kria_turn_auto_continue_max_runs``, or the
+    switch is off: answer with the old reply), ``"successor"`` (the creator already sent
+    a newer message: answer and let it run) or ``"lost"`` (this run no longer owns the
+    turn, e.g. it was cancelled: write nothing).
+
+    Runs are counted by `lease_epoch` (+1 per claim), not by turn age: a message that sat
+    queued behind another turn is old before it ever plans, and every run can pay for a
+    Main Creator call, so the run count is also the spend bound.
+
+    Same lock discipline as `_complete_response_turn`: the turn row under FOR UPDATE and
+    the lease re-checked, so a cancel during planning stays cancelled. No event is
+    written and no brief version persisted: the next run does both.
+    """
+    if lease_epoch >= int(settings.kria_turn_auto_continue_max_runs):
+        return "exhausted"
+    with sync_session() as db:
+        turn = db.execute(
+            select(CreatorAgentTurn).where(CreatorAgentTurn.id == turn_id).with_for_update()
+        ).scalar_one_or_none()
+        database_now = db.execute(select(func.now())).scalar_one()
+        if turn is None or not _owns_turn_lease(
+            turn,
+            lease_owner=lease_owner,
+            lease_epoch=lease_epoch,
+            database_now=database_now,
+        ):
+            db.rollback()
+            return "lost"
+        if _lock_queued_successor(db, turn.thread_id) is not None:
+            db.rollback()
+            return "successor"
+        turn.status = "pending"
+        turn.lease_owner = None
+        turn.lease_expires_at = database_now + timedelta(
+            seconds=_CONTINUE_COUNTDOWN_S + _CONTINUE_LEASE_SLACK_S
+        )
+        db.commit()
+    log.info("kria_turn_auto_continued", turn_id=str(turn_id), lease_epoch=lease_epoch)
+    return "continued"
 
 
 def _bind_thread_language(stack: ExitStack, thread: CreationThread) -> None:
@@ -630,22 +688,49 @@ def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resoluti
 _SIMPLER_VERSION_REASON = "simplification_requires_choice"
 
 
+def _simpler_version_question() -> dict[str, Any]:
+    """Use the existing exact option matcher; an arbitrary next reply is not consent."""
+    return build_choice_question(
+        ConflictCandidate(
+            conflict_id=_SIMPLER_VERSION_REASON,
+            intro="",
+            reason="",
+            options=(
+                ConflictOption(
+                    "different_approach",
+                    label=say(en="Try a different approach", tr="Farklı bir yol dene"),
+                ),
+                ConflictOption(
+                    "simpler_version",
+                    label=say(en="Make this simpler version", tr="Daha basit sürümü hazırla"),
+                    aliases=(
+                        "simpler version",
+                        "make it more basic",
+                        "skip, decide for me",
+                        "Make this simpler version",
+                        "Daha basit sürümü hazırla",
+                    ),
+                ),
+            ),
+        )
+    )
+
+
 def _simpler_version_already_offered(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
     requirement_ids: list[str],
+    *,
+    brief: CreativeBrief | None,
+    source_event: CreationThreadEvent | None,
 ) -> bool:
-    """True when the creator was already asked "different approach, or simpler version?"
-    about these same unmet requirements, and no draft has been made since.
+    """Explicit acceptance of these exact omissions at the offered brief revision.
 
-    KRI-610: answering that question relied on the planner dropping the requirement.
-    When it didn't, every reply ("simpler version", "you decide", "skip") got the same
-    question back; thread 0ef4fdde asked five times in an hour and never drafted. The
-    creator's reply is their answer, so the caller drafts the simpler version and its
-    receipts report what is missing. Clip questions in between don't reset the ask; a
-    draft does, and a requirement never offered as a choice is still asked about.
+    Legacy offers have receipt versions but no choice card. They use the same exact
+    label/alias matcher, preserving KRI-610's text fallback without treating silence,
+    refusal, another question, or an old stable requirement ID as consent (KRI-698).
     """
-    if not requirement_ids:
+    if not requirement_ids or brief is None or source_event is None:
         return False
     rows = db.execute(
         select(CreationThreadEvent.event_type, CreationThreadEvent.payload)
@@ -663,12 +748,30 @@ def _simpler_version_already_offered(
         coverage = payload.get("brief_coverage")
         if not isinstance(coverage, Mapping) or coverage.get("reason") != _SIMPLER_VERSION_REASON:
             continue
-        offered = {
-            str(receipt.get("requirement_id"))
+        receipts = [
+            receipt
             for receipt in payload.get("requirement_receipts") or []
             if isinstance(receipt, Mapping) and needs_creator_choice(receipt)
+        ]
+        offered = {str(receipt.get("requirement_id")) for receipt in receipts}
+        if set(requirement_ids) != offered or {r.get("brief_version") for r in receipts} != {
+            brief.version
+        }:
+            return False
+        question = payload.get("choice_question") or _simpler_version_question()
+        selection = (source_event.payload or {}).get("choice_selection")
+        if isinstance(selection, Mapping):
+            return (
+                selection.get("question_id") == question.get("question_id")
+                and selection.get("option_key") == "simpler_version"
+            )
+        # A bare number may answer an intervening clip question. Only the live
+        # card's validated selection can use its ordinal; a text fallback must
+        # name the simpler option itself.
+        named_option = {
+            "options": [o for o in question.get("options", []) if o.get("key") == "simpler_version"]
         }
-        return set(requirement_ids) <= offered
+        return match_open_choice(named_option, source_event.content) == "simpler_version"
     return False
 
 
@@ -973,7 +1076,9 @@ def _complete_draft_turn(
         if scope_note:
             reply_text = f"{reply_text} {scope_note}".strip()
         requirement_receipts: list[dict[str, Any]] = []
+        effective_brief_updates = planned.brief_updates
         brief = None
+        speed_notice: str | None = None  # KRI-689
         if planned.brief_route is not None:
             # KRI-188: persist this turn's requirements (idempotent per turn),
             # then check each one deterministically against what was drafted.
@@ -1004,12 +1109,34 @@ def _complete_draft_turn(
                         speech_cleanup_enabled=bool(getattr(item, "speech_cleanup_enabled", False)),
                         speech_cleanup_offered=_speech_cleanup_offered(item, document.strategy),
                     )
+                    # KRI-705: a phone Talking draft answers every ask plainly, so the
+                    # approval text cannot promise a cut or a mix change no receipt backs.
+                    facts = replace(
+                        facts,
+                        phone_talking=defers_caption_words_to_phone_render(
+                            creator_id=thread.creator_id,
+                            edit_format=document.strategy.get("edit_format") or item.edit_format,
+                            audio_strategy=document.strategy.get("audio_strategy"),
+                            clip_paths=item.clip_gcs_paths or (),
+                        )
+                        and (document.strategy.get("edit_format") or item.edit_format)
+                        in {"subtitled", "talking_head"},
+                    )
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
                     # them against this text-free draft would only mislead.
                     checked = requirements_to_check_at_draft(
                         checked,
+                        creator_id=thread.creator_id,
+                        strategy=document.strategy,
+                        item_edit_format=item.edit_format,
+                        clip_paths=item.clip_gcs_paths or (),
+                    )
+                    # KRI-689: a phone montage plays every clip at natural speed. Say so
+                    # before approval; the render-ready review reports it as "Couldn't".
+                    speed_notice = clip_speed_notice(
+                        brief.live(),
                         creator_id=thread.creator_id,
                         strategy=document.strategy,
                         item_edit_format=item.edit_format,
@@ -1078,6 +1205,14 @@ def _complete_draft_turn(
                         reply_text = reply_from_diff(
                             phrases, notices=planned.policy_notices, notes=arguments.notes
                         )
+        if speed_notice:
+            reply_text = f"{reply_text}\n{speed_notice}"
+        if brief is not None:
+            # A repeated offer can have no new updates to persist in the response
+            # transaction. Its receipts still name the revision it checked.
+            requirement_receipts = [
+                {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
+            ]
         unmet_ids = [
             str(receipt.get("requirement_id"))
             for receipt in requirement_receipts
@@ -1087,9 +1222,41 @@ def _complete_draft_turn(
             bool(unmet_ids)
             and apply_intent.tool_name == "draft.apply_strategy"
             and settings.brief_binding_for(thread.creator_id)
-            and _simpler_version_already_offered(db, thread.id, unmet_ids)
+            # A concurrent/new instruction needs its own offer, even if its stable
+            # requirement IDs happen to be the same. Never waive model-authored updates.
+            and not planned.brief_updates
+            and _simpler_version_already_offered(
+                db,
+                thread.id,
+                unmet_ids,
+                brief=brief,
+                source_event=db.get(CreationThreadEvent, turn.source_event_id),
+            )
         )
         if simpler_version_chosen:
+            omitted = [req for req in brief.live() if req.id in unmet_ids]
+            effective_brief_updates = tuple(
+                BriefUpdate(
+                    operation="remove",
+                    target_requirement_id=req.id,
+                    expected_version=brief.version,
+                )
+                for req in omitted
+            )
+            brief = persist_brief_version_sync(
+                db,
+                thread_id=thread.id,
+                turn_id=turn.id,
+                updates=effective_brief_updates,
+            )
+            if settings.kria_choice_questions_enabled:
+                brief = answered_brief(brief, document.strategy)
+            # These are now agreed omissions, not failed obligations in the new
+            # revision. Keep the history; pin only the effective requirements.
+            requirement_receipts = [
+                r for r in requirement_receipts if r["requirement_id"] not in unmet_ids
+            ]
+            checked = [req for req in checked if req.id not in unmet_ids]
             log.info(
                 "kria_simpler_version_drafted",
                 thread_id=str(thread.id),
@@ -1097,7 +1264,23 @@ def _complete_draft_turn(
                 requirement_ids=unmet_ids,
             )
             lead = say(en="Here's the simpler version.", tr="İşte daha basit sürüm.")
-            reply_text = f"{lead}\n{reply_text}"
+            omissions = "\n".join(
+                say(
+                    en=f"- Left out as agreed: {req.text()}",
+                    tr=f"- Kararlaştırdığımız gibi çıkarıldı: {req.text()}",
+                )
+                for req in omitted
+            )
+            kept = (
+                reply_from_receipts(
+                    brief,
+                    build_receipts(checked, facts, include_unchecked=True, strict_order=True),
+                    notices=planned.policy_notices,
+                )
+                if checked
+                else ""
+            )
+            reply_text = "\n".join(part for part in (lead, kept, omissions, speed_notice) if part)
         if (
             settings.brief_binding_for(thread.creator_id)
             and unmet_ids
@@ -1125,6 +1308,7 @@ def _complete_draft_turn(
             recovery = KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
+                choice_question=_simpler_version_question(),
                 response=(
                     f"{reply_text}\n{draft_state} "
                     + say(
@@ -1152,6 +1336,36 @@ def _complete_draft_turn(
                 brief_expected_version=planned.brief_expected_version,
             )
             return replace(completed, response_only=True)
+        approval_summary = arguments.summary
+        if (
+            apply_intent.tool_name == "draft.apply_strategy"
+            and brief is not None
+            and (
+                simpler_version_chosen
+                or (requirement_receipts and not keeps_model_summary(brief, requirement_receipts))
+            )
+        ):
+            # KRI-700: the reply above already replaced the model's summary with what was
+            # checked ("Couldn't: brighten the dark river clips"). The draft's change list and
+            # the approval card follow it, so neither promises what the plan doesn't contain.
+            changes = [change for change in changes if change != arguments.summary]
+            approval_summary = reply_text
+            document = document.model_copy(
+                update={
+                    "changes": changes,
+                    **(
+                        {
+                            "intent": say(
+                                en="Simpler version with the agreed omissions.",
+                                tr="Kararlaştırılan eksiklerle daha basit sürüm.",
+                            )
+                        }
+                        if simpler_version_chosen
+                        else {}
+                    ),
+                }
+            )
+            snapshot, snapshot_hash = canonical_snapshot(document)
         choice_gate = (
             settings.kria_choice_questions_enabled
             and apply_intent.tool_name == "draft.apply_strategy"
@@ -1204,12 +1418,13 @@ def _complete_draft_turn(
                     lease_epoch=lease_epoch,
                     claimed_thread_revision=claimed_thread_revision,
                     plan=blocked_plan,
-                    brief_updates=planned.brief_updates,
+                    brief_updates=effective_brief_updates,
                     requirement_receipts=requirement_receipts,
                     brief_coverage={
                         **(planned.brief_coverage or {}),
                         "stage": "draft",
                         "reason": blocked_reason,
+                        **({"accepted_omission_ids": unmet_ids} if simpler_version_chosen else {}),
                     },
                     brief_expected_version=planned.brief_expected_version,
                 )
@@ -1234,6 +1449,14 @@ def _complete_draft_turn(
             if source_event is not None and full_request is None:
                 raise ApprovedCreatorRequestTooLongError
             coverage = dict(planned.brief_coverage or {})
+            if simpler_version_chosen:
+                coverage["accepted_omission_ids"] = unmet_ids
+                coverage["applicable_ids"] = [req.id for req in brief.live()]
+                coverage["retrieved_ids"] = [
+                    req_id
+                    for req_id in coverage.get("retrieved_ids", [])
+                    if req_id not in unmet_ids
+                ]
             coverage["enforced_ids"] = [
                 r["requirement_id"]
                 for r in requirement_receipts
@@ -1443,7 +1666,16 @@ def _complete_draft_turn(
             target_manifest_hash=planned.manifest_hash,
             target_ownership_epoch=int(session.ownership_epoch),
             execution_ids=[str(render_execution.id)],
-            consequence_summary=f"Render this draft: {arguments.summary}",
+            # KRI-689: the speed heads-up rides on the card too, unless the KRI-700 reply
+            # (which already ends with it) became the summary.
+            consequence_summary=" ".join(
+                part
+                for part in (
+                    f"Render this draft: {approval_summary}",
+                    speed_notice if speed_notice and speed_notice not in approval_summary else None,
+                )
+                if part
+            ),
             cost_summary=say(en="One render", tr="Tek bir video"),
             status="pending",
             expires_at=datetime.now(UTC) + _APPROVAL_TTL,
@@ -2189,6 +2421,34 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 )
             )
             planned = _useful_plan(planned, user_message=user_message)
+            if planned.plan.mode == "respond" and planned.continuable:
+                # KRI-709: the planner stopped on a time budget with its answers saved.
+                # Run the same turn again instead of asking the creator to say "go
+                # ahead"; the chat keeps showing "Thinking" (no assistant event yet).
+                outcome = _continue_turn(
+                    identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
+                )
+                if outcome == "lost":
+                    return {"turn_id": turn_id, "status": "ignored"}
+                if outcome == "continued":
+                    try:
+                        run_kria_turn.apply_async(
+                            args=[turn_id],
+                            # Unique per run: the finished run's own id is still on record.
+                            task_id=f"{turn_id}-c{lease_epoch}",
+                            queue="agent-control",
+                            countdown=_CONTINUE_COUNTDOWN_S,
+                        )
+                    except Exception:  # noqa: BLE001 - the reconciler republishes the pending row
+                        log.warning("kria_turn_continue_publish_failed", turn_id=turn_id)
+                    return {"turn_id": turn_id, "status": "continued"}
+                if outcome == "successor":
+                    planned = replace(
+                        planned,
+                        plan=planned.plan.model_copy(
+                            update={"response": continuation_superseded_reply()}
+                        ),
+                    )
             if planned.plan.mode == "respond":
                 completion = _complete_response_turn(
                     identifier,
@@ -2529,6 +2789,11 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
     leaves ``accepted`` as the recovery ledger for the minute reconciler.
     """
 
+    from app.kria.render_retry import claim_render_retry  # noqa: PLC0415
+
+    handled, retry_claim = claim_render_retry(approval_id)
+    if handled:
+        return retry_claim
     with sync_session() as db, ExitStack() as language:
         approval_ref = db.get(CreatorAgentApproval, approval_id)
         if approval_ref is None or not approval_ref.execution_ids:
@@ -3263,7 +3528,7 @@ def _typed_creator_decline(
     if raw is None:
         return None
     decline = {"decline_reason": str(raw["decline_reason"])}
-    for key in ("field_path", "alternative"):
+    for key in ("field_path", "alternative", "missing_text"):
         if isinstance(raw.get(key), str) and raw[key]:
             decline[key] = raw[key]
     if isinstance(message, str) and message.strip():
@@ -3288,7 +3553,7 @@ def _device_contract_decline(job: Job, variant_id: str | None) -> dict[str, str]
         raw = contract_decline(job, str(record_variant))
         if isinstance(raw, dict) and raw.get("decline_reason") in DECLINE_REASONS:
             decline = {"decline_reason": str(raw["decline_reason"])}
-            for key in ("field_path", "alternative", "message"):
+            for key in ("field_path", "alternative", "message", "missing_text"):
                 if isinstance(raw.get(key), str) and raw[key].strip():
                     decline[key] = raw[key].strip()[:500]
             return decline
@@ -3363,6 +3628,18 @@ _WORKER_TEXT_TR: dict[str, str] = {
     "I couldn't tell which clips you want first or last, so I can't confirm their order.": (
         "Hangi klipleri başa ya da sona istediğini anlayamadım, o yüzden sıralarını "
         "doğrulayamıyorum."
+    ),
+    "This edit is missing confirmed on-screen text.": (
+        "Bu düzenlemede onayladığın ekran yazısı eksik."
+    ),
+    "This edit couldn't keep confirmed text on screen long enough.": (
+        "Bu düzenleme onayladığın yazıyı ekranda yeterince uzun tutamadı."
+    ),
+    "This edit put confirmed text in the wrong place.": (
+        "Bu düzenleme onayladığın yazıyı yanlış yere koydu."
+    ),
+    "This edit keeps confirmed text on screen after the picture has ended.": (
+        "Bu düzenleme onayladığın yazıyı görüntü bittikten sonra da ekranda tutuyor."
     ),
     # services/cloud_render_contract.py
     "I can render it again, or you can relax the requirement.": (
@@ -3487,11 +3764,23 @@ def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> 
     """
     # The message and alternative come from the server's contract checks, in English;
     # a Turkish chat gets their Turkish twin or, when there is none, the line below.
-    message = _worker_copy(decline.get("message")) or say(
-        en="That edit didn't keep something you asked for.",
-        tr="Bu düzenleme istediğin bir şeyi korumadı.",
-    )
     reason = decline["decline_reason"]
+    quoted = _quoted_missing_text(decline) if reason == "evidence_missing" else None
+    message = (
+        (
+            say(
+                en=f"The text {quoted} isn't in that edit.",
+                tr=f"{quoted} yazısı bu düzenlemede yok.",
+            )
+            if quoted
+            else None
+        )
+        or _worker_copy(decline.get("message"))
+        or say(
+            en="That edit didn't keep something you asked for.",
+            tr="Bu düzenleme istediğin bir şeyi korumadı.",
+        )
+    )
     kept = (
         say(en=_LAST_GOOD_STAYS, tr="Son iyi sürümün hâlâ duruyor.")
         if last_good
@@ -3511,6 +3800,44 @@ def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> 
         tr="Baştan yapmamı söylersen onayladığın isteğe göre yeni bir sürüm hazırlarım.",
     )
     return f"{message} {not_applied} {kept} {redo}"
+
+
+_MISSING_TEXT_QUOTE_CHARS = 120
+
+
+def _quoted_missing_text(decline: dict[str, str]) -> str | None:
+    """The confirmed on-screen text a refused edit lacks, quoted for a chat line."""
+    text = " ".join(str(decline.get("missing_text") or "").split())
+    if not text:
+        return None
+    if len(text) > _MISSING_TEXT_QUOTE_CHARS:
+        text = text[: _MISSING_TEXT_QUOTE_CHARS - 1].rstrip() + "…"
+    return f"“{text}”"
+
+
+def _phone_evidence_refusal_copy(decline: dict[str, str]) -> str:
+    """A phone plan the contract refused for missing evidence (KRI-701).
+
+    Nothing here is an iPhone limit, so it never says "your iPhone can't render": a missing
+    text is named with one question, anything else says what the edit lacked (the
+    alternative, when there is one, is added by the caller).
+    """
+    quoted = _quoted_missing_text(decline)
+    if quoted:
+        return say(
+            en=(
+                f"Your video wasn't made: the text {quoted} isn't in the edit. "
+                "Want me to add it, or leave it out?"
+            ),
+            tr=(
+                f"Videon oluşturulmadı: {quoted} yazısı düzenlemede yok. "
+                "Ekleyeyim mi, yoksa bu yazı olmadan mı yapayım?"
+            ),
+        )
+    return _worker_copy(decline.get("message")) or say(
+        en="Your video wasn't made: the edit didn't keep something you asked for.",
+        tr="Videon oluşturulmadı: düzenleme istediğin bir şeyi korumadı.",
+    )
 
 
 def _capability_refusal_copy(decline: dict[str, str]) -> str:
@@ -4029,7 +4356,12 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
         publish_preflight_after_commit(preflight_analysis_id)
 
     dispatch_reason: str | None = None
-    if getattr(claim, "draft_kind", "strategy") == "editor":
+    if getattr(claim, "draft_kind", "strategy") == "retry":
+        # Claim committed the same recipe under a new device identity. There is
+        # no planner, media analysis or broker render task to invoke.
+        outcome = "dispatched"
+        result_job_id = str(claim.target_job_id)
+    elif getattr(claim, "draft_kind", "strategy") == "editor":
         if (
             claim.target_job_id is None
             or claim.target_variant_id is None
@@ -4966,6 +5298,16 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 deterministic = True
         recovery = "manual" if device_failed else ("ask_user" if deterministic else "retry")
         retryable = not device_failed and not deterministic
+        from app.kria.render_retry import retry_program_available  # noqa: PLC0415
+
+        exact_retry_available = retry_program_available(job, execution)
+        native_without_program = bool((job.assembly_plan or {}).get("native_device_only")) and (
+            not device_failed and not deterministic and not exact_retry_available
+        )
+        if device_failed and exact_retry_available:
+            recovery, retryable = "retry", True
+        elif native_without_program:
+            recovery, retryable = "ask_user", False
         if device_decline is not None:
             # The contract refused this edit, so the phone's own Retry (which re-pins the
             # same refused recipe) is a dead end, and nothing re-runs it automatically.
@@ -5059,15 +5401,35 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     job, str(execution.target_variant_id or "") or None
                 ),
             )
-        elif device_failed:
+        elif device_failed and exact_retry_available:
             failure_content = say(
                 en=(
                     "Your iPhone couldn't finish the render. Your approved edit is still "
-                    "saved: open the project on your iPhone and tap Retry."
+                    "saved. Retry the same edit on your iPhone after reviewing its approval."
                 ),
                 tr=(
                     "iPhone'un videoyu tamamlayamadı. Onayladığın düzenleme hâlâ kayıtlı: "
-                    'projeyi iPhone\'unda açıp "Retry" düğmesine dokun.'
+                    "iPhone'unda aynı düzenlemeyi yeniden denemeden önce onayını gözden geçir."
+                ),
+            )
+        elif device_failed:
+            failure_content = say(
+                en="Your iPhone stopped this export. Your approved edit is saved. "
+                "Check the device error before trying again.",
+                tr="iPhone'un bu dışa aktarımı durdurdu. Onayladığın düzenleme kayıtlı. "
+                "Yeniden denemeden önce cihazdaki hatayı kontrol et.",
+            )
+        elif native_without_program:
+            failure_content = say(
+                en=(
+                    "The render stopped before a complete render plan was saved. "
+                    "Your approved direction and footage are safe. "
+                    "Ask for a new version and review its approval."
+                ),
+                tr=(
+                    "Video, eksiksiz oluşturma planı kaydedilmeden durdu. "
+                    "Onayladığın yön ve görüntüler güvende. "
+                    "Yeni bir sürüm isteyip onayını gözden geçir."
                 ),
             )
         elif recovery_message is not None:
@@ -5079,6 +5441,14 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # The decline's own authored message plus the way forward. Only a TYPED decline
             # reaches here, so no raw exception text is ever shown.
             failure_content = _capability_refusal_copy(typed_decline)
+        elif (
+            typed_decline is not None
+            and failure_code == "phone_plan_unsupported"
+            and typed_decline["decline_reason"] == "evidence_missing"
+        ):
+            # KRI-701: the plan lacked something the creator confirmed; the iPhone can render
+            # it, so the "can't render yet" table line would blame the wrong thing.
+            failure_content = _phone_evidence_refusal_copy(typed_decline)
         elif deterministic or failure_code in {
             "phone_capability_unavailable",
             "creation_text_failed",
@@ -5111,6 +5481,8 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             and typed_decline["decline_reason"] != "capability_unavailable"
             and recovery_message is None
             and not device_failed
+            # A named missing text already asks its one question (KRI-701).
+            and not _quoted_missing_text(typed_decline)
         ):
             # A deterministic phone decline keeps its copy and adds the way forward.
             failure_content = f"{failure_content} {worker_alternative}"

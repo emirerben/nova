@@ -1,0 +1,8 @@
+{
+  "runner": "GEMINI_API_KEY=ci-noop OPENAI_API_KEY=sk-test ANTHROPIC_API_KEY=test PYTHONPATH=src/apps/api src/apps/api/.venv/bin/python -m pytest {files}",
+  "dependencies": {
+    "docs/reviews/kri-698-simpler-approval.md": [],
+    ".gstack/pregate.json": []
+  },
+  "strays": { "allow": [".gstack/pregate.json"] }
+}

@@ -2038,7 +2038,8 @@ struct NativeEditorTemporaryVideo {
         isSaving = true
         saveState = .saving
         loadState = .loading
-        defer { isSaving = false }
+        Perf.begin("editor.open", id: editorJobID.uuidString)
+        defer { isSaving = false; Perf.end("editor.open", id: editorJobID.uuidString) }
         do {
             let receipt: OpenInEditorResponse? = if planItemID == nil {
                 try await api.openJobInEditor(jobID: editorJobID)
@@ -2386,6 +2387,8 @@ struct NativeEditorTemporaryVideo {
 
     func prepareSourcePreview() async {
         guard let api, let jobID, let variantKey else { return }
+        Perf.begin("editor.preview", id: jobID.uuidString)
+        defer { Perf.end("editor.preview", id: jobID.uuidString) }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
         let sequence = sourcePreviewSequence
@@ -2574,18 +2577,20 @@ struct NativeEditorTemporaryVideo {
     }
 
     /// Device-rendered variants have no cloud receipt or base-video URL. Their
-    /// current recipe is the authority for narration and the creator's song, and
-    /// its published generation must still be the document we are reconstructing.
+    /// current recipe is the authority for narration and the creator's song. Its
+    /// saved or published generation must be the document we are reconstructing.
     static func currentDeviceRecipeRequest(
         _ status: DeviceRenderStatusResponse,
         jobID: UUID,
         variantID: String,
         generation: String
     ) throws -> DeviceRenderRequest {
-        guard status.request.identity.jobID == jobID,
-              status.request.identity.variantID == variantID,
-              status.phase == "published",
-              status.publishedGeneration == generation else {
+        let matchesGeneration = status.phase == "published"
+            ? status.publishedGeneration == generation
+            : ["awaiting_device", "syncing", "needs_attention"].contains(status.phase)
+                && status.baseGeneration == generation
+        guard !generation.isEmpty, status.request.identity.jobID == jobID,
+              status.request.identity.variantID == variantID, matchesGeneration else {
             throw APIError.conflict
         }
         return status.request
@@ -3427,8 +3432,11 @@ struct NativeEditorTemporaryVideo {
         guard canEditTimeline, let id = selectedClipID, let index = clipSlotIndex(id.uuidString), document.clips.indices.contains(index) else { return }
         let slot = document.clips[index]
         let length = max(minimumClipDuration, slot.durationS ?? minimumClipDuration)
-        let sourceEnd = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"]) ?? slot.inS + length
-        let start = min(max(0, slot.inS + offset), max(0, sourceEnd - length))
+        // The source span is the length times the real rate, or the slide could write a window the server refuses.
+        let found = sourceWindowSlot(for: EditorSelection(kind: .clip, id: id.uuidString))
+        let span = length * (found.map { effectiveSourceRate(slot: $0.slot, clip: $0.clip) } ?? 1)
+        let sourceEnd = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"]) ?? slot.inS + span
+        let start = min(max(0, slot.inS + offset), max(0, sourceEnd - span))
         transactDocument(section: .timeline) { $0.clips[index].inS = start }
     }
 
@@ -5773,6 +5781,88 @@ struct NativeEditorTemporaryVideo {
         return await KriaCropFrameLoader.image(at: url, time: time)
     }
 
+    // MARK: Source window / Range (KRI-717)
+
+    /// Everything the Range sheet needs to draw and edit one clip's source window.
+    struct SourceWindowContext: Equatable {
+        var window: KriaSourceWindowGeometry.Window
+        var rate: Double
+        /// Nil when the server did not say; the sheet then asks the file itself.
+        var sourceDuration: Double?
+        var url: URL
+    }
+
+    private var stillImageURLs: [URL: Bool] = [:]
+    private func isStill(_ url: URL) -> Bool {
+        if let known = stillImageURLs[url] { return known }
+        let value = NativeDownloadedMedia.isStillImage(url)
+        stillImageURLs[url] = value
+        return value
+    }
+
+    private func sourceWindowSlot(for selection: EditorSelection?) -> (slot: EditorTimelineSlot, clip: EditorClip)? {
+        guard let selection, selection.kind == .clip,
+              let clip = timelineClips.first(where: { $0.id.uuidString == selection.id }),
+              let slot = document.clips.first(where: { $0.id == clip.slotID }) else { return nil }
+        return (slot, clip)
+    }
+
+    /// Why Range is greyed out for the selected clip, or nil when it is available.
+    func sourceWindowBlockedReason(for selection: EditorSelection?) -> String? {
+        guard let found = sourceWindowSlot(for: selection) else { return "Select a clip to choose its range." }
+        if !canEditTimeline || !canEdit(.timeline) { return "Clip edits are locked for this render." }
+        let kind = found.slot.raw["media_kind"]?.stringValue ?? found.slot.raw["kind"]?.stringValue
+        if kind == "image" { return "Photos have no range to choose." }
+        if let url = found.clip.sourceClipIndex.flatMap({ resolvedSources?[$0] })?.url, isStill(url) { return "Photos have no range to choose." }
+        return nil
+    }
+
+    /// Output seconds the slot lasts, as the render compiler reads it (`durationS`, else the projected span).
+    private func sourceWindowLength(slot: EditorTimelineSlot, clip: EditorClip) -> Double {
+        max(minimumClipDuration, slot.durationS ?? (clip.trimOut - clip.trimIn))
+    }
+
+    /// The playback rate the clip really plays at, derived the way the render compiler and the server do: an
+    /// explicit `playback_rate`, else projected source span / slot length. That covers slowed narrated clips
+    /// (`native_source_span_s`, no `playback_rate`) and older retimes that live only in the source span.
+    private func effectiveSourceRate(slot: EditorTimelineSlot, clip: EditorClip) -> Double {
+        if let explicit = slot.raw["playback_rate"]?.numberValue, explicit.isFinite, explicit > 0 { return explicit }
+        let derived = (clip.trimOut - clip.trimIn) / sourceWindowLength(slot: slot, clip: clip)
+        return derived.isFinite && derived > 0 ? derived : 1
+    }
+
+    func sourceWindowContext(for selection: EditorSelection?) -> SourceWindowContext? {
+        guard let found = sourceWindowSlot(for: selection),
+              let url = found.clip.sourceClipIndex.flatMap({ resolvedSources?[$0] })?.url else { return nil }
+        return SourceWindowContext(
+            window: .init(start: max(0, found.slot.inS), length: sourceWindowLength(slot: found.slot, clip: found.clip)),
+            rate: effectiveSourceRate(slot: found.slot, clip: found.clip),
+            sourceDuration: found.clip.sourceDuration,
+            url: url
+        )
+    }
+
+    /// Writes a window from the Range sheet. A window the server would refuse (`TIMELINE_SOURCE_BOUNDS`) is
+    /// ignored rather than staged, so one bad drag can never block Save. Wrap a whole drag in
+    /// `beginTransaction()` / `endTransaction()` for a single undo step.
+    @discardableResult
+    func setSourceWindow(for selection: EditorSelection, _ window: KriaSourceWindowGeometry.Window, rate: Double, sourceDuration: Double?) -> Bool {
+        guard sourceWindowBlockedReason(for: selection) == nil, let found = sourceWindowSlot(for: selection) else { return false }
+        let current = KriaSourceWindowGeometry.Window(start: max(0, found.slot.inS), length: sourceWindowLength(slot: found.slot, clip: found.clip))
+        // A slot that already overruns its footage may still shrink toward a valid window, even if it is not valid yet.
+        let shrinks = window.start >= 0 && window.length >= KriaSourceWindowGeometry.minimumLength - 1e-9
+            && KriaSourceWindowGeometry.sourceEnd(window, rate: rate) <= KriaSourceWindowGeometry.sourceEnd(current, rate: rate) + 1e-9
+        guard KriaSourceWindowGeometry.isWithinBounds(window, rate: rate, sourceDuration: sourceDuration) || shrinks else { return false }
+        let moved = abs(window.start - current.start) > 1e-6, resized = abs(window.length - current.length) > 1e-6
+        guard moved || resized else { return true }
+        // A pure slide writes `in_s` alone, so a beat-bound slot keeps `duration_beats`; a new length is a fixed length.
+        mutateClip(clipID: selection.id) { slot in
+            slot.inS = max(0, window.start)
+            if resized { slot.durationS = max(minimumClipDuration, window.length); slot.durationBeats = nil }
+        }
+        return true
+    }
+
     func operationCapability(_ key: String) -> EditorCapability? { document.capabilities[key] }
     func operationCapabilityReason(_ key: String) -> String? { document.capabilities[key]?.reason }
     func readOnlyReason(forOperation key: String) -> String? { operationCapabilityReason(key) }
@@ -6176,7 +6266,29 @@ struct NativeEditorTemporaryVideo {
     }
 
     private var carriesGuidedLabelsWithTimeline: Bool {
-        changedSections.contains(.timeline) && canEditSection(.text) && GuidedLabelRebase.hasLabels(document.textElements)
+        changedSections.contains(.timeline) && canEditSection(.text)
+            && GuidedLabelRebase.hasLabels(document.textElements, includeFreeText: ridesGuidedTimeline)
+    }
+
+    /// A guided story times EVERY text on its absolute output seconds, so any clip-timing edit
+    /// must re-time all of it (chat / creator text, group titles, `montage-text-*`), not just the
+    /// per-clip labels. Other archetypes keep their own text rules.
+    private var ridesGuidedTimeline: Bool { previewVariant["resolved_archetype"] == .string("guided_story") }
+
+    /// Source media ids by `clip_index`, for slots that do not carry a `media_id` themselves
+    /// (the server resolves them from the guided revision's `sources[clip_index]`).
+    private var mediaIDsByClipIndex: [Int: String] {
+        var result: [Int: String] = [:]
+        // The variant's own clip pool names every clip's media (resolved or not); the resolved
+        // source pool only fills in what it lacks.
+        for clip in previewVariant["user_timeline"]?.objectValue?["clips"]?.arrayValue ?? [] {
+            if let object = clip.objectValue, let index = object["clip_index"]?.numberValue,
+               let mediaID = object["media_id"]?.stringValue, !mediaID.isEmpty { result[Int(index)] = mediaID }
+        }
+        for clip in sourcePool?.clips ?? [] where result[clip.clipIndex] == nil {
+            if let mediaID = clip.nativeSource?.mediaID { result[clip.clipIndex] = mediaID }
+        }
+        return result
     }
 
     private func commitRequest(sections: [String: JSONValue]?, baseGeneration: String) -> EditorCommitRequest {
@@ -6268,6 +6380,11 @@ struct NativeEditorTemporaryVideo {
 
     private func acknowledge(_ sections: Set<EditorSection>, generation: String, submittedDocument: EditorDocument) {
         guard !sections.isEmpty else { return }
+        if document.revision.baseGeneration != generation {
+            finishedRenderIsCurrent = false
+            finishedRenderRecoveryTask?.cancel()
+            finishedRenderRecoveryInFlight = false
+        }
         document.revision.baseGeneration = generation
         let acknowledgedRevision = document.revision
         // KRI-576: the cuts this save carried now ARE the clean clips, so a lip-sync song start they moved stops
@@ -6355,16 +6472,23 @@ struct NativeEditorTemporaryVideo {
         let start = min(max(0, index), clips.count - 1)
         for i in start..<clips.count { let length = max(minimumClipDuration, clips[i].end - clips[i].start); let previousEnd = i == 0 ? 0 : clips[i - 1].end; clips[i].start = previousEnd; clips[i].end = previousEnd + length }
     }
-    /// Retimes the per-clip label bars onto their clips after any change to clip
+    /// Retimes the text that rides the guided timeline (clip labels, titles and, on a guided
+    /// story, every other text: see `GuidedLabelRebase`) after any change to clip
     /// timing (trim, extend, reorder, delete, transition overlap, add). Runs inside the
     /// same transaction as the timeline edit, so one Undo reverts both, and the text lane
     /// then differs from the clean document and is saved alongside `timeline_slots`.
     /// No-op unless a window actually moved and the text lane is editable.
     private func rebaseGuidedLabels(_ next: inout EditorDocument, from previous: EditorDocument) {
-        guard GuidedLabelRebase.hasLabels(next.textElements), canEditSection(.text),
-              previous.clips != next.clips,
-              GuidedLabelRebase.windows(of: previous.clips) != GuidedLabelRebase.windows(of: next.clips) else { return }
-        next.textElements = GuidedLabelRebase.rebase(next.textElements, oldSlots: previous.clips, newSlots: next.clips)
+        let freeText = ridesGuidedTimeline
+        guard GuidedLabelRebase.hasLabels(next.textElements, includeFreeText: freeText), canEditSection(.text),
+              previous.clips != next.clips else { return }
+        let media = mediaIDsByClipIndex
+        guard GuidedLabelRebase.windows(of: previous.clips, mediaByClipIndex: media)
+                != GuidedLabelRebase.windows(of: next.clips, mediaByClipIndex: media) else { return }
+        next.textElements = GuidedLabelRebase.rebase(
+            next.textElements, oldSlots: previous.clips, newSlots: next.clips,
+            mediaByClipIndex: media, includeFreeText: freeText
+        )
     }
     private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil, isCurrent: Bool = true) {
         // A completed cloud render remains a useful, non-editable fallback
@@ -6382,9 +6506,8 @@ struct NativeEditorTemporaryVideo {
         // text would flash the old style for the few seconds it takes the
         // local source preview (built straight from the current document)
         // to take over. Untrusted here only gates *display* during that
-        // window; restoreFinishedRenderFallback() still uses it if source
-        // preview construction genuinely fails, same as before — stale is
-        // still better than nothing once every other option is exhausted.
+        // window. A failed source preview must keep this fence too: an older
+        // render cannot represent the saved document or replace its error.
         finishedRenderIsCurrent = isCurrent
         guard sourcePreviewState == .idle || sourcePreviewState.isFailure || player == nil else { return }
         installPlayer(item: AVPlayerItem(url: url), preferredDuration: preferredDuration)
@@ -6565,6 +6688,13 @@ struct NativeEditorTemporaryVideo {
             pendingPlayRequest = wantsPlayback
             failSourcePreview(NativeEditorPlaybackFailure.liveItem)
         case .finished:
+            // An obsolete render may still be retained for recovery, but it is
+            // hidden. Its failures cannot replace the current preview's state or
+            // start a retry loop against a generation the server no longer serves.
+            guard finishedRenderIsCurrent, !hasUnsavedChanges, chatStagedDocument == nil else {
+                finishedRenderFailed = true
+                return
+            }
             pendingPlayRequest = wantsPlayback
             recoverFinishedRender(failedPlayer: failedPlayer)
         }
@@ -6616,6 +6746,9 @@ struct NativeEditorTemporaryVideo {
     }
 
     private func surfaceUnplayableFinishedRender() {
+        // The retry may have started before a save or staged edit made this
+        // player obsolete. Its delayed completion cannot own the new error.
+        guard finishedRenderIsCurrent, !hasUnsavedChanges, chatStagedDocument == nil else { return }
         // An editable preview still building will take over by itself; only a settled state needs a message.
         guard sourcePreviewState != .preparing else { return }
         let message = Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem)
@@ -6640,7 +6773,8 @@ struct NativeEditorTemporaryVideo {
     }
 
     private func restoreFinishedRenderFallback() {
-        guard let finishedRenderURL else { return }
+        guard let finishedRenderURL, finishedRenderIsCurrent,
+              !hasUnsavedChanges, chatStagedDocument == nil else { return }
         guard player === finishedRenderPlayer else {
             installFinishedRenderPlayer(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
             return
@@ -6888,6 +7022,7 @@ struct NativeEditorTemporaryVideo {
     private func startPreviewRefresh(generation: String) {
         previewRefreshTask?.cancel()
         pendingPreviewGeneration = generation
+        if surfaceDeviceRenderFailure() { return }
         guard let api, let jobID, let variantKey else {
             saveState = .previewFailed("Your edit is saved, but this device cannot check the new preview yet.")
             return
@@ -6964,6 +7099,7 @@ struct NativeEditorTemporaryVideo {
     @discardableResult
     func applyPreviewVariant(_ variant: [String: JSONValue], generation: String) -> Bool {
         guard pendingPreviewGeneration == generation else { return false }
+        if surfaceDeviceRenderFailure() { return true }
         let currentGeneration = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
         guard let currentGeneration else { return false }
         if currentGeneration != generation {
@@ -7103,13 +7239,31 @@ struct NativeEditorTemporaryVideo {
     func retryDeviceRender() async {
         guard !isSaving, let key = deviceRenderKey, let deviceRenders,
               let generation = pendingPreviewGeneration else { return }
-        let retried = await deviceRenders.retryNeedsAttention(key)
-        guard retried, !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
+        if deviceRenders.presentations[key]?.requiresServerRetry == true {
+            let retried = await deviceRenders.retryNeedsAttention(key)
+            guard retried else { return }
+        }
+        guard !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
         await refreshDeviceRender(retry: true)
         guard !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
         pendingDeviceRenderIdentity = deviceRenders.request(for: key)?.identity
         saveState = .previewPending
         startPreviewRefresh(generation: generation)
+    }
+
+    /// Saving the edit and producing its video are separate outcomes. A local
+    /// preparation failure (including a failed status fetch) must leave a useful
+    /// retry instead of polling the unchanged awaiting_device variant forever.
+    @discardableResult
+    private func surfaceDeviceRenderFailure() -> Bool {
+        guard let key = deviceRenderKey, let presentation = deviceRenders?.presentations[key],
+              presentation.requiresServerRetry || presentation.phase == .needsAttention
+                || presentation.phase == .cancelled
+                || (presentation.phase == .localReady && presentation.message != nil) else { return false }
+        saveState = .deviceRenderRetryNeeded(
+            presentation.message ?? "Your edit is saved, but this iPhone needs to retry rendering it."
+        )
+        return true
     }
 
     func retryRender() async {

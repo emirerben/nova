@@ -463,6 +463,19 @@ final class ChatWorkspaceTests: XCTestCase {
         )
     }
 
+    func testFailedNativeRetryApprovalIsVisibleEvenWhenOldJobStillAwaitsDevice() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .rendering, awaitsNewPlanConfirmation: true,
+                isChoosingFormat: false, hasFormat: true, approvedRenderRetryPending: true),
+            .direction
+        )
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .rendering, awaitsNewPlanConfirmation: false,
+                isChoosingFormat: false, hasFormat: true, approvedRenderRetryPending: true),
+            .rendering
+        )
+    }
+
     func testPreparationWinsOverDraftAndReadyStatuses() {
         XCTAssertEqual(
             WorkspaceStage.resolve(status: .draft, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true, preparationIsActive: true),

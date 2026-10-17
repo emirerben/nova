@@ -37,6 +37,10 @@ _FRAME_S = 1.0 / GUIDED_FPS
 _EDGE_S = 0.05
 _LABEL_PREFIX = "clip-label-"
 _LABEL_MEDIA_PREFIX = "clip-label-media-"
+# `montage-text-<cut_id>` is per-shot copy bound to one clip's window, exactly like a
+# `clip-label-*` bar (guided_story._GUIDED_CLIP_TEXT_PREFIXES). Keep the two in step.
+_MONTAGE_TEXT_PREFIX = "montage-text-"
+_CLIP_TEXT_PREFIXES = (_LABEL_PREFIX, _MONTAGE_TEXT_PREFIX)
 _MIN_BAR_S = 0.2
 # A bar that carries a segment_id (server projection stamps EVERY projected bar,
 # titles included) is only "clip-bound" if it still fills that segment.
@@ -48,6 +52,11 @@ _ANCHORED_IDS = frozenset({"guided-title", "guided-closing-title"})
 # never to a clip. KRI-525: a RANGED pin is not: one that fills its clip follows that clip
 # (like a label), and a seconds range is re-windowed by the generic time rules.
 _ANCHORED_PREFIX = "guided-pinned-"
+
+
+def _is_edge_titled(bar_id: str) -> bool:
+    """Titles and pins: the ids whose edge-touching windows are re-anchored, not projected."""
+    return bar_id in _ANCHORED_IDS or bar_id.startswith(_ANCHORED_PREFIX)
 
 
 def _is_anchored(bar: dict[str, Any], old_total: float) -> bool:
@@ -238,12 +247,67 @@ def _is_untouched(bar: dict[str, Any]) -> bool:
     )
 
 
-def _bar_media(bar: dict[str, Any], links: dict[str, dict[str, Any]]) -> str | None:
+def _bar_media(
+    bar: dict[str, Any],
+    links: dict[str, dict[str, Any]],
+    cut_media: dict[str, str] | None = None,
+) -> str | None:
     bar_id = str(bar.get("id") or "")
     if bar_id.startswith(_LABEL_MEDIA_PREFIX):
         return bar_id[len(_LABEL_MEDIA_PREFIX) :] or None
     link = links.get(bar_id)
-    return str(link["clip_id"]) if link else None
+    if link:
+        return str(link["clip_id"])
+    if bar_id.startswith(_MONTAGE_TEXT_PREFIX) and cut_media:
+        return cut_media.get(bar_id[len(_MONTAGE_TEXT_PREFIX) :])
+    return None
+
+
+def _cut_media_by_id(job: Any) -> dict[str, str]:
+    """cut_id -> media_id from the approved proposal (links ``montage-text-<cut_id>`` bars)."""
+    assembly = getattr(job, "assembly_plan", None)
+    guided = assembly.get("guided_edit") if isinstance(assembly, dict) else None
+    proposal = guided.get("approved_proposal") if isinstance(guided, dict) else None
+    cuts = proposal.get("fast_cuts") if isinstance(proposal, dict) else None
+    return {
+        str(cut["cut_id"]): str(cut["media_id"])
+        for cut in cuts or []
+        if isinstance(cut, dict) and cut.get("cut_id") and cut.get("media_id")
+    }
+
+
+def _project_span(
+    project: Any,
+    old_segments: list[dict[str, Any]],
+    start: float,
+    end: float,
+) -> tuple[tuple[float, str], tuple[float, str]] | None:
+    """Project a text range ``[start, end)`` through source time onto the new clips.
+
+    The END is anchored one frame early (the projector is right-biased on exact
+    boundaries); the caller adds the frame back. When either edge sits in a clip
+    that no longer exists the range still survives as long as ANY clip under it does:
+    it is re-anchored to the earliest and latest surviving pieces. ``None`` only when
+    every clip under the range is gone (or the range overlaps no clip at all).
+    """
+    first = project(start)
+    last = project(max(start, end - _FRAME_S))
+    if first is not None and last is not None:
+        return first, last
+    pieces: list[tuple[tuple[float, str], tuple[float, str]]] = []
+    for segment in old_segments:
+        lo = max(start, float(segment["output_start_s"]))
+        hi = min(end, float(segment["output_end_s"]))
+        if hi - lo <= 1e-6:
+            continue
+        head, tail = project(lo), project(max(lo, hi - _FRAME_S))
+        if head is not None and tail is not None:
+            pieces.append((head, tail))
+    if not pieces:
+        return None
+    return min((p[0] for p in pieces), key=lambda x: x[0]), max(
+        (p[1] for p in pieces), key=lambda x: x[0]
+    )
 
 
 def _overlap(a0: float, a1: float, b0: float, b1: float) -> float:
@@ -357,6 +421,7 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
     new_total = max((float(s["output_end_s"]) for s in new_segments), default=0.0)
     explicit_text_ids = getattr(state, "explicit_text_ids", set()) or set()
     links = ops._clip_label_links(state.job, state.variant)
+    cut_media = _cut_media_by_id(state.job)
     project = make_time_projector(old_segments, new_segments)
     old_index = {str(s.get("segment_id")): i for i, s in enumerate(old_segments)}
 
@@ -386,13 +451,31 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
                 raise _op_error("That text timing does not fit on the video")
             rebased.append(bar)
             continue
-        media_id = _bar_media(bar, links)
-        is_label = str(bar.get("id") or "").startswith(_LABEL_PREFIX)
+        media_id = _bar_media(bar, links, cut_media)
+        bar_id = str(bar.get("id") or "")
+        is_label = bar_id.startswith(_CLIP_TEXT_PREFIXES)
         old_segment = None
         clip_bound = False
         if is_label:
             old_segment = _identify_old_segment(bar, media_id, old_segments)
-            clip_bound = True
+            # A per-shot montage text whose clip cannot be identified is ordinary
+            # timed text: it follows the footage it sits over instead of vanishing.
+            clip_bound = (
+                old_segment is not None
+                or media_id is not None
+                or not bar_id.startswith(_MONTAGE_TEXT_PREFIX)
+            )
+            # A montage text the creator stretched past its clip is a span, not a clip-bound
+            # bar: it falls through to the source-time projection below.
+            if (
+                bar_id.startswith(_MONTAGE_TEXT_PREFIX)
+                and old_segment is not None
+                and (
+                    start < float(old_segment["output_start_s"]) - _SEGMENT_FIT_TOLERANCE_S
+                    or end > float(old_segment["output_end_s"]) + _SEGMENT_FIT_TOLERANCE_S
+                )
+            ):
+                clip_bound = False
         elif bar.get("segment_id") and not _is_anchored(bar, old_total):
             candidate = _identify_old_segment(bar, None, old_segments)
             if (
@@ -418,7 +501,11 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
             continue
         opening = start <= _EDGE_S
         closing = old_total > 0 and end >= old_total - _EDGE_S
-        if opening or closing:
+        # Edge anchoring ("keep the start / pin to the end") belongs to titles and pins.
+        # Ordinary text that merely touches one edge (a group title over the first clips,
+        # chat text over the last) follows its footage through source time instead;
+        # only text spanning the WHOLE video keeps tracking the whole video.
+        if (opening and closing) or ((opening or closing) and _is_edge_titled(bar_id)):
             updated = dict(bar)
             if opening and closing:
                 new_start, new_end = 0.0, new_total
@@ -436,11 +523,11 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
             updated["start_s"], updated["end_s"] = _round(new_start), _round(new_end)
             rebased.append(updated)
             continue
-        start_point = project(start)
-        end_point = project(max(start, end - _FRAME_S))
-        if start_point is None or end_point is None:
+        span = _project_span(project, old_segments, start, end)
+        if span is None:
             drop(bar, None, False)
             continue
+        start_point, end_point = span
         # The projector is right-biased on exact overlaps; anchoring the END one
         # frame early and shifting back keeps a bar that ended on a cut inside
         # its own clip.

@@ -94,7 +94,8 @@ class CreatorRenderContractError(UnsupportedPhonePlan):
     ``decline_reason`` / ``field_path`` / ``alternative`` are optional so that
     legacy raise sites keep working; typed sites let the reason survive every
     layer between the verifier and the creator thread (see
-    ``decline_payload``).
+    ``decline_payload``). ``missing_text`` is the confirmed on-screen text the
+    edit lacks, so the chat can name it (KRI-701).
     """
 
     def __init__(
@@ -104,11 +105,13 @@ class CreatorRenderContractError(UnsupportedPhonePlan):
         decline_reason: DeclineReason | None = None,
         field_path: str | None = None,
         alternative: str | None = None,
+        missing_text: str | None = None,
     ) -> None:
         super().__init__(message)
         self.decline_reason = decline_reason
         self.field_path = field_path
         self.alternative = alternative
+        self.missing_text = missing_text
 
 
 def decline_payload(exc: BaseException) -> dict[str, str]:
@@ -118,7 +121,7 @@ def decline_payload(exc: BaseException) -> dict[str, str]:
     if reason not in DECLINE_REASONS:
         return {}
     payload = {"decline_reason": str(reason)}
-    for key in ("field_path", "alternative"):
+    for key in ("field_path", "alternative", "missing_text"):
         value = getattr(exc, key, None)
         if isinstance(value, str) and value:
             payload[key] = value
@@ -1331,7 +1334,11 @@ def read_render_contract(assembly: Mapping[str, Any]) -> CreatorRenderContract |
 
 
 def _phone_decline(
-    requirement: str, message: str, *, field_path: str | None = None
+    requirement: str,
+    message: str,
+    *,
+    field_path: str | None = None,
+    missing_text: str | None = None,
 ) -> CreatorRenderContractError:
     """A typed refusal for ``requirement`` using the declared phone-verifier reason."""
 
@@ -1341,6 +1348,7 @@ def _phone_decline(
         decline_reason=decline.reason,
         field_path=field_path or REQUIREMENT_FIELD_PATHS[requirement],
         alternative=decline.alternative or None,
+        missing_text=missing_text,
     )
 
 
@@ -1789,6 +1797,7 @@ def verify_phone_recipe(
                 "exact_texts",
                 "This edit is missing confirmed on-screen text.",
                 field_path=text_field_path(requirement),
+                missing_text=requirement.text,
             )
         if requirement.duration_s is not None:
             matches = [

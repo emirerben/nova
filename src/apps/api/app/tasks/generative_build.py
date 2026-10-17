@@ -6353,6 +6353,7 @@ def _run_phone_unified_montage_job(
     if brief is not None and brief.live():
         from app.kria.brief_checks import (  # noqa: PLC0415
             build_receipts,
+            needs_creator_choice,
             plan_facts_from_unified_montage,
         )
 
@@ -6369,18 +6370,15 @@ def _run_phone_unified_montage_job(
                 include_unchecked=bool(snapshot.get("creator_brief_binding")),
             )
         ]
+        # A checked receipt that only states a limit of the phone montage (KRI-689: it plays
+        # every clip at natural speed, and the draft already said so) never blocks the render.
         if snapshot.get("creator_brief_binding") and any(
-            row.get("verification") == "checked" and row["status"] != "met"
-            for row in record["requirement_receipts"]
+            needs_creator_choice(row) for row in record["requirement_receipts"]
         ):
             from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-            failures = [
-                row
-                for row in record["requirement_receipts"]
-                if row.get("verification") == "checked" and row["status"] != "met"
-            ]
+            failures = [row for row in record["requirement_receipts"] if needs_creator_choice(row)]
             record_pipeline_event(
                 "montage",
                 "requirement_recovery",
@@ -7031,12 +7029,27 @@ def _run_phone_subtitled_job(
                 )
             # KRI-628: "start the video at '...'" cuts the speech before that line out of
             # the cleanup plan (the plan's keep segments are the only trim this render has).
+            # KRI-704: the cut never depends on cleanup consent. With cleanup off, the
+            # checked preflight words (when the job carries them) ground the quote and the
+            # plan is a single keep segment [line, end); nothing else is cut.
+            opening_cut_snapshot = (
+                None
+                if cleanup_required or multi_clip
+                else _phone_opening_cut_snapshot(
+                    snapshot, storage_path=gcs_path, duration_s=float(probe.duration_s)
+                )
+            )
+            cleanup_cut_plan = cut_plan
             cut_plan, opening_cut_receipt = _phone_opening_cut(
                 snapshot,
                 cut_plan,
                 speech_cleanup_snapshot.source_words() if speech_cleanup_snapshot else (),
                 duration_s=float(probe.duration_s),
+                off_words=opening_cut_snapshot.source_words() if opening_cut_snapshot else None,
             )
+            # True when the plan is the opening cut alone (cleanup off): captions remap
+            # through it, but it is never reported as a speech-cleanup outcome.
+            opening_cut_only = cleanup_cut_plan is None and cut_plan is not None
 
             # KRI-547: the creator asked for a vertical / full-screen / face-in-frame
             # video. A sideways speaker clip is then face-filled -- the engine's
@@ -7098,7 +7111,7 @@ def _run_phone_subtitled_job(
                     _closing if isinstance(_closing, dict) else None,
                 )
 
-            if cleanup_required:
+            if cleanup_required or opening_cut_only:
                 # Reuse the preflight analysis's own verbatim words -- the
                 # SAME transcription the CutPlan was computed from, never a
                 # second Whisper call for the cut -- so the cut, the lane
@@ -7120,10 +7133,11 @@ def _run_phone_subtitled_job(
                 # same CutPlan, exactly like the cloud
                 # `_resolve_verbatim_caption_language` + `_cut_caption_words`.
                 # The cut itself and `raw_words` stay on the spoken words.
-                assert speech_cleanup_snapshot is not None and cut_plan is not None  # noqa: S101
-                words = speech_cleanup_snapshot.source_words()
+                words_snapshot = speech_cleanup_snapshot or opening_cut_snapshot
+                assert words_snapshot is not None and cut_plan is not None  # noqa: S101
+                words = words_snapshot.source_words()
                 detected_lang, _lang_source = resolve_spoken_caption_language(
-                    speech_cleanup_snapshot.analysis.language,
+                    words_snapshot.analysis.language,
                     transcript_text=" ".join(word.text for word in words),
                     fallback=language,
                 )
@@ -7206,7 +7220,8 @@ def _run_phone_subtitled_job(
                         confidence=1.0,
                     )
                     for item in remap_words(caption_words, cut_plan)
-                    if not is_filler_token(item["text"])
+                    # Cleanup cut the fillers out of the audio; an opening cut alone left them in.
+                    if opening_cut_only or not is_filler_token(item["text"])
                 ]
                 cues = build_plain_cues(cut_words, attach_words=True, budget=PHONE_CUE_BUDGET)
             else:
@@ -8017,7 +8032,7 @@ def _run_phone_subtitled_job(
             new_entry["phone_overlay_receipt"] = overlay_receipt
         if beats_enabled:
             new_entry["phone_beat_receipt"] = beat_receipt
-        if cut_plan is not None:
+        if cut_plan is not None and not opening_cut_only:
             # Admin/debug parity with the cloud `required_v1` render
             # (`base["silence_cut"]`/`base["silence_cut_outcome"]`), and the
             # source `_speech_cleanup_outcome_context` the device-export
@@ -8061,12 +8076,31 @@ def _run_phone_subtitled_job(
     )
 
 
+def _phone_opening_cut_snapshot(
+    snapshot: dict, *, storage_path: str | None, duration_s: float
+) -> HydratedSpeechCleanupSnapshot | None:
+    """KRI-704: the checked preflight snapshot of this exact clip on a cleanup-off job.
+
+    Only its words are used (never its CutPlan). Fail-open: missing, malformed or stale
+    (other clip / window) evidence is ``None`` and the opening cut reports ``cleanup_off``."""
+    try:
+        return hydrate_job_speech_cleanup_snapshot(snapshot).require_source(
+            kind="embedded_spine",
+            storage_path=storage_path,
+            window_start_s=0.0,
+            window_duration_s=duration_s,
+        )
+    except SpeechCleanupSnapshotError:
+        return None
+
+
 def _phone_opening_cut(
     snapshot: dict,
     cut_plan: CutPlan | None,
     words: Any,
     *,
     duration_s: float,
+    off_words: Any = None,
 ) -> tuple[CutPlan | None, dict[str, Any] | None]:
     """KRI-628: cut the phone Talking take down to start at a line the creator quoted.
 
@@ -8074,10 +8108,15 @@ def _phone_opening_cut(
     (``creator_brief_binding``), never a prompt field. ``(cut_plan, None)`` without such
     an ask (or a readable binding), so the render runs exactly as before. Otherwise the
     plan with everything before the line cut (when the take says it, and the speech
-    cleanup plan exists to carry the cut) and a receipt that never raises."""
+    cleanup plan exists to carry the cut) and a receipt that never raises.
+
+    KRI-704: with cleanup off (``cut_plan is None``) the cut does not wait for consent --
+    ``off_words`` (the checked preflight words, when the job carries them) ground the quote
+    and the result is an opening-cut-only plan. No words: ``cleanup_off``, as before."""
     from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
     from app.kria.opening_cut_ask import brief_opening_cut  # noqa: PLC0415
     from app.pipeline.phone_opening_cut import apply_opening_cut  # noqa: PLC0415
+    from app.pipeline.silence_cut import no_op_plan  # noqa: PLC0415
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     raw_binding = snapshot.get("creator_brief_binding")
@@ -8091,8 +8130,28 @@ def _phone_opening_cut(
     if ask is None:
         return cut_plan, None
     receipt: dict[str, Any]
-    if cut_plan is None:
-        # Cleanup was declined: no word timings to ground the line in.
+    if cut_plan is None and off_words is not None:
+        try:
+            plan, receipt = apply_opening_cut(
+                no_op_plan(duration_s),
+                list(off_words),
+                ask.quote,
+                duration_s=duration_s,
+                requirement_ids=ask.requirement_ids,
+            )
+            # A take that already opens on the line needs no plan at all.
+            cut_plan = plan if plan.removed else None
+        except Exception as exc:  # noqa: BLE001 - a missed cut is reported, never fatal
+            log.warning("phone_opening_cut.failed", error=str(exc)[:200])
+            receipt = {
+                "version": 1,
+                "quote": ask.quote,
+                "requirement_ids": list(ask.requirement_ids),
+                "status": "not_applied",
+                "reason": "not_found",
+            }
+    elif cut_plan is None:
+        # Cleanup was declined and the job carries no word timings to ground the line in.
         receipt = {
             "version": 1,
             "quote": ask.quote,

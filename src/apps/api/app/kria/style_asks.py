@@ -15,6 +15,7 @@ verdict stricter, not wrong.
 from __future__ import annotations
 
 import re
+import string
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -370,6 +371,7 @@ _MOMENT_NOUNS = frozenset(
         "anlar",
         "anlari",
         "andan",
+        "anlardan",
         "sahne",
         "sahneler",
         "sahneyi",
@@ -437,6 +439,9 @@ _MOMENT_FILLERS = frozenset(
         "cok",
         "hizli",
         "farkli",
+        # Turkish counting words: "sekiz tane an", "8 adet sahne"
+        "tane",
+        "adet",
     }
 )
 # "4 of my 10 clips", "4 out of 10", "from 10 shots", "all 5 moments", "bu 10 sahne": the
@@ -500,13 +505,20 @@ def _counted_spans(tokens: list[str]) -> list[tuple[int, int, str | None]]:
         if not token.isdigit():
             continue
         end, noun = index + 1, None
-        for after in range(index + 1, min(index + 4, len(tokens))):
+        after, limit = index + 1, index + 4
+        while after < min(limit, len(tokens)):
             if tokens[after] in _MOMENT_NOUNS or tokens[after] in _FOOTAGE_NOUNS:
                 end, noun = after + 1, tokens[after]
                 break
-            if tokens[after] not in _MOMENT_FILLERS:
+            length = _seconds_at(tokens, after)
+            if length is not None and length[2] in _SECOND_ADJECTIVES:
+                # "8 2-second moments": the length sits between the count and the noun.
+                after, limit = length[1], limit + 2
+            elif tokens[after] in _MOMENT_FILLERS:
+                after += 1
+            else:
                 break
-            end = after + 1
+            end = after
         spans.append((index, end, noun))
     return spans
 
@@ -526,6 +538,182 @@ def _counts_footage(tokens: list[str], index: int, end: int, noun: str | None) -
         or before in _NOT_MOMENT_VERBS
         or ("of" in passed and before.isdigit())
     )
+
+
+# KRI-686: "pick the moments where a lit house passes -- eight of them, about 2 seconds
+# each". The count can sit apart from the noun ("eight of them", "8 in total", "8 tane")
+# and the length of each moment ("about 2 seconds each", "her biri 2 saniye") is a
+# per-moment length. Read by tokens, not patterns: the words are already folded and
+# number-worded ("eight" -> "8", "sekiz" -> "8"). A recorded `facts` value
+# (`moment_count`, `moment_length_s`) decides when the extractor wrote one (KRI-667).
+MAX_MOMENT_COUNT = 30
+MAX_EACH_S = 30.0
+_SECOND_UNITS = frozenset({"s", "sec", "secs", "second", "seconds", "sn", "saniye", "saniyelik"})
+# "a 2-second moment", "2 saniyelik an": the unit is an adjective of the noun after it.
+_SECOND_ADJECTIVES = frozenset({"second", "saniyelik"})
+# A moment noun that is never an English article ("an" is Turkish for "moment" too).
+_MOMENT_WORDS = _MOMENT_NOUNS - {"an"}
+_BARE_COUNT_AFTER = frozenset({("of", "them"), ("of", "those"), ("of", "these"), ("in", "total")})
+_BARE_COUNT_WORDS = frozenset({"total", "altogether"})
+_COUNT_CLASSIFIERS = frozenset({"tane", "adet"})
+# Verbs that decide what a bare count counts: "pick the moments ... 8 of them" counts
+# moments, "skip the dark ones, 2 of them" counts what to leave out.
+_PICK_VERBS = frozenset(
+    {
+        "pick",
+        "choose",
+        "select",
+        "find",
+        "want",
+        "need",
+        "use",
+        "take",
+        "give",
+        "show",
+        "keep",
+        "include",
+        "get",
+        "sec",
+        "kullan",
+        "al",
+    }
+)
+# Words that sit between "each" and the seconds: "each one is about 2 seconds long". "1" is
+# "one" after folding.
+_EACH_FILLERS = frozenset(
+    {
+        "about",
+        "around",
+        "roughly",
+        "approximately",
+        "yaklasik",
+        "is",
+        "are",
+        "be",
+        "being",
+        "lasting",
+        "for",
+        "only",
+        "just",
+        "at",
+        "olan",
+        "olsun",
+        "1",
+    }
+)
+_STRETCH_NOUNS = frozenset(
+    {
+        "stretch",
+        "stretches",
+        "segment",
+        "segments",
+        "section",
+        "sections",
+        "portion",
+        "portions",
+        "part",
+        "parts",
+        "bit",
+        "bits",
+        "kisim",
+        "kisimlar",
+        "bolum",
+        "bolumler",
+    }
+)
+# "no more than 3 seconds" is a limit on length, not a stretch to keep out.
+_NOT_A_BAN = frozenset({"more", "less", "fewer", "longer", "shorter", "than"})
+
+
+def _keep_decimals(text: str) -> str:
+    """Write 1.5 and 2,5 as "1dot5", so the word folder keeps one number, not "1" and "5"."""
+    chars = list(text)
+    for index in range(1, len(chars) - 1):
+        if chars[index] in ".," and chars[index - 1].isdigit() and chars[index + 1].isdigit():
+            chars[index] = "dot"
+    return "".join(chars)
+
+
+def _number_of(token: str) -> float | None:
+    whole, dot, fraction = token.partition("dot")
+    if not whole.isdigit() or (dot and not fraction.isdigit()):
+        return None
+    return float(f"{whole}.{fraction}") if dot else float(whole)
+
+
+def _seconds_at(tokens: list[str], index: int) -> tuple[float, int, str] | None:
+    """(seconds, index after the unit, unit) for "2 seconds", "1.5 s" or "2s" at ``index``."""
+    token = tokens[index]
+    value = _number_of(token)
+    if value is not None:
+        if index + 1 < len(tokens) and tokens[index + 1] in _SECOND_UNITS:
+            return value, index + 2, tokens[index + 1]
+        return None
+    stripped = token.rstrip(string.ascii_lowercase)
+    unit = token[len(stripped) :]
+    value = _number_of(stripped)
+    if value is not None and unit in _SECOND_UNITS:
+        return value, index + 1, unit
+    return None
+
+
+def _each_seconds(tokens: list[str]) -> float | None:
+    """The length asked for each moment: "about 2 seconds each", "her biri 2 saniye"."""
+    for index in range(len(tokens)):
+        found = _seconds_at(tokens, index)
+        if found is None or not 0 < found[0] <= MAX_EACH_S:
+            continue
+        seconds, after, unit = found
+        ahead = tokens[after : after + 2]
+        if ahead[:1] == ["long"]:
+            ahead = ahead[1:]
+        trailing = ahead[:1] in (["each"], ["apiece"]) or (
+            ahead[:1] == ["per"] and len(ahead) > 1 and ahead[1] in _MOMENT_NOUNS
+        )
+        adjective = unit in _SECOND_ADJECTIVES and any(
+            token in _MOMENT_NOUNS for token in tokens[after : after + 2]
+        )
+        back = index
+        while back > 0 and tokens[back - 1] in _EACH_FILLERS:
+            back -= 1
+        lead = tokens[max(0, back - 3) : back]
+        leading = (
+            lead[-1:] == ["each"]
+            or lead[-3:] == ["each", "of", "them"]
+            or lead[-2:] in (["her", "biri"], ["her", "bir"])
+        )
+        if trailing or adjective or leading:
+            return seconds
+    return None
+
+
+def _counts_bare(tokens: list[str], index: int, end: int) -> bool:
+    """A number with no noun that still counts moments: "8 of them", "8 in total", "8 tane"."""
+    ahead = tuple(tokens[end : end + 2])
+    named = (
+        (index + 1 < len(tokens) and tokens[index + 1] in _COUNT_CLASSIFIERS)
+        or ahead in _BARE_COUNT_AFTER
+        or (bool(ahead) and ahead[0] in _BARE_COUNT_WORDS)
+    )
+    if not named:
+        return False
+    for token in reversed(tokens[:index]):
+        if token in _NOT_MOMENT_VERBS:
+            return False
+        if token in _PICK_VERBS:
+            return True
+    return True
+
+
+def _says_no_stretches(tokens: list[str]) -> bool:
+    """A ban on parts of the footage: "no black-sky stretches", "karanlik kisimlar olmasin"."""
+    for index, token in enumerate(tokens):
+        if token == "no" and not _NOT_A_BAN & set(tokens[index + 1 : index + 2]):
+            if _STRETCH_NOUNS & set(tokens[index + 1 : index + 4]):
+                return True
+        elif token == "olmasin" and _STRETCH_NOUNS & set(tokens[max(0, index - 3) : index]):
+            return True
+    return False
 
 
 _SHORT_MOMENTS = re.compile(
@@ -556,8 +744,23 @@ class MomentAsk:
     short: bool = False
     # KRI-624: the moments must come from the long takes only.
     long_takes_only: bool = False
-    # KRI-624: the ask also rules some clips out ("skip the dark ones").
+    # KRI-624: the ask also rules some clips out ("skip the dark ones", "no dark stretches").
     excludes: bool = False
+    # KRI-686: the length the creator gave each moment ("about 2 seconds each"), in seconds.
+    each_s: float | None = None
+
+    @property
+    def max_s(self) -> float | None:
+        """How long one moment may run: the creator's own length, else "very short" (3 s)."""
+        if self.each_s is not None:
+            return self.each_s
+        return MOMENT_SHORT_MAX_S if self.short else None
+
+
+def _recorded_seconds(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if 0 < value <= MAX_EACH_S else None
 
 
 def moment_ask(req: BriefRequirement) -> MomentAsk | None:
@@ -566,27 +769,46 @@ def moment_ask(req: BriefRequirement) -> MomentAsk | None:
     if req.kind == "text":
         return None
     text = req.description or ""
-    tokens = fold_tokens(text)
+    tokens = fold_tokens(_keep_decimals(text))
     count: int | None = None
     fact = req.facts.get("moment_count")
-    if isinstance(fact, int) and not isinstance(fact, bool) and 2 <= fact <= 30:
+    if isinstance(fact, int) and not isinstance(fact, bool) and 2 <= fact <= MAX_MOMENT_COUNT:
         count = fact
+    each_s = _recorded_seconds(req.facts.get("moment_length_s"))
     footage: set[int] = set()
+    bare: list[tuple[int, int]] = []
     for index, end, noun in _counted_spans(tokens):
         if _counts_footage(tokens, index, end, noun):
             footage.update(range(index, end))
-        elif count is None and noun is not None and 2 <= int(tokens[index]) <= 30:
-            count = int(tokens[index])
-    kept = " ".join(token for index, token in enumerate(tokens) if index not in footage)
-    short = bool(_SHORT_MOMENTS.search(kept))
-    if count is None and not short:
+        elif not 2 <= int(tokens[index]) <= MAX_MOMENT_COUNT:
+            continue
+        elif noun is not None:
+            if count is None:
+                count = int(tokens[index])
+        else:
+            bare.append((index, end))
+    kept_tokens = [token for index, token in enumerate(tokens) if index not in footage]
+    kept = " ".join(kept_tokens)
+    # A count or a length with no moment noun of its own ("eight of them", "2 seconds each")
+    # counts moments only when the requirement names moments somewhere: "use 4 clips, 2
+    # seconds each" and "photos 2 seconds each" hold clips, not moments.
+    names_moments = any(token in _MOMENT_WORDS for token in kept_tokens)
+    if count is None and names_moments:
+        count = next((int(tokens[i]) for i, end in bare if _counts_bare(tokens, i, end)), None)
+    if each_s is None and (count is not None or names_moments):
+        each_s = _each_seconds(kept_tokens)
+    short = bool(_SHORT_MOMENTS.search(kept)) or (
+        each_s is not None and each_s <= MOMENT_SHORT_MAX_S
+    )
+    if count is None and not short and each_s is None:
         return None
     whole = " ".join(tokens)
     return MomentAsk(
         count=count,
         short=short,
         long_takes_only=bool(_LONG_TAKES.search(whole)),
-        excludes=bool(_MOMENT_EXCLUSION.search(whole)),
+        excludes=bool(_MOMENT_EXCLUSION.search(whole)) or _says_no_stretches(tokens),
+        each_s=each_s,
     )
 
 
@@ -600,9 +822,11 @@ def brief_moment_ask(brief: CreativeBrief | None) -> MomentAsk | None:
     if not asks:
         return None
     counts = [ask.count for ask in asks if ask.count is not None]
+    lengths = [ask.each_s for ask in asks if ask.each_s is not None]
     return MomentAsk(
         count=counts[-1] if counts else None,
         short=any(ask.short for ask in asks),
         long_takes_only=any(ask.long_takes_only for ask in asks),
         excludes=any(ask.excludes for ask in asks),
+        each_s=lengths[-1] if lengths else None,
     )

@@ -106,6 +106,7 @@ async def test_alignment_missing_returns_the_song_pending_reply() -> None:
     assert result.plan.response != planner._CLIP_INTENT_PENDING_REPLY
     assert result.plan.diagnostics["reason"] == "song_alignment_pending"
     assert result.plan.song_order_question is None
+    assert result.pending is True  # KRI-709: the runtime re-runs the turn, no "send again"
 
 
 async def test_stale_or_incomplete_alignment_is_pending() -> None:

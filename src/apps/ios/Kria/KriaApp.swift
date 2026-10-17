@@ -7,7 +7,35 @@ import SwiftData
     @StateObject private var model: AppModel
     private let container: ModelContainer
     init() {
+        // Launch ends when the first transcript row is visible (`ChatWorkspaceView`); `launch.init` is the
+        // synchronous setup in this initializer and `AppModel.init`.
+        Perf.mark("app.init")
+        Perf.begin("launch.toTranscript")
+        Perf.begin("launch.toPixels")
+        Perf.begin("launch.init")
+        defer { Perf.end("launch.init") }
         #if DEBUG
+        // First, before anything can touch `URLSession.shared`: AsyncImage loads gallery posters through it.
+        PerfPosterURLProtocol.registerIfNeeded()
+        // Opt-in hardware journey: real HTTP/API + scratch database, separate QA bundle.
+        // Never uses a developer's Keychain or connects without both explicit inputs.
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-retry-api"),
+           let address = ProcessInfo.processInfo.environment["KRIA_RETRY_TEST_API_URL"],
+           let baseURL = URL(string: address),
+           let subject = ProcessInfo.processInfo.environment["KRIA_RETRY_TEST_USER_ID"],
+           UUID(uuidString: subject) != nil {
+            let container = Self.fallbackContainer()
+            self.container = container
+            let store = AccountUITestTokenStore()
+            let api = KriaAPI(baseURL: baseURL, tokenStore: store)
+            let auth = AuthStore(tokenStore: store, api: api)
+            let payload = Data("{\"sub\":\"\(subject)\"}".utf8).base64EncodedString()
+            try? auth.signIn(with: MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "fixture-refresh", expiresIn: 3600), displayName: "Retry QA")
+            auth.acceptAIConsent()
+            _auth = StateObject(wrappedValue: auth)
+            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-account") {
             let container = Self.fallbackContainer()
             self.container = container
@@ -21,11 +49,15 @@ import SwiftData
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
-            let container = Self.fallbackContainer()
+            let container = PerfFixture.container()
             self.container = container
             CreationChatFixture.seedClipThumbnails()
-            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore()))
-            _model = StateObject(wrappedValue: AppModel(api: ChatUITestTransport.api(), cache: CacheRepository(context: container.mainContext)))
+            let api = ChatUITestTransport.api()
+            // With an expired fixture session the account is "signed in", so its profile read must hit the fixture too.
+            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken ? api : nil))
+            let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext))
+            if PerfFixture.uploadTicks { model.uploads.startProgressTicksForTesting() }
+            _model = StateObject(wrappedValue: model)
             return
         }
         #endif
@@ -89,6 +121,7 @@ struct RootView: View {
                     .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
                     .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
             }
+            else if ProcessInfo.processInfo.arguments.contains("-ui-testing-saved-uploads") { SavedUploadsUITestHost() }
             else if ProcessInfo.processInfo.arguments.contains("-device-effects") { DeviceEffectsView() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { BrandPreviewHost() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
@@ -97,7 +130,9 @@ struct RootView: View {
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat-bubbles") {
                 ChatBubbleUITestHost()
             }
-            else if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") { ChatWorkspaceView() }
+            else if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
+                ChatWorkspaceView().overlay(alignment: .topLeading) { if PerfFixture.countersProbe { PerfCountersProbe() } }
+            }
             else if !auth.isSignedIn { SignInView() }
             else { signedInContent }
             #else

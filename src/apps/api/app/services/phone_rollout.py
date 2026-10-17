@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from functools import cache
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 from app.agents._schemas.edit_format import (
     GUIDED_EDIT_FORMATS,
@@ -368,6 +368,15 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "Authored text phases and backgrounds await native parity and device qualification",
             capability="authoredText",
         )
+    # One-word-at-a-time captions (`karaoke.single_word`): same explicit gate, for a recipe
+    # a caller mutated after compile.
+    if recipe_has_single_word_text(recipe) and "singleWordText" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "One-word captions await native parity and device qualification",
+            capability="singleWordText",
+        )
     if any(
         clip.source_crop is not None for track in recipe.tracks for clip in track.clips
     ) and "sourceCrop" not in set(settings.phone_render_verified_features):
@@ -499,6 +508,71 @@ def text_bend_supported(*, require_client: bool | None = None) -> bool:
         and "textBend" in set(settings.phone_render_verified_features)
         and text_bend_client_supported(require_client=require_client)
     )
+
+
+# Variant field an HTTP editor Save writes when it compiled one-word captions for a build
+# that declared the protocol (`single_word_captions_enabled`): a later compile with no
+# request (a worker applying a chat edit) has no app build to ask, so it trusts this.
+SINGLE_WORD_CAPTIONS_STAMP = "caption_single_word_text"
+
+
+def recipe_has_single_word_text(recipe: Any) -> bool:
+    """Does any text layer of this recipe use `karaoke.single_word`?"""
+    return any(
+        layer.karaoke is not None and layer.karaoke.single_word
+        for layer in getattr(recipe, "text_layers", None) or []
+    )
+
+
+def single_word_text_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode `karaoke.single_word`?
+
+    The build declares ``X-Kria-Client-Protocol``; at least
+    ``single_word_text_min_client_protocol`` (11) understands it. ``require_client``
+    ``None`` applies the gate only inside an HTTP request (workers have no app build to
+    qualify); pass ``True``/``False`` to force it. Mirrors `text_bend_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.single_word_text_min_client_protocol
+
+
+def single_word_text_verified() -> bool:
+    """Is one-word captions' device parity verified (the production gate)?
+
+    The mode is an ``active_only`` karaoke layer, which `EditRecipeV2` also tags
+    ``authoredText``, so both must be verified: otherwise the recipe would be refused
+    where today's full-line sweep is not.
+    """
+    verified = set(settings.phone_render_verified_features)
+    return {"singleWordText", "authoredText"} <= verified
+
+
+def single_word_captions_enabled(variant: dict | None = None) -> bool:
+    """May caption compilation emit `Display: Word` as one-word layers right now?
+
+    Off (the production default) unless ``singleWordText`` (and ``authoredText``) are in
+    ``phone_render_verified_features``; when it is off, captions compile to the full-line
+    karaoke sweep exactly as before. When on, the compile must know the app build can decode
+    the shape: inside an HTTP request that is the declared ``X-Kria-Client-Protocol``;
+    outside one (workers: chat-edit approvals) the build is unknown, so the answer is the
+    stamp (`SINGLE_WORD_CAPTIONS_STAMP`) an earlier qualifying Save left on the variant.
+    """
+    from app.services.client_protocol import in_http_request  # noqa: PLC0415
+
+    if not single_word_text_verified():
+        return False
+    if in_http_request():
+        return single_word_text_client_supported(require_client=True)
+    return bool(variant and variant.get(SINGLE_WORD_CAPTIONS_STAMP) is True)
 
 
 def text_elements_have_bend(elements: object) -> bool:
