@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.14.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save after deleting a clip no longer fails with unsupported_phone_edit (KRI-736) (#1648) <!-- release-pr: 1648 -->
+
+## [0.80.13.0] - 2026-10-17
+
+### Changed
+- feat(media): backfill historical uploads into Saved uploads (#1640) <!-- release-pr: 1640 -->
+
+## [0.80.12.0] - 2026-10-17
+
+### Changed
+- test(ios): scrub seek-latency test waits up to 60 s for the real frame (#1634) <!-- release-pr: 1634 -->
+
 ## [0.80.11.0] - 2026-10-17
 
 ### Changed
