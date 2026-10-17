@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-10-11",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -76,6 +76,28 @@
       "sample_hooks": ["felt cute this week", "before office", "the walk that fixes everything", "chic"],
       "source": "tiktok:@allexmarielle (2026-06)",
       "performance": {"engagement_rate": 0.128, "view_index": 1.05, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "wellness-ritual-reset-01",
+      "niche": "wellness & lifestyle rituals",
+      "summary": "You document the small rituals that reset your day — morning bowls, movement routines, seasonal habits — framing them as the honest antidote to life's disruptions: post-vacation, post-illness, post-chaos.",
+      "tone": "warm, grounding, genuinely personal",
+      "content_pillars": ["morning wellness rituals", "post-trip routine resets", "seasonal habit shifts", "product integrations as real personal habits"],
+      "audience": "people who want to get back on track and need someone to show them it's okay to start with something small",
+      "sample_hooks": ["getting back into routines after the holiday", "the thing that gets me out of bed", "slow start, real comeback"],
+      "source": "tiktok:@nermozdemir (2026-10)",
+      "performance": {"engagement_rate": 0.081, "view_index": 19.4, "sampled_at": "2026-10"}
+    },
+    {
+      "id": "early-riser-commitment-01",
+      "niche": "fitness & daily discipline",
+      "summary": "You commit publicly to early-morning challenges — 5am hikes, dawn swims, pre-sunrise workouts — and post the raw 'I actually did it' moment, short and energetic. No production polish. The authenticity is the point.",
+      "tone": "energetic, honest, unapologetically enthusiastic",
+      "content_pillars": ["early-morning challenge reveals", "fitness commitment moments", "short candid day-starters", "travel + wellness combinations"],
+      "audience": "people who want to do hard things in the morning but need to see that someone real is actually doing it",
+      "sample_hooks": ["woke up at 5am to [activity]!!", "nobody was awake, and i loved it", "set the alarm — showed up — worth it"],
+      "source": "tiktok:@izzsiomoi (2026-10)",
+      "performance": {"engagement_rate": 0.253, "view_index": 20.0, "sampled_at": "2026-10"}
     }
   ]
 }

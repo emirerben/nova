@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-10-11",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -212,6 +212,46 @@
       "filming_context": "15-30s of an aspirational scene — a city café, a mountain trail, a dream apartment — let it breathe; no narration needed",
       "source": "tiktok:@izzsiomoi (2026-06)",
       "performance": {"engagement_rate": 0.032, "view_index": 1.57, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "early-morning-commitment-01",
+      "niche": "fitness & daily discipline",
+      "pillar": "early-morning challenge reveals",
+      "idea": "an energetic short clip announcing you woke up at 5am (or earlier) to do [activity] — let the time and the energy sell the payoff, no narration needed",
+      "hook_pattern": "woke up at 5am to [activity]!!",
+      "filming_context": "candid, first-person, natural dawn light; show the arrival or first moment at the spot — rawness is better than polish here",
+      "source": "tiktok:@izzsiomoi (2026-10)",
+      "performance": {"engagement_rate": 0.253, "view_index": 20.0, "sampled_at": "2026-10"}
+    },
+    {
+      "id": "routine-reset-after-disruption-01",
+      "niche": "wellness & lifestyle rituals",
+      "pillar": "post-trip routine resets",
+      "idea": "a short ritual clip framed as getting back into routines after [disruption — vacation, busy stretch, illness] — the ritual is the reentry, not the disruption",
+      "hook_pattern": "getting back into routines after [disruption]: [the ritual]",
+      "filming_context": "morning kitchen or movement space, close-up on the ritual itself (the bowl, the mat, the shoes), calm natural light — the disruption is in the caption, not on screen",
+      "source": "tiktok:@nermozdemir (2026-10)",
+      "performance": {"engagement_rate": 0.081, "view_index": 19.4, "sampled_at": "2026-10"}
+    },
+    {
+      "id": "series-comeback-accountability-01",
+      "niche": "city lifestyle & food",
+      "pillar": "a perfect day in the city",
+      "idea": "bring back a content series after a break — open with 'it's been [X months] since I posted [content type]...' and let the accountability framing be the hook for returning and new viewers alike",
+      "hook_pattern": "it's been [duration] since I posted [content type]... missed it",
+      "filming_context": "same location, aesthetic, or format as the original series — the visual callback rewards loyal followers; the caption hooks newcomers who need no prior context",
+      "source": "tiktok:@nermozdemir (2026-10)",
+      "performance": {"engagement_rate": 0.081, "view_index": 19.4, "sampled_at": "2026-10"}
+    },
+    {
+      "id": "audience-opinion-fashion-01",
+      "niche": "city lifestyle & food",
+      "pillar": "seasonal outfit rotations",
+      "idea": "show [item] in one option and ask the audience to pick between two — turns a regular outfit or shopping clip into a conversation that drives comments and saves",
+      "hook_pattern": "which would you pick — [option A] or [option B]?",
+      "filming_context": "show the item clearly in natural light; caption asks the question directly — the viewer becomes the decision-maker",
+      "source": "tiktok:@allexmarielle (2026-10)",
+      "performance": {"engagement_rate": 0.134, "view_index": 4.1, "sampled_at": "2026-10"}
     }
   ]
 }
