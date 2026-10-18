@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.31.0] - 2026-10-18
+
+### Changed
+- fix(kria): keep clip-picker answers bound to the intent across reworded rows (KRI-697) (#1658) <!-- release-pr: 1658 -->
+
 ## [0.80.30.0] - 2026-10-18
 
 ### Changed
