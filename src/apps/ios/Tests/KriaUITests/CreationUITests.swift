@@ -718,11 +718,11 @@ final class CreationUITests: XCTestCase {
 
     /// A history shaped like the production Olympics thread (48 phone-proxy clips, the question newest, no
     /// suggestions). `thumbs` seeds cached posters for the first 24 so both tile states show.
-    private func launchRealShapeHistory(thumbs: Bool = false) -> XCUIApplication {
+    private func launchRealShapeHistory(thumbs: Bool = false, question: String = "history") -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
-        app.launchEnvironment["KRIA_CHAT_CLIP_QUESTION"] = "history"
+        app.launchEnvironment["KRIA_CHAT_CLIP_QUESTION"] = question
         if thumbs { app.launchEnvironment["KRIA_CHAT_CLIP_THUMBS"] = "1" }
         app.launch()
         // Same drawer path as `createFreshChat`, for a seeded thread that is already past the format prompt.
@@ -825,6 +825,25 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(eventually { self.selectedCount(app) != "0 of 48 selected" })
         let count = Int(selectedCount(app).split(separator: " ").first ?? "0") ?? 0
         XCTAssertGreaterThan(count, 8, "auto-scroll kept selecting as rows passed under the finger: \(count)")
+    }
+
+    /// KRI-693: a Visuals photo in the picker shows its thumbnail and reads as a photo in the chat's language,
+    /// while the chat clips beside it stay "Clip N".
+    func testPickerShowsAVisualsPhotoWithItsThumbnailAndAPhotoName() {
+        let app = launchRealShapeHistory(thumbs: true, question: "photo")
+        XCTAssertTrue(app.descendants(matching: .any)["clip-card"].waitForExistence(timeout: 20))
+        app.buttons["clip-choose"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
+        let photoID = "asset-d9627a79-b228-4db0-9cbb-201f6f921bb2"
+        let photo = app.buttons["clip-thumb-group:dodgeball-\(photoID)"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 5))
+        XCTAssertEqual(photo.label, "Fotoğraf 1")
+        XCTAssertEqual(app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[0])"].label, "Clip 1", "chat clips are unchanged")
+        // The thumbnail arrives from Visuals; until it does the tile is a placeholder named like the photo.
+        let placeholder = app.descendants(matching: .any)["clip-placeholder-\(photoID)"]
+        let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: placeholder)
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 15), .completed, "the photo never got its thumbnail")
+        shoot(app, "kri693-photo-tile")
     }
 
     /// KRI-282 root-cause pin: the production-shaped question must always produce the card, never just text.
