@@ -52,6 +52,7 @@ from app.kria.brief_checks import (
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
+from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.editor_receipts import (
     bind_editor_receipts,
     receipt_lead,
@@ -116,7 +117,7 @@ from app.services.choice_questions import (
     open_conflicts,
     tag_event,
 )
-from app.services.creation_thread_titles import matches_conversation_revision
+from app.services.creation_thread_titles import conversation_revision_matches_sync
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
@@ -172,8 +173,8 @@ def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: in
     """Pin every creator instruction visible to the approved source turn."""
     messages = [
         str(content).strip()
-        for (content,) in db.execute(
-            select(CreationThreadEvent.content)
+        for content, payload in db.execute(
+            select(CreationThreadEvent.content, CreationThreadEvent.payload)
             .where(
                 CreationThreadEvent.thread_id == thread_id,
                 CreationThreadEvent.role == "user",
@@ -182,7 +183,8 @@ def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: in
             )
             .order_by(CreationThreadEvent.sequence)
         ).all()
-        if str(content).strip()
+        # KRI-552: a re-sent copy of a message adds no instruction to the pinned request.
+        if str(content).strip() and not is_duplicate_answer(payload)
     ]
     request = "\n".join(messages)
     return request if len(request) <= 12_000 else None
@@ -275,7 +277,7 @@ def _complete_response_turn(
         thread = db.execute(
             select(CreationThread).where(CreationThread.id == turn.thread_id).with_for_update()
         ).scalar_one()
-        if not matches_conversation_revision(thread, claimed_thread_revision):
+        if not conversation_revision_matches_sync(db, thread, claimed_thread_revision):
             turn.status = "pending"
             turn.lease_owner = None
             turn.lease_expires_at = None
@@ -883,7 +885,7 @@ def _complete_draft_turn(
         thread = db.execute(
             select(CreationThread).where(CreationThread.id == turn.thread_id).with_for_update()
         ).scalar_one()
-        if not matches_conversation_revision(thread, claimed_thread_revision):
+        if not conversation_revision_matches_sync(db, thread, claimed_thread_revision):
             turn.status = "pending"
             turn.lease_owner = None
             turn.lease_expires_at = None
@@ -2100,7 +2102,7 @@ def _complete_read_turn(
         thread = db.execute(
             select(CreationThread).where(CreationThread.id == turn.thread_id).with_for_update()
         ).scalar_one()
-        if not matches_conversation_revision(thread, claimed_thread_revision):
+        if not conversation_revision_matches_sync(db, thread, claimed_thread_revision):
             # The receipt describes a superseded snapshot. Remove its
             # uncommitted row, release the lease, and republish this durable
             # turn so the next claim observes the new project revision.

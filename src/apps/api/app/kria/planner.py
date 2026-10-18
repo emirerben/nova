@@ -68,6 +68,7 @@ from app.kria.brief import (
 from app.kria.brief_route import loose_text
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
+from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.reply_language import current_reply_language, say
 from app.kria.strategy_policy import (
     RefusedStrategy,
@@ -704,6 +705,8 @@ async def _load_raw_creator_request(
         .scalars()
         .all()
     )
+    # KRI-552: a re-sent copy of a message adds no instruction; read twice it doubled every ask.
+    rows = [row for row in rows if not is_duplicate_answer(row.payload)]
     return _full_creator_request(rows, current_message=user_message)
 
 
@@ -1527,6 +1530,7 @@ async def _load_editor_target(
         .scalars()
         .all()
     )
+    rows = [row for row in rows if not is_duplicate_answer(row.payload)]  # KRI-552
     rows.reverse()
     conversation = [
         {"role": row.role, "content": model_text(getattr(row, "payload", None), row.content)[:1000]}
@@ -1762,6 +1766,8 @@ async def _load_creator_inputs(
         .scalars()
         .all()
     )
+    # KRI-552: a re-sent copy of a message, and the one-line answer it got, are not conversation.
+    rows = [row for row in rows if not is_duplicate_answer(row.payload)]
     rows.reverse()
     creator_summary, item_summary = creator_context(persona, item)
     extra: dict = {}

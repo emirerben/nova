@@ -88,6 +88,16 @@ group, city labels, and activity labels. Do not use any category allowlist.
 Pure style, timing, transitions, titles, music, or duration requests produce an
 empty intents list.
 
+Asking to cut or remove parts of the creator's own recorded speech is speech
+cleanup, which another step handles: "cut my long pauses", "remove the ums",
+"cut the part where I restart the sentence", "uzun duraklamaları kes", "cümleyi
+baştan söylediğim yeri çıkar". It names no clips and prints nothing, so it yields
+no intent -- never a caption, label, group, order, or include, whatever words
+follow "cut" -- and it is never a reason to ask a question. Example: `Cut my long
+pauses and the part where I restart the kilometer thirty sentence. When I say
+"the medal", show my medal photo.` yields one include intent for the medal photo
+and nothing for the cuts.
+
 A general request to caption or subtitle the video, such as "add captions",
 "add subtitles", "turn on captions", or "altyazı ekle", is not a clip operation:
 it asks for captions of what is said, which another step handles. When it names

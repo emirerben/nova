@@ -50,6 +50,9 @@ class _Result:
     def scalars(self) -> _Scalars:
         return _Scalars(self._scalars)
 
+    def all(self) -> list:
+        return []
+
 
 @pytest.fixture(autouse=True)
 def _runtime_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -850,6 +853,7 @@ def test_complete_read_turn_requeues_when_project_revision_changed() -> None:
         _Result(scalar=now),
         _Result(scalar=None),
         _Result(scalar=thread),
+        _Result(),  # KRI-552: the fence reads the events written since the claim
     ]
     db.get.return_value = session
     added: list[object] = []
