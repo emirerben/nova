@@ -332,6 +332,8 @@ def _complete_response_turn(
                     else {}
                 ),
                 **({"choice_question": plan.choice_question} if plan.choice_question else {}),
+                # KRI-738: tappable lengths; the prose above still lists them for old clients.
+                **({"options": plan.reply_options} if plan.reply_options else {}),
                 **(
                     {"creative_copy_resolution": creative_copy_resolution}
                     if creative_copy_resolution
