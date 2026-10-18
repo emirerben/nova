@@ -39,6 +39,7 @@ from app.agents._schemas.creator_agent import (
 from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
 from app.agents.brief_extractor import BriefExtractionInput, BriefExtractorAgent
 from app.agents.clip_intent_planner import ConfirmedTitleCopy
+from app.agents.length_options import length_options
 from app.agents.main_creator import (
     MAIN_CREATOR_CONVERSATION_MAX,
     CreativeCopyDecision,
@@ -1665,6 +1666,15 @@ async def _plan_editor_revision(
             mode="respond",
             turn_value=("question" if response.outcome == "clarification" else "recovery"),
             response=reply,
+            # KRI-738: tappable lengths, only on a question and only those the reply states.
+            reply_options=(
+                [
+                    option["label"]
+                    for option in length_options(getattr(response, "length_options", None), reply)
+                ]
+                if response.outcome == "clarification"
+                else None
+            ),
         )
     return None
 

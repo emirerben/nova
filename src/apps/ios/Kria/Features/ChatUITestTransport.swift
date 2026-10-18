@@ -515,6 +515,36 @@ final class CreationChatFixture: @unchecked Sendable {
                 append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": turnID, "turn_value": "response"])
                 append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
                 append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+            } else if runtime == 2, let replyFixture = ProcessInfo.processInfo.environment["KRIA_CHAT_REPLY_FIXTURE"] {
+                // Reply-UX fixtures (options / receipts / receipt-single), shaped like the server's `assistant_response`.
+                let text = body["message"] as? String ?? ""
+                switch replyFixture {
+                case "options":
+                    if text.hasPrefix("About ") {
+                        // Echo what the server received so the UI test can pin that a chip is sent as plain text.
+                        append("assistant_response", text: "Got it. reply[\(text)]", payload: ["turn_id": turnID, "turn_value": "response"])
+                    } else {
+                        append("assistant_response", text: "The clips are about 1.3 seconds each right now. How short should they be: about 1 second, about 0.8 seconds, or about 0.5 seconds? Or tell me a number of seconds.",
+                               payload: ["turn_id": turnID, "turn_value": "question",
+                                         "options": ["About 1 second", "About 0.8 seconds", "About 0.5 seconds"]])
+                    }
+                default:
+                    let single = replyFixture == "receipt-single"
+                    // An older server (or a review turn): the same receipts with no `reply_lead` / `also_changed`.
+                    let noLead = replyFixture == "receipts-no-lead"
+                    let receipts: [[String: Any]] = [
+                        ["requirement_id": "req-length", "status": "met", "verification": "checked",
+                         "reason": "Set 11 clips to 0.8s; Video length 45.64s → 39.78s"],
+                        ["requirement_id": "req-drone", "status": "not_possible", "reason": "None of your clips is aerial footage."],
+                    ]
+                    append("assistant_response",
+                           text: single ? "Have a look: Make the clips about 0.8 seconds (I changed: Set 11 clips to 0.8s; Video length 45.64s → 39.78s)."
+                                        : "- Couldn't: End on a drone shot. None of your clips is aerial footage.\n- Done: Make the clips about 0.8 seconds. Set 11 clips to 0.8s; Video length 45.64s → 39.78s.\nAlso changed: Retimed the title (0–4.3s → 3–7.3s).",
+                           payload: ["turn_id": turnID, "turn_value": "response",
+                                     "requirement_receipts": single ? [receipts[0]] : receipts]
+                               .merging(noLead ? [:] : ["reply_lead": single ? "Done." : "I did 1 of your 2 asks.",
+                                                        "also_changed": ["Retimed the title (0–4.3s → 3–7.3s)"]]) { $1 })
+                }
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] == "1",
                (thread["job"] as? [String: Any])?["status"] as? String == "ready" {
                 editorTurnIDs[id] = turnID
@@ -656,7 +686,8 @@ final class CreationChatFixture: @unchecked Sendable {
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_BRIEF"] == "1" {
                     // What the server sends after a render: the reply plus one receipt per requirement.
                     append("assistant_review", text: "The cut is ready. I did most of what you asked; one thing needs your call.",
-                           payload: ["turn_id": id, "turn_value": "review", "requirement_receipts": Self.fixtureReceipts])
+                           payload: ["turn_id": id, "turn_value": "review", "requirement_receipts": Self.fixtureReceipts,
+                                     "reply_lead": "Partly done.", "also_changed": ["Retimed the title (0–4.3s → 3–7.3s)"]])
                 }
             }
         }
@@ -862,6 +893,7 @@ final class CreationChatFixture: @unchecked Sendable {
         ["thread_id": threadID, "version": 1,
          "requirements": [
             ["id": "req-labels", "kind": "text", "scope": "per_clip", "description": "Label each clip with its place", "status": "met"],
+            ["id": "req-length", "kind": "duration", "scope": "per_clip", "description": "Make the clips about 0.8 seconds", "status": "met"],
             ["id": "req-order", "kind": "order", "scope": "route", "description": "Follow the pier-to-lighthouse route", "status": "partial"],
             ["id": "req-drone", "kind": "select", "scope": "clip", "description": "End on a drone shot", "status": "not_possible"],
          ],

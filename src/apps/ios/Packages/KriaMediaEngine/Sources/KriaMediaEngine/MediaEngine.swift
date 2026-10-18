@@ -123,6 +123,9 @@ public protocol AssetFingerprinter: Sendable { func fingerprint(file: URL) throw
 
 public struct SHA256Fingerprinter: AssetFingerprinter {
     public init() {}
+    /// Told how many bytes each file hashed was, so a benchmark can count what a flow hashes. Set once at launch by a
+    /// test fixture; nil in normal use.
+    nonisolated(unsafe) public static var observer: (@Sendable (Int64) -> Void)?
     public func fingerprint(file: URL) throws -> AssetFingerprint {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
@@ -133,6 +136,7 @@ public struct SHA256Fingerprinter: AssetFingerprinter {
             if data.isEmpty { break }
             count += Int64(data.count); digest.update(data)
         }
+        Self.observer?(count)
         return AssetFingerprint(hex: digest.finalize(), byteCount: count)
     }
 }
