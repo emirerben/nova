@@ -505,6 +505,10 @@ actor NativeEditorSourceResolver {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
         configuration.timeoutIntervalForResource = 600
+        #if DEBUG
+        // This session is private to the resolver, so a fixture can only reach it from here.
+        if PerfFixture.editorFixture { configuration.protocolClasses = [PerfSourceURLProtocol.self] }
+        #endif
         return URLSession(configuration: configuration)
     }()
     private let diskCache: NativePreviewAssetCache

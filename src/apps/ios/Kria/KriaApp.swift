@@ -52,6 +52,7 @@ import SwiftData
             let container = PerfFixture.container()
             self.container = container
             CreationChatFixture.seedClipThumbnails()
+            PerfFixture.installHashObserver()
             let api = ChatUITestTransport.api()
             // With an expired fixture session the account is "signed in", so its profile read must hit the fixture too.
             _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken ? api : nil))
@@ -131,7 +132,7 @@ struct RootView: View {
                 ChatBubbleUITestHost()
             }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
-                ChatWorkspaceView().overlay(alignment: .topLeading) { if PerfFixture.countersProbe { PerfCountersProbe() } }
+                ChatWorkspaceView().onAppear { PerfCountersWindow.installIfNeeded() }
             }
             else if !auth.isSignedIn { SignInView() }
             else { signedInContent }

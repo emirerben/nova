@@ -278,6 +278,62 @@ final class PerfUITests: XCTestCase {
         print("PERF testScrollQuietTranscript timeline.build=\(Double(rebuilds) / Double(iterations))")
     }
 
+    // MARK: Editor
+
+    private var editorEnvironment: [String: String] {
+        ["KRIA_EDITOR_FIXTURE": "1", "KRIA_CHAT_LONG_HISTORY": "12"]
+    }
+
+    /// Opens the chat's finished render in the native editor and waits until it has finished opening (the preview built
+    /// from the source clips). The counters are read through their own window, which stays readable under the editor.
+    private func openEditor(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let open = app.buttons["Open editor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 20), "The chat offers no Open editor", file: file, line: line)
+        open.tap()
+        XCTAssertTrue(app.staticTexts["native-editor-duration"].waitForExistence(timeout: 30), "The editor never opened", file: file, line: line)
+        let deadline = Date().addingTimeInterval(60)
+        while Date() < deadline {
+            if counters(app)["t editor.open.done"] != nil { return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTFail("The editor never finished opening", file: file, line: line)
+    }
+
+    /// A first open: nothing downloaded yet, so the editor fetches the job, downloads and hashes three clips, and builds
+    /// the preview.
+    func testEditorOpen() {
+        var book = CounterBook()
+        measure(metrics: [interval("editor.open"), interval("editor.preview")], options: options) {
+            let app = makeApp(reset: true, editorEnvironment)
+            app.launch()
+            waitForTranscript(app)
+            openEditor(app)
+            book.add(counters(app))
+            app.terminate()
+        }
+        book.report("testEditorOpen", prefixes: ["net ", "source", "sha256", "t "])
+    }
+
+    /// Opening a project whose sources an earlier session already downloaded (a fresh launch, so a fresh editor
+    /// session, but the on-disk source cache is warm).
+    func testEditorReopenWarm() {
+        let warm = makeApp(reset: true, editorEnvironment)
+        warm.launch()
+        waitForTranscript(warm)
+        openEditor(warm)
+        warm.terminate()
+        var book = CounterBook()
+        measure(metrics: [interval("editor.open"), interval("editor.preview")], options: options) {
+            let app = makeApp(editorEnvironment)
+            app.launch()
+            waitForTranscript(app)
+            openEditor(app)
+            book.add(counters(app))
+            app.terminate()
+        }
+        book.report("testEditorReopenWarm", prefixes: ["net ", "source", "sha256", "t "])
+    }
+
     // MARK: Gallery
 
     /// The first poster on screen. On failure the accessibility tree is printed, so a missing poster can be told

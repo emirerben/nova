@@ -2042,7 +2042,7 @@ struct NativeEditorTemporaryVideo {
         saveState = .saving
         loadState = .loading
         Perf.begin("editor.open", id: editorJobID.uuidString)
-        defer { isSaving = false; Perf.end("editor.open", id: editorJobID.uuidString) }
+        defer { isSaving = false; Perf.end("editor.open", id: editorJobID.uuidString); Perf.mark("editor.open.done") }
         do {
             let receipt: OpenInEditorResponse? = if planItemID == nil {
                 try await api.openJobInEditor(jobID: editorJobID)
