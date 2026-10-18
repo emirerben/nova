@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.37.0] - 2026-10-18
+
+### Fixed
+- fix(kria): phone Voiceover chats leave out spoken-word labels instead of refusing every turn (KRI-691) (#1667) <!-- release-pr: 1667 -->
+
 ## [0.80.36.0] - 2026-10-18
 
 ### Changed
