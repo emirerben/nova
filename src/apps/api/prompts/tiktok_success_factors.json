@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-10-18",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -136,6 +136,24 @@
       "provenance": "corpus",
       "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
       "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
+    },
+    {
+      "id": "nostalgia-content-return-corpus-10",
+      "factor": "Announcing a return to a beloved content series after a long gap creates a community reunion that lifts performance above your baseline",
+      "why": "Parasocial accountability — followers who remember the series feel rewarded and share the return; newcomers get discovery without needing context",
+      "applies_to": ["plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched wellness-lifestyle set, a video explicitly framing it as a return to a beloved format (farm vlogs, ~1-year gap) indexed ~19x the account median at 8.1% engagement — the gap announcement itself was the hook",
+      "source": "tiktok market research 2026-10 (wellness-lifestyle account)"
+    },
+    {
+      "id": "open-choice-engagement-corpus-11",
+      "factor": "Posing a genuine this-or-that styling question over a single outfit or product clip massively lifts comments — the audience's opinion is the CTA",
+      "why": "Choice questions are low-friction to answer and create invested discussion; the creator appears open and real rather than selling",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched city-fashion set, a single outfit clip with a genuine 'this color or the other?' question indexed ~5.4x the account median at 13.6% engagement — well above the account's editorial posts at the same length",
+      "source": "tiktok market research 2026-10 (city-fashion account)"
     }
   ]
 }

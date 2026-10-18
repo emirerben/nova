@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-10-18",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -212,6 +212,35 @@
       "filming_context": "15-30s of an aspirational scene — a city café, a mountain trail, a dream apartment — let it breathe; no narration needed",
       "source": "tiktok:@izzsiomoi (2026-06)",
       "performance": {"engagement_rate": 0.032, "view_index": 1.57, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "nostalgia-series-return-01",
+      "niche": "wellness & daily ritual",
+      "pillar": "return-to-routine after a break",
+      "idea": "return to a beloved content series you haven't posted in a long time — the gap itself is the hook, the community reunion is the reward",
+      "hook_pattern": "haven't done [series/format] in [time period]... missed it?",
+      "filming_context": "film in the original style and location if possible; let the nostalgia show — no need to explain the absence, just show up",
+      "source": "tiktok:@nermozdemir (2026-10)",
+      "performance": {"engagement_rate": 0.081, "view_index": 19.1, "sampled_at": "2026-10"}
+    },
+    {
+      "id": "outfit-choice-question-01",
+      "niche": "professional lifestyle & city aesthetics",
+      "pillar": "seasonal outfit rotations",
+      "idea": "show a single outfit you genuinely love and ask the audience to choose between it and an alternate version — the indecision is the hook, comments are the payoff",
+      "hook_pattern": "what do you think of [this]? or does [the other version] win?",
+      "filming_context": "6-15s, clean background or city street, wear the item in a way that shows it properly; phrase the question authentically — you actually want to know",
+      "source": "tiktok:@allexmarielle (2026-10)",
+      "performance": {"engagement_rate": 0.136, "view_index": 5.4, "sampled_at": "2026-10"}
+    },
+    {
+      "id": "ritual-anchor-reset-01",
+      "niche": "wellness & daily ritual",
+      "pillar": "morning rituals and recipe ingredients",
+      "idea": "the single food, drink, or routine that gets you back on track after a disruption — framed as your personal anchor rather than a wellness prescription",
+      "hook_pattern": "my go-to when [life disrupted the routine]",
+      "filming_context": "close-up preparation shots — the bowl, the pour, the process — let the ritual breathe; 30-60s; no need to explain why it works, just show it",
+      "source": "tiktok:@nermozdemir (2026-10)"
     }
   ]
 }

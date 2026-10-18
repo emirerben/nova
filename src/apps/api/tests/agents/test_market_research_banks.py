@@ -223,8 +223,10 @@ def test_persona_bank_version_couples_to_prompt_version():
     # Bump 2026-06-14: weekly research refresh — added professional-visual-diary-01 archetype
     #                  (allexmarielle 9to5 professional aesthetic lane).
     # Bump 2026-07-11-kria: product rename only; banks untouched.
-    assert archetypes_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
+    # Bump 2026-10-18: weekly research refresh — added wellness-ritual-lifestyle-01 archetype
+    #                  (nermozdemir daily ritual pattern, farm vlog 19.1x vi=19.1, er=0.081).
+    assert archetypes_version() == "2026-10-18"
+    assert PERSONA_PROMPT_VERSION == "2026-10-18-weekly-bank"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -246,8 +248,11 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     #             banks untouched (new block is conditional-empty when no seeds).
     # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
     #             parallel-life-aspiration-01 ideas.
-    assert content_ideas_version() == "2026-06-14"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-09-06-v3-creator-direction"
+    # 2026-10-18: weekly research refresh — added nostalgia-series-return-01
+    #             (nermozdemir farm vlog 19.1x), outfit-choice-question-01 (allexmarielle
+    #             jacket 5.4x), ritual-anchor-reset-01 (wellness routine pattern).
+    assert content_ideas_version() == "2026-10-18"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-18-weekly-bank"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -267,12 +272,13 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # Intro bumped to 2026-08-05: anti-slop pattern-class ban + translate-don't-echo
     #                  (plans/015 — monkey/marketing incident); banks untouched here
     #                  (success-factor bank unchanged; overlay bank moved separately).
-    assert success_factors_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-09-06-v3-creator-direction"
-    # Creator direction was added to the consuming prompt without changing
-    # the research bank, so only the agent version advances.
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-09-06-creator-direction"
+    # Bump 2026-10-18: weekly research refresh — added nostalgia-content-return-corpus-10
+    #                  (nermozdemir farm vlog 19.1x) and open-choice-engagement-corpus-11
+    #                  (allexmarielle jacket 5.4x, er=0.136).
+    assert success_factors_version() == "2026-10-18"
+    assert PERSONA_PROMPT_VERSION == "2026-10-18-weekly-bank"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-18-weekly-bank"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-18-weekly-bank"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -304,11 +310,11 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  bank content edit, so BOTH consuming agents bump. Guard:
     #                  tests/agents/test_overlay_examples_slop_guard.py now lints
     #                  every exemplar against the slop pattern class.
-    assert library_version() == "2026-08-05"
-    # Creator direction was added to the consuming prompt without changing
-    # the exemplar bank, so only the agent version advances.
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-09-06-creator-direction"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-08-05"
+    # Bump 2026-10-18: weekly research refresh — added nostalgia-return-fadein-01
+    #                  and routine-anchor-popin-01 (wellness & daily ritual lane).
+    assert library_version() == "2026-10-18"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-18-weekly-bank"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-10-18-weekly-bank"
 
 
 @pytest.mark.parametrize(
