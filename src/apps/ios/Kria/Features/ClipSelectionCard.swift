@@ -16,14 +16,18 @@ struct ClipSelectionCard: View {
     let media: [CreationAttachedMedia]
     let projectID: UUID?
     let mode: ClipSelectionCardMode
+    /// The language of the answer this card posts (the chat's reply language, KRI-694).
+    let language: ClipAnswerLanguage
     @State private var state: ClipSelectionState
     @State private var showsPicker = false
 
-    init(question: ClipQuestion, media: [CreationAttachedMedia], projectID: UUID? = nil, mode: ClipSelectionCardMode) {
+    init(question: ClipQuestion, media: [CreationAttachedMedia], projectID: UUID? = nil, mode: ClipSelectionCardMode,
+         language: ClipAnswerLanguage = .english) {
         self.question = question
         self.media = media
         self.projectID = projectID
         self.mode = mode
+        self.language = language
         _state = State(initialValue: ClipSelectionState(question: question))
     }
 
@@ -34,7 +38,7 @@ struct ClipSelectionCard: View {
             // On the wrapper (not the active card) so Done can flip the card to its answered summary while the
             // sheet is still dismissing.
             .sheet(isPresented: $showsPicker) {
-                ClipPickerSheet(question: question, state: $state, media: media, positions: positions, projectID: projectID, isSending: isSendingNow) { submission, text in
+                ClipPickerSheet(question: question, state: $state, media: media, positions: positions, projectID: projectID, isSending: isSendingNow, language: language) { submission, text in
                     if case .active(_, let submit) = mode { submit(submission, text) }
                 }
             }
@@ -95,7 +99,7 @@ struct ClipSelectionCard: View {
                 .accessibilityIdentifier("clip-choose")
                 Button("Skip, decide for me") {
                     let submission = ClipSelectionSubmission.skip(question)
-                    submit(submission, submission.message(question: question, positions: positions))
+                    submit(submission, submission.message(question: question, positions: positions, language: language))
                 }
                 .font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -131,6 +135,7 @@ struct ClipPickerSheet: View {
     let positions: [String: Int]
     let projectID: UUID?
     let isSending: Bool
+    let language: ClipAnswerLanguage
     let submit: (ClipSelectionSubmission, String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var categoryKey: String
@@ -142,13 +147,15 @@ struct ClipPickerSheet: View {
     struct PreviewTarget: Identifiable { let index: Int; var id: Int { index } }
 
     init(question: ClipQuestion, state: Binding<ClipSelectionState>, media: [CreationAttachedMedia], positions: [String: Int],
-         projectID: UUID?, isSending: Bool, submit: @escaping (ClipSelectionSubmission, String) -> Void) {
+         projectID: UUID?, isSending: Bool, language: ClipAnswerLanguage = .english,
+         submit: @escaping (ClipSelectionSubmission, String) -> Void) {
         self.question = question
         _state = state
         self.media = media
         self.positions = positions
         self.projectID = projectID
         self.isSending = isSending
+        self.language = language
         self.submit = submit
         _categoryKey = State(initialValue: question.categories[0].key)
     }
@@ -356,7 +363,7 @@ struct ClipPickerSheet: View {
             Button {
                 let submission = state.submission
                 doneToken += 1
-                submit(submission, submission.message(question: question, positions: positions))
+                submit(submission, submission.message(question: question, positions: positions, language: language))
                 dismiss()
             } label: {
                 Text(state.canSend ? "Done" : "Pick a clip or None of these").frame(maxWidth: .infinity)

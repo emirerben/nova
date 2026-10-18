@@ -10,6 +10,7 @@
       "KriaUITests/CreationUITests/testTalkingToCameraPicksThreeVideos",
       "KriaUITests/CreationUITests/testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",
       "KriaUITests/CreationUITests/testClipsOnlySubmissionUsesSuggestAnEdit",
+      "KriaUITests/CreationUITests/testDictationShowsLiveWordsThenServerTextAndIsSendable",
       "KriaUITests/CreationUITests/testIncomingResponseDoesNotPullReaderFromScrolledHistory",
       "KriaUITests/CreationUITests/testTypedPromptAppearsBetweenMediaReceiptAndAssistantResponse",
       "KriaUITests/CreationUITests/testSlowDirectionAndPreJobFailureNeverReturnToUploading",

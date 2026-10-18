@@ -2965,3 +2965,19 @@ effort for a stale sticker asset (dropped, never fatal) so deleting a pool image
 v0.7.8.2 with the dead `/template/[id]` route (Drive picker gone; NextAuth uses the
 server-side `GOOGLE_CLIENT_ID`). Moved here to make room for the
 `CLIP_EXPOSURE_FACT_ENABLED` line.
+
+## [2026-10-18] Consented speech cleanup never claims a retake cut; the reply states what it cut and left (KRI-551)
+
+**Decision:** Phone Voiceover/Talking cleanup (`required_v1`) cuts long pauses and filler sounds only. The preflight analysis is built
+without `retake_spans`, so a restarted sentence ("At kilometer 30... sorry." in stress kit N3, job 8a0ced82) is never cut, whatever
+`RETAKE_CUT_ENABLED` says. We chose honesty over a half-tested feature: the iOS cleanup card says "pauses and filler sounds" and that a
+restarted sentence stays in; the Talking whole-take receipt no longer says "retakes may be cut"; and the finished-render reply appends
+`speech_cleanup_review_note(variant)`, read from the variant's own `silence_cut.removed` rows (14 silences + 1 filler on N3), so it holds
+even when the render's brief binding was lost (KRI-552) and no requirement receipt could report the limit.
+**Why:** The only retake detector is a paid Gemini agent (`retake_detector`); precision matters because a retake cut removes real words
+under consent, and validating that needs paid live runs. A deterministic text matcher would be a new heuristic reading creator words.
+**Real cut (not done, needs a paid precision run):** inject `retake_detect_fn` into `analyze_speech_cleanup` after `_timed_words`, call
+`run_retake_detector` from `speech_cleanup_analysis._run_engine_once` behind `RETAKE_CUT_ENABLED` (fail open to zero spans), add a retakes
+token to `current_detector_policy` / bump `DETECTOR_VERSION` (retires `ready` analyses, re-collects consent, reshuffles cohorts), expose
+`retakes` in `public_projection` + the iOS stats, then drop the limit sentence and let `_check_rendered_cleanup` read a cut retake as met.
+**Guards:** `tests/tasks/test_kri551_cleanup_review_note.py` (real N3 words + cut record, English and Turkish).

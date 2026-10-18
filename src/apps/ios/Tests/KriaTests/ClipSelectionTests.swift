@@ -237,6 +237,45 @@ final class ClipSelectionTests: XCTestCase {
         XCTAssertTrue(ClipSelectionSubmission.skip(q).skipped)
     }
 
+    /// KRI-694: Tigre night N1 posted "None of these for …" into a Turkish chat. The visible answer follows the
+    /// chat's reply language (the server keeps it on `thread.state["reply_language"]`); the device language never
+    /// decides, and everything but Turkish stays English.
+    func testMessageTextFollowsTheChatReplyLanguage() throws {
+        let q = try question()
+        let positions = ["a": 1, "b": 7, "c": 3, "d": 2]
+        // "b" is the server's suggestion for Dodgeball and starts ticked, so ticking "c" gives clips 3 and 7.
+        var both = ClipSelectionState(question: q)
+        both.toggle("c", in: "dodgeball")
+        both.toggleNone("football")
+        XCTAssertEqual(both.submission.message(question: q, positions: positions, language: .turkish),
+                       "Dodgeball: klip 3, 7. Football için hiçbiri")
+        XCTAssertEqual(both.submission.message(question: q, positions: positions, language: .english),
+                       "Dodgeball: clips 3, 7. None of these for Football")
+        var single = ClipSelectionState(question: q)
+        single.toggle("d", in: "football")
+        XCTAssertEqual(single.submission.message(question: q, positions: positions, language: .turkish),
+                       "Dodgeball: klip 7. Football: klip 2")
+        XCTAssertEqual(single.submission.message(question: q, positions: positions, language: .english),
+                       "Dodgeball: clip 7. Football: clip 2")
+        XCTAssertEqual(ClipSelectionSubmission.skip(q).message(question: q, positions: positions, language: .turkish),
+                       "Atla, benim yerime sen karar ver")
+        XCTAssertEqual(ClipSelectionSubmission.skip(q).message(question: q, positions: positions, language: .english),
+                       "Skip, decide for me")
+        // An answer with no tick and no "none" reads as a skip in either language.
+        let empty = ClipSelectionSubmission(questionID: q.questionID, answers: [], noneKeys: [], skipped: false)
+        XCTAssertEqual(empty.message(question: q, positions: positions, language: .turkish), "Atla, benim yerime sen karar ver")
+        XCTAssertEqual(empty.message(question: q, positions: positions, language: .english), "Skip, decide for me")
+    }
+
+    func testTheAnswerLanguageComesFromTheThreadStateAndDefaultsToEnglish() {
+        XCTAssertEqual(ClipAnswerLanguage(threadState: ["reply_language": .string("tr")]), .turkish)
+        XCTAssertEqual(ClipAnswerLanguage(threadState: ["reply_language": .string("en")]), .english)
+        // Unknown language, a missing key and a non-string value are English, like the server's `say()`.
+        XCTAssertEqual(ClipAnswerLanguage(threadState: ["reply_language": .string("de")]), .english)
+        XCTAssertEqual(ClipAnswerLanguage(threadState: ["reply_language": .number(1)]), .english)
+        XCTAssertEqual(ClipAnswerLanguage(threadState: [:]), .english)
+    }
+
     func testSummaryForAnsweredCard() throws {
         let q = try question()
         var state = ClipSelectionState(question: q)

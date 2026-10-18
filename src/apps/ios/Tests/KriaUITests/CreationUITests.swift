@@ -524,6 +524,42 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [appended], timeout: 5), .completed)
     }
 
+    /// KRI-742: talk instead of type. The microphone and recognizer are scripted (a simulator has neither); the
+    /// composer, mic button, controller and send path are the real ones. Live words appear while listening, the
+    /// server text replaces them on stop, and the result is an ordinary sendable message.
+    func testDictationShowsLiveWordsThenServerTextAndIsSendable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_VOICE_DICTATION"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+
+        let mic = app.buttons["chat-dictate"]
+        XCTAssertTrue(mic.waitForExistence(timeout: 10), "The mic appears once the server advertises voice_dictation")
+        XCTAssertGreaterThanOrEqual(mic.frame.height, 44)
+        let composer = app.textFields["Message Kria"]
+        mic.tap()
+
+        let live = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "make the intro shorter"), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [live], timeout: 5), .completed, "Live words appear while listening")
+        XCTAssertEqual(mic.label, "Stop dictation")
+
+        mic.tap()
+        let final = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Make the intro shorter and add the beach clip first."), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [final], timeout: 8), .completed, "The server text replaces the live words")
+        XCTAssertEqual(mic.label, "Dictate message")
+        XCTAssertTrue(app.buttons["chat-send-message"].isEnabled)
+
+        app.buttons["chat-send-message"].tap()
+        let sent = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value != %@", "Make the intro shorter and add the beach clip first."), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [sent], timeout: 8), .completed, "Sending clears the composer")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Dictation sent"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
     func testClipsOnlySubmissionUsesSuggestAnEdit() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]

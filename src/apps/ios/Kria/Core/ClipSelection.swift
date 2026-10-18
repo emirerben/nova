@@ -158,21 +158,40 @@ struct ClipSelectionSubmission: Encodable, Equatable, Sendable {
     }
 
     /// The readable message sent alongside the structured payload ("Dodgeball: clips 3, 7. Football: clips 1, 2").
-    /// `positions` maps media id -> the 1-based clip number the picker showed.
-    func message(question: ClipQuestion, positions: [String: Int]) -> String {
-        if skipped { return "Skip, decide for me" }
+    /// `positions` maps media id -> the 1-based clip number the picker showed. It is the creator's visible turn in the
+    /// chat, so it follows the chat's reply language (KRI-694); the structured answer, not this text, is what binds.
+    func message(question: ClipQuestion, positions: [String: Int], language: ClipAnswerLanguage = .english) -> String {
+        let skip = language == .turkish ? "Atla, benim yerime sen karar ver" : "Skip, decide for me"
+        if skipped { return skip }
         let labels = Dictionary(question.categories.map { ($0.key, $0.label) }, uniquingKeysWith: { first, _ in first })
         var pieces: [String] = []
         for category in question.categories {
+            let label = labels[category.key] ?? category.key
             if let answer = answers.first(where: { $0.key == category.key }), !answer.mediaIDs.isEmpty {
                 let numbers = answer.mediaIDs.compactMap { positions[$0] }.sorted()
                 let list = numbers.map(String.init).joined(separator: ", ")
-                pieces.append("\(labels[category.key] ?? category.key): clip\(numbers.count == 1 ? "" : "s") \(list)")
+                switch language {
+                case .turkish: pieces.append("\(label): klip \(list)")
+                case .english: pieces.append("\(label): clip\(numbers.count == 1 ? "" : "s") \(list)")
+                }
             } else if noneKeys.contains(category.key) {
-                pieces.append("None of these for \(labels[category.key] ?? category.key)")
+                pieces.append(language == .turkish ? "\(label) için hiçbiri" : "None of these for \(label)")
             }
         }
-        return pieces.isEmpty ? "Skip, decide for me" : pieces.joined(separator: ". ")
+        return pieces.isEmpty ? skip : pieces.joined(separator: ". ")
+    }
+}
+
+/// The language the picker's posted answer is written in: the chat's reply language, which the server keeps on
+/// `thread.state["reply_language"]` (KRI-520). Never the device language -- a Turkish chat on an English phone
+/// still reads Turkish. Only Turkish has its own wording; a missing or unknown language stays English, exactly
+/// like the server's `say(en:, tr:)`.
+enum ClipAnswerLanguage: Equatable, Sendable {
+    case english
+    case turkish
+
+    init(threadState: [String: JSONValue]) {
+        self = threadState["reply_language"]?.stringValue == "tr" ? .turkish : .english
     }
 }
 

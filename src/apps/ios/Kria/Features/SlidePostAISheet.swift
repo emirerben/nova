@@ -38,6 +38,9 @@ struct SlidePostAISheet: View {
     let chatEnabled: Bool
     let canRequestProposal: Bool
     let uploadGuidance: String?
+    /// KRI-742: the server advertises `voice_dictation`.
+    var dictationEnabled = false
+    @State private var dictation: DictationController?
     @State private var prompt = ""
     @FocusState private var composerFocused: Bool
 
@@ -50,10 +53,13 @@ struct SlidePostAISheet: View {
                 text: $prompt, isSending: session.isBusy || session.isChatting, canAttach: false,
                 blocksSubmission: !chatEnabled && !canRequestProposal,
                 placeholder: chatEnabled ? "Ask Kria to edit your slides…" : "Describe the post…",
-                isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
+                isFocused: $composerFocused, dictation: dictationEnabled ? dictation : nil, attach: {}, send: { Task { await send() } }
             )
         }
         .background(KriaColor.paper)
+        .task(id: dictationEnabled) {
+            if dictationEnabled, dictation == nil { dictation = DictationController.make(api: api) }
+        }
         .onAppear { prompt = session.instruction }
         .onChange(of: prompt) { _, value in session.instruction = value }
     }

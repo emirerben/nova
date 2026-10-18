@@ -23,6 +23,7 @@ from app.kria.brief_route import chapter_list
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.kria.reply_language import say
+from app.kria.spoken_text_ask import requirement_spoken_text
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import voice_tail_slack_s
 from app.pipeline.sequence_text_evidence import text_matches
@@ -1077,6 +1078,7 @@ def build_render_contract(
     sequence_placed = all(status == "resolved" for _p, _n, _m, status in sequence) and any(
         clip_ids.intersection(members) for _p, _n, members, _s in sequence
     )
+    talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
     if brief:
         for requirement in brief.live():
             if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
@@ -1091,6 +1093,11 @@ def build_render_contract(
                     continue
                 durations.append(float(requirement.facts["duration_s"]))
             if requirement.kind == "text" and requirement.literal:
+                if talking_edit and requirement_spoken_text(requirement) is not None:
+                    # KRI-707: a Talking edit shows text on a spoken word only where the
+                    # take says it (`phone_spoken_text`). Its own receipt answers it ("not
+                    # heard" / "can't"), so pinning it would refuse an honest render.
+                    continue
                 shot_index = None
                 if requirement.is_shot_text:
                     labels = list(typed.shot_labels or ()) if typed else []
