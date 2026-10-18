@@ -1064,8 +1064,7 @@ private struct CreationWorkspaceView: View {
         return ReplyOptionsMode(
             select: { option in Task { await send(message: option) } },
             other: {
-                // Nothing is sent: the creator writes their own answer in the composer.
-                prompt = ""
+                // Nothing is sent and nothing typed is lost: the creator writes their own answer.
                 composerFocused = true
             }
         )

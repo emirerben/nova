@@ -911,6 +911,17 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
                 return say(en="Reordered the clips", tr="Klipler yeniden sıralandı")
             return say(en="Reordered the clips", tr="Klipler yeniden sıralandı")
         if name == "in_s":
+            # A longer clip reaches back into earlier footage (KRI-737): that is not a trim.
+            if all(
+                isinstance(t.before, int | float)
+                and isinstance(t.after, int | float)
+                and t.after < t.before
+                for t in entry.targets
+            ):
+                return say(
+                    en=f"Started {who} earlier in its footage",
+                    tr=f"{who} görüntüde daha erken başlıyor",
+                )
             return say(en=f"Trimmed {who}", tr=f"{who} kırpıldı")
         if name == "look_preset":
             return say(en=f"Changed the look of {who}", tr=f"{who} görünümü değişti")

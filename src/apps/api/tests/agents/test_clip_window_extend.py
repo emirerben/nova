@@ -132,3 +132,56 @@ def test_bounds_allow_the_whole_source_not_just_the_forward_room() -> None:
     _low, high = timeline._bounds(row, timeline._ops())
 
     assert high == pytest.approx(math.floor(8.0 * _FPS) / _FPS)
+
+
+def _two_moments_of_one_file() -> dict:
+    """Two slots cut back to back from the same 10 s file (an edit that reuses a long take)."""
+    variant = _variant()
+    first, second = variant["ai_timeline"]["slots"]
+    first.update(clip_index=0, in_s=0.0, duration_s=5.0, source_duration_s=10.0)
+    second.update(
+        clip_index=0,
+        source_gcs_path=first["source_gcs_path"],
+        in_s=5.0,
+        duration_s=5.0,
+        source_duration_s=10.0,
+    )
+    return variant
+
+
+def test_a_clip_never_slides_back_over_its_neighbours_footage() -> None:
+    # Slot 1 starts where slot 0 ends. Reaching back would replay slot 0's moment.
+    slot = _compile(
+        _two_moments_of_one_file(),
+        [{"op": "patch_slots", "selector": {"slot_indexes": [1]}, "patch": {"duration_s": 8.0}}],
+    )[1]
+
+    assert slot["in_s"] == pytest.approx(5.0)
+    assert slot["duration_s"] == pytest.approx(5.0)
+
+
+def test_set_total_duration_promises_no_more_than_before_when_clips_share_a_file() -> None:
+    # Two 5 s moments of a 10 s file. Slot 0 may grow forward over the file (as it always could);
+    # slot 1 may not reach back over slot 0, so the longest stays 15 s, not 20 s.
+    with pytest.raises(Exception, match="Longest possible is 15.0 s"):
+        _compile(
+            _two_moments_of_one_file(),
+            [{"op": "set_total_duration", "target_s": 20.0, "strategy": "uniform"}],
+        )
+
+
+def test_the_receipt_says_the_clip_started_earlier_not_that_it_was_trimmed() -> None:
+    from app.services.kria_editor_ops_diff import describe_diff  # noqa: PLC0415
+
+    variant = _slot0(in_s=7.63, duration=0.37)
+    compiled = compile_editor_ops(
+        _job(variant),
+        variant,
+        [{"op": "patch_slots", "selector": {"slot_indexes": [0]}, "patch": {"duration_s": 1.5}}],
+    )
+
+    said = describe_diff(compiled.diff.entries, live_text_count=compiled.diff.live_text_count)
+
+    assert "Set clip 1 to 1.5s" in said
+    assert "Started clip 1 earlier in its footage" in said
+    assert not any("Trimmed" in phrase for phrase in said)

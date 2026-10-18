@@ -376,24 +376,47 @@ def _select(state: Any, selector: dict[str, Any]) -> list[int]:
     return chosen
 
 
+def _slide_floor(rows: list[dict[str, Any]], row: dict[str, Any], ops: Any) -> float:
+    """The earliest source second ``row`` may slide back to: the end of the latest window of
+    another clip cut from the same file that finishes before ``row`` starts, so lengthening one
+    moment never replays the footage of its neighbour."""
+    key = row.get("clip_index")
+    start = float(row.get("in_s") or 0.0)
+    if key is None:
+        return 0.0
+    ends = [
+        float(other.get("in_s") or 0.0) + ops._slot_duration(other) * ops._slot_rate(other)
+        for other in rows
+        if other is not row and not other.get("removed") and other.get("clip_index") == key
+    ]
+    return max((end for end in ends if end <= start + 1e-6), default=0.0)
+
+
 def _fit_window(
-    source: float, in_s: float, duration: float, rate: float, *, slide: bool
+    source: float,
+    in_s: float,
+    duration: float,
+    rate: float,
+    *,
+    slide: bool,
+    floor: float = 0.0,
 ) -> tuple[float, float]:
     """Fit a clip of ``duration`` output seconds into a ``source``-second file.
 
     The clip plays ``duration * rate`` source seconds starting at ``in_s``. When that runs
     past the end and ``slide`` is set, the start moves earlier so the clip ends at the end
-    of the source (everything it already showed stays in); the duration is only capped at
-    the whole source. Without ``slide`` the duration is clamped to the footage after
-    ``in_s``. Invariant: ``in_s + duration * rate <= source``.
+    of the source (everything it already showed stays in), but never before ``floor``; the
+    duration is capped at the footage between ``floor`` and the end. Without ``slide`` the
+    duration is clamped to the footage after ``in_s``.
+    Invariant: ``floor <= in_s`` and ``in_s + duration * rate <= source``.
     """
     room = (source - in_s) / rate
     if duration <= room + 1e-9:
         return in_s, duration
     if not slide:
         return in_s, math.floor(room * _FPS) / _FPS
-    duration = min(duration, math.floor(source / rate * _FPS) / _FPS)
-    return max(0.0, source - duration * rate), duration
+    duration = min(duration, math.floor((source - floor) / rate * _FPS) / _FPS)
+    return max(floor, source - duration * rate), duration
 
 
 def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
@@ -456,7 +479,14 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
                 slide = "in_s" not in patch
                 if not slide and (float(source) - in_s) / rate < MIN_CLIP_S:
                     raise _err("That start point leaves too little footage in the clip")
-                new_in, duration = _fit_window(float(source), in_s, duration, rate, slide=slide)
+                new_in, duration = _fit_window(
+                    float(source),
+                    in_s,
+                    duration,
+                    rate,
+                    slide=slide,
+                    floor=_slide_floor(rows, row, ops) if slide else 0.0,
+                )
                 if new_in != in_s:
                     row["in_s"] = round(new_in, 3)
             if duration < MIN_CLIP_S:
@@ -525,16 +555,19 @@ def _plan_total(durations: list[float], rows: list[dict[str, Any]]) -> float:
     return sum(durations) - sum(overlap for _t, overlap in eff[:-1])
 
 
-def _bounds(row: dict[str, Any], ops: Any) -> tuple[float, float]:
+def _bounds(
+    row: dict[str, Any], ops: Any, rows: list[dict[str, Any]] | None = None
+) -> tuple[float, float]:
     current = ops._slot_duration(row)
     low = min(MIN_RETARGET_CLIP_S, current)
     high = _max_total_s()
     source = row.get("source_duration_s")
     if not _is_image(row) and isinstance(source, (int, float)) and source > 0:
-        # The whole source, not just the footage after the start: a longer clip slides its
-        # start earlier (see ``_fit_window``).
+        # The whole source after any neighbouring window cut from the same file, not just the
+        # footage after the start: a longer clip slides its start earlier (``_fit_window``).
         rate = ops._slot_rate(row)
-        high = min(high, math.floor(float(source) / rate * _FPS) / _FPS)
+        floor = _slide_floor(rows, row, ops) if rows else 0.0
+        high = min(high, math.floor((float(source) - floor) / rate * _FPS) / _FPS)
     return low, max(low, high)
 
 
@@ -546,7 +579,12 @@ def _write_durations(state: Any, idx: list[int], durations: list[float]) -> None
         if not _is_image(row) and isinstance(source, (int, float)) and source > 0:
             in_s = float(row.get("in_s") or 0.0)
             new_in, durations[pos] = _fit_window(
-                float(source), in_s, durations[pos], ops._slot_rate(row), slide=True
+                float(source),
+                in_s,
+                durations[pos],
+                ops._slot_rate(row),
+                slide=True,
+                floor=_slide_floor(state.slots, row, ops),
             )
             if new_in != in_s:
                 row["in_s"] = round(new_in, 3)
@@ -567,7 +605,7 @@ def _trim_tail(state: Any, ops: Any, target: float, active_idx: list[int]) -> No
         if abs(gap) <= _TOL_S:
             break
         tail = len(idx) - 1
-        low, _high = _bounds(state.slots[idx[tail]], ops)
+        low, _high = _bounds(state.slots[idx[tail]], ops, state.slots)
         if gap < 0:
             wanted = d[tail] + gap
             if wanted >= low - 1e-9:
@@ -582,7 +620,7 @@ def _trim_tail(state: Any, ops: Any, target: float, active_idx: list[int]) -> No
         else:
             grown = False
             for pos in range(len(idx) - 1, -1, -1):
-                _low, high = _bounds(state.slots[idx[pos]], ops)
+                _low, high = _bounds(state.slots[idx[pos]], ops, state.slots)
                 if high - d[pos] > 1e-6:
                     d[pos] = _frame(min(high, d[pos] + gap))
                     grown = True
@@ -603,7 +641,7 @@ def _op_set_total_duration(state: Any, op: dict[str, Any]) -> None:
     if not idx:
         raise _err("The timeline has no clips")
     rows = [state.slots[i] for i in idx]
-    bounds = [_bounds(row, ops) for row in rows]
+    bounds = [_bounds(row, ops, state.slots) for row in rows]
     lows = [b[0] for b in bounds]
     highs = [b[1] for b in bounds]
     longest = _plan_total(highs, rows)

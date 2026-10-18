@@ -293,7 +293,7 @@ private struct RequirementReceiptRow: View {
                     Text(reason)
                         .font(KriaFont.body(13))
                         .foregroundStyle(title == nil ? KriaColor.ink : KriaColor.mutedInk)
-                        .lineLimit(2)
+                        // Never truncated: the "Couldn't" / "Partly" explanation is what the creator needs.
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
