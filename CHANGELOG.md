@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.34.0] - 2026-10-18
+
+### Changed
+- perf(ios): the editor opens faster: overlapped requests, parallel clips, sources not re-hashed (KRI-714) (#1666) <!-- release-pr: 1666 -->
+
 ## [0.80.33.0] - 2026-10-18
 
 ### Fixed
