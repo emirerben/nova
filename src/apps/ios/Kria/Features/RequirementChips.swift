@@ -4,7 +4,7 @@ import SwiftUI
 //
 // The server judges every requirement in the creator's brief (met / partial / couldn't) and lists
 // the names it guessed for clips (a landmark, a place). This file is the native side of that:
-// one chip per requirement under the reply that carries the receipts, and a "Guessed names" row
+// one static row per requirement under the reply that carries the receipts, and a "Guessed names" row
 // whose tap starts a one-line correction in the composer.
 //
 // Decoded by hand (not the generated client) so an additive server field can never fail a whole
@@ -154,19 +154,53 @@ struct CreativeBrief: Decodable, Equatable, Sendable {
     }
 }
 
-/// Under an assistant reply that carries receipts: one chip per requirement, then the guessed names.
+/// The optional "say it once" keys an assistant event can carry next to its receipts or question.
+/// Hand-decoded and tolerant like the receipts: a missing or oddly typed key is nil / empty, never a failure.
+struct ReplyExtras: Equatable, Sendable {
+    /// Short lead that replaces the long prose. Only honoured together with receipts.
+    let lead: String?
+    /// Extra deliberate changes no request claimed.
+    let alsoChanged: [String]
+    /// Chip labels for an `assistant_response` question (2-4 short strings).
+    let options: [String]
+
+    static func parse(payload: [String: JSONValue]?, eventType: String, hasReceipts: Bool) -> Self {
+        func strings(_ key: String) -> [String] {
+            (payload?[key]?.arrayValue ?? []).compactMap { $0.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
+        let lead = hasReceipts
+            ? payload?["reply_lead"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty : nil
+        // Legacy `assistant_question` events keep their own exact-string `options` path (QuestionOptionsRow).
+        let isReplyQuestion = eventType == "assistant_response" && payload?["turn_value"]?.stringValue == "question"
+        return Self(lead: lead, alsoChanged: hasReceipts ? strings("also_changed") : [], options: isReplyQuestion ? strings("options") : [])
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+/// Under an assistant reply that carries receipts: one static row per requirement (outcome icon + the
+/// reason, always visible), an optional muted "Also:" line, then the guessed names.
 /// Type is Inter (`KriaFont.body`) throughout — never the display serif on new UI.
 struct RequirementChipsView: View {
     let receipts: [RequirementReceiptItem]
     let requirements: [String: CreativeBriefRequirement]
-    /// False until the brief has loaded (or its fetch has definitively failed). Chips wait for it so
-    /// they never flash a bare "Done" and then relabel themselves.
+    /// False until the brief has loaded (or its fetch has definitively failed). Titles wait for it so
+    /// they never flash a placeholder and then relabel themselves. A single receipt shows no title at
+    /// all (the creator's own message is right above), so it never has to wait.
     let titlesReady: Bool
+    /// Extra deliberate changes no request claimed, shown as one muted last line.
+    var alsoChanged: [String] = []
+    /// True when the message shows a short `reply_lead` instead of the long prose, so the rows carry
+    /// each reason. False (old server, or a review turn whose prose still lists them): the rows are just
+    /// outcome + request title, never a second copy of the reasons the prose already gives.
+    var showsReasons: Bool = true
     /// Nil where correcting isn't possible (no composer): the guessed-names row is then omitted.
     let correct: ((InferredLabel) -> Void)?
-    @State private var expandedID: String?
 
-    /// One chip per requirement id, first receipt wins (a duplicate id would collide in the list).
+    /// One row per requirement id, first receipt wins (a duplicate id would collide in the list).
     private var uniqueReceipts: [RequirementReceiptItem] {
         var seen = Set<String>()
         return receipts.filter { seen.insert($0.requirementID).inserted }
@@ -180,15 +214,24 @@ struct RequirementChipsView: View {
     }
 
     var body: some View {
-        if titlesReady {
+        let rows = uniqueReceipts
+        // A lone receipt under a lead needs no title, so it never waits for the brief.
+        let showsTitles = !showsReasons || rows.count > 1
+        if titlesReady || !showsTitles {
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(uniqueReceipts.enumerated()), id: \.element.requirementID) { offset, receipt in
-                    RequirementChip(
+                ForEach(Array(rows.enumerated()), id: \.element.requirementID) { offset, receipt in
+                    RequirementReceiptRow(
                         receipt: receipt,
-                        title: requirements[receipt.requirementID]?.chipTitle ?? "Request \(offset + 1)",
-                        isExpanded: expandedID == receipt.requirementID,
-                        toggle: { expandedID = expandedID == receipt.requirementID ? nil : receipt.requirementID }
+                        title: showsTitles ? (requirements[receipt.requirementID]?.chipTitle ?? "Request \(offset + 1)") : nil,
+                        showsReason: showsReasons
                     )
+                }
+                if !alsoChanged.isEmpty {
+                    Text("Also: " + alsoChanged.joined(separator: "; "))
+                        .font(KriaFont.body(12))
+                        .foregroundStyle(KriaColor.mutedInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("requirement-also-changed")
                 }
                 if let correct, !guessedNames.isEmpty {
                     GuessedNamesRow(labels: guessedNames, correct: correct)
@@ -201,55 +244,64 @@ struct RequirementChipsView: View {
     }
 }
 
-private struct RequirementChip: View {
+/// One fact, once: an outcome icon and the reason, always visible (no tap, no disclosure). With 2+ asks the
+/// short request title leads in medium weight and the reason sits beneath it.
+private struct RequirementReceiptRow: View {
     let receipt: RequirementReceiptItem
-    let title: String
-    let isExpanded: Bool
-    let toggle: () -> Void
+    /// Nil for a lone receipt: the creator's own message is right above it.
+    let title: String?
+    /// False when the prose above already states the reason (no `reply_lead`).
+    var showsReason: Bool = true
 
-    private var treatment: (icon: String, foreground: Color, background: Color) {
+    private var treatment: (icon: String, tint: Color, meaning: String) {
         // KRI-529: an unchecked requirement is neutral, never the yellow "partly done".
-        // KRI-558: it points the creator at the video ("have a look"), never at a failure.
-        if receipt.isUnchecked { return ("eye", KriaColor.zinc, KriaColor.softZinc) }
+        if receipt.isUnchecked { return ("checkmark", KriaColor.zinc, "Have a look") }
         return switch receipt.outcome {
-        case .met: ("checkmark", KriaColor.success, KriaColor.successSoft)
-        case .partial: ("circle.lefthalf.filled", KriaColor.ink, KriaColor.butter)
-        case .notPossible: ("xmark", KriaColor.failureText, KriaColor.failureSoft)
+        case .met: ("checkmark", KriaColor.success, receipt.outcome.word)
+        case .partial: ("circle.lefthalf.filled", KriaColor.ink, receipt.outcome.word)
+        case .notPossible: ("xmark", KriaColor.failureText, receipt.outcome.word)
         }
     }
 
-    private var label: String { title }
+    private var reason: String {
+        receipt.reason ?? (receipt.isUnchecked ? "Have a look at this one in the video." : receipt.outcome.defaultReason)
+    }
+
+    private var spokenLabel: String {
+        switch (title, showsReason) {
+        case let (title?, true): "\(treatment.meaning): \(title). \(reason)"
+        case let (title?, false): "\(treatment.meaning): \(title)"
+        case (nil, _): "\(treatment.meaning): \(reason)"
+        }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button(action: toggle) {
-                HStack(spacing: 6) {
-                    Image(systemName: treatment.icon).font(.system(size: 11, weight: .bold))
-                    Text(label)
-                        .font(KriaFont.body(12).weight(.semibold))
-                        .multilineTextAlignment(.leading)
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: treatment.icon)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(treatment.tint)
+                .frame(width: 16, height: 20)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                if let title {
+                    Text(title)
+                        .font(KriaFont.body(13).weight(.medium))
+                        .foregroundStyle(KriaColor.ink)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .foregroundStyle(treatment.foreground)
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(treatment.background)
-                .clipShape(Capsule())
-                .frame(minHeight: 44)
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(receipt.isUnchecked ? "Have a look" : receipt.outcome.word): \(label)")
-            .accessibilityHint(isExpanded ? "Hides the reason" : "Shows the reason")
-            .accessibilityIdentifier("requirement-chip-\(receipt.requirementID)")
-            if isExpanded {
-                Text(receipt.reason ?? (receipt.isUnchecked ? "Have a look at this one in the video." : receipt.outcome.defaultReason))
-                    .font(KriaFont.body(12))
-                    .foregroundStyle(KriaColor.zinc)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 4)
-                    .accessibilityIdentifier("requirement-reason-\(receipt.requirementID)")
+                if showsReason {
+                    Text(reason)
+                        .font(KriaFont.body(13))
+                        .foregroundStyle(title == nil ? KriaColor.ink : KriaColor.mutedInk)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(spokenLabel)
+        .accessibilityIdentifier("requirement-chip-\(receipt.requirementID)")
     }
 }
 
