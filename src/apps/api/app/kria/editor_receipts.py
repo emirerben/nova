@@ -726,14 +726,15 @@ def _bind_by_diff(
     if not shape.cued:
         # No word or fact named a dimension: say what the turn changed, never "Done".
         if matched and declined is None:
+            # Just the change list: the chat shows it under a lead line, and the prose reply
+            # puts "I changed:" back (``_changed_lead``).
             changed = "; ".join(_phrases(matched, live, 3))
-            reason = say(en=f"I changed: {changed}", tr=f"Değiştirdiklerim: {changed}")
             return base.model_copy(
                 update={
                     "status": "partial",
                     "verification": "unchecked",
                     "stage": "applied",
-                    "reason": reason[:300],
+                    "reason": changed[:300],
                 }
             )
         return base.model_copy(
@@ -795,6 +796,9 @@ def reply_from_editor_receipts(
             continue
         label = _label(receipt)
         reason = (receipt.reason or "").rstrip(".")
+        if reason and receipt.verification == "unchecked" and receipt.status == "partial":
+            # An ask naming no dimension reports only what changed (``_bind_by_diff``).
+            reason = say(en="I changed: ", tr="Değiştirdiklerim: ") + reason
         if receipt.status == "met" and receipt.verification == "checked":
             lines.append(f"{label}: {reason or req.text()}")
         else:
@@ -811,6 +815,43 @@ def reply_from_editor_receipts(
     if notes:
         parts.append(notes.strip())
     text = "\n".join(part for part in parts if part)
+    return text if len(text) <= MAX_REPLY_CHARS else text[: MAX_REPLY_CHARS - 1].rstrip() + "…"
+
+
+def receipt_lead(
+    receipts: Sequence[RequirementReceipt],
+    *,
+    notices: Sequence[str] = (),
+    notes: str | None = None,
+) -> str:
+    """The one short line above an editor turn's receipt rows (KRI-739).
+
+    The rows carry each ask's outcome and reason, so the lead only says how the turn went. The
+    server's own notices and notes (time zone, a limit) follow it. The full prose stays in the
+    event's ``content`` for the web chat and older apps.
+    """
+    if not receipts:
+        return ""
+    total = len(receipts)
+    failed = sum(r.status == "not_possible" for r in receipts)
+    if failed == total:
+        lead = say(
+            en="I couldn't do that." if total == 1 else "I couldn't do those.",
+            tr="Bunu yapamadım." if total == 1 else "Bunları yapamadım.",
+        )
+    elif failed:
+        lead = say(
+            en=f"I did {total - failed} of your {total} asks.",
+            tr=f"{total} isteğinden {total - failed} tanesini yaptım.",
+        )
+    elif any(r.status == "partial" and r.verification == "checked" for r in receipts):
+        lead = say(en="Partly done.", tr="Kısmen yapıldı.")
+    elif any(r.verification == "unchecked" for r in receipts):
+        lead = say(en="Done — have a look.", tr="Yapıldı — bir göz at.")
+    else:
+        lead = say(en="Done.", tr="Yapıldı.")
+    parts = [lead, *notices, (notes or "").strip()]
+    text = " ".join(part for part in parts if part)
     return text if len(text) <= MAX_REPLY_CHARS else text[: MAX_REPLY_CHARS - 1].rstrip() + "…"
 
 
