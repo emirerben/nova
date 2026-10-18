@@ -42,8 +42,8 @@
     "queue_wait_seconds": 1200,
     "source_conversion_seconds": 180,
     "source_max_seconds": 300,
-    "source_max_bytes": 1073741824,
-    "model_calls": 0
+    "model_calls": 0,
+    "source_max_size": "1 GiB"
   },
   "deployment": {
     "deployed": false,

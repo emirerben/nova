@@ -802,7 +802,23 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/device_render.py",
-                (True, "covered", "kri-492-length-ownership,kri-669-gameday"),
+                (
+                    True,
+                    "covered",
+                    "kri-492-length-ownership,kri-669-gameday,kri-726-background-recovery",
+                ),
+            ),
+            (
+                "src/apps/api/app/kria/automatic_export_repair.py",
+                (True, "covered", "kri-726-background-recovery"),
+            ),
+            (
+                "src/apps/api/app/tasks/export_verification.py",
+                (True, "covered", "kri-726-background-recovery"),
+            ),
+            (
+                "src/apps/api/tests/integration/test_background_export_completion.py",
+                (True, "covered", "kri-726-background-recovery"),
             ),
             (
                 "src/apps/api/app/pipeline/pinned_text.py",
