@@ -256,10 +256,14 @@ def choose_title_y_frac(
     faces: Sequence[NormalizedBox],
     *,
     caption_top_frac: float = CAPTION_BAND_TOP_FRAC,
+    avoid: Sequence[NormalizedBox] = (),
 ) -> tuple[float, dict[str, Any]]:
     """The first spot (preset, then lower) where the title covers no face and
     stays between the header margin and the caption band; else the spot that
-    covers the least face."""
+    covers the least face. ``avoid`` (KRI-707: the captions and text on screen
+    at the same time) is kept clear like a face, but never sets the "just under
+    the face" row."""
+    blocked = [*faces, *avoid]
     candidates = [default_y]
     for value in _FALLBACK_Y_FRACS:
         if all(abs(value - existing) > 0.01 for existing in candidates):
@@ -272,7 +276,7 @@ def choose_title_y_frac(
         in_band = index == 0 or (
             box.top >= _TOP_MARGIN_FRAC - 1e-6 and box.bottom <= caption_top_frac + 1e-6
         )
-        coverage = round(max((box.coverage_by(face) for face in faces), default=0.0), 5)
+        coverage = round(max((box.coverage_by(face) for face in blocked), default=0.0), 5)
         evaluated.append({"y_frac": y_frac, "coverage": coverage, "in_band": in_band})
         if in_band and coverage <= _MAX_FACE_COVERAGE:
             return y_frac, {
@@ -285,7 +289,7 @@ def choose_title_y_frac(
     below = _below_face_y_frac(probe_box, faces)
     if below is not None:
         box = _translate_centered_box_to_y(probe_box, below)
-        coverage = round(max((box.coverage_by(face) for face in faces), default=0.0), 5)
+        coverage = round(max((box.coverage_by(face) for face in blocked), default=0.0), 5)
         evaluated.append(
             {"y_frac": below, "coverage": coverage, "in_band": False, "below_face": True}
         )
@@ -410,13 +414,18 @@ def place_talking_title(
     scale: float = 1.0,
     sample: FaceSampler | None = None,
     position_x: float = 0.0,
+    avoid: Sequence[NormalizedBox] = (),
 ) -> tuple[dict, dict[str, Any]]:
     """``row`` moved off the speaker's face (and clear of the captions), plus
     a receipt for the job debug view. Never raises: anything that goes wrong
     while measuring leaves the row where it was. ``sample`` defaults to
     `render_geometry.sample_face_regions` (looked up per call). ``scale`` and
     ``position_x`` are the speaker clip's main-track transform (letterbox scale,
-    KRI-547 face-filled crop shift), so the face is mapped where it is drawn."""
+    KRI-547 face-filled crop shift), so the face is mapped where it is drawn.
+
+    ``avoid`` (KRI-707) is other text on screen during the row (caption lines,
+    the title): kept clear too when a spot clears both, else the face wins and
+    the receipt's ``text_overlap`` says the row touches that text."""
     default_y = float(row.get("y_frac") or 0.15)
     try:
         faces, receipt = _face_boxes(
@@ -431,7 +440,15 @@ def place_talking_title(
             position_x=position_x,
         )
         probe = _translate_centered_box_to_y(_measure_title_box(row, canvas=canvas), default_y)
-        chosen, decision = choose_title_y_frac(probe, default_y, faces)
+        chosen, decision = choose_title_y_frac(probe, default_y, faces, avoid=avoid)
+        if avoid:
+            if decision["status"] == "best_effort":
+                # No spot clears the face and the text: text never covers a face.
+                chosen, decision = choose_title_y_frac(probe, default_y, faces)
+            box = _translate_centered_box_to_y(probe, chosen)
+            decision["text_overlap"] = any(
+                box.coverage_by(other) > _MAX_FACE_COVERAGE for other in avoid
+            )
     except Exception as exc:  # noqa: BLE001 - a placement nicety never blocks a render
         log.warning("phone_subtitled_title.placement_failed", error=str(exc)[:200])
         return dict(row), {"status": "error", "error": str(exc)[:200], "default_y_frac": default_y}
