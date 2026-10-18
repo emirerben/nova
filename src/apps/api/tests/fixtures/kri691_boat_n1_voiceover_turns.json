@@ -1,0 +1,476 @@
+{
+ "source": "Prod thread 2ea478ec-fe52-4c18-a419-09e93be3cf5b (KRI-691, 2026-10-15, boat kit N1): the Main Creator inputs of the three planned turns, from the item's proposal trace. Model outputs were redacted in the trace. Turns 2-4 (the third Main Creator input here, and the turn after it) each replied 'Bu etiketler icin kaydedilmis bir seslendirme ve rehberli gorseller gerekiyor.' The narration storage path is replaced by a synthetic one; the music catalog is left out (a voiceover edit never uses it).",
+ "item_id": "bfe181bf-a566-4f65-9923-ebf19df536e1",
+ "edit_format": "narrated_planned",
+ "narration": {
+  "gcs_path": "users/creator/creation-threads/thread/voiceover.m4a",
+  "duration_s": 26.354649,
+  "generation": "1792096319242391"
+ },
+ "media": [
+  {
+   "kind": "video",
+   "label": null,
+   "media_id": "analysis-proxy-ios-77D2BC74-C050-4A2B-AA5A-28D1CB1152BD.mp4",
+   "duration_s": 20.0
+  },
+  {
+   "kind": "video",
+   "label": null,
+   "media_id": "analysis-proxy-ios-40602D2B-CC63-4235-911D-BE67B6608AC0.mp4",
+   "duration_s": 11.0
+  },
+  {
+   "kind": "video",
+   "label": null,
+   "media_id": "analysis-proxy-ios-50666494-269A-440A-B583-A72B0016D880.mp4",
+   "duration_s": 14.0
+  },
+  {
+   "kind": "video",
+   "label": null,
+   "media_id": "analysis-proxy-ios-BC50ED54-8225-4815-B545-538C7E5B239A.mp4",
+   "duration_s": 12.0
+  },
+  {
+   "kind": "video",
+   "label": null,
+   "media_id": "analysis-proxy-ios-B80D96B0-3541-4A1D-B870-CF3C73484418.mp4",
+   "duration_s": 12.0
+  },
+  {
+   "kind": "video",
+   "label": null,
+   "media_id": "analysis-proxy-ios-5B5D8A66-0564-4576-A669-AD7E9A23B52C.mp4",
+   "duration_s": 12.0
+  },
+  {
+   "kind": "video",
+   "label": null,
+   "media_id": "analysis-proxy-ios-0847280C-3D64-4327-9318-5EABD6EB8AED.mp4",
+   "duration_s": 15.0
+  },
+  {
+   "kind": "video",
+   "label": null,
+   "media_id": "analysis-proxy-ios-D4E7CAA6-AE64-439A-AD2C-AD8279FEF42A.mp4",
+   "duration_s": 15.0
+  },
+  {
+   "kind": "image",
+   "label": null,
+   "media_id": "asset-d9627a79-b228-4db0-9cbb-201f6f921bb2",
+   "duration_s": null
+  }
+ ],
+ "recorded_guided_voiceover": {
+  "reason": "This chat cannot run guided_voiceover_v1: leave execution_contract unset. The voiceover edit uses the project's own clips (\"all\" = every clip); a Visuals photo or video shows only on a spoken word, via reaction_beats.",
+  "available": false,
+  "reason_code": "native_voiceover_only"
+ },
+ "shared_input": {
+  "item_context": "{'idea': 'Untitled video', 'theme': '', 'creator_notes': '', 'filming_guide': [], 'current_edit_format': 'narrated_planned', 'current_audio_mode': 'voiceover', 'has_recorded_voiceover': True}",
+  "creator_context": "{'summary': 'A creator making clear, engaging short-form videos.', 'tone': 'natural and direct', 'audience': 'people who enjoy relatable short videos', 'content_pillars': ['real-life moments'], 'style': {}}",
+  "creator_direction": "",
+  "brief_enabled": true,
+  "reply_language": "tr",
+  "creative_copy_state": [],
+  "media_context": [
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-15T14:36:08Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "N1_08_footage",
+    "media_id": "analysis-proxy-ios-77D2BC74-C050-4A2B-AA5A-28D1CB1152BD.mp4",
+    "duration_s": 20.0,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "setting": "River at night, alongside a lighted urban bank",
+     "subject": "Riverbank at night from boat",
+     "summary": "The video shows a slow-moving boat at night, cruising along a riverbank illuminated by numerous streetlights and reflections on the water.",
+     "activity": "boating along a river",
+     "audio_type": "ambient",
+     "content_type": "ambience",
+     "notable_moments": [
+      {
+       "end_s": 6.0,
+       "start_s": 0.0,
+       "description": "boat moves past lighted bank"
+      },
+      {
+       "end_s": 19.0,
+       "start_s": 8.5,
+       "description": "boat continues along river"
+      }
+     ]
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-15T14:35:47Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_09_footage",
+    "media_id": "analysis-proxy-ios-40602D2B-CC63-4235-911D-BE67B6608AC0.mp4",
+    "duration_s": 11.0,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "people": {
+      "note": "a man wearing glasses and a bandana-like cloth under his chin",
+      "count": 1,
+      "speaks_to_camera": false
+     },
+     "setting": "riverbank promenade at night",
+     "subject": "river at night",
+     "summary": "The video starts with a close-up of a man's face, then transitions to a night view of a riverbank with lights from buildings and boats, suggesting a promenade or commercial area.",
+     "activity": "panning across a lit riverfront",
+     "audio_type": "ambient",
+     "content_type": "ambience"
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-15T14:34:50Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_05_footage",
+    "media_id": "analysis-proxy-ios-50666494-269A-440A-B583-A72B0016D880.mp4",
+    "duration_s": 14.0,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "setting": "riverbank at night, overlooking an amusement park",
+     "subject": "amusement park rides",
+     "summary": "The camera pans across a river at night, showing the silhouette of an amusement park with various rides, including a Ferris wheel, a swing ride, and roller coasters, illuminated by faint lights agains",
+     "activity": "panning across an amusement park view",
+     "audio_type": "ambient",
+     "content_type": "ambience",
+     "notable_moments": [
+      {
+       "end_s": 3.0,
+       "start_s": 0.0,
+       "description": "Ferris wheel and swing ride reveal"
+      },
+      {
+       "end_s": 8.0,
+       "start_s": 5.0,
+       "description": "swing ride and roller coaster structures"
+      }
+     ]
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-15T14:34:35Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "N1_05_footage",
+    "media_id": "analysis-proxy-ios-BC50ED54-8225-4815-B545-538C7E5B239A.mp4",
+    "duration_s": 12.0,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "setting": "waterway at night",
+     "subject": "boat on a waterway at night",
+     "summary": "The video shows a dark view from a moving boat at night, with lights from buildings and trees on the banks reflecting on the water. The boat appears to be moving at a steady pace.",
+     "activity": "boating",
+     "audio_type": "ambient",
+     "content_type": "ambience",
+     "notable_moments": [
+      {
+       "end_s": 3.0,
+       "start_s": 0.0,
+       "description": "boat moves along the bank"
+      },
+      {
+       "end_s": 8.0,
+       "start_s": 5.0,
+       "description": "lights reflect on water"
+      }
+     ]
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-15T14:34:06Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_01_footage",
+    "media_id": "analysis-proxy-ios-B80D96B0-3541-4A1D-B870-CF3C73484418.mp4",
+    "duration_s": 12.0,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "setting": "river at night",
+     "subject": "boat on a river at night",
+     "summary": "The video shows a night-time journey on a river from the perspective of a boat, with the engine sound audible and lights from the shore reflecting on the water.",
+     "activity": "traveling by boat on a river",
+     "audio_type": "ambient",
+     "content_type": "ambience",
+     "notable_moments": [
+      {
+       "end_s": 3.0,
+       "start_s": 0.0,
+       "description": "boat moves past distant lights"
+      },
+      {
+       "end_s": 8.0,
+       "start_s": 5.0,
+       "description": "lights reflect on rippling water"
+      }
+     ]
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-15T14:38:56Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_10_footage",
+    "media_id": "analysis-proxy-ios-5B5D8A66-0564-4576-A669-AD7E9A23B52C.mp4",
+    "duration_s": 12.0,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "setting": "body of water (lake or river) at night",
+     "subject": "boat on water at night",
+     "summary": "The video captures a night scene from a moving boat, showcasing blurry lights, the silhouette of a distant shoreline with trees and illuminated structures, and their reflections on the dark water.",
+     "activity": "traveling on a boat at night",
+     "audio_type": "ambient",
+     "content_type": "ambience",
+     "notable_moments": [
+      {
+       "end_s": 2.5,
+       "start_s": 0.0,
+       "description": "boat moves past distant lights"
+      },
+      {
+       "end_s": 7.5,
+       "start_s": 4.5,
+       "description": "shoreline trees and lights appear"
+      }
+     ]
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-15T14:33:32Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_02_footage",
+    "media_id": "analysis-proxy-ios-0847280C-3D64-4327-9318-5EABD6EB8AED.mp4",
+    "duration_s": 15.0,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "people": {
+      "note": "one person in a dark shirt",
+      "count": 1,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "segments": [
+       {
+        "e": 1.6,
+        "s": 0.0,
+        "text": "Dönmek istiyorsan dön."
+       },
+       {
+        "e": 5.5,
+        "s": 4.0,
+        "text": "Aaa kaldık lan tekne çalışmıyor."
+       },
+       {
+        "e": 8.5,
+        "s": 6.3,
+        "text": "Tekne çalışmıyor lan."
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "dönmek istiyorsan dön. A kaldık la, tekne çalışmıyor. Tekne çalışmıyor lan."
+     },
+     "setting": "boat on a body of water at night",
+     "subject": "person on a boat at night",
+     "summary": "A person is on a boat at night, attempting to operate it. The boat appears to be stuck or not working, as reflected in their frustrated comments.",
+     "activity": "attempting to start a boat engine",
+     "audio_type": "dialogue",
+     "content_type": "action"
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-15T14:33:17Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_11_footage",
+    "media_id": "analysis-proxy-ios-D4E7CAA6-AE64-439A-AD2C-AD8279FEF42A.mp4",
+    "duration_s": 15.0,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "speech": {
+      "segments": [
+       {
+        "e": 0.2,
+        "s": 0.0,
+        "text": "Tamam."
+       },
+       {
+        "e": 2.7,
+        "s": 1.8,
+        "text": "Tamam."
+       },
+       {
+        "e": 3.6,
+        "s": 3.2,
+        "text": "Tutsana."
+       },
+       {
+        "e": 5.6,
+        "s": 3.9,
+        "text": "Bir saate gidip gelmemiz gerekiyor."
+       },
+       {
+        "e": 12.0,
+        "s": 11.2,
+        "text": "Amigo Sergio."
+       },
+       {
+        "e": 13.9,
+        "s": 12.4,
+        "text": "Amigo, amigo, amigo."
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Ay yandı. Ay yardım et. Biz sahile gidip gelmemiz gerekiyor. Amigo Sergio. Amigo, amigo, amigo."
+     },
+     "setting": "dark outdoor environment at night",
+     "summary": "The video is mostly dark, showing faint reflections or lights in a dark environment while people speak in Turkish and Spanish. It suggests a night-time setting with some distant lights visible towards",
+     "activity": "conversing",
+     "audio_type": "dialogue",
+     "content_type": "ambience"
+    }
+   },
+   {
+    "kind": "image",
+    "filename": "38E0200C-08F2-405B-A9B7-735348D520DF-N1_09_visual.jpg",
+    "media_id": "asset-d9627a79-b228-4db0-9cbb-201f6f921bb2",
+    "duration_s": null,
+    "creator_context": null,
+    "analysis_only_not_copy": {
+     "subject": "Night scene on water",
+     "summary": "A dark photo captures a nighttime view from a low perspective on a body of water, showing the water surface in the foreground and middle ground, with silhouetted trees and faint distant lights on the "
+    }
+   }
+  ]
+ },
+ "turns": [
+  {
+   "label": "turn1_first_request",
+   "recorded_at": "2026-10-15T20:33:45.016200Z",
+   "prompt_version": "2026-10-15-v59",
+   "user_message": "Başlık: \"Atakan'ı almaya\". \"Sergio\" dediğimde kaptanla iskeledeki klibi göster. \"çalışmadı\" dediğimde teknenin çalışmadığı klibi göster ve o klipte \"tekne çalışmıyor\" dediğim ses seslendirmenin altında duyulsun. \"ışıklar\" dediğimde ışıklı ev fotoğrafını göster. \"yirmi dakika\" dediğimde ekrana \"20 dk\" yazısı gelsin. \"lunapark\" dediğimde lunapark klibi. En son tekneyi bağladığımız klip olsun. Türkçe altyazı, kelime kelime.",
+   "creator_request": "",
+   "conversation": [
+    {
+     "role": "assistant",
+     "content": "What are we making? Pick a format and we’ll shape it together."
+    },
+    {
+     "role": "user",
+     "content": "Başlık: \"Atakan'ı almaya\". \"Sergio\" dediğimde kaptanla iskeledeki klibi göster. \"çalışmadı\" dediğimde teknenin çalışmadığı klibi göster ve o klipte \"tekne çalışmıyor\" dediğim ses seslendirmenin altında duyulsun. \"ışıklar\" dediğimde ışıklı ev fotoğrafını göster. \"yirmi dakika\" dediğimde ekrana \"20 dk\" yazısı gelsin. \"lunapark\" dediğimde lunapark klibi. En son tekneyi bağladığımız klip olsun. Türkçe altyazı, kelime kelime."
+    }
+   ],
+   "current_edit": null
+  },
+  {
+   "label": "turn2_picker_answer",
+   "recorded_at": "2026-10-15T20:40:22.027615Z",
+   "prompt_version": "2026-10-15-v59",
+   "user_message": "I tapped the clips you asked about.",
+   "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [text/title] başlık (\"Atakan'ı almaya\")\n- [r2] [timing/per_clip] kaptanla iskeledeki klip 'Sergio' denildiğinde gösterilsin facts={\"triggers\":[\"Sergio\"]}\n- [r3] [timing/per_clip] teknenin çalışmadığı klip 'çalışmadı' denildiğinde gösterilsin facts={\"triggers\":[\"çalışmadı\"]}\n- [r4] [audio/per_clip] 'tekne çalışmıyor' sesi seslendirmenin altında duyulsun\n- [r5] [timing/clip:asset-d9627a79-b228-4db0-9cbb-201f6f921bb2] ışıklı ev fotoğrafı 'ışıklar' denildiğinde gösterilsin facts={\"triggers\":[\"ışıklar\"]}\n- [r6] [text/global] ekrana '20 dk' yazısı gelsin (\"20 dk\") facts={\"triggers\":[\"yirmi dakika\"]}\n- [r7] [timing/per_clip] lunapark klibi 'lunapark' denildiğinde gösterilsin facts={\"triggers\":[\"lunapark\"]}\n- [r8] [order/global] en son tekneyi bağladığımız klip olsun facts={\"last_clip\":\"tekneyi bağladığımız klip\"}\n- [r9] [style/global] kelime kelime Türkçe altyazı facts={\"caption_language\":\"tr\",\"captions\":\"word_by_word\"}\nLatest message: I tapped the clips you asked about.",
+   "conversation": [
+    {
+     "role": "assistant",
+     "content": "What are we making? Pick a format and we’ll shape it together."
+    },
+    {
+     "role": "user",
+     "content": "Başlık: \"Atakan'ı almaya\". \"Sergio\" dediğimde kaptanla iskeledeki klibi göster. \"çalışmadı\" dediğimde teknenin çalışmadığı klibi göster ve o klipte \"tekne çalışmıyor\" dediğim ses seslendirmenin altında duyulsun. \"ışıklar\" dediğimde ışıklı ev fotoğrafını göster. \"yirmi dakika\" dediğimde ekrana \"20 dk\" yazısı gelsin. \"lunapark\" dediğimde lunapark klibi. En son tekneyi bağladığımız klip olsun. Türkçe altyazı, kelime kelime."
+    },
+    {
+     "role": "assistant",
+     "content": "Şunlar için hangi klipleri kastettiğini anlayamadım: \"ışıklı ev fotoğrafını\", \"the moment 'yirmi dakika' is said\", \"tekneyi bağladığımız klip\". Her biri için klipleri seç ya da hiç klibi olmayanları işaretle."
+    },
+    {
+     "role": "user",
+     "content": "I tapped the clips you asked about."
+    }
+   ],
+   "current_edit": null
+  },
+  {
+   "label": "turn3_voiceover_attached",
+   "recorded_at": "2026-10-15T20:54:31.753851Z",
+   "prompt_version": "2026-10-15-v59",
+   "user_message": "Seslindirmeyi kaydettim sohbette ekli. Ekrana etiket koyma sadece kelime turkce altyazi olsun. Devam et",
+   "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [text/title] başlık (\"Atakan'ı almaya\")\n- [r2] [timing/per_clip] kaptanla iskeledeki klip 'Sergio' denildiğinde gösterilsin facts={\"triggers\":[\"Sergio\"]}\n- [r3] [timing/per_clip] teknenin çalışmadığı klip 'çalışmadı' denildiğinde gösterilsin facts={\"triggers\":[\"çalışmadı\"]}\n- [r4] [audio/per_clip] 'tekne çalışmıyor' sesi seslendirmenin altında duyulsun\n- [r5] [timing/clip:asset-d9627a79-b228-4db0-9cbb-201f6f921bb2] ışıklı ev fotoğrafı 'ışıklar' denildiğinde gösterilsin facts={\"triggers\":[\"ışıklar\"]}\n- [r6] [text/global] ekrana '20 dk' yazısı gelsin (\"20 dk\") facts={\"triggers\":[\"yirmi dakika\"]}\n- [r7] [timing/per_clip] lunapark klibi 'lunapark' denildiğinde gösterilsin facts={\"triggers\":[\"lunapark\"]}\n- [r8] [order/global] en son tekneyi bağladığımız klip olsun facts={\"last_clip\":\"tekneyi bağladığımız klip\"}\n- [r9] [style/global] kelime kelime Türkçe altyazı facts={\"caption_language\":\"tr\",\"captions\":\"word_by_word\"}\nLatest message: Seslindirmeyi kaydettim sohbette ekli. Ekrana etiket koyma sadece kelime turkce altyazi olsun. Devam et",
+   "conversation": [
+    {
+     "role": "assistant",
+     "content": "What are we making? Pick a format and we’ll shape it together."
+    },
+    {
+     "role": "user",
+     "content": "Başlık: \"Atakan'ı almaya\". \"Sergio\" dediğimde kaptanla iskeledeki klibi göster. \"çalışmadı\" dediğimde teknenin çalışmadığı klibi göster ve o klipte \"tekne çalışmıyor\" dediğim ses seslendirmenin altında duyulsun. \"ışıklar\" dediğimde ışıklı ev fotoğrafını göster. \"yirmi dakika\" dediğimde ekrana \"20 dk\" yazısı gelsin. \"lunapark\" dediğimde lunapark klibi. En son tekneyi bağladığımız klip olsun. Türkçe altyazı, kelime kelime."
+    },
+    {
+     "role": "assistant",
+     "content": "Şunlar için hangi klipleri kastettiğini anlayamadım: \"ışıklı ev fotoğrafını\", \"the moment 'yirmi dakika' is said\", \"tekneyi bağladığımız klip\". Her biri için klipleri seç ya da hiç klibi olmayanları işaretle."
+    },
+    {
+     "role": "user",
+     "content": "I tapped the clips you asked about."
+    },
+    {
+     "role": "assistant",
+     "content": "Bu etiketler için kaydedilmiş bir seslendirme ve rehberli görseller gerekiyor."
+    },
+    {
+     "role": "user",
+     "content": "Seslindirmeyi kaydettim sohbette ekli. Ekrana etiket koyma sadece kelime turkce altyazi olsun. Devam et"
+    }
+   ],
+   "current_edit": null
+  }
+ ]
+}
