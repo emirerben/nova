@@ -191,6 +191,8 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_STICKERS"] == "1" { capabilities["slide_post_stickers"] = true }
             // KRIA_TEXT_BEND (KRI-646): the Bend slider. The server only advertises it to protocol 9 builds.
             if ProcessInfo.processInfo.environment["KRIA_TEXT_BEND"] == "1" { capabilities["text_bend"] = true }
+            // KRIA_VOICE_DICTATION (KRI-742): the mic button; the engine is scripted (see DictationController).
+            if ProcessInfo.processInfo.environment["KRIA_VOICE_DICTATION"] == "1" { capabilities["voice_dictation"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_SIZES"] == "1" {
                 capabilities["slide_post_framing"] = true
                 capabilities["slide_post_sizes"] = true

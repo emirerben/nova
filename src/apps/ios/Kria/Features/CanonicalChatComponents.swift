@@ -1309,41 +1309,109 @@ struct ChatComposer: View {
     var blocksSubmission = false
     var placeholder = "Tell Kria what you want…"
     var isFocused: FocusState<Bool>.Binding
+    /// KRI-742: pass a controller (only when the server advertises `voice_dictation`) to show the mic.
+    var dictation: DictationController? = nil
+    var dictationTerms: () -> [String] = { [] }
     let attach: () -> Void
     let send: () -> Void
 
+    private var dictationIsBusy: Bool {
+        dictation.map { $0.phase == .finalizing || $0.phase == .requestingPermission } ?? false
+    }
     private var canSend: Bool {
         (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || canSendWithoutText) && !isSending && !blocksSubmission
-            && !ChatSubmission.isBareCorrectionStub(text)
+            && !ChatSubmission.isBareCorrectionStub(text) && !dictationIsBusy
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 4) {
-            Button(action: attach) { KriaIcon(.plus).frame(width: 44, height: 44) }
-                .disabled(!canAttach).accessibilityLabel("Attach footage")
-                .accessibilityHint(canAttach ? "" : "Choose a video format first")
-            TextField(placeholder, text: $text, axis: .vertical)
-                .font(KriaFont.body(15)).lineLimit(1...4)
-                .frame(minHeight: 44).accessibilityLabel("Message Kria")
-                .focused(isFocused)
-                .submitLabel(.send)
-                .onSubmit {
-                    if canSend {
-                        send()
-                    } else {
-                        isFocused.wrappedValue = false
+        VStack(alignment: .leading, spacing: 0) {
+            if let notice = dictation?.notice {
+                Text(notice)
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                    .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 2)
+                    .accessibilityIdentifier("chat-dictation-notice")
+            }
+            HStack(alignment: .bottom, spacing: 4) {
+                Button(action: attach) { KriaIcon(.plus).frame(width: 44, height: 44) }
+                    .disabled(!canAttach).accessibilityLabel("Attach footage")
+                    .accessibilityHint(canAttach ? "" : "Choose a video format first")
+                TextField(dictation?.isListening == true && text.isEmpty ? "Listening…" : placeholder, text: $text, axis: .vertical)
+                    .font(KriaFont.body(15)).lineLimit(1...4)
+                    .frame(minHeight: 44).accessibilityLabel("Message Kria")
+                    .focused(isFocused)
+                    .submitLabel(.send)
+                    // Dictated words are written into the field; typing over them mid-sentence would race the recognizer.
+                    .disabled(dictation?.isActive == true)
+                    .onSubmit {
+                        if canSend {
+                            send()
+                        } else {
+                            isFocused.wrappedValue = false
+                        }
                     }
+                if let dictation {
+                    Button { toggleDictation(dictation) } label: { DictationMicLabel(dictation: dictation) }
+                        .disabled(dictationIsBusy || (isSending && !dictation.isListening))
+                        .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate message")
+                        .accessibilityIdentifier("chat-dictate")
                 }
-            Button(action: send) {
-                Image(systemName: isSending ? "ellipsis" : "arrow.up")
-                    .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
-                    .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
-            }.disabled(!canSend).opacity(canSend ? 1 : 0.45)
-                .accessibilityLabel(isSending ? "Sending message" : (canSendWithoutText && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Send clips" : "Send message"))
-                .accessibilityIdentifier("chat-send-message")
+                Button(action: sendTapped) {
+                    Image(systemName: isSending ? "ellipsis" : "arrow.up")
+                        .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+                        .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
+                }.disabled(!canSend).opacity(canSend ? 1 : 0.45)
+                    .accessibilityLabel(isSending ? "Sending message" : (canSendWithoutText && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Send clips" : "Send message"))
+                    .accessibilityIdentifier("chat-send-message")
+            }
         }
         .padding(7).kriaFloatingSurface(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .padding(.horizontal, 14).padding(.vertical, 12)
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: dictation?.phase)
+        .onDisappear { dictation?.cancel() }
+    }
+
+    private func toggleDictation(_ dictation: DictationController) {
+        if dictation.isActive {
+            Task { await dictation.stop() }
+        } else {
+            isFocused.wrappedValue = false
+            dictation.start(base: text, contextTerms: dictationTerms()) { text = $0 }
+        }
+    }
+
+    /// Sending while the mic is live finishes the dictation first, so the message carries the final text.
+    private func sendTapped() {
+        guard let dictation, dictation.isListening else { send(); return }
+        Task {
+            await dictation.stop()
+            if canSend { send() }
+        }
+    }
+}
+
+/// The mic button's face: a mic at rest, a stop square inside a ring that breathes with the voice while
+/// listening, a spinner while the server pass runs.
+struct DictationMicLabel: View {
+    let dictation: DictationController
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            switch dictation.phase {
+            case .idle:
+                Image(systemName: "mic").font(.system(size: 19, weight: .medium)).foregroundStyle(KriaColor.ink)
+            case .requestingPermission, .finalizing:
+                ProgressView().controlSize(.small).tint(KriaColor.ink)
+            case .listening:
+                Circle().fill(KriaColor.butter.opacity(0.55))
+                    .scaleEffect(KriaMotion.isReduced(reduceMotion) ? 1 : 1 + dictation.level * 0.22)
+                    .animation(.easeOut(duration: 0.08), value: dictation.level)
+                Circle().fill(KriaColor.butter).frame(width: 34, height: 34)
+                Image(systemName: "stop.fill").font(.system(size: 13, weight: .bold)).foregroundStyle(KriaColor.ink)
+            }
+        }
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
     }
 }
 

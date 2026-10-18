@@ -138,7 +138,8 @@ struct SlidePostWorkspaceView: View {
                 session: session, api: model.api, itemID: itemID,
                 chatEnabled: aiChatEnabled,
                 canRequestProposal: canRequestProposal,
-                uploadGuidance: hasFailedAssets ? "Resolve or remove failed photos and videos before asking Kria." : hasPendingAssets ? "Wait for every photo and video to finish importing before asking Kria." : nil
+                uploadGuidance: hasFailedAssets ? "Resolve or remove failed photos and videos before asking Kria." : hasPendingAssets ? "Wait for every photo and video to finish importing before asking Kria." : nil,
+                dictationEnabled: effectiveCapabilities?.voiceDictationEnabled == true
             )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
