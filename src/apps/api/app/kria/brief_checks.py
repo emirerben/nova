@@ -49,6 +49,7 @@ from app.kria.style_asks import (
     value_matches,
 )
 from app.pipeline.caption_spelling import extract_spelling_asks
+from app.pipeline.sequence_text_evidence import complete_sequences, sequence_lineage
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.text_style_intent import (
     LABEL_ANCHORS,
@@ -1052,6 +1053,7 @@ def plan_facts_from_editor_payload(
     per_clip: dict[str, str] = {}
     title: str | None = None
     text_spans: list[tuple[str, str, float, float]] = []
+    sequence_fragments: list[Mapping[str, Any]] = []
     text_timing_incomplete = False
 
     def take_text(value: object) -> str | None:
@@ -1091,6 +1093,8 @@ def plan_facts_from_editor_payload(
                 text_spans.append(
                     (row_id, str(row.get("role") or "text"), float(start), float(end))
                 )
+                if not row.get("removed") and sequence_lineage(row) is not None:
+                    sequence_fragments.append(row)
             elif isinstance(row_id, str) and str(row.get("role") or "text") in {
                 "title",
                 "generative_intro",
@@ -1099,6 +1103,10 @@ def plan_facts_from_editor_payload(
             clip = row.get("clip_id")
             if isinstance(clip, str) and clip:
                 per_clip[clip] = text
+    # KRI-560: a phrase the compiler split into one-word-at-a-time fragments (a word-by-word
+    # hook) is on screen as the whole phrase, but no single row says it. Only a complete,
+    # contiguous, same-source run counts; a missing or removed word leaves the phrase unseen.
+    strings.extend(composed["text"] for composed in complete_sequences(sequence_fragments))
     for entry in text_diff or ():
         if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
             continue

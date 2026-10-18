@@ -735,6 +735,15 @@
         "src/apps/api/tests/routes/test_phone_manual_edits_win.py",
         "src/apps/api/tests/services/test_phone_editor_render_contract.py"
       ]
+    },
+    {
+      "id": "kri-560-lisbon-hook",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri560_lisbon_word_by_word_hook.py tests/services/test_sequence_text_evidence.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri560_lisbon_word_by_word_hook.json",
+        "src/apps/api/tests/kria/test_kri560_lisbon_word_by_word_hook.py"
+      ]
     }
   ]
 }
