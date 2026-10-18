@@ -426,6 +426,14 @@ private struct CreationWorkspaceView: View {
     @State private var availableFormats: [CreationFormat] = []
     @State private var capabilities: CreationCapabilities?
     @State private var capabilitiesFailure: ChatFailure?
+    /// KRI-742: built once the server advertises `voice_dictation`; nil (no mic) until then.
+    @State private var dictationController: DictationController?
+    private var dictationForComposer: DictationController? {
+        capabilities?.voiceDictationEnabled == true ? dictationController : nil
+    }
+    private func dictationContextTerms() -> [String] {
+        DictationController.contextTerms(title: project.title, mediaNames: CreationAttachedMedia.parse(threadState).map(\.displayName))
+    }
     @State private var fullThread: CreationThread?
     @State private var pendingAction: CreationActionIdentity?
     @State private var uploadRecords: [UploadRecoveryRecord] = []
@@ -1305,6 +1313,11 @@ private struct CreationWorkspaceView: View {
         .onChange(of: currentProject.serverRevision) { _, revision in
             threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: revision)
         }
+        .task(id: capabilities?.voiceDictationEnabled == true) {
+            if capabilities?.voiceDictationEnabled == true, dictationController == nil {
+                dictationController = DictationController.make(api: model.api)
+            }
+        }
         .onReceive(model.uploads.$records) { uploadRecords = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$inFlight) { uploadInFlight = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$photoSelections) { photoSelections = $0; rememberUploadAnchors() }
@@ -1378,6 +1391,7 @@ private struct CreationWorkspaceView: View {
             ReviewPlanView(
                 seed: presentation.seed, initialFlag: presentation.initialFlag,
                 actions: reviewActions(),
+                dictation: dictationForComposer, dictationTerms: dictationContextTerms,
                 close: { reviewPresentation = nil }
             )
             .presentationDetents([.large])
@@ -1439,6 +1453,8 @@ private struct CreationWorkspaceView: View {
                 blocksSubmission: isThinking || pendingUploadCount > 0,
                 placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
                 isFocused: $composerFocused,
+                dictation: dictationForComposer,
+                dictationTerms: dictationContextTerms,
                 attach: openAttachments,
                 send: { Task { await send() } }
             )
@@ -1454,7 +1470,7 @@ private struct CreationWorkspaceView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
                 text: promptBinding, isSending: isSending || isActing,
-                canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
+                canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await send() } }
             )
         }
         .background(KriaColor.paper)

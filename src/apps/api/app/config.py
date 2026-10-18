@@ -672,6 +672,12 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # KRI-742: voice dictation in the chat composers. `POST /dictation/transcribe` (Whisper) and
+    # the `voice_dictation` capability the iOS mic button reads. Default TRUE; this is the kill
+    # switch only. False: the route 404s and the capability is not advertised, so the app hides
+    # the mic. Audio is never stored. Apply: `fly secrets set VOICE_DICTATION_ENABLED=false`
+    # (api) + restart.
+    voice_dictation_enabled: bool = True
     # One word at a time for caption `Display: Word` (`karaoke.single_word`, capability
     # `singleWordText`): the layer's runs are standalone-centred words and only the active one
     # is drawn. Emitted only when `singleWordText` is in PHONE_RENDER_VERIFIED_FEATURES (fly
