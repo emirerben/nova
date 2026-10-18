@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.43.0] - 2026-10-18
+
+### Added
+- feat: background export verification and bounded approved repairs (KRI-734/KRI-726) (#1663) <!-- release-pr: 1663 -->
+
 ## [0.80.42.0] - 2026-10-18
 
 ### Changed
