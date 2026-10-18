@@ -459,6 +459,15 @@
       ]
     },
     {
+      "id": "kri-691-voiceover-spoken-labels",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri691_native_voiceover_transcript_labels.py tests/kria/test_kri598_voiceover_planner.py tests/kria/test_voiceover_downgrade_losses.py tests/kria/test_talking_clip_intents.py tests/kria/test_kri520_strategy_policy.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri691_boat_n1_voiceover_turns.json",
+        "src/apps/api/tests/kria/test_kri691_native_voiceover_transcript_labels.py"
+      ]
+    },
+    {
       "id": "kri-593-voiceover-clips",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri593_voiceover_keeps_every_clip.py",
