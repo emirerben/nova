@@ -63,10 +63,24 @@ artifacts. Consent/expiry, unknown outcomes, repeated source failures and exhaus
 permission are covered by database-backed checks. CI journey:
 `kri-726-background-recovery`; private physical-device evidence remains outside git.
 
-On the iPhone 13 Pro, the approval option and checking UI were observed, a
-deliberately incorrect decoded picture was rejected, and repair #1 was issued
-with the same recipe digest. The controlled fault exists only in the private QA build. The final repaired export is **pending restored
-Xcode UI-testing authorization**; this is not yet a complete phone-flow pass. If the 30-minute permission expires while device access is unavailable, the test must review a fresh approval in the app; the grant will not be extended in the database.
+On the iPhone 13 Pro, the complete UI flow passed using retained recent account
+originals in a separate QA bundle and the real API/PostgreSQL/Celery pipeline with
+local object transport. The original two-repair permission was reviewed and tapped.
+A private QA-only decoder fault produced a wrong picture that persists on a plain
+retry. Kria hid the candidate during checking, rejected it, displayed **Repairing
+your video (1 of 2)**, normalized the affected original and exported again. All
+13 actual-output checks passed before **Ready**. The correction took 7.91 seconds
+in this short-edit case; this is a single test, not a latency guarantee.
+
+Every authored recipe field remained equal; only the capability set's serialization
+order differed, and the canonical recipe digest stayed identical. The copied phone
+movie's SHA-256 equals the checked uploaded movie's SHA-256. Two extra completion
+observations returned `ignored` and did not create new chat events. No model ran.
+The earlier permission expired during device-access loss and correctly stopped;
+the test reviewed a fresh approval in the app, without extending database grants.
+The fault hook is absent from committed product code. The private XCUITest result
+bundle, four state screenshots, movie copies and full reports are retained under
+`/private/tmp/kri726-qa`; private footage and call-overlay screenshots are not in git.
 
 The full native run initially passed 1,802 tests and skipped 24, with one long
 slide-video test killed by the simulator. That unchanged test subsequently
@@ -79,7 +93,7 @@ off, install protocol 13 on the pilot iPhone, then enable the existing
 `PHONE_ACTUAL_EXPORT_VERIFICATION_ENABLED` and account allowlist deliberately.
 New clients omit repair consent when no offer was shown, preserving older-server
 approval compatibility. Disabling enrollment cannot waive an already required
-check. Keep this PR draft until the remaining device proof and CI are complete.
+check. The phone proof is complete. CI and the normal review/merge/deploy process still apply.
 
 This remains the first simple-cut phone adapter. KRI-723's broader preparation
 migration, other render adapters, text-only repairs and camera-roll recommendations
