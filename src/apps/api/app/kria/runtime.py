@@ -40,6 +40,7 @@ from app.kria.contracts import (
     KriaTurnPlan,
     RequirementReceipt,
 )
+from app.kria.duplicate_send import duplicate_reply, find_duplicate_send
 from app.kria.language import is_help_question, is_status_question
 from app.kria.reply_language import (
     remember_reply_language,
@@ -736,6 +737,19 @@ async def submit_turn(
                     else body.expected_thread_revision
                 ),
             )
+    # KRI-552: the creator's identical re-send of their latest message (the chat looked stuck)
+    # is a copy. It is answered below and never planned: queued, it threw the running turn back
+    # to plan again and, after the render, asked the creator to restate what was already done.
+    duplicate = None
+    if (
+        settings.kria_duplicate_resend_enabled
+        and scope is None
+        and choice_selection is None
+        and body.clip_selection is None
+        and body.song_order is None
+        and body.song_range is None
+    ):
+        duplicate = await find_duplicate_send(db, thread, body.message)
     # KRI-520: the chat's reply language after this message, stored on the locked
     # thread row (committed with the event below; rolled back with a refusal).
     reply_language = resolve_reply_language(
@@ -746,6 +760,8 @@ async def submit_turn(
     with reply_language_for(reply_language):
         if scope is not None:
             pass  # "Update: captions, music" is never a status or help question
+        elif duplicate is not None:
+            inert_response = ("progress", duplicate_reply(duplicate))
         elif is_status_question(body.message):
             status = getattr(active, "status", None)
             if status in {"pending", "planning"}:
@@ -791,6 +807,10 @@ async def submit_turn(
     if inert_response is not None:
         turn_value, message = inert_response
         turn_id = uuid.uuid4()
+        # KRI-552: marks both events as a copy of `duplicate.turn_id`'s message. The worker's
+        # revision fence and the planner's reads skip them, so a copy never disturbs the turn
+        # it repeats.
+        copy_of = {"duplicate_of": str(duplicate.turn_id)} if duplicate is not None else {}
         source = await _append_event(
             db,
             thread,
@@ -803,6 +823,7 @@ async def submit_turn(
                 "turn_id": str(turn_id),
                 "turn_status": "completed",
                 "inert": True,
+                **copy_of,
             },
             client_event_id=body.client_event_id,
         )
@@ -818,6 +839,7 @@ async def submit_turn(
                 "receipt_ids": [],
                 "next_actions": [],
                 "schema_version": 2,
+                **copy_of,
             },
         )
         plan = KriaTurnPlan(mode="respond", turn_value=turn_value, response=message)

@@ -771,7 +771,7 @@
       "tickets": [
         "KRI-542"
       ],
-      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana d\u00f6n\u00fc\u015ft\u00fcremedim').",
+      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana dönüştüremedim').",
       "boundary": "model_budget",
       "fix_prs": [
         1493
@@ -867,7 +867,7 @@
         "KRI-651",
         "KRI-674"
       ],
-      "symptom": "Phone Montage render-ready reply said 'Do\u011frulayamad\u0131m' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
+      "symptom": "Phone Montage render-ready reply said 'Doğrulayamadım' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
       "boundary": "publication",
       "fix_prs": [
         1503,
@@ -906,7 +906,7 @@
       "kill_switch": null,
       "evidence": {
         "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read; KRI-674 follow-up timeout: stalled Pro transport causes both EN/TR healthy rendered follow-ups to fail before the fix (2 failed, 2 passed); Flash-first preserves successful clarification and single-call unknown recovery (4 passed).",
-        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17\u201314.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
+        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17–14.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
         "native_output": "Berlin re-run job a7d69a5b (2026-10-08) was the incident; post-fix phone re-send pending; KRI-651: native simulator export and pixel checks passed 2026-10-13 (exact hook, color emoji, no context caption)",
         "production": "merged 2026-10-08"
       },
@@ -1093,27 +1093,54 @@
       "tickets": [
         "KRI-552"
       ],
-      "symptom": "A second copy of the same chat message, run after the render, read cleanup asks as caption intents and re-planned finished work.",
+      "symptom": "A second copy of the same chat message, sent because the chat looked stuck, threw the running turn back to plan again, doubled the pinned request, queued a second plan and, after the render, asked the creator to restate finished work ('caption: long pauses').",
       "boundary": "persistence",
-      "status": "gap",
+      "status": "open_pr",
       "owner": "KRI-552",
-      "gap_reason": "Resend at 69 s during a 113 s turn is confirmed; the race mechanism is unproven. Needs a trace before orchestration changes (KRI-577 item 4).",
-      "paths": [],
-      "regression_tests": [],
-      "harness": "pending",
-      "kill_switch": null,
-      "evidence": {
-        "offline_replay": "none",
-        "live_model": "n/a",
-        "native_output": "incident observed on phone 2026-10-08",
-        "production": "unfixed"
-      },
-      "neighbours_covered": [],
-      "neighbours_gap": [
-        "semantic resend / idempotency across turns",
-        "completed-output reuse"
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/kria/duplicate_send.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/text_trim.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/services/creation_thread_titles.py",
+        "src/apps/api/app/agents/clip_intent_planner.py",
+        "src/apps/api/prompts/clip_intent_planner.txt"
       ],
-      "follow_ups": [],
+      "regression_tests": [
+        "tests/kria/test_kri552_duplicate_send_postgres.py",
+        "tests/kria/test_text_trim.py",
+        "tests/agents/test_clip_intent_planner.py::test_kri552_the_prod_shape_still_asks_but_never_cuts_a_label_mid_word",
+        "tests/agents/test_clip_intent_planner.py::test_kri552_the_prompt_sends_speech_cleanup_to_the_step_that_owns_it"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "kria_duplicate_resend_enabled",
+      "evidence": {
+        "offline_replay": "Postgres-backed submit_turn + run_kria_turn replay of prod seq 7/9/19: the copy sent mid-planning used to requeue the first turn ('requeued', a second Main Creator run) and sit queued; now it is answered in one line (EN/TR), the first turn completes in one pass with its own brief v1 pinned, and no queued turn blocks the next message. Retries (failed turn, question, no review, 10 min later, tapped answer) still plan.",
+        "live_model": "n/a (the cleanup rule in the clip-intent prompt, 2026-10-18.1, is unverified against a live model)",
+        "native_output": "unknown",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "copy while the first turn plans",
+        "copy while the draft waits for approval",
+        "copy just after the render review",
+        "Turkish chat",
+        "same client_event_id replay",
+        "retry after a failed turn or a question is never swallowed",
+        "a different message mid-planning still requeues the first turn",
+        "planner and approval pin read the message once"
+      ],
+      "neighbours_gap": [
+        "the empty brief binding on prod turn a0913b2e is not reproduced: replaying the old flow bound brief v1 to the first turn; only its pinned request was doubled",
+        "cleanup asks misfiled as caption intents rely on the prompt rule (model behaviour), not a parser rule",
+        "iOS shows the generic Thinking row (and the live thought line is dropped) during a requeue",
+        "semantic (not byte-identical) re-sends"
+      ],
+      "follow_ups": [
+        "KRI-551 (retake cleanup itself)"
+      ],
       "red_control": "not_applicable"
     },
     {

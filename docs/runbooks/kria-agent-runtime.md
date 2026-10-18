@@ -379,6 +379,20 @@ pre-fix behaviour. Diagnose: `kria_turn_auto_continued` log lines (turn_id, leas
 `GET creation-threads/<id>/turns` shows one turn with several lease epochs and one
 assistant event. Guard: `tests/kria/test_turn_auto_continue_postgres.py`.
 
+Copies of a message (KRI-552): when the creator re-sends their latest message word for word
+(the chat looked stuck), `submit_turn` answers it in one line instead of queuing a second plan
+(`app/kria/duplicate_send.py`). It counts as a copy while that message's turn is pending,
+planning, awaiting approval, executing or observing, or in the 120 s after a turn that ended
+in a render review. A failed turn, a question, a recovery, a tapped answer and a re-send
+minutes later all plan as before. The copy's two events carry `payload.duplicate_of` (the
+first turn's id): the worker's revision fence (`conversation_revision_matches_sync`) and the
+planner/approval-pin readers skip them, so the running turn is not requeued and the pinned
+request is not doubled. `fly secrets set KRIA_DUPLICATE_RESEND_ENABLED=false --app nova-video`
++ restart api restores the old queueing. Diagnose: `GET creation-threads/<id>/events` shows an
+inert `user_message` plus an `assistant_response` with `duplicate_of`; `GET .../turns` shows a
+`completed` respond turn beside the real one. Guard:
+`tests/kria/test_kri552_duplicate_send_postgres.py`.
+
 ## Alerts and release blockers
 
 - expired lease on an active turn;
