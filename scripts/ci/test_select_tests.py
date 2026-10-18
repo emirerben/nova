@@ -761,6 +761,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-719-talking-multi-clip"),
             ),
             (
+                "src/apps/api/app/kria/duplicate_send.py",
+                (True, "covered", "kri-577-reliability-gates"),
+            ),
+            (
+                "src/apps/api/app/kria/text_trim.py",
+                (True, "covered", "kri-577-reliability-gates"),
+            ),
+            (
                 "src/apps/api/tests/pipeline/test_phone_talking_cutaways.py",
                 (True, "covered", "kri-719-talking-multi-clip"),
             ),
