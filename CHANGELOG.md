@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.33.0] - 2026-10-18
+
+### Fixed
+- fix(kria): longer clips reach back into footage; tappable length answers; one receipt per edit (KRI-737/738/739) (#1664) <!-- release-pr: 1664 -->
+
 ## [0.80.32.0] - 2026-10-18
 
 ### Changed
