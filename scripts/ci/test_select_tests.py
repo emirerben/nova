@@ -762,11 +762,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/duplicate_send.py",
-                (True, "covered", "kri-577-reliability-gates"),
+                (True, "covered", "kri-552-duplicate-resend"),
             ),
             (
                 "src/apps/api/app/kria/text_trim.py",
-                (True, "covered", "kri-577-reliability-gates"),
+                (True, "covered", "kri-552-duplicate-resend"),
             ),
             (
                 "src/apps/api/tests/pipeline/test_phone_talking_cutaways.py",

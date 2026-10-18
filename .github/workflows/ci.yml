@@ -689,6 +689,19 @@ jobs:
           set -o pipefail
           python3 -m pytest tests/pipeline/test_phone_talking_cutaways.py tests/tasks/test_phone_subtitled_narrated_dispatch.py -q \
             | tee ../../../test-results/kri-559/talking-multi-clip-api-tests.log
+      - name: Verify a re-sent copy of a message is answered, not planned, and labels are cut at words
+        if: contains(needs.changes.outputs.journey_ids, 'kri-552-duplicate-resend')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/kria/test_text_trim.py \
+            tests/kria/test_kri552_duplicate_send_postgres.py \
+            tests/agents/test_clip_intent_planner.py -q \
+            | tee ../../../test-results/kri-559/duplicate-resend-api-tests.log
       - name: Verify a montage clip named by a spoken line is cut on that line
         if: contains(needs.changes.outputs.journey_ids, 'kri-681-named-line-windows')
         working-directory: src/apps/api
