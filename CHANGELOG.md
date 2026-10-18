@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.32.0] - 2026-10-18
+
+### Changed
+- test(ios): editor-session tests wait on a 60 s deadline instead of fixed 1–5 s loops (#1659) <!-- release-pr: 1659 -->
+
 ## [0.80.31.0] - 2026-10-18
 
 ### Changed
