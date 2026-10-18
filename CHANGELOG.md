@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.40.0] - 2026-10-18
+
+### Fixed
+- fix(kria): phone Talking shows a creator's text on the word they say (KRI-707) (#1674) <!-- release-pr: 1674 -->
+
 ## [0.80.39.0] - 2026-10-18
 
 ### Changed
