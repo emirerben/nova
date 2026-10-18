@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.39.0] - 2026-10-18
+
+### Changed
+- fix(kria): clip-picker answer follows the chat language (KRI-694) (#1670) <!-- release-pr: 1670 -->
+
 ## [0.80.38.0] - 2026-10-18
 
 ### Changed
