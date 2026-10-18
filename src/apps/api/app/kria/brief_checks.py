@@ -2857,10 +2857,11 @@ def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
             req,
             "partial",
             say(
-                en="Speech cleanup is on, so some pauses or retakes may be cut.",
+                # KRI-551: consented cleanup cuts pauses and filler sounds, never a retake.
+                en="Speech cleanup is on, so some long pauses or filler sounds may be cut.",
                 tr=(
-                    "Konuşma temizliği açık, o yüzden bazı duraklamalar ya da tekrar "
-                    "çekimler kesilebilir."
+                    "Konuşma temizliği açık, o yüzden bazı uzun duraklamalar ya da dolgu "
+                    "sesleri kesilebilir."
                 ),
             ),
         )
@@ -3315,6 +3316,106 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
     if status == "met" and outcome == "applied":
         return _receipt(req, "met", None)
     return _receipt(req, status, "; ".join(notes))
+
+
+def _cleanup_counts(variant: Mapping[str, Any]) -> tuple[int, int, int, float | None] | None:
+    """Pauses, filler sounds and retakes a variant's cut record removed, and the time saved.
+
+    Read off ``silence_cut.removed`` (one ``reason`` per span). ``None`` when the variant
+    carries no cut record, so the note states no number it was not given.
+    """
+    record = variant.get("silence_cut")
+    rows = record.get("removed") if isinstance(record, Mapping) else None
+    if not isinstance(rows, list) or not rows:
+        return None
+    pauses = fillers = retakes = 0
+    for row in rows:
+        reason = row.get("reason") if isinstance(row, Mapping) else None
+        if reason == "silence":
+            pauses += 1
+        elif reason in ("filler_lexical", "filler_acoustic"):
+            fillers += 1
+        elif reason == "retake":
+            retakes += 1
+    if not (pauses or fillers or retakes):
+        return None
+    saved = record.get("time_saved_s")
+    seconds = (
+        float(saved)
+        if isinstance(saved, int | float) and not isinstance(saved, bool) and saved > 0
+        else None
+    )
+    return pauses, fillers, retakes, seconds
+
+
+def speech_cleanup_review_note(
+    variant: Mapping[str, Any], *, text: str = "", retake_cut_possible: bool = False
+) -> str | None:
+    """What a finished Voiceover/Talking render's speech cleanup cut, and what it left (KRI-551).
+
+    Read off the variant's own cut record, never off a brief, so the reply is honest even when
+    the render's brief binding was lost (prod thread ddc6e71b: the creator asked to cut "the part
+    where I restart the kilometer thirty sentence", the cleanup cut 14 silences and a filler,
+    the restart stayed, and no receipt said so). Consented cleanup cuts long pauses and filler
+    sounds only; it never detects a retake, so the limit is stated unless a retake cut really
+    could have run (``retake_cut_possible``) or the record shows one. ``text`` is the reply built
+    so far: a requirement receipt that already reports the limit is not repeated.
+    ``None`` for a variant that is not a speech edit or whose cleanup did not run.
+    """
+    if variant.get("resolved_archetype") not in _RENDERED_EDIT_FORMATS:
+        return None
+    outcome = variant.get("silence_cut_outcome")
+    if outcome not in ("applied", "no_change"):
+        return None
+    counts = _cleanup_counts(variant)
+    retakes = counts[2] if counts else 0
+    if outcome == "no_change":
+        sentences = [_loc(_CLEANUP_NOTHING_TO_CUT) + "."]
+    elif counts is None:
+        sentences = [_loc(_CLEANUP_DONE) + "."]
+    else:
+        pauses, fillers, retakes, seconds = counts
+        parts_en: list[str] = []
+        parts_tr: list[str] = []
+        for count, one, many, tr in (
+            (pauses, "long pause", "long pauses", "uzun duraklama"),
+            (fillers, "filler sound", "filler sounds", "dolgu sesi"),
+            (retakes, "restarted sentence", "restarted sentences", "baştan başlanan cümle"),
+        ):
+            if count:
+                parts_en.append(f"{count} {one if count == 1 else many}")
+                parts_tr.append(f"{count} {tr}")
+        joined_en = parts_en[0] if len(parts_en) == 1 else ", ".join(parts_en[:-1])
+        if len(parts_en) > 1:
+            joined_en += f" and {parts_en[-1]}"
+        sentences = [
+            say(
+                en=(
+                    f"Speech cleanup cut {joined_en}"
+                    + (f" ({seconds:.1f} s)" if seconds is not None else "")
+                    + "."
+                ),
+                tr=(
+                    f"Konuşma temizliği şunları kesti: {', '.join(parts_tr)}"
+                    + (f" ({seconds:.1f} sn)".replace(".", ",") if seconds is not None else "")
+                    + "."
+                ),
+            )
+        ]
+    if not retakes and not retake_cut_possible and _loc(_NAMED_CUTS_NEED_EDITOR) not in text:
+        sentences.append(
+            say(
+                en=(
+                    "It only cuts pauses and filler sounds, so a sentence you restarted stays "
+                    "in; trim it in the editor."
+                ),
+                tr=(
+                    "Yalnızca duraklamaları ve dolgu seslerini keser; baştan başladığın bir "
+                    "cümle videoda kalır, onu editörde kırp."
+                ),
+            )
+        )
+    return " ".join(sentences)
 
 
 def _merge_cleanup_timing(
@@ -6138,4 +6239,5 @@ __all__ = [
     "plan_facts_from_unified_montage",
     "render_block_recovery",
     "reply_from_receipts",
+    "speech_cleanup_review_note",
 ]
