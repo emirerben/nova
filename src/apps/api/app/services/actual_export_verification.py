@@ -12,9 +12,12 @@ import hashlib
 import io
 import json
 import math
+import re
 import subprocess
+import tempfile
 import time
 from collections.abc import Mapping
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
@@ -133,11 +136,19 @@ def _probe(path: Path) -> dict:
     )
 
 
-def _frame(path: Path, at: float, *, size: tuple[int, int] | None = None) -> Image.Image:
+def _frame(
+    path: Path, at: float, *, size: tuple[int, int] | None = None, region=None
+) -> Image.Image:
     args = [
         "ffmpeg",
         "-v",
         "error",
+        # One sampled frame does not benefit from decoder look-ahead or a
+        # threaded PNG encoder. Bound both on the single-vCPU API machines.
+        "-threads",
+        "1",
+        "-filter_threads",
+        "1",
         "-ss",
         str(round(at, 6)),
         *_LOCAL_MP4_INPUT,
@@ -152,9 +163,14 @@ def _frame(path: Path, at: float, *, size: tuple[int, int] | None = None) -> Ima
             "-vf",
             f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
         ]
-    return Image.open(io.BytesIO(_run(args + ["-f", "image2pipe", "-vcodec", "png", "-"]))).convert(
-        "RGB"
-    )
+    elif region is not None:
+        x0, y0, x1, y1 = region
+        # Convert before cropping: YUV chroma subsampling must not shift an odd
+        # crop origin. These are the same RGB pixels Pillow previously cropped.
+        args += ["-vf", f"format=rgb24,crop={x1 - x0}:{y1 - y0}:{x0}:{y0}:exact=1"]
+    return Image.open(
+        io.BytesIO(_run(args + ["-f", "image2pipe", "-vcodec", "png", "-threads", "1", "-"]))
+    ).convert("RGB")
 
 
 def _audio(path: Path, start: float, duration: float) -> np.ndarray:
@@ -181,6 +197,116 @@ def _audio(path: Path, start: float, duration: float) -> np.ndarray:
         ]
     )
     return np.frombuffer(raw, dtype="<f4").astype(np.float64)
+
+
+def _frames(path: Path, times, *, size: tuple[int, int], probe=None, deadline=None, region=None):
+    """Decode the same first-at/after samples with bounded process reuse.
+
+    Keep exact input PTS in a private metadata sidecar, so sparse/VFR samples can
+    share an observed frame without moving any requested sample time. Any batch
+    uncertainty falls back to the original independent seek path.
+    """
+    deadline = deadline if deadline is not None else time.monotonic() + 90
+    # Preserve the original _frame helper's rounding for either numeric type.
+    # The picture caller still normalizes linspace offsets to float, as before.
+    requested = [float(round(at, 6)) for at in times]
+    try:
+        probe = probe or _probe(path)
+        video = next(s for s in probe["streams"] if s["codec_type"] == "video")
+        base = Fraction(str(probe["format"].get("start_time", "0")))
+        tick = Fraction(video["time_base"])
+        unique = sorted(set(requested))
+        observed = {}
+        frame_bytes = size[0] * size[1] * 3
+        maximum = max(1, min(17, (64 * 1024 * 1024) // frame_bytes))
+        while unique:
+            if time.monotonic() > deadline:
+                raise TimeoutError("verification_budget")
+            group = [at for at in unique[:maximum] if at - unique[0] <= 8]
+            unique = unique[len(group) :]
+            # Accurate input seeking rounds the requested clock to the stream
+            # time base (nearest, ties away from zero), before frame selection.
+            clocks = [(Fraction(str(at)) + base) / tick for at in group]
+            thresholds = [
+                math.floor(value + Fraction(1, 2))
+                if value >= 0
+                else math.ceil(value - Fraction(1, 2))
+                for value in clocks
+            ]
+            expression = "+".join(
+                f"gte(pts,{pts})*eq(selected_n,{i})" for i, pts in enumerate(thresholds)
+            )
+            with tempfile.TemporaryDirectory(prefix="kria-sample-clock-") as directory:
+                clock = Path(directory) / "clock.txt"
+                geometry = (
+                    f"format=rgb24,crop={region[2] - region[0]}:{region[3] - region[1]}:"
+                    f"{region[0]}:{region[1]}:exact=1"
+                    if region is not None
+                    else (
+                        f"scale={size[0]}:{size[1]}:force_original_aspect_ratio=increase,"
+                        f"crop={size[0]}:{size[1]},format=rgb24"
+                    )
+                )
+                filters = (
+                    f"select='{expression}',{geometry},"
+                    "metadata=mode=add:key=lavfi.kria_sample:value=1,"
+                    f"metadata=mode=print:file={clock}"
+                )
+                raw = _run(
+                    [
+                        "ffmpeg",
+                        "-v",
+                        "error",
+                        "-threads",
+                        "1",
+                        "-filter_threads",
+                        "1",
+                        "-copyts",
+                        "-ss",
+                        str(group[0]),
+                        *_LOCAL_MP4_INPUT,
+                        "-i",
+                        str(path),
+                        "-frames:v",
+                        str(len(group)),
+                        "-vf",
+                        filters,
+                        "-fps_mode",
+                        "passthrough",
+                        "-threads",
+                        "1",
+                        "-f",
+                        "rawvideo",
+                        "-pix_fmt",
+                        "rgb24",
+                        "-",
+                    ]
+                )
+                points = [
+                    int(value) for value in re.findall(r"\bpts:\s*(-?\d+)", clock.read_text())
+                ]
+            count, remainder = divmod(len(raw), frame_bytes)
+            if remainder or len(points) < count or not count:
+                raise ValueError("incomplete_picture_batch")
+            points = points[:count]
+            if points != sorted(points):
+                raise ValueError("non_monotonic_picture_batch")
+            for at, threshold in zip(group, thresholds, strict=True):
+                index = next(i for i, pts in enumerate(points) if pts >= threshold)
+                data = raw[index * frame_bytes : (index + 1) * frame_bytes]
+                observed[at] = Image.frombytes("RGB", size, data)
+        return [observed[at] for at in requested]
+    except (OSError, ValueError, KeyError, StopIteration, subprocess.SubprocessError):
+        result = []
+        for at in requested:
+            if time.monotonic() > deadline:
+                raise TimeoutError("verification_budget")
+            result.append(
+                _frame(path, at, region=region)
+                if region is not None
+                else _frame(path, at, size=size)
+            )
+        return result
 
 
 def _picture_similarity(expected: np.ndarray, actual: np.ndarray, mask: np.ndarray) -> float:
@@ -374,15 +500,27 @@ def verify_actual_export(
                 count = max(3, math.ceil(clip.source_duration / 0.5) + 1)
                 differences = []
                 similarities = []
-                for offset in np.linspace(0.1, clip.source_duration - 0.1, count):
+                offsets = [float(t) for t in np.linspace(0.1, clip.source_duration - 0.1, count)]
+                source_probe = _probe(source)
+                expected_frames = _frames(
+                    source,
+                    [clip.source_start + offset for offset in offsets],
+                    size=size,
+                    probe=source_probe,
+                    deadline=deadline,
+                )
+                actual_frames = _frames(
+                    output,
+                    [clip.timeline_start + offset for offset in offsets],
+                    size=size,
+                    probe=probe,
+                    deadline=deadline,
+                )
+                for reference, candidate in zip(expected_frames, actual_frames, strict=True):
                     if time.monotonic() > deadline:
                         raise TimeoutError("verification_budget")
-                    expected = np.asarray(
-                        _frame(source, clip.source_start + float(offset), size=size), dtype=float
-                    )
-                    actual = np.asarray(
-                        _frame(output, clip.timeline_start + float(offset), size=size), dtype=float
-                    )
+                    expected = np.asarray(reference, dtype=float)
+                    actual = np.asarray(candidate, dtype=float)
                     differences.append(float(np.abs(expected - actual)[mask].mean() / 255))
                     similarities.append(_picture_similarity(expected, actual, mask))
                 worst = max(differences)
@@ -405,7 +543,6 @@ def verify_actual_export(
                         "min_local_ssim": round(similarity, 6),
                     }
                 )
-                source_probe = _probe(source)
                 has_audio = any(s["codec_type"] == "audio" for s in source_probe["streams"])
                 gain = clip.volume * recipe.audio.original_volume
                 observed = _audio(output, clip.timeline_start, clip.source_duration)
@@ -432,7 +569,16 @@ def verify_actual_export(
                 times.append((layer.start - 0.15, False))
             if layer.end < expected_duration - 0.2:
                 times.append((layer.end + 0.15, False))
-            for at, present in times:
+            x0, y0, x1, y1 = rect
+            text_frames = _frames(
+                output,
+                [at for at, _ in times],
+                size=(x1 - x0, y1 - y0),
+                probe=probe,
+                deadline=deadline,
+                region=rect,
+            )
+            for (at, present), text_frame in zip(times, text_frames, strict=True):
                 if time.monotonic() > deadline:
                     raise TimeoutError("verification_budget")
                 colors = [
@@ -442,7 +588,7 @@ def verify_actual_export(
                     )
                     for run in layer.runs
                 ]
-                observed_text = _read_text(_frame(output, at).crop(rect), colors)
+                observed_text = _read_text(text_frame, colors)
                 matches = wanted in observed_text
                 checks.append(
                     {

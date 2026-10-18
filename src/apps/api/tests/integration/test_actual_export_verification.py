@@ -7,6 +7,7 @@ FFmpeg drawtext: the verifier must independently read actual pixels/audio.
 from __future__ import annotations
 
 import copy
+import io
 import shutil
 import subprocess
 import threading
@@ -14,11 +15,14 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import numpy as np
 import pytest
+from PIL import Image
 
 from app.kria.device_render import DeviceRenderStatus, make_device_request
 from app.kria.recipes_v2 import EditRecipeV2
-from app.services.actual_export_verification import verify_actual_export
+from app.services import actual_export_verification as measured
+from app.services.actual_export_verification import _audio, _frame, verify_actual_export
 
 pytestmark = pytest.mark.timeout(120)
 
@@ -357,3 +361,189 @@ def test_matching_codecs_and_pixels_in_a_non_mp4_container_are_not_ready(exports
     ffmpeg("-i", candidate, "-c", "copy", "-f", "matroska", disguised)
     report = verify_actual_export(disguised, status(recipe), sources)
     assert report["status"] != "checked", "A format the iPhone cannot play must never be ready"
+
+
+@pytest.mark.parametrize(
+    "timing", ["cfr", "vfr", "rotated", "offset", "coarse_timebase", "fine_timebase"]
+)
+def test_decoder_optimization_preserves_reference_pixels_and_pcm(tmp_path, timing, monkeypatch):
+    """Performance changes must preserve the independent original decoder output.
+
+    Reference oracle authored before optimization; fine-clock coverage extends
+    it before the numpy-clock fix. Process reuse must preserve pixels and PCM.
+    """
+    source = tmp_path / "source.mp4"
+    ffmpeg(
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=s=160x96:r=30:d=12",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=477:sample_rate=48000:duration=12",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        source,
+    )
+    if timing == "vfr":
+        changed = tmp_path / "vfr.mp4"
+        ffmpeg(
+            "-i",
+            source,
+            "-vf",
+            "setpts='if(lt(N,30),N,30+(N-30)*2)/(30*TB)'",
+            "-fps_mode",
+            "vfr",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-c:a",
+            "copy",
+            changed,
+        )
+        source = changed
+    if timing == "rotated":
+        changed = tmp_path / "rotated.mp4"
+        ffmpeg("-i", source, "-c", "copy", "-metadata:s:v:0", "rotate=90", changed)
+        source = changed
+    if timing == "offset":
+        changed = tmp_path / "offset.mp4"
+        ffmpeg("-i", source, "-c", "copy", "-output_ts_offset", "1.25", changed)
+        source = changed
+    if timing == "coarse_timebase":
+        changed = tmp_path / "coarse.mp4"
+        ffmpeg("-i", source, "-c", "copy", "-video_track_timescale", "1000", changed)
+        source = changed
+    if timing == "fine_timebase":
+        changed = tmp_path / "fine.mp4"
+        ffmpeg("-i", source, "-c", "copy", "-video_track_timescale", "1000000", changed)
+        source = changed
+    times = (
+        0,
+        0.0005,
+        0.1,
+        0.1005,
+        # The original np.linspace caller rounds a numpy scalar before seek.
+        # Converting it to Python float first changes half-microsecond ties.
+        np.float64(0.1000005),
+        0.333333,
+        0.333334,
+        1.234567,
+        1.5,
+        5.333333,
+        8.333334,
+        9.234567,
+        10.1,
+    )
+
+    def no_fallback(*args, **kwargs):
+        pytest.fail("The supported fixture must use batch decoding, not silently fall back")
+
+    with monkeypatch.context() as batch_only:
+        batch_only.setattr(measured, "_frame", no_fallback)
+        batches = measured._frames(source, times, size=(96, 54))
+        window = measured._frames(source, times[4:], size=(96, 54))
+        regions = measured._frames(source, times, size=(66, 54), region=(7, 9, 73, 63))
+    assert all(
+        np.array_equal(np.asarray(a), np.asarray(b))
+        for a, b in zip(batches[4:], window, strict=True)
+    ), "A later source window must preserve the same sample clock"
+    for at, batched, region_frame in zip(times, batches, regions, strict=True):
+        # These explicit commands retain the pre-optimization sampling behavior.
+        # They do not call the production decoder helper or inspect its flags.
+        raw = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-ss",
+                str(round(at, 6)),
+                "-protocol_whitelist",
+                "file,pipe",
+                "-f",
+                "mov",
+                "-i",
+                str(source),
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=96:54:force_original_aspect_ratio=increase,crop=96:54",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "png",
+                "-",
+            ],
+            check=True,
+            capture_output=True,
+            timeout=20,
+        ).stdout
+        reference = np.asarray(Image.open(io.BytesIO(raw)).convert("RGB"))
+        assert np.array_equal(np.asarray(_frame(source, at, size=(96, 54))), reference)
+        assert np.array_equal(np.asarray(batched), reference), f"{timing} at {at}"
+        full = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-ss",
+                str(round(at, 6)),
+                "-protocol_whitelist",
+                "file,pipe",
+                "-f",
+                "mov",
+                "-i",
+                str(source),
+                "-frames:v",
+                "1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "png",
+                "-",
+            ],
+            check=True,
+            capture_output=True,
+            timeout=20,
+        ).stdout
+        region = (7, 9, 73, 63)
+        cropped = Image.open(io.BytesIO(full)).convert("RGB").crop(region)
+        assert np.array_equal(np.asarray(region_frame), np.asarray(cropped))
+        assert np.array_equal(np.asarray(_frame(source, at, region=region)), np.asarray(cropped))
+        pcm = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-ss",
+                str(at),
+                "-protocol_whitelist",
+                "file,pipe",
+                "-f",
+                "mov",
+                "-i",
+                str(source),
+                "-t",
+                "0.75",
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "8000",
+                "-f",
+                "f32le",
+                "-",
+            ],
+            check=True,
+            capture_output=True,
+            timeout=20,
+        ).stdout
+        assert np.array_equal(_audio(source, at, 0.75), np.frombuffer(pcm, dtype="<f4"))

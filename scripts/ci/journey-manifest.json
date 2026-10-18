@@ -105,6 +105,7 @@
         "src/apps/api/tests/tasks/test_voice_behind_footage_dispatch.py",
         "src/apps/api/app/services/actual_export_verification.py",
         "src/apps/api/app/cli/verify_device_export.py",
+        "src/apps/api/app/cli/benchmark_device_export.py",
         "src/apps/api/tests/integration/test_actual_export_verification.py",
         "src/apps/api/tests/integration/test_actual_export_completion.py",
         "src/apps/api/tests/routes/test_actual_export_publication.py"
