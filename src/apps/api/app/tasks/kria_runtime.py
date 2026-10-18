@@ -49,6 +49,7 @@ from app.kria.brief_checks import (
     plan_facts_from_strategy,
     reply_from_receipts,
     requirements_to_check_at_draft,
+    speech_cleanup_review_note,
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
@@ -1930,9 +1931,15 @@ def _owns_turn_lease(
     )
 
 
-def _model_message(source: Any) -> str:
-    """The creator's words as the planner and brief extractor should read them (KRI-575)."""
-    return model_text(getattr(source, "payload", None), getattr(source, "content", None))
+def _model_message(source: Any, *, language: str | None = None) -> str:
+    """The creator's words as the planner and brief extractor should read them (KRI-575).
+
+    Callers that run before the turn binds the chat's language pass it (KRI-694), so a tapped
+    answer's neutral sentence is in the chat's language, like the history rows read later.
+    """
+    return model_text(
+        getattr(source, "payload", None), getattr(source, "content", None), language=language
+    )
 
 
 def _answers_clip_question(source: Any) -> bool:
@@ -2020,7 +2027,8 @@ def _claim(
             claimed_snapshot["live_scope"] = live_scope
         return (
             claimed_snapshot,
-            _model_message(source),
+            # KRI-694: the task binds the chat's language only after this claim.
+            _model_message(source, language=thread_reply_language(thread)),
             int(turn.lease_epoch),
             int(thread.revision),
             _stored_editor_state(turn),
@@ -2768,7 +2776,8 @@ def extract_kria_brief(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         source = db.get(CreationThreadEvent, turn.source_event_id)
         if thread is None or source is None:
             return {"turn_id": turn_id, "status": "ignored"}
-        snapshot, message = _snapshot(thread), _model_message(source)
+        snapshot = _snapshot(thread)
+        message = _model_message(source, language=snapshot.get("reply_language"))
     if not snapshot.get("item_id"):
         return {"turn_id": turn_id, "status": "ignored"}
     try:
@@ -4781,6 +4790,37 @@ def _source_fingerprints(job: Job) -> dict[str, str]:
 
 
 def _approved_generation_review(
+    db: Any,
+    thread: CreationThread,
+    job: Job,
+    variant: dict,
+    execution: CreatorAgentExecution,
+    default_text: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    """The finished render's reply, plus what its speech cleanup cut and left (KRI-551).
+
+    The cleanup note is read from the variant's own cut record, so it survives a lost brief
+    binding (the requirement receipts then cannot say a retake was not cut).
+    """
+    text, receipts = _approved_generation_requirements_review(
+        db, thread, job, variant, execution, default_text
+    )
+    contract = (job.assembly_plan or {}).get("speech_cleanup_contract")
+    note = speech_cleanup_review_note(
+        variant,
+        text=text,
+        # Consented cleanup never runs the retake detector; the older auto path does when
+        # its lever is on, so only then must the reply not deny a restart cut.
+        retake_cut_possible=contract != "required_v1" and bool(settings.retake_cut_enabled),
+    )
+    if not note:
+        return text, receipts
+    # A requirement list is multi-line: keep the note off its last bullet.
+    separator = "\n\n" if "\n" in text else " "
+    return f"{text}{separator}{note}", receipts
+
+
+def _approved_generation_requirements_review(
     db: Any,
     thread: CreationThread,
     job: Job,

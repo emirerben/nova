@@ -6727,6 +6727,7 @@ def _run_phone_subtitled_job(
         SilentAudioPlanDeclined,
         UnsupportedPhonePlan,
     )
+    from app.pipeline.phone_spoken_text import SPOKEN_TEXT_FIELD  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import remap_lanes_for_cut  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
         SFX_DUCK_RECEIPT_FIELD,
@@ -6755,6 +6756,7 @@ def _run_phone_subtitled_job(
         phone_subtitled_closing_title_supported,
         phone_subtitled_overlays_supported,
         phone_subtitled_reaction_beats_supported,
+        phone_subtitled_spoken_text_supported,
         phone_subtitled_title_supported,
         phone_subtitled_video_overlays_supported,
         phone_talking_head_supported,
@@ -6957,6 +6959,16 @@ def _run_phone_subtitled_job(
         )
     closing_text_rows: list[dict] = []
     closing_text_receipt: dict[str, Any] | None = None
+    # KRI-707: the creator's text on a word they say ("big 'ATAKAN' when I say 'Atakan'"),
+    # read off the pinned brief. Read only while its rollout is on, so the flag-off recipe
+    # and variant stay byte-identical.
+    spoken_text_asks = (
+        _phone_spoken_text_asks(snapshot) if phone_subtitled_spoken_text_supported() else ()
+    )
+    spoken_text_rows: list[dict] = []
+    spoken_text_receipt: dict[str, Any] | None = None
+    # The take's words on the timeline the recipe plays, for `spoken_text_asks`.
+    timeline_words: list[Any] = []
 
     # KRI-174 lane state. Kept at these empty defaults when the flag is off
     # (or there is no lane request), so the fences/persistence below become
@@ -7349,6 +7361,9 @@ def _run_phone_subtitled_job(
                     if opening_cut_only or not is_filler_token(item["text"])
                 ]
                 cues = build_plain_cues(cut_words, attach_words=True, budget=PHONE_CUE_BUDGET)
+                if spoken_text_asks:
+                    # KRI-707: the SPOKEN words (never a requested caption language), cut.
+                    timeline_words = remap_words(words, cut_plan)
             else:
                 transcript = transcribe_whisper_cached(
                     clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
@@ -7434,6 +7449,8 @@ def _run_phone_subtitled_job(
                 cues = build_plain_cues(
                     transcript.words, attach_words=True, budget=PHONE_CUE_BUDGET
                 )
+                if spoken_text_asks:
+                    timeline_words = list(transcript.words)
                 # KRI-719: each extra speaker's own words, shifted to where it
                 # plays (right after the speakers before it). Built per clip so
                 # one caption line never spans two clips.
@@ -7457,6 +7474,8 @@ def _run_phone_subtitled_job(
                         cues = cues + build_plain_cues(
                             extra_words, attach_words=True, budget=PHONE_CUE_BUDGET
                         )
+                        if spoken_text_asks:
+                            timeline_words.extend(extra_words)
                     extra_offset_s += float(extra_binding.original.duration_s)
             cues = correct_caption_cues(
                 cues,
@@ -7496,6 +7515,20 @@ def _run_phone_subtitled_job(
             talking_timeline_s = sum(
                 max(0.0, end - start) for start, end in speaker_keep_segments
             ) + sum(float(extra.original.duration_s) for extra in extra_speaker_bindings)
+            if spoken_text_asks:
+                spoken_text_rows, spoken_text_receipt = _phone_talking_spoken_text_rows(
+                    spoken_text_asks,
+                    words=timeline_words,
+                    cues=cues,
+                    caption_style=caption_style,
+                    shown_rows=title_rows,
+                    timeline_duration_s=talking_timeline_s,
+                    binding=binding,
+                    clip_path=clip_path,
+                    keep_segments=speaker_keep_segments,
+                    landscape_fit=framed_fit,
+                    position_x=speaker_position_x or 0.0,
+                )
 
             def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
                 if not talking_closing_text:
@@ -7606,10 +7639,16 @@ def _run_phone_subtitled_job(
                 )
             if not media_lanes_enabled:
                 closing_text_rows, closing_text_receipt = _closing_rows_for(None)
-                styled_rows = generation_style_rows(title_rows + closing_text_rows, job_id=job_id)
+                styled_rows = generation_style_rows(
+                    title_rows + spoken_text_rows + closing_text_rows, job_id=job_id
+                )
                 title_ids = {row["id"] for row in title_rows}
+                spoken_ids = {row["id"] for row in spoken_text_rows}
                 title_rows = [row for row in styled_rows if row["id"] in title_ids]
-                closing_text_rows = [row for row in styled_rows if row["id"] not in title_ids]
+                spoken_text_rows = [row for row in styled_rows if row["id"] in spoken_ids]
+                closing_text_rows = [
+                    row for row in styled_rows if row["id"] not in title_ids | spoken_ids
+                ]
                 if talking_multi:
                     cutaways = _schedule_talking_footage([])
                 recipe = compile_phone_subtitled_plan(
@@ -7619,8 +7658,10 @@ def _run_phone_subtitled_job(
                     cut_plan=cut_plan,
                     cutaways=cutaways,
                     landscape_fit=landscape_fit,  # type: ignore[arg-type]
-                    text_elements=title_rows + closing_text_rows,
-                    text_elements_user_edited=bool(title_rows or closing_text_rows),
+                    text_elements=title_rows + spoken_text_rows + closing_text_rows,
+                    text_elements_user_edited=bool(
+                        title_rows or spoken_text_rows or closing_text_rows
+                    ),
                     additional_speakers=extra_speaker_bindings,
                     **framed_compile,
                 )
@@ -8021,14 +8062,16 @@ def _run_phone_subtitled_job(
                             if lanes is not None and beat_closing_card_id
                             else None
                         )
-                        recipe = _compile_lanes(title_rows + closing_text_rows)
+                        recipe = _compile_lanes(title_rows + spoken_text_rows + closing_text_rows)
                         if closing_text_rows and closing_text_rows[0]["end_s"] < (
                             recipe.duration - 1e-3
                         ):
                             # An ending clip plays after the speaker: closing text
                             # runs to the very end, which the contract checks.
                             closing_text_rows = [{**closing_text_rows[0], "end_s": recipe.duration}]
-                            recipe = _compile_lanes(title_rows + closing_text_rows)
+                            recipe = _compile_lanes(
+                                title_rows + spoken_text_rows + closing_text_rows
+                            )
                         sfx_duck = sfx_duck_receipt(lanes, recipe)
                         break
                     except SubtitledLaneError as exc:
@@ -8246,18 +8289,27 @@ def _run_phone_subtitled_job(
                 # A face crop IS a crop: the editor's bars/crop control shows it,
                 # and a Save without a bars/crop change keeps it.
                 new_entry["landscape_fit"] = "fill"
-        if title_rows or closing_text_rows:
+        if title_rows or spoken_text_rows or closing_text_rows:
             # KRI-467: the title is an ordinary saved text row. `user_edited`
             # makes the read path serve it beside the projected caption
             # mirrors (an unedited caption variant serves the mirrors alone).
-            # KRI-514: the closing text is a second one.
-            new_entry["text_elements"] = title_rows + closing_text_rows
+            # KRI-514: the closing text is a second one. KRI-707: so is text
+            # on a word the creator says.
+            new_entry["text_elements"] = title_rows + spoken_text_rows + closing_text_rows
             new_entry["text_elements_user_edited"] = True
             new_entry["text_elements_materialized_from"] = (
-                "opening_title" if title_rows else "closing_title"
+                "opening_title"
+                if title_rows
+                else "spoken_text"
+                if spoken_text_rows
+                else "closing_title"
             )
         if title_rows:
             new_entry["opening_title_placement"] = title_receipt
+        if spoken_text_receipt is not None:
+            # KRI-707: where each text-on-a-word ask landed, or why not; the brief
+            # receipt's evidence at render-ready.
+            new_entry[SPOKEN_TEXT_FIELD] = spoken_text_receipt
         if closing_text_rows:
             new_entry["closing_title_placement"] = closing_text_receipt
         if talking_multi and talking_roles is not None:
@@ -8622,6 +8674,83 @@ def _phone_talking_closing_rows(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return [placed], receipt
+
+
+def _phone_spoken_text_asks(snapshot: dict) -> tuple:
+    """KRI-707: the texts the creator wants on screen when they say a word, read
+    deterministically off the approved brief pinned on the job
+    (``creator_brief_binding``), never a prompt field. Empty without a readable
+    binding, so the render runs exactly as before."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.spoken_text_ask import brief_spoken_texts  # noqa: PLC0415
+
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return ()
+    try:
+        return brief_spoken_texts(BriefBinding.model_validate(raw_binding).resolve())
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_spoken_text.binding_unreadable", error=str(exc)[:200])
+        return ()
+
+
+def _phone_talking_spoken_text_rows(
+    asks: Any,
+    *,
+    words: list[Any],
+    cues: list[dict],
+    caption_style: str,
+    shown_rows: list[dict],
+    timeline_duration_s: float,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+    position_x: float = 0.0,
+) -> tuple[list[dict], dict[str, Any]]:
+    """KRI-707: one text row per ``asks`` entry the take says, from the word's start
+    (cut-timeline ``words``), placed off the speaker's face and clear of the
+    captions and ``shown_rows`` (the title), plus the receipt of every ask.
+    ``binding`` / ``clip_path`` / ``keep_segments`` are the first speaker's, so a
+    row past its span (a KRI-719 extra speaker) protects the fallback face."""
+    from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+    from app.pipeline.phone_spoken_text import spoken_text_rows  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import place_talking_title  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    display_width, display_height = display_dims(binding.original)
+    scale = fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale
+    speaker_span_s = sum(max(0.0, end - start) for start, end in keep_segments)
+
+    def place(row: dict, avoid: Any) -> tuple[dict, dict[str, Any]]:
+        return place_talking_title(
+            row,
+            clip_path=clip_path if float(row["start_s"]) < speaker_span_s else None,
+            keep_segments=keep_segments,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=_STORY_CANVAS,
+            scale=scale,
+            position_x=position_x,
+            avoid=avoid,
+        )
+
+    rows, receipt = spoken_text_rows(
+        asks,
+        words=words,
+        cues=cues,
+        caption_style=caption_style,
+        timeline_duration_s=timeline_duration_s,
+        canvas=_STORY_CANVAS,
+        place=place,
+        shown_rows=shown_rows,
+    )
+    try:
+        record_pipeline_event("phone", "subtitled_spoken_text", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return rows, receipt
 
 
 def _phone_narrated_cleaned_narration(job_id: str, snapshot: dict) -> NarrationTrack:

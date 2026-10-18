@@ -1171,6 +1171,11 @@
             "default": false,
             "title": "Visuals Enabled",
             "type": "boolean"
+          },
+          "voice_dictation": {
+            "default": false,
+            "title": "Voice Dictation",
+            "type": "boolean"
           }
         },
         "required": [

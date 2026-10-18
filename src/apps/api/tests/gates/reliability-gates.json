@@ -808,7 +808,8 @@
         "KRI-533",
         "KRI-537",
         "KRI-541",
-        "KRI-549"
+        "KRI-549",
+        "KRI-551"
       ],
       "symptom": "Every phone Voiceover ask read 'Couldn't verify' at draft time; then photo-on-words and crowd-noise asks; then captions and pause cuts; then caption language and name spelling, although the render did them.",
       "boundary": "reply",
@@ -829,7 +830,8 @@
         "tests/kria/test_brief_marathon_receipts.py",
         "tests/tasks/test_marathon_render_ready_review.py",
         "tests/kria/test_brief_rendered_speech_facts.py",
-        "tests/kria/test_draft_receipts_defer.py"
+        "tests/kria/test_draft_receipts_defer.py",
+        "tests/tasks/test_kri551_cleanup_review_note.py"
       ],
       "harness": "real_reply",
       "kill_switch": null,

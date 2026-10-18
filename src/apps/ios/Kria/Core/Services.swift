@@ -200,6 +200,9 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     /// (KRI-561). `generation` pins the song the question was built against; a 409 `song_changed` means it was
     /// replaced. A 404 means the server does not offer it.
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink
+    /// Whisper text for a dictated recording (KRI-742). `contextTerms` are the creator's own clip/song names.
+    /// A 404 means the server has dictation off.
+    func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta
     func draft(threadID: UUID) async throws -> DraftSnapshot
@@ -284,6 +287,12 @@ struct ProjectPage: Sendable {
     let nextCursor: String?
 }
 
+/// `POST /dictation/transcribe` (KRI-742). `reason == "no_speech"` comes with empty text.
+struct DictationTranscriptResponse: Decodable, Equatable, Sendable {
+    let text: String
+    let reason: String?
+}
+
 extension KriaAPIClient {
     func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted { throw APIError.unsupported }
     /// Substitutes that only know the whole library: everything as the first page, nothing after it.
@@ -311,6 +320,7 @@ extension KriaAPIClient {
 /// implemented by a substitute.
 extension KriaAPIClient {
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
+    func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse { throw APIError.unsupported }
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot { throw APIError.unsupported }
     func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit]) async throws -> TurnAccepted { throw APIError.unsupported }
     func undoPlanSection(threadID: UUID, sectionID: PlanSectionID, expectedThreadRevision: Int, expectedBlockRevision: Int, expectedDraftRevision: Int) async throws -> PlanSectionUndoResult { throw APIError.unsupported }
@@ -1214,6 +1224,17 @@ struct KriaAPI: KriaAPIClient {
         guard await recentCreationCapabilities(maxAge: 60) == nil else { return }
         _ = try? await creationCapabilities()
     }
+    func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse {
+        let boundary = "kria-\(UUID().uuidString)"
+        var body = Data()
+        func append(_ text: String) { body.append(Data(text.utf8)) }
+        append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"dictation.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n")
+        body.append(audio)
+        append("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"context_terms\"\r\n\r\n")
+        append(String(data: (try? JSONEncoder().encode(contextTerms)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]")
+        append("\r\n--\(boundary)--\r\n")
+        return try await request(path: "dictation/transcribe", method: "POST", headers: ["Content-Type": "multipart/form-data; boundary=\(boundary)"], bodyData: body, decode: DictationTranscriptResponse.self, timeoutInterval: 30)
+    }
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink {
         try await request(path: "creation-threads/\(threadID.uuidString)/song-audio", method: "GET",
                           query: generation.map { [URLQueryItem(name: "generation", value: String($0))] } ?? [],
@@ -1496,7 +1517,11 @@ struct KriaAPI: KriaAPIClient {
             storedSession = try await refreshAhead(of: current)
         }
         if let token = storedSession?.accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        if let bodyData { request.httpBody = bodyData; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        if let bodyData {
+            request.httpBody = bodyData
+            // A caller that sets its own Content-Type (multipart dictation upload) keeps it.
+            if request.value(forHTTPHeaderField: "Content-Type") == nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        }
         var (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth)
         // The server answers a request Postgres aborted as a deadlock victim with
         // `409 {"code": "concurrent_update", "retryable": true}`. It was rolled back, so
