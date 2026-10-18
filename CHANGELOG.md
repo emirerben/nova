@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.36.0] - 2026-10-18
+
+### Changed
+- fix(kria): the review sees a word-by-word hook as shown; replay the real Lisbon plan (KRI-560) (#1671) <!-- release-pr: 1671 -->
+
 ## [0.80.35.0] - 2026-10-18
 
 ### Changed
