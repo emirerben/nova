@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.30.0] - 2026-10-18
+
+### Changed
+- fix(kria): re-read locked rows when the approval sweep races a new message (#1657) <!-- release-pr: 1657 -->
+
 ## [0.80.29.0] - 2026-10-18
 
 ### Changed
