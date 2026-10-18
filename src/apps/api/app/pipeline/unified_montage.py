@@ -86,6 +86,14 @@ from app.services.clip_facts import (
 from app.services.clip_order_sequence import apply_sequence, sequence_rows
 from app.services.length_policy import natural_length_owner
 from app.services.spoken_quotes import is_outro_hallucination
+from app.services.spoken_roles import (
+    SpokenClip,
+    SpokenSeats,
+    speech_ordered,
+    spoken_seats,
+    window_holds,
+    window_inside,
+)
 
 FPS = 30
 # The reading-time rule: 0.8s to notice the text plus 60ms per character,
@@ -183,6 +191,9 @@ class BriefView:
     # described label; only the scoped ones above are applied per clip.
     wants_order: bool = False
     order_by_capture: bool = False
+    # KRI-585: an order requirement says "the order I added them", so what the clips
+    # say never moves one (filming-time keys set ``order_by_capture`` instead).
+    order_basis_stated: bool = False
     # KRI-219: the per-clip text is the hour each clip was filmed, not its place.
     per_clip_text_is_time: bool = False
     # "hh_mm" or "hour" (just the hour, no minutes) for those filming-time labels.
@@ -205,6 +216,7 @@ def brief_view(brief: Any) -> BriefView:
     wants_text = False
     wants_order = False
     order_capture = False
+    basis_stated = False
     wants_time = False
     hour_only = False
     clip_literals: dict[str, str] = {}
@@ -253,6 +265,11 @@ def brief_view(brief: Any) -> BriefView:
             key = str((req.facts or {}).get("key") or (req.facts or {}).get("by") or "")
             if key.casefold() in _CAPTURE_ORDER_KEYS:
                 order_capture = True
+            from app.services.choice_questions import ATTACHMENT_ORDER_KEY  # noqa: PLC0415
+
+            # A "narrative" or a first/last-clip key is not a basis: it is what the
+            # creator's own sequence rows (and the clips' words, KRI-585) decide.
+            basis_stated = basis_stated or key.casefold() == ATTACHMENT_ORDER_KEY
         elif req.kind == "timing":
             raw = (req.facts or {}).get("duration_s")
             if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
@@ -263,6 +280,7 @@ def brief_view(brief: Any) -> BriefView:
         clip_literals=clip_literals,
         wants_order=wants_order,
         order_by_capture=order_capture,
+        order_basis_stated=basis_stated,
         per_clip_text_is_time=wants_time,
         time_format="hour" if hour_only else "hh_mm",
         title_literal=title_literal,
@@ -443,6 +461,15 @@ class UnifiedMontagePlan:
     # KRI-569: the song's lyrics placed as captions ({status, style, words, lines}). Empty
     # when no lyric captions were planned, so every earlier record is unchanged.
     caption_receipt: dict[str, Any] = field(default_factory=dict)
+    # KRI-585: media_id -> spoken role ("opening" / "closing" / "introduction") of the
+    # clips the spoken order read; the welcome it moved forward, when its cut holds the
+    # line ({media_id, source_start_s, source_end_s}); and the creator-pinned closing
+    # clip cut on a stretch without its introduction (the same plus ``reason``). All
+    # empty unless the spoken order ran and found a role, so every earlier record is
+    # unchanged.
+    spoken_roles: dict[str, str] = field(default_factory=dict)
+    opening_speech: dict[str, Any] = field(default_factory=dict)
+    closing_quiet: dict[str, Any] = field(default_factory=dict)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -484,6 +511,15 @@ class UnifiedMontagePlan:
             else {}
         )
         captions = {"captions": dict(self.caption_receipt)} if self.caption_receipt else {}
+        spoken = {
+            key: dict(value)
+            for key, value in (
+                ("spoken_roles", self.spoken_roles),
+                ("opening_speech", self.opening_speech),
+                ("closing_quiet", self.closing_quiet),
+            )
+            if value
+        }
         pins = (
             {"pinned_texts": [pin.model_dump(mode="json") for pin in self.snapshot.pinned_texts]}
             if self.snapshot.pinned_texts
@@ -529,6 +565,7 @@ class UnifiedMontagePlan:
             **durations,
             **best_parts_conflicts,
             **captions,
+            **spoken,
         }
 
         if self.snapshot.text_composition is not None:
@@ -706,6 +743,9 @@ SPEECH_LEAD_S = 0.15
 SPEECH_TAIL_S = 0.3
 # A held line counts as held when the cut covers it to within a frame or two.
 _HELD_LINE_TOLERANCE_S = 0.05
+# KRI-585: above every analysed moment's energy, so a seated welcome line or quiet
+# closing stretch is its clip's window (the length plan's ``DESCRIBED_MOMENT_ENERGY``).
+SPOKEN_SEAT_ENERGY = 100.0
 
 
 def _speech_span(clip: UnifiedClip) -> tuple[float, float] | None:
@@ -1117,6 +1157,7 @@ def plan_unified_montage(
     output_orientation: str | None = None,
     creator_duration_proven: bool = False,
     approved_length_plan: Mapping[str, Any] | None = None,
+    speech_order: bool = False,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
@@ -1147,6 +1188,15 @@ def plan_unified_montage(
     shape: ``"portrait"``/``"landscape"`` pins the canvas with the reason "The
     creator selected this output format"; ``None`` keeps the snapshot's own
     aspect-vote inference byte-identical.
+
+    ``speech_order`` (KRI-585) says every clip's own sound plays in this montage and no
+    confirmed order is pinned for it. Then, in an order nobody chose (attachment order,
+    no filming- or upload-order ask, no grouping answer, no song), a clip whose words
+    welcome the viewer leads and a sign-off closes (``services.spoken_roles``), with the
+    creator's own sequence rows seated on top. Without approved windows the welcome's line
+    is held whole and a creator-pinned closing clip that only introduces someone ends on
+    a quiet stretch of that clip; an approved length plan already chose those windows.
+    Off (the default), or with no spoken role in any clip, the plan is byte-identical.
     """
     view = view or BriefView()
     strategy = strategy or {}
@@ -1190,6 +1240,29 @@ def plan_unified_montage(
     # KRI-458: "start with X, then Y, end at Z" -- the creator's own sequence of
     # described groups, matched to clips by the server, outranks every other order.
     sequence = _sequence_intents(strategy, clip_intents_enabled)
+    # KRI-585: the viewer hears every clip's own sound, so a welcome leads and a
+    # sign-off closes. Only an order nobody chose moves (see ``speech_order``).
+    seats = SpokenSeats()
+    if (
+        speech_order
+        and basis == "attachment"
+        and not view.order_by_capture
+        and not view.order_basis_stated
+        and choice is None
+        and song_duration_s is None
+    ):
+        quote = (approved_length_plan or {}).get("closing_quote")
+        seats = spoken_seats(
+            [
+                SpokenClip(clip.ref_id, clip.analysis, float(clip.duration_s))
+                for clip in ordered
+                if clip.lane == "clip" and clip.kind == "video"
+            ],
+            sequence,
+            hold_closing_words=_keeps_source_audio(strategy)
+            or (isinstance(quote, Mapping) and quote.get("status") == "found"),
+        )
+        ordered = speech_ordered(ordered, seats.roles, key=lambda clip: clip.ref_id)
     if sequence:
         ordered = _apply_sequence(ordered, sequence)
     ordered = _scatter(ordered, visuals)
@@ -1386,12 +1459,15 @@ def plan_unified_montage(
         # Reading-time holds remain protected while the source window is chosen
         # from the best analysed moment. Pins affect overlay placement, not the
         # footage duration, and are retained untouched in ``snapshot_kwargs``.
+        sources, seat_minimums, seat_maximums = _spoken_sources(ordered, seats)
+        minimums = {media_id: label.min_display_s for media_id, label in labels.items()}
+        for media_id, floor in seat_minimums.items():
+            minimums[media_id] = max(floor, minimums.get(media_id, 0.0))
         candidate = select_best_parts(
-            ordered,
+            sources,
             minimum_total_duration_s=MIN_TOTAL_S,
-            minimum_duration_s={
-                media_id: label.min_display_s for media_id, label in labels.items()
-            },
+            minimum_duration_s=minimums,
+            maximum_duration_s=seat_maximums,
         )
         candidate = _frame_bound_best_parts(candidate)
         if candidate.ok and candidate.duration_s >= MIN_TOTAL_S:
@@ -1487,6 +1563,34 @@ def plan_unified_montage(
             labelled[-1] = True  # ``_shrink`` only takes frames from unlabelled cuts
         else:
             speech_span = None
+    # KRI-585: without chosen windows, the welcome the spoken order moved forward is
+    # heard whole, like the closing line above (a line the length cannot also fit keeps
+    # the ordinary cut), and a creator-pinned closing clip whose words only introduce
+    # someone stays on its quiet stretch, never longer than the stretch.
+    opening_index: int | None = None
+    quiet_index: int | None = None
+    if not approved_windows and best_parts is None:
+        refs_at = {clip.ref_id: index for index, clip in enumerate(ordered)}
+        if seats.opening is not None and seats.opening[0] in refs_at:
+            index = refs_at[seats.opening[0]]
+            span = seats.opening[1]
+            line = int(math.ceil((span[1] - span[0]) * FPS - 1e-9))
+            held = max(wanted[index], min(capacity[index], line))
+            if not target_s or sum(wanted) - wanted[index] + held <= target_frames:
+                wanted[index] = held
+                growth_ceiling[index] = held
+                labelled[index] = True
+                opening_index = index
+        if (
+            seats.quiet_close is not None
+            and speech_span is None
+            and ordered[-1].ref_id == seats.quiet_close[0]
+        ):
+            quiet_s = seats.quiet_close[1][1] - seats.quiet_close[1][0]
+            quiet_frames = int(math.floor(quiet_s * FPS + 1e-6))
+            if wanted[-1] <= quiet_frames:
+                growth_ceiling[-1] = min(growth_ceiling[-1], quiet_frames)
+                quiet_index = len(ordered) - 1
     total = sum(wanted) if approved_windows else _grow(wanted, growth_ceiling, target_frames)
     if not approved_windows and total < floor_frames:
         # Too short to be a video at all: use every frame the clips have.
@@ -1628,7 +1732,18 @@ def plan_unified_montage(
                 start, end = 0.0, math.floor(clip.duration_s * 1000) / 1000
             else:
                 closing_line = speech_span is not None and index == len(ordered) - 1
-                start = speech_span[0] if closing_line else _window_start_s(clip, duration)
+                if closing_line:
+                    start = speech_span[0]
+                elif index == opening_index and seats.opening is not None:
+                    start = seats.opening[1][0]
+                elif index == quiet_index and seats.quiet_close is not None:
+                    # Centred in the quiet stretch: as far from the words as it can be.
+                    quiet_start, quiet_end = seats.quiet_close[1]
+                    start = round(
+                        quiet_start + max(0.0, (quiet_end - quiet_start - duration) / 2), 3
+                    )
+                else:
+                    start = _window_start_s(clip, duration)
                 end = round(start + duration, 3)
                 if end > clip.duration_s + 0.001:
                     start = round(max(0.0, clip.duration_s - duration), 3)
@@ -1667,6 +1782,7 @@ def plan_unified_montage(
         for index, (media_id, start, end, approved) in enumerate(spans)
     ]
     repeats = any(len(windows) > 1 for windows in windows_by_id.values())
+    spoken_roles, opening_speech, closing_quiet = _spoken_records(ordered, cuts, seats)
     closing_speech, closing_quote = _closing_records(
         cuts,
         speech_span,
@@ -1777,7 +1893,86 @@ def plan_unified_montage(
             if clip.lane == "clip" and clip.duration_s > 0
         },
         best_parts_conflicts=best_parts_conflicts,
+        spoken_roles=spoken_roles,
+        opening_speech=opening_speech,
+        closing_quiet=closing_quiet,
     )
+
+
+def _spoken_sources(
+    ordered: Sequence[UnifiedClip], seats: SpokenSeats
+) -> tuple[list[UnifiedClip], dict[str, float], dict[str, float]]:
+    """KRI-585 for the footage selector: the seated windows lead each clip's moments.
+
+    The welcome's line is its clip's strongest moment and its floor (heard whole); the
+    quiet closing stretch is its clip's strongest moment and its ceiling. Copies only:
+    the clips the plan records keep their own analysis.
+    """
+    seated: dict[str, tuple[tuple[float, float], bool]] = {}
+    if seats.opening is not None:
+        seated[seats.opening[0]] = (seats.opening[1], False)
+    if seats.quiet_close is not None:
+        seated[seats.quiet_close[0]] = (seats.quiet_close[1], True)
+    if not seated:
+        return list(ordered), {}, {}
+    sources: list[UnifiedClip] = []
+    minimums: dict[str, float] = {}
+    maximums: dict[str, float] = {}
+    for clip in ordered:
+        seat = seated.get(clip.ref_id)
+        if seat is None:
+            sources.append(clip)
+            continue
+        (start, end), quiet = seat
+        analysis = dict(clip.analysis) if isinstance(clip.analysis, Mapping) else {}
+        moments = analysis.get("best_moments")
+        analysis["best_moments"] = [
+            {"start_s": start, "end_s": end, "energy": SPOKEN_SEAT_ENERGY},
+            *(moments if isinstance(moments, list) else []),
+        ]
+        sources.append(replace(clip, analysis=analysis))
+        length = round(end - start, 3)
+        if quiet:
+            minimums[clip.media_id] = min(length, DEFAULT_CUT_S)
+            maximums[clip.media_id] = length
+        else:
+            minimums[clip.media_id] = length
+    return sources, minimums, maximums
+
+
+def _spoken_records(
+    ordered: Sequence[UnifiedClip], cuts: Sequence[FastMontageCut], seats: SpokenSeats
+) -> tuple[dict[str, str], dict[str, Any], dict[str, Any]]:
+    """(spoken_roles, opening_speech, closing_quiet), each claimed only when the cuts do it."""
+    if not seats.lines or not cuts:
+        return {}, {}, {}
+    media_of = {clip.ref_id: clip.media_id for clip in ordered}
+    roles = {media_of[ref]: line.role for ref, line in seats.lines.items() if ref in media_of}
+    opening: dict[str, Any] = {}
+    if seats.opening is not None:
+        media_id = media_of.get(seats.opening[0])
+        cut = next((c for c in cuts[:-1] if c.media_id == media_id), None)
+        if cut is not None and window_holds(
+            (cut.source_start_s, cut.source_end_s), seats.opening[1]
+        ):
+            opening = _cut_record(cut)
+    quiet: dict[str, Any] = {}
+    last = cuts[-1]
+    if (
+        seats.quiet_close is not None
+        and last.media_id == media_of.get(seats.quiet_close[0])
+        and window_inside((last.source_start_s, last.source_end_s), seats.quiet_close[1])
+    ):
+        quiet = {**_cut_record(last), "reason": "introduction"}
+    return roles, opening, quiet
+
+
+def _cut_record(cut: FastMontageCut) -> dict[str, Any]:
+    return {
+        "media_id": cut.media_id,
+        "source_start_s": cut.source_start_s,
+        "source_end_s": cut.source_end_s,
+    }
 
 
 def skia_font_covers(family: str, text: str) -> bool:

@@ -68,6 +68,12 @@ from app.kria.brief import (
 from app.kria.brief_route import loose_text
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
+from app.kria.narration_notes import (
+    keeps_camera_sound,
+    narration_note_parts,
+    spoken_plan,
+    with_note,
+)
 from app.kria.reply_language import current_reply_language, say
 from app.kria.strategy_policy import (
     RefusedStrategy,
@@ -165,6 +171,7 @@ from app.services.spoken_quotes import (
     described_line_moments,
     ground_closing_quote,
 )
+from app.services.spoken_roles import SpokenSeats
 
 log = structlog.get_logger()
 
@@ -175,6 +182,7 @@ def _enrich_best_parts_snapshot(
     brief: CreativeBrief | None,
     *,
     closing_quote: Mapping[str, Any] | None = None,
+    camera_sound: bool = False,
 ) -> dict | None:
     """Attach source-bounded footage capacity before the choice collector runs.
 
@@ -182,6 +190,9 @@ def _enrich_best_parts_snapshot(
     creator asked to end on (KRI-597); the brief's moment ask (KRI-596, "the best six
     moments, each very short") lets a long take give several windows; a clip the creator's
     sound or order ask describes by what is said in it starts on that sentence (KRI-681).
+    ``camera_sound`` (``narration_notes.keeps_camera_sound``, KRI-585): every clip's own
+    sound plays, so a welcome the clips' words move forward keeps its line and a pinned
+    closing clip that only introduces someone plays its stretch without words.
     """
     if not isinstance(media_snapshot, dict):
         return media_snapshot
@@ -219,19 +230,49 @@ def _enrich_best_parts_snapshot(
         if isinstance(closing_quote, Mapping) and closing_quote.get("status") == "found"
         else []
     )
-    length_plan = build_length_plan(
-        {**strategy, "voiceover_duration_s": recording},
-        media_snapshot,
-        creator_target_s=creator_target_s,
-        selected_ids=selected,
-        order_ids=contract.order_ids if contract is not None else (),
-        closing_quote=closing_quote,
-        moment_count=moments.count if moments is not None else None,
-        moment_max_s=moments.max_s if moments is not None else None,
-        spoken_moments=described_line_moments(
-            _described_clip_texts(brief), media_snapshot, skip_ids=held
-        ),
+    described = described_line_moments(_described_clip_texts(brief), media_snapshot, skip_ids=held)
+
+    def windows_for(seats: SpokenSeats | None) -> dict[str, Any]:
+        quiet = seats.quiet_close if seats is not None else None
+        if quiet is not None and quiet[0] in described:
+            quiet = None  # the creator described that clip by what is said in it
+        opening = seats.opening if seats is not None else None
+        return build_length_plan(
+            {**strategy, "voiceover_duration_s": recording},
+            media_snapshot,
+            creator_target_s=creator_target_s,
+            selected_ids=selected,
+            order_ids=contract.order_ids if contract is not None else (),
+            closing_quote=closing_quote,
+            moment_count=moments.count if moments is not None else None,
+            moment_max_s=moments.max_s if moments is not None else None,
+            # The creator's own description of a clip outranks its welcome line.
+            spoken_moments={**dict([opening] if opening else []), **described},
+            quiet_moments=dict([quiet]) if quiet else None,
+            spoken_order=seats.record() if seats is not None else None,
+        )
+
+    # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is
+    # a moment ask too; when it takes several moments per take, the reply checks what
+    # those windows hold instead of trusting the seat.
+    seats = (
+        spoken_plan(
+            strategy,
+            media_snapshot,
+            brief,
+            contract=contract,
+            clip_intents_enabled=settings.clip_intents_enabled,
+            closing_quote=closing_quote,
+        )
+        if camera_sound
+        else None
     )
+    length_plan = windows_for(seats)
+    if seats is not None and length_plan["conflicts"]:
+        # A held welcome or a capped ending must never be what makes the length impossible.
+        plain = windows_for(None)
+        if not plain["conflicts"]:
+            length_plan = plain
     enriched = dict(media_snapshot)
     enriched["length_plan"] = length_plan
     # Keep legacy readers and their receipts stable while approved workers move
@@ -3515,8 +3556,15 @@ async def _gate_unresolved_choices(
         if strategy.get("edit_format") == "montage"
         else None
     )
+    # KRI-585: on the phone route that plays every clip's own sound, what the clips say
+    # may order them; the length plan seats the windows that keeps right.
+    camera_sound = keeps_camera_sound(planned.brief_manifest, strategy)
     enriched_snapshot = _enrich_best_parts_snapshot(
-        strategy, planned.media_snapshot, brief, closing_quote=closing_quote
+        strategy,
+        planned.media_snapshot,
+        brief,
+        closing_quote=closing_quote,
+        camera_sound=camera_sound,
     )
     if enriched_snapshot is not planned.media_snapshot:
         planned = replace(planned, media_snapshot=enriched_snapshot)
@@ -3596,22 +3644,97 @@ async def _gate_unresolved_choices(
             ),
         )
     if not resolution.answers:
-        return planned
+        return _with_narration_note(
+            planned,
+            strategy,
+            enriched_snapshot,
+            brief,
+            camera_sound=camera_sound,
+            closing_quote=closing_quote,
+        )
     summary = " ".join([str(arguments.get("summary") or ""), *resolution.notices]).strip()
     rewritten = apply_intent.model_copy(
         update={
             "arguments": {**arguments, "strategy": resolution.strategy, "summary": summary[:1000]}
         }
     )
-    return replace(
-        planned,
-        plan=plan.model_copy(update={"intents": [rewritten, *plan.intents[1:]]}),
-        media_snapshot=_enrich_best_parts_snapshot(
-            resolution.strategy,
-            enriched_snapshot,
-            answered_brief(brief, resolution.strategy),
-            closing_quote=closing_quote,
+    final_brief = answered_brief(brief, resolution.strategy)
+    final_snapshot = _enrich_best_parts_snapshot(
+        resolution.strategy,
+        enriched_snapshot,
+        final_brief,
+        closing_quote=closing_quote,
+        camera_sound=camera_sound,
+    )
+    return _with_narration_note(
+        replace(
+            planned,
+            plan=plan.model_copy(update={"intents": [rewritten, *plan.intents[1:]]}),
+            media_snapshot=final_snapshot,
         ),
+        resolution.strategy,
+        final_snapshot,
+        final_brief,
+        camera_sound=camera_sound,
+        closing_quote=closing_quote,
+    )
+
+
+# The apply-strategy summary holds 1000 characters (``ApplyStrategyArguments``).
+_SUMMARY_BUDGET = 1000
+
+
+def _with_narration_note(
+    planned: PlannedKriaTurn,
+    strategy: Mapping[str, Any],
+    media_snapshot: dict | None,
+    brief: CreativeBrief | None,
+    *,
+    camera_sound: bool,
+    closing_quote: Mapping[str, Any] | None,
+) -> PlannedKriaTurn:
+    """KRI-585: say what the clips' own sound does in the montage (``kria.narration_notes``).
+
+    Read off the strategy and length plan this draft approves. Best-effort copy: a note
+    that cannot be built, or would push the reply past its budget, leaves the reply as
+    it was (sentences are dropped from the end first; the sound sentence goes last).
+    """
+    if not camera_sound:
+        return planned
+    from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
+
+    try:
+        contract = build_render_contract(
+            strategy,
+            generation_id="length-planning",
+            brief=brief,
+            media_snapshot={
+                key: value for key, value in (media_snapshot or {}).items() if key != "length_plan"
+            },
+        )
+        seats = spoken_plan(
+            strategy,
+            media_snapshot,
+            brief,
+            contract=contract,
+            clip_intents_enabled=settings.clip_intents_enabled,
+            closing_quote=closing_quote,
+        )
+        parts = narration_note_parts(
+            strategy, media_snapshot, seats, clip_intents_enabled=settings.clip_intents_enabled
+        )
+    except Exception as exc:  # noqa: BLE001 - reply copy must never fail the turn
+        log.warning("kria_narration_note_failed", error_type=type(exc).__name__)
+        return planned
+    plan = planned.plan
+    if not parts or not plan.intents:
+        return planned
+    apply_intent = plan.intents[0]
+    arguments = apply_intent.arguments
+    summary = with_note(str(arguments.get("summary") or ""), parts, budget=_SUMMARY_BUDGET)
+    rewritten = apply_intent.model_copy(update={"arguments": {**arguments, "summary": summary}})
+    return replace(
+        planned, plan=plan.model_copy(update={"intents": [rewritten, *plan.intents[1:]]})
     )
 
 

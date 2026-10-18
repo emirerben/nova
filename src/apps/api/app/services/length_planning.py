@@ -40,6 +40,9 @@ DEFAULT_MOMENT_S = 2.5
 DESCRIBED_MOMENT_ENERGY = 100.0
 # ...and the clip keeps at least that sentence (up to this long) when lengths are shared.
 DESCRIBED_MOMENT_FLOOR_MAX_S = 4.0
+# KRI-585: a quiet stretch (``spoken_roles.quiet_window``) is its clip's window and its
+# ceiling, and keeps at least a readable shot when lengths are shared.
+QUIET_MOMENT_FLOOR_S = 1.2
 
 
 def _number(value: object) -> float | None:
@@ -58,6 +61,7 @@ def _sources(
     selected_ids: Sequence[str],
     strategy: Mapping[str, Any],
     spoken_moments: Mapping[str, tuple[float, float]] | None = None,
+    quiet_moments: Mapping[str, tuple[float, float]] | None = None,
 ) -> list[dict[str, Any]]:
     selected = set(selected_ids)
     rows = snapshot.get("clip_assignments")
@@ -96,6 +100,17 @@ def _sources(
                 *(analysis.get("best_moments") or []),
             ]
             spoken_floor_s = round(min(end - start, DESCRIBED_MOMENT_FLOOR_MAX_S), 3)
+        quiet_ceiling_s = None
+        if kind == "video" and quiet_moments and row["media_id"] in quiet_moments:
+            # KRI-585: a pinned closing clip whose words only introduce someone plays its
+            # stretch without words, and never more than that stretch.
+            start, end = quiet_moments[row["media_id"]]
+            analysis["best_moments"] = [
+                {"start_s": start, "end_s": end, "energy": DESCRIBED_MOMENT_ENERGY},
+                *(analysis.get("best_moments") or []),
+            ]
+            quiet_ceiling_s = round(end - start, 3)
+            spoken_floor_s = round(min(quiet_ceiling_s, QUIET_MOMENT_FLOOR_S), 3)
         sources.append(
             {
                 "media_id": row["media_id"],
@@ -114,6 +129,9 @@ def _sources(
                 # late analysed moment (for example 7s–10s of a 10s clip)
                 # stays valid when the allowed rendered hold is only 3s.
                 "maximum_duration_s": bounds.maximum_s if bounds is not None else None,
+                # A quiet stretch caps its window but is no capacity policy: the
+                # clarification capacity below stays the measured footage.
+                "quiet_ceiling_s": quiet_ceiling_s,
                 "hook_score": _number(analysis.get("hook_score"))
                 or _number(row.get("hook_score"))
                 or 0.0,
@@ -135,6 +153,8 @@ def build_length_plan(
     moment_count: int | None = None,
     moment_max_s: float | None = None,
     spoken_moments: Mapping[str, tuple[float, float]] | None = None,
+    quiet_moments: Mapping[str, tuple[float, float]] | None = None,
+    spoken_order: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
 
@@ -149,11 +169,15 @@ def build_length_plan(
     receipt can say whether the line was found and held; a song-owned montage pins it
     too (KRI-681). ``spoken_moments`` (``spoken_quotes.described_line_moments``) seats a
     clip's window on the sentence the creator described it by.
+
+    KRI-585: ``quiet_moments`` seats a clip's window inside a stretch with no words and
+    caps it there; ``spoken_order`` (``spoken_roles.SpokenSeats.record``) rides on the plan
+    as ``spoken_order`` so the reply reads what was seated.
     """
 
     natural_owner = natural_length_owner(strategy)
     owner = length_owner(strategy, creator_duration_proven=creator_target_s is not None)
-    sources = _sources(media_snapshot, selected_ids, strategy, spoken_moments)
+    sources = _sources(media_snapshot, selected_ids, strategy, spoken_moments, quiet_moments)
     by_id = {source["media_id"]: source for source in sources}
     if len(by_id) != len(sources):
         raise ValueError("duplicate length plan source")
@@ -351,8 +375,10 @@ def build_length_plan(
             },
             maximum_duration_s={
                 source["media_id"]: source["maximum_duration_s"]
-                for source in ordered_sources
                 if source["maximum_duration_s"] is not None
+                else source["quiet_ceiling_s"]
+                for source in ordered_sources
+                if source["maximum_duration_s"] is not None or source["quiet_ceiling_s"] is not None
             },
         )
     windows = result.receipt() if result is not None else []
@@ -463,6 +489,8 @@ def build_length_plan(
             too_long = creator_target_s is not None and line_s >= creator_target_s
             quote["status"] = "too_long" if too_long else "not_held"
         plan["closing_quote"] = quote
+    if spoken_order:
+        plan["spoken_order"] = dict(spoken_order)
     if licensed_music is not None:
         plan["licensed_music"] = dict(licensed_music)
     elif isinstance(strategy.get("selected_music_section"), Mapping):

@@ -6212,9 +6212,15 @@ def _run_phone_unified_montage_job(
 
     # KRI-578: a plan-authority job (stamp + pinned contract) takes the lyric-caption
     # decision from the approved strategy; only legacy jobs re-read the saved request.
-    from app.services.creator_render_contract import stamped_plan_contract  # noqa: PLC0415
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        read_render_contract,
+        stamped_plan_contract,
+    )
 
     plan_authority = stamped_plan_contract(snapshot, all_candidates) is not None
+    # KRI-585: a pinned contract that requires an order is verified cut for cut, so what
+    # the clips say never moves one there.
+    contract = read_render_contract(snapshot)
     user_id, assignments, brief = _load_unified_montage_inputs(job_id)
     approved_length_plan = _approved_length_plan_envelope(snapshot)
     view = brief_view(brief)
@@ -6326,6 +6332,10 @@ def _run_phone_unified_montage_job(
                 output_orientation=_creator_shape_orientation(all_candidates),
                 creator_duration_proven=creator_duration_proven,
                 approved_length_plan=approved_length_plan,
+                # KRI-585: no song here, so every clip's own sound plays and what the
+                # clips say may order them -- unless the contract pins a confirmed
+                # order, which the phone verifier checks cut for cut.
+                speech_order=not (contract is not None and contract.order_required),
             )
     # Complete the initial text lane before the canonical generation is pinned.
     # This uses the request already bound to this job, never a newer thread message.

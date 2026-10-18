@@ -729,6 +729,18 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-623-ruled-out-clips"),
             ),
             (
+                "src/apps/api/app/kria/narration_notes.py",
+                (True, "covered", "kri-585-spoken-order"),
+            ),
+            (
+                "src/apps/api/app/services/spoken_roles.py",
+                (True, "covered", "kri-585-spoken-order"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/kri585_tigre_m1_clips.json",
+                (True, "covered", "kri-585-spoken-order"),
+            ),
+            (
                 "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
                 (True, "covered", "kri-625-moment-quality"),
             ),
