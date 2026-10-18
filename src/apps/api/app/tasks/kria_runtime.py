@@ -49,6 +49,7 @@ from app.kria.brief_checks import (
     plan_facts_from_strategy,
     reply_from_receipts,
     requirements_to_check_at_draft,
+    speech_cleanup_review_note,
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
@@ -4771,6 +4772,37 @@ def _source_fingerprints(job: Job) -> dict[str, str]:
 
 
 def _approved_generation_review(
+    db: Any,
+    thread: CreationThread,
+    job: Job,
+    variant: dict,
+    execution: CreatorAgentExecution,
+    default_text: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    """The finished render's reply, plus what its speech cleanup cut and left (KRI-551).
+
+    The cleanup note is read from the variant's own cut record, so it survives a lost brief
+    binding (the requirement receipts then cannot say a retake was not cut).
+    """
+    text, receipts = _approved_generation_requirements_review(
+        db, thread, job, variant, execution, default_text
+    )
+    contract = (job.assembly_plan or {}).get("speech_cleanup_contract")
+    note = speech_cleanup_review_note(
+        variant,
+        text=text,
+        # Consented cleanup never runs the retake detector; the older auto path does when
+        # its lever is on, so only then must the reply not deny a restart cut.
+        retake_cut_possible=contract != "required_v1" and bool(settings.retake_cut_enabled),
+    )
+    if not note:
+        return text, receipts
+    # A requirement list is multi-line: keep the note off its last bullet.
+    separator = "\n\n" if "\n" in text else " "
+    return f"{text}{separator}{note}", receipts
+
+
+def _approved_generation_requirements_review(
     db: Any,
     thread: CreationThread,
     job: Job,

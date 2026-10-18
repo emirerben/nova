@@ -602,9 +602,12 @@ For a `narrated` / `subtitled` variant `plan_facts_from_phone_variant` sets
 captions and cleanup checkers judge those when `rendered_variant` is set; a real editor
 turn still answers "can't check". Cleanup never cuts a named line or retake ("the restart
 of the kilometer thirty sentence"), so such an ask stays "Partly" with the editor note. A
-cloud variant whose fields are not filled yet stays unknown. Guards:
+cloud variant whose fields are not filled yet stays unknown. KRI-551: `_approved_generation_review`
+also appends `speech_cleanup_review_note(variant)` (counts read from `silence_cut.removed`, plus
+"a sentence you restarted stays in" unless a retake cut could have run), independent of the brief
+binding, so a render whose binding was lost still says what cleanup did not cut. Guards:
 `tests/kria/test_brief_rendered_speech_facts.py`, the KRI-541 cases in
-`tests/tasks/test_marathon_render_ready_review.py`.
+`tests/tasks/test_marathon_render_ready_review.py`, `tests/tasks/test_kri551_cleanup_review_note.py`.
 
 ### Phone Talking face-filled vertical crop (KRI-547, `PHONE_SPEAKER_FACE_FILL_ENABLED`)
 

@@ -113,23 +113,23 @@ final class SpeechCleanupOfferTests: XCTestCase {
 
     func testSummarySentenceDropsEveryFieldTheServerDidNotSend() {
         XCTAssertNil(SpeechCleanupStats().summarySentence)
-        XCTAssertEqual(SpeechCleanupStats(candidateCount: 3).summarySentence, "Found 3 pauses and retakes.")
-        XCTAssertEqual(SpeechCleanupStats(candidateCount: 1).summarySentence, "Found 1 pause or retake.")
+        XCTAssertEqual(SpeechCleanupStats(candidateCount: 3).summarySentence, "Found 3 pauses and filler sounds.")
+        XCTAssertEqual(SpeechCleanupStats(candidateCount: 1).summarySentence, "Found 1 pause or filler sound.")
         XCTAssertEqual(SpeechCleanupStats(estimatedRemovedMs: 4200).summarySentence, "About 4.2s shorter.")
         XCTAssertEqual(SpeechCleanupStats(estimatedRemovedMs: 4000).summarySentence, "About 4s shorter.")
     }
 
     func testSummarySentenceCombinesCandidateCountAndDuration() {
         let stats = SpeechCleanupStats(candidateCount: 3, estimatedRemovedMs: 4200)
-        XCTAssertEqual(stats.summarySentence, "Found 3 pauses and retakes — about 4.2s shorter.")
+        XCTAssertEqual(stats.summarySentence, "Found 3 pauses and filler sounds — about 4.2s shorter.")
     }
 
     func testSummarySentenceIncludesCategoryCountsOnlyWhenBothPresentAndNonzero() {
         let withCategories = SpeechCleanupStats(candidateCount: 3, fillerSounds: 2, longPauses: 1)
-        XCTAssertEqual(withCategories.summarySentence, "Found 3 pauses and retakes (2 filler sounds, 1 long pause).")
+        XCTAssertEqual(withCategories.summarySentence, "Found 3 pauses and filler sounds (2 filler sounds, 1 long pause).")
 
         let missingOneCategory = SpeechCleanupStats(candidateCount: 3, fillerSounds: 2, longPauses: nil)
-        XCTAssertEqual(missingOneCategory.summarySentence, "Found 3 pauses and retakes.", "Never fabricate the missing half of the breakdown")
+        XCTAssertEqual(missingOneCategory.summarySentence, "Found 3 pauses and filler sounds.", "Never fabricate the missing half of the breakdown")
 
         let zeroCandidates = SpeechCleanupStats(candidateCount: 0, estimatedRemovedMs: 1000)
         XCTAssertEqual(zeroCandidates.summarySentence, "About 1s shorter.", "A zero count is not worth stating as a finding")
