@@ -821,6 +821,8 @@ def _build_clip_question(
                 "key": intent_key(work.intent),
                 "label": category_label(work.intent),
                 "op": work.intent.op,
+                "intent_id": work.intent.intent_id,
+                "creator_text": work.intent.creator_text,
                 "candidate_media_ids": candidates[:MAX_QUESTION_CLIPS],
                 "suggested_media_ids": sorted(
                     (m for m in work.failed_media_ids if m in order and m not in confirmed),
