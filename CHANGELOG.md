@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.41.0] - 2026-10-18
+
+### Changed
+- fix(kria): a Visuals photo in the clip picker shows its thumbnail and reads as a photo (KRI-693) (#1673) <!-- release-pr: 1673 -->
+
 ## [0.80.40.0] - 2026-10-18
 
 ### Fixed

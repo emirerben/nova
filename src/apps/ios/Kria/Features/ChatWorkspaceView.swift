@@ -455,6 +455,8 @@ private struct CreationWorkspaceView: View {
     @State private var isChoosingFormat = false
     @State private var formatResolveFailed = false
     @State private var threadState: [String: JSONValue] = [:]
+    /// KRI-693: the plan item's Visuals, read only while a clip picker offers Visuals (`asset-…`) candidates.
+    @State private var clipPoolVisuals: [CreationVisual] = []
     @State private var afterSequence = -1
     @State private var threadRevision: Int
     @State private var projectionOrder = ThreadProjectionOrder()
@@ -921,7 +923,7 @@ private struct CreationWorkspaceView: View {
                                composerFocused = true
                            },
                            clipSelectionMode: clipSelectionMode(for: message),
-                           clipSelectionMedia: CreationAttachedMedia.parse(threadState),
+                           clipSelectionMedia: clipSelectionMedia(for: message),
                            clipSelectionLanguage: ClipAnswerLanguage(threadState: threadState),
                            songOrderMode: songOrderMode(for: message),
                            songOrderMedia: CreationAttachedMedia.parse(threadState),
@@ -953,6 +955,24 @@ private struct CreationWorkspaceView: View {
         case .media:
             EmptyView() // Consecutive receipts are rendered together above.
         }
+    }
+
+    /// Chat media plus the Visuals photos/videos the question offers, appended in candidate order so the picker
+    /// numbers them exactly as before (KRI-693: they were "Clip 9" with no thumbnail).
+    private func clipSelectionMedia(for message: ChatTranscriptMessage) -> [CreationAttachedMedia] {
+        let chatMedia = CreationAttachedMedia.parse(threadState)
+        guard let question = message.clipQuestion, !clipPoolVisuals.isEmpty else { return chatMedia }
+        return chatMedia + ClipPoolMedia.media(for: question, pool: clipPoolVisuals)
+    }
+
+    /// Reads the plan item's Visuals once per question that offers pool candidates. A failed read keeps the
+    /// server's photo names with a placeholder tile.
+    private func loadClipPoolVisuals() async {
+        guard let eventID = latestClipQuestionID, let itemID = fullThread?.activePlanItemID,
+              let event = events.first(where: { $0.id == eventID }),
+              let question = ChatTranscriptMessage.from(event: event)?.clipQuestion,
+              !ClipPoolMedia.poolIDs(in: question).isEmpty else { return }
+        if let loaded = try? await model.api.visuals(itemID: itemID) { clipPoolVisuals = loaded.assets }
     }
 
     /// Picker only when the server advertises `clip_selection_questions`. Interactive on the newest question
@@ -1353,6 +1373,9 @@ private struct CreationWorkspaceView: View {
                 guard !Task.isCancelled, capabilities == nil else { return }
                 await refreshCapabilities()
             }
+        }
+        .task(id: "\(latestClipQuestionID ?? "")|\(fullThread?.activePlanItemID ?? "")") {
+            await loadClipPoolVisuals()
         }
         .task(id: latestReceiptEventID) {
             guard latestReceiptEventID != nil else { return }
