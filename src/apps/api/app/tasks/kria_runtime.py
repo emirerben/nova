@@ -1930,9 +1930,15 @@ def _owns_turn_lease(
     )
 
 
-def _model_message(source: Any) -> str:
-    """The creator's words as the planner and brief extractor should read them (KRI-575)."""
-    return model_text(getattr(source, "payload", None), getattr(source, "content", None))
+def _model_message(source: Any, *, language: str | None = None) -> str:
+    """The creator's words as the planner and brief extractor should read them (KRI-575).
+
+    Callers that run before the turn binds the chat's language pass it (KRI-694), so a tapped
+    answer's neutral sentence is in the chat's language, like the history rows read later.
+    """
+    return model_text(
+        getattr(source, "payload", None), getattr(source, "content", None), language=language
+    )
 
 
 def _answers_clip_question(source: Any) -> bool:
@@ -2020,7 +2026,8 @@ def _claim(
             claimed_snapshot["live_scope"] = live_scope
         return (
             claimed_snapshot,
-            _model_message(source),
+            # KRI-694: the task binds the chat's language only after this claim.
+            _model_message(source, language=thread_reply_language(thread)),
             int(turn.lease_epoch),
             int(thread.revision),
             _stored_editor_state(turn),
@@ -2768,7 +2775,8 @@ def extract_kria_brief(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         source = db.get(CreationThreadEvent, turn.source_event_id)
         if thread is None or source is None:
             return {"turn_id": turn_id, "status": "ignored"}
-        snapshot, message = _snapshot(thread), _model_message(source)
+        snapshot = _snapshot(thread)
+        message = _model_message(source, language=snapshot.get("reply_language"))
     if not snapshot.get("item_id"):
         return {"turn_id": turn_id, "status": "ignored"}
     try:

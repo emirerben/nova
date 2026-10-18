@@ -81,17 +81,39 @@ CLIP_SKIP_MESSAGE = "I skipped your clip question, so pick those clips for me."
 # KRI-588: the same for the answer to "which part of the song did you film?".
 SONG_RANGE_ANSWER_MESSAGE = "I told you which part of the song I filmed."
 
+# KRI-694: a Turkish chat's models read these instead, so the creator's turn is not the one English
+# line in a Turkish conversation (Main Creator's `conversation` input). Same rules as the English
+# constants: no digits or times, and no word a Turkish rule reads as a request (`loose_creator_text`
+# only blanks text that reads as English); `test_kri694_picker_answer_language.py` pins both.
+SONG_ORDER_ANSWER_MESSAGE_TR = "Kliplerimin şarkıda nereye geleceğini onayladım."
+CLIP_ANSWER_MESSAGE_TR = "Sorduğun klipleri seçtim."
+CLIP_SKIP_MESSAGE_TR = "Klip sorusunu boş bıraktım, o klipleri sen belirle."
+SONG_RANGE_ANSWER_MESSAGE_TR = "Şarkının hangi kısmını çektiğimi söyledim."
 
-def model_text(payload: Any, content: Any) -> str:
-    """A user event's text as a model should read it (structured song/clip answers are neutral)."""
+
+def model_text(payload: Any, content: Any, *, language: str | None = None) -> str:
+    """A user event's text as a model should read it (structured song/clip answers are neutral).
+
+    The neutral sentence follows the chat's reply language (KRI-694). ``language`` is for the
+    call sites that run before the turn binds it (``_claim``); everything else reads the language
+    bound for the turn, and English when nothing is bound.
+    """
+
+    def stand_in(english: str, turkish: str) -> str:
+        if language is None:
+            return say(en=english, tr=turkish)
+        return turkish if language == "tr" else english
+
     if isinstance(payload, Mapping):
         if isinstance(payload.get(SONG_ORDER_ANSWER_KEY), Mapping):
-            return SONG_ORDER_ANSWER_MESSAGE
+            return stand_in(SONG_ORDER_ANSWER_MESSAGE, SONG_ORDER_ANSWER_MESSAGE_TR)
         if isinstance(payload.get(SONG_RANGE_ANSWER_KEY), Mapping):
-            return SONG_RANGE_ANSWER_MESSAGE
+            return stand_in(SONG_RANGE_ANSWER_MESSAGE, SONG_RANGE_ANSWER_MESSAGE_TR)
         selection = payload.get("clip_selection")
         if isinstance(selection, Mapping):
-            return CLIP_SKIP_MESSAGE if selection.get("skipped") is True else CLIP_ANSWER_MESSAGE
+            if selection.get("skipped") is True:
+                return stand_in(CLIP_SKIP_MESSAGE, CLIP_SKIP_MESSAGE_TR)
+            return stand_in(CLIP_ANSWER_MESSAGE, CLIP_ANSWER_MESSAGE_TR)
     return str(content or "")
 
 
