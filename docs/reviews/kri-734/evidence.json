@@ -73,5 +73,62 @@
     "sampled frames are not an every-frame or subjective-creative guarantee"
   ],
   "review": "Inline source, test, scope and documentation review by the implementing agent; no subagents or independent review claimed.",
-  "initial_base_sha": "9e8b1aa2b4775d4e5c03220170a807b0009e1f17"
+  "initial_base_sha": "9e8b1aa2b4775d4e5c03220170a807b0009e1f17",
+  "performance_phase": {
+    "base_sha": "113ef3e63e546f0e8df0ca0f8500732204bb5edf",
+    "baseline_verifier_sha256": "39391cad7e656a9b9d4d908eebd3a8ddf51bad28894a78f85e2b1540bca39b78",
+    "optimized_verifier_sha256": "92cfcffec10b07d60184fc456bbd3707d12dd2e26636db7f263e221b77bdced9",
+    "focused_passed": 394,
+    "exact_media_profile_passed": 39,
+    "mapped_reliability_passed": 512,
+    "ci_selector_tests_passed": 41,
+    "decoder_production_parity_fixtures": 6,
+    "retained_native_check_objects_equal": true,
+    "retained_native_file_sha256_equal": true,
+    "same_sample_schedule_and_thresholds": true,
+    "worker_hardware_report": "worker-optimized.json",
+    "not_a_worker_routing_change": true,
+    "shared_cpu_rollout_blocker": true,
+    "new_physical_canary": false,
+    "review": "Inline implementing-agent source/test/gate/scope review; no independent review or subagents.",
+    "source_sha256": {
+      "src/apps/api/app/services/actual_export_verification.py": "92cfcffec10b07d60184fc456bbd3707d12dd2e26636db7f263e221b77bdced9",
+      "src/apps/api/app/cli/benchmark_device_export.py": "9d73781cf8797636761b90bf7e176541a4fd193b6744b22fa5b251377eb1b652",
+      "src/apps/api/app/tasks/kria_runtime.py": "aaaea098280031a51cb3b3945732129e52b710915a734b42c69fb98eb97409b0",
+      "src/apps/api/tests/integration/test_actual_export_verification.py": "76c9e02ebb5b12167bf4a20c5194a8507d613ab14149c37f26fc8e53f96de9c9"
+    },
+    "worker_cases": [
+      {
+        "case": "native-5s",
+        "before_s": 7.081938,
+        "after_s": 5.784244,
+        "speedup": 1.224
+      },
+      {
+        "case": "synthetic-5s",
+        "before_s": 8.424223,
+        "after_s": 4.654854,
+        "speedup": 1.81
+      },
+      {
+        "case": "synthetic-30s",
+        "before_s": 36.214905,
+        "after_s": 10.060199,
+        "speedup": 3.6
+      },
+      {
+        "case": "synthetic-60s",
+        "before_s": 69.491079,
+        "after_s": 17.48599,
+        "speedup": 3.974
+      }
+    ],
+    "worker_60s_cpu_reduction_pct": 88.3,
+    "worker_measurement_order": "optimized then baseline, same isolated performance-4cpu/8192MiB Machine",
+    "api_frozen_result": "one native 5s and one synthetic 60s run: both partial",
+    "temporary_benchmark_compute_cleanup": "all three task-created Machines destroyed after report capture",
+    "ci_proof_scope": "Local performance evidence; current-head CI is reported by the PR checks.",
+    "measured_at_utc": "2026-10-18"
+  },
+  "source_snapshot": "Initial implementation before performance optimization; current decoder hash is in performance_phase."
 }

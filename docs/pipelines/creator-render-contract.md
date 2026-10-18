@@ -1181,6 +1181,14 @@ KRI-722–725 and the remainder of KRI-734 own additional snapshot/adapter proof
 Picture checks are sampled; a checked report is not an assertion that every frame
 or subjective creative choice was inspected. See report fields for exact coverage.
 
+Nearby frames share bounded decoding batches without changing the sample clock,
+comparison thresholds or OCR views. Exact-pixel controls cover fractional seeks,
+variable frame timing, display rotation, nonzero timestamps and later source
+windows. See the [production-hardware benchmark](../reviews/kri-734/performance.md)
+for reproducible timings and raw results. The current shared-CPU API execution
+path remains a rollout blocker under sustained load; worker-class benchmark
+results do not change where completion runs or authorize enrollment.
+
 Repeat a check without publication or model calls (private evidence inputs):
 
 ```sh
