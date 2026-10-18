@@ -830,7 +830,7 @@ def _build_clip_question(
                 ),
             }
         )
-    question = build_clip_question(categories)
+    question = build_clip_question(categories, media_kinds={c.media_id: c.kind for c in clips})
     if question is None or len(question["categories"]) != len(creator_work):
         return None
     return question

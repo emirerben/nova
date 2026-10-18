@@ -72,6 +72,7 @@
       "KriaUITests/CreationUITests/testConfirmScreenLandscapeChoiceIsSentWithoutAFit",
       "KriaUITests/CreationUITests/testClipPickerSelectsClipsAndSendsStructuredAnswerWithMissingThumbnailFallback",
       "KriaUITests/CreationUITests/testRealShapeHistoryShowsClipQuestionCardAndOpensTheGridSheet",
+      "KriaUITests/CreationUITests/testPickerShowsAVisualsPhotoWithItsThumbnailAndAPhotoName",
       "KriaUITests/CreationUITests/testClipPickerSlideAcrossTilesSelectsDeselectsAndKeepsTapAndHold",
       "KriaUITests/SongOrderUITests/testOrderCardShowsBadgesReordersAndSendsTheConfirmedOrder",
       "KriaUITests/SongOrderUITests/testTimelineFillsAnEmptySpotFromTheTrayAndSendsPlacements",

@@ -199,7 +199,7 @@ final class CreationChatFixture: @unchecked Sendable {
             }
             // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
             // sends the clip_question payload but does not advertise the capability (old-server fallback).
-            if ["1", "history"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
+            if ["1", "history", "photo"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
             // KRIA_CHAT_SONG_ORDER: "1" = server advertises media.song, song_order_questions and
             // song_order_placements (the song timeline, KRI-561); "list" = media.song and song_order_questions only
             // (the vertical order list, an older server); "legacy" = it still sends the song_order_question payload
@@ -276,6 +276,8 @@ final class CreationChatFixture: @unchecked Sendable {
                 var seededState: [String: Any] = [:]
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "history" {
                     (seededEvents, seededState) = Self.realShapeClipQuestionHistory()
+                } else if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "photo" {
+                    (seededEvents, seededState) = Self.realShapeClipQuestionHistory(poolPhoto: true)
                 }
                 let thread: [String: Any] = ["id": id, "title": "Untitled project", "status": "active", "revision": seededEvents.count, "runtime_version": runtime, "state": seededState, "events": seededEvents, "active_plan_item_id": id, "updated_at": "2026-09-10T10:00:00Z"]
                 threads[id] = thread
@@ -295,6 +297,12 @@ final class CreationChatFixture: @unchecked Sendable {
         }
         if parts.first == "plan-items", parts.count >= 2, ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_FIXTURE"] == "1" {
             return slideResponse(request, itemID: parts[1], parts: parts, body: body)
+        }
+        // KRI-693 (`KRIA_CHAT_CLIP_QUESTION=photo`): the plan item's Visuals hold the pool photo the picker offers.
+        if parts.first == "plan-items", parts.last == "assets", ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "photo" {
+            let photo = Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")?.absoluteString ?? ""
+            return response(["assets": [["id": Self.poolPhotoAssetID, "kind": "image", "status": "ready", "media_status": "available",
+                                         "source_filename": "N1_09_visual.jpg", "display_url": photo]], "max_assets": 10])
         }
         if parts.first == "plan-items" { return response(["assets": [], "max_assets": 10]) }
         // `KRIA_CHAT_SEED_THREADS` (perf): an account that already has chats, each built the first time it is asked for.
@@ -863,8 +871,13 @@ final class CreationChatFixture: @unchecked Sendable {
         }
     }
 
-    static func realShapeClipQuestionHistory() -> (events: [[String: Any]], state: [String: Any]) {
-        let ids = realShapeMediaIDs
+    /// KRI-693: the Visuals photo the `photo` fixture's picker offers next to three chat clips.
+    static let poolPhotoAssetID = "d9627a79-b228-4db0-9cbb-201f6f921bb2"
+
+    /// `poolPhoto`: three chat clips plus one Visuals photo candidate, named by the server in Turkish.
+    static func realShapeClipQuestionHistory(poolPhoto: Bool = false) -> (events: [[String: Any]], state: [String: Any]) {
+        let ids = poolPhoto ? Array(realShapeMediaIDs.prefix(3)) : realShapeMediaIDs
+        let candidates = poolPhoto ? ids + ["asset-\(poolPhotoAssetID)"] : ids
         var events: [[String: Any]] = []
         func append(_ type: String, role: String, content: String = "", payload: [String: Any] = [:]) {
             events.append(["id": UUID().uuidString, "sequence": events.count, "revision": events.count + 1, "role": role,
@@ -880,12 +893,16 @@ final class CreationChatFixture: @unchecked Sendable {
         }
         append("user_message", role: "user", content: "Make a day vlog of the tournament, grouped by sport.",
                payload: ["turn_id": "t1", "turn_status": "accepted", "runtime_version": 2])
+        let category: [String: Any] = ["op": "group", "key": "group:dodgeball", "label": "dodgeball",
+                                       "candidate_media_ids": candidates, "suggested_media_ids": [String]()]
+        var clipQuestion: [String: Any] = ["version": 1, "allow_none": true, "question_id": "real-shape-q", "categories": [category]]
+        if poolPhoto {
+            clipQuestion["candidate_media"] = [["media_id": "asset-\(poolPhotoAssetID)", "kind": "image", "label": "Fotoğraf 1"]]
+        }
         append("assistant_response", role: "assistant",
                content: "I couldn't tell which of your clips show \"dodgeball\". Tap the clips that do, or tell me there aren't any.",
                payload: ["turn_id": "t1", "turn_value": "question", "receipt_ids": [String](), "next_actions": [String](), "schema_version": 2,
-                         "clip_question": ["version": 1, "allow_none": true, "question_id": "real-shape-q",
-                                           "categories": [["op": "group", "key": "group:dodgeball", "label": "dodgeball",
-                                                           "candidate_media_ids": ids, "suggested_media_ids": [String]()]]] as [String: Any]])
+                         "clip_question": clipQuestion])
         return (events, ["format": "montage", "media": media])
     }
 
