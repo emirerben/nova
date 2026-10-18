@@ -78,6 +78,9 @@ class CopilotTurnResponse(BaseModel):
     # KRI-558: the agent's server-authored notes (time zone, missing filming times), kept apart
     # from `reply` so a receipt-built reply can still carry them.
     reply_notes: str = ""
+    # KRI-738: tappable lengths for a "how short/long?" question. Read by the chat planner only;
+    # kept out of the HTTP body so the legacy routes' JSON is unchanged.
+    length_options: list[dict] = Field(default_factory=list, exclude=True)
 
 
 # Edit verbs a reply uses to claim the draft changed. Stem-based so past and
@@ -432,4 +435,5 @@ async def run_copilot_turn(
         pending_actions=(output.pending_actions if outcome == "clarification" else []),
         unmet_requests=output.unmet_requests,
         reply_notes=output.reply_notes,
+        length_options=output.length_options if outcome == "clarification" else [],
     )
