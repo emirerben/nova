@@ -323,8 +323,8 @@ struct AttachmentSheet: View {
 
     private var footageStep: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AttachmentHeading(title: "Add footage", subtitle: "Choose the clips you want Kria to work with.")
-            if (format ?? thread.map { CreationFormat(thread: $0) }) == .talkingToCamera {
+            AttachmentHeading(title: "Add footage", subtitle: FootageStageCopy.attachmentSubtitle(talking: isTalkingToCamera, maximumClipCount: maximumClipCount))
+            if isTalkingToCamera {
                 Button { showsTeleprompter = true } label: {
                     Label("Record with script", systemImage: "video.badge.waveform")
                         .frame(maxWidth: .infinity)
@@ -343,11 +343,19 @@ struct AttachmentSheet: View {
         }
         let ownID = take?.intakeID
         if let ownID, model.uploads.containsIntake(recordID: ownID) { return nil }
+        // KRI-719: a Talking edit can hold several clips, so a take is only
+        // refused once the edit is full, not whenever any clip is attached.
         let occupied = existing(for: .clip) + model.uploads.reservedCount(projectID: projectID, role: .clip)
         guard occupied < maximumClipCount else {
-            return "This Talking edit already has footage. Close this screen and remove the current clip in Add media, then reopen your saved take to use it."
+            return maximumClipCount > 1
+                ? "This Talking edit already has \(FootageStageCopy.count(maximumClipCount, "clip")), the most it can take. Close this screen and remove a clip in Add media, then reopen your saved take to use it."
+                : "This Talking edit already has footage. Close this screen and remove the current clip in Add media, then reopen your saved take to use it."
         }
         return nil
+    }
+
+    private var isTalkingToCamera: Bool {
+        (format ?? thread.map { CreationFormat(thread: $0) }) == .talkingToCamera
     }
 
     private func useCameraTake(_ take: TeleprompterTakeManifest, _ url: URL) async -> TeleprompterIntakeResult {

@@ -465,7 +465,7 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(songLength()), 2, accuracy: 0.001)
         let compiles = session.sourcePreviewCompileCount
         session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 3.5)
-        for _ in 0..<100 where session.sourcePreviewCompileCount == compiles { try await Task.sleep(for: .milliseconds(20)) }
+        _ = await waitUntil { session.sourcePreviewCompileCount != compiles }
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertGreaterThan(session.sourcePreviewCompileCount, compiles, "a timeline change rebuilds, it is not absorbed as a volume change")
         XCTAssertEqual(try XCTUnwrap(songLength()), 3, accuracy: 0.001, "the song is as long as the video allows: 4s file from second 1")
@@ -609,7 +609,7 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.sourcePreviewCompileCount, compiles, "no rebuild while the finger is down")
         XCTAssertEqual(session.document.userSong?.windowStartS, 1.5)
         session.endSongStartDrag()
-        for _ in 0..<100 where session.sourcePreviewCompileCount == compiles { try await Task.sleep(for: .milliseconds(20)) }
+        _ = await waitUntil { session.sourcePreviewCompileCount != compiles }
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(session.sourcePreviewCompileCount, compiles + 1, "one rebuild, at release")
         let song = try XCTUnwrap(session.displayedSourcePreviewRecipe?.tracks.first { $0.id == "song" }?.clips.first)
@@ -1103,6 +1103,92 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges, "The source clip is server state, never a user edit to Save")
     }
 
+    /// KRI-719: a Talking edit with a footage clip previews that clip full frame and muted in the receipt's
+    /// window, on top of the speaker. The frame mid-cutaway is the footage, not the speaker; it is server state,
+    /// so nothing in the editor can select it and the edit has nothing to Save.
+    func testPhoneTalkingEditPreviewsItsFootageCutawayOverTheSpeaker() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true, talkingCutaways: [
+            .object(["media_id": .string("street"), "start_s": .number(1.5), "end_s": .number(3.0)])])
+
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertEqual(session.timelineClips.map(\.sourceClipIndex), [0], "only the speaker is on the timeline")
+        XCTAssertTrue(session.document.mediaOverlays.isEmpty, "the cutaway is never a card the creator can edit")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        let recipe = try XCTUnwrap(session.displayedSourcePreviewRecipe)
+        let cutaway = try XCTUnwrap(recipe.tracks.first { $0.kind == .overlay }?.clips.first)
+        XCTAssertEqual(cutaway.id, "cutaway-0")
+        XCTAssertEqual(cutaway.sourceAssetID, "source-1")
+        XCTAssertEqual(cutaway.timelineStart, 1.5)
+        XCTAssertEqual(cutaway.sourceDuration, 1.5, accuracy: 1e-9)
+        XCTAssertEqual(cutaway.volume, 0)
+
+        // What the creator sees: grab the live preview's frames and compare them with the two source videos.
+        let item = try XCTUnwrap(session.player?.currentItem)
+        let composition = try XCTUnwrap(item.videoComposition)
+        func frame(_ asset: AVAsset, at seconds: Double, composition: AVVideoComposition? = nil) async throws -> CGImage {
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.videoComposition = composition
+            generator.appliesPreferredTrackTransform = true
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            return try await withCheckedThrowingContinuation { continuation in
+                generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: CMTime(seconds: seconds, preferredTimescale: 600))]) { _, image, _, result, error in
+                    if result == .succeeded, let image { continuation.resume(returning: image) }
+                    else { continuation.resume(throwing: error ?? MediaEngineError.exportFailed) }
+                }
+            }
+        }
+        /// The centre 9:16 of a frame as a 9x16 grid of RGB means (what a full-frame cover fill shows).
+        func signature(_ image: CGImage, coverCrop: Bool) throws -> [Double] {
+            var rect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+            if coverCrop, rect.width / rect.height > 9.0 / 16 {
+                let width = rect.height * 9 / 16
+                rect = CGRect(x: (rect.width - width) / 2, y: 0, width: width, height: rect.height)
+            }
+            let cropped = try XCTUnwrap(image.cropping(to: rect.integral))
+            var pixels = [UInt8](repeating: 0, count: 9 * 16 * 4)
+            let context = try XCTUnwrap(CGContext(data: &pixels, width: 9, height: 16, bitsPerComponent: 8, bytesPerRow: 36,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.interpolationQuality = .medium
+            context.draw(cropped, in: CGRect(x: 0, y: 0, width: 9, height: 16))
+            return pixels.enumerated().filter { $0.offset % 4 != 3 }.map { Double($0.element) }
+        }
+        // A plain loop: the zip/map/reduce one-liner times out the type checker on CI.
+        func distance(_ a: [Double], _ b: [Double]) -> Double {
+            var total: Double = 0
+            for (x, y) in zip(a, b) { total += abs(x - y) }
+            return total / Double(a.count)
+        }
+        let speakerURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let footageURL = try XCTUnwrap(Bundle.main.url(forResource: "istanbul", withExtension: "mp4"))
+        let midCutaway = try await frame(item.asset, at: 2.25, composition: composition)
+        let speakerTime = try await frame(item.asset, at: 0.75, composition: composition)
+        let footage = try signature(try await frame(AVURLAsset(url: footageURL), at: 0.75), coverCrop: true)
+        let speakerAtCut = try signature(try await frame(AVURLAsset(url: speakerURL), at: 2.25), coverCrop: true)
+        let previewed = try signature(midCutaway, coverCrop: false)
+        XCTAssertLessThan(distance(previewed, footage), distance(previewed, speakerAtCut), "mid-cutaway the preview shows the footage")
+        let speakerFrame = try signature(try await frame(AVURLAsset(url: speakerURL), at: 0.75), coverCrop: true)
+        let previewedSpeaker = try signature(speakerTime, coverCrop: false)
+        XCTAssertLessThan(distance(previewedSpeaker, speakerFrame), distance(previewedSpeaker, footage), "outside it, the speaker")
+        for (name, image) in [("kri719-preview-mid-cutaway-2.25s", midCutaway), ("kri719-preview-speaker-0.75s", speakerTime)] {
+            let attachment = XCTAttachment(image: UIImage(cgImage: image))
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+    }
+
+    /// A receipt cutaway whose clip isn't in the source pool can't be drawn: the editor keeps the finished MP4
+    /// instead of a live preview that shows the speaker where the video cuts away.
+    func testPhoneTalkingEditWithAnUnknownCutawayClipKeepsTheFinishedMP4() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true, talkingCutaways: [
+            .object(["media_id": .string("not-in-pool"), "start_s": .number(1.5), "end_s": .number(3.0)])])
+
+        XCTAssertTrue(session.timelineClips.isEmpty)
+        guard case .failed = session.sourcePreviewState else { return XCTFail("state: \(session.sourcePreviewState)") }
+        XCTAssertNil(session.displayedSourcePreviewRecipe)
+    }
+
     /// KRI-211: a project whose originals aren't on this iPhone settles into its own state (no Retry
     /// can help), the relink targets come from the source pool that failed, a wrong file is refused, and
     /// the right one rebuilds the live preview.
@@ -1352,7 +1438,7 @@ final class NativeEditorSessionTests: XCTestCase {
         func displayedTitle() -> String? {
             session.displayedSourcePreviewRecipe?.textLayers.first { $0.id == "narrated-title" }?.runs.map(\.text).joined(separator: " ")
         }
-        for _ in 0..<200 where displayedTitle() != "Cacio e pepe, fast" { try await Task.sleep(for: .milliseconds(25)) }
+        _ = await waitUntil { displayedTitle() == "Cacio e pepe, fast" }
         XCTAssertEqual(displayedTitle(), "Cacio e pepe, fast", "the preview follows the edit")
         await session.save()
 
@@ -1387,7 +1473,7 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.timelineItems.contains { $0.id == "narrated-title" })
         XCTAssertFalse(session.document.textBlocks.contains { $0.id == "narrated-title" })
         func titleDrawn() -> Bool { session.displayedSourcePreviewRecipe?.textLayers.contains { $0.id == "narrated-title" } ?? true }
-        for _ in 0..<200 where titleDrawn() { try await Task.sleep(for: .milliseconds(25)) }
+        _ = await waitUntil { !titleDrawn() }
         XCTAssertNotNil(session.displayedSourcePreviewRecipe)
         XCTAssertFalse(titleDrawn(), "the title layer is gone")
         await session.save()
@@ -1556,8 +1642,11 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.timelineItems.contains { $0.id == "opening-title" })
     }
 
+    /// `talkingCutaways`: KRI-719 receipt `cutaways` rows; the footage clip "street" (istanbul.mp4) joins the pool
+    /// as clip 1 and the variant carries a `phone_talking_multi_clip` receipt with "source" as the one speaker.
     private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false, bindOriginal: Bool = true, title: Bool = false,
-                                            unloadableCards: Bool = false, withholdPool: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy) {
+                                            unloadableCards: Bool = false, withholdPool: Bool = false,
+                                            talkingCutaways: [JSONValue]? = nil) async throws -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
         let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
@@ -1624,14 +1713,27 @@ final class NativeEditorSessionTests: XCTestCase {
             nativeAssets.append(NativeEditorAsset(id: "broken-card", kind: "media_overlay", mediaID: "broken-media",
                 sourceURL: try XCTUnwrap(URL(string: "http://storage.example/broken.png")), preserveAlpha: nil))
         }
+        var poolClips: [NativeEditorSourcePool.Clip] = [.init(clipIndex: 0, nativeSource: .init(mediaID: "source",
+            sourceURL: nil, original: descriptor, localRequired: true))]
+        if let talkingCutaways {
+            variant["phone_talking_multi_clip"] = .object(["version": .number(1), "speaker_media_ids": .array([.string("source")]),
+                "cutaways": .array(talkingCutaways), "unplaced": .array([])])
+            let footageInput = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+            try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "istanbul", withExtension: "mp4")), to: footageInput)
+            defer { try? FileManager.default.removeItem(at: footageInput) }
+            let footage = try await AssetImportCoordinator(project: project).importAsset(from: footageInput)
+            try SourceAssetStore(project: project).bind(mediaID: "street", original: footage)
+            poolClips.append(.init(clipIndex: 1, nativeSource: .init(mediaID: "street", sourceURL: nil,
+                original: OriginalMediaDescriptor(sha256: try XCTUnwrap(footage.fingerprint).hex, byteCount: try XCTUnwrap(footage.fingerprint).byteCount,
+                    durationS: 6, width: 1280, height: 720, orientationDegrees: 0, hasAudio: false), localRequired: true)))
+        }
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
                 snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
                 snapshot: [:], canUndo: false, createdAt: .now),
             authoritativeVariant: variant
         )
-        let pool = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: .init(mediaID: "source",
-            sourceURL: nil, original: descriptor, localRequired: true))], baseGeneration: "generation-1", nativeAssets: nativeAssets)
+        let pool = NativeEditorSourcePool(clips: poolClips, baseGeneration: "generation-1", nativeAssets: nativeAssets)
         // `withholdPool`: the first read of the source pool fails (a dropped connection); the test hands the
         // pool back and retries.
         if withholdPool { fake.withheldSourcePool = pool } else { fake.sourcePoolResult = pool }
@@ -1692,9 +1794,7 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document.clips.last?.id, placement.id.uuidString)
         let reopened = EditorDocument(snapshot: session.document.encodeSnapshot())
         XCTAssertEqual(reopened.clips.last?.id, placement.id.uuidString)
-        for _ in 0..<200 where session.displayedSourcePreviewRecipe?.tracks.filter({ $0.kind == .video }).flatMap(\.clips).count != before + 1 {
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        _ = await waitUntil { session.displayedSourcePreviewRecipe?.tracks.filter({ $0.kind == .video }).flatMap(\.clips).count == before + 1 }
         let recipe = try XCTUnwrap(session.displayedSourcePreviewRecipe)
         XCTAssertEqual(recipe.tracks.filter { $0.kind == .video }.flatMap(\.clips).count, before + 1)
         XCTAssertEqual(recipe.tracks.filter { $0.kind == .video }.flatMap(\.clips).last?.sourceAssetID, "source-9")
@@ -1844,9 +1944,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let before = session.document.clips.count
 
         await session.resumeEditorImports()
-        for _ in 0..<100 where session.document.clips.count == before {
-            try await Task.sleep(for: .milliseconds(50))
-        }
+        _ = await waitUntil { session.document.clips.count != before }
 
         XCTAssertEqual(session.document.clips.count, before + 1)
     }
@@ -2481,7 +2579,7 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.timelineTime(for: 100, width: 100), previewDuration, accuracy: 0.01)
         // The compositor may still be finishing the initial frame on a busy
         // simulator. Wait for the requested outro frame, not a 2.5s render budget.
-        let outroFrameReady = await waitUntil(timeout: .seconds(10)) {
+        let outroFrameReady = await waitUntil {
             (session.scrubPreviewTime ?? 0) > session.duration
         }
         XCTAssertTrue(outroFrameReady, "The compositor must produce a frame inside the outro")
@@ -2557,15 +2655,6 @@ final class NativeEditorSessionTests: XCTestCase {
     }
 
     // MARK: KRI-200 — a play tap must never be a silent no-op
-
-    private func waitUntil(timeout: Duration = .seconds(5), _ condition: () -> Bool) async -> Bool {
-        let deadline = ContinuousClock.now + timeout
-        while ContinuousClock.now < deadline {
-            if condition() { return true }
-            try? await Task.sleep(for: .milliseconds(25))
-        }
-        return condition()
-    }
 
     private static func failedStateMessage(_ session: NativeEditorSession) -> String? {
         if case .failed(let message) = session.sourcePreviewState { message } else { nil }
@@ -2801,7 +2890,7 @@ final class NativeEditorSessionTests: XCTestCase {
         spy.suspendNextSourcePool = true
         let session = NativeEditorSession()
         let loading = Task { @MainActor in await session.load(api: spy, threadID: threadID) }
-        for _ in 0..<200 where !spy.sourcePoolIsSuspended { try await Task.sleep(for: .milliseconds(25)) }
+        _ = await waitUntil { spy.sourcePoolIsSuspended }
         XCTAssertTrue(spy.sourcePoolIsSuspended)
         return (session, spy, loading)
     }
@@ -2862,9 +2951,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let session = NativeEditorSession(project: project)
 
         let loadTask = Task { await session.load(project: project, api: fake) }
-        for _ in 0..<100 where !fake.sourcePoolIsSuspended {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        _ = await waitUntil { fake.sourcePoolIsSuspended }
         XCTAssertTrue(fake.sourcePoolIsSuspended, "the source-pool gate did not suspend in time")
 
         XCTAssertEqual(session.sourcePreviewState, .preparing)
@@ -2945,10 +3032,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         await session.prepareFixtureSourcePreview(url: url)
         session.seek(to: 0.5)
-        for _ in 0..<100 {
-            if session.scrubPreviewFrame != nil { break }
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        _ = await waitUntil { session.scrubPreviewFrame != nil }
         XCTAssertNotNil(session.scrubPreviewFrame)
         let player = DelayedSeekPlayer()
         session.player = player
@@ -3552,7 +3636,7 @@ final class NativeEditorSessionTests: XCTestCase {
         session.markDirty(.timeline)
         fake.commitResponse = emptyCommitResponse(session, generation: "g2")
         let save = Task { await session.save() }
-        for _ in 0..<100 where !fake.commitIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        _ = await waitUntil { fake.commitIsSuspended }
         XCTAssertTrue(fake.commitIsSuspended)
         session.updateTextContent(id: "keep", content: "Later edit")
         fake.resumeCommit()
@@ -3599,7 +3683,7 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.deleteSelection(.init(kind: .clip, id: "slot-0")))
         fake.commitResponse = emptyCommitResponse(session, generation: "g2")
         let save = Task { await session.save() }
-        for _ in 0..<100 where !fake.commitIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        _ = await waitUntil { fake.commitIsSuspended }
         XCTAssertTrue(fake.commitIsSuspended)
         let file = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).mp4")
         try Data("fixture upload".utf8).write(to: file)
@@ -3631,7 +3715,7 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.deleteSelection(.init(kind: .clip, id: "slot-0")))
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 2, revisionHash: "h2", expectedDuration: 2)
         let save = Task { await session.save() }
-        for _ in 0..<100 where !fake.commitIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        _ = await waitUntil { fake.commitIsSuspended }
         XCTAssertTrue(fake.commitIsSuspended)
         XCTAssertTrue(session.deleteSelection(.init(kind: .text, id: "later")))
         session.updateTextContent(id: "keep", content: "Later edit")
@@ -4412,7 +4496,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.suspendNextEditorVariant = true
 
         let saveTask = Task { await session.save() }
-        for _ in 0..<100 where !fake.editorVariantIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        _ = await waitUntil { fake.editorVariantIsSuspended }
         XCTAssertTrue(fake.editorVariantIsSuspended)
         session.updateTextContent(id: UUID(uuidString: textID)!, content: "Local")
         fake.resumeEditorVariant()
@@ -4437,7 +4521,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.authoritativeVariant = ["variant_id": .string("variant"), "render_generation_id": .string("g2"), "editor_capabilities": capabilities, "text_elements": .array([.object(["id": .string(textID), "text": .string("Server"), "start_s": .number(0), "end_s": .number(1)])])]
         fake.suspendNextEditorVariant = true
         let saveTask = Task { await session.save() }
-        for _ in 0..<100 where !fake.editorVariantIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        _ = await waitUntil { fake.editorVariantIsSuspended }
         session.setOriginalMixLevel(0.25)
         fake.resumeEditorVariant(); await saveTask.value
 
@@ -4481,7 +4565,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.authoritativeVariant = ["variant_id": .string("variant"), "render_generation_id": .string("g2"), "editor_capabilities": .object(["text_elements": .bool(true)]), "text_elements": .array([.object(["id": .string(textID), "text": .string("Server")])])]
         fake.suspendNextEditorVariant = true
         let saveTask = Task { await session.save() }
-        for _ in 0..<100 where !fake.editorVariantIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        _ = await waitUntil { fake.editorVariantIsSuspended }
         let replacementJobID = UUID(); let replacement = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d2", itemID: "new-item", variantKey: "new-variant", draftRevision: 1, snapshotHash: "h2", etag: "e2", baseJobID: replacementJobID.uuidString, baseGenerationID: "new-g1", snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: ["variant_id": .string("new-variant"), "render_generation_id": .string("new-g1"), "editor_capabilities": .object(["text_elements": .bool(true)])])
         await session.load(api: replacement, threadID: UUID())
         fake.resumeEditorVariant(); await saveTask.value
@@ -4532,7 +4616,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.authoritativeVariant = ["variant_id": .string("variant"), "render_generation_id": .string("g3"), "editor_capabilities": capabilities, "text_elements": .array([.object(["id": .string(textID), "text": .string("Third")])])]
         fake.suspendNextEditorVariant = true
         let saveTask = Task { await session.save() }
-        for _ in 0..<100 where !fake.editorVariantIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        _ = await waitUntil { fake.editorVariantIsSuspended }
         XCTAssertTrue(fake.editorVariantIsSuspended)
         XCTAssertFalse(session.applyPreviewVariant(["render_generation_id": .string("g2"), "render_status": .string("rendering"), "text_elements": .array([.object(["id": .string(textID), "text": .string("Stale")])])], generation: "g2"))
         fake.resumeEditorVariant(); await saveTask.value
@@ -4663,9 +4747,7 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.hasUnsavedChanges)
 
         let saveTask = Task { await session.save() }
-        for _ in 0..<100 where !fake.commitIsSuspended {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        _ = await waitUntil { fake.commitIsSuspended }
         XCTAssertTrue(fake.commitIsSuspended, "the commit gate did not suspend in time")
         XCTAssertEqual(Self.object(fake.lastRequest?.textElements?.first)?["text"], .string("Submitted"))
 
@@ -4714,9 +4796,7 @@ final class NativeEditorSessionTests: XCTestCase {
         session.updateTextContent(id: loadedTextID, content: "Submitted")
 
         let saveTask = Task { await session.save() }
-        for _ in 0..<100 where !fake.commitIsSuspended {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        _ = await waitUntil { fake.commitIsSuspended }
         session.updateTextContent(id: loadedTextID, content: "Original")
         fake.resumeCommit()
         await saveTask.value
@@ -5379,10 +5459,7 @@ final class NativeEditorSessionTests: XCTestCase {
         session.endTransaction()
         XCTAssertEqual(session.document.captionUnits.first?.text, "Edited words")
 
-        for _ in 0..<200 {
-            if session.displayedSourcePreviewRecipe?.textLayers.first?.runs.map(\.text).joined(separator: " ") == "Edited words" { break }
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        _ = await waitUntil { session.displayedSourcePreviewRecipe?.textLayers.first?.runs.map(\.text).joined(separator: " ") == "Edited words" }
         XCTAssertEqual(session.sourcePreviewState, .ready, "A caption text edit must never fail the source preview over to the stale finished render")
         let after = try XCTUnwrap(session.displayedSourcePreviewRecipe, "The canvas must still be showing the editable source composition after a caption edit")
         XCTAssertEqual(after.textLayers.map { $0.runs.map(\.text).joined(separator: " ") }, ["Edited words"])
@@ -5424,9 +5501,7 @@ final class NativeEditorSessionTests: XCTestCase {
     }
 
     private func waitForDisplayedCaptionTexts(_ session: NativeEditorSession, _ expected: [String]) async throws {
-        for _ in 0..<200 where displayedCaptionTexts(session) != expected {
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        _ = await waitUntil { displayedCaptionTexts(session) == expected }
     }
 
     // KRI-110: retyping a caption passes through the empty string. That is
@@ -5464,9 +5539,7 @@ final class NativeEditorSessionTests: XCTestCase {
         // Over the layout's 500-character ceiling: the one text-element input
         // that still hard-fails a compile.
         session.updateCaptionCue(id: "narration-caption-1", text: String(repeating: "x", count: 600))
-        for _ in 0..<200 where !session.sourcePreviewState.isFailure {
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        _ = await waitUntil { session.sourcePreviewState.isFailure }
         XCTAssertTrue(session.sourcePreviewState.isFailure)
         XCTAssertFalse(session.isShowingRenderedFallback, "The finished render predates the dirty text and must remain hidden")
         XCTAssertFalse(session.canDisplayCurrentPlayer)
@@ -5498,9 +5571,7 @@ final class NativeEditorSessionTests: XCTestCase {
         }
         session.endTransaction()
         try await Task.sleep(for: .milliseconds(NativeEditorSession.previewCoalesceMilliseconds * 4))
-        for _ in 0..<100 where session.sourcePreviewCompileCount == compiles {
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        _ = await waitUntil { session.sourcePreviewCompileCount != compiles }
 
         XCTAssertEqual(session.sourcePreviewCompileCount, compiles + 1, "Eight samples inside one drag must produce one rebuild")
         let run = try XCTUnwrap(session.displayedSourcePreviewRecipe?.textLayers.first?.runs.first)
@@ -5709,6 +5780,23 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.load(api: fake, threadID: threadID)
         return (session, fake)
     }
+}
+
+/// Re-checks `condition` every 25 ms until it holds or `timeout` passes, and returns whether it held.
+/// Waits on the real AVFoundation compositor or on a task reaching a fake's gate used fixed loops of
+/// 100 × 25 ms; a busy CI simulator sometimes needed longer, failing PRs that changed no iOS code
+/// (runs 38877653553, 38465843981). Under heavy local CPU load a real frame took up to 15 s, and CI
+/// ran one setup step ~87× slower than an idle Mac (#1634), so the default matches that PR's 60 s.
+/// A met condition returns at once, so passing runs are no slower; a real regression still fails,
+/// just after the deadline. Only the budget grows: callers still assert what they checked.
+@MainActor
+private func waitUntil(timeout: Duration = .seconds(60), _ condition: () -> Bool) async -> Bool {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if condition() { return true }
+        try? await Task.sleep(for: .milliseconds(25))
+    }
+    return condition()
 }
 
 private func deviceRenderRequest(jobID: UUID, revision: Int, digest: String) -> DeviceRenderRequest {

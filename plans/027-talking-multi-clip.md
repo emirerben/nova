@@ -1,6 +1,6 @@
 # 027 — Talking to camera with several videos (speaker + cutaways)
 
-Linear: [KRI-719](https://linear.app/kria/issue/KRI-719). Status: **Phase 1 built (server + iPhone render, flag off)**; phases 2-3 open. Pause/filler removal for several videos: [KRI-720](https://linear.app/kria/issue/KRI-720). Written 2026-10-16 against `origin/main` 31af74ef7.
+Linear: [KRI-719](https://linear.app/kria/issue/KRI-719). Status: **Phases 1-2 built (server + iPhone render + iOS app, flag off)**; phase 3 open. Pause/filler removal for several videos: [KRI-720](https://linear.app/kria/issue/KRI-720). Written 2026-10-16 against `origin/main` 31af74ef7.
 
 ## Phase 1 as built (2026-10-16)
 
@@ -10,6 +10,16 @@ Changed from the plan after Yasin's note that a Talking edit can hold several ta
 - Speech cleanup is refused for every multi-clip Talking edit in v1 (KRI-720 adds it). With 2+ speakers, cards/sounds/beats and face fill are skipped.
 - No creator speaker pin yet (comes with the iOS work in phase 2).
 - Details: `docs/runbooks/phone-rendering.md` "Several videos on a phone Talking edit".
+
+## Phase 2 as built (2026-10-16, iOS)
+
+- Offline fallback cap for Talking is 10; the server's `max_clips` always wins (`CreationFormat.maximumClipCount(for:serverLimits:)`), so a server with the flag off still caps Talking at 1 and the single-pick picker auto-close keeps working there.
+- Copy follows the cap: with more than one clip allowed, Talking reads "the video of you talking, plus any clips to show while you talk"; "up to 1 clips" plural fixed.
+- Teleprompter take is refused only when the edit is full (it already was cap-based); the refusal names the cap.
+- Live editor preview plays every speaker from the variant's `phone_talking_multi_clip.speaker_media_ids`, in order, as locked composite clips (first speaker carries any cut, the rest play whole). A speaker missing from the source pool falls back to the finished MP4.
+- Live preview draws the receipt's `cutaways` windows muted and full frame over the speakers (`NativePhoneTalkingSource.cutaways` → `NativeEditorRenderCompiler.compile(talkingCutaways:)`). Read from the receipt on the client rather than projected as `media_overlays` rows: rows would show up as editable cards and an older build's Save would send them back as new full-screen overlays, which `lanes_from_editor_sections` refuses. A cutaway clip missing from the pool falls back to the finished MP4.
+- **Not done:** no "Make speaker" pin (needs a server `set_speaker` action; scope with Yasin). Cutaways are not shown on the editor timeline and can't be moved.
+- Tests: `CreationUITests.testTalkingToCameraPicksThreeVideos` (3 videos on Talking), `testLibraryPickerReturnsToChatByDoneAndBySinglePick` now runs against a cap-1 server (`KRIA_CHAT_TALKING_MAX_CLIPS=1`).
 
 
 A creator on **Talking to camera** (`edit_format = "subtitled"`) can pick several videos. One is the **speaker** (main track: its own audio, captions, title, cleanup). The rest play **on top, full screen and muted**, at moments Kria picks, while the speaker's voice and captions keep running.
@@ -58,7 +68,7 @@ The KRI-136 `talking_head` path (self-narrated Voiceover items, `PHONE_TALKING_H
 - Picker: no Talking-specific cap in code once the server raises `max_clips`; change the offline fallback (`ChatWorkspaceView.swift:2492`) to 10 and its comment. The KRI-175 auto-close stops firing on its own (limit > 1); the user taps Done.
 - Speaker choice: in the attached clip list (`CreationAttachments.swift:538`), a "Speaker" badge on the chosen clip and "Make speaker" on the others (sends `set_speaker`). Teleprompter take shows as speaker automatically. Teleprompter admission (`:337`) only blocks when a speaker take already exists, not when any clip exists.
 - Copy: `FootageStage` (`CanonicalChatComponents.swift:461`) → "Pick the video of you talking, plus any clips to show while you talk." Fix "up to 1 clips" plural (`:477`). Format-switch error stays, with the new number.
-- Editor preview: `NativePhoneTalkingSource.sourceIndex` (`NativeEditorSources.swift:194`) uses the speaker index instead of requiring `pool.clips.count == 1` (today 2+ clips loses the live preview and falls back to the MP4). Server projects cutaways as locked full-screen overlay rows (`project_phone_subtitled_editor_sections`), which the compiler already draws (`NativeEditorRenderCompiler.swift:316`). Moving/deleting cutaways in the editor is a follow-up.
+- Editor preview: `NativePhoneTalkingSource.sourceIndex` (`NativeEditorSources.swift:194`) uses the speaker index instead of requiring `pool.clips.count == 1` (today 2+ clips loses the live preview and falls back to the MP4). Cutaways are drawn from the variant receipt as preview-only clips (see phase 2 notes above). Moving/deleting cutaways in the editor is a follow-up.
 - Fixtures: `ChatUITestTransport.swift:153` → 10.
 
 ### Phase 3 — cloud render

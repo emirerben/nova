@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.32.0] - 2026-10-18
+
+### Changed
+- test(ios): editor-session tests wait on a 60 s deadline instead of fixed 1–5 s loops (#1659) <!-- release-pr: 1659 -->
+
+## [0.80.31.0] - 2026-10-18
+
+### Changed
+- fix(kria): keep clip-picker answers bound to the intent across reworded rows (KRI-697) (#1658) <!-- release-pr: 1658 -->
+
+## [0.80.30.0] - 2026-10-18
+
+### Changed
+- fix(kria): re-read locked rows when the approval sweep races a new message (#1657) <!-- release-pr: 1657 -->
+
+## [0.80.29.0] - 2026-10-18
+
+### Changed
+- feat(ios): several videos on Talking edits in the iPhone app (KRI-719, phase 2) (#1642) <!-- release-pr: 1642 -->
+
 ## [0.80.28.0] - 2026-10-17
 
 ### Changed
