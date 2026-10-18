@@ -488,7 +488,7 @@ struct NativePreviewAssetCache {
         guard url.deletingLastPathComponent() == project.originals.standardizedFileURL,
               url.deletingPathExtension().lastPathComponent == asset.id else { return nil }
         // The file was verified when it was cached, so a file whose size and modification time are still what they were
-        // then is trusted. Hashing the whole file on every open cost seconds for a long phone video. Anything that
+        // then is trusted. Hashing the whole file on every open grows with the size of the footage. Anything that
         // changed (or an entry from before this record existed) is hashed as before, and the record is refreshed.
         if let record = fileRecord(for: key), record.matches(url, byteCount: fingerprint.byteCount) { return asset }
         guard (try? SHA256Fingerprinter().fingerprint(file: url)) == fingerprint else { return nil }

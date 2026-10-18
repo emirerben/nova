@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// SHA-256 fingerprints remembered by file identity (path, size, modification time), so a file that has not changed is
-/// not read again. Hashing a long phone video takes seconds; a cached proxy or download is opened many times.
+/// not read again. Hashing reads the whole file and grows with its size; a cached proxy or download is opened many times.
 ///
 /// A file whose size or modification time differs from the record is hashed afresh and the record replaced, so the
 /// worst case is the cost of not having a cache. The records live in `directory`, which the caller owns (it should be
