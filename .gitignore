@@ -96,3 +96,4 @@ src/apps/ios/Packages/*/.swiftpm/
 brand/social/dist/**/*.mov
 
 .request-following-report/
+.dictation-eval/

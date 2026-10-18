@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.35.0] - 2026-10-18
+
+### Changed
+- feat(ios): talk to Kria — voice dictation in the chat composers (KRI-742) (#1665) <!-- release-pr: 1665 -->
+
 ## [0.80.34.0] - 2026-10-18
 
 ### Changed
