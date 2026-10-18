@@ -84,10 +84,10 @@ def test_transcript_labels_notice_stays_english_constant_and_has_a_turkish_twin(
 
     assert TRANSCRIPT_LABELS_DROPPED_NOTICE.startswith("Words from your voiceover")
     with reply_language_for("tr"):
-        assert strategy_policy._transcript_labels_dropped_notice().startswith(
+        assert strategy_policy.transcript_labels_dropped_notice().startswith(
             "Seslendirmendeki sözler"
         )
-    assert strategy_policy._transcript_labels_dropped_notice() == TRANSCRIPT_LABELS_DROPPED_NOTICE
+    assert strategy_policy.transcript_labels_dropped_notice() == TRANSCRIPT_LABELS_DROPPED_NOTICE
 
 
 def test_title_refusal_on_talking_edit_in_turkish(prod_profile, monkeypatch) -> None:

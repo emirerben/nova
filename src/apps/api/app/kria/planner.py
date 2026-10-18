@@ -73,7 +73,9 @@ from app.kria.reply_language import current_reply_language, say
 from app.kria.strategy_policy import (
     RefusedStrategy,
     check_strategy_for_runtime_v2,
+    renderable_clip_intents,
     song_captions_refusal,
+    transcript_labels_dropped_notice,
 )
 from app.kria.style_asks import brief_moment_ask
 from app.kria.voiceover_clips import keep_every_voiceover_clip
@@ -2617,13 +2619,41 @@ async def _plan_creator_action(
             manifest.narration is None
             or action.strategy.execution_contract != "guided_voiceover_v1"
         ):
-            return PlannedKriaTurn(
-                plan=_clip_intent_resolution_plan(
-                    question=_labels_need_voiceover_reply(),
-                    status="needs_creator",
+            kept_intents = renderable_clip_intents(manifest, planned.requested_intents)
+            if kept_intents is None:
+                return PlannedKriaTurn(
+                    plan=_clip_intent_resolution_plan(
+                        question=_labels_need_voiceover_reply(),
+                        status="needs_creator",
+                    ),
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                )
+            # KRI-691: a native voiceover chat can never draw a narration label, so the
+            # question above dead-ended every turn. Leave the label out and say so; the
+            # resolver never saw it, so the other intents are already resolved.
+            planned = replace(
+                planned,
+                requested_intents=kept_intents,
+                resolution=replace(
+                    planned.resolution,
+                    intents=[
+                        intent
+                        for intent in planned.resolution.intents
+                        if intent.label_source != "transcript"
+                    ],
                 ),
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
+            )
+            notice = transcript_labels_dropped_notice()
+            if notice not in policy_notices:
+                action = action.model_copy(
+                    update={"summary": " ".join([action.summary.strip(), notice]).strip()}
+                )
+                policy_notices = (*policy_notices, notice)
+            log.info(
+                "kria_transcript_labels_dropped",
+                thread_id=str(thread_id),
+                kept=len(kept_intents),
             )
         if planned.resolution.vision_answers:
             try:

@@ -921,6 +921,7 @@ private struct CreationWorkspaceView: View {
                            },
                            clipSelectionMode: clipSelectionMode(for: message),
                            clipSelectionMedia: CreationAttachedMedia.parse(threadState),
+                           clipSelectionLanguage: ClipAnswerLanguage(threadState: threadState),
                            songOrderMode: songOrderMode(for: message),
                            songOrderMedia: CreationAttachedMedia.parse(threadState),
                            songTimeline: songTimelineConfiguration,
