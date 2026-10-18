@@ -2042,7 +2042,16 @@ struct NativeEditorTemporaryVideo {
         saveState = .saving
         loadState = .loading
         Perf.begin("editor.open", id: editorJobID.uuidString)
-        defer { isSaving = false; Perf.end("editor.open", id: editorJobID.uuidString) }
+        defer { isSaving = false; Perf.end("editor.open", id: editorJobID.uuidString); Perf.mark("editor.open.done") }
+        // Neither of these needs the job's status, so they start now and overlap it. They used to follow it one after
+        // the other, three round trips in a row before the editor could show anything. The draft is compared with the
+        // resolved variant only once that is known.
+        let capabilitiesTask = Task { try? await api.creationCapabilities() }
+        let draftTask: Task<DraftSnapshot?, Never>? = if conversationRuntimeVersion == 2, let threadID {
+            Task { try? await api.draft(threadID: threadID) }
+        } else {
+            nil
+        }
         do {
             let receipt: OpenInEditorResponse? = if planItemID == nil {
                 try await api.openJobInEditor(jobID: editorJobID)
@@ -2097,7 +2106,7 @@ struct NativeEditorTemporaryVideo {
             draft = loadedDraft
             legacyPromptSnapshot = loadedDraft.serverSnapshot
             configureCapabilities(from: variant)
-            await applyCloudReadOnlyIfNeeded(api: api, variant: variant)
+            await applyCloudReadOnlyIfNeeded(api: api, variant: variant, capabilities: capabilitiesTask)
             cleanDocument = document
             undoStack.removeAll()
             redoStack.removeAll()
@@ -2124,7 +2133,7 @@ struct NativeEditorTemporaryVideo {
             // A chat turn may already have drafted edits for this render:
             // stage them as unsaved. Never let this block opening the editor.
             appliedChatDraftRevision = nil; chatStagedDocument = nil; chatStagedSections = []
-            if conversationRuntimeVersion == 2, let threadID, let head = try? await api.draft(threadID: threadID),
+            if conversationRuntimeVersion == 2, let head = await draftTask?.value,
                head.itemID == resolvedPlanItemID, head.variantKey == resolved.variantID,
                head.baseJobID.flatMap(UUID.init) == editorJobID,
                let staged = stagedChatDocument(snapshot: head, draft: loadedDraft, variant: variant) {
@@ -6979,12 +6988,17 @@ struct NativeEditorTemporaryVideo {
         _ = requestScrubFrame(at: playbackDuration)
     }
 
-    private func applyCloudReadOnlyIfNeeded(api: any KriaAPIClient, variant: [String: JSONValue]?) async {
+    /// `capabilities` is a read the caller already started; without one this makes its own.
+    private func applyCloudReadOnlyIfNeeded(
+        api: any KriaAPIClient, variant: [String: JSONValue]?, capabilities: Task<CreationCapabilities?, Never>? = nil
+    ) async {
         guard variant != nil else {
             cloudEditorUnavailableMessage = nil
             return
         }
-        let creationMode = (try? await api.creationCapabilities())?.creationMode
+        let loaded: CreationCapabilities?
+        if let capabilities { loaded = await capabilities.value } else { loaded = try? await api.creationCapabilities() }
+        let creationMode = loaded?.creationMode
         if creationMode == .deviceOnly, !rendersOnDevice {
             let message = "This video was rendered in the cloud and can’t be changed on this iPhone. You can still play its existing video."
             cloudEditorUnavailableMessage = message

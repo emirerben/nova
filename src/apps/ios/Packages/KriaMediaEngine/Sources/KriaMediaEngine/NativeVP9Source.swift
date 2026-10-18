@@ -34,7 +34,10 @@ public actor NativeVP9Source {
             }
         }
         trace?("fingerprint")
-        let fingerprint = try SHA256Fingerprinter().fingerprint(file: source)
+        // The proxy is named after the source's hash, so a source that needs one used to be hashed whole on EVERY open
+        // just to find the proxy that already exists. The hash is remembered by size and modification time instead.
+        let fingerprint = try FileFingerprintCache(directory: cacheDirectory.appendingPathComponent("fingerprints", isDirectory: true))
+            .fingerprint(file: source)
         try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         // A corrective decode never trusts an existing derivative. Its fresh
         // URL also forces a new AVFoundation reader for the original bytes.

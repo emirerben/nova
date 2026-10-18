@@ -187,6 +187,9 @@ struct ChatMessageRow: View {
     var choiceQuestionMode: ChoiceQuestionCardMode? = nil
     /// KRI-588: how to present `message.songRangeQuestion`. nil (old server, flag off, not a question) = text only.
     var songRangeMode: SongRangeCardMode? = nil
+    /// Tappable answers for a plain `assistant_response` question. nil = not the newest unanswered question
+    /// (or no options): no chips are drawn, so history never keeps stale tappable answers.
+    var replyOptionsMode: ReplyOptionsMode? = nil
 
     private static let userBubbleShape = UnevenRoundedRectangle(
         topLeadingRadius: 18,
@@ -226,20 +229,25 @@ struct ChatMessageRow: View {
                 if message.isProposal {
                     Text("Proposed direction").font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.zinc)
                 }
-                ChatResponseText(content: message.content, startedAt: responseStartedAt)
+                // With receipts and a server `reply_lead`, the lead replaces the long prose: the receipt rows
+                // below carry each fact once. No lead (old server) = today's text, unchanged.
+                ChatResponseText(content: message.displayedContent, startedAt: responseStartedAt)
                     .font(KriaFont.body(14))
                     .foregroundStyle(KriaColor.ink)
                     .lineSpacing(4)
-                    .copyableMessage(message.content, previewShape: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .copyableMessage(message.displayedContent, previewShape: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     // On the text, not the stack: a stack's label is applied to
                     // every child, which read each option chip as the question.
-                    .accessibilityLabel("Kria: \(message.content)")
+                    .accessibilityLabel("Kria: \(message.displayedContent)")
                 if !message.options.isEmpty, let onSelectOption {
                     QuestionOptionsRow(
                         options: message.options,
                         recommendedOption: message.recommendedOption,
                         select: onSelectOption
                     )
+                }
+                if !message.replyOptions.isEmpty, let replyOptionsMode {
+                    ReplyOptionChips(options: message.replyOptions, mode: replyOptionsMode)
                 }
                 if let question = message.clipQuestion, let clipSelectionMode {
                     ClipSelectionCard(question: question, media: clipSelectionMedia, projectID: projectID, mode: clipSelectionMode)
@@ -264,7 +272,11 @@ struct ChatMessageRow: View {
                         .id(question.questionID)
                 }
                 if !message.receipts.isEmpty {
-                    RequirementChipsView(receipts: message.receipts, requirements: requirements, titlesReady: briefSettled, correct: onCorrectGuess)
+                    RequirementChipsView(
+                        receipts: message.receipts, requirements: requirements, titlesReady: briefSettled,
+                        alsoChanged: message.usesReplyLead ? message.alsoChanged : [],
+                        showsReasons: message.usesReplyLead, correct: onCorrectGuess
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1077,6 +1089,64 @@ struct QuestionOptionButton: View {
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.55 : 1)
         .accessibilityLabel(isRecommended ? "\(text) (recommended)" : text)
+    }
+}
+
+/// Newest-unanswered-question state for `ReplyOptionChips`. History rows get no mode, so they draw no chips.
+struct ReplyOptionsMode {
+    /// Sends the tapped label as a normal user message (plain text, no structured answer).
+    let select: (String) -> Void
+    /// "Other…": puts the creator in the composer; nothing is sent.
+    let other: () -> Void
+}
+
+/// A filled capsule: no stroke, Inter, 44pt tap height. Shared by the reply-option chips so the style
+/// lives in one place (the outlined `PromptChip` predates the no-borders rule and is left alone).
+struct KriaFilledChip: View {
+    let text: String
+    var systemImage: String? = nil
+    var foreground: Color = KriaColor.ink
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(text)
+                    .font(KriaFont.body(13).weight(.medium))
+                    .multilineTextAlignment(.leading)
+                if let systemImage {
+                    Image(systemName: systemImage).font(.system(size: 11, weight: .semibold))
+                }
+            }
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 44)
+            .background(KriaColor.fill)
+            .clipShape(Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(text)
+    }
+}
+
+/// The offered answers of a clarifying question as tappable chips, plus "Other…" to type a different one.
+struct ReplyOptionChips: View {
+    let options: [String]
+    let mode: ReplyOptionsMode
+
+    var body: some View {
+        PlanChipFlow(spacing: 8) {
+            ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                KriaFilledChip(text: option) { mode.select(option) }
+                    .accessibilityIdentifier("reply-option-\(index)")
+            }
+            KriaFilledChip(text: "Other…", systemImage: "pencil", foreground: KriaColor.mutedInk, action: mode.other)
+                .accessibilityIdentifier("reply-option-other")
+        }
+        .padding(.top, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("reply-options")
     }
 }
 

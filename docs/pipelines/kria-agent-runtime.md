@@ -168,6 +168,21 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   observed-turn projection; today receipts ride on the `draft_applied` event
   payload and `GET /creation-threads/{id}/brief` returns the current
   brief with the newest receipt per requirement (empty when the flag is off).
+- **One receipt, each fact once (KRI-739).** An editor turn that bound receipts also
+  puts `reply_lead` (`receipt_lead`: "Done." / "Done — have a look." / "Partly done." /
+  "I did 1 of your 2 asks." / "I couldn't do that.", then the server's notices) and
+  `also_changed` (changes no ask claimed; `describe_diff`) on the `draft_applied` payload.
+  The apps show the lead plus one static row per receipt (outcome icon + `reason`). `content`
+  keeps the full prose for the web chat and apps without the keys; the two must not drift,
+  so `reply_from_editor_receipts` is the only writer of that prose. The stored `reason` of an
+  ask that names no dimension is the bare change list ("I changed:" is added to the prose only).
+- **Length answers (KRI-737/738).** A longer clip keeps its old window and starts earlier
+  in its source when the footage after its start runs out (`editor_ops_v2/timeline.py:
+  _fit_window`; an explicit `in_s` is never moved). The copilot's "how short/long?" question
+  records its options as `length_options` (`[{label, seconds}]`); `agents/length_options.py`
+  keeps one only while the model's own reply is the one shown and states that length, and the
+  planner emits them as `options` on the `assistant_response` event. A tap sends the label as
+  plain text (the copilot's ANSWER rule resolves it); no protocol bump, the prose still lists them.
 - **Ask facts (KRI-667).** Which checker judges an ask is read from `facts` first,
   in English keys and values whatever the creator's language: `triggers` (spoken
   words, never translated), `keep_whole_take`, `closing`, `speech_cleanup`

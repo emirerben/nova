@@ -920,7 +920,8 @@ private struct CreationWorkspaceView: View {
                            songDurationS: CreationAttachedMedia.song(threadState)?.durationS,
                            projectID: project.id,
                            choiceQuestionMode: choiceQuestionMode(for: message),
-                           songRangeMode: songRangeMode(for: message))
+                           songRangeMode: songRangeMode(for: message),
+                           replyOptionsMode: replyOptionsMode(for: message))
                 .id(entry.id)
             if let operationID = message.memoryOperationID {
                 SavedTextPreferenceUndo(operationID: operationID, api: model.api)
@@ -1049,6 +1050,25 @@ private struct CreationWorkspaceView: View {
             // A rejected send removes the pending message, which reopens the card for a retry.
             Task { await send(message: text, choiceSelection: submission) }
         }
+    }
+
+    /// Chips for a plain `assistant_response` question, interactive only on the newest question that no later
+    /// user message has answered. Anything later (an answer, a newer question) removes them from history.
+    private func replyOptionsMode(for message: ChatTranscriptMessage) -> ReplyOptionsMode? {
+        guard transcriptIsFresh, !message.replyOptions.isEmpty else { return nil }
+        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
+            if case .message(let message) = entry.content { message } else { nil }
+        }
+        guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
+        let later = messages[(index + 1)...]
+        guard !later.contains(where: { $0.role == .user || !$0.replyOptions.isEmpty || !$0.options.isEmpty }) else { return nil }
+        return ReplyOptionsMode(
+            select: { option in Task { await send(message: option) } },
+            other: {
+                // Nothing is sent and nothing typed is lost: the creator writes their own answer.
+                composerFocused = true
+            }
+        )
     }
 
     private func mediaReceipts(_ entries: [ChatTimelineEntry]) -> some View {
@@ -2554,6 +2574,17 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     /// KRI-588: the `song_range` a user message carried (from the stored event, or the in-flight send).
     var songRangeAnswer: SongRangeAnswer? = nil
     var memoryOperationID: String? = nil
+    /// Chip labels of a plain `assistant_response` question (`turn_value == "question"`). Distinct from
+    /// `options`, which are the legacy exact-string choices rendered by `QuestionOptionsRow`.
+    var replyOptions: [String] = []
+    /// Short lead sentence that replaces `content` when receipts are present (see `usesReplyLead`).
+    var replyLead: String? = nil
+    /// Deliberate extra changes no request claimed; shown as one muted line under the receipts.
+    var alsoChanged: [String] = []
+
+    /// True only with receipts AND a lead: an old server (no lead) or a reply without receipts renders `content`.
+    var usesReplyLead: Bool { !receipts.isEmpty && !(replyLead ?? "").isEmpty }
+    var displayedContent: String { usesReplyLead ? (replyLead ?? content) : content }
 
     static func syntheticUser(_ content: String) -> Self {
         Self(id: "synthetic-\(content)", role: .user, content: content)
@@ -2595,6 +2626,7 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
             recommendedOption = event.payload?["recommended_option"]?.stringValue
         }
         let receipts = role == .assistant ? RequirementReceiptItem.parse(payload: event.payload) : []
+        let replyExtras = role == .assistant ? ReplyExtras.parse(payload: event.payload, eventType: event.eventType, hasReceipts: !receipts.isEmpty) : nil
         let clipQuestion = role == .assistant ? ClipQuestion.parse(payload: event.payload) : nil
         let songOrderQuestion = role == .assistant ? SongOrderQuestion.parse(payload: event.payload) : nil
         let songOrderAnswer = role == .user ? SongOrderSubmission.parse(payload: event.payload) : nil
@@ -2602,7 +2634,7 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
         let songRangeQuestion = role == .assistant ? SongRangeQuestion.parse(payload: event.payload) : nil
         let songRangeAnswer = role == .user ? SongRangeAnswer.parse(payload: event.payload) : nil
         let memoryOperationID = event.payload?["kind"]?.stringValue == "creator_memory_receipt" ? event.payload?["operation_id"]?.stringValue : nil
-        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, memoryOperationID: memoryOperationID)
+        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, memoryOperationID: memoryOperationID, replyOptions: replyExtras?.options ?? [], replyLead: replyExtras?.lead, alsoChanged: replyExtras?.alsoChanged ?? [])
     }
 }
 

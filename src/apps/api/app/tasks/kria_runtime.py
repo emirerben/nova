@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -54,6 +54,7 @@ from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTu
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
 from app.kria.editor_receipts import (
     bind_editor_receipts,
+    receipt_lead,
     reply_from_diff,
     reply_from_editor_receipts,
 )
@@ -332,6 +333,8 @@ def _complete_response_turn(
                     else {}
                 ),
                 **({"choice_question": plan.choice_question} if plan.choice_question else {}),
+                # KRI-738: tappable lengths; the prose above still lists them for old clients.
+                **({"options": plan.reply_options} if plan.reply_options else {}),
                 **(
                     {"creative_copy_resolution": creative_copy_resolution}
                     if creative_copy_resolution
@@ -530,6 +533,16 @@ def _state_event_fields(state_id: str | None, trace: dict[str, Any]) -> dict[str
         **({"based_on_client_state_id": state_id} if state_id else {}),
         **trace,
     }
+
+
+def _receipt_lead_fields(
+    lead: str | None, also_changed: Sequence[str], receipts: Sequence[Any]
+) -> dict[str, Any]:
+    """KRI-739: the lead line + unclaimed changes shown above the receipt rows. Only an editor turn
+    that bound receipts has them; every other event stays byte-identical."""
+    if not lead or not receipts:
+        return {}
+    return {"reply_lead": lead, **({"also_changed": list(also_changed)} if also_changed else {})}
 
 
 def _unresolved_choice_plan(
@@ -1076,6 +1089,10 @@ def _complete_draft_turn(
         if scope_note:
             reply_text = f"{reply_text} {scope_note}".strip()
         requirement_receipts: list[dict[str, Any]] = []
+        # KRI-739: an editor turn's one-line lead and its unclaimed changes. The chat shows them
+        # above the receipt rows; `reply_text` keeps the full prose for older clients and the web.
+        reply_lead: str | None = None
+        also_changed: list[str] = []
         effective_brief_updates = planned.brief_updates
         brief = None
         speed_notice: str | None = None  # KRI-689
@@ -1171,12 +1188,18 @@ def _complete_draft_turn(
                                 facts.text_styles or (),
                                 unmet=[item.model_dump() for item in arguments.unmet_requests],
                             )
+                            also_changed = describe_diff(
+                                unbound, live_text_count=compiled.diff.live_text_count, limit=2
+                            )
                             reply_text = reply_from_editor_receipts(
                                 checked,
                                 bound_receipts,
-                                unbound=describe_diff(
-                                    unbound, live_text_count=compiled.diff.live_text_count, limit=2
-                                ),
+                                unbound=also_changed,
+                                notices=planned.policy_notices,
+                                notes=arguments.notes,
+                            )
+                            reply_lead = receipt_lead(
+                                bound_receipts,
                                 notices=planned.policy_notices,
                                 notes=arguments.notes,
                             )
@@ -1607,6 +1630,7 @@ def _complete_draft_turn(
                         if requirement_receipts
                         else {}
                     ),
+                    **_receipt_lead_fields(reply_lead, also_changed, requirement_receipts),
                 },
             )
             turn.plan_json = plan.model_dump(mode="json")
@@ -1716,6 +1740,7 @@ def _complete_draft_turn(
                 "receipt_ids": [str(draft_execution.id)],
                 **_state_event_fields(state_id, state_trace),
                 **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
+                **_receipt_lead_fields(reply_lead, also_changed, requirement_receipts),
             },
         )
         _append_sync_event(
