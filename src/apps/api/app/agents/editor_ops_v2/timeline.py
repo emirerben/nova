@@ -376,6 +376,26 @@ def _select(state: Any, selector: dict[str, Any]) -> list[int]:
     return chosen
 
 
+def _fit_window(
+    source: float, in_s: float, duration: float, rate: float, *, slide: bool
+) -> tuple[float, float]:
+    """Fit a clip of ``duration`` output seconds into a ``source``-second file.
+
+    The clip plays ``duration * rate`` source seconds starting at ``in_s``. When that runs
+    past the end and ``slide`` is set, the start moves earlier so the clip ends at the end
+    of the source (everything it already showed stays in); the duration is only capped at
+    the whole source. Without ``slide`` the duration is clamped to the footage after
+    ``in_s``. Invariant: ``in_s + duration * rate <= source``.
+    """
+    room = (source - in_s) / rate
+    if duration <= room + 1e-9:
+        return in_s, duration
+    if not slide:
+        return in_s, math.floor(room * _FPS) / _FPS
+    duration = min(duration, math.floor(source / rate * _FPS) / _FPS)
+    return max(0.0, source - duration * rate), duration
+
+
 def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
     ops = _ops()
     patch = dict(op.get("patch") or {})
@@ -430,11 +450,15 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
         if touched:
             source = row.get("source_duration_s")
             if not image and isinstance(source, (int, float)) and source > 0:
-                room = (float(source) - in_s) / rate
-                if room < MIN_CLIP_S:
+                # A start point the creator (or model) chose is kept; otherwise a clip
+                # that outgrows the footage after its start reaches back into the footage
+                # before it.
+                slide = "in_s" not in patch
+                if not slide and (float(source) - in_s) / rate < MIN_CLIP_S:
                     raise _err("That start point leaves too little footage in the clip")
-                if duration > room:
-                    duration = math.floor(room * _FPS) / _FPS
+                new_in, duration = _fit_window(float(source), in_s, duration, rate, slide=slide)
+                if new_in != in_s:
+                    row["in_s"] = round(new_in, 3)
             if duration < MIN_CLIP_S:
                 raise _err("A clip cannot be shorter than 0.1 seconds")
             row["duration_beats"] = None
@@ -507,15 +531,25 @@ def _bounds(row: dict[str, Any], ops: Any) -> tuple[float, float]:
     high = _max_total_s()
     source = row.get("source_duration_s")
     if not _is_image(row) and isinstance(source, (int, float)) and source > 0:
+        # The whole source, not just the footage after the start: a longer clip slides its
+        # start earlier (see ``_fit_window``).
         rate = ops._slot_rate(row)
-        room = (float(source) - float(row.get("in_s") or 0.0)) / rate
-        high = min(high, math.floor(room * _FPS) / _FPS)
+        high = min(high, math.floor(float(source) / rate * _FPS) / _FPS)
     return low, max(low, high)
 
 
 def _write_durations(state: Any, idx: list[int], durations: list[float]) -> None:
+    ops = _ops()
     for pos, i in enumerate(idx):
         row = state.slots[i]
+        source = row.get("source_duration_s")
+        if not _is_image(row) and isinstance(source, (int, float)) and source > 0:
+            in_s = float(row.get("in_s") or 0.0)
+            new_in, durations[pos] = _fit_window(
+                float(source), in_s, durations[pos], ops._slot_rate(row), slide=True
+            )
+            if new_in != in_s:
+                row["in_s"] = round(new_in, 3)
         row["duration_beats"] = None
         row["duration_s"] = round(durations[pos], 3)
     state.changed.add("timeline")
