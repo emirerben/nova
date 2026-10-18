@@ -830,6 +830,11 @@ class Settings(BaseSettings):
     # byte-identical to the pre-fix behaviour.
     # Apply: fly secret KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 + restart (api + worker).
     kria_turn_auto_continue_max_runs: int = Field(default=4, ge=0, le=8)
+    # KRI-552: an identical re-send of the creator's latest message (the chat looked stuck) is
+    # answered in one line instead of being queued and planned a second time. False restores
+    # the old behaviour: the copy queues behind the running turn.
+    # Apply: fly secret KRIA_DUPLICATE_RESEND_ENABLED=false + restart (api).
+    kria_duplicate_resend_enabled: bool = True
     # KRI-188: thread-level Creative Brief ledger + deterministic scope router +
     # per-requirement receipts on runtime-v2 turns. False (default): the planner,
     # router, draft validation, dispatch request and replies are byte-identical

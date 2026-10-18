@@ -784,6 +784,17 @@
       ]
     },
     {
+      "id": "kri-552-duplicate-resend",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_text_trim.py tests/kria/test_kri552_duplicate_send_postgres.py tests/agents/test_clip_intent_planner.py",
+      "paths": [
+        "src/apps/api/app/kria/duplicate_send.py",
+        "src/apps/api/app/kria/text_trim.py",
+        "src/apps/api/tests/kria/test_kri552_duplicate_send_postgres.py",
+        "src/apps/api/tests/kria/test_text_trim.py"
+      ]
+    },
+    {
       "id": "kri-560-lisbon-hook",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri560_lisbon_word_by_word_hook.py tests/services/test_sequence_text_evidence.py",
