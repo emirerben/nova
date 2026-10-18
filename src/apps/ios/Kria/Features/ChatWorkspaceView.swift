@@ -1125,8 +1125,7 @@ private struct CreationWorkspaceView: View {
     }
 
     private var selectedMaximumClipCount: Int {
-        guard let selectedFormat else { return CreationFormat.fallbackMaximumClipCountWithoutFormat }
-        return maximumClipsByFormat[selectedFormat] ?? selectedFormat.fallbackMaximumClipCount
+        CreationFormat.maximumClipCount(for: selectedFormat, serverLimits: maximumClipsByFormat)
     }
 
     /// Clips being prepared or still being chosen — not yet visible as an upload record.
@@ -1850,7 +1849,7 @@ private struct CreationWorkspaceView: View {
             return
         }
         let pendingClips = model.uploads.records.filter { $0.projectID == project.id && $0.role == .clip }.count
-        if let capacityError = formatClipCapacityError(format: format, clipLimit: maximumClipsByFormat[format] ?? format.fallbackMaximumClipCount, occupiedClipCount: attachedClipCount + pendingClips) {
+        if let capacityError = formatClipCapacityError(format: format, clipLimit: CreationFormat.maximumClipCount(for: format, serverLimits: maximumClipsByFormat), occupiedClipCount: attachedClipCount + pendingClips) {
             failure = ChatFailure(capacityError)
             return
         }
@@ -2646,16 +2645,27 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     }
 
     /// Used only before `/capabilities` has loaded (or if it fails to load).
-    /// Talking-to-camera is genuinely capped at 1 clip server-side; every
-    /// other format's real server default is 50 -- keep this in step with it
-    /// so a slow/failed capabilities fetch doesn't under-cap what the picker
-    /// and composer allow.
+    /// Talking-to-camera takes up to 10 clips (KRI-719: the video of you
+    /// talking plus clips shown while you talk); a server with that rollout
+    /// off still answers `max_clips: 1`, and the server value always wins
+    /// (`maximumClipCount(for:serverLimits:)`). Every other format's real
+    /// server default is 50 -- keep these in step with the server so a
+    /// slow/failed capabilities fetch doesn't under-cap what the picker and
+    /// composer allow.
     var fallbackMaximumClipCount: Int {
-        self == .talkingToCamera ? 1 : CreationFormat.fallbackMaximumClipCountWithoutFormat
+        self == .talkingToCamera ? 10 : CreationFormat.fallbackMaximumClipCountWithoutFormat
     }
 
     /// Same fallback, for the moment before any format is even selected.
     static let fallbackMaximumClipCountWithoutFormat = 50
+
+    /// The clip cap the picker and composer enforce: the server's
+    /// `/capabilities` `max_clips` for `format` when it has loaded, else the
+    /// offline fallback.
+    static func maximumClipCount(for format: CreationFormat?, serverLimits: [CreationFormat: Int]) -> Int {
+        guard let format else { return fallbackMaximumClipCountWithoutFormat }
+        return serverLimits[format] ?? format.fallbackMaximumClipCount
+    }
 
     init?(thread: CreationThread) {
         if let format = thread.state?["format"]?.stringValue {

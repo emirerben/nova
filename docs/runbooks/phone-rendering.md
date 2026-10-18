@@ -2468,7 +2468,15 @@ to `TALKING_MULTI_CLIP_MAX_CLIPS` (10) clips.
   per-clip roles); trace event `phone/talking_multi_clip_roles`.
 - **Editor Save** keeps speakers and cutaways from the pinned recipe
   (`speaker_binding_from_recipe`, `additional_speakers_from_recipe`, `cutaways_from_recipe`).
-  The iOS live preview still falls back to the finished MP4 for 2+ clips (phase 2).
+- **iOS live preview** (`NativePhoneTalkingSource.sourceIndices`) plays the receipt's
+  `speaker_media_ids` in order as locked composite clips, and draws the receipt's
+  `cutaways` windows (`NativePhoneTalkingSource.cutaways`) muted and full frame above
+  them, below every card, with `_compile_cutaway_track`'s clamps. Cutaways are preview
+  state only: never in the editor document, so nothing selects, moves or Saves them.
+  A speaker or cutaway clip missing from the source pool (or a malformed / overlapping
+  window) falls back to the finished MP4. The receipt windows equal the pinned recipe's
+  `talking-head-cutaways` clips (`_assert_receipt_cutaways_match_recipe` in
+  `tests/tasks/test_phone_subtitled_narrated_dispatch.py`).
 
 ## Hook titles on phone Talking edits (KRI-467)
 
