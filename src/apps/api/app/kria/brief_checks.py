@@ -5026,6 +5026,23 @@ def _is_spoken_text_cue(req: BriefRequirement) -> bool:
     )
 
 
+def spoken_text_literals(brief: CreativeBrief | None) -> tuple[str, ...]:
+    """KRI-692: the exact text of each live ask to show a line when the creator says a word.
+
+    The clip planner also reads such an ask as a `caption` clip intent, which is a question
+    with no clip to answer it; the planner uses these to keep it out of the clip inventory.
+    """
+    if brief is None:
+        return ()
+    return tuple(
+        dict.fromkeys(
+            req.literal
+            for req in brief.live()
+            if req.kind == "text" and req.literal and _is_spoken_text_cue(req)
+        )
+    )
+
+
 def _is_voiceover_edit(facts: PlanFacts) -> bool:
     return facts.edit_format in NARRATED_EDIT_FORMATS and facts.audio_strategy == "voiceover"
 

@@ -20,6 +20,7 @@ from app.agents.clip_intent_planner import (
     salvage_question,
 )
 from app.config import settings
+from app.kria.brief_route import fold_text
 from app.kria.reply_language import current_reply_language, say
 from app.schemas.clip_intents import (
     CLIP_DESCRIPTION_ATTRIBUTE,
@@ -174,6 +175,32 @@ def with_clip_descriptions(intents: list[ClipIntent]) -> list[ClipIntent]:
     return [
         *kept,
         ClipIntent(intent_id=intent_id, op="label", attribute=CLIP_DESCRIPTION_ATTRIBUTE),
+    ]
+
+
+def without_spoken_text_captions(
+    intents: list[ClipIntent], spoken_text: Sequence[str]
+) -> list[ClipIntent]:
+    """Leave out the `caption` intents that are a text line timed to a spoken word (KRI-692).
+
+    "Show '20 dk' when I say 'yirmi dakika'" is a moment in the voiceover, not a chapter of
+    clips, so the picker's "which clips?" had no right answer and the English label the
+    model gave it ("the moment ... is said") sat in a Turkish chat. ``spoken_text`` is the
+    brief's own exact text for such asks; only a caption carrying exactly that text goes,
+    so a real chapter caption, a label or an include is never touched. The ask itself is
+    kept by the brief and answered by its receipt.
+    """
+    if not spoken_text:
+        return intents
+    cues = {fold_text(text) for text in spoken_text}
+    return [
+        intent
+        for intent in intents
+        if not (
+            intent.op == "caption"
+            and intent.creator_text is not None
+            and fold_text(intent.creator_text) in cues
+        )
     ]
 
 
@@ -474,9 +501,13 @@ async def plan_and_resolve_clip_intents(
     understanding_wait_until: float | None = None,
     clip_selections: ClipSelections | None = None,
     describe_clips: bool = False,
+    spoken_text: Sequence[str] = (),
 ) -> PlannedIntentResolution:
     """``describe_clips`` (KRI-612): the Creative Brief asks for a line on each clip saying
-    what it shows, so the inventory always carries one description label for it."""
+    what it shows, so the inventory always carries one description label for it.
+
+    ``spoken_text`` (KRI-692): exact texts the creator wants on screen when they say a word,
+    on an edit that cannot draw them. A caption intent for one is never a clip question."""
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
             [],
@@ -616,6 +647,7 @@ async def plan_and_resolve_clip_intents(
             intent.model_copy(update={"order_by": None}) if intent.order_by else intent
             for intent in intents
         ]
+    intents = without_spoken_text_captions(intents, spoken_text)
     if describe_clips:
         intents = with_clip_descriptions(intents)
     # KRI-678: a creator label that can never be printed is a question about the TEXT,
