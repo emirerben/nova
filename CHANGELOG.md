@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.29.0] - 2026-10-18
+
+### Changed
+- feat(ios): several videos on Talking edits in the iPhone app (KRI-719, phase 2) (#1642) <!-- release-pr: 1642 -->
+
 ## [0.80.28.0] - 2026-10-17
 
 ### Changed
