@@ -334,6 +334,30 @@ final class PerfUITests: XCTestCase {
         book.report("testEditorReopenWarm", prefixes: ["net ", "source", "sha256", "t "])
     }
 
+    /// What playing the open editor costs: CPU and hitches over a rewind and two seconds of playback, repeated, with the
+    /// launch and the open outside the measured block. (The CPU metric cannot take an explicit start and stop on a
+    /// device, so the rewind swipes are inside; they cost the same for every build compared.) The editor's playhead
+    /// moves many times a second, which is what a body that reads it at the top of a large view would pay for. The
+    /// playhead is the timeline's scroll position, so swiping the timeline back rewinds.
+    func testEditorPlayback() {
+        let app = makeApp(reset: true, editorEnvironment)
+        app.launch()
+        waitForTranscript(app)
+        openEditor(app)
+        let play = app.buttons["native-editor-play-pause"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10))
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 10))
+        var metrics: [XCTMetric] = [XCTCPUMetric(application: app)]
+        if #available(iOS 26, *) { metrics.append(XCTHitchMetric(application: app)) }
+        measure(metrics: metrics, options: options) {
+            for _ in 0..<2 { timeline.swipeRight(velocity: .fast) }
+            play.tap()
+            RunLoop.current.run(until: Date().addingTimeInterval(2))
+            play.tap()
+        }
+    }
+
     // MARK: Gallery
 
     /// The first poster on screen. On failure the accessibility tree is printed, so a missing poster can be told
