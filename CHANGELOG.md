@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.42.0] - 2026-10-18
+
+### Changed
+- fix(kria): answer a re-sent copy of a message instead of queuing and re-planning it (KRI-552) (#1672) <!-- release-pr: 1672 -->
+
 ## [0.80.41.0] - 2026-10-18
 
 ### Changed
