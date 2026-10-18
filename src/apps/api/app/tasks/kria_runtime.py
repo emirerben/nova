@@ -5613,101 +5613,116 @@ def _expire_pending_approvals() -> list[str]:
         )
     for approval_id in pending:
         try:
-            with sync_session() as db, ExitStack() as language:
-                ref = db.get(CreatorAgentApproval, approval_id)
-                if ref is None:
-                    continue
-                # Canonical order (subset): Session -> Turn -> Approval -> Execution -> Thread.
-                session = db.execute(
-                    select(CreatorAgentSession)
-                    .where(CreatorAgentSession.id == ref.session_id)
-                    .with_for_update()
-                ).scalar_one_or_none()
-                turn = db.execute(
-                    select(CreatorAgentTurn)
-                    .where(CreatorAgentTurn.id == ref.turn_id)
-                    .with_for_update()
-                ).scalar_one_or_none()
-                approval = db.execute(
-                    select(CreatorAgentApproval)
-                    .where(CreatorAgentApproval.id == approval_id)
-                    .with_for_update()
-                ).scalar_one_or_none()
-                execution = None
-                try:
-                    execution_id = uuid.UUID(str((ref.execution_ids or [None])[0]))
-                    execution = db.execute(
-                        select(CreatorAgentExecution)
-                        .where(CreatorAgentExecution.id == execution_id)
-                        .with_for_update()
-                    ).scalar_one_or_none()
-                except (TypeError, ValueError, IndexError):
-                    execution = None
-                thread = db.execute(
-                    select(CreationThread)
-                    .where(CreationThread.id == ref.thread_id)
-                    .with_for_update()
-                ).scalar_one_or_none()
-                if (
-                    session is None
-                    or turn is None
-                    or approval is None
-                    or thread is None
-                    or approval.status != "pending"
-                ):
-                    continue
-                if isinstance(getattr(execution, "result", None), dict) and (
-                    "strategy_media_before" in execution.result
-                ):
-                    continue
-                # KRI-520: this sweep has no turn; the notice follows the chat's language.
-                _bind_thread_language(language, thread)
-                now = datetime.now(UTC)
-                error = {
-                    "code": "approval_expired",
-                    "retryable": False,
-                    "recovery": "refresh_replan",
-                }
-                approval.status = "expired"
-                if execution is not None and execution.status == "awaiting_approval":
-                    execution.status = "stale"
-                    execution.error = error
-                    execution.completed_at = now
-                if turn.status == "awaiting_approval":
-                    turn.status = "failed"
-                    turn.completed_at = now
-                    turn.error = error
-                if session.status != "rendering":
-                    session.status = "awaiting_feedback"
-                _append_sync_event(
-                    db,
-                    thread,
-                    role="assistant",
-                    event_type="assistant_error",
-                    content=say(
-                        en=(
-                            "That approval expired before it was decided, so nothing was "
-                            "rendered. Tell me what you want and I'll prepare it again."
-                        ),
-                        tr=(
-                            "Bu onay karara bağlanmadan süresi doldu, o yüzden hiçbir video "
-                            "oluşturulmadı. Ne istediğini söyle, yeniden hazırlayayım."
-                        ),
-                    ),
-                    payload={
-                        "turn_id": str(turn.id),
-                        "approval_id": str(approval.id),
-                        "code": "approval_expired",
-                        "recovery": "refresh_replan",
-                    },
-                )
-                db.commit()
-                successor = _promote_queued_successor_sync(thread.id)
-                if successor is not None:
-                    successors.append(successor)
+            successor = _expire_overdue_approval(approval_id)
         except Exception:  # noqa: BLE001 - one bad approval must not stop the sweep
             log.warning("kria_approval_expiry_failed", approval_id=str(approval_id), exc_info=True)
+            continue
+        if successor is not None:
+            successors.append(successor)
     return successors
+
+
+def _expire_overdue_approval(approval_id: uuid.UUID) -> str | None:
+    """Expire one approval the sweep found overdue; return the successor turn to publish.
+
+    None when it is gone, no longer pending, or carries a strategy media stash (see
+    `_expire_pending_approvals`). It does not re-check `expires_at`: the sweep's query did.
+    """
+    with sync_session() as db, ExitStack() as language:
+        ref = db.get(CreatorAgentApproval, approval_id)
+        if ref is None:
+            return None
+        # Canonical order (subset): Session -> Turn -> Approval -> Execution -> Thread.
+        session = db.execute(
+            select(CreatorAgentSession)
+            .where(CreatorAgentSession.id == ref.session_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        turn = db.execute(
+            select(CreatorAgentTurn).where(CreatorAgentTurn.id == ref.turn_id).with_for_update()
+        ).scalar_one_or_none()
+        # populate_existing: `ref` was read before the lock, and an expiry or
+        # decision committed in between (the lazy expiry in `submit_turn`, a deny)
+        # must not look pending here, or it is expired and announced twice.
+        approval = db.execute(
+            select(CreatorAgentApproval)
+            .where(CreatorAgentApproval.id == approval_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if approval is None or approval.status != "pending":
+            # Let go before waiting on Thread: the `submit_turn` that just closed
+            # it holds Thread and then needs Session FOR KEY SHARE for its new
+            # turn's foreign key, so waiting here deadlocks that request.
+            return None
+        execution = None
+        try:
+            execution_id = uuid.UUID(str((ref.execution_ids or [None])[0]))
+            execution = db.execute(
+                select(CreatorAgentExecution)
+                .where(CreatorAgentExecution.id == execution_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+        except (TypeError, ValueError, IndexError):
+            execution = None
+        thread = db.execute(
+            select(CreationThread).where(CreationThread.id == ref.thread_id).with_for_update()
+        ).scalar_one_or_none()
+        if (
+            session is None
+            or turn is None
+            or approval is None
+            or thread is None
+            or approval.status != "pending"
+        ):
+            return None
+        if isinstance(getattr(execution, "result", None), dict) and (
+            "strategy_media_before" in execution.result
+        ):
+            return None
+        # KRI-520: this sweep has no turn; the notice follows the chat's language.
+        _bind_thread_language(language, thread)
+        now = datetime.now(UTC)
+        error = {
+            "code": "approval_expired",
+            "retryable": False,
+            "recovery": "refresh_replan",
+        }
+        approval.status = "expired"
+        if execution is not None and execution.status == "awaiting_approval":
+            execution.status = "stale"
+            execution.error = error
+            execution.completed_at = now
+        if turn.status == "awaiting_approval":
+            turn.status = "failed"
+            turn.completed_at = now
+            turn.error = error
+        if session.status != "rendering":
+            session.status = "awaiting_feedback"
+        _append_sync_event(
+            db,
+            thread,
+            role="assistant",
+            event_type="assistant_error",
+            content=say(
+                en=(
+                    "That approval expired before it was decided, so nothing was "
+                    "rendered. Tell me what you want and I'll prepare it again."
+                ),
+                tr=(
+                    "Bu onay karara bağlanmadan süresi doldu, o yüzden hiçbir video "
+                    "oluşturulmadı. Ne istediğini söyle, yeniden hazırlayayım."
+                ),
+            ),
+            payload={
+                "turn_id": str(turn.id),
+                "approval_id": str(approval.id),
+                "code": "approval_expired",
+                "recovery": "refresh_replan",
+            },
+        )
+        db.commit()
+        return _promote_queued_successor_sync(thread.id)
 
 
 def _reconcile_kria_turns_body() -> dict[str, int]:
