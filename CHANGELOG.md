@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.38.0] - 2026-10-18
+
+### Changed
+- fix(kria): Voiceover cleanup says what it cut and left, no more retakes promise (KRI-551) (#1669) <!-- release-pr: 1669 -->
+
 ## [0.80.37.0] - 2026-10-18
 
 ### Fixed
