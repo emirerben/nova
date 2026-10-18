@@ -13,7 +13,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import structlog
@@ -2102,7 +2102,11 @@ async def decide_approval(
                 and isinstance(execution_peek.result, dict)
                 and "strategy_media_before" in execution_peek.result
             )
-    needs_plan_item_lock = is_strategy_approval or deny_restore_pending
+    needs_plan_item_lock = (
+        is_strategy_approval
+        or deny_restore_pending
+        or (decision == "approve" and body.automatic_repair_attempts > 0)
+    )
     plan_item = (
         await _lock_strategy_plan_item(
             db, session_id=approval_ref.session_id, creator_id=creator_id
@@ -2444,6 +2448,25 @@ async def decide_approval(
             db, item=plan_item, execution=execution
         )
 
+    if decision == "approve" and body.automatic_repair_attempts:
+        if execution is None:
+            raise RuntimeFailure(
+                409, "approval_target_missing", "The render for this approval is unavailable."
+            )
+        from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+
+        grant_item = plan_item or await db.get(PlanItem, session.plan_item_id)
+        execution.result = {
+            **(execution.result or {}),
+            "automatic_repair_grant": {
+                "version": 1,
+                "max_attempts": 2,
+                "used": 0,
+                "approved_at": now.isoformat(),
+                "expires_at": (now + timedelta(minutes=30)).isoformat(),
+                "media_snapshot": snapshot_media(grant_item),
+            },
+        }
     approval.status = "approved" if decision == "approve" else "denied"
     if decision == "deny":
         turn.status = "completed"
@@ -2521,6 +2544,12 @@ async def read_approval(
         if isinstance(result, dict) and isinstance(result.get("render_retry"), dict):
             retry_of_execution_id = result["render_retry"].get("source_execution_id")
     return ApprovalSnapshotOut(
+        automatic_repair_limit=(
+            2
+            if settings.phone_actual_export_verification_enabled
+            and creator_id in settings.phone_actual_export_verification_user_ids
+            else 0
+        ),
         approval_id=str(approval.id),
         turn_id=str(approval.turn_id),
         draft_id=str(approval.draft_id) if approval.draft_id else None,

@@ -340,7 +340,7 @@ async def test_device_render_poll_tells_an_old_build_to_update(monkeypatch, prot
     from app.routes import device_render
 
     job, recipe = _saved_single_word_recipe(monkeypatch, highlight=True)
-    request = SimpleNamespace(recipe=recipe, identity=SimpleNamespace())
+    request = SimpleNamespace(recipe=recipe, identity=SimpleNamespace(), recovery=None)
     monkeypatch.setattr(device_render, "_owned_job", AsyncMock(return_value=job))
     monkeypatch.setattr(
         device_render, "device_status", lambda *_a: SimpleNamespace(request=request)

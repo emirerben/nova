@@ -3477,7 +3477,17 @@ def _device_render_state(job: Job, execution: CreatorAgentExecution) -> str | No
         if isinstance(minimum, int) and status.request.identity.recipe_revision < minimum:
             states.append("pending")
         elif status.phase == "published":
-            states.append("ready")
+            from app.services.device_render import (  # noqa: PLC0415
+                checked_export_report,
+                device_record,
+            )
+
+            record = device_record(job, record_variant)
+            states.append(
+                "ready"
+                if checked_export_report(record, status, str(record.get("published_attempt") or ""))
+                else "failed"
+            )
         elif status.phase == "needs_attention":
             states.append("failed")
         else:
@@ -5248,7 +5258,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 # published device render is matched by revision (above).
                 generation_id=None if device_state == "ready" else pinned_generation_id,
             )
-            if variant is not None:
+            if variant is not None and device_state != "failed":
                 variant_id = str(variant["variant_id"])
                 generation_id = str(variant.get("render_generation_id") or "") or None
                 execution.status = "completed"
@@ -5357,6 +5367,9 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             if device_failed
             else None
         )
+        output_check_failed = bool(
+            device_decline and device_decline.get("field_path") == "export_verification"
+        )
         typed_decline = (
             device_decline
             if device_failed
@@ -5389,7 +5402,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             recovery, retryable = "retry", True
         elif native_without_program:
             recovery, retryable = "ask_user", False
-        if device_decline is not None:
+        if device_decline is not None and not output_check_failed:
             # The contract refused this edit, so the phone's own Retry (which re-pins the
             # same refused recipe) is a dead end, and nothing re-runs it automatically.
             # The creator's real next step is a new message, never a retry button.
@@ -5476,12 +5489,31 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         if device_decline is not None:
             from app.services.device_render import has_accepted_artifact  # noqa: PLC0415
 
-            failure_content = _device_refusal_copy(
-                device_decline,
-                last_good=has_accepted_artifact(
-                    job, str(execution.target_variant_id or "") or None
-                ),
-            )
+            last_good = has_accepted_artifact(job, str(execution.target_variant_id or "") or None)
+            if output_check_failed:
+                failure_content = (
+                    say(
+                        en=(
+                            "The exported video hasn't passed its checks against "
+                            "your approved edit. "
+                            "Your approved edit is saved. Retry the same edit after reviewing "
+                            "its approval."
+                        ),
+                        tr=(
+                            "Dışa aktarılan video, onayladığın düzenlemeye göre yapılan "
+                            "kontrolleri geçemedi. Onayladığın düzenleme kayıtlı. "
+                            "Onayını gözden geçirip aynı düzenlemeyi yeniden dene."
+                        ),
+                    )
+                    + " "
+                    + (
+                        say(en=_LAST_GOOD_STAYS, tr="Son iyi sürümün hâlâ duruyor.")
+                        if last_good
+                        else say(en=_NOTHING_PUBLISHED, tr="Yeni bir video oluşturulmadı.")
+                    )
+                )
+            else:
+                failure_content = _device_refusal_copy(device_decline, last_good=last_good)
         elif device_failed and exact_retry_available:
             failure_content = say(
                 en=(

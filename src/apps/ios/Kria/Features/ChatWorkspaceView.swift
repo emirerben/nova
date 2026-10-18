@@ -419,6 +419,7 @@ private struct CreationWorkspaceView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var approval: ApprovalSnapshot?
+    @State private var allowAutomaticRepairs = true
     /// KRI-306: the creator's pending video-shape pick for the approval / plan on screen.
     @State private var renderShapePick = RenderShapePickerState()
     @State private var approvalNotice: String?
@@ -1566,6 +1567,7 @@ private struct CreationWorkspaceView: View {
                     format: selectedFormat,
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
                     renderShape: approval.retryOfExecutionID == nil ? renderShapePicker : nil,
+                    automaticRepairs: approval.automaticRepairLimit == 2 ? $allowAutomaticRepairs : nil,
                     isBusy: isActing || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     decide: decide,
@@ -2372,7 +2374,8 @@ private struct CreationWorkspaceView: View {
                     speechCleanupAnalysisID: analysisID,
                     speechCleanupChoice: cleanupChoice,
                     outputOrientation: shape?.orientation,
-                    landscapeFit: shape?.landscapeFit
+                    landscapeFit: shape?.landscapeFit,
+                    automaticRepairAttempts: decision == "approve" && approval.automaticRepairLimit == 2 && allowAutomaticRepairs ? 2 : 0
                 )
             } catch let error as APIError where error == .conflict && speechCleanupConflictCodes.contains(error.conflictCode ?? "") {
                 // The approval stays PENDING with the same id/fingerprint --

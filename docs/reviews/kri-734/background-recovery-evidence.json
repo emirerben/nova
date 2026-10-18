@@ -1,0 +1,77 @@
+{
+  "recorded_at": "2026-10-18T07:42:14.572061+00:00",
+  "status": "implemented_physical_recovery_passed",
+  "actual_verifier_sha256": "92cfcffec10b07d60184fc456bbd3707d12dd2e26636db7f263e221b77bdced9",
+  "checks": {
+    "native_clean": {
+      "total": 1813,
+      "passed": 1789,
+      "skipped": 24,
+      "failed": 0
+    },
+    "timeline": {
+      "jest": 209,
+      "desktop_browser": 28,
+      "mobile_browser": 42,
+      "api": 582
+    },
+    "mapped_reliability": 512,
+    "gate_registry": 71,
+    "ci_selector": {
+      "selection_unittests": 66,
+      "journey_proof_tests": 6
+    },
+    "actual_output_compatibility": 62,
+    "ci_compatibility_fixtures": 155
+  },
+  "physical_device": {
+    "model": "iPhone 13 Pro",
+    "footage": "retained recent account footage; selected originals only",
+    "fault": "controlled wrong decoded picture in private QA exporter; persists on a plain retry",
+    "original_repair_permission_observed": true,
+    "incorrect_export_rejected": true,
+    "automatic_repairs_authorized": 2,
+    "approved_recipe_digest_unchanged": true,
+    "repaired_export_verified": true,
+    "private_evidence_directory": "/private/tmp/kri726-qa",
+    "production_app_replaced": false,
+    "automatic_repairs_used": 1,
+    "all_authored_recipe_fields_equal": true,
+    "verification_checks_passed": 13,
+    "repair_elapsed_seconds": 7.912359,
+    "accepted_sha256": "765edd377e6db599fe713ad0d3befeeec557d7ff9ada6c304b11f907acc6a651",
+    "phone_file_matches_uploaded_and_checked_file": true,
+    "duplicate_observation_outcomes": [
+      "ignored",
+      "ignored"
+    ],
+    "chat_event_count_unchanged_on_replay": true,
+    "ui_test_passed": true,
+    "ui_states_observed": [
+      "checking",
+      "repairing_1_of_2",
+      "ready"
+    ],
+    "expired_prior_permission_stopped_before_fresh_ui_approval": true,
+    "fault_hook_shipped": false,
+    "backend": "isolated real API, PostgreSQL and Celery with local object transport; not production",
+    "model_calls": 0
+  },
+  "limits": {
+    "automatic_repairs": 2,
+    "permission_minutes": 30,
+    "same_artifact_check_attempts": 3,
+    "worker_hard_seconds": 300,
+    "claim_lease_seconds": 360,
+    "queue_wait_seconds": 1200,
+    "source_conversion_seconds": 180,
+    "source_max_seconds": 300,
+    "model_calls": 0,
+    "source_max_size": "1 GiB"
+  },
+  "deployment": {
+    "deployed": false,
+    "enrollment_enabled_in_production": false,
+    "required_phone_protocol": 13
+  }
+}

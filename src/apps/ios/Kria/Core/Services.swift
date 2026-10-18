@@ -240,7 +240,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     /// are the creator's video-shape pick (KRI-306). They are passed ONLY when the
     /// thread offered a `render_shape` -- the API rejects unknown keys and a
     /// choice nothing offered -- and are encoded absent, never null, when nil.
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws
     func playbackURL(jobID: UUID) async throws -> URL
     /// KRI-200: best-effort report of an editor player item that failed on this phone.
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws
@@ -305,6 +305,10 @@ extension KriaAPIClient {
     }
     func textPreferenceMemory() async throws -> TextPreferenceMemory { throw APIError.unsupported }
     func mutateTextPreferenceMemory(path: String, method: String, body: [String: JSONValue]) async throws -> TextPreferenceOperation { throw APIError.unsupported }
+    /// Existing/programmatic callers grant zero repairs unless they showed the consent control.
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws {
+        try await decideApproval(threadID: threadID, approvalID: approvalID, decision: decision, expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit, automaticRepairAttempts: 0)
+    }
     /// Decisions that carry no video-shape pick (denials, and threads that offered none).
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws {
         try await decideApproval(threadID: threadID, approvalID: approvalID, decision: decision, expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: nil, landscapeFit: nil)
@@ -904,9 +908,10 @@ struct ApprovalSnapshot: Codable, Sendable, Identifiable {
     let costSummary: String?
     let expiresAt: Date
     let approvalFingerprint: String
+    var automaticRepairLimit: Int? = nil
     var retryOfExecutionID: String? = nil
     var id: String { approvalID }
-    enum CodingKeys: String, CodingKey { case status; case approvalID = "approval_id"; case turnID = "turn_id"; case draftID = "draft_id"; case draftRevision = "draft_revision"; case consequenceSummary = "consequence_summary"; case costSummary = "cost_summary"; case expiresAt = "expires_at"; case approvalFingerprint = "approval_fingerprint"; case retryOfExecutionID = "retry_of_execution_id" }
+    enum CodingKeys: String, CodingKey { case status; case approvalID = "approval_id"; case turnID = "turn_id"; case draftID = "draft_id"; case draftRevision = "draft_revision"; case consequenceSummary = "consequence_summary"; case costSummary = "cost_summary"; case expiresAt = "expires_at"; case approvalFingerprint = "approval_fingerprint"; case automaticRepairLimit = "automatic_repair_limit"; case retryOfExecutionID = "retry_of_execution_id" }
 }
 struct RenderRetryAccepted: Codable, Sendable {
     let turnID: String
@@ -1022,7 +1027,10 @@ private enum KriaClientProtocolContract {
     /// 11 (single-word captions): draws the recipe's `karaoke.single_word` text layers (one word on screen at a time,
     /// one layer per cue). The server emits that mode only to this protocol and answers 426 `client_update_required`
     /// to older builds, which cannot decode the key.
-    static let version = 11
+    /// 12 (KRI-734): withholds unverified local exports from playback/Save/Share
+    /// when the server declares `output_verification_required`.
+    /// 13: accepts durable background output checks and resumes status polling.
+    static let version = 13
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1402,7 +1410,7 @@ struct KriaAPI: KriaAPIClient {
             bodyData: JSONSerialization.data(withJSONObject: ["execution_id": executionID.uuidString,
                 "expected_thread_revision": expectedRevision]), decode: RenderRetryAccepted.self)
     }
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit)), decode: ApprovalResponse.self) }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit, automaticRepairAttempts: automaticRepairAttempts > 0 ? automaticRepairAttempts : nil)), decode: ApprovalResponse.self) }
     func playbackURL(jobID: UUID) async throws -> URL { let response = try await request(path: "me/jobs/\(jobID.uuidString)/playback-url", method: "GET", bodyData: nil, decode: PlaybackResponse.self); guard let url = URL(string: response.videoURL) else { throw APIError.invalidResponse }; return url }
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws {
         _ = try await request(path: "me/jobs/\(jobID.uuidString)/playback-diagnostics", method: "POST", bodyData: try JSONEncoder().encode(report), decode: EmptyProjectResponse.self)
@@ -1975,6 +1983,7 @@ private struct ApprovalDecisionRequest: Encodable {
     let speechCleanupChoice: String?
     let outputOrientation: String?
     let landscapeFit: String?
+    let automaticRepairAttempts: Int?
     enum CodingKeys: String, CodingKey {
         case expectedThreadRevision = "expected_thread_revision"
         case expectedDraftRevision = "expected_draft_revision"
@@ -1984,6 +1993,7 @@ private struct ApprovalDecisionRequest: Encodable {
         case speechCleanupChoice = "speech_cleanup_choice"
         case outputOrientation = "output_orientation"
         case landscapeFit = "landscape_fit"
+        case automaticRepairAttempts = "automatic_repair_attempts"
     }
 }
 private struct UploadCancellation: Decodable { let reservationID: String; let status: String; enum CodingKeys: String, CodingKey { case status; case reservationID = "reservation_id" } }

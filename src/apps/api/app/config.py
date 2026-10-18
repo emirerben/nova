@@ -28,6 +28,11 @@ class Settings(BaseSettings):
 
     # Phone rendering remains off until a capability group has device evidence.
     phone_rendering_enabled: bool = False
+    # Enroll supported NEW phone requests in measured actual-output verification.
+    # The per-request stamp survives flag changes and exact retries.
+    phone_actual_export_verification_enabled: bool = False
+    # Explicit pilot enrollment only; empty means no new requests are enrolled.
+    phone_actual_export_verification_user_ids: list[UUID] = Field(default_factory=list)
     # New editor imports require device qualification; saved receipts remain readable.
     phone_editor_media_enabled: bool = False
     phone_render_verified_features: list[str] = Field(default_factory=list)
