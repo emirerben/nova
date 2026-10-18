@@ -28,6 +28,7 @@ from app.services.device_render import (
     save_device_record,
 )
 from tests.integration.test_actual_export_verification import encode, exports  # noqa: F401
+from tests.routes.test_background_export_verification import checked_completion
 from tests.routes.test_device_render import (  # noqa: F401
     body,
     fixture,
@@ -125,9 +126,7 @@ def test_actual_bytes_are_checked_before_publication_and_retry(
             shutil.copyfile(source, local)
 
         monkeypatch.setattr(routes.storage, "download_generation_to_file", download)
-        response = fixture.client.post(
-            f"/me/jobs/{fixture.job.id}/device-render/complete", json=body(fixture, attempt)
-        )
+        response = checked_completion(fixture, body(fixture, attempt))
         report = device_record(fixture.job, "first")["attempts"][attempt][
             "actual_export_verification"
         ]

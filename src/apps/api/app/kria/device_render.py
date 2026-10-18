@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from app.kria.recipes import EditRecipeV1
 from app.kria.recipes_v2 import EditRecipeV2
@@ -31,9 +31,23 @@ class DeviceRenderIdentity(_DeviceModel):
     recipe_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class DeviceRepairInstruction(_DeviceModel):
+    action: Literal["normalize_sources"] = "normalize_sources"
+    attempt: int = Field(ge=1, le=2)
+    asset_ids: list[str] = Field(min_length=1, max_length=16)
+
+
 class DeviceRenderRequest(_DeviceModel):
     identity: DeviceRenderIdentity
     recipe: DeviceRecipe
+    recovery: DeviceRepairInstruction | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_request(self, handler):
+        data = handler(self)
+        if data.get("recovery") is None:
+            data.pop("recovery", None)
+        return data
 
     @model_validator(mode="after")
     def check_digest(self) -> DeviceRenderRequest:
@@ -140,7 +154,7 @@ class DeviceExportCompleteBody(_DeviceModel):
 
 
 class DeviceExportCompleteOut(_DeviceModel):
-    status: Literal["published"] = "published"
+    status: Literal["published", "checking"] = "published"
     identity: DeviceRenderIdentity
 
 

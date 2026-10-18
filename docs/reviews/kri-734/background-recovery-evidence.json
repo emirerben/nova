@@ -1,0 +1,53 @@
+{
+  "recorded_at": "2026-10-18T07:25:22.865467+00:00",
+  "status": "implemented_device_completion_blocked",
+  "actual_verifier_sha256": "92cfcffec10b07d60184fc456bbd3707d12dd2e26636db7f263e221b77bdced9",
+  "checks": {
+    "native_clean": {
+      "total": 1813,
+      "passed": 1789,
+      "skipped": 24,
+      "failed": 0
+    },
+    "timeline": {
+      "jest": 209,
+      "desktop_browser": 28,
+      "mobile_browser": 42,
+      "api": 582
+    },
+    "mapped_reliability": 512,
+    "gate_registry": 71,
+    "ci_selector": 6,
+    "actual_output_compatibility": 62
+  },
+  "physical_device": {
+    "model": "iPhone 13 Pro",
+    "footage": "retained recent account footage; selected originals only",
+    "fault": "controlled wrong decoded picture in private QA exporter; persists on a plain retry",
+    "original_repair_permission_observed": true,
+    "incorrect_export_rejected": true,
+    "automatic_repairs_authorized": 1,
+    "approved_recipe_digest_unchanged": true,
+    "repaired_export_verified": false,
+    "blocking_condition": "Xcode UI testing lost authorization and reports Authentication canceled / Canceled by user",
+    "private_evidence_directory": "/private/tmp/kri726-qa",
+    "production_app_replaced": false
+  },
+  "limits": {
+    "automatic_repairs": 2,
+    "permission_minutes": 30,
+    "same_artifact_check_attempts": 3,
+    "worker_hard_seconds": 300,
+    "claim_lease_seconds": 360,
+    "queue_wait_seconds": 1200,
+    "source_conversion_seconds": 180,
+    "source_max_seconds": 300,
+    "source_max_bytes": 1073741824,
+    "model_calls": 0
+  },
+  "deployment": {
+    "deployed": false,
+    "enrollment_enabled_in_production": false,
+    "required_phone_protocol": 13
+  }
+}

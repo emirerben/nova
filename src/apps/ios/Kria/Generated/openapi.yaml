@@ -112,6 +112,15 @@
       "ApprovalDecisionBody": {
         "additionalProperties": false,
         "properties": {
+          "automatic_repair_attempts": {
+            "default": 0,
+            "enum": [
+              0,
+              2
+            ],
+            "title": "Automatic Repair Attempts",
+            "type": "integer"
+          },
           "expected_approval_fingerprint": {
             "maxLength": 64,
             "minLength": 64,
@@ -231,6 +240,15 @@
           "approval_id": {
             "title": "Approval Id",
             "type": "string"
+          },
+          "automatic_repair_limit": {
+            "default": 0,
+            "enum": [
+              0,
+              2
+            ],
+            "title": "Automatic Repair Limit",
+            "type": "integer"
           },
           "consequence_summary": {
             "title": "Consequence Summary",
@@ -1719,7 +1737,8 @@
           "status": {
             "default": "published",
             "enum": [
-              "published"
+              "published",
+              "checking"
             ],
             "title": "Status",
             "type": "string"
@@ -1959,6 +1978,11 @@
               }
             ],
             "title": "Recipe"
+          },
+          "recovery": {
+            "$ref": "#/components/schemas/DeviceRepairInstruction",
+            "default": null,
+            "nullable": true
           }
         },
         "required": [
@@ -2072,6 +2096,40 @@
           "request"
         ],
         "title": "DeviceRenderStatusOut",
+        "type": "object"
+      },
+      "DeviceRepairInstruction": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "default": "normalize_sources",
+            "enum": [
+              "normalize_sources"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "asset_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "title": "Asset Ids",
+            "type": "array"
+          },
+          "attempt": {
+            "maximum": 2,
+            "minimum": 1,
+            "title": "Attempt",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "attempt",
+          "asset_ids"
+        ],
+        "title": "DeviceRepairInstruction",
         "type": "object"
       },
       "DeviceRetryBody": {

@@ -1567,6 +1567,66 @@
         "KRI-725"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-726-background-recovery",
+      "tickets": [
+        "KRI-734",
+        "KRI-726",
+        "KRI-674"
+      ],
+      "symptom": "Inline export checks time out on the API; unchecked exports must stay hidden and any corrective render must retain the exact approved edit and bounded original consent. Live iPhone polling exposed a Retry owner-lock inversion.",
+      "boundary": "publication",
+      "status": "open_pr",
+      "owner": "KRI-726",
+      "fix_prs": [
+        1663
+      ],
+      "journey": "kri-726-background-recovery",
+      "paths": [
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/api/app/tasks/export_verification.py",
+        "src/apps/api/app/kria/automatic_export_repair.py",
+        "src/apps/api/app/kria/render_retry.py",
+        "src/apps/api/app/kria/device_render.py",
+        "src/apps/api/app/kria/api_schemas.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/ios/Kria/Core/DeviceRendering.swift",
+        "src/apps/ios/Kria/Core/DeviceRenderSessions.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/NativeVP9Source.swift"
+      ],
+      "regression_tests": [
+        "tests/routes/test_background_export_verification.py",
+        "tests/routes/test_actual_export_publication.py",
+        "tests/integration/test_background_export_completion.py",
+        "tests/integration/test_actual_export_completion.py",
+        "tests/kria/test_automatic_export_repair.py",
+        "tests/kria/test_render_retry_lock_order_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "phone_actual_export_verification_enabled",
+      "evidence": {
+        "offline_replay": "Actual MP4 decoding and PostgreSQL concurrent claims, durable broker-gap recovery, immutable recipe/last-good guards, finite repair permission. Owner-lock inversion reproduced before the fix and passes after it.",
+        "live_model": "No model calls; deterministic source normalization only.",
+        "native_output": "iPhone 13 Pro: consent and checking UI observed; deliberately wrong export rejected; first repair issued. Completion pending restored Xcode UI-test authorization.",
+        "production": "Not deployed; enrollment remains off."
+      },
+      "neighbours_covered": [
+        "duplicate completion and worker delivery",
+        "lost initial queue dispatch",
+        "stale or missing consent and unknown outcomes",
+        "same failure without a new corrective action",
+        "owner-first Retry locking under live phone polling"
+      ],
+      "neighbours_gap": [
+        "other render adapters",
+        "text-only repair",
+        "automatic repair while iOS suspends rendering"
+      ],
+      "follow_ups": [
+        "KRI-723 preparation migration and broader adapter promotion"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

@@ -287,6 +287,7 @@ struct DeviceRenderStatusCard: View {
 
     private var title: String {
         if presentation.outputVerificationPending { return "Checking your video" }
+        if let attempt = presentation.repairAttempt { return "Repairing your video (\(attempt) of 2)" }
         return switch presentation.phase {
         case .preparing: "Preparing on your iPhone"
         case .rendering: "Rendering on your iPhone"

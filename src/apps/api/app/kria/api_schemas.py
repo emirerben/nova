@@ -182,6 +182,8 @@ class TurnCancelled(BaseModel):
 
 
 class ApprovalDecisionBody(_StrictBody):
+    # Explicit original consent. Older clients grant no automatic repairs.
+    automatic_repair_attempts: Literal[0, 2] = 0
     expected_thread_revision: int = Field(ge=0)
     expected_draft_revision: int = Field(ge=0)
     expected_approval_fingerprint: str = Field(min_length=64, max_length=64)
@@ -221,6 +223,7 @@ class ApprovalDecisionOut(BaseModel):
 
 
 class ApprovalSnapshotOut(BaseModel):
+    automatic_repair_limit: Literal[0, 2] = 0
     approval_id: str
     turn_id: str
     draft_id: str | None = None

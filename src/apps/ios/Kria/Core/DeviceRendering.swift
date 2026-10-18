@@ -130,7 +130,22 @@ extension KriaAPI {
     }
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws {
         let result = try await request(path: "me/jobs/\(body.identity.jobID.uuidString)/device-render/complete", method: "POST", bodyData: RecipeJSON.encoder().encode(body), decode: DeviceExportCompletion.self)
-        guard result.status == "published" else { throw APIError.invalidResponse }
+        if result.status == "published" { return }
+        guard result.status == "checking" else { throw APIError.invalidResponse }
+        // The committed worker check survives app suspension or a lost HTTP
+        // response. Poll only lightweight status reads, never completion POSTs.
+        // A network failure leaves the local receipt resumable; no rerender.
+        for _ in 0..<450 {
+            try await Task.sleep(for: .seconds(2))
+            let status = try await deviceRender(jobID: body.identity.jobID, variantID: body.identity.variantID)
+            guard status.request.identity == body.identity else { throw APIError.conflict }
+            if status.phase == "published" {
+                guard status.publishedGeneration == body.attemptID.uuidString.lowercased() else { throw APIError.conflict }
+                return
+            }
+            guard status.phase == "syncing" else { throw APIError.conflict }
+        }
+        throw URLError(.timedOut)
     }
     func reportDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, reasonCode: String, detail: String) async throws -> DeviceRenderFailureAck {
         try await request(
@@ -355,6 +370,19 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
             urls[asset.id] = try await Task.detached {
                 try PlayableAudioFile.prepare(source: verified, fingerprint: fingerprint, directory: playableAudio)
             }.value
+        }
+        if let recovery = request.recovery {
+            guard recovery.action == "normalize_sources", (1...2).contains(recovery.attempt),
+                  !recovery.assetIDs.isEmpty, recovery.assetIDs.count <= 16,
+                  Set(recovery.assetIDs).count == recovery.assetIDs.count else { throw APIError.invalidResponse }
+            let directory = project.appending(path: "repair-sources/\(request.identity.recipeRevision)", directoryHint: .isDirectory)
+            for id in recovery.assetIDs {
+                guard let asset = manifest.assets.first(where: { $0.id == id }),
+                      case .original = asset.source, let original = urls[id] else { throw APIError.invalidResponse }
+                // `PortableAssetResolver` above has just checked the approved
+                // original fingerprint. A decoding copy changes no recipe field.
+                urls[id] = try await NativeVP9Source.shared.prepare(original, cacheDirectory: directory, forceNormalization: true)
+            }
         }
         return urls
     }

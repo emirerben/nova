@@ -36,6 +36,7 @@ struct DeviceRenderPresentation: Equatable, Sendable {
     /// Drives the live plan feed (KRI-443); never shown as a number.
     var exportProgress: Double?
     var outputVerificationPending: Bool = false
+    var repairAttempt: Int? = nil
 }
 
 /// Short label for the editor's top-of-preview device-render affordance
@@ -314,6 +315,7 @@ enum DeviceRenderButtonTitle {
 
     private func presentation(_ receipt: DeviceRenderReceipt, for key: DeviceRenderKey) -> DeviceRenderPresentation {
         var value = Self.presentation(receipt)
+        value.repairAttempt = [.preparing, .rendering].contains(receipt.phase) ? receipt.request.recovery?.attempt : nil
         if verificationKeys.contains(key) && receipt.phase != .synced {
             value.localFile = nil
             value.outputVerificationPending = [.localReady, .syncing].contains(receipt.phase)

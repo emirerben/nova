@@ -3,6 +3,15 @@
     "ApprovalDecisionBody": {
       "additionalProperties": false,
       "properties": {
+        "automatic_repair_attempts": {
+          "default": 0,
+          "enum": [
+            0,
+            2
+          ],
+          "title": "Automatic Repair Attempts",
+          "type": "integer"
+        },
         "expected_approval_fingerprint": {
           "maxLength": 64,
           "minLength": 64,
@@ -144,6 +153,15 @@
         "approval_id": {
           "title": "Approval Id",
           "type": "string"
+        },
+        "automatic_repair_limit": {
+          "default": 0,
+          "enum": [
+            0,
+            2
+          ],
+          "title": "Automatic Repair Limit",
+          "type": "integer"
         },
         "consequence_summary": {
           "title": "Consequence Summary",

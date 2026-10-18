@@ -681,6 +681,7 @@ struct DirectionStage: View {
     /// (older server, nothing choosable) hides the picker; the parent reads the pick
     /// when it sends the approval, so `decide` needs no extra argument.
     var renderShape: (offer: RenderShapeOffer, choice: Binding<RenderShapeChoice>)? = nil
+    var automaticRepairs: Binding<Bool>? = nil
     let isBusy: Bool
     var responseStartedAt: Date? = nil
     /// `decision` is "approve" or "deny". `cleanupChoice` is only meaningful on
@@ -741,6 +742,17 @@ struct DirectionStage: View {
             Text("Nothing renders until you approve this direction.")
                 .font(KriaFont.body(12))
                 .foregroundStyle(KriaColor.zinc)
+
+            if let automaticRepairs {
+                Toggle(isOn: automaticRepairs) {
+                    Text("Allow up to 2 automatic repairs")
+                        .font(KriaFont.body(14).weight(.medium))
+                    Text("If a video check fails, Kria can rebuild it with the same clips, text, timing and sound. Permission lasts 30 minutes.")
+                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+                }
+                .disabled(isBusy)
+                .accessibilityIdentifier("automatic-repair-consent")
+            }
 
             cleanupActions
 

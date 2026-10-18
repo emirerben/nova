@@ -15,6 +15,7 @@ from app.services.device_render import (
     export_source_digest,
     save_device_record,
 )
+from tests.routes.test_background_export_verification import checked_completion
 from tests.routes.test_device_render import (  # noqa: F401
     body,
     fixture,
@@ -71,9 +72,7 @@ def test_unchecked_export_cannot_publish_or_replace_last_good(
             "M", (), dict(size=reservation["size"], content_type="video/mp4", generation="g")
         )(),
     )
-    response = fixture.client.post(
-        f"/me/jobs/{fixture.job.id}/device-render/complete", json=body(fixture, attempt)
-    )
+    response = checked_completion(fixture, body(fixture, attempt))
     assert response.status_code == 422, response.text
     record = device_record(fixture.job, "first")
     assert record["status"]["phase"] == "needs_attention"
@@ -107,7 +106,7 @@ def test_published_fast_path_requires_its_own_successful_report(fixture, monkeyp
     assert response.status_code == 409, response.text
 
 
-@pytest.mark.parametrize("protocol,expected", [(11, 426), (12, 200)])
+@pytest.mark.parametrize("protocol,expected", [(11, 426), (12, 426), (13, 200)])
 def test_required_output_check_is_declared_and_old_share_ui_is_refused(
     fixture, monkeypatch, protocol, expected
 ):
@@ -153,9 +152,7 @@ def test_measured_output_with_stale_authority_never_keeps_a_checked_receipt(
         )
 
     monkeypatch.setattr(routes, "_verify_export", verify)
-    response = fixture.client.post(
-        f"/me/jobs/{fixture.job.id}/device-render/complete", json=body(fixture, attempt)
-    )
+    response = checked_completion(fixture, body(fixture, attempt))
     assert response.status_code == 422, response.text
     stored = device_record(fixture.job, "first")
     assert stored["attempts"][attempt]["actual_export_verification"]["status"] == "rejected"

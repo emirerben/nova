@@ -16,7 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from google.api_core.exceptions import NotFound
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -232,6 +232,36 @@ def _record(job: Job, identity: DeviceRenderIdentity) -> tuple[dict, DeviceRende
     return record, status
 
 
+async def _expire_repair_permission(
+    db: AsyncSession,
+    job: Job,
+    record: dict,
+    status: DeviceRenderStatus,
+) -> bool:
+    if status.request.recovery is None or status.phase in {"published", "needs_attention"}:
+        return False
+    raw = (record.get("repair_authority") or {}).get("expires_at")
+    try:
+        live = datetime.fromisoformat(raw) > datetime.now(UTC)
+    except (ValueError, TypeError):
+        live = False
+    if live:
+        return False
+    record["repair_stopped"] = "approval_expired"
+    save_device_record(job, status.request.identity.variant_id, record)
+    mark_device_failed(
+        job,
+        status.request.identity.variant_id,
+        reason_code="export_failed",
+        detail=(
+            "Automatic repair permission expired. Your approved edit is saved. "
+            "Review Retry approved edit to continue."
+        ),
+    )
+    await db.commit()
+    return True
+
+
 async def _runtime_retry_execution(db: AsyncSession, job: Job, record: dict) -> uuid.UUID | None:
     generation = record.get("base_generation")
     generation_targets = [CreatorAgentExecution.target_generation_id == generation]
@@ -266,11 +296,13 @@ async def get_device_render(
     except KeyError as exc:
         raise HTTPException(404, "Device recipe unavailable") from exc
     record, status = _record(job, status.request.identity)
+    if await _expire_repair_permission(db, job, record, status):
+        record, status = _record(job, status.request.identity)
     verification_required = "actual_export_policy" in record
     if verification_required:
         from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
 
-        if (current_client_protocol() or 0) < 12:
+        if (current_client_protocol() or 0) < 13:
             raise HTTPException(
                 426, detail={"code": "client_update_required", "feature": "export_verification"}
             )
@@ -991,18 +1023,38 @@ def _verify_export(
 @limiter.limit("5/minute")
 async def complete_device_export(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     job_id: uuid.UUID,
     body: DeviceExportCompleteBody,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DeviceExportCompleteOut:
-    user_id = user.id
+    result = await _complete_device_export(job_id, body, user.id, db)
+    if result.status == "checking":
+        response.status_code = 202
+        from app.tasks.export_verification import enqueue  # noqa: PLC0415
+
+        background_tasks.add_task(enqueue, str(job_id), str(user.id), body.model_dump(mode="json"))
+    return result
+
+
+async def _complete_device_export(
+    job_id: uuid.UUID,
+    body: DeviceExportCompleteBody,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+    *,
+    verification_token: str | None = None,
+) -> DeviceExportCompleteOut:
     job = await _owned_job(db, user_id, job_id)
     try:
         record, status = _record(job, body.identity)
     except _ContractRefusal as refusal:
         await _refuse_publication(db, job, refusal)
         raise
+    if await _expire_repair_permission(db, job, record, status):
+        raise HTTPException(409, "Automatic repair permission expired")
     attempt_id = str(body.attempt_id)
     if status.phase == "published":
         if record.get("published_attempt") != attempt_id:
@@ -1015,6 +1067,37 @@ async def complete_device_export(
     attempt = record["attempts"].get(attempt_id)
     if attempt is None:
         raise HTTPException(409, "Export was not reserved")
+    if "actual_export_policy" in record:
+        from app.tasks.export_verification import claim_valid  # noqa: PLC0415
+
+        if verification_token is None:
+            from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+            if (current_client_protocol() or 0) < 13:
+                raise HTTPException(
+                    426,
+                    detail={"code": "client_update_required", "feature": "background_verification"},
+                )
+            active = record.get("verification_attempt")
+            if active and active != attempt_id:
+                raise HTTPException(409, "Another export is being checked")
+            if "verification_task" not in attempt:
+                attempt["verification_task"] = {
+                    "state": "queued",
+                    "runs": 0,
+                    "queued_at": datetime.now(UTC).isoformat(),
+                }
+                record["verification_attempt"] = attempt_id
+                save_device_record(job, body.identity.variant_id, record)
+                from app.kria.automatic_export_repair import bind_repair_grant  # noqa: PLC0415
+
+                await bind_repair_grant(db, job, body.identity.variant_id)
+                await db.commit()
+            return DeviceExportCompleteOut(status="checking", identity=body.identity)
+        if record.get("verification_attempt") != attempt_id or not claim_valid(
+            record, attempt_id, verification_token
+        ):
+            raise HTTPException(409, "Verification claim changed")
     verification_report: dict | None = {} if "actual_export_policy" in record else None
     policy = record.get("actual_export_policy")
     bindings = (
@@ -1096,6 +1179,14 @@ async def complete_device_export(
         return DeviceExportCompleteOut(identity=body.identity)
     if status.phase != "syncing":
         raise HTTPException(409, "Render no longer accepts completion")
+    if verification_token is not None:
+        if await _expire_repair_permission(db, job, record, status):
+            raise HTTPException(409, "Automatic repair permission expired")
+        from app.tasks.export_verification import claim_valid  # noqa: PLC0415
+
+        if not claim_valid(record, attempt_id, verification_token):
+            raise HTTPException(409, "Verification claim changed")
+        record["attempts"][attempt_id]["verification_task"].update(state="done")
     if verification_report is not None:
         # Fence the source/policy snapshot again after downloading and decoding.
         if (
@@ -1109,6 +1200,16 @@ async def complete_device_export(
             source_receipts_digest=sources_digest,
         )
         record["attempts"][attempt_id]["actual_export_verification"] = verification_report
+        if record.get("repair_history"):
+            row = record["repair_history"][-1]
+            row["outcome"] = verification_report.get("status", "partial")
+            row["completed_at"] = datetime.now(UTC).isoformat()
+            row["elapsed_s"] = (
+                datetime.now(UTC) - datetime.fromisoformat(row["started_at"])
+            ).total_seconds()
+            row["result"] = copy.deepcopy(verification_report)
+            row["model_cost_usd"] = 0
+            row["infrastructure_cost_usd"] = None
         if not checked_export_report(record, status, attempt_id):
             if verification_report.get("status") == "checked":
                 verification_report["status"] = "rejected"
@@ -1118,6 +1219,13 @@ async def complete_device_export(
             else:
                 verification_report["status"] = verification_report.get("status") or "partial"
             save_device_record(job, body.identity.variant_id, record)
+            from app.kria.automatic_export_repair import repair_failed_export  # noqa: PLC0415
+
+            if await repair_failed_export(
+                db, job, body.identity.variant_id, attempt_id, verification_report
+            ):
+                await db.commit()
+                return DeviceExportCompleteOut(status="checking", identity=body.identity)
             failed = next(
                 (
                     row.get("kind")

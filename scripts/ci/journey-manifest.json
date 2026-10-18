@@ -724,6 +724,29 @@
         "src/apps/api/tests/routes/test_phone_manual_edits_win.py",
         "src/apps/api/tests/services/test_phone_editor_render_contract.py"
       ]
+    },
+    {
+      "id": "kri-726-background-recovery",
+      "needs_native": false,
+      "api_tests": "tests/routes/test_background_export_verification.py tests/routes/test_actual_export_publication.py tests/integration/test_background_export_completion.py tests/integration/test_actual_export_completion.py tests/kria/test_automatic_export_repair.py tests/kria/test_render_retry_lock_order_postgres.py",
+      "paths": [
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/api/app/tasks/export_verification.py",
+        "src/apps/api/app/kria/automatic_export_repair.py",
+        "src/apps/api/app/kria/render_retry.py",
+        "src/apps/api/app/kria/device_render.py",
+        "src/apps/api/app/kria/api_schemas.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/ios/Kria/Core/DeviceRendering.swift",
+        "src/apps/ios/Kria/Core/DeviceRenderSessions.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/NativeVP9Source.swift",
+        "src/apps/api/tests/routes/test_background_export_verification.py",
+        "src/apps/api/tests/routes/test_actual_export_publication.py",
+        "src/apps/api/tests/integration/test_background_export_completion.py",
+        "src/apps/api/tests/integration/test_actual_export_completion.py",
+        "src/apps/api/tests/kria/test_automatic_export_repair.py",
+        "src/apps/api/tests/kria/test_render_retry_lock_order_postgres.py"
+      ]
     }
   ]
 }

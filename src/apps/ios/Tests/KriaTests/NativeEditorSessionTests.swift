@@ -6024,7 +6024,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { throw APIError.unsupported }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws { throw APIError.unsupported }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws { throw APIError.unsupported }
     var playbackURLResult: URL?
     /// Served in order before `playbackURLResult` (a link that fails, then one that plays).
     var playbackURLQueue: [URL] = []
