@@ -60,3 +60,5 @@ schema, holdout, capture and live comparison work. Before implementation:
 - Bounded projection changes valid values: declare the eight-level dynamic-JSON restriction explicitly; original local schema remains unchanged.
 - Branch tags or maps change during projection: shallow values and all existing fixtures must retain the original codec and satisfy the provider projection.
 - Sol/Gemini lose recursive support: their schemas continue accepting deeper values.
+
+- Known full Sonnet grammar rejection: reject native profile locally; only an explicitly selected JSON profile can run, with all earlier rejections retained. No automatic format fallback.

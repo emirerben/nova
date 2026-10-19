@@ -265,3 +265,12 @@ def test_production_schema_profile_is_opt_in_and_versioned(monkeypatch):
     assert configured.spec.response_schema
     assert configured.spec.prompt_version.endswith("+typed-presence-v2")
     assert MainCreatorAgent.spec.response_schema is None
+
+
+def test_known_rejected_sonnet_native_profile_requires_explicit_json():
+    from app.services.creator_model_comparison import Arm, build_agent
+
+    for name in ("main_creator", "edit_copilot"):
+        with pytest.raises(ValueError, match="compiled grammar"):
+            build_agent(name, Arm("S", "claude-sonnet-5-5", "high", "native"), None)
+        assert build_agent(name, Arm("S-json", "claude-sonnet-5-5", "high", "json"), None)

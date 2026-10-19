@@ -117,6 +117,11 @@ def schema_audit(schema: dict, model: str) -> dict:
 def build_agent(name, arm: Arm, client):
     if arm.model not in MODELS or arm.output_mode not in ("json", "native"):
         raise ValueError("unsupported model or output mode")
+    if arm.output_mode == "native" and arm.model == "claude-sonnet-5-5":
+        raise ValueError(
+            "Sonnet rejected the full Main Creator/Copilot compiled grammar; "
+            "select an explicit JSON profile until a capability-scoped schema is verified"
+        )
     efforts = (
         ("low", "medium", "high")
         if arm.model.startswith("gemini")
