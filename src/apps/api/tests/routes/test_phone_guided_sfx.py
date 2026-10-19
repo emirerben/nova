@@ -17,7 +17,7 @@ from app.services.device_render import device_status
 from app.services.kria_editor_ops import build_editor_snapshot
 from app.services.phone_subtitled_editor import PHONE_SUBTITLED_EDITOR_LANES_FIELD  # noqa: F401
 from tests.pipeline.test_phone_subtitled_plan import _sfx_asset
-from tests.routes.test_phone_guided_timeline_commit import _guided_phone_job
+from tests.routes._editor_save_matrix import guided_phone_job as _guided_phone_job
 
 _SFX_VERIFIED = ["soundEffects", "audioMix"]
 

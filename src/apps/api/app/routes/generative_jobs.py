@@ -11482,6 +11482,15 @@ def _prepare_editor_commit(
         or guided_timeline_commit
         or payload._lyric_line_suppressions is not None
     )
+    if has_render_section and variant.get("resolved_archetype") == "slides":
+        # KRI-750: the capability map closes every lane for a slide post, but Save is
+        # deliberately not behind `require_editable_variant`. Without this a stale client or a
+        # chat draft re-rendered the montage renderer over the variant, destroying the post
+        # (plans/024 risk #2). Slides are edited through PUT .../variants/{id}/slides.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_SLIDE_POST_EDIT_ERROR,
+        )
     new_gen = uuid.uuid4().hex if has_render_section else None
     base_affecting_commit = (
         resolved_slots is not None
