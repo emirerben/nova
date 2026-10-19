@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.45.0] - 2026-10-19
+
+### Changed
+- chore: add .mailmap so emirerben and Emir Erben count as one author (#1678) <!-- release-pr: 1678 -->
+
 ## [0.80.44.0] - 2026-10-19
 
 ### Changed
