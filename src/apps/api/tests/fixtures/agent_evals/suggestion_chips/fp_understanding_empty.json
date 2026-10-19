@@ -1,0 +1,48 @@
+{
+ "name": "fp_understanding_empty",
+ "description": "Analysis settled empty: default edit only, no retry.",
+ "tags": [
+  "empty"
+ ],
+ "context": {
+  "thread_id": "thread-fp_understanding_empty",
+  "state": "first_prompt",
+  "language": "en",
+  "client_protocol": 2,
+  "media_digest": "digest-fp_understanding_empty",
+  "understanding": "empty",
+  "runtime_version": 2,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-2",
+    "ordinal": 2,
+    "kind": "video",
+    "subject": "",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": []
+   }
+  ]
+ },
+ "expect": {
+  "understanding": "empty",
+  "retry_after_s": null,
+  "kinds": [
+   "default_edit"
+  ]
+ }
+}

@@ -29,6 +29,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var textBend: Bool? = nil
     /// KRI-742: the chat composers show a mic button (talk instead of type). Missing = off (no mic).
     var voiceDictation: Bool? = nil
+    /// KRI-756: the server offers footage-aware suggestion chips to this account. Missing = off (the old fixed chips stay).
+    var suggestionChips: Bool? = nil
     /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
     var clipSelectionQuestions: Bool? = nil
     /// Server sends `song_order_question` payloads and accepts `song_order` on a turn (KRI-374). Nil/false = no order card.
@@ -66,6 +68,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostStickersEnabled: Bool { slidePostStickers == true }
     var textBendEnabled: Bool { textBend == true }
     var voiceDictationEnabled: Bool { voiceDictation == true }
+    var suggestionChipsEnabled: Bool { suggestionChips == true }
     var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
     var songOrderQuestionsEnabled: Bool { songOrderQuestions == true }
     /// Only meaningful together with `songOrderQuestionsEnabled`.
@@ -98,6 +101,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case slidePostStickers = "slide_post_stickers"
         case textBend = "text_bend"
         case voiceDictation = "voice_dictation"
+        case suggestionChips = "suggestion_chips"
         case clipSelectionQuestions = "clip_selection_questions"
         case songOrderQuestions = "song_order_questions"
         case songOrderPlacements = "song_order_placements"
@@ -132,6 +136,7 @@ extension CreationCapabilities {
         slidePostStickers = try container.decodeIfPresent(Bool.self, forKey: .slidePostStickers)
         textBend = try container.decodeIfPresent(Bool.self, forKey: .textBend)
         voiceDictation = try container.decodeIfPresent(Bool.self, forKey: .voiceDictation)
+        suggestionChips = try container.decodeIfPresent(Bool.self, forKey: .suggestionChips)
         clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
         songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)
         songOrderPlacements = try container.decodeIfPresent(Bool.self, forKey: .songOrderPlacements)

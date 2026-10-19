@@ -1,0 +1,58 @@
+{
+ "name": "rd_single_slot",
+ "description": "One slot: no boundary to put a transition on.",
+ "tags": [
+  "transition"
+ ],
+ "context": {
+  "thread_id": "thread-rd_single_slot",
+  "state": "ready",
+  "language": "en",
+  "client_protocol": 2,
+  "media_digest": "digest-rd_single_slot",
+  "understanding": "n/a",
+  "runtime_version": 2,
+  "render_generation_id": "gen-1",
+  "variant_id": "v1",
+  "resolved_archetype": null,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "pouring matcha into a glass",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [
+     {
+      "start_s": 1.0,
+      "end_s": 2.5,
+      "label": "the pour"
+     }
+    ]
+   }
+  ],
+  "snapshot_preset": "plain_montage",
+  "snapshot": {
+   "slots": [
+    {
+     "slot_id": "slot-0",
+     "media_id": "clip-1",
+     "output_start_s": 0.0,
+     "output_end_s": 3.0,
+     "duration_s": 3.0,
+     "transition_after": "cut"
+    }
+   ],
+   "total_duration_s": 3.0
+  }
+ },
+ "expect": {
+  "kinds_exclude": [
+   "transition"
+  ]
+ }
+}

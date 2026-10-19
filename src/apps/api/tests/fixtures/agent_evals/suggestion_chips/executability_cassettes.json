@@ -1,0 +1,359 @@
+{
+ "_comment": "Hand-authored (NOT captured from a live model) reference planner answers to each chip message. Replayed through replay_v2_strategy / replay_v2_editor: proves the COMPILE path only. A live proof that today's prompts produce these answers is a paid TODO (tests/evals/README.md). If a chip's message changes, the recorded answer is stale and test_cassette_message_matches_engine fails.",
+ "cassettes": [
+  {
+   "id": "default_edit-first_prompt",
+   "kind": "default_edit",
+   "state": "first_prompt",
+   "fixture": "fp_silent_broll_music",
+   "engine": "strategy",
+   "message": "Suggest an edit.",
+   "model_output": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "archetype": "montage",
+      "audio_strategy": "licensed_music",
+      "render_program": "guided",
+      "story_structure": [],
+      "caption_style": "auto",
+      "clip_intents": [],
+      "pacing": "balanced",
+      "target_duration_s": 24,
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Recorded reference answer for the chip message."
+     },
+     "summary": "A first cut of your clips."
+    }
+   },
+   "expect": {
+    "action_kind": "propose_strategy",
+    "checked": "ok"
+   }
+  },
+  {
+   "id": "hook-first_prompt",
+   "kind": "hook",
+   "state": "first_prompt",
+   "fixture": "fp_silent_broll_music",
+   "engine": "strategy",
+   "message": "Add a hook that matches the video",
+   "model_output": {
+    "action": {
+     "kind": "ask_user",
+     "question": "How about Sunrise miles as your opening hook?",
+     "reason_code": "hook_candidate",
+     "options": []
+    },
+    "creative_decision": {
+     "target": "opening_title",
+     "status": "candidate",
+     "proposed_text": "Sunrise miles",
+     "language": "en"
+    }
+   },
+   "expect": {
+    "action_kind": "ask_user",
+    "reason_code": "hook_candidate",
+    "decision_status": "candidate",
+    "decision_target": "opening_title"
+   },
+   "note": "reaches wording approval with a candidate; it does NOT execute an op until the creator approves the wording"
+  },
+  {
+   "id": "hook-ready",
+   "kind": "hook",
+   "state": "ready",
+   "fixture": "rd_plain_montage",
+   "engine": "editor",
+   "message": "Add a hook that matches the video",
+   "model_output": {
+    "intent": "edit",
+    "ops": [
+     {
+      "op": "set_title",
+      "title": "Sunrise miles"
+     }
+    ],
+    "confidence": 0.95,
+    "reply": "Added an opening hook.",
+    "suggestions": [],
+    "needs_clarification": false
+   },
+   "expect": {
+    "ops": [
+     "set_title"
+    ],
+    "changes": null
+   },
+   "note": "ready taps go to the editor copilot (set_title on the title family), not the Main Creator strategy path"
+  },
+  {
+   "id": "captions-first_prompt",
+   "kind": "captions",
+   "state": "first_prompt",
+   "fixture": "fp_speech_and_broll",
+   "engine": "strategy",
+   "message": "Add captions",
+   "model_output": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "archetype": "montage",
+      "audio_strategy": "licensed_music",
+      "render_program": "guided",
+      "story_structure": [],
+      "caption_style": "clean",
+      "clip_intents": [],
+      "pacing": "balanced",
+      "target_duration_s": 24,
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Recorded reference answer for the chip message."
+     },
+     "summary": "A first cut of your clips."
+    }
+   },
+   "expect": {
+    "action_kind": "propose_strategy",
+    "caption_style": "clean"
+   }
+  },
+  {
+   "id": "captions-ready",
+   "kind": "captions",
+   "state": "ready",
+   "fixture": "rd_captions_off_with_cues",
+   "engine": "editor",
+   "message": "Add captions",
+   "model_output": {
+    "intent": "edit",
+    "ops": [
+     {
+      "op": "set_caption_meta",
+      "patch": {
+       "enabled": true
+      }
+     }
+    ],
+    "confidence": 0.95,
+    "reply": "Turned captions on.",
+    "suggestions": [],
+    "needs_clarification": false
+   },
+   "expect": {
+    "ops": [
+     "set_caption_meta"
+    ],
+    "changes": [
+     "Set caption meta"
+    ]
+   }
+  },
+  {
+   "id": "sfx-first_prompt",
+   "kind": "sfx",
+   "state": "first_prompt",
+   "fixture": "fp_silent_broll_music",
+   "engine": "strategy",
+   "message": "Add sound effects",
+   "model_output": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "archetype": "montage",
+      "audio_strategy": "licensed_music",
+      "render_program": "guided",
+      "story_structure": [],
+      "caption_style": "auto",
+      "clip_intents": [],
+      "pacing": "balanced",
+      "target_duration_s": 24,
+      "selected_media_ids": [],
+      "optional_treatments": [
+       "sfx"
+      ],
+      "rationale": "Recorded reference answer for the chip message."
+     },
+     "summary": "A first cut of your clips."
+    }
+   },
+   "expect": {
+    "action_kind": "propose_strategy",
+    "treatment": "sfx"
+   }
+  },
+  {
+   "id": "sfx-ready",
+   "kind": "sfx",
+   "state": "ready",
+   "fixture": "rd_plain_montage",
+   "engine": "editor",
+   "message": "Add sound effects",
+   "model_output": {
+    "intent": "edit",
+    "ops": [
+     {
+      "op": "add_sfx",
+      "effect_id": "whoosh_01",
+      "at_s": 1.0,
+      "gain": 1.0
+     }
+    ],
+    "confidence": 0.95,
+    "reply": "Added a whoosh.",
+    "suggestions": [],
+    "needs_clarification": false
+   },
+   "expect": {
+    "ops": [
+     "add_sfx"
+    ],
+    "changes": [
+     "Add sfx"
+    ]
+   }
+  },
+  {
+   "id": "transition-first_prompt",
+   "kind": "transition",
+   "state": "first_prompt",
+   "fixture": "fp_silent_broll_music",
+   "engine": "strategy",
+   "message": "Add transitions between the clips",
+   "model_output": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "archetype": "montage",
+      "audio_strategy": "licensed_music",
+      "render_program": "guided",
+      "story_structure": [],
+      "caption_style": "auto",
+      "clip_intents": [],
+      "pacing": "balanced",
+      "target_duration_s": 24,
+      "selected_media_ids": [],
+      "optional_treatments": [
+       "transitions"
+      ],
+      "rationale": "Recorded reference answer for the chip message."
+     },
+     "summary": "A first cut of your clips."
+    }
+   },
+   "expect": {
+    "action_kind": "propose_strategy",
+    "treatment": "transitions"
+   }
+  },
+  {
+   "id": "transition-ready",
+   "kind": "transition",
+   "state": "ready",
+   "fixture": "rd_plain_montage",
+   "engine": "editor",
+   "message": "Add transitions between the clips",
+   "model_output": {
+    "intent": "edit",
+    "ops": [
+     {
+      "op": "set_transition",
+      "boundary_index": 0,
+      "transition": "crossfade"
+     },
+     {
+      "op": "set_transition",
+      "boundary_index": 1,
+      "transition": "crossfade"
+     }
+    ],
+    "confidence": 0.95,
+    "reply": "Added crossfades.",
+    "suggestions": [],
+    "needs_clarification": false
+   },
+   "expect": {
+    "ops": [
+     "set_transition",
+     "set_transition"
+    ],
+    "changes": [
+     "Set transition"
+    ]
+   }
+  },
+  {
+   "id": "music-ready",
+   "kind": "music",
+   "state": "ready",
+   "fixture": "rd_music_loud",
+   "engine": "editor",
+   "message": "Turn the music down",
+   "model_output": {
+    "intent": "edit",
+    "ops": [
+     {
+      "op": "set_mix",
+      "music_level": 0.35
+     }
+    ],
+    "confidence": 0.95,
+    "reply": "Lowered the music.",
+    "suggestions": [],
+    "needs_clarification": false
+   },
+   "expect": {
+    "ops": [
+     "set_mix"
+    ],
+    "changes": [
+     "Set mix"
+    ]
+   }
+  },
+  {
+   "id": "title_animation-ready",
+   "kind": "title_animation",
+   "state": "ready",
+   "fixture": "rd_title_present_guided_story",
+   "engine": "editor",
+   "message": "Animate the title",
+   "model_output": {
+    "intent": "edit",
+    "ops": [
+     {
+      "op": "patch_text",
+      "selector": {
+       "group": "title"
+      },
+      "patch": {
+       "animation_phases": {
+        "entrance": "pop"
+       }
+      }
+     }
+    ],
+    "confidence": 0.95,
+    "reply": "The title now pops in.",
+    "suggestions": [],
+    "needs_clarification": false
+   },
+   "expect": {
+    "ops": [
+     "patch_text"
+    ],
+    "changes": null
+   }
+  }
+ ]
+}

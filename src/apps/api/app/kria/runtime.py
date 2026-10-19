@@ -99,6 +99,7 @@ from app.services.speech_cleanup_decision import (
     resolve_next_audio_mode,
     reuse_recorded_cleanup_decision,
 )
+from app.services.suggestion_chips import suggestion_tap_payload
 
 log = structlog.get_logger()
 
@@ -121,7 +122,8 @@ def request_digest(body: SubmitTurnBody) -> str:
     # `clip_selection` stays in the digest (a different tap set under one id is a
     # different request) but is excluded when absent so pre-existing digests hold.
     excluded = (
-        {"editor_state"}
+        # KRI-756: which chip a message came from is telemetry, never part of the request.
+        {"editor_state", "suggestion"}
         | ({"clip_selection"} if body.clip_selection is None else set())
         | ({"choice_selection"} if body.choice_selection is None else set())
         | ({"song_order"} if body.song_order is None else set())  # KRI-374: additive digest
@@ -956,6 +958,16 @@ async def submit_turn(
                 }
                 if choice_selection is not None
                 else {}
+            ),
+            # KRI-756: {"suggestion": {...}} when the message equals an offered chip. Not
+            # part of `request_digest`; flag off => {} (existing payloads byte-identical).
+            **(
+                await suggestion_tap_payload(
+                    db,
+                    thread,
+                    body.message,
+                    suggestion=body.suggestion.model_dump() if body.suggestion else None,
+                )
             ),
         },
         client_event_id=body.client_event_id,
