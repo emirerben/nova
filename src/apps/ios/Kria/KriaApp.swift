@@ -48,6 +48,13 @@ import SwiftData
             _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
             return
         }
+        if ProcessInfo.processInfo.arguments.contains("-camera-roll-benchmark") {
+            let container = Self.fallbackContainer()
+            self.container = container
+            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore()))
+            _model = StateObject(wrappedValue: AppModel(api: ChatUITestTransport.api(), cache: CacheRepository(context: container.mainContext)))
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
             let container = PerfFixture.container()
             self.container = container
@@ -122,6 +129,7 @@ struct RootView: View {
                     .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
                     .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
             }
+            else if ProcessInfo.processInfo.arguments.contains("-camera-roll-benchmark") { CameraRollBenchmarkView() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-saved-uploads") { SavedUploadsUITestHost() }
             else if ProcessInfo.processInfo.arguments.contains("-device-effects") { DeviceEffectsView() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { BrandPreviewHost() }

@@ -134,6 +134,35 @@ the existing cost ledger with duration pricing and no hidden SDK retries. Cache
 hits make no provider call. A live lease remains processing; failed analysis is
 retryable. Creative interpretation, corrections and take alignment stay per post.
 
+## Camera-roll collection foundation (KRI-729–732)
+
+The default-off collection API reuses these catalogue assets and immutable sources:
+`PUT/GET /me/media-collections/{id}`, `POST /{id}/index`,
+`GET /{id}/moments`, and `GET /{id}/sources/{source_id}/transcript` (all under
+`/me/media-collections`). Both library and collection-proposal flags plus native
+authentication are required. No production picker/recommendation capability is
+advertised by this foundation.
+
+Writes require an expected revision and at most 50 owned asset/source pairs;
+they neither upload nor analyse media. Indexing consumes compatible existing
+facts in at most 32-source passes. Text search and transcript reads return exact
+source-second windows, cache provenance and uncertainty, with source-generation
+availability checks. Partial speech/index coverage is explicit. Images have no
+source-time interval and are reported as untimed, rather than given invented
+video timing. Collection membership and derived search rows do not pin cloud
+copies or change retention.
+
+The native metadata cache retains Photos identifiers only on device, beneath the
+existing account-scoped original-store root; it does not change original files
+or render bindings. Its state/correction persistence is not yet connected to the
+production picker. The DEBUG-only `-camera-roll-benchmark` screen measures an
+explicit Photos selection using no media/provider requests.
+
+This is a text-retrieval baseline, not semantic retrieval, targeted inspection,
+story drafting or release proof. Keep discovery off until the execution
+prerequisites and native/pilot gates pass. See the measured evidence, exact
+commands and remaining work in the [implementation status](../reviews/camera-roll-recommendations/status.md).
+
 ## Retention and erasure
 
 Archive hides future selection and preserves editable consumers. Catalogue

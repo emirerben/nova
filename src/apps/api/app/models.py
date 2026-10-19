@@ -2860,6 +2860,8 @@ class MediaCollection(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    selection_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
@@ -2867,6 +2869,7 @@ class MediaCollection(Base):
 
     __table_args__ = (
         UniqueConstraint("id", "user_id", name="uq_media_collections_id_user"),
+        CheckConstraint("revision >= 0", name="ck_media_collections_revision"),
         Index("idx_media_collections_user_updated", "user_id", "updated_at"),
     )
 
@@ -2894,6 +2897,42 @@ class MediaCollectionMember(Base):
             name="fk_media_collection_members_asset_owner",
             ondelete="CASCADE",
         ),
+    )
+
+
+class MediaSourceMoment(Base):
+    """Derived search index, never an independent library or source authority."""
+
+    __tablename__ = "media_source_moments"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    fact_version: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    start_s: Mapped[float] = mapped_column(Float, nullable=False)
+    end_s: Mapped[float] = mapped_column(Float, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    uncertain: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["source_id", "user_id", "asset_id"],
+            [
+                "media_asset_sources.id",
+                "media_asset_sources.user_id",
+                "media_asset_sources.asset_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_media_source_moments_owned_source",
+        ),
+        CheckConstraint(
+            "start_s >= 0 AND end_s > start_s", name="ck_media_source_moments_interval"
+        ),
+        CheckConstraint("kind IN ('visual','speech')", name="ck_media_source_moments_kind"),
+        Index("idx_media_source_moments_source_version", "user_id", "source_id", "fact_version"),
     )
 
 
