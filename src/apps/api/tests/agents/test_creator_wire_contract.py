@@ -87,3 +87,27 @@ def test_explicit_null_and_omission_remain_distinct():
     contract = WireContract(source)
     for value in ({}, {"keep_or_clear": None}, {"keep_or_clear": "creator copy"}):
         assert contract.decode(contract.encode(value)) == value
+
+
+def test_anthropic_projection_has_no_reference_cycles_and_declares_depth_bound():
+    from jsonschema import Draft202012Validator
+
+    from app.agents._creator_wire import _json_defs, obj
+
+    source = obj({"data": {"$ref": "#/$defs/NonNullJSONValue"}})
+    source["$defs"] = _json_defs()
+    contract = WireContract(source)
+    shallow = contract.encode({"data": {"effect": {"amount": 0.5}}})
+    deep = "value"
+    for _ in range(20):
+        deep = {"nested": deep}
+    encoded_deep = contract.encode({"data": deep})
+    anthro = contract.provider_schema("claude-sonnet-5-5")
+    assert schema_audit(anthro, "claude-sonnet-5-5")["compatible"]
+    assert Draft202012Validator(anthro).is_valid(shallow)
+    assert not Draft202012Validator(anthro).is_valid(encoded_deep)
+    assert Draft202012Validator(contract.provider_schema("gpt-6.1-sol")).is_valid(encoded_deep)
+    recursive = contract.provider_schema("gpt-6.1-sol")
+    audit = schema_audit(recursive, "claude-sonnet-5-5")
+    assert not audit["compatible"]
+    assert any("circular_reference" in v for v in audit["blockers"])

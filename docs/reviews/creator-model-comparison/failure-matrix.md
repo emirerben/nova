@@ -53,3 +53,10 @@ schema, holdout, capture and live comparison work. Before implementation:
 - An ordinary unknown without this durable reconciliation still stops the envelope.
 - A later real receipt may settle actual usage; a conservative hold is never
   reported as metered spend or successful inference.
+
+## Anthropic circular-schema correction, fixed before implementation
+
+- Provider rejects recursive dynamic JSON: detect reference cycles offline; preserve known rejections.
+- Bounded projection changes valid values: declare the eight-level dynamic-JSON restriction explicitly; original local schema remains unchanged.
+- Branch tags or maps change during projection: shallow values and all existing fixtures must retain the original codec and satisfy the provider projection.
+- Sol/Gemini lose recursive support: their schemas continue accepting deeper values.

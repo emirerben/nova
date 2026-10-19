@@ -16,6 +16,8 @@ from functools import cached_property
 from jsonschema import Draft202012Validator
 
 VERSION = "typed-presence-v2"
+ANTHROPIC_JSON_DEPTH = 8
+ANTHROPIC_PROJECTION_VERSION = "claude-acyclic-json-8-v1"
 INSTRUCTION = """\n\nOUTPUT TRANSPORT typed-presence-v2:
 Return the typed JSON object in the supplied schema.
 This changes serialization only; all creative and safety instructions above still apply.
@@ -559,6 +561,31 @@ class WireContract:
 
     def provider_schema(self, model):
         schema = copy.deepcopy(self.local_schema)
+        if model.startswith("claude") and "JSONValue" in self._defs:
+            # Anthropic rejects recursive grammars. Preserve typed branch tags
+            # and map entries, but explicitly bound only dynamic JSON containers.
+            # Local/Sol/Gemini contracts retain their recursive value support.
+            definitions = schema["$defs"]
+
+            def rebind(node, target):
+                if isinstance(node, dict):
+                    return {
+                        k: target if k == "$ref" and v == "#/$defs/JSONValue" else rebind(v, target)
+                        for k, v in node.items()
+                    }
+                if isinstance(node, list):
+                    return [rebind(v, target) for v in node]
+                return node
+
+            for depth in range(ANTHROPIC_JSON_DEPTH):
+                source = copy.deepcopy(self._defs["JSONValue"])
+                if depth == 0:
+                    source["anyOf"] = source["anyOf"][:4]  # original scalar branch indexes
+                else:
+                    source = rebind(source, f"#/$defs/JSONValueLevel{depth - 1}")
+                definitions[f"JSONValueLevel{depth}"] = self._transform(source)
+            definitions["JSONValue"] = {"$ref": f"#/$defs/JSONValueLevel{ANTHROPIC_JSON_DEPTH - 1}"}
+            definitions["NonNullJSONValue"] = self._transform(self._defs["NonNullJSONValue"])
 
         # Keep bounds enforced locally. Anthropic does not support all numeric /
         # string limits. Every projection is explicit and versioned, never hidden.

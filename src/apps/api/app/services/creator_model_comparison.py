@@ -72,6 +72,34 @@ def schema_audit(schema: dict, model: str) -> dict:
 
     walk(schema)
     if model == "claude-sonnet-5-5":
+        definitions = schema.get("$defs", {})
+
+        def references(node):
+            if isinstance(node, dict):
+                if "$ref" in node:
+                    yield node["$ref"].removeprefix("#/$defs/")
+                for child in node.values():
+                    yield from references(child)
+            elif isinstance(node, list):
+                for child in node:
+                    yield from references(child)
+
+        visited = set()
+
+        def acyclic(name, stack):
+            if name in stack:
+                return False
+            if name in visited:
+                return True
+            if not all(
+                acyclic(child, stack | {name}) for child in references(definitions.get(name))
+            ):
+                return False
+            visited.add(name)
+            return True
+
+        if not all(acyclic(name, set()) for name in definitions):
+            blockers.append("circular_reference_unsupported")
         if optional > 24:
             blockers.append(f"optional_parameters:{optional}>24")
         if unions > 16:
@@ -100,6 +128,7 @@ def build_agent(name, arm: Arm, client):
     schema = None
     if arm.output_mode == "native":
         from app.agents._creator_wire import (
+            ANTHROPIC_PROJECTION_VERSION,
             INSTRUCTION,
             VERSION,
             WireContract,
@@ -138,6 +167,11 @@ def build_agent(name, arm: Arm, client):
 
         agent = NativeAgent(client)
         agent.spec = replace(agent.spec, prompt_version=agent.spec.prompt_version + "+" + VERSION)
+        if arm.model.startswith("claude"):
+            agent.spec = replace(
+                agent.spec,
+                prompt_version=agent.spec.prompt_version + "+" + ANTHROPIC_PROJECTION_VERSION,
+            )
     if arm.legacy_retries and arm.model != "gemini-3.1-pro-preview":
         raise ValueError("legacy retries belong only to the current Gemini arm")
     if arm.legacy_retries and arm.model != agent.spec.model:
