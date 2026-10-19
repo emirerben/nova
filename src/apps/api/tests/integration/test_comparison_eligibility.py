@@ -63,6 +63,17 @@ async def test_comparison_read_boundary_revocation_holdout_and_owner(monkeypatch
             ).json()["eligible"]
             monkeypatch.setattr(settings, "request_following_holdout_thread_ids", [str(thread)])
             assert not (await client.get(url, params=params)).json()["eligible"]
+            monkeypatch.setattr(settings, "creator_comparison_holdout_token", "sealed-test-token")
+            sealed_url = "/admin/request-following/comparison-holdout-eligibility"
+            assert (await client.get(sealed_url, params=params)).status_code == 403
+            held_response = await client.get(
+                sealed_url,
+                params=params,
+                headers={"X-Comparison-Evaluator-Token": "sealed-test-token"},
+            )
+            assert held_response.status_code == 200 and held_response.json()["eligible"]
+            # The ordinary body and eligibility readers never open the holdout.
+            assert not (await client.get(url, params=params)).json()["eligible"]
             monkeypatch.setattr(settings, "request_following_holdout_thread_ids", [])
             async with AsyncSessionLocal() as db:
                 row = await db.get(InternalAccountGrant, grant)

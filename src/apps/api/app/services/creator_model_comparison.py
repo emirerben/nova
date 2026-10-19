@@ -10,6 +10,7 @@ import copy
 import json
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
+from pathlib import Path
 
 from app.services.request_following_cases import digest
 
@@ -98,12 +99,45 @@ def build_agent(name, arm: Arm, client):
     agent = agent_class(name)(client)
     schema = None
     if arm.output_mode == "native":
-        schema = agent.Output.model_json_schema()
+        from app.agents._creator_wire import (
+            INSTRUCTION,
+            VERSION,
+            WireContract,
+            copilot_schema,
+            main_creator_schema,
+        )
+        from app.agents._runtime import SchemaError
+
+        contract = WireContract(
+            main_creator_schema() if name == "main_creator" else copilot_schema()
+        )
+        schema = contract.provider_schema(arm.model)
         audit = schema_audit(schema, arm.model)
-        if not audit["compatible"] or name == "edit_copilot":
-            # Parsed Copilot output includes server-derived fields and untyped
-            # ops. It is deliberately not advertised as a model wire contract.
-            raise ValueError("native wire contract unavailable; inspect schema audit")
+        if not audit["compatible"]:
+            raise ValueError("native schema incompatible: " + ",".join(audit["blockers"]))
+        base = type(agent)
+
+        class NativeAgent(base):
+            wire_contract = contract
+
+            def render_prompt(self, input):
+                return super().render_prompt(input) + INSTRUCTION
+
+            def parse(self, raw_text, input):
+                try:
+                    decoded = contract.decode(json.loads(raw_text))
+                except (ValueError, TypeError, KeyError) as exc:
+                    raise SchemaError("invalid typed wire response") from exc
+                return super().parse(json.dumps(decoded, ensure_ascii=False), input)
+
+            def schema_clarification(self):
+                return INSTRUCTION
+
+            def refusal_clarification(self):
+                return INSTRUCTION
+
+        agent = NativeAgent(client)
+        agent.spec = replace(agent.spec, prompt_version=agent.spec.prompt_version + "+" + VERSION)
     if arm.legacy_retries and arm.model != "gemini-3.1-pro-preview":
         raise ValueError("legacy retries belong only to the current Gemini arm")
     if arm.legacy_retries and arm.model != agent.spec.model:
@@ -119,6 +153,40 @@ def build_agent(name, arm: Arm, client):
         max_attempts=agent.spec.max_attempts if arm.legacy_retries else 1,
     )
     return agent
+
+
+def configure_creator_agent(agent, name):
+    """Server-only opt-in. JSON defaults return the existing instance unchanged."""
+    from app.config import settings
+
+    mode = getattr(settings, name + "_output_mode")
+    if mode == "json":
+        return agent
+    return build_agent(
+        name,
+        Arm(
+            "configured",
+            agent.spec.model,
+            agent.spec.thinking_level or "medium",
+            output_mode="native",
+        ),
+        agent.client,
+    )
+
+
+def runtime_digest():
+    root = Path(__file__).resolve().parents[1]
+    files = [
+        "agents/_runtime.py",
+        "agents/_model_client.py",
+        "agents/_text_providers.py",
+        "agents/_creator_wire.py",
+        "agents/main_creator.py",
+        "agents/edit_copilot.py",
+        "services/ai_cost_control.py",
+        "services/creator_model_comparison.py",
+    ]
+    return digest({name: (root / name).read_text() for name in files})
 
 
 def prepare_case(case, arm, *, allow_holdout=False):
@@ -158,6 +226,7 @@ def prepare_case(case, arm, *, allow_holdout=False):
         "prompt_sha256": digest(prompt),
         "prompt_version": agent.spec.prompt_version,
         "spec_sha256": digest(asdict(agent.spec)),
+        "runtime_sha256": runtime_digest(),
         "price_version": PRICE_VERSION,
         "output_mode": (
             "prompt_json"
@@ -188,7 +257,7 @@ def validate_packet(packet):
     for case in packet["cases"]:
         if case.get("split") not in ("development", "holdout", "control"):
             raise ValueError("split required")
-        if case.get("source_kind") == "exact_invocation":
+        if case.get("source_kind") in ("exact_invocation", "reconstructed_real"):
             expires = datetime.fromisoformat(case["expires_at"])
             if expires <= datetime.now(UTC):
                 raise ValueError("case expired")

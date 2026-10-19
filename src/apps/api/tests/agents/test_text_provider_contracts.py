@@ -149,3 +149,60 @@ def test_sonnet_usage_and_only_visible_text():
 def test_unsupported_inputs_fail_without_sdk(kwargs):
     with pytest.raises(TerminalError):
         OpenAITextClient().invoke(model="gpt-6.1-sol", prompt="JSON", **kwargs)
+
+
+def test_gemini_sdk_retries_cannot_bypass_runtime_accounting(monkeypatch):
+    from google import genai
+    from google.genai import types
+
+    from app.agents._model_client import GeminiClient
+    from app.agents._runtime import TransientError
+
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(
+            500, json={"error": {"code": 500, "message": "failure", "status": "INTERNAL"}}
+        )
+
+    sdk = genai.Client(
+        api_key="test",
+        http_options=types.HttpOptions(
+            retry_options=types.HttpRetryOptions(attempts=2, initial_delay=0.001, max_delay=0.001),
+            client_args={"transport": httpx.MockTransport(respond)},
+        ),
+    )
+    client = GeminiClient()
+    monkeypatch.setattr(client, "_get", lambda: sdk)
+    with pytest.raises(TransientError):
+        client.invoke(model="gemini-3.1-pro-preview", prompt="JSON please", timeout_s=5)
+    assert len(calls) == 1
+
+
+def test_gemini_transport_has_the_same_deadline_as_runtime(monkeypatch):
+    from google import genai
+    from google.genai import types
+
+    from app.agents._model_client import GeminiClient
+
+    captured = []
+
+    def respond(request):
+        captured.append(request.extensions.get("timeout"))
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [{"content": {"parts": [{"text": "{}"}]}, "finishReason": "STOP"}],
+                "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1},
+            },
+        )
+
+    sdk = genai.Client(
+        api_key="test",
+        http_options=types.HttpOptions(client_args={"transport": httpx.MockTransport(respond)}),
+    )
+    client = GeminiClient()
+    monkeypatch.setattr(client, "_get", lambda: sdk)
+    client.invoke(model="gemini-3.1-pro-preview", prompt="JSON", timeout_s=7)
+    assert captured[0]["read"] == 7.0

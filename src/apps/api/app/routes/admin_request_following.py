@@ -197,6 +197,34 @@ async def comparison_eligibility(
     captured_at: datetime = Query(),
     expires_at: datetime = Query(),
 ):
+    return await _comparison_eligibility(
+        db, thread_id, creator_id, grant_key, captured_at, expires_at, holdout=False
+    )
+
+
+@router.get("/comparison-holdout-eligibility")
+async def comparison_holdout_eligibility(
+    db: DB,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    grant_key: str = Query(max_length=120),
+    captured_at: datetime = Query(),
+    expires_at: datetime = Query(),
+    x_comparison_evaluator_token: str = Header(default=""),
+):
+    import hmac
+
+    expected = settings.creator_comparison_holdout_token
+    if not expected or not hmac.compare_digest(expected, x_comparison_evaluator_token):
+        raise HTTPException(403, "sealed_evaluator_required")
+    return await _comparison_eligibility(
+        db, thread_id, creator_id, grant_key, captured_at, expires_at, holdout=True
+    )
+
+
+async def _comparison_eligibility(
+    db, thread_id, creator_id, grant_key, captured_at, expires_at, *, holdout
+):
     """Read-only eligibility for private exact captures; returns no case bodies.
 
     A queue snapshot is not the invocation input. Bind directly to the existing
@@ -226,17 +254,21 @@ async def comparison_eligibility(
     if (
         thread is None
         or thread.creator_id != creator_id
-        or thread_id in holdouts
         or not in_scope(creator_id, thread_id)
         or await db.get(CreationThreadDeletion, thread_id)
     ):
         return {"eligible": False}
-    # Historical holdout assignment also survives configuration changes.
-    if await db.scalar(
-        select(RequestFollowingCase.id)
-        .where(RequestFollowingCase.thread_id == thread_id, RequestFollowingCase.split == "holdout")
-        .limit(1)
-    ):
+    # Historical holdout assignment survives configuration changes.
+    held_out = thread_id in holdouts or bool(
+        await db.scalar(
+            select(RequestFollowingCase.id)
+            .where(
+                RequestFollowingCase.thread_id == thread_id, RequestFollowingCase.split == "holdout"
+            )
+            .limit(1)
+        )
+    )
+    if held_out != holdout:
         return {"eligible": False}
     decision = await evaluate_training_eligibility_async(db, creator_id)
     return {"eligible": eligibility_key(decision) == grant_key, "checked_at": now.isoformat()}

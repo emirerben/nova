@@ -1,0 +1,46 @@
+{
+  "nova.creator.main": {
+    "name": "nova.creator.main",
+    "prompt_id": "main_creator",
+    "prompt_version": "2026-10-19-v63",
+    "model": "gemini-3.1-pro-preview",
+    "fallback_models": [
+      "gemini-3.6-flash"
+    ],
+    "max_attempts": 3,
+    "backoff_s": [
+      2.0
+    ],
+    "timeout_s": 130.0,
+    "cost_per_1k_input_usd": 0.0,
+    "cost_per_1k_output_usd": 0.0,
+    "thinking_budget": null,
+    "thinking_level": "high",
+    "enable_clarification_retries": true,
+    "enable_json_repair": false,
+    "sensitive_io": true,
+    "schema_retry_limit": 2,
+    "max_tool_cost_usd": 0.0
+  },
+  "nova.edit.copilot": {
+    "name": "nova.edit.copilot",
+    "prompt_id": "edit_copilot",
+    "prompt_version": "2026-10-19-v85",
+    "model": "gemini-3.1-pro-preview",
+    "fallback_models": [],
+    "max_attempts": 2,
+    "backoff_s": [
+      2.0
+    ],
+    "timeout_s": 120.0,
+    "cost_per_1k_input_usd": 0.002,
+    "cost_per_1k_output_usd": 0.012,
+    "thinking_budget": null,
+    "thinking_level": "high",
+    "enable_clarification_retries": true,
+    "enable_json_repair": false,
+    "sensitive_io": false,
+    "schema_retry_limit": 1,
+    "max_tool_cost_usd": 0.0
+  }
+}

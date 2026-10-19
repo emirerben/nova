@@ -130,6 +130,7 @@ from app.services.creative_copy_decisions import (
     question_message,
     wording_question,
 )
+from app.services.creator_model_comparison import configure_creator_agent
 from app.services.creator_sessions import (
     creator_context,
     load_intent_clips_for_item,
@@ -1864,7 +1865,7 @@ async def _call_main_creator(
 
     def _run_agent():  # noqa: ANN202 - inferred MainCreatorOutput
         deadline = turn_deadline.get()
-        return MainCreatorAgent(default_client()).run(
+        return configure_creator_agent(MainCreatorAgent(default_client()), "main_creator").run(
             inputs.agent_input,
             ctx=RunContext(
                 request_id=str(thread_id),

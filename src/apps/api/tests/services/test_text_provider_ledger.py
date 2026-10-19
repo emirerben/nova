@@ -66,3 +66,54 @@ def test_agent_run_new_provider_ledger(provider_ledger, model, provider, unknown
     assert row["status"] == ("unknown" if unknown else "settled")
     if not unknown:
         assert float(row["settled_cost_usd"]) > 0
+
+
+def test_envelope_caps_concurrent_distinct_batches(ledger):  # noqa: F811
+    """A new batch id must not turn the approved total into another allowance."""
+    import uuid
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.agents._runtime import AiBudgetExceededError
+    from app.services.ai_cost_control import reserve_paid_call
+
+    envelope = "comparison:" + str(uuid.uuid4())
+    requests = []
+    for i in range(2):
+        request = _request(ledger, str(i), estimate=1.4, run_id=envelope + ":" + str(i))
+        request.ctx.extra.update(
+            paid_experiment_envelope_id=envelope, approved_envelope_max_usd=2.0
+        )
+        requests.append(request)
+
+    def reserve(request):
+        try:
+            return reserve_paid_call(request)
+        except AiBudgetExceededError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        receipts = list(pool.map(reserve, requests))
+    assert sum(r is not None for r in receipts) == 1
+
+
+def test_unknown_submission_fences_the_entire_envelope(ledger):  # noqa: F811
+    import uuid
+
+    from app.services.ai_cost_control import (
+        mark_paid_call_started,
+        mark_paid_call_unknown,
+        reserve_paid_call,
+    )
+
+    envelope = "comparison:" + str(uuid.uuid4())
+    first = _request(ledger, "unknown-envelope", estimate=0.05, run_id=envelope + ":first")
+    second = _request(ledger, "next-batch", estimate=0.05, run_id=envelope + ":second")
+    for request in (first, second):
+        request.ctx.extra.update(
+            paid_experiment_envelope_id=envelope, approved_envelope_max_usd=2.0
+        )
+    receipt = reserve_paid_call(first)
+    mark_paid_call_started(receipt)
+    mark_paid_call_unknown(receipt)
+    with pytest.raises(ProviderOutcomeUnknownError):
+        reserve_paid_call(second)

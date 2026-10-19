@@ -74,7 +74,7 @@ def _source(path):
     }
 
 
-def _eligibility(case, *, require_review=True):
+def _eligibility(case, *, require_review=True, sealed=False):
     """Current owner/grant/scope checks through the existing admin CLI, no bodies.
 
     Human expectations bind separately to the immutable invocation input. A
@@ -83,10 +83,51 @@ def _eligibility(case, *, require_review=True):
     from urllib.parse import urlencode
     from uuid import UUID
 
-    if case.get("source_kind") != "exact_invocation" or not case.get("complete"):
+    if case.get("source_kind") not in ("exact_invocation", "reconstructed_real") or not case.get(
+        "complete"
+    ):
         raise ValueError("live comparison requires a complete exact capture")
-    if case.get("split") != "development":
-        raise ValueError("restricted holdout runner not enabled")
+    if case.get("split") != ("holdout" if sealed else "development"):
+        raise ValueError("wrong evaluation split")
+    if case.get("review_queue_case_id") and not sealed:
+        source_id = str(UUID(case["review_queue_case_id"]))
+        response = subprocess.run(
+            [
+                "python3",
+                str(REPO / "scripts/admin.py"),
+                "--prod",
+                "GET",
+                "request-following/" + source_id + "/export",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=REPO,
+        )
+        if response.returncode:
+            raise ValueError("current source eligibility unavailable")
+        exported = json.loads(response.stdout)
+        receipt = exported["eligibility"]
+        if any(
+            receipt.get(k) != case.get(k)
+            for k in ("creator_id", "thread_id", "eligibility_key", "source_sha256")
+        ):
+            raise ValueError("source eligibility changed")
+        if datetime.fromisoformat(receipt["expires_at"]) <= datetime.now(UTC):
+            raise ValueError("source expired")
+        if require_review:
+            original = exported["candidate"]["intent_review"]
+            review = case.get("intent_review") or {}
+            if (
+                original.get("decision") != "approved"
+                or review.get("decision") != "source_reviewed"
+                or review.get("source_sha256") != receipt["source_sha256"]
+                or review.get("source_review_version") != original.get("version")
+                or review.get("expectations") != original.get("expectations")
+            ):
+                raise ValueError("original human review changed or missing")
+            return review["expectations"]
+        return None
     query = urlencode(
         {
             "thread_id": str(UUID(case["thread_id"])),
@@ -102,7 +143,10 @@ def _eligibility(case, *, require_review=True):
             str(REPO / "scripts/admin.py"),
             "--prod",
             "GET",
-            "request-following/comparison-eligibility?" + query,
+            "request-following/"
+            + ("comparison-holdout-eligibility?" if sealed else "comparison-eligibility?")
+            + query,
+            *(["--comparison-evaluator"] if sealed else []),
         ],
         capture_output=True,
         text=True,
@@ -159,6 +203,20 @@ def purge_packet(path, directory, *, check_eligibility=False):
     for suffix in (".live.json", ".replay.json"):
         journal = _private_file(directory / (identity + suffix))
         journal.unlink(missing_ok=True)
+    index_path = directory / "derived-artifacts.json"
+    if index_path.exists():
+        index = read(_private_file(index_path))
+        affected = {c["id"] for c in packet["cases"]}
+        retained = []
+        for entry in index.get("artifacts", []):
+            if affected.intersection(entry.get("cases", [])):
+                for name in entry.get("files", []):
+                    if Path(name).name != name:
+                        raise ValueError("derived artifact must stay in private store")
+                    _private_file(directory / name).unlink(missing_ok=True)
+            else:
+                retained.append(entry)
+        write(index_path, {"artifacts": retained})
     path.unlink()
     return {"purged": True, "packet_sha256": identity}
 
@@ -203,9 +261,36 @@ def report_journal(path):
     }
 
 
-def _execute(packet, directory, *, live, approved_cost=None, approval_sha=None):
+def _execute(
+    packet,
+    directory,
+    *,
+    live,
+    approved_cost=None,
+    approval_sha=None,
+    registration=None,
+    envelope=None,
+    unavailable_models=None,
+):
     directory = private_root(directory)
-    preflight = prepare_packet(packet)
+    if registration is not None:
+        from app.services.creator_comparison_holdout import validate_registration
+
+        validate_registration(packet, registration)
+    sealed = registration is not None
+    preflight = prepare_packet(packet, holdout=sealed)
+    envelope_id = None
+    if envelope is not None:
+        from uuid import UUID
+
+        envelope_id = "comparison:" + str(UUID(envelope["id"]))
+        if (
+            envelope.get("sha256") != digest({k: v for k, v in envelope.items() if k != "sha256"})
+            or packet["sha256"] not in envelope.get("batches", {})
+            or approved_cost != envelope["batches"][packet["sha256"]]
+            or not 0 < envelope["approved_total_usd"] <= 5.66
+        ):
+            raise ValueError("invalid approved pilot envelope")
     if live:
         from app.config import settings
 
@@ -221,7 +306,7 @@ def _execute(packet, directory, *, live, approved_cost=None, approval_sha=None):
         if preflight["estimated_max_usd"] > approved_cost:
             raise ValueError("preflight exceeds approved cap; freeze a smaller batch")
         for case in packet["cases"]:
-            _eligibility(case)
+            _eligibility(case, sealed=sealed)
     run_id = packet["sha256"]
     lock_path = directory / (run_id + ".lock")
     with os.fdopen(os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600), "r+") as lock:
@@ -253,9 +338,20 @@ def _execute(packet, directory, *, live, approved_cost=None, approval_sha=None):
             key = digest([case["id"], arm.id, repeat])
             if key in journal["rows"]:
                 continue  # includes started/unknown: never retry a possibly accepted call
+            if unavailable_models and arm.model in unavailable_models:
+                journal["rows"][key] = {
+                    **prepare_case(case, arm, allow_holdout=sealed),
+                    "repeat": repeat,
+                    "status": "blocked",
+                    "reason": unavailable_models[arm.model],
+                    "invocations": [],
+                    "first_attempt_parsed": False,
+                }
+                write(journal_path, journal)
+                continue
             if live:
                 try:
-                    _eligibility(case)  # every arm, not merely at import/run start
+                    _eligibility(case, sealed=sealed)  # every arm, not merely at import/run start
                 except Exception:
                     # Remove source-derived bodies from this run on revocation.
                     for old in journal["rows"].values():
@@ -276,13 +372,27 @@ def _execute(packet, directory, *, live, approved_cost=None, approval_sha=None):
                         # Recheck immediately before *each* provider submission,
                         # including runtime retries/fallbacks inside legacy arms.
                         try:
-                            _eligibility(case)
+                            _eligibility(case, sealed=sealed)
                         except Exception as exc:
                             from app.agents._runtime import TerminalError
 
                             eligibility_lost = True
                             raise TerminalError("comparison eligibility unavailable") from exc
-                        result = dispatcher.invoke(**kwargs)
+                        try:
+                            result = dispatcher.invoke(**kwargs)
+                        except Exception as error:
+                            cause = error.__cause__
+                            detail = getattr(cause, "body", None)
+                            attempts.append(
+                                {
+                                    "model": kwargs["model"],
+                                    "finish": "provider_error",
+                                    "error_class": type(error).__name__,
+                                    "provider_http_status": getattr(cause, "status_code", None),
+                                    "provider_error": str(detail)[:2000] if detail else None,
+                                }
+                            )
+                            raise
                     else:
                         from app.agents._runtime import ModelInvocation
 
@@ -309,7 +419,11 @@ def _execute(packet, directory, *, live, approved_cost=None, approval_sha=None):
             agent = build_agent(case["agent"], arm, Client())
             from app.agents._runtime import RunContext
 
-            row = {**prepare_case(case, arm), "repeat": repeat, "status": "started"}
+            row = {
+                **prepare_case(case, arm, allow_holdout=sealed),
+                "repeat": repeat,
+                "status": "started",
+            }
             journal["rows"][key] = row
             write(journal_path, journal)  # durable fence BEFORE submission
             start = time.monotonic()
@@ -320,21 +434,44 @@ def _execute(packet, directory, *, live, approved_cost=None, approval_sha=None):
                         ctx=RunContext(
                             request_id=f"comparison:{run_id}:{key}",
                             usage_purpose="live_eval" if live else None,
-                            test_run_id=f"comparison:{run_id}" if live else None,
+                            test_run_id=(
+                                envelope_id + ":" + run_id
+                                if envelope_id
+                                else f"comparison:{run_id}"
+                            )
+                            if live
+                            else None,
                             estimated_max_cost_usd=approved_cost,
                             reservation_approved=live,
                             extra={
                                 "skip_agent_run_persist": True,
                                 "skip_langfuse_trace": True,
                                 "skip_comparison_capture": True,
+                                **(
+                                    {
+                                        "paid_experiment_envelope_id": envelope_id,
+                                        "approved_envelope_max_usd": envelope["approved_total_usd"],
+                                    }
+                                    if envelope_id
+                                    else {}
+                                ),
                             },
                         ),
                     )
                 else:
                     # Replay validates recorded bytes, never reserves or constructs SDKs.
-                    output = agent.parse(
-                        case["raw_text"], agent.Input.model_validate(case["input"])
-                    )
+                    raw = case["raw_text"]
+                    if hasattr(agent, "wire_contract"):
+                        base = agent_class(case["agent"])(None)
+                        value = (
+                            base.parse(raw, base.Input.model_validate(case["input"])).model_dump(
+                                mode="json"
+                            )
+                            if case["agent"] == "main_creator"
+                            else json.loads(raw)
+                        )
+                        raw = json.dumps(agent.wire_contract.encode(value))
+                    output = agent.parse(raw, agent.Input.model_validate(case["input"]))
                 from tests.evals.runners.structural import run_structural
 
                 failures = run_structural(
@@ -376,9 +513,11 @@ def _execute(packet, directory, *, live, approved_cost=None, approval_sha=None):
             "parsed": sum(r["status"] == "parsed" for r in journal["rows"].values()),
             "unknown": sum(r["status"] in ("unknown", "started") for r in journal["rows"].values()),
             "quality_verdict": "unassessed",
+            "blocked": sum(r["status"] == "blocked" for r in journal["rows"].values()),
             "actual_export": "unassessed",
             "inference_only": True,
-            "private_journal": str(journal_path),
+            **({} if sealed else {"private_journal": str(journal_path)}),
+            "split": "holdout" if sealed else "development",
         }
         if live:
             # Read actual and conservatively held cost from the same ledger.
@@ -395,7 +534,7 @@ def _execute(packet, directory, *, live, approved_cost=None, approval_sha=None):
                         "THEN estimated_cost_usd ELSE 0 END),0) FROM ai_cost_reservations "
                         "WHERE test_run_id=:id"
                     ),
-                    {"id": f"comparison:{run_id}"},
+                    {"id": envelope_id + ":" + run_id if envelope_id else f"comparison:{run_id}"},
                 ).one()
             summary.update(settled_usd=float(cost[0]), reserved_or_unknown_usd=float(cost[1]))
         return summary
@@ -418,6 +557,22 @@ def main(argv=None):
     freeze.add_argument("--repetitions", type=int, default=1)
     freeze.add_argument("--seed", type=int, default=727)
     freeze.add_argument("--output", required=True)
+    sealed_cmd = sub.add_parser("sealed-run")
+    sealed_cmd.add_argument("--packet", required=True)
+    sealed_cmd.add_argument("--registration", required=True)
+    sealed_cmd.add_argument("--directory", required=True)
+    sealed_cmd.add_argument("--live", action="store_true")
+    sealed_cmd.add_argument("--approve-max-usd", type=float)
+    sealed_cmd.add_argument("--approval-sha256")
+    sealed_cmd.add_argument("--envelope")
+    register = sub.add_parser("seal")
+    register.add_argument("--packet", required=True)
+    register.add_argument("--development-groups", required=True)
+    register.add_argument("--output", required=True)
+    approve = sub.add_parser("approve-envelope")
+    approve.add_argument("--packet", action="append", required=True)
+    approve.add_argument("--max-usd", type=float, required=True)
+    approve.add_argument("--output", required=True)
     for name in ("validate", "dry-run", "replay", "live"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--packet", required=True)
@@ -425,7 +580,68 @@ def main(argv=None):
         if name == "live":
             cmd.add_argument("--approve-max-usd", type=float, required=True)
             cmd.add_argument("--approval-sha256", required=True)
+            cmd.add_argument("--envelope")
     args = parser.parse_args(argv)
+    if args.command == "approve-envelope":
+        import uuid
+
+        batches = {}
+        for path in args.packet:
+            packet = read(_private_file(path))
+            preflight = prepare_packet(packet)
+            if preflight["estimated_max_usd"] > 2:
+                raise ValueError("batch exceeds $2")
+            batches[packet["sha256"]] = preflight["estimated_max_usd"]
+        if not 0 < args.max_usd <= 5.66 or sum(batches.values()) > args.max_usd:
+            raise ValueError("pilot estimate exceeds approved total")
+        envelope = {
+            "id": str(uuid.uuid4()),
+            "approved_total_usd": args.max_usd,
+            "batches": batches,
+            "approval": "user approved $5.66 pilot in this conversation",
+        }
+        envelope["sha256"] = digest(envelope)
+        output = _private_file(args.output)
+        if output.exists():
+            raise ValueError("approval envelopes are immutable")
+        write(output, envelope)
+        print(
+            json.dumps(
+                {
+                    "approved_total_usd": args.max_usd,
+                    "estimated_max_usd": sum(batches.values()),
+                    "batches": len(batches),
+                }
+            )
+        )
+        return
+    if args.command == "seal":
+        from app.services.creator_comparison_holdout import register_holdout
+
+        packet = read(_private_file(args.packet))
+        registration = register_holdout(
+            packet, development_groups=read(_private_file(args.development_groups))
+        )
+        output = _private_file(args.output)
+        if output.exists():
+            raise ValueError("registrations are immutable")
+        write(output, registration)
+        print(json.dumps(registration))
+        return
+    if args.command == "sealed-run":
+        packet = read(_private_file(args.packet))
+        registration = read(_private_file(args.registration))
+        result = _execute(
+            packet,
+            args.directory,
+            live=args.live,
+            approved_cost=args.approve_max_usd,
+            approval_sha=args.approval_sha256,
+            registration=registration,
+            envelope=read(_private_file(args.envelope)) if args.envelope else None,
+        )
+        print(json.dumps(result))
+        return
     if args.command == "report":
         print(json.dumps(report_journal(args.journal), indent=2))
         return
@@ -481,6 +697,9 @@ def main(argv=None):
                     live=args.command == "live",
                     approved_cost=getattr(args, "approve_max_usd", None),
                     approval_sha=getattr(args, "approval_sha256", None),
+                    envelope=read(_private_file(args.envelope))
+                    if getattr(args, "envelope", None)
+                    else None,
                 )
             except Exception:
                 if args.command == "live":

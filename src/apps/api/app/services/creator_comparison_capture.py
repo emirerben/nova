@@ -102,7 +102,6 @@ def capture_invocation(agent, input_model, ctx):
         from app.services.request_following_collection import eligibility_key, in_scope
         from app.services.training_eligibility import evaluate_training_eligibility
 
-        root = private_root(settings.creator_comparison_capture_dir)
         with sync_session() as db:
             creator = uuid.UUID(ctx.creator_id) if ctx.creator_id else None
             if ctx.job_id:
@@ -132,15 +131,22 @@ def capture_invocation(agent, input_model, ctx):
                 return
             from app.services.request_following_collection import scope
 
-            if thread.id in scope()[2] or db.scalar(
+            held_out = thread.id in scope()[2] or db.scalar(
                 select(RequestFollowingCase.id)
                 .where(
                     RequestFollowingCase.thread_id == thread.id,
                     RequestFollowingCase.split == "holdout",
                 )
                 .limit(1)
-            ):
+            )
+            directory = (
+                settings.creator_comparison_holdout_capture_dir
+                if held_out
+                else settings.creator_comparison_capture_dir
+            )
+            if not directory:
                 return
+            root = private_root(directory)
             safe, complete = sanitize_input(input_model.model_dump(mode="json"))
             now = datetime.now(UTC)
             agent_name = (
@@ -152,7 +158,7 @@ def capture_invocation(agent, input_model, ctx):
                 "id": identity,
                 "agent": agent_name,
                 "source_kind": "exact_invocation",
-                "split": "development",
+                "split": "holdout" if held_out else "development",
                 "input": safe,
                 "input_sha256": digest(safe),
                 "complete": complete,

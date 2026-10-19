@@ -278,6 +278,12 @@ class GeminiClient(ModelClient):
         contents.append(prompt)
 
         cfg_kwargs: dict[str, Any] = self.generation_config()
+        # The reservation runtime owns retries. SDK retries would submit extra
+        # accepted work under one reservation and evade attempt accounting.
+        cfg_kwargs["http_options"] = genai_types.HttpOptions(
+            retry_options=genai_types.HttpRetryOptions(attempts=1),
+            timeout=max(1, int(timeout_s * 1000)),
+        )
         if response_schema is not None:
             cfg_kwargs["response_json_schema"] = response_schema
         if response_json:

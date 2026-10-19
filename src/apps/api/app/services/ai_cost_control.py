@@ -290,7 +290,7 @@ def estimate_call_cost_usd(
             tokens_out=output_tokens,
             # Preview reasoning may consume output-priced tokens not represented
             # in max_output_tokens on every SDK version.
-            tokens_thoughts=output_tokens,
+            tokens_thoughts=output_tokens if model.startswith("gemini") else 0,
             token_details={"prompt_tokens_details": prompt_details},
         ),
     )
@@ -506,6 +506,21 @@ def _test_run_spend(conn: Any, *, test_run_id: str) -> Decimal:
     return Decimal(str(value or 0))
 
 
+def _envelope_spend(conn: Any, envelope: str) -> Decimal:
+    value = conn.execute(
+        text("""
+        SELECT COALESCE(SUM(CASE WHEN status='settled'
+            THEN COALESCE(settled_cost_usd,estimated_cost_usd)
+            WHEN status IN ('provider_started','unknown') THEN estimated_cost_usd
+            WHEN status='reserved' AND expires_at>now() THEN estimated_cost_usd
+            ELSE 0 END),0) FROM ai_cost_reservations
+        WHERE test_run_id LIKE :prefix
+    """),
+        {"prefix": envelope + ":%"},
+    ).scalar_one()
+    return Decimal(str(value or 0))
+
+
 def _override_total(conn: Any, scope: str, now: datetime) -> Decimal:
     value = conn.execute(
         text(
@@ -635,7 +650,26 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                     cached_behavior_available=request.cached_behavior_available,
                 )
 
+            envelope = request.ctx.extra.get("paid_experiment_envelope_id")
+            envelope_limit = request.ctx.extra.get("approved_envelope_max_usd")
+            if envelope:
+                # Fixed UUID namespace, never a caller-controlled SQL LIKE pattern.
+                try:
+                    envelope = "comparison:" + str(
+                        uuid.UUID(str(envelope).removeprefix("comparison:"))
+                    )
+                    valid = (test_run_id or "").startswith(envelope + ":") and float(
+                        envelope_limit
+                    ) > 0
+                except (ValueError, TypeError):
+                    valid = False
+                if not valid or environment != "development" or purpose != "live_eval":
+                    raise AiCostControlPolicyError(
+                        scope="experiment:envelope", reason="invalid_envelope"
+                    )
             scopes = [f"environment:{environment}"]
+            if envelope:
+                scopes.append("envelope:" + envelope)
             if purpose in _CANARY_PURPOSES:
                 scopes.append("purpose:release_canary")
             if request.feature == "edit_director" and creator_id is not None:
@@ -646,6 +680,20 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 conn.execute(
                     text("SELECT pg_advisory_xact_lock(hashtextextended(:scope, 0))"),
                     {"scope": scope},
+                )
+
+            if (
+                envelope
+                and conn.execute(
+                    text(
+                        "SELECT EXISTS(SELECT 1 FROM ai_cost_reservations "
+                        "WHERE test_run_id LIKE :prefix AND status='unknown')"
+                    ),
+                    {"prefix": envelope + ":%"},
+                ).scalar_one()
+            ):
+                raise ProviderOutcomeUnknownError(
+                    "experiment envelope has an unresolved provider outcome"
                 )
 
             existing = (
@@ -725,6 +773,15 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                         reset_at=reset_at,
                         cached_behavior_available=request.cached_behavior_available,
                     )
+
+            if envelope and _envelope_spend(conn, envelope) + Decimal(str(estimate)) > Decimal(
+                str(envelope_limit)
+            ):
+                _reject(
+                    scope="envelope:" + envelope,
+                    reset_at=reset_at,
+                    cached_behavior_available=request.cached_behavior_available,
+                )
 
             if request.feature == "edit_director" and creator_id is not None:
                 used = int(

@@ -185,3 +185,83 @@ def test_expired_private_sources_and_derived_outputs_are_purged(tmp_path):
     write(journal, {"output": "private"})
     assert purge_packet(path, tmp_path)["purged"]
     assert not path.exists() and not source.exists() and not journal.exists()
+
+
+def test_known_unavailable_model_stays_in_denominator_without_submission(tmp_path):
+    import json
+    from dataclasses import asdict
+    from pathlib import Path
+
+    from app.cli.compare_creator_models import _execute
+    from app.services.request_following_cases import digest
+
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1] / "fixtures/agent_evals/main_creator/montage_strategy.json"
+        ).read_text()
+    )
+    packet = {
+        "schema_version": 1,
+        "cases": [
+            {
+                "id": "case",
+                "agent": "main_creator",
+                "split": "development",
+                "source_kind": "synthetic_control",
+                "input": fixture["input"],
+                "raw_text": fixture["raw_text"],
+            }
+        ],
+        "arms": [asdict(Arm("S", "claude-sonnet-5-5", "high"))],
+        "repetitions": 1,
+        "seed": 727,
+    }
+    packet["sha256"] = digest(packet)
+    tmp_path.chmod(0o700)
+    result = _execute(
+        packet,
+        tmp_path,
+        live=False,
+        unavailable_models={"claude-sonnet-5-5": "account_credit_unavailable"},
+    )
+    assert result["blocked"] == 1 and result["parsed"] == 0 and result["completed_rows"] == 1
+
+
+def test_retirement_removes_registered_derived_artifacts(tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    from app.cli.compare_creator_models import purge_packet
+    from app.services.request_following_private_store import write
+
+    tmp_path.chmod(0o700)
+    packet = {
+        "sha256": "b" * 64,
+        "cases": [
+            {"id": "case", "expires_at": (datetime.now(UTC) - timedelta(seconds=1)).isoformat()}
+        ],
+    }
+    packet_path = tmp_path / "packet.json"
+    write(packet_path, packet)
+    artifact = tmp_path / "private-review.html"
+    artifact.write_text("private")
+    artifact.chmod(0o600)
+    write(
+        tmp_path / "derived-artifacts.json",
+        {"artifacts": [{"cases": ["case"], "files": [artifact.name]}]},
+    )
+    assert purge_packet(packet_path, tmp_path)["purged"]
+    assert not artifact.exists()
+
+
+def test_production_schema_profile_is_opt_in_and_versioned(monkeypatch):
+    from app.config import settings
+    from app.services.creator_model_comparison import configure_creator_agent
+
+    original = MainCreatorAgent(None)
+    monkeypatch.setattr(settings, "main_creator_output_mode", "json")
+    assert configure_creator_agent(original, "main_creator") is original
+    monkeypatch.setattr(settings, "main_creator_output_mode", "native")
+    configured = configure_creator_agent(original, "main_creator")
+    assert configured.spec.response_schema
+    assert configured.spec.prompt_version.endswith("+typed-presence-v1")
+    assert MainCreatorAgent.spec.response_schema is None

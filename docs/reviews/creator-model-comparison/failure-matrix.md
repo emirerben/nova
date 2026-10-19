@@ -19,3 +19,26 @@
 Use existing replay and real PostgreSQL integration coverage, SDK HTTP contract tests,
 and runnable CLI artifacts. Human intent reviews and final-export checks remain independent
 requirements; a parser pass is not request fulfillment.
+
+## Approved continuation — 2026-10-19
+
+The user approved $5.66 total for the priced pilot and requested the remaining
+schema, holdout, capture and live comparison work. Before implementation:
+
+- Every current replay response must survive typed-wire encode/decode without
+  losing model-owned values; server-owned fields stay outside model wire contracts.
+- Optional presence uses a typed 0-or-1 array, not JSON-in-a-string, avoiding
+  provider optional/nullable-union limits. Local cardinality/semantic validation
+  remains mandatory; provider projection lists every locally enforced constraint.
+- Copilot operation names, fields and scalar/container types must be closed;
+  unknown operations/keys fail before execution. Dynamic metadata is explicitly
+  typed JSON and never substitutes for an operation schema.
+- Held-out bodies never pass development freeze/replay/report paths. A sealed
+  registration pins arms, source groups and source hashes before execution;
+  development/holdout creator and media-event overlap is rejected. Only aggregate
+  metrics leave sealed execution; normal review/export routes remain unchanged.
+- All paid batches share an atomic $5.66 envelope in addition to their <=$2
+  PostgreSQL run caps. Rejected requests, unknown work and restart fences count.
+- Reconstructed real context is labeled separately from exact historical input.
+  No human review is fabricated; source-reviewed expectations retain their original
+  pointer and review identity. Unreviewed tasks cannot become a quality verdict.
