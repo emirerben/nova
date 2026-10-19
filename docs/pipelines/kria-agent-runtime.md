@@ -329,6 +329,33 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   Photos and Visuals are never dropped; "skip the dark ones" stays the model's call
   (no lighting signal yet). Incident: cabin kit M2 re-send, prod thread 35ccc8ef.
   Guard: `tests/kria/test_kri623_ruled_out_clips.py`.
+- *What the clips say orders a camera-sound montage (KRI-585)*: a phone montage with no
+  song, voiceover or named voice source plays every clip's own sound
+  (`narration_notes.keeps_camera_sound`), so the narration is heard cut by cut.
+  `app/services/spoken_roles.py` reads each clip's spoken role from its analysed speech
+  by folded tokens (no regex, KRI-667 ratchet): `opening` ("hoş geldiniz", "welcome
+  to"), `closing` ("görüşmek üzere", "see you next time"; whisper's invented outro is
+  ignored) and `introduction` ("Bu da Deniz", "this is Deniz", with someone on screen).
+  A welcome or sign-off said on more than one clip (a room-by-room tour) moves nothing.
+  Only in an order nobody chose (no filming- or upload-order ask, no grouping answer, no
+  contract-pinned order, no song; a `narrative` / first-last key is not a basis):
+  welcomes lead and sign-offs close, under the creator's own first/last rows.
+  `spoken_seats` is the one rule for the order and two windows: the length plan seats the
+  welcome's whole line (`spoken_moments`) and, for a creator-pinned closing clip whose
+  words only introduce someone, a stretch with no words (`quiet_moments`, capped there);
+  it records `length_plan.spoken_order` (order only, plain windows, if the seats would
+  make the length impossible). The phone unified writer reorders
+  (`plan_unified_montage(speech_order=True)`) only when that record is on the approved
+  plan and the strategy still keeps every clip's sound (`speech_order_approved`), so it
+  never moves a clip the reply did not name. The pre-approval reply then says the
+  narration plays and where those lines go (`narration_note_parts`, EN + TR); it adds
+  nothing when the words changed nothing, and claims the quiet ending only when the
+  approved windows stay off the words. Kill switch `SPOKEN_ORDER_ENABLED` (default on;
+  off = no seats, no record, no reorder, no note): `fly secrets set
+  SPOKEN_ORDER_ENABLED=false -a nova-video`, then restart api and worker. Incident: cabin
+  kit M1, prod thread 7ccbde0a. Guards: `tests/tasks/test_kri585_spoken_order_montage.py`
+  (incl. the worker's negative cases), `tests/pipeline/test_unified_montage_spoken_order.py`,
+  `tests/services/test_spoken_roles.py`.
 - *Clip exclusions (KRI-667)*: "Skip the quad bike clip", "don't use the blurry ones",
   "çamaşır klibini kullanma" are one `exclude` clip intent each, stated by the
   clip-intent planner in any language (`ClipIntentOp` includes `exclude`; before, the

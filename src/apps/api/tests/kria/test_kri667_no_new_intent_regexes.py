@@ -44,6 +44,8 @@ _OTHER_MODULES = (
     "services/kria_editor_ops_diff.py",
     "services/sfx_catalog.py",
     "services/spoken_quotes.py",
+    # KRI-585: reads the clips' own speech for its spoken role, by folded tokens only.
+    "services/spoken_roles.py",
     "services/visual_treatment_planner.py",
     "tasks/kria_runtime.py",
 )
