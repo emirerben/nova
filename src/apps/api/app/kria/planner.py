@@ -121,7 +121,10 @@ from app.services.choice_questions import (
 )
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
 from app.services.clip_intent_planning import (
+    KeptLabel,
     PlannedIntentResolution,
+    brief_label_asks,
+    kept_labels_from_strategy,
     plan_and_resolve_clip_intents,
 )
 from app.services.clip_intent_resolution import IntentClip
@@ -935,6 +938,21 @@ def _with_song_sync(strategy: Any, song_sync: str) -> Any:
     clone = copy.copy(strategy)
     clone.song_sync = song_sync
     return clone
+
+
+async def _load_kept_labels(db: AsyncSession, item_id: uuid.UUID) -> list[KeptLabel]:
+    """Labels the item's current draft already placed on clips (KRI-766), then release the txn."""
+    snapshot = (
+        await db.execute(
+            select(CreatorEditDraft.snapshot_json)
+            .where(CreatorEditDraft.item_id == item_id, CreatorEditDraft.is_head.is_(True))
+            .order_by(CreatorEditDraft.updated_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    await db.rollback()  # no connection pinned across the model calls that follow
+    strategy = snapshot.get("strategy") if isinstance(snapshot, dict) else None
+    return kept_labels_from_strategy(strategy)
 
 
 async def _load_thread_events(
@@ -2081,6 +2099,7 @@ async def _plan_from_creator_output(
     requested_media: Mapping[str, str] | None = None,
     describe_clips: bool = False,
     spoken_text: Sequence[str] = (),
+    effective_brief: CreativeBrief | None = None,
 ) -> PlannedKriaTurn:
     """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
     decision = getattr(output, "creative_decision", None)
@@ -2128,6 +2147,7 @@ async def _plan_from_creator_output(
         requested_media=requested_media,
         describe_clips=describe_clips,
         spoken_text=spoken_text,
+        effective_brief=effective_brief,
     )
     return replace(planned, creative_copy_resolution=resolution)
 
@@ -2340,6 +2360,7 @@ async def _plan_creator_action(
     requested_media: Mapping[str, str] | None = None,
     describe_clips: bool = False,
     spoken_text: Sequence[str] = (),
+    effective_brief: CreativeBrief | None = None,
 ) -> PlannedKriaTurn:
     action = output.action
     if isinstance(action, ProposeStrategy):
@@ -2627,6 +2648,14 @@ async def _plan_creator_action(
             thread_events = await _load_thread_events(db, thread_id)
         if settings.kria_clip_selection_questions_enabled:
             clip_selections = fold_clip_selections(thread_events)
+        # KRI-766: the texts the creator dictated for a described shot, which this turn's
+        # inventory may not repeat, and the labels the draft already placed.
+        brief_labels = brief_label_asks(
+            effective_brief,
+            getattr(action.strategy, "shot_labels", None) or (),
+            spoken_text,
+        )
+        kept_labels = await _load_kept_labels(db, item_id) if effective_brief is not None else []
         await _kick_clip_understanding(item_id, intent_clips)
         try:
             planned = await plan_and_resolve_clip_intents(
@@ -2660,6 +2689,8 @@ async def _plan_creator_action(
                 **({"clip_selections": clip_selections} if clip_selections else {}),
                 # KRI-612: "explain the footages" puts a line from the footage on each clip.
                 **({"describe_clips": True} if describe_clips else {}),
+                **({"brief_labels": brief_labels} if brief_labels else {}),
+                **({"kept_labels": kept_labels} if kept_labels else {}),
                 # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
                 # never a clip question; its receipt tells the creator.
                 **(
@@ -4652,6 +4683,7 @@ async def _plan_live_turn(
         requested_media=requested_media(effective, (media.media_id for media in manifest.media)),
         describe_clips=wants_clip_descriptions(effective),
         spoken_text=spoken_text_literals(effective),
+        effective_brief=effective,
     )
     return replace(
         planned,
