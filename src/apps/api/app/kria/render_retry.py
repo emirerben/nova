@@ -11,7 +11,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -35,14 +35,15 @@ from app.models import (
 from app.services.creation_thread_titles import conversation_revision_matches
 from app.services.creator_render_contract import CreatorRenderContractError
 from app.services.device_render import (
-    CONTRACT_DECLINE_FIELD,
     apply_retry_variant_reset,
     approved_runtime_generation,
+    device_contract_blocks_retry,
     device_record,
     device_status,
     retry_device_render,
     verify_device_record_contract,
 )
+from app.services.job_storage_paths import project_media_reference_lock_key
 
 RETRY_FIELD = "render_retry"
 _NEEDS_CHANGE = {"unsupported_recipe", "cancelled_by_user"}
@@ -57,7 +58,7 @@ def retry_program_available(job: Job, execution: CreatorAgentExecution) -> bool:
         record, status = device_record(job, variant), device_status(job, variant)
         return (
             status.phase == "needs_attention"
-            and not record.get(CONTRACT_DECLINE_FIELD)
+            and not device_contract_blocks_retry(record)
             and status.reason_code not in _NEEDS_CHANGE | _MISSING_ORIGINAL
         )
     except (KeyError, ValueError, TypeError):
@@ -89,7 +90,9 @@ def _targets(source, session, item, approval_id=None):  # noqa: ANN001, ANN202
     }
 
 
-def _validate(rows, *, creator_id, source, source_approval, retry=None, accepted=False):  # noqa: ANN001, ANN202
+def _validate(
+    rows, *, creator_id, source, source_approval, retry=None, accepted=False, automatic=False
+):  # noqa: ANN001, ANN202
     if any(
         rows.get(cls) is None
         for cls in (
@@ -160,7 +163,7 @@ def _validate(rows, *, creator_id, source, source_approval, retry=None, accepted
             "The previous attempt has an unknown outcome. Refresh to check its status; "
             "another render has not started.",
         )
-    if source.status != "failed":
+    if source.status not in ({"accepted", "dispatched"} if automatic else {"failed"}):
         raise _failure(
             "render_retry_not_failed",
             "This render is still running or has already finished. Refresh the project.",
@@ -256,7 +259,7 @@ def _validate(rows, *, creator_id, source, source_approval, retry=None, accepted
             "An original video is unavailable on this iPhone. "
             "Restore the original before retrying; your edit is saved.",
         )
-    if record.get(CONTRACT_DECLINE_FIELD) or status.reason_code in _NEEDS_CHANGE:
+    if device_contract_blocks_retry(record) or status.reason_code in _NEEDS_CHANGE:
         raise _failure(
             "render_retry_requires_change",
             "This failure needs a change before another render. Your approved edit has been kept.",
@@ -321,6 +324,33 @@ async def prepare_render_retry(
             "render_retry_target_stale",
             "You have changed this project since that failure. Refresh and use the current edit.",
         )
+    from app.kria.approval_readiness import (  # noqa: PLC0415
+        NOT_READY,
+        ApprovalReadinessError,
+        assess_saved_document,
+        requires_readiness,
+    )
+
+    readiness_report = None
+    raw_draft = rows[CreatorEditDraft].snapshot_json or {}
+    if settings.approval_readiness_for(creator_id) or (
+        isinstance(raw_draft, dict)
+        and (raw_draft.get("brief_coverage") or {}).get("approval_readiness") is not None
+    ):
+        try:
+            readiness_document = KriaDraftDocument.model_validate(raw_draft)
+            # Historical snapshots without the requirement binding stay legacy.
+            if requires_readiness(readiness_document, creator_id):
+                readiness_report = await assess_saved_document(
+                    db, rows[PlanItem], readiness_document
+                )
+        except ApprovalReadinessError as exc:
+            raise _failure(NOT_READY, str(exc)) from exc
+        except ValueError as exc:
+            raise _failure(
+                NOT_READY,
+                "The saved edit's rendering evidence is unavailable. Ask Kria to prepare it again.",
+            ) from exc
     if existing is not None:
         current_approval = await db.get(
             CreatorAgentApproval,
@@ -451,6 +481,14 @@ async def prepare_render_retry(
         started_at=now,
         awaiting_approval_at=now,
         result={
+            **(
+                {
+                    "approval_readiness": readiness_report,
+                    "approval_readiness_digest": readiness_report["digest"],
+                }
+                if readiness_report is not None
+                else {}
+            ),
             RETRY_FIELD: {
                 "source_execution_id": str(source.id),
                 "failed_identity": status.request.identity.model_dump(mode="json"),
@@ -538,6 +576,15 @@ def claim_render_retry(approval_id: uuid.UUID):  # noqa: ANN201
         item = db.get(PlanItem, session.plan_item_id) if session else None
         if source is None or item is None:
             return True, None
+        # The media-reference trigger takes the owner lock on a Job write.
+        # Match phone polling's owner -> project-row order before any row lock.
+        db.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    project_media_reference_lock_key(approval_ref.creator_id)
+                )
+            )
+        )
         rows = acquire_locked_rows_sync(
             db, _targets(execution_ref, session, item, approval_id), populate_existing=True
         )

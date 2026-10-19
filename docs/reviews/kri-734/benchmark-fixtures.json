@@ -1,0 +1,97 @@
+{
+  "contains_media": false,
+  "measurement_files": [
+    {
+      "name": "native-5s",
+      "kind": "retained_native",
+      "video": {
+        "sha256": "3d15eb008867621ed9e290b98ef87567367b4419daa11f8bc800a0827f3c2e55",
+        "bytes": 5299669
+      },
+      "status_json": {
+        "sha256": "ff0345287f2eb4ba9e78ed864808e8558b15ad2321ef8d001953ee2ca8613eb4",
+        "bytes": 8376
+      },
+      "source_files": [
+        {
+          "sha256": "0444fc4cad19226701ce30afc65c9ac20b69caeb20b8c03700833bb131ac56da",
+          "bytes": 567691
+        },
+        {
+          "sha256": "fc989f4da0cb598d5589071d8e9454655021063e1f1e869126afc578017260a3",
+          "bytes": 534955
+        }
+      ],
+      "brand_tail": "standard"
+    },
+    {
+      "name": "synthetic-5s",
+      "kind": "synthetic",
+      "video": {
+        "sha256": "ebaacd9e3623274d7d1f844f77f49e77022189aabd6de33c79a6100577794449",
+        "bytes": 3105499
+      },
+      "status_json": {
+        "sha256": "7d66121eb0347346cd39d5711d3df995a134e71a998aec4a0e388366f9acbf82",
+        "bytes": 3102
+      },
+      "source_files": [
+        {
+          "sha256": "feac2b55163c6ec0f6717ae7ebf86d6ef2b979dc40d0d199c76a20da0251a6ea",
+          "bytes": 4853602
+        },
+        {
+          "sha256": "5ffd0c3e4896b0502c7f0d82fcb831258316da444105396bb669be7dfd4634ab",
+          "bytes": 4530885
+        }
+      ],
+      "brand_tail": "none"
+    },
+    {
+      "name": "synthetic-30s",
+      "kind": "synthetic",
+      "video": {
+        "sha256": "a288a3b51131f033f9155db49ed15b9286362f11b39c31caa52b9b9a6084347e",
+        "bytes": 18106109
+      },
+      "status_json": {
+        "sha256": "733097f3a5a4855a1bbcaf89ac04f402c2bc5eb1613cba5a179599d20b0a8003",
+        "bytes": 3105
+      },
+      "source_files": [
+        {
+          "sha256": "feac2b55163c6ec0f6717ae7ebf86d6ef2b979dc40d0d199c76a20da0251a6ea",
+          "bytes": 4853602
+        },
+        {
+          "sha256": "5ffd0c3e4896b0502c7f0d82fcb831258316da444105396bb669be7dfd4634ab",
+          "bytes": 4530885
+        }
+      ],
+      "brand_tail": "none"
+    },
+    {
+      "name": "synthetic-60s",
+      "kind": "synthetic",
+      "video": {
+        "sha256": "3445a46bac1cbb4edb0f8bf2dd65327168e783afd8c819286a21c3d2ae8d7ffa",
+        "bytes": 36312907
+      },
+      "status_json": {
+        "sha256": "0c5520940b81c72b1d90075f149a0cbe9f4c8b4ac7de94b8880ba9c39b4b0637",
+        "bytes": 3105
+      },
+      "source_files": [
+        {
+          "sha256": "feac2b55163c6ec0f6717ae7ebf86d6ef2b979dc40d0d199c76a20da0251a6ea",
+          "bytes": 4853602
+        },
+        {
+          "sha256": "5ffd0c3e4896b0502c7f0d82fcb831258316da444105396bb669be7dfd4634ab",
+          "bytes": 4530885
+        }
+      ],
+      "brand_tail": "none"
+    }
+  ]
+}

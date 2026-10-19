@@ -56,6 +56,7 @@ from app.schemas.edit_proposal import (
     clean_creator_pinned_texts,
     clean_creator_shot_labels,
 )
+from app.schemas.editorial_plan import EditorialPlan
 from app.schemas.text_style_intent import (
     LabelPosition,
     TitleAnimation,
@@ -355,6 +356,10 @@ class CreativeStrategy(_CreatorModel):
     execution_contract: ExecutionContract | None = None
     media_scope: MediaScope | None = None
     story_structure: list[str] = Field(default_factory=list, max_length=8)
+    editorial_plan: EditorialPlan | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
     caption_style: CaptionStyle = "auto"
     intro_hook: str | None = Field(
         default=None,

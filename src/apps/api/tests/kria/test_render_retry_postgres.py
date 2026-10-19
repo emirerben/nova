@@ -306,9 +306,26 @@ def test_a_new_manual_editor_generation_keeps_direct_device_retry(client, whole_
 
 
 @pytest.mark.parametrize("whole_job", [False, True], ids=["variant", "whole-job"])
-def test_retry_reuses_turn_draft_and_recipe_with_fresh_consent(client, monkeypatch, whole_job):
+@pytest.mark.parametrize(
+    "output_failure", [False, True], ids=["export-failure", "output-check-failure"]
+)
+def test_retry_reuses_turn_draft_and_recipe_with_fresh_consent(
+    client, monkeypatch, whole_job, output_failure
+):
     http, publish = client
     case = seed_failed(whole_job=whole_job)
+    if output_failure:
+        with sync_session() as db:
+            job = db.get(Job, case.job_id)
+            record = device_record(job, "first")
+            record["actual_export_policy"] = {"version": 1, "source_receipts_digest": "a" * 64}
+            record["contract_decline"] = {
+                "stage": "actual_export",
+                "field_path": "export_verification",
+                "decline_reason": "evidence_missing",
+            }
+            save_device_record(job, "first", record)
+            db.commit()
     # Any accidental new creative planning or analysis is a real failure.
     from app.tasks import kria_runtime
 
@@ -343,6 +360,11 @@ def test_retry_reuses_turn_draft_and_recipe_with_fresh_consent(client, monkeypat
         status = device_status(db.get(Job, case.job_id), "first")
         assert status.request.identity.recipe_revision == 2
         assert status.request.recipe.model_dump(mode="json") == case.recipe
+        if output_failure:
+            assert device_record(db.get(Job, case.job_id), "first")["actual_export_policy"] == {
+                "version": 1,
+                "source_receipts_digest": "a" * 64,
+            }
         assert (
             db.scalar(
                 select(func.count())

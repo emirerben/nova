@@ -3,6 +3,15 @@
     "ApprovalDecisionBody": {
       "additionalProperties": false,
       "properties": {
+        "automatic_repair_attempts": {
+          "default": 0,
+          "enum": [
+            0,
+            2
+          ],
+          "title": "Automatic Repair Attempts",
+          "type": "integer"
+        },
         "expected_approval_fingerprint": {
           "maxLength": 64,
           "minLength": 64,
@@ -144,6 +153,15 @@
         "approval_id": {
           "title": "Approval Id",
           "type": "string"
+        },
+        "automatic_repair_limit": {
+          "default": 0,
+          "enum": [
+            0,
+            2
+          ],
+          "title": "Automatic Repair Limit",
+          "type": "integer"
         },
         "consequence_summary": {
           "title": "Consequence Summary",
@@ -4001,6 +4019,17 @@
                 "title": "Edit Format",
                 "type": "string"
               },
+              "editorial_plan": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/EditorialPlan"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "execution_contract": {
                 "anyOf": [
                   {
@@ -4332,6 +4361,73 @@
               }
             },
             "title": "CreativeStrategy",
+            "type": "object"
+          },
+          "EditorialBeat": {
+            "additionalProperties": false,
+            "properties": {
+              "media_ids": {
+                "items": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "minItems": 1,
+                "title": "Media Ids",
+                "type": "array"
+              },
+              "purpose": {
+                "maxLength": 80,
+                "minLength": 1,
+                "title": "Purpose",
+                "type": "string"
+              },
+              "text_goal": {
+                "anyOf": [
+                  {
+                    "maxLength": 240,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Text Goal"
+              }
+            },
+            "required": [
+              "purpose",
+              "media_ids"
+            ],
+            "title": "EditorialBeat",
+            "type": "object"
+          },
+          "EditorialPlan": {
+            "additionalProperties": false,
+            "properties": {
+              "beats": {
+                "items": {
+                  "$ref": "#/$defs/EditorialBeat"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "title": "Beats",
+                "type": "array"
+              },
+              "viewer_goal": {
+                "maxLength": 240,
+                "minLength": 1,
+                "title": "Viewer Goal",
+                "type": "string"
+              }
+            },
+            "required": [
+              "viewer_goal",
+              "beats"
+            ],
+            "title": "EditorialPlan",
             "type": "object"
           },
           "LicensedSfxIntent": {

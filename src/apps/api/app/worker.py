@@ -78,6 +78,7 @@ celery_app = Celery(
         "app.tasks.billing_reconciliation",
         "app.tasks.template_upload_promotion",
         "app.tasks.device_render_reaper",
+        "app.tasks.export_verification",
         "app.tasks.editor_sources",
         # Deliberately NOT in MAINTENANCE_TASK_NAMES: repair_job_poster downloads
         # a full MP4 into the RAM-backed /tmp, which is exactly the workload that
@@ -105,6 +106,7 @@ celery_app = Celery(
 # machine that might be stopped) but is at least loud in effect: Beat
 # entries are rare and reviewed, unlike per-request dispatch call sites.
 MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
+    "tasks.reconcile_export_verifications",
     "app.tasks.request_following.collect",
     "tasks.sweep_stale_jobs",
     "tasks.cleanup_agent_runs",
@@ -238,6 +240,10 @@ celery_app.conf.update(
     # embedded (`-B`) in the `light` process (see fly.toml). Other worker
     # processes ignore this dict, so it's safe to define unconditionally.
     beat_schedule={
+        "reconcile-export-verifications-every-minute": {
+            "task": "tasks.reconcile_export_verifications",
+            "schedule": 60.0,
+        },
         "request-following-collection": {
             "task": "app.tasks.request_following.collect",
             "schedule": 900.0,

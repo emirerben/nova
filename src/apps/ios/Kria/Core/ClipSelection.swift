@@ -18,10 +18,22 @@ struct ClipQuestion: Equatable, Sendable {
         var id: String { key }
     }
 
+    /// KRI-693: how the server describes one candidate that is not a plain video (`clip_question.candidate_media`).
+    /// A candidate id says nothing about its kind, so a Visuals photo (`asset-…`) used to read as "Clip 9".
+    struct CandidateMedia: Equatable, Sendable {
+        let kind: String
+        /// The server's name for it in the chat's language ("Photo 1" / "Fotoğraf 1"); nil when blank.
+        let label: String?
+    }
+
     let version: Int
     let questionID: String
     let categories: [Category]
     let allowNone: Bool
+    /// Empty on an older server and whenever the question offers no photo.
+    var candidateMedia: [String: CandidateMedia] = [:]
+
+    func isPhoto(_ mediaID: String) -> Bool { candidateMedia[mediaID]?.kind == "image" }
 
     /// Highest `clip_question.version` this build understands; newer payloads degrade to the text question.
     static let supportedVersion = 1
@@ -61,7 +73,56 @@ struct ClipQuestion: Equatable, Sendable {
         }
         guard !categories.isEmpty else { return nil }
         return ClipQuestion(version: version, questionID: questionID, categories: categories,
-                            allowNone: fields["allow_none"]?.boolValue ?? true)
+                            allowNone: fields["allow_none"]?.boolValue ?? true,
+                            candidateMedia: parseCandidateMedia(fields["candidate_media"]))
+    }
+
+    /// Only photos are named; anything else (a video, junk) keeps its plain "Clip N" row.
+    private static func parseCandidateMedia(_ value: JSONValue?) -> [String: CandidateMedia] {
+        var result: [String: CandidateMedia] = [:]
+        for entry in value?.arrayValue ?? [] {
+            guard let object = entry.objectValue, let id = object["media_id"]?.stringValue, !id.isEmpty,
+                  object["kind"]?.stringValue == "image" else { continue }
+            let label = object["label"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            result[id] = CandidateMedia(kind: "image", label: label?.isEmpty == false ? label : nil)
+        }
+        return result
+    }
+}
+
+/// How one picker tile reads (KRI-693): what it is called and whether it is a photo. The server names photos
+/// in the chat's language; every other tile is "Clip N", unchanged.
+struct ClipTileInfo: Equatable {
+    let name: String
+    let isPhoto: Bool
+    /// The placeholder glyph while no thumbnail is available.
+    var symbol: String { isPhoto ? "photo" : "film" }
+
+    init(mediaID: String, position: Int, question: ClipQuestion, media: CreationAttachedMedia?) {
+        isPhoto = question.isPhoto(mediaID) || media?.kind == "image"
+        name = question.candidateMedia[mediaID].flatMap { $0.kind == "image" ? $0.label : nil } ?? "Clip \(position)"
+    }
+}
+
+/// Thumbnails for the Visuals-pool candidates of a clip question. Pool photos and videos are not chat media, so
+/// the chat state never lists them; the iPhone looks them up in the plan item's Visuals instead.
+enum ClipPoolMedia {
+    /// The question's pool candidates (`asset-<uuid>`), in candidate order.
+    static func poolIDs(in question: ClipQuestion) -> [String] {
+        var seen = Set<String>()
+        return question.categories.flatMap(\.candidateMediaIDs).filter { $0.hasPrefix("asset-") && seen.insert($0).inserted }
+    }
+
+    /// One entry per pool candidate that the Visuals read lists, in candidate order, so appending them to the
+    /// chat media numbers them exactly as the picker already did. A candidate the read lacks is left out.
+    static func media(for question: ClipQuestion, pool: [CreationVisual]) -> [CreationAttachedMedia] {
+        let byID = Dictionary(pool.map { ($0.id.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
+        return poolIDs(in: question).compactMap { candidateID in
+            guard let visual = byID[String(candidateID.dropFirst("asset-".count)).lowercased()] else { return nil }
+            // A video's `display_url` is the raw file, never a poster; a photo's is its signed preview.
+            let thumbnail = visual.kind == "video" ? visual.previewURL : (visual.displayURL ?? visual.sourceURL)
+            return CreationAttachedMedia(id: candidateID, filename: visual.sourceFilename ?? "Visual", kind: visual.kind, previewURL: thumbnail)
+        }
     }
 }
 
@@ -97,21 +158,40 @@ struct ClipSelectionSubmission: Encodable, Equatable, Sendable {
     }
 
     /// The readable message sent alongside the structured payload ("Dodgeball: clips 3, 7. Football: clips 1, 2").
-    /// `positions` maps media id -> the 1-based clip number the picker showed.
-    func message(question: ClipQuestion, positions: [String: Int]) -> String {
-        if skipped { return "Skip, decide for me" }
+    /// `positions` maps media id -> the 1-based clip number the picker showed. It is the creator's visible turn in the
+    /// chat, so it follows the chat's reply language (KRI-694); the structured answer, not this text, is what binds.
+    func message(question: ClipQuestion, positions: [String: Int], language: ClipAnswerLanguage = .english) -> String {
+        let skip = language == .turkish ? "Atla, benim yerime sen karar ver" : "Skip, decide for me"
+        if skipped { return skip }
         let labels = Dictionary(question.categories.map { ($0.key, $0.label) }, uniquingKeysWith: { first, _ in first })
         var pieces: [String] = []
         for category in question.categories {
+            let label = labels[category.key] ?? category.key
             if let answer = answers.first(where: { $0.key == category.key }), !answer.mediaIDs.isEmpty {
                 let numbers = answer.mediaIDs.compactMap { positions[$0] }.sorted()
                 let list = numbers.map(String.init).joined(separator: ", ")
-                pieces.append("\(labels[category.key] ?? category.key): clip\(numbers.count == 1 ? "" : "s") \(list)")
+                switch language {
+                case .turkish: pieces.append("\(label): klip \(list)")
+                case .english: pieces.append("\(label): clip\(numbers.count == 1 ? "" : "s") \(list)")
+                }
             } else if noneKeys.contains(category.key) {
-                pieces.append("None of these for \(labels[category.key] ?? category.key)")
+                pieces.append(language == .turkish ? "\(label) için hiçbiri" : "None of these for \(label)")
             }
         }
-        return pieces.isEmpty ? "Skip, decide for me" : pieces.joined(separator: ". ")
+        return pieces.isEmpty ? skip : pieces.joined(separator: ". ")
+    }
+}
+
+/// The language the picker's posted answer is written in: the chat's reply language, which the server keeps on
+/// `thread.state["reply_language"]` (KRI-520). Never the device language -- a Turkish chat on an English phone
+/// still reads Turkish. Only Turkish has its own wording; a missing or unknown language stays English, exactly
+/// like the server's `say(en:, tr:)`.
+enum ClipAnswerLanguage: Equatable, Sendable {
+    case english
+    case turkish
+
+    init(threadState: [String: JSONValue]) {
+        self = threadState["reply_language"]?.stringValue == "tr" ? .turkish : .english
     }
 }
 

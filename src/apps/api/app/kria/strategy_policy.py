@@ -23,7 +23,7 @@ something the creator asked for (KRI-594).
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from app.agents._schemas.creator_agent import (
@@ -45,10 +45,12 @@ from app.agents._schemas.creator_policy import (
     MontageCadenceUnavailableError,
     PhoneMediaUnavailableError,
     latest_scope_counts_own_clips,
+    native_voiceover_only,
 )
 from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
 from app.kria.reply_language import current_reply_language, say
 from app.kria.voiceover_scope import lost_visual_asks, resolve_native_all_scope
+from app.schemas.clip_intents import ClipIntent
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PINNED_TEXT_MAX_CHARS
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
@@ -135,8 +137,28 @@ def _captions_kept_notice() -> str:
     return say(en=CAPTIONS_KEPT_NOTICE, tr=_CAPTIONS_KEPT_NOTICE_TR)
 
 
-def _transcript_labels_dropped_notice() -> str:
+def transcript_labels_dropped_notice() -> str:
     return say(en=TRANSCRIPT_LABELS_DROPPED_NOTICE, tr=_TRANSCRIPT_LABELS_DROPPED_NOTICE_TR)
+
+
+def renderable_clip_intents(
+    manifest: ResolvedCreatorManifest, intents: Sequence[ClipIntent]
+) -> list[ClipIntent] | None:
+    """KRI-691: ``intents`` without the narration labels this chat can never draw, or None
+    when there is nothing to leave out.
+
+    Only the guided contract draws a transcript label, and a runtime-v2 manifest with a
+    recorded voiceover never offers it (KRI-598, `native_voiceover_only`). Asking for "a
+    recorded voiceover with guided visuals" there asked for a voiceover the creator had
+    already recorded, on every turn (prod thread 2ea478ec), so the label is left out with
+    `transcript_labels_dropped_notice` instead. Where the contract is still offered, or no
+    voiceover is recorded yet, the question stays: the creator can act on it.
+    """
+
+    if not native_voiceover_only(manifest):
+        return None
+    kept = [intent for intent in intents if intent.label_source != "transcript"]
+    return kept if len(kept) != len(intents) else None
 
 
 # Notices and messages other modules write in English (the strategy compiler, the
@@ -423,7 +445,7 @@ def _downgrade_guided_voiceover(
     if strategy.mixed_media_timing is not None:
         notices.append(say(en=VOICEOVER_MEDIA_TIMING_NOTICE, tr=_VOICEOVER_MEDIA_TIMING_NOTICE_TR))
     if len(kept_intents) != len(intents):
-        notices.append(_transcript_labels_dropped_notice())
+        notices.append(transcript_labels_dropped_notice())
     loses_a_request = (
         any(media_id not in placed for media_id in asked)
         or strategy.mixed_media_timing is not None
@@ -761,11 +783,18 @@ def check_strategy_for_runtime_v2(
     reaction beat or closing shot places is named and asked about, never dropped silently.
     """
 
+    notices: list[str] = []
+    kept_intents = renderable_clip_intents(manifest, strategy.clip_intents or [])
+    if kept_intents is not None:
+        # KRI-691: a narration label the Main Creator wrote. Left out before the baseline
+        # is taken: no answer to "a simpler version?" could make this chat draw it, so it
+        # is a notice, never that question (the next turn would only ask it again).
+        strategy = strategy.model_copy(update={"clip_intents": kept_intents or None})
+        notices.append(transcript_labels_dropped_notice())
     original = strategy
     # What a dropped request is judged against: the creator's strategy, with a guided
     # voiceover contract already swapped out when its downgrade keeps every request.
     baseline = original
-    notices: list[str] = []
     if strategy.caption_style == "none" and (
         strategy.edit_format == "subtitled" or strategy.edit_format in NARRATED_EDIT_FORMATS
     ):
@@ -873,6 +902,8 @@ __all__ = [
     "RefusedStrategy",
     "SONG_CAPTIONS_NEED_SONG_CODE",
     "check_strategy_for_runtime_v2",
+    "renderable_clip_intents",
+    "transcript_labels_dropped_notice",
     "song_captions_refusal",
     "localize_known_message",
 ]

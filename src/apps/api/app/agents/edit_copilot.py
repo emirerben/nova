@@ -39,12 +39,13 @@ from app.services.editor_limits import (
     MOTION_MAX_ACTIVE_FRAMES,
     MOTION_MAX_INSTANCES,
 )
+from app.services.researched_text import ResearchRequest
 
 log = structlog.get_logger()
 
 # v82 (KRI-716): a group title is one add_text across the stretch, never one per clip.
 # v81 (KRI-667/KRI-669): keep claimed_ops honesty and measured heading placement together.
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-18-v83"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-19-v84"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -732,6 +733,9 @@ class EditCopilotInput(BaseModel):
 class EditCopilotOutput(BaseModel):
     """Parsed edit intent and editor operations."""
 
+    research_request: ResearchRequest | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     intent: Literal["edit", "clarify", "describe", "reject", "unknown"]
     ops: list[dict] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
@@ -3297,6 +3301,24 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         if not isinstance(data, dict):
             raise SchemaError("edit_copilot: response is not a JSON object")
 
+        if data.get("research_request") is not None:
+            from app.services.researched_text import ResearchUnavailable
+
+            try:
+                request = ResearchRequest.model_validate(data["research_request"])
+                request.authorize(input.utterance)
+            except (ValueError, ResearchUnavailable) as exc:
+                raise SchemaError(
+                    "Research request must quote the creator and name a public topic"
+                ) from exc
+            return EditCopilotOutput(
+                intent="describe",
+                ops=[],
+                confidence=0.9,
+                reply="Research is needed before these explanations can be prepared.",
+                research_request=request,
+            )
+
         intent = data.get("intent", "unknown")
         if intent not in _VALID_INTENTS:
             log.warning("edit_copilot.unknown_intent", intent=intent)
@@ -3427,6 +3449,10 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         # so the model's claimed_ops can be matched against the ops that survived.
         renamed: dict[str, str] = {}
         for raw_op in raw_ops:
+            # Research provenance is attached only by the grounded server step,
+            # after model parsing. Ordinary model operations cannot invent it.
+            if isinstance(raw_op, dict):
+                raw_op = {key: value for key, value in raw_op.items() if key != "research"}
             # A bulk caption replacement is one atomic client operation no
             # matter how many cues it changes. Keep it outside the ordinary
             # per-operation cap so a model that emits it after 12 unrelated

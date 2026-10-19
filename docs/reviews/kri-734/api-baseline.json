@@ -1,0 +1,369 @@
+{
+  "captured_at": "2026-10-18T05:18:44.526458+00:00",
+  "implementation_sha256": "39391cad7e656a9b9d4d908eebd3a8ddf51bad28894a78f85e2b1540bca39b78",
+  "python": "3.11.17",
+  "system": "Linux",
+  "measurement": "verification_only_staged_local_files_no_transfer_or_fixture_creation",
+  "cases": [
+    {
+      "name": "native-5s",
+      "kind": "retained_native",
+      "duration_s": 5.0,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "median_s": 8.526149,
+      "min_s": 8.492795,
+      "max_s": 9.10257,
+      "runs": [
+        {
+          "wall_s": 9.10257,
+          "cpu_s": 8.650502,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 4
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.581984
+            },
+            "picture_decode": {
+              "calls": 28,
+              "wall_s": 6.595813
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.383164
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.170134
+            }
+          }
+        },
+        {
+          "wall_s": 8.526149,
+          "cpu_s": 8.410198,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 4
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.273859
+            },
+            "picture_decode": {
+              "calls": 28,
+              "wall_s": 6.310509
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.377011
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.224696
+            }
+          }
+        },
+        {
+          "wall_s": 8.492795,
+          "cpu_s": 8.368944,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 4
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.261672
+            },
+            "picture_decode": {
+              "calls": 28,
+              "wall_s": 6.261163
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.375156
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.264346
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "synthetic-5s",
+      "kind": "synthetic",
+      "duration_s": 5.0,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "median_s": 12.728522,
+      "min_s": 12.680889,
+      "max_s": 12.794412,
+      "runs": [
+        {
+          "wall_s": 12.728522,
+          "cpu_s": 12.583296,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 4
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.257216
+            },
+            "picture_decode": {
+              "calls": 28,
+              "wall_s": 10.528637
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.364678
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.18676
+            }
+          }
+        },
+        {
+          "wall_s": 12.680889,
+          "cpu_s": 12.535603,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 4
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.254972
+            },
+            "picture_decode": {
+              "calls": 28,
+              "wall_s": 10.483518
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.379169
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.189631
+            }
+          }
+        },
+        {
+          "wall_s": 12.794412,
+          "cpu_s": 12.656895,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 4
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.253979
+            },
+            "picture_decode": {
+              "calls": 28,
+              "wall_s": 10.573913
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.383722
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.213624
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "synthetic-30s",
+      "kind": "synthetic",
+      "duration_s": 30.0,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "median_s": 97.671819,
+      "min_s": 91.618831,
+      "max_s": 99.606763,
+      "runs": [
+        {
+          "wall_s": 91.618831,
+          "cpu_s": 12.329269,
+          "status": "partial",
+          "checks": {
+            "duration:passed": 1,
+            "evidence:missing": 1
+          },
+          "picture_samples": 0,
+          "stages": {
+            "probe": {
+              "calls": 1,
+              "wall_s": 0.092288
+            },
+            "picture_decode": {
+              "calls": 26,
+              "wall_s": 91.064971
+            }
+          }
+        },
+        {
+          "wall_s": 99.606763,
+          "cpu_s": 8.500042,
+          "status": "partial",
+          "checks": {
+            "duration:passed": 1,
+            "evidence:missing": 1
+          },
+          "picture_samples": 0,
+          "stages": {
+            "probe": {
+              "calls": 1,
+              "wall_s": 0.964519
+            },
+            "picture_decode": {
+              "calls": 20,
+              "wall_s": 97.523423
+            }
+          }
+        },
+        {
+          "wall_s": 97.671819,
+          "cpu_s": 8.477621,
+          "status": "partial",
+          "checks": {
+            "duration:passed": 1,
+            "evidence:missing": 1
+          },
+          "picture_samples": 0,
+          "stages": {
+            "probe": {
+              "calls": 1,
+              "wall_s": 1.123217
+            },
+            "picture_decode": {
+              "calls": 20,
+              "wall_s": 95.609331
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "synthetic-60s",
+      "kind": "synthetic",
+      "duration_s": 60.0,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "median_s": 101.760787,
+      "min_s": 92.883454,
+      "max_s": 104.246619,
+      "runs": [
+        {
+          "wall_s": 92.883454,
+          "cpu_s": 8.495759,
+          "status": "partial",
+          "checks": {
+            "duration:passed": 1,
+            "evidence:missing": 1
+          },
+          "picture_samples": 0,
+          "stages": {
+            "probe": {
+              "calls": 1,
+              "wall_s": 1.201623
+            },
+            "picture_decode": {
+              "calls": 20,
+              "wall_s": 90.709463
+            }
+          }
+        },
+        {
+          "wall_s": 101.760787,
+          "cpu_s": 7.122246,
+          "status": "partial",
+          "checks": {
+            "duration:passed": 1,
+            "evidence:missing": 1
+          },
+          "picture_samples": 0,
+          "stages": {
+            "probe": {
+              "calls": 1,
+              "wall_s": 1.51589
+            },
+            "picture_decode": {
+              "calls": 18,
+              "wall_s": 99.027772
+            }
+          }
+        },
+        {
+          "wall_s": 104.246619,
+          "cpu_s": 7.125752,
+          "status": "partial",
+          "checks": {
+            "duration:passed": 1,
+            "evidence:missing": 1
+          },
+          "picture_samples": 0,
+          "stages": {
+            "probe": {
+              "calls": 1,
+              "wall_s": 1.761175
+            },
+            "picture_decode": {
+              "calls": 18,
+              "wall_s": 101.362484
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "tools": {
+    "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tesseract": "tesseract 5.5.0"
+  }
+}

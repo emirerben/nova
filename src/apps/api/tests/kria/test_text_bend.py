@@ -497,7 +497,7 @@ async def test_device_render_poll_tells_an_old_build_to_update(monkeypatch) -> N
 
     env, element = _guided_env(monkeypatch)
     env.save(text_elements=[{**element, "bend": 40}])
-    request = SimpleNamespace(recipe=env.recipe, identity=SimpleNamespace())
+    request = SimpleNamespace(recipe=env.recipe, identity=SimpleNamespace(), recovery=None)
     monkeypatch.setattr(device_render, "_owned_job", AsyncMock(return_value=env.job))
     monkeypatch.setattr(
         device_render, "device_status", lambda *_a: SimpleNamespace(request=request)

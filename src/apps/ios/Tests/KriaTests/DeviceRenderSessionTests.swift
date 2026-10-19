@@ -242,6 +242,30 @@ private actor RetryGate {
         await sessions.stopAll()
     }
 
+    func testRequiredVerificationWithholdsLocalExportUntilPublication() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let request = request(job), exporter = SessionExport(), publisher = SessionPublisher()
+        await publisher.fail(true)
+        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: publisher)
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            DeviceRenderStatusResponse(phase: "syncing", request: request, outputVerificationRequired: true)
+        }, factory: { _, _ in coordinator })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        await coordinator.waitUntilIdle()
+        await sessions.reconcile(key, capabilities: .disabled)
+        XCTAssertNil(sessions.presentations[key]?.localFile, "Unchecked export must not be playable/saveable/shareable as ready")
+        XCTAssertEqual(sessions.presentations[key]?.outputVerificationPending, true)
+        await publisher.fail(false)
+        await sessions.reconcile(key, capabilities: enabled, retry: true)
+        await coordinator.waitUntilIdle()
+        await sessions.reconcile(key, capabilities: .disabled)
+        XCTAssertNotNil(sessions.presentations[key]?.localFile)
+        XCTAssertEqual(sessions.presentations[key]?.outputVerificationPending, false)
+        await sessions.stopAll()
+    }
+
     func testServerNeedsAttentionWithLocalOutputMintsFreshIdentityBeforeRetry() async throws {
         let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: output) }

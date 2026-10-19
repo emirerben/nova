@@ -305,6 +305,60 @@ final class NativeEditorInteractionTests: XCTestCase {
         XCTAssertNil(NativeEditorInteraction.outroRange(lastClipEnd: 10, playbackDuration: .infinity, isBrandedPreview: true))
         XCTAssertNil(NativeEditorInteraction.outroRange(lastClipEnd: 10, playbackDuration: 8, isBrandedPreview: true))
     }
+
+    // MARK: - Clip reorder: moving a clip must never change how long the video is
+
+    func testReorderKeepsTotalDurationAndLeavesCutsAtTheirPositions() {
+        // Mixed durations so the 30% overlap caps differ per neighbour; the last slot's transition is ignored.
+        let slots = [
+            slot("a", duration: 4, transition: "crossfade", transitionDuration: 0.3),
+            slot("b", duration: 3, transition: "crossfade", transitionDuration: 0.3),
+            slot("c", duration: 5, transition: "crossfade", transitionDuration: 0.3),
+            slot("d", duration: 2, transition: "cut"),
+        ]
+        let total = NativeEditorInteraction.timelineProjection(slots: slots, carousel: nil).totalDuration
+        for from in slots.indices {
+            for to in slots.indices where to != from {
+                let moved = NativeEditorInteraction.reorderedSlots(slots, from: from, to: to)
+                XCTAssertEqual(moved[to].id, slots[from].id, "\(from)->\(to)")
+                XCTAssertEqual(moved.map(\.transitionAfter), slots.map(\.transitionAfter), "\(from)->\(to)")
+                XCTAssertEqual(
+                    NativeEditorInteraction.timelineProjection(slots: moved, carousel: nil).totalDuration,
+                    total, accuracy: 0.0005, "moving \(from)->\(to) changed the length"
+                )
+            }
+        }
+    }
+
+    func testReorderTargetUsesOtherClipsMidpointsSoUnequalWidthsLandRight() {
+        // Clips 0-1.5, 1.5-4.5, 4.5-6.5 (midpoints 0.75, 3, 5.5).
+        let windows: [(start: TimeInterval, end: TimeInterval)] = [(0, 1.5), (1.5, 4.5), (4.5, 6.5)]
+        func target(from: Int, center: TimeInterval) -> Int {
+            NativeEditorInteraction.clipReorderTarget(windows: windows, from: from, liftedCenter: center)
+        }
+        XCTAssertEqual(target(from: 0, center: 0.75), 0)
+        XCTAssertEqual(target(from: 0, center: 2.9), 0)
+        XCTAssertEqual(target(from: 0, center: 3.1), 1)
+        XCTAssertEqual(target(from: 0, center: 6), 2)
+        XCTAssertEqual(target(from: 2, center: 2.9), 1)
+        XCTAssertEqual(target(from: 2, center: 0.5), 0)
+        XCTAssertEqual(target(from: 1, center: -4), 0)
+        XCTAssertEqual(target(from: 1, center: 40), 2)
+    }
+
+    func testReorderedClipWindowsKeepTheGapBeforeEachPosition() {
+        // 0.3 s crossfade overlaps before the 2nd and 3rd clips, a 3 s carousel splice before the 4th.
+        let windows: [(start: TimeInterval, end: TimeInterval)] = [(0, 4), (3.7, 6.7), (6.4, 11.4), (14.4, 16.4)]
+        let moved = NativeEditorInteraction.reorderedClipWindows(windows: windows, from: 3, to: 0)
+        // Durations become 2, 4, 3, 5; the gaps (-0.3, -0.3, +3) stay at positions 1, 2, 3.
+        let expected: [(start: TimeInterval, end: TimeInterval)] = [(0, 2), (1.7, 5.7), (5.4, 8.4), (11.4, 16.4)]
+        XCTAssertEqual(moved.count, expected.count)
+        for (got, want) in zip(moved, expected) {
+            XCTAssertEqual(got.start, want.start, accuracy: 0.0005)
+            XCTAssertEqual(got.end, want.end, accuracy: 0.0005)
+        }
+        XCTAssertEqual(moved.last?.end ?? 0, windows.last?.end ?? -1, accuracy: 0.0005, "same total length")
+    }
 }
 
 @MainActor

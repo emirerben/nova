@@ -39,6 +39,7 @@ from app.kria.brief_route import (
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.kria.reply_language import current_reply_language, say
 from app.kria.speed_ask import asks_clip_speed
+from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS
 from app.kria.style_asks import (
     MOMENT_SHORT_MAX_S,
     MomentAsk,
@@ -49,6 +50,7 @@ from app.kria.style_asks import (
     value_matches,
 )
 from app.pipeline.caption_spelling import extract_spelling_asks
+from app.pipeline.sequence_text_evidence import complete_sequences, sequence_lineage
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.text_style_intent import (
     LABEL_ANCHORS,
@@ -103,6 +105,19 @@ class BeatFact:
     # Seconds into the render where the pop-in shows (a rendered variant's receipt);
     # None for a draft, which has not been laid out yet.
     at_s: float | None = None
+
+
+@dataclass(frozen=True)
+class SpokenTextFact:
+    """One text-on-a-spoken-word ask as a phone Talking render handled it (KRI-707)."""
+
+    requirement_id: str
+    # "placed" | "not_heard" | "no_time" | "error"
+    status: str
+    text: str = ""
+    # The word it waited for: the one heard, else the first one asked for.
+    trigger: str = ""
+    face_collision: bool = False
 
 
 @dataclass(frozen=True)
@@ -353,6 +368,10 @@ class PlanFacts:
     # KRI-706: True when the rendered opening title still sits on the speaker's face
     # (`variant["opening_title_placement"]["face_collision"]`). None = no such receipt.
     title_face_collision: bool | None = None
+    # KRI-707: how a phone Talking render handled each text-on-a-spoken-word ask
+    # (`variant["spoken_text_placement"]`). None = no such receipt (no such ask, a draft,
+    # or an older render): nothing is claimed.
+    spoken_texts: tuple[SpokenTextFact, ...] | None = None
     # KRI-547: pop-ins the render dropped for lack of room, as (trigger, "no_room") when
     # no spot cleared the face and captions, or (trigger, "overlap") when another pop-in
     # held the spot at that moment (`phone_beat_receipt.unplaced[]`).
@@ -1052,6 +1071,7 @@ def plan_facts_from_editor_payload(
     per_clip: dict[str, str] = {}
     title: str | None = None
     text_spans: list[tuple[str, str, float, float]] = []
+    sequence_fragments: list[Mapping[str, Any]] = []
     text_timing_incomplete = False
 
     def take_text(value: object) -> str | None:
@@ -1091,6 +1111,8 @@ def plan_facts_from_editor_payload(
                 text_spans.append(
                     (row_id, str(row.get("role") or "text"), float(start), float(end))
                 )
+                if not row.get("removed") and sequence_lineage(row) is not None:
+                    sequence_fragments.append(row)
             elif isinstance(row_id, str) and str(row.get("role") or "text") in {
                 "title",
                 "generative_intro",
@@ -1099,6 +1121,10 @@ def plan_facts_from_editor_payload(
             clip = row.get("clip_id")
             if isinstance(clip, str) and clip:
                 per_clip[clip] = text
+    # KRI-560: a phrase the compiler split into one-word-at-a-time fragments (a word-by-word
+    # hook) is on screen as the whole phrase, but no single row says it. Only a complete,
+    # contiguous, same-source run counts; a missing or removed word leaves the phrase unseen.
+    strings.extend(composed["text"] for composed in complete_sequences(sequence_fragments))
     for entry in text_diff or ():
         if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
             continue
@@ -1293,6 +1319,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_speaker_framing_facts(variant))
     changes.update(_opening_cut_facts(variant))
     changes.update(_title_face_facts(variant))
+    changes.update(_spoken_text_facts(variant))
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
     changes.update(_rendered_caption_facts(variant))
     rendered = _rendered_clip_durations(variant)
@@ -2640,10 +2667,16 @@ _TALKING_NO_SPOKEN_TEXT = "A Talking video can't show text at a word you say yet
 _TALKING_OPENING_CUT_PLAN = (
     "I'll start the video at that line if I find it in your take; if not, it opens at the start"
 )
+# KRI-707: the phone Talking worker shows the text from the word (`phone_spoken_text`).
+_TALKING_SPOKEN_TEXT_PLAN = (
+    "I'll show it the moment you say that word in your take; if I don't hear the word, it "
+    "won't appear"
+)
 _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_NO_SUCH_EDIT,
     _TALKING_NO_SPOKEN_TEXT,
     _TALKING_OPENING_CUT_PLAN,
+    _TALKING_SPOKEN_TEXT_PLAN,
 )
 
 # The Turkish twin of every static reason above (KRI-520). Reasons are written into
@@ -2711,6 +2744,9 @@ _REASON_TR: dict[str, str] = {
     _TALKING_NO_SPOKEN_TEXT: "Konuşmalı video söylediğin bir kelimede yazı gösteremiyor",
     _TALKING_OPENING_CUT_PLAN: (
         "Videoyu o cümlenin başladığı yerden başlatırım; çekiminde bulamazsam baştan açılır"
+    ),
+    _TALKING_SPOKEN_TEXT_PLAN: (
+        "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
     ),
     "Some requested text ends before the video does.": "Bazı yazılar video bitmeden kayboluyor.",
 }
@@ -2857,10 +2893,11 @@ def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
             req,
             "partial",
             say(
-                en="Speech cleanup is on, so some pauses or retakes may be cut.",
+                # KRI-551: consented cleanup cuts pauses and filler sounds, never a retake.
+                en="Speech cleanup is on, so some long pauses or filler sounds may be cut.",
                 tr=(
-                    "Konuşma temizliği açık, o yüzden bazı duraklamalar ya da tekrar "
-                    "çekimler kesilebilir."
+                    "Konuşma temizliği açık, o yüzden bazı uzun duraklamalar ya da dolgu "
+                    "sesleri kesilebilir."
                 ),
             ),
         )
@@ -3317,6 +3354,106 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
     return _receipt(req, status, "; ".join(notes))
 
 
+def _cleanup_counts(variant: Mapping[str, Any]) -> tuple[int, int, int, float | None] | None:
+    """Pauses, filler sounds and retakes a variant's cut record removed, and the time saved.
+
+    Read off ``silence_cut.removed`` (one ``reason`` per span). ``None`` when the variant
+    carries no cut record, so the note states no number it was not given.
+    """
+    record = variant.get("silence_cut")
+    rows = record.get("removed") if isinstance(record, Mapping) else None
+    if not isinstance(rows, list) or not rows:
+        return None
+    pauses = fillers = retakes = 0
+    for row in rows:
+        reason = row.get("reason") if isinstance(row, Mapping) else None
+        if reason == "silence":
+            pauses += 1
+        elif reason in ("filler_lexical", "filler_acoustic"):
+            fillers += 1
+        elif reason == "retake":
+            retakes += 1
+    if not (pauses or fillers or retakes):
+        return None
+    saved = record.get("time_saved_s")
+    seconds = (
+        float(saved)
+        if isinstance(saved, int | float) and not isinstance(saved, bool) and saved > 0
+        else None
+    )
+    return pauses, fillers, retakes, seconds
+
+
+def speech_cleanup_review_note(
+    variant: Mapping[str, Any], *, text: str = "", retake_cut_possible: bool = False
+) -> str | None:
+    """What a finished Voiceover/Talking render's speech cleanup cut, and what it left (KRI-551).
+
+    Read off the variant's own cut record, never off a brief, so the reply is honest even when
+    the render's brief binding was lost (prod thread ddc6e71b: the creator asked to cut "the part
+    where I restart the kilometer thirty sentence", the cleanup cut 14 silences and a filler,
+    the restart stayed, and no receipt said so). Consented cleanup cuts long pauses and filler
+    sounds only; it never detects a retake, so the limit is stated unless a retake cut really
+    could have run (``retake_cut_possible``) or the record shows one. ``text`` is the reply built
+    so far: a requirement receipt that already reports the limit is not repeated.
+    ``None`` for a variant that is not a speech edit or whose cleanup did not run.
+    """
+    if variant.get("resolved_archetype") not in _RENDERED_EDIT_FORMATS:
+        return None
+    outcome = variant.get("silence_cut_outcome")
+    if outcome not in ("applied", "no_change"):
+        return None
+    counts = _cleanup_counts(variant)
+    retakes = counts[2] if counts else 0
+    if outcome == "no_change":
+        sentences = [_loc(_CLEANUP_NOTHING_TO_CUT) + "."]
+    elif counts is None:
+        sentences = [_loc(_CLEANUP_DONE) + "."]
+    else:
+        pauses, fillers, retakes, seconds = counts
+        parts_en: list[str] = []
+        parts_tr: list[str] = []
+        for count, one, many, tr in (
+            (pauses, "long pause", "long pauses", "uzun duraklama"),
+            (fillers, "filler sound", "filler sounds", "dolgu sesi"),
+            (retakes, "restarted sentence", "restarted sentences", "baştan başlanan cümle"),
+        ):
+            if count:
+                parts_en.append(f"{count} {one if count == 1 else many}")
+                parts_tr.append(f"{count} {tr}")
+        joined_en = parts_en[0] if len(parts_en) == 1 else ", ".join(parts_en[:-1])
+        if len(parts_en) > 1:
+            joined_en += f" and {parts_en[-1]}"
+        sentences = [
+            say(
+                en=(
+                    f"Speech cleanup cut {joined_en}"
+                    + (f" ({seconds:.1f} s)" if seconds is not None else "")
+                    + "."
+                ),
+                tr=(
+                    f"Konuşma temizliği şunları kesti: {', '.join(parts_tr)}"
+                    + (f" ({seconds:.1f} sn)".replace(".", ",") if seconds is not None else "")
+                    + "."
+                ),
+            )
+        ]
+    if not retakes and not retake_cut_possible and _loc(_NAMED_CUTS_NEED_EDITOR) not in text:
+        sentences.append(
+            say(
+                en=(
+                    "It only cuts pauses and filler sounds, so a sentence you restarted stays "
+                    "in; trim it in the editor."
+                ),
+                tr=(
+                    "Yalnızca duraklamaları ve dolgu seslerini keser; baştan başladığın bir "
+                    "cümle videoda kalır, onu editörde kırp."
+                ),
+            )
+        )
+    return " ".join(sentences)
+
+
 def _merge_cleanup_timing(
     req: BriefRequirement, facts: PlanFacts, cleanup: RequirementReceipt
 ) -> RequirementReceipt:
@@ -3743,6 +3880,7 @@ def _with_text_look(
 ) -> RequirementReceipt:
     """Add the look check to a text requirement's presence check (KRI-558)."""
     base = _with_title_face(req, facts, base)
+    base = _with_spoken_text_face(req, facts, base)
     if not text_look_facts(req) or base.status != "met":
         return base
     look = check_text_look(req, facts)
@@ -3941,6 +4079,74 @@ def _opening_cut_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         "opening_cut_reason": str(reason) if isinstance(reason, str) and reason else None,
         "opening_cut_quote": str(quote) if isinstance(quote, str) and quote else None,
     }
+
+
+def _spoken_text_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    receipt = variant.get("spoken_text_placement")
+    rows = receipt.get("rows") if isinstance(receipt, Mapping) else None
+    if not isinstance(rows, list):
+        return {}
+    facts: list[SpokenTextFact] = []
+    for row in rows:
+        if not isinstance(row, Mapping) or not isinstance(row.get("requirement_id"), str):
+            continue
+        triggers = row.get("triggers")
+        first = triggers[0] if isinstance(triggers, list) and triggers else ""
+        facts.append(
+            SpokenTextFact(
+                requirement_id=row["requirement_id"],
+                status=str(row.get("status") or "error"),
+                text=str(row.get("text") or ""),
+                trigger=str(row.get("trigger") or first or ""),
+                face_collision=row.get("face_collision") is True,
+            )
+        )
+    return {"spoken_texts": tuple(facts)}
+
+
+def _spoken_text_fact(facts: PlanFacts, req: BriefRequirement) -> SpokenTextFact | None:
+    return next((f for f in facts.spoken_texts or () if f.requirement_id == req.id), None)
+
+
+def _spoken_text_miss(req: BriefRequirement, fact: SpokenTextFact) -> RequirementReceipt:
+    """KRI-707: why a rendered phone Talking edit shows no text for this ask."""
+    text = f"“{fact.text or req.literal or ''}”"
+    word = f"“{fact.trigger}”" if fact.trigger else say(en="that word", tr="o kelimeyi")
+    if fact.status == "not_heard":
+        reason = say(
+            en=f"I didn't hear you say {word} in your take, so {text} isn't shown",
+            tr=f"Çekiminde {word} dediğini duymadım, o yüzden {text} yazısı çıkmadı",
+        )
+    elif fact.status == "no_time":
+        reason = say(
+            en=f"You say {word} right at the end, so there was no time to show {text}",
+            tr=f"{word} en sonda söylüyorsun, o yüzden {text} yazısına yer kalmadı",
+        )
+    else:
+        reason = say(
+            en=f"I couldn't place {text} on this video",
+            tr=f"{text} yazısını bu videoya yerleştiremedim",
+        )
+    return _receipt(req, "partial", reason)
+
+
+def _with_spoken_text_face(
+    req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
+) -> RequirementReceipt:
+    """KRI-707: text never covers a face, so a text on a spoken word the render could not
+    move off the face is not "met" (the title's rule, KRI-706)."""
+    fact = _spoken_text_fact(facts, req) if base.status == "met" else None
+    if fact is None or fact.status != "placed" or not fact.face_collision:
+        return base
+    text = f"“{fact.text}”"
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en=f"{text} lands on your face; I couldn't find a spot clear of it",
+            tr=f"{text} yüzünün üstüne denk geliyor; yüzünü açıkta bırakan bir yer bulamadım",
+        ),
+    )
 
 
 def _title_face_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
@@ -4987,6 +5193,14 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
             return _receipt(req, "partial", _NO_CHECKER)
         return _receipt(req, "met", None)
     if _is_spoken_text_cue(req) and facts.edit_format in {"subtitled", "talking_head"}:
+        spoken = _spoken_text_fact(facts, req)
+        if spoken is not None:
+            # KRI-707: the phone Talking render recorded why this text isn't on screen.
+            return _spoken_text_miss(req, spoken)
+        if facts.phone_talking and not facts.rendered_variant and _talking_shows_spoken_text(req):
+            # KRI-707: the phone Talking worker places it on the word itself, so the draft
+            # says what it will do (like the start cut), never "a simpler version?".
+            return _receipt(req, "partial", _TALKING_SPOKEN_TEXT_PLAN)
         # KRI-705: a Talking edit has the same gap (a pinned line has no trigger field), and the
         # reply says so plainly instead of holding the draft behind "a simpler version?".
         return _receipt(req, "not_possible", _TALKING_NO_SPOKEN_TEXT)
@@ -5009,9 +5223,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     )
 
 
-# Fact keys that name the spoken words a text line waits for. Narrower than
-# `_TRIGGER_FACT_KEYS`: on a text ask, "words" / "keywords" may be the text itself.
-_SPOKEN_TEXT_CUE_KEYS = ("triggers", "trigger", "trigger_words", "when_i_say", "spoken_words")
+# Fact keys that name the spoken words a text line waits for (one list with the phone
+# Talking worker, `spoken_text_ask`).
+_SPOKEN_TEXT_CUE_KEYS = SPOKEN_TEXT_CUE_KEYS
 
 
 def _is_spoken_text_cue(req: BriefRequirement) -> bool:
@@ -5041,6 +5255,15 @@ def spoken_text_literals(brief: CreativeBrief | None) -> tuple[str, ...]:
             if req.kind == "text" and req.literal and _is_spoken_text_cue(req)
         )
     )
+
+
+def _talking_shows_spoken_text(req: BriefRequirement) -> bool:
+    """KRI-707: the phone Talking worker can place this text: its fields name the text and
+    the spoken word (`spoken_text_ask`), and the lane is rolled out."""
+    from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
+    from app.services.phone_rollout import phone_subtitled_spoken_text_supported  # noqa: PLC0415
+
+    return requirement_spoken_text(req) is not None and phone_subtitled_spoken_text_supported()
 
 
 def _is_voiceover_edit(facts: PlanFacts) -> bool:
@@ -6155,4 +6378,5 @@ __all__ = [
     "plan_facts_from_unified_montage",
     "render_block_recovery",
     "reply_from_receipts",
+    "speech_cleanup_review_note",
 ]

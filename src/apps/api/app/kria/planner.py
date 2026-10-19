@@ -72,11 +72,14 @@ from app.kria.brief_checks import spoken_text_literals
 from app.kria.brief_route import loose_text
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
+from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.reply_language import current_reply_language, say
 from app.kria.strategy_policy import (
     RefusedStrategy,
     check_strategy_for_runtime_v2,
+    renderable_clip_intents,
     song_captions_refusal,
+    transcript_labels_dropped_notice,
 )
 from app.kria.style_asks import brief_moment_ask
 from app.kria.voiceover_clips import keep_every_voiceover_clip
@@ -140,6 +143,7 @@ from app.services.kria_editor_ops import (
     build_editor_snapshot,
     clip_facts_by_media_id,
     clip_seen_by_media_id,
+    clip_visible_text_by_media_id,
     coalesce_text_style_ops,
     editor_state_has_lanes,
     resolve_editor_base,
@@ -526,6 +530,8 @@ class PlannedKriaTurn:
     # The manifest this turn planned against, so the receipt checks resolve
     # reaction beats (owned images, capability) exactly as approval will.
     brief_manifest: ResolvedCreatorManifest | None = None
+    # KRI-721: resolved for the proposed format, without applying it to the item.
+    readiness_manifest: ResolvedCreatorManifest | None = None
     brief_coverage: dict | None = None
     brief_expected_version: int | None = None
     media_snapshot: dict | None = None
@@ -708,6 +714,8 @@ async def _load_raw_creator_request(
         .scalars()
         .all()
     )
+    # KRI-552: a re-sent copy of a message adds no instruction; read twice it doubled every ask.
+    rows = [row for row in rows if not is_duplicate_answer(getattr(row, "payload", None))]
     return _full_creator_request(rows, current_message=user_message)
 
 
@@ -1266,6 +1274,11 @@ async def _copilot_clip_context(
         seen = clip_seen_by_media_id(job, variant, list(item.clip_assignments or []))
         if seen:
             context["seen"] = seen
+        visible_text = clip_visible_text_by_media_id(
+            job, variant, list(item.clip_assignments or [])
+        )
+        if visible_text:
+            context["visible_text"] = visible_text
     except Exception:  # noqa: BLE001 - fail open to no descriptions
         log.warning("kria_copilot_clip_seen_unavailable", thread_id=str(thread_id), exc_info=True)
     try:
@@ -1539,6 +1552,8 @@ async def _load_editor_target(
         .scalars()
         .all()
     )
+    # KRI-552: a re-sent copy of a message is not conversation.
+    rows = [row for row in rows if not is_duplicate_answer(getattr(row, "payload", None))]
     rows.reverse()
     conversation = [
         {"role": row.role, "content": model_text(getattr(row, "payload", None), row.content)[:1000]}
@@ -1774,6 +1789,8 @@ async def _load_creator_inputs(
         .scalars()
         .all()
     )
+    # KRI-552: a re-sent copy of a message, and the one-line answer it got, are not conversation.
+    rows = [row for row in rows if not is_duplicate_answer(getattr(row, "payload", None))]
     rows.reverse()
     creator_summary, item_summary = creator_context(persona, item)
     extra: dict = {}
@@ -2632,13 +2649,41 @@ async def _plan_creator_action(
             manifest.narration is None
             or action.strategy.execution_contract != "guided_voiceover_v1"
         ):
-            return PlannedKriaTurn(
-                plan=_clip_intent_resolution_plan(
-                    question=_labels_need_voiceover_reply(),
-                    status="needs_creator",
+            kept_intents = renderable_clip_intents(manifest, planned.requested_intents)
+            if kept_intents is None:
+                return PlannedKriaTurn(
+                    plan=_clip_intent_resolution_plan(
+                        question=_labels_need_voiceover_reply(),
+                        status="needs_creator",
+                    ),
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                )
+            # KRI-691: a native voiceover chat can never draw a narration label, so the
+            # question above dead-ended every turn. Leave the label out and say so; the
+            # resolver never saw it, so the other intents are already resolved.
+            planned = replace(
+                planned,
+                requested_intents=kept_intents,
+                resolution=replace(
+                    planned.resolution,
+                    intents=[
+                        intent
+                        for intent in planned.resolution.intents
+                        if intent.label_source != "transcript"
+                    ],
                 ),
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
+            )
+            notice = transcript_labels_dropped_notice()
+            if notice not in policy_notices:
+                action = action.model_copy(
+                    update={"summary": " ".join([action.summary.strip(), notice]).strip()}
+                )
+                policy_notices = (*policy_notices, notice)
+            log.info(
+                "kria_transcript_labels_dropped",
+                thread_id=str(thread_id),
+                kept=len(kept_intents),
             )
         if planned.resolution.vision_answers:
             try:
@@ -3468,7 +3513,7 @@ async def _gate_unresolved_choices(
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         arguments = apply_intent.arguments
     planned = replace(planned, plan=plan)
-    if not settings.kria_choice_questions_enabled:
+    if not settings.kria_choice_questions_enabled and not strategy.get("editorial_plan"):
         return planned
     brief: CreativeBrief | None = None
     # Only a creator with a brief BINDING has a dispatch contract that reads the brief, so
@@ -3545,6 +3590,38 @@ async def _gate_unresolved_choices(
     length_plan = (
         enriched_snapshot.get("length_plan") if isinstance(enriched_snapshot, dict) else None
     )
+    if strategy.get("editorial_plan") is not None:
+        from app.services.editorial_plan import editorial_summary
+
+        if isinstance(length_plan, dict) and any(
+            conflict.get("code") == "editorial_text_capacity"
+            for conflict in length_plan.get("conflicts", [])
+        ):
+            return replace(
+                planned,
+                plan=KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=say(
+                        en=(
+                            "The planned explanations need more reading time than this edit "
+                            "allows. Should we use a longer edit or explain fewer parts?"
+                        ),
+                        tr=(
+                            "Planlanan açıklamaları okumak için bu videoda yeterli süre yok. "
+                            "Videoyu uzatalım mı, yoksa daha az bölümü mü açıklayalım?"
+                        ),
+                    ),
+                ),
+            )
+
+        windows = length_plan.get("windows", []) if isinstance(length_plan, dict) else []
+        duration = sum(float(row["source_end_s"]) - float(row["source_start_s"]) for row in windows)
+        summary = editorial_summary(strategy["editorial_plan"], duration or None)
+        arguments = {**arguments, "summary": summary}
+        apply_intent = apply_intent.model_copy(update={"arguments": arguments})
+        plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
+        planned = replace(planned, plan=plan)
     plan_notices = [
         notice
         for notice in (
@@ -3561,6 +3638,8 @@ async def _gate_unresolved_choices(
         apply_intent = apply_intent.model_copy(update={"arguments": arguments})
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         planned = replace(planned, plan=plan)
+    if not settings.kria_choice_questions_enabled:
+        return planned
     resolution = resolve_choices(
         strategy,
         answered_brief(brief, strategy),
@@ -3657,6 +3736,8 @@ async def _plan_scoped_turn(
     """
     from app.kria import plan_review  # noqa: PLC0415
 
+    # Provider calls release the transaction and expire ORM rows.
+    scoped_creator_id, scoped_item_id = persona.user_id, item.id
     # KRI-598: runtime v2 has no guided-proposal step, so it never offers guided voiceover.
     manifest, _ = await resolve_item_creator_context(
         db, item, persona=persona, runs_guided_voiceover=False
@@ -3795,7 +3876,38 @@ async def _plan_scoped_turn(
                 }
             }
         )
-    return _planned(plan)
+    planned = _planned(plan)
+    if settings.approval_readiness_for(scoped_creator_id) and plan.mode == "act" and model_scope:
+        prior_brief = await load_latest_brief(db, thread_id)
+        expected_version = prior_brief.version if prior_brief else 0
+        updates, route = await extract_deferred_brief(
+            db,
+            thread_id=thread_id,
+            item_id=scoped_item_id,
+            creator_id=scoped_creator_id,
+            user_message=user_message,
+        )
+        if route is None:
+            return _reply(
+                say(
+                    en=(
+                        "I need to clarify the requested changes before offering this render. "
+                        "Your saved edit is unchanged."
+                    ),
+                    tr=(
+                        "Bu oluşturmayı sunmadan önce istenen değişiklikleri "
+                        "netleştirmem gerekiyor. "
+                        "Kayıtlı düzenlemen değişmedi."
+                    ),
+                )
+            )
+        planned = replace(
+            planned,
+            brief_updates=updates,
+            brief_route="editor_ops",
+            brief_expected_version=expected_version,
+        )
+    return planned
 
 
 async def _plan_live_turn(
