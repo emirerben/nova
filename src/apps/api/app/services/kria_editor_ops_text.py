@@ -1082,5 +1082,7 @@ def add_text_v2(state: _DraftState, op: dict[str, Any]) -> None:
     patch = op.get("patch")
     if isinstance(patch, dict) and patch:
         apply_patch(row, patch)
+    if isinstance(op.get("research"), dict):
+        row["source_params"] = {**(row.get("source_params") or {}), "research": op["research"]}
     state.text.append(row)
     state.changed.add("text")

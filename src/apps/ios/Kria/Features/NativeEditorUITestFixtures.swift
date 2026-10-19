@@ -521,8 +521,13 @@ enum NativeEditorUITestFixtures {
     /// repeatable fixture generator and must contain an `EditorDraft` whose
     /// serverSnapshot is the persisted, compiler-produced server draft.
     static let capturedCreation: EditorDraft = {
-        guard let path = ProcessInfo.processInfo.environment["KRIA_UI_FIXTURE_DRAFT"],
-              let data = FileManager.default.contents(atPath: path) else {
+        let supplied = ProcessInfo.processInfo.environment["KRIA_UI_FIXTURE_DRAFT"] ?? ""
+        let path: String
+        if supplied.hasPrefix("Documents/") {
+            path = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent(String(supplied.dropFirst("Documents/".count))).path
+        } else { path = supplied }
+        guard let data = FileManager.default.contents(atPath: path) else {
             preconditionFailure("KRI-524 captured editor fixture requires KRIA_UI_FIXTURE_DRAFT")
         }
         do { return try JSONDecoder().decode(EditorDraft.self, from: data) }

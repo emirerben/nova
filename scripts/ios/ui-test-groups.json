@@ -223,6 +223,7 @@
       "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability",
       "KriaUITests/GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview",
       "KriaUITests/NativeSourceWindowUITests/testRangeSheetSlidesAndResizesTheWindow",
+      "KriaUITests/ResearchSourcesUITests/testPreparedResearchSourcesAndPreview",
       "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingClipReordersKeepsLengthAndUndoesInOneStep",
       "KriaUITests/NativeEditorInspectorUITests/testQuickSwipeAcrossAClipSeeksInsteadOfReordering"
     ],
@@ -348,6 +349,9 @@
     "src/apps/ios/Kria/Features/CameraRollExportProofView.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/CameraRollBenchmarkUITests.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/CameraRollCollectionUITests.swift": "creation",
-    "src/apps/ios/Tests/KriaUITests/CameraRollStoriesUITests.swift": "creation"
+    "src/apps/ios/Tests/KriaUITests/CameraRollStoriesUITests.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/ResearchSourcesUITests.swift": "editor",
+    "src/apps/ios/Kria/Core/ResearchCitation.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift": "editor"
   }
 }

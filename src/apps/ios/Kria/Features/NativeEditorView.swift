@@ -26,6 +26,7 @@ struct NativeEditorView: View {
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
     @State private var showsDeviceRender = false
+    @State private var showsResearchSources = false
     @State private var opensRetryConversation = false
     @State private var showsOriginalsRecovery = false
     @State private var showsConversation = false
@@ -136,6 +137,7 @@ struct NativeEditorView: View {
                 }
             }
             .navigationBarBackButtonHidden(true)
+            .sheet(isPresented: $showsResearchSources) { NativeResearchSourcesView(document: session.document) }
             .sheet(item: $inspector) { inspector in
                 NativeEditorInspectorView(inspector: inspector, session: session)
                     // The sheet is its own presentation; hand it the editor's text size explicitly.
@@ -311,7 +313,8 @@ struct NativeEditorView: View {
                     onSaveToPhotos: { Task { await exporter.saveToPhotos(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
                     onShare: { Task { await exporter.share(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
                     beforeSave: { if captionEditing { panelLifecycle.prepareToClose(); resignKeyboard() } },
-                    onVideoShape: { changePanel(to: nil); inspector = .videoShape }
+                    onVideoShape: { changePanel(to: nil); inspector = .videoShape },
+                    onSources: { showsResearchSources = true }
                 )
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
                 .transition(shouldReduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))

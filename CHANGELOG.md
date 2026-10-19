@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.48.0] - 2026-10-19
+
+### Changed
+- feat: add footage-bound research and native source citations (#1679) <!-- release-pr: 1679 -->
+
 ## [0.80.47.0] - 2026-10-19
 
 ### Changed
