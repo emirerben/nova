@@ -3436,7 +3436,7 @@ async def _gate_unresolved_choices(
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         arguments = apply_intent.arguments
     planned = replace(planned, plan=plan)
-    if not settings.kria_choice_questions_enabled:
+    if not settings.kria_choice_questions_enabled and not strategy.get("editorial_plan"):
         return planned
     brief: CreativeBrief | None = None
     # Only a creator with a brief BINDING has a dispatch contract that reads the brief, so
@@ -3513,6 +3513,38 @@ async def _gate_unresolved_choices(
     length_plan = (
         enriched_snapshot.get("length_plan") if isinstance(enriched_snapshot, dict) else None
     )
+    if strategy.get("editorial_plan") is not None:
+        from app.services.editorial_plan import editorial_summary
+
+        if isinstance(length_plan, dict) and any(
+            conflict.get("code") == "editorial_text_capacity"
+            for conflict in length_plan.get("conflicts", [])
+        ):
+            return replace(
+                planned,
+                plan=KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=say(
+                        en=(
+                            "The planned explanations need more reading time than this edit "
+                            "allows. Should we use a longer edit or explain fewer parts?"
+                        ),
+                        tr=(
+                            "Planlanan açıklamaları okumak için bu videoda yeterli süre yok. "
+                            "Videoyu uzatalım mı, yoksa daha az bölümü mü açıklayalım?"
+                        ),
+                    ),
+                ),
+            )
+
+        windows = length_plan.get("windows", []) if isinstance(length_plan, dict) else []
+        duration = sum(float(row["source_end_s"]) - float(row["source_start_s"]) for row in windows)
+        summary = editorial_summary(strategy["editorial_plan"], duration or None)
+        arguments = {**arguments, "summary": summary}
+        apply_intent = apply_intent.model_copy(update={"arguments": arguments})
+        plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
+        planned = replace(planned, plan=plan)
     plan_notices = [
         notice
         for notice in (
@@ -3529,6 +3561,8 @@ async def _gate_unresolved_choices(
         apply_intent = apply_intent.model_copy(update={"arguments": arguments})
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         planned = replace(planned, plan=plan)
+    if not settings.kria_choice_questions_enabled:
+        return planned
     resolution = resolve_choices(
         strategy,
         answered_brief(brief, strategy),

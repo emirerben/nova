@@ -88,7 +88,7 @@ log = structlog.get_logger()
 # KRI-700: a brighten / darken ask carries `footage_light`, so the server can say no draft
 # changes the footage's light instead of the summary promising it (v60).
 # v61 (KRI-674 live verification): per-clip camera sound is not spoken excerpts.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-17-v61"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-18-v62"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -770,6 +770,32 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         reaction_beats=len(strategy.reaction_beats or ()),
                     )
                     strategy = strategy.model_copy(update={"execution_contract": None})
+                if strategy.editorial_plan is not None:
+                    from app.services.editorial_plan import editorial_order
+
+                    if (
+                        strategy.edit_format != "montage"
+                        or not input.capability_manifest.capabilities.get("phone_format:montage")
+                        or not input.capability_manifest.capabilities[
+                            "phone_format:montage"
+                        ].available
+                        or input.capability_manifest.has_voiceover
+                        or any(media.kind != "video" for media in input.capability_manifest.media)
+                        or strategy.audio_strategy != "licensed_music"
+                        or strategy.montage_cadence is not None
+                        or strategy.montage_audio is not None
+                    ):
+                        raise ValueError(
+                            "editorial_plan requires a music-led phone montage of video clips"
+                        )
+                    editorial_order(
+                        strategy.editorial_plan,
+                        [
+                            media.media_id
+                            for media in input.capability_manifest.media
+                            if media.kind in {"video", "image"}
+                        ],
+                    )
                 action = action.model_copy(
                     update={
                         "strategy": normalize_creator_strategy_media(
