@@ -886,7 +886,9 @@ private extension EditorDocument {
 }
 
 private extension EditorDocument {
-    static func decodeSlots(_ rows: [JSONValue]) -> [EditorTimelineSlot] { rows.compactMap { value in guard let o = object(value), let id = string(o["slot_id"]), let index = integer(o["clip_index"]), let inS = number(o["in_s"]) else { return nil }; return EditorTimelineSlot(id: id, clipIndex: index, inS: inS, durationS: number(o["duration_s"]), durationBeats: integer(o["duration_beats"]), removed: o["removed"]?.boolValue ?? false, parentSegmentID: string(o["parent_segment_id"]), transitionAfter: string(o["transition_after"]) ?? "cut", transitionDurationS: number(o["transition_duration_s"]), lookPreset: string(o["look_preset"]), lookAdjustments: object(o["look_adjustments"]), raw: o) } }
+    // New placements have no slot_id until Save assigns one. Keep them through
+    // draft hydration and subsequent chat/commit round trips.
+    static func decodeSlots(_ rows: [JSONValue]) -> [EditorTimelineSlot] { rows.compactMap { value in guard let o = object(value), let index = integer(o["clip_index"]), let inS = number(o["in_s"]) else { return nil }; return EditorTimelineSlot(id: string(o["slot_id"]), clipIndex: index, inS: inS, durationS: number(o["duration_s"]), durationBeats: integer(o["duration_beats"]), removed: o["removed"]?.boolValue ?? false, parentSegmentID: string(o["parent_segment_id"]), transitionAfter: string(o["transition_after"]) ?? "cut", transitionDurationS: number(o["transition_duration_s"]), lookPreset: string(o["look_preset"]), lookAdjustments: object(o["look_adjustments"]), raw: o) } }
     static func decodeText(_ rows: [JSONValue]) -> [EditorTextElement] { rows.compactMap { value in guard let o = object(value), let id = string(o["id"]), let text = string(o["text"]), let start = number(o["start_s"]), let end = number(o["end_s"]) else { return nil }; return EditorTextElement(id: id, text: text, startS: start, endS: end, role: string(o["role"]), raw: o) } }
     static func decodeCaptions(_ rows: [JSONValue]) -> [EditorCaptionCue] {
         var used = Set(rows.compactMap { object($0).flatMap { string($0["id"]) } })

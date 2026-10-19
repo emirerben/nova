@@ -1512,7 +1512,9 @@ struct NativeMiniStrip: View {
             Text("/")
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .foregroundStyle(KriaColor.zinc)
-            Text(timecode(timelineDuration))
+            // The transport reports playable media; timeline geometry may extend
+            // farther so pending or failed clip additions remain editable.
+            Text(timecode(session.playbackDuration))
                 .font(.system(size: 13, weight: .regular, design: .monospaced))
                 .foregroundStyle(KriaColor.zinc)
                 .monospacedDigit()
@@ -1520,7 +1522,7 @@ struct NativeMiniStrip: View {
                 .minimumScaleFactor(0.8)
                 .frame(width: 56, alignment: .leading)
                 .accessibilityLabel("Duration")
-                .accessibilityValue(timecode(timelineDuration))
+                .accessibilityValue(timecode(session.playbackDuration))
                 .accessibilityIdentifier("native-editor-duration")
 
             Spacer(minLength: 8)
