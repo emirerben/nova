@@ -232,6 +232,61 @@ enum NativeEditorInteraction {
         return overlap >= 0.1 ? roundedMillis(overlap) : 0
     }
 
+    // MARK: Clip reorder (drag a clip block to a new position)
+
+    /// Moves one slot and leaves the cut after each POSITION where it was.
+    /// A transition's overlap is owned by the left clip and the last clip's
+    /// transition is ignored, so a transition that travelled with its clip
+    /// would change the video's length whenever the last clip moved. Keeping
+    /// them by position means a reorder only permutes who plays where.
+    /// (Overlaps are still capped at 30% of each neighbour, so clips under
+    /// about 1 s can shift the total by a few milliseconds.)
+    static func reorderedSlots(_ slots: [EditorTimelineSlot], from: Int, to: Int) -> [EditorTimelineSlot] {
+        guard slots.indices.contains(from), slots.indices.contains(to), from != to else { return slots }
+        let transitions = slots.map { ($0.transitionAfter, $0.transitionDurationS) }
+        var moved = slots
+        moved.insert(moved.remove(at: from), at: to)
+        for index in moved.indices {
+            moved[index].transitionAfter = transitions[index].0
+            moved[index].transitionDurationS = transitions[index].1
+        }
+        return moved
+    }
+
+    /// Where a dragged clip would land. Clip widths differ, so this compares
+    /// the lifted block's centre with the OTHER clips' original midpoints
+    /// (static, so the answer cannot flicker as neighbours slide aside).
+    static func clipReorderTarget(
+        windows: [(start: TimeInterval, end: TimeInterval)],
+        from: Int,
+        liftedCenter: TimeInterval
+    ) -> Int {
+        guard windows.indices.contains(from) else { return from }
+        return windows.enumerated().reduce(0) { count, entry in
+            entry.offset != from && (entry.element.start + entry.element.end) / 2 < liftedCenter ? count + 1 : count
+        }
+    }
+
+    /// The clip windows after moving `from` to `to`, in their new order. The
+    /// gap before each position (negative = a transition overlap, positive =
+    /// a carousel splice) stays with the position, so the total is unchanged.
+    static func reorderedClipWindows(
+        windows: [(start: TimeInterval, end: TimeInterval)],
+        from: Int,
+        to: Int
+    ) -> [(start: TimeInterval, end: TimeInterval)] {
+        guard windows.indices.contains(from), windows.indices.contains(to), from != to else { return windows }
+        var durations = windows.map { $0.end - $0.start }
+        durations.insert(durations.remove(at: from), at: to)
+        var cursor = windows.first?.start ?? 0
+        return durations.enumerated().map { index, duration in
+            if index > 0 { cursor += windows[index].start - windows[index - 1].end }
+            let start = cursor
+            cursor = start + duration
+            return (roundedMillis(start), roundedMillis(cursor))
+        }
+    }
+
     static func timelineProjection(
         slots: [EditorTimelineSlot],
         carousel: [String: JSONValue]?

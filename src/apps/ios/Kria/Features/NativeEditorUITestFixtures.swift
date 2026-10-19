@@ -26,6 +26,10 @@ enum NativeEditorUITestFixtures {
         /// KRI-589: a 6 s cut whose variant opens the drawings lane; Save commits through a stub transport
         /// that keeps the saved drawings across relaunches (`-ui-testing-editor-drawing-reset` starts clean).
         case drawing = "drawing"
+        /// Three clips of different lengths (1.0 / 1.4 / 1.2 s) that sit inside one viewport, so a long-press drag
+        /// can reorder them without reaching the auto-scroll edge, and the durations tell the order apart. Each is
+        /// at least 1 s so the default crossfades are never capped by a short neighbour and the length is exact.
+        case reorderClips = "reorder-clips"
     }
 
     /// Three catalog sounds in two categories; nil preview URLs keep UI tests off the network.
@@ -80,6 +84,7 @@ enum NativeEditorUITestFixtures {
         case .retimedClips: retimedClips
         case .songTrim: songTrim
         case .drawing: drawing
+        case .reorderClips: reorderClips
         }
     }
 
@@ -522,6 +527,20 @@ enum NativeEditorUITestFixtures {
         }
         do { return try JSONDecoder().decode(EditorDraft.self, from: data) }
         catch { preconditionFailure("KRI-524 captured editor fixture is invalid: \(error)") }
+    }()
+
+    static let reorderClips: EditorDraft = {
+        let clips = [
+            clip(950, start: 0, duration: 1),
+            clip(951, start: 1, duration: 1.4),
+            clip(952, start: 2.4, duration: 1.2),
+        ]
+        return draft(clips: clips, text: [], captions: false, music: false,
+                     sections: [
+                        "timeline_slots": slots(for: clips),
+                        "title": .string("Reorder fixture"),
+                        "orientation": .string("9:16"),
+                     ])
     }()
 
     static let autoScrollExtend: EditorDraft = {
