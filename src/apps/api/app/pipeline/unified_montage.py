@@ -83,7 +83,7 @@ from app.services.clip_facts import (
     format_capture_hour,
     order_by_capture_time,
 )
-from app.services.clip_order_sequence import apply_sequence, sequence_rows
+from app.services.clip_order_sequence import apply_sequence, row_relations, sequence_rows
 from app.services.length_policy import natural_length_owner
 from app.services.spoken_quotes import is_outro_hallucination
 from app.services.spoken_roles import (
@@ -1004,16 +1004,22 @@ def _sequence_outcomes(
 
     Every row also carries a ``code`` (KRI-503) so the receipt never re-parses ``reason``:
     ``landed`` / ``misplaced`` (a described group is not where it was asked), ``absent`` (none
-    of its clips are in the edit), ``contained`` (all its clips are already in an earlier
-    group), ``visual`` (its members are Visuals-pool items, which no sequence rule seats) and
-    ``unresolved``. ``status`` keeps its meaning for every other consumer.
+    of its clips are in the edit), ``contained`` (a ``then`` group whose clips are all already
+    in an earlier group), ``repeat`` (a first / last group naming clips an earlier group
+    already seated at that same spot: the creator said it twice, KRI-764), ``conflict`` (a
+    first / last group naming clips an earlier group seated at another spot: one clip cannot
+    be both, the earlier claim stands), ``visual`` (its members are Visuals-pool items, which
+    no sequence rule seats) and ``unresolved``. ``status`` keeps its meaning for every other
+    consumer.
     """
     spot = {clip.ref_id: i for i, clip in enumerate(c for c in ordered if c.lane == "clip")}
     visuals = {clip.ref_id for clip in ordered if clip.lane != "clip"}
     named = {m for _p, _n, members, _s in rows for m in members if m in spot}
+    relations = row_relations(rows, present=spot)
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for position, name, members, status in rows:
+    landed_clips: set[str] = set()
+    for (position, name, members, status), relation in zip(rows, relations, strict=True):
         label = f"{position or 'then'}: {name}" if name else "the order you described"
         row = {"op": "order", "name": label, "position": position or "then"}
         mine = [m for m in members if m in spot and m not in seen]
@@ -1024,6 +1030,28 @@ def _sequence_outcomes(
                     "status": "not_possible",
                     "code": "unresolved",
                     "reason": "I couldn't tell which clips",
+                }
+            )
+            continue
+        if relation == "repeat":
+            # The same ask twice: it stands or falls with the group that seated those clips.
+            met = all(m in landed_clips for m in members if m in spot)
+            out.append(
+                {
+                    **row,
+                    "status": "met" if met else "partial",
+                    "code": "repeat",
+                    "reason": None if met else "the clips did not end up there",
+                }
+            )
+            continue
+        if relation == "conflict":
+            out.append(
+                {
+                    **row,
+                    "status": "partial",
+                    "code": "conflict",
+                    "reason": "its clips are already placed at another spot",
                 }
             )
             continue
@@ -1045,6 +1073,8 @@ def _sequence_outcomes(
             or (position == "first" and max(ahead) < min(others))
             or (position == "last" and min(ahead) > max(others))
         )
+        if met:
+            landed_clips.update(mine)
         out.append(
             {
                 **row,
