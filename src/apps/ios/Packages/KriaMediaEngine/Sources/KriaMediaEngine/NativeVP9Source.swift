@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 public actor NativeVP9Source {
     public static let shared = NativeVP9Source()
 
-    public func prepare(_ source: URL, cacheDirectory: URL, trace: (@Sendable (String) -> Void)? = nil) async throws -> URL {
+    public func prepare(_ source: URL, cacheDirectory: URL, forceNormalization: Bool = false, trace: (@Sendable (String) -> Void)? = nil) async throws -> URL {
         try Task.checkCancellation()
         trace?("image-probe")
         if let image = CGImageSourceCreateWithURL(source as CFURL, nil),
@@ -25,11 +25,24 @@ public actor NativeVP9Source {
         // RecipeVideoCompositor is an SDR 8-bit pipeline. Keep ordinary H.264
         // sources untouched, but proxy HEVC (including iPhone HDR) and other
         // codecs before they reach an AVComposition.
-        guard hasVP9 || !Self.isSafeSDRH264(formats) else { return source }
+        guard forceNormalization || hasVP9 || !Self.isSafeSDRH264(formats) else { return source }
+        if forceNormalization {
+            let duration = try await asset.load(.duration).seconds
+            let size = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            guard duration.isFinite, duration > 0, duration <= 300, size > 0, size <= 1_073_741_824 else {
+                throw MediaEngineError.unsupportedCapability
+            }
+        }
         trace?("fingerprint")
-        let fingerprint = try SHA256Fingerprinter().fingerprint(file: source)
+        // The proxy is named after the source's hash, so a source that needs one used to be hashed whole on EVERY open
+        // just to find the proxy that already exists. The hash is remembered by size and modification time instead.
+        let fingerprint = try FileFingerprintCache(directory: cacheDirectory.appendingPathComponent("fingerprints", isDirectory: true))
+            .fingerprint(file: source)
         try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-        let output = cacheDirectory.appendingPathComponent("source-proxy-v2-\(fingerprint.hex).mp4")
+        // A corrective decode never trusts an existing derivative. Its fresh
+        // URL also forces a new AVFoundation reader for the original bytes.
+        let name = forceNormalization ? "repair-\(UUID().uuidString).mp4" : "source-proxy-v2-\(fingerprint.hex).mp4"
+        let output = cacheDirectory.appendingPathComponent(name)
         if FileManager.default.fileExists(atPath: output.path) { return output }
         let temporary = cacheDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -40,7 +53,19 @@ public actor NativeVP9Source {
         } else {
             conversion = try await AVFoundationSourceConversion(source: source, output: temporary)
         }
-        try await conversion.run()
+        if forceNormalization {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask { try await conversion.run() }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(180))
+                    throw MediaEngineError.exportFailed
+                }
+                defer { group.cancelAll() }
+                try await group.next()
+            }
+        } else {
+            try await conversion.run()
+        }
         trace?("conversion-complete")
         try Task.checkCancellation()
         // Concurrent callers may have completed while this actor was suspended.

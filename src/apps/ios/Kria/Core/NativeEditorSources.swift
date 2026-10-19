@@ -162,8 +162,57 @@ struct NativeEditorBaseSource: Sendable {
 /// Only when the edit's cards and sounds are editable (`lanesEditable`): with
 /// them closed the server doesn't send those lanes, so a live preview would
 /// drop what the finished MP4 shows.
+///
+/// Several videos (KRI-719): the server plays every speaker back to back on
+/// the main track, in the order of the variant's `phone_talking_multi_clip`
+/// receipt (`speaker_media_ids`). The first speaker carries any cut; the rest
+/// play in full. The receipt's `cutaways` windows (footage clips shown full
+/// frame, muted, over the speakers) are drawn on top as locked preview
+/// clips: they never enter the document, so nothing can select, move or
+/// Save them (Save keeps them from the pinned recipe, `cutaways_from_recipe`).
 enum NativePhoneTalkingSource {
     static let slotID = "native-phone-talking-source"
+    static let multiClipReceiptField = "phone_talking_multi_clip"
+
+    struct Speaker: Equatable, Sendable {
+        let clipIndex: Int
+        let duration: Double
+    }
+
+    /// One muted full-frame footage window (KRI-719), on the edit's timeline.
+    /// Mirrors a `talking-head-cutaways` recipe clip: the footage plays from
+    /// `sourceStart` for the whole window.
+    struct Cutaway: Equatable, Sendable {
+        let clipIndex: Int
+        let start: Double
+        let end: Double
+        var sourceStart: Double = 0
+    }
+
+    /// Source-pool cutaways from the receipt's `cutaways` rows
+    /// (`{media_id, start_s, end_s}`), sorted by start. Empty when there is no
+    /// receipt or it placed no footage. Nil when any row is malformed, can't be
+    /// found in the pool, reuses a speaker, or overlaps another: a preview that
+    /// silently dropped one would show the speaker where the MP4 cuts away, so
+    /// the caller falls back to the finished MP4 instead.
+    static func cutaways(variant: [String: JSONValue], pool: NativeEditorSourcePool,
+                         speakerIndices: [Int]) -> [Cutaway]? {
+        guard let receipt = variant[multiClipReceiptField]?.objectValue else { return [] }
+        guard let rowsValue = receipt["cutaways"] else { return [] }
+        guard case .array(let rows) = rowsValue else { return nil }
+        var result: [Cutaway] = []
+        for row in rows {
+            guard let fields = row.objectValue, let mediaID = fields["media_id"]?.stringValue,
+                  let start = fields["start_s"]?.numberValue, let end = fields["end_s"]?.numberValue,
+                  start.isFinite, end.isFinite, start >= 0, end > start,
+                  let clip = pool.clips.first(where: { $0.nativeSource?.mediaID == mediaID }),
+                  !speakerIndices.contains(clip.clipIndex) else { return nil }
+            result.append(Cutaway(clipIndex: clip.clipIndex, start: start, end: end))
+        }
+        result.sort { ($0.start, $0.end) < ($1.start, $1.end) }
+        for (previous, next) in zip(result, result.dropFirst()) where next.start < previous.end - 1e-6 { return nil }
+        return result
+    }
 
     /// Source spans speech cleanup removed from this variant, sorted. Empty
     /// when no cleanup was applied.
@@ -191,30 +240,54 @@ enum NativePhoneTalkingSource {
         return kept.filter { $0.end - $0.start > 0.001 }
     }
 
-    static func sourceIndex(variant: [String: JSONValue], document: EditorDocument,
-                            pool: NativeEditorSourcePool, lanesEditable: Bool) -> Int? {
+    /// Source-pool indices of the speaker clips, in play order: the one pool
+    /// clip, or each `speaker_media_ids` entry of a multi-clip receipt. Nil
+    /// (finished-MP4 fallback) when the edit isn't a live phone Talking edit
+    /// or any speaker can't be found in the pool.
+    static func sourceIndices(variant: [String: JSONValue], document: EditorDocument,
+                              pool: NativeEditorSourcePool, lanesEditable: Bool) -> [Int]? {
         guard lanesEditable,
               variant["resolved_archetype"] == .string("subtitled"),
               variant["render_destination"] == .string("device"),
               document.capabilities["timeline"]?.editable != true,
               document.tombstones.isEmpty,
-              document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }),
-              pool.clips.count == 1 else { return nil }
-        return pool.clips[0].clipIndex
+              document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return nil }
+        guard let receipt = variant[multiClipReceiptField] else {
+            return pool.clips.count == 1 ? [pool.clips[0].clipIndex] : nil
+        }
+        guard case .array(let rows)? = receipt.objectValue?["speaker_media_ids"], !rows.isEmpty else { return nil }
+        var indices: [Int] = []
+        for row in rows {
+            guard let mediaID = row.stringValue,
+                  let clip = pool.clips.first(where: { $0.nativeSource?.mediaID == mediaID }),
+                  !indices.contains(clip.clipIndex) else { return nil }
+            indices.append(clip.clipIndex)
+        }
+        return indices
     }
 
     static func hydrate(_ document: EditorDocument, clipIndex: Int, duration: Double,
                         removed: [(start: Double, end: Double)] = []) throws -> EditorDocument {
-        guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
+        try hydrate(document, speakers: [.init(clipIndex: clipIndex, duration: duration)], removed: removed)
+    }
+
+    /// `removed` applies to the first speaker only (the server cuts only it);
+    /// every later speaker plays in full right after it.
+    static func hydrate(_ document: EditorDocument, speakers: [Speaker],
+                        removed: [(start: Double, end: Double)] = []) throws -> EditorDocument {
+        guard let first = speakers.first,
+              speakers.allSatisfy({ $0.duration.isFinite && $0.duration > 0 }) else { throw APIError.invalidResponse }
         guard document.editorState != "empty" else { return document }
         guard document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return document }
-        let kept = keptSegments(duration: duration, removed: removed)
+        let kept = keptSegments(duration: first.duration, removed: removed)
         guard !kept.isEmpty else { throw RecipeError.invalidTimeline }
+        let segments = kept.map { (speaker: first, start: $0.start, end: $0.end) }
+            + speakers.dropFirst().map { (speaker: $0, start: 0.0, end: $0.duration) }
         var result = document
-        result.clips = kept.enumerated().map { index, segment in
-            .init(id: index == 0 ? slotID : slotID + "-\(index)", clipIndex: clipIndex, inS: segment.start,
+        result.clips = segments.enumerated().map { index, segment in
+            .init(id: index == 0 ? slotID : slotID + "-\(index)", clipIndex: segment.speaker.clipIndex, inS: segment.start,
                   durationS: segment.end - segment.start,
-                  raw: ["native_composite_source": .bool(true), "source_duration_s": .number(duration)])
+                  raw: ["native_composite_source": .bool(true), "source_duration_s": .number(segment.speaker.duration)])
         }
         return result
     }
@@ -413,14 +486,42 @@ struct NativePreviewAssetCache {
               asset.id == "native-preview-" + fingerprint.hex else { return nil }
         let url = project.root.appendingPathComponent(asset.relativePath).standardizedFileURL
         guard url.deletingLastPathComponent() == project.originals.standardizedFileURL,
-              url.deletingPathExtension().lastPathComponent == asset.id,
-              (try? SHA256Fingerprinter().fingerprint(file: url)) == fingerprint else { return nil }
+              url.deletingPathExtension().lastPathComponent == asset.id else { return nil }
+        // The file was verified when it was cached, so a file whose size and modification time are still what they were
+        // then is trusted. Hashing the whole file on every open grows with the size of the footage. Anything that
+        // changed (or an entry from before this record existed) is hashed as before, and the record is refreshed.
+        if let record = fileRecord(for: key), record.matches(url, byteCount: fingerprint.byteCount) { return asset }
+        guard (try? SHA256Fingerprinter().fingerprint(file: url)) == fingerprint else { return nil }
+        try? writeFileRecord(for: key, file: url)
         return asset
     }
     func store(_ asset: MediaAsset, for key: String) throws {
         let url = indexURL(key)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(asset).write(to: url, options: .atomic)
+        try? writeFileRecord(for: key, file: project.root.appendingPathComponent(asset.relativePath))
+    }
+
+    /// Size and modification time of the cached file at the moment it was verified.
+    private struct FileRecord: Codable {
+        let byteCount: Int64
+        let modified: TimeInterval
+        func matches(_ file: URL, byteCount expected: Int64) -> Bool {
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+                  let size = (attributes[.size] as? NSNumber)?.int64Value,
+                  let date = attributes[.modificationDate] as? Date else { return false }
+            return size == expected && byteCount == expected && date.timeIntervalSince1970 == modified
+        }
+    }
+    private func recordURL(_ key: String) -> URL { indexURL(key).deletingPathExtension().appendingPathExtension("file.json") }
+    private func fileRecord(for key: String) -> FileRecord? {
+        (try? Data(contentsOf: recordURL(key))).flatMap { try? JSONDecoder().decode(FileRecord.self, from: $0) }
+    }
+    private func writeFileRecord(for key: String, file: URL) throws {
+        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        guard let size = (attributes[.size] as? NSNumber)?.int64Value,
+              let date = attributes[.modificationDate] as? Date else { return }
+        try JSONEncoder().encode(FileRecord(byteCount: size, modified: date.timeIntervalSince1970)).write(to: recordURL(key), options: .atomic)
     }
 }
 
@@ -432,6 +533,10 @@ actor NativeEditorSourceResolver {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
         configuration.timeoutIntervalForResource = 600
+        #if DEBUG
+        // This session is private to the resolver, so a fixture can only reach it from here.
+        if PerfFixture.editorFixture { configuration.protocolClasses = [PerfSourceURLProtocol.self] }
+        #endif
         return URLSession(configuration: configuration)
     }()
     private let diskCache: NativePreviewAssetCache
@@ -519,7 +624,10 @@ actor NativeEditorSourceResolver {
             })
         guard url != source.url else { return source }
         var asset = source.asset
-        asset.fingerprint = try SHA256Fingerprinter().fingerprint(file: url)
+        // A converted proxy is reused across opens; its fingerprint is remembered by size and modification time.
+        asset.fingerprint = try FileFingerprintCache(
+            directory: diskCache.project.root.appendingPathComponent("decoded-sources/fingerprints", isDirectory: true)
+        ).fingerprint(file: url)
         asset.relativePath = "decoded-sources/" + url.lastPathComponent
         return ResolvedEditorSource(clipIndex: source.clipIndex, mediaID: source.mediaID, asset: asset, url: url)
     }
@@ -532,79 +640,100 @@ actor NativeEditorSourceResolver {
         guard required.isSubset(of: Set(pool.clips.map(\.clipIndex))) else {
             throw MediaEngineError.missingAsset("source-pool")
         }
-        for clip in pool.clips where required.contains(clip.clipIndex) {
-            try Task.checkCancellation()
-            guard let source = clip.nativeSource, !source.mediaID.isEmpty else {
-                throw MediaEngineError.missingAsset("clip-\(clip.clipIndex)")
+        let clips = pool.clips.filter { required.contains($0.clipIndex) }
+        // Several clips download at once (it was one after another, so three clips cost three round trips and three
+        // transfers in series). The actor interleaves them at each await; the work each does is the same as before.
+        try await withThrowingTaskGroup(of: (Int, ResolvedEditorSource).self) { group in
+            var remaining = clips.makeIterator()
+            var running = 0
+            while running < Self.clipConcurrency, let clip = remaining.next() {
+                group.addTask { (clip.clipIndex, try await self.resolveClip(clip, generation: generation)) }
+                running += 1
             }
-            #if DEBUG
-            NativePreviewDiagnostics.record("source-resolve", fields: ["index": String(clip.clipIndex)])
-            #endif
-            let key = "\(generation):\(clip.clipIndex):\(source.mediaID)"
-            if !source.localRequired, let previous = cachedDownload(key: key, id: source.mediaID, clipIndex: clip.clipIndex) {
-                result[clip.clipIndex] = try await decoderCompatible(previous)
-                continue
+            while let (index, source) = try await group.next() {
+                result[index] = source
+                if let clip = remaining.next() {
+                    group.addTask { (clip.clipIndex, try await self.resolveClip(clip, generation: generation)) }
+                }
             }
-            var asset: MediaAsset
-            let url: URL
-            if source.localRequired {
-                guard source.sourceURL == nil, let descriptor = source.original else { throw APIError.invalidResponse }
-                let store = SourceAssetStore(project: project)
-                let files = try store.resolve(mediaIDs: [source.mediaID])
-                guard let originalURL = files[source.mediaID],
-                      let binding = try store.bindings().first(where: { $0.mediaID == source.mediaID }) else {
-                    throw SourceAssetError.missingOriginal(source.mediaID)
-                }
-                let fingerprint = try SHA256Fingerprinter().fingerprint(file: originalURL)
-                guard fingerprint.hex == descriptor.sha256, fingerprint.byteCount == descriptor.byteCount else {
-                    throw SourceAssetError.changedOriginal(source.mediaID)
-                }
-                asset = binding.original
-                url = originalURL
-            } else {
-                guard let sourceURL = source.sourceURL, sourceURL.scheme == "https", source.original == nil else {
-                    throw APIError.invalidResponse
-                }
-                #if DEBUG
-                NativePreviewDiagnostics.record("source-download", fields: ["index": String(clip.clipIndex)])
-                #endif
-                #if DEBUG
-                let monitor = Task { [downloads] in
-                    while !Task.isCancelled {
-                        downloads.getAllTasks { tasks in
-                            for task in tasks {
-                                NativePreviewDiagnostics.record("source-transfer", fields: ["index": String(clip.clipIndex),
-                                    "received": String(task.countOfBytesReceived), "expected": String(task.countOfBytesExpectedToReceive),
-                                    "state": String(task.state.rawValue)])
-                            }
-                        }
-                        try? await Task.sleep(for: .seconds(2))
-                    }
-                }
-                defer { monitor.cancel() }
-                #endif
-                let (file, response) = try await downloads.download(from: sourceURL)
-                #if DEBUG
-                NativePreviewDiagnostics.record("source-downloaded", fields: ["index": String(clip.clipIndex)])
-                #endif
-                defer { try? FileManager.default.removeItem(at: file) }
-                guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-                guard response.statusCode == 200 else { throw APIError.requestFailed(status: response.statusCode) }
-                try Task.checkCancellation()
-                asset = try await NativeDownloadedMedia.importAsset(from: file, sourceURL: sourceURL, response: response, project: diskCache.project)
-                url = diskCache.project.root.appendingPathComponent(asset.relativePath)
-            }
-            if asset.duration == nil, !NativeDownloadedMedia.isStillImage(url) {
-                let duration = try await AVURLAsset(url: url).load(.duration).seconds
-                guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
-                asset.duration = duration
-            }
-            let resolved = ResolvedEditorSource(clipIndex: clip.clipIndex, mediaID: source.mediaID, asset: asset, url: url)
-            if source.localRequired { cached[key] = resolved }
-            else { rememberDownload(resolved, key: key) }
-            result[clip.clipIndex] = try await decoderCompatible(resolved)
         }
         return result
+    }
+
+    /// How many source clips resolve (download, hash, probe) at the same time.
+    private static let clipConcurrency = 3
+
+    /// One clip's source: from this session's memory, the on-disk cache, a download, or the device's own original.
+    private func resolveClip(_ clip: NativeEditorSourcePool.Clip, generation: String) async throws -> ResolvedEditorSource {
+        try Task.checkCancellation()
+        guard let source = clip.nativeSource, !source.mediaID.isEmpty else {
+            throw MediaEngineError.missingAsset("clip-\(clip.clipIndex)")
+        }
+        #if DEBUG
+        NativePreviewDiagnostics.record("source-resolve", fields: ["index": String(clip.clipIndex)])
+        #endif
+        let key = "\(generation):\(clip.clipIndex):\(source.mediaID)"
+        if !source.localRequired, let previous = cachedDownload(key: key, id: source.mediaID, clipIndex: clip.clipIndex) {
+            return try await decoderCompatible(previous)
+        }
+        var asset: MediaAsset
+        let url: URL
+        if source.localRequired {
+            guard source.sourceURL == nil, let descriptor = source.original else { throw APIError.invalidResponse }
+            let store = SourceAssetStore(project: project)
+            let files = try store.resolve(mediaIDs: [source.mediaID])
+            guard let originalURL = files[source.mediaID],
+                  let binding = try store.bindings().first(where: { $0.mediaID == source.mediaID }) else {
+                throw SourceAssetError.missingOriginal(source.mediaID)
+            }
+            let fingerprint = try SHA256Fingerprinter().fingerprint(file: originalURL)
+            guard fingerprint.hex == descriptor.sha256, fingerprint.byteCount == descriptor.byteCount else {
+                throw SourceAssetError.changedOriginal(source.mediaID)
+            }
+            asset = binding.original
+            url = originalURL
+        } else {
+            guard let sourceURL = source.sourceURL, sourceURL.scheme == "https", source.original == nil else {
+                throw APIError.invalidResponse
+            }
+            #if DEBUG
+            NativePreviewDiagnostics.record("source-download", fields: ["index": String(clip.clipIndex)])
+            #endif
+            #if DEBUG
+            let monitor = Task { [downloads] in
+                while !Task.isCancelled {
+                    downloads.getAllTasks { tasks in
+                        for task in tasks {
+                            NativePreviewDiagnostics.record("source-transfer", fields: ["index": String(clip.clipIndex),
+                                "received": String(task.countOfBytesReceived), "expected": String(task.countOfBytesExpectedToReceive),
+                                "state": String(task.state.rawValue)])
+                        }
+                    }
+                    try? await Task.sleep(for: .seconds(2))
+                }
+            }
+            defer { monitor.cancel() }
+            #endif
+            let (file, response) = try await downloads.download(from: sourceURL)
+            #if DEBUG
+            NativePreviewDiagnostics.record("source-downloaded", fields: ["index": String(clip.clipIndex)])
+            #endif
+            defer { try? FileManager.default.removeItem(at: file) }
+            guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard response.statusCode == 200 else { throw APIError.requestFailed(status: response.statusCode) }
+            try Task.checkCancellation()
+            asset = try await NativeDownloadedMedia.importAsset(from: file, sourceURL: sourceURL, response: response, project: diskCache.project)
+            url = diskCache.project.root.appendingPathComponent(asset.relativePath)
+        }
+        if asset.duration == nil, !NativeDownloadedMedia.isStillImage(url) {
+            let duration = try await AVURLAsset(url: url).load(.duration).seconds
+            guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
+            asset.duration = duration
+        }
+        let resolved = ResolvedEditorSource(clipIndex: clip.clipIndex, mediaID: source.mediaID, asset: asset, url: url)
+        if source.localRequired { cached[key] = resolved }
+        else { rememberDownload(resolved, key: key) }
+        return try await decoderCompatible(resolved)
     }
 }
 

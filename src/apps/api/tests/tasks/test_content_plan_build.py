@@ -4878,3 +4878,136 @@ def test_dispatch_stamps_composition_for_a_stamped_voice_plan_and_not_an_unstamp
     assert "creator_composition" not in job.assembly_plan
     plain = _dispatch_with_binding(monkeypatch, enabled=True, factory_stamped=False)
     assert "creator_composition" not in plain.session.add.call_args.args[0].assembly_plan
+
+
+# --- KRI-719: multi-clip Talking to camera dispatch gate ----------------------
+
+
+def _multi_clip_talking_features() -> list[str]:
+    from app.services.phone_rollout import PHONE_TALKING_HEAD_FEATURES
+
+    return list(PHONE_TALKING_HEAD_FEATURES)
+
+
+@pytest.mark.parametrize("clip_count", [2, 3, 10])
+def test_phone_gate_subtitled_multi_clip_flag_off_refuses(
+    monkeypatch: pytest.MonkeyPatch, clip_count: int
+) -> None:
+    """Flag off: the verified features alone never unlock 2+ clips."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "talking_multi_clip_enabled", False)
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="subtitled",
+        approved=False,
+        clip_count=clip_count,
+        phone_render_verified_features=_multi_clip_talking_features(),
+    )
+    assert result.outcome == "invalid_clips"
+    assert result.reason == "subtitled_clip_count_unsupported"
+    bind_mock.assert_not_called()
+    mock_build.assert_not_called()
+
+
+@pytest.mark.parametrize("clip_count", [1, 2, 3, 10])
+def test_phone_gate_subtitled_multi_clip_flag_on_dispatches(
+    monkeypatch: pytest.MonkeyPatch, clip_count: int
+) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "talking_multi_clip_enabled", True)
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="subtitled",
+        approved=False,
+        clip_count=clip_count,
+        phone_render_verified_features=_multi_clip_talking_features(),
+    )
+    assert result.outcome == "dispatched"
+    bind_mock.assert_called_once()
+    mock_build.assert_called_once()
+
+
+def test_phone_gate_subtitled_multi_clip_over_the_cap_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.config import settings
+    from app.tasks.content_plan_build import PHONE_GATE_MESSAGES
+
+    monkeypatch.setattr(settings, "talking_multi_clip_enabled", True)
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="subtitled",
+        approved=False,
+        clip_count=11,
+        phone_render_verified_features=_multi_clip_talking_features(),
+    )
+    assert result.outcome == "invalid_clips"
+    assert result.reason == "subtitled_clip_count_unsupported"
+    bind_mock.assert_not_called()
+    mock_build.assert_not_called()
+    # The refusal copy must say the cap, not "exactly one clip".
+    message = PHONE_GATE_MESSAGES["subtitled_clip_count_unsupported"][1]
+    assert "exactly one clip" not in message
+    assert "10 clips" in message
+
+
+def test_phone_gate_message_subtitled_clip_count_is_exactly_one_flag_off() -> None:
+    from app.tasks.content_plan_build import PHONE_GATE_MESSAGES
+
+    assert "exactly one clip" in PHONE_GATE_MESSAGES["subtitled_clip_count_unsupported"][1]
+
+
+def test_phone_gate_subtitled_multi_clip_any_over_long_clip_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the SECOND clip is over the 5-minute cap: it still dooms the render."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "talking_multi_clip_enabled", True)
+    result, _job, mock_build, _bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="subtitled",
+        approved=False,
+        clip_count=3,
+        bound_sources=(_bound_source(20.0), _bound_source(301.0), _bound_source(20.0)),
+        phone_render_verified_features=_multi_clip_talking_features(),
+    )
+    assert result.outcome == "invalid_clips"
+    assert result.reason == "subtitled_clip_too_long"
+    mock_build.assert_not_called()
+
+
+def test_phone_gate_subtitled_multi_clip_all_clips_within_cap_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "talking_multi_clip_enabled", True)
+    result, _job, mock_build, _bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="subtitled",
+        approved=False,
+        clip_count=3,
+        bound_sources=(_bound_source(20.0), _bound_source(300.0), _bound_source(20.0)),
+        phone_render_verified_features=_multi_clip_talking_features(),
+    )
+    assert result.outcome == "dispatched"
+    mock_build.assert_called_once()
+
+
+def test_phone_gate_subtitled_second_clip_length_ignored_flag_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flag off keeps the first-source-only check (one-clip items never have a second)."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "talking_multi_clip_enabled", False)
+    result, _job, _mock_build, _bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="subtitled",
+        approved=False,
+        bound_sources=(_bound_source(20.0), _bound_source(301.0)),
+    )
+    assert result.outcome == "dispatched"

@@ -52,6 +52,38 @@ def test_the_unstamped_twin_keeps_the_legacy_speech_lane(monkeypatch) -> None:
     assert h.mismatches == []
 
 
+@pytest.mark.parametrize("stamped", [True, False])
+def test_per_clip_camera_sound_keeps_named_sources_without_requiring_a_speaker(
+    monkeypatch, stamped
+) -> None:
+    """KRI-674 live blocker: named ambient sound is not a spoken-excerpt request.
+
+    Cross the real strategy/contract projection and worker dispatch. Renderer
+    recorders establish the selected entry; compiled-recipe audio guards and
+    the physical export establish source preservation separately.
+    """
+    from app.services.creator_render_contract import read_render_contract
+
+    job = _job(
+        platform="phone",
+        clips=2,
+        stamped=stamped,
+        strategy=_strategy(
+            audio_strategy="original_audio",
+            voice_mode="per_clip",
+            montage_audio={"preserve_source_audio": True, "source_media_ids": ["c0", "c1"]},
+        ),
+    )
+    h = Harness(monkeypatch, job)
+    h.speech.side_effect = lambda *_a, **_k: h.calls.append("speech") or True
+    h.run()
+    assert h.calls == (["_run_phone_unified_montage_job"] if stamped else ["speech"])
+    assert h.mismatches == []
+    contract = read_render_contract(h.job.assembly_plan)
+    assert contract is not None and contract.audio_source_ids == ("c0", "c1")
+    assert contract.original_audio == "require"
+
+
 @pytest.mark.parametrize("voice_mode", ["excerpts", None])
 def test_a_stamped_plan_without_a_continuous_voice_still_takes_the_speech_lane(
     monkeypatch, voice_mode

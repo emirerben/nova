@@ -46,6 +46,8 @@ enum ProfileFetchState: Equatable, Sendable {
         guard let identity = localStorageIdentity else { return }
         try? TeleprompterStore.removeAccount(accountID: identity)
         try? MediaLibraryOriginals(owner: identity).removeAccount()
+        Task { await TranscriptCache.shared.removeAccount(owner: identity) }
+        Task.detached { SlidePostImageCache.library.removeAll() }
     }
     private let tokenStore: TokenStore
     private let api: KriaAPIClient
@@ -68,6 +70,7 @@ enum ProfileFetchState: Equatable, Sendable {
                 guard let projectID = notification.object as? UUID,
                       let identity = self?.localStorageIdentity else { return }
                 try? TeleprompterStore.removeProject(accountID: identity, projectID: projectID)
+                Task { await TranscriptCache.shared.remove(owner: identity, threadID: projectID) }
             }
         if isSignedIn {
             Task { [weak self] in await self?.refreshProfile() }
@@ -88,6 +91,9 @@ enum ProfileFetchState: Equatable, Sendable {
     }
     func signOut() {
         let refreshToken = try? tokenStore.read()?.refreshToken
+        // Saved conversations go with an explicit sign-out (read the identity before the session is deleted).
+        if let identity = localStorageIdentity { Task { await TranscriptCache.shared.removeAccount(owner: identity) } }
+        Task.detached { SlidePostImageCache.library.removeAll() }
         // Persist the logical logout before touching Keychain. If secure-item
         // deletion fails, a process restart must not resurrect that session.
         defaults.set(true, forKey: Self.invalidatedSessionKey)
@@ -198,6 +204,11 @@ enum AccountIdentity {
     @Published var errorMessage: String?
     @Published private(set) var projectsState: ProjectCollectionState = .idle
     @Published private(set) var libraryState: ProjectCollectionState = .idle
+    /// Where the next page of older videos starts; nil when the whole library is loaded.
+    @Published private(set) var libraryNextCursor: String?
+    private var lastLibraryLoad: Date?
+    private var isLoadingMoreLibrary = false
+    static let libraryPageSize = 24
     @Published private(set) var libraryPosterRecoveryVersion = 0
     @Published private(set) var recoveringPosterIDs: Set<UUID> = []
     @Published private(set) var posterLoadRevisions: [UUID: Int] = [:]
@@ -217,6 +228,10 @@ enum AccountIdentity {
     /// new chat shows at once instead of reading itself back from the server first.
     private var createdThreads: [UUID: CreationThread] = [:]
     let chatDrafts: ChatDraftStore
+    let chatKeepers = ChatKeeperStore()
+    /// Where the next page of older chats starts; nil when the list is complete.
+    @Published private(set) var projectsNextCursor: String?
+    private var isLoadingMoreProjects = false
     private var collectionGeneration = 0
     init(
         api: KriaAPIClient = KriaAPI(),
@@ -224,16 +239,20 @@ enum AccountIdentity {
         cache: CacheRepository? = nil,
         chatDrafts: ChatDraftStore = ChatDraftStore()
     ) {
+        Perf.begin("appmodel.init")
+        defer { Perf.end("appmodel.init") }
         self.chatDrafts = chatDrafts
         self.api = api
         self.editorOperations = editorOperations
         self.uploads = BackgroundUploadCoordinator(api: api)
         self.deviceRenders = DeviceRenderSessions(api: api)
         self.cache = cache
+        Perf.begin("cache.load")
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {
             projects = cached.map(\.summary).filter { !deletedProjectIDs.contains($0.id) }
             projectsState = .loaded
         }
+        Perf.end("cache.load")
     }
     func loadProjects() async {
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {
@@ -244,12 +263,18 @@ enum AccountIdentity {
         if projects.isEmpty { projectsState = .loading }
         defer { isLoading = false }
         do {
-            let fetched = try await api.projects()
+            let page = try await api.projectsPage(cursor: nil)
             guard generation == collectionGeneration else { return }
-            projects = fetched.filter { !deletedProjectIDs.contains($0.id) }.map { incoming in
+            // Merge, never replace: the first page is only the newest chats, and the cached older ones must stay
+            // reachable (and drop out only when the server stops listing them).
+            let before = projects
+            let fetched = page.projects.filter { !deletedProjectIDs.contains($0.id) }.map { incoming in
                 if let current = projects.first(where: { $0.id == incoming.id }), current.serverRevision > incoming.serverRevision { return current }
                 return incoming
             }
+            projects = ProjectListMerge.apply(existing: projects, page: fetched, isFirstPage: true, hasMore: page.nextCursor != nil)
+            projectsNextCursor = page.nextCursor
+            try? cache?.removeProjects(before.map(\.id).filter { id in !projects.contains { $0.id == id } })
             projectsState = projects.isEmpty ? .empty : .loaded
             errorMessage = nil
             if let selectedProject,
@@ -276,15 +301,19 @@ enum AccountIdentity {
             #endif
         }
     }
+    /// The newest videos only: the first page shows as soon as it arrives instead of after every page of a large
+    /// library, and older ones follow as the grid scrolls (`loadMoreLibrary`).
     func loadLibrary() async {
         let generation = collectionGeneration
         librarySnapshot += 1
         let snapshot = librarySnapshot
         if libraryProjects.isEmpty { libraryState = .loading }
         do {
-            let fetched = try await api.library()
+            let page = try await api.libraryPage(cursor: nil, limit: Self.libraryPageSize)
             guard generation == collectionGeneration, snapshot == librarySnapshot, !Task.isCancelled else { return }
-            libraryProjects = fetched
+            libraryProjects = ProjectListMerge.apply(existing: libraryProjects, page: page.projects, isFirstPage: true, hasMore: page.nextCursor != nil)
+            libraryNextCursor = page.nextCursor
+            lastLibraryLoad = .now
             libraryState = libraryProjects.isEmpty ? .empty : .loaded
             errorMessage = nil
             libraryPosterRecoveryVersion += 1
@@ -295,6 +324,23 @@ enum AccountIdentity {
             libraryState = libraryProjects.isEmpty ? .failed(error.localizedDescription) : .loaded
             libraryPosterRecoveryVersion += 1
         }
+    }
+    /// Refreshes the library only when the last load is older than `maxAge` (opening the drawer used to reload
+    /// every page each time just to update the "N videos" label).
+    func loadLibraryIfStale(maxAge: TimeInterval = 60) async {
+        if let last = lastLibraryLoad, Date.now.timeIntervalSince(last) < maxAge, !libraryProjects.isEmpty { return }
+        await loadLibrary()
+    }
+    /// The next page of older videos, when the grid has scrolled to the end of what it has.
+    func loadMoreLibrary() async {
+        guard let cursor = libraryNextCursor, !isLoadingMoreLibrary else { return }
+        isLoadingMoreLibrary = true
+        defer { isLoadingMoreLibrary = false }
+        let generation = collectionGeneration
+        guard let page = try? await api.libraryPage(cursor: cursor, limit: Self.libraryPageSize), generation == collectionGeneration else { return }
+        libraryProjects = ProjectListMerge.apply(existing: libraryProjects, page: page.projects, isFirstPage: false, hasMore: page.nextCursor != nil)
+        libraryNextCursor = page.nextCursor
+        libraryPosterRecoveryVersion += 1
     }
     func beginLibraryPosterRecovery() {
         galleryIsVisible = true
@@ -426,7 +472,9 @@ enum AccountIdentity {
     func takeCreatedThread(_ id: UUID) -> CreationThread? { createdThreads.removeValue(forKey: id) }
     func openWorkspace(preferredProjectID: UUID? = nil) async {
         selectWorkspaceProject(preferredProjectID: preferredProjectID)
+        Perf.mark("workspace.selected")
         uploads.recoverInterruptedPreparations()
+        Perf.mark("uploads.recovered")
         // KRI-640: New chat (even from the empty workspace) then needs no capabilities read on tap.
         let api = api
         async let capabilitiesPrefetch: Void = api.prefetchCreationCapabilities()
@@ -491,12 +539,13 @@ enum AccountIdentity {
     /// Silently deletes a chat the user walked away from without sending anything, staging media,
     /// or leaving unsent text. Any doubt (fetch failure, conflict, still uploading) keeps the chat.
     func discardIfAbandoned(_ id: UUID) async {
-        guard !deletedProjectIDs.contains(id), !reapingChatIDs.contains(id),
+        guard !deletedProjectIDs.contains(id), !reapingChatIDs.contains(id), !chatKeepers.contains(id),
               let project = projects.first(where: { $0.id == id }), project.status == .draft else { return }
         reapingChatIDs.insert(id)
         defer { reapingChatIDs.remove(id) }
-        guard let thread = try? await api.project(threadID: id),
-              AbandonedChat.isEmpty(
+        guard let thread = try? await api.project(threadID: id) else { return }
+        if thread.events.contains(where: { $0.role == "user" }) { chatKeepers.insert(id) }
+        guard AbandonedChat.isEmpty(
                 thread: thread,
                 draft: chatDrafts.draft(for: id),
                 hasPendingUploads: uploads.records.contains { $0.projectID == id }
@@ -509,9 +558,24 @@ enum AccountIdentity {
     /// Cleans up empty chats left by a killed app, keeping whichever chat is open when
     /// `keeping` is given (the app is foregrounded on it).
     func sweepAbandonedChats(keeping: UUID? = nil) async {
-        for project in projects where project.status == .draft && project.id != keeping && !project.awaitsConfirmation {
+        for project in projects where project.status == .draft && project.id != keeping && !project.awaitsConfirmation
+            && !chatKeepers.contains(project.id) {
             await discardIfAbandoned(project.id)
         }
+    }
+    /// The next page of older chats, when the drawer has scrolled to the end of what it has.
+    func loadMoreProjects() async {
+        guard let cursor = projectsNextCursor, !isLoadingMoreProjects else { return }
+        isLoadingMoreProjects = true
+        defer { isLoadingMoreProjects = false }
+        let generation = collectionGeneration
+        guard let page = try? await api.projectsPage(cursor: cursor), generation == collectionGeneration else { return }
+        let before = projects
+        let fetched = page.projects.filter { !deletedProjectIDs.contains($0.id) }
+        projects = ProjectListMerge.apply(existing: projects, page: fetched, isFirstPage: false, hasMore: page.nextCursor != nil)
+        projectsNextCursor = page.nextCursor
+        try? cache?.upsert(fetched)
+        try? cache?.removeProjects(before.map(\.id).filter { id in !projects.contains { $0.id == id } })
     }
     func updateProject(_ project: ProjectSummary) {
         guard !deletedProjectIDs.contains(project.id) else { return }

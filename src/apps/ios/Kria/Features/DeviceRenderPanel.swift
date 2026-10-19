@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct DeviceRenderPanel: View {
     let key: DeviceRenderKey
     let sessions: DeviceRenderSessions
+    var retryApproved: (() async -> Void)? = nil
     let retry: () async -> Void
     @State private var showsSourceRecovery = false
     /// KRI-211: the attention state is caused by originals that are not on this
@@ -16,11 +17,21 @@ struct DeviceRenderPanel: View {
         VStack(spacing: 12) {
         DeviceRenderStatusCard(
             presentation: sessions.presentations[key] ?? DeviceRenderPresentation(phase: .preparing),
-            retry: { Task { await retry() } },
+            retry: { Task {
+                // Re-sending an existing local file needs no new render consent.
+                // Every fresh runtime export goes through its approval, including
+                // a local failure whose server observer has not caught up yet.
+                if let retryApproved, sessions.presentations[key]?.phase != .localReady {
+                    await retryApproved()
+                } else { await retry() }
+            } },
             stop: { Task { await sessions.cancel(key) } },
             retryNeedsAttention: {
-                let ok = await sessions.retryNeedsAttention(key)
-                if ok { await retry() }
+                if let retryApproved { await retryApproved() }
+                else {
+                    let ok = await sessions.retryNeedsAttention(key)
+                    if ok { await retry() }
+                }
             },
             originalsMissing: originalsMissing
         )
@@ -275,7 +286,9 @@ struct DeviceRenderStatusCard: View {
     }
 
     private var title: String {
-        switch presentation.phase {
+        if presentation.outputVerificationPending { return "Checking your video" }
+        if let attempt = presentation.repairAttempt { return "Repairing your video (\(attempt) of 2)" }
+        return switch presentation.phase {
         case .preparing: "Preparing on your iPhone"
         case .rendering: "Rendering on your iPhone"
         case .localReady: "Ready on this iPhone"
@@ -287,7 +300,8 @@ struct DeviceRenderStatusCard: View {
         }
     }
     private var detail: String {
-        switch presentation.phase {
+        if presentation.outputVerificationPending { return "Checking the exported picture, text and sound against your approved edit." }
+        return switch presentation.phase {
         case .preparing: "Getting the original footage and selected assets ready."
         case .rendering: "Keep Kria open while the video finishes."
         case .localReady: "You can watch and share it now. It will appear on your other devices after syncing."

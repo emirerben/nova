@@ -24,6 +24,7 @@ from app.kria.brief import BriefRequirement
 from app.kria.brief_checks import build_receipts, plan_facts_from_editor_payload
 from app.kria.editor_receipts import (
     bind_editor_receipts,
+    receipt_lead,
     reply_from_diff,
     reply_from_editor_receipts,
 )
@@ -178,7 +179,9 @@ def test_an_ask_naming_no_dimension_is_never_green_it_lists_what_changed() -> No
     reqs = [_req("style", "Make it feel more cinematic")]
     receipts, reply, _ = _turn(reqs, [_patch(["a", "b"], {"letter_spacing": 2})])
     assert (receipts["r1"].status, receipts["r1"].verification) == ("partial", "unchecked")
-    assert receipts["r1"].reason == "I changed: Changed the letter spacing of both texts"
+    # The stored reason is just the change list (the chat shows it under a lead line); the
+    # prose reply puts "I changed:" back, so `content` is unchanged for older clients.
+    assert receipts["r1"].reason == "Changed the letter spacing of both texts"
     assert reply.startswith("Have a look: Make it feel more cinematic (I changed:")
 
 
@@ -562,3 +565,75 @@ def test_setting_the_title_it_already_has_is_not_a_change() -> None:
         rows=[title_row, ROWS[1]],
     )
     assert not [e for e in compiled.diff.real() if e.lane == "title"]
+
+
+# -------------------------------------------------------------------- KRI-739: one receipt
+
+
+def _receipt(status: str, verification: str = "checked", reason: str | None = None):
+    from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
+
+    return RequirementReceipt(
+        requirement_id="r1", status=status, verification=verification, reason=reason
+    )
+
+
+@pytest.mark.parametrize(
+    ("statuses", "expected"),
+    [
+        ([("met", "checked")], "Done."),
+        ([("met", "checked"), ("met", "checked")], "Done."),
+        ([("partial", "unchecked")], "Done — have a look."),
+        ([("met", "checked"), ("partial", "unchecked")], "Done — have a look."),
+        ([("partial", "checked")], "Partly done."),
+        ([("partial", "checked"), ("partial", "unchecked")], "Partly done."),
+        ([("not_possible", "checked")], "I couldn't do that."),
+        ([("not_possible", "checked"), ("not_possible", "checked")], "I couldn't do those."),
+        ([("not_possible", "checked"), ("met", "checked")], "I did 1 of your 2 asks."),
+        (
+            [("met", "checked"), ("partial", "unchecked"), ("not_possible", "checked")],
+            "I did 2 of your 3 asks.",
+        ),
+    ],
+)
+def test_the_lead_says_how_the_turn_went(statuses, expected) -> None:
+    assert receipt_lead([_receipt(s, v) for s, v in statuses]) == expected
+
+
+def test_no_receipts_have_no_lead() -> None:
+    assert receipt_lead([]) == ""
+
+
+def test_notices_and_notes_follow_the_lead() -> None:
+    lead = receipt_lead(
+        [_receipt("met")],
+        notices=["Speed stays natural on a phone edit."],
+        notes=" Times are UTC. ",
+    )
+
+    assert lead == "Done. Speed stays natural on a phone edit. Times are UTC."
+
+
+def test_the_turkish_lead_keeps_the_english_structure() -> None:
+    with reply_language_for("tr"):
+        assert receipt_lead([_receipt("met")]) == "Yapıldı."
+        assert receipt_lead([_receipt("not_possible"), _receipt("met")]) == (
+            "2 isteğinden 1 tanesini yaptım."
+        )
+        assert receipt_lead([_receipt("partial", "unchecked")]) == "Yapıldı — bir göz at."
+
+
+def test_the_lead_never_repeats_the_request_or_the_reason() -> None:
+    """The three-times bug: prose, a pill with the request, and the tap detail all said it."""
+    reqs = [_req("style", "Make it feel more cinematic")]
+    receipts, reply, _ = _turn(reqs, [_patch(["a", "b"], {"letter_spacing": 2})])
+    receipt = receipts["r1"]
+
+    lead = receipt_lead([receipt])
+
+    assert lead == "Done — have a look."
+    assert "cinematic" not in lead
+    assert (receipt.reason or "") not in lead
+    # The row carries the reason once; the old prose is still the event content.
+    assert "I changed:" not in (receipt.reason or "")
+    assert "(I changed: Changed the letter spacing of both texts)" in reply

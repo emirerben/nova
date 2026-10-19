@@ -16,14 +16,18 @@ struct ClipSelectionCard: View {
     let media: [CreationAttachedMedia]
     let projectID: UUID?
     let mode: ClipSelectionCardMode
+    /// The language of the answer this card posts (the chat's reply language, KRI-694).
+    let language: ClipAnswerLanguage
     @State private var state: ClipSelectionState
     @State private var showsPicker = false
 
-    init(question: ClipQuestion, media: [CreationAttachedMedia], projectID: UUID? = nil, mode: ClipSelectionCardMode) {
+    init(question: ClipQuestion, media: [CreationAttachedMedia], projectID: UUID? = nil, mode: ClipSelectionCardMode,
+         language: ClipAnswerLanguage = .english) {
         self.question = question
         self.media = media
         self.projectID = projectID
         self.mode = mode
+        self.language = language
         _state = State(initialValue: ClipSelectionState(question: question))
     }
 
@@ -34,7 +38,7 @@ struct ClipSelectionCard: View {
             // On the wrapper (not the active card) so Done can flip the card to its answered summary while the
             // sheet is still dismissing.
             .sheet(isPresented: $showsPicker) {
-                ClipPickerSheet(question: question, state: $state, media: media, positions: positions, projectID: projectID, isSending: isSendingNow) { submission, text in
+                ClipPickerSheet(question: question, state: $state, media: media, positions: positions, projectID: projectID, isSending: isSendingNow, language: language) { submission, text in
                     if case .active(_, let submit) = mode { submit(submission, text) }
                 }
             }
@@ -95,7 +99,7 @@ struct ClipSelectionCard: View {
                 .accessibilityIdentifier("clip-choose")
                 Button("Skip, decide for me") {
                     let submission = ClipSelectionSubmission.skip(question)
-                    submit(submission, submission.message(question: question, positions: positions))
+                    submit(submission, submission.message(question: question, positions: positions, language: language))
                 }
                 .font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -131,6 +135,7 @@ struct ClipPickerSheet: View {
     let positions: [String: Int]
     let projectID: UUID?
     let isSending: Bool
+    let language: ClipAnswerLanguage
     let submit: (ClipSelectionSubmission, String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var categoryKey: String
@@ -142,13 +147,15 @@ struct ClipPickerSheet: View {
     struct PreviewTarget: Identifiable { let index: Int; var id: Int { index } }
 
     init(question: ClipQuestion, state: Binding<ClipSelectionState>, media: [CreationAttachedMedia], positions: [String: Int],
-         projectID: UUID?, isSending: Bool, submit: @escaping (ClipSelectionSubmission, String) -> Void) {
+         projectID: UUID?, isSending: Bool, language: ClipAnswerLanguage = .english,
+         submit: @escaping (ClipSelectionSubmission, String) -> Void) {
         self.question = question
         _state = state
         self.media = media
         self.positions = positions
         self.projectID = projectID
         self.isSending = isSending
+        self.language = language
         self.submit = submit
         _categoryKey = State(initialValue: question.categories[0].key)
     }
@@ -246,18 +253,20 @@ struct ClipPickerSheet: View {
 
     private func attached(_ mediaID: String) -> CreationAttachedMedia {
         media.first { $0.id == mediaID }
-            ?? CreationAttachedMedia(id: mediaID, filename: "Clip \(positions[mediaID] ?? 0)", kind: "video", previewURL: nil)
+            ?? CreationAttachedMedia(id: mediaID, filename: "Clip \(positions[mediaID] ?? 0)",
+                                     kind: question.isPhoto(mediaID) ? "image" : "video", previewURL: nil)
     }
 
     private func tile(_ mediaID: String) -> some View {
         let position = positions[mediaID] ?? 0
+        let info = ClipTileInfo(mediaID: mediaID, position: position, question: question, media: media.first { $0.id == mediaID })
         let isOn = state.isSelected(mediaID, in: category.key)
         let suggested = category.suggestedMediaIDs.contains(mediaID)
         return ZStack(alignment: .topTrailing) {
             Button { state.toggle(mediaID, in: category.key) } label: {
                 Color.clear
                     .aspectRatio(9.0 / 16.0, contentMode: .fit)
-                    .overlay { ClipThumbnailView(media: attached(mediaID), position: position, projectID: projectID) }
+                    .overlay { ClipThumbnailView(media: attached(mediaID), position: position, projectID: projectID, name: info.name) }
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(alignment: .topLeading) {
                         Text("\(position)")
@@ -267,13 +276,17 @@ struct ClipPickerSheet: View {
                             .padding(6)
                     }
                     .overlay(alignment: .bottomLeading) {
-                        if suggested {
-                            Text("Suggested")
-                                .font(KriaFont.body(11).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                                .padding(.horizontal, 7).padding(.vertical, 3)
-                                .background(KriaColor.butter, in: Capsule())
-                                .padding(6)
+                        VStack(alignment: .leading, spacing: 4) {
+                            // KRI-693: a photo says so on the tile, in the chat's language.
+                            if info.isPhoto { photoName(info) }
+                            if suggested {
+                                Text("Suggested")
+                                    .font(KriaFont.body(11).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                                    .padding(.horizontal, 7).padding(.vertical, 3)
+                                    .background(KriaColor.butter, in: Capsule())
+                            }
                         }
+                        .padding(6)
                     }
                     .overlay(alignment: .bottomTrailing) {
                         if isOn {
@@ -291,7 +304,7 @@ struct ClipPickerSheet: View {
             .buttonStyle(.plain)
             .disabled(isSending)
             .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in previewing = PreviewTarget(index: category.candidateMediaIDs.firstIndex(of: mediaID) ?? 0) })
-            .accessibilityLabel("Clip \(position)" + (suggested ? ", suggested" : ""))
+            .accessibilityLabel(info.name + (suggested ? ", suggested" : ""))
             .accessibilityValue(isOn ? "Selected" : "Not selected")
             .accessibilityAddTraits(isOn ? .isSelected : [])
             .accessibilityAction(named: "Preview clip") { previewing = PreviewTarget(index: category.candidateMediaIDs.firstIndex(of: mediaID) ?? 0) }
@@ -305,9 +318,20 @@ struct ClipPickerSheet: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Preview clip \(position)")
+            .accessibilityLabel(info.isPhoto ? "Preview \(info.name)" : "Preview clip \(position)")
             .accessibilityIdentifier("clip-preview-\(mediaID)")
         }
+    }
+
+    private func photoName(_ info: ClipTileInfo) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: info.symbol).font(.system(size: 10, weight: .semibold))
+            Text(info.name).font(KriaFont.body(11).weight(.semibold)).lineLimit(1)
+        }
+        .foregroundStyle(Color.white)
+        .padding(.horizontal, 7).padding(.vertical, 3)
+        .background(KriaColor.ink.opacity(0.78), in: Capsule())
+        .accessibilityHidden(true)
     }
 
     private var bottomBar: some View {
@@ -339,7 +363,7 @@ struct ClipPickerSheet: View {
             Button {
                 let submission = state.submission
                 doneToken += 1
-                submit(submission, submission.message(question: question, positions: positions))
+                submit(submission, submission.message(question: question, positions: positions, language: language))
                 dismiss()
             } label: {
                 Text(state.canSend ? "Done" : "Pick a clip or None of these").frame(maxWidth: .infinity)
@@ -362,12 +386,15 @@ struct ClipThumbnailView: View {
     let media: CreationAttachedMedia
     let position: Int
     let projectID: UUID?
+    /// What the placeholder calls the media; nil reads "Clip N". Photos are named by the server (KRI-693).
+    let name: String?
     @State private var image: UIImage?
 
-    init(media: CreationAttachedMedia, position: Int, projectID: UUID?) {
+    init(media: CreationAttachedMedia, position: Int, projectID: UUID?, name: String? = nil) {
         self.media = media
         self.position = position
         self.projectID = projectID
+        self.name = name
         _image = State(initialValue: UIImage(contentsOfFile: CreationMediaPreview.url(mediaID: media.id).path))
     }
 
@@ -394,8 +421,8 @@ struct ClipThumbnailView: View {
 
     private var placeholder: some View {
         VStack(spacing: 4) {
-            Image(systemName: "film").font(.system(size: 20)).foregroundStyle(KriaColor.zinc)
-            Text("Clip \(position)").font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk)
+            Image(systemName: media.kind == "image" ? "photo" : "film").font(.system(size: 20)).foregroundStyle(KriaColor.zinc)
+            Text(name ?? "Clip \(position)").font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk)
         }
         .accessibilityIdentifier("clip-placeholder-\(media.id)")
     }
@@ -430,11 +457,25 @@ struct ClipPreviewPager: View {
 
     private var currentID: String { ids[index] }
     private var position: Int { positions[currentID] ?? (index + 1) }
+    private var currentInfo: ClipTileInfo {
+        ClipTileInfo(mediaID: currentID, position: position, question: state.question, media: media.first { $0.id == currentID })
+    }
+
+    private func page(_ id: String, offset: Int) -> some View {
+        let attached = media.first { $0.id == id }
+        let number = positions[id] ?? (offset + 1)
+        let info = ClipTileInfo(mediaID: id, position: number, question: state.question, media: attached)
+        let fallbackKind = info.isPhoto ? "image" : "video"
+        return ClipPreviewPage(
+            media: attached ?? CreationAttachedMedia(id: id, filename: "Clip", kind: fallbackKind, previewURL: nil),
+            position: number, projectID: projectID, isCurrent: offset == index, name: info.name
+        )
+    }
 
     var body: some View {
         VStack(spacing: 10) {
             HStack {
-                Text("Clip \(position) of \(max(positions.count, ids.count))")
+                Text(currentInfo.isPhoto ? currentInfo.name : "Clip \(position) of \(max(positions.count, ids.count))")
                     .font(KriaFont.headline(20)).foregroundStyle(KriaColor.ink)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("clip-preview-title")
@@ -448,12 +489,7 @@ struct ClipPreviewPager: View {
             }
             TabView(selection: $index) {
                 ForEach(Array(ids.enumerated()), id: \.offset) { offset, id in
-                    ClipPreviewPage(
-                        media: media.first { $0.id == id }
-                            ?? CreationAttachedMedia(id: id, filename: "Clip", kind: "video", previewURL: nil),
-                        position: positions[id] ?? (offset + 1), projectID: projectID, isCurrent: offset == index
-                    )
-                    .tag(offset)
+                    page(id, offset: offset).tag(offset)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
@@ -491,14 +527,20 @@ struct ClipPreviewPage: View {
     let position: Int
     let projectID: UUID?
     let isCurrent: Bool
+    var name: String? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var player: LoopingPlayer?
     @State private var muted = true
     @State private var hasLocalVideo: Bool?
 
+    private var previewLabel: String {
+        let photoName = name ?? "Photo"
+        return media.kind == "image" ? "\(photoName) preview" : "Clip \(position) preview"
+    }
+
     var body: some View {
         ZStack {
-            ClipThumbnailView(media: media, position: position, projectID: projectID)
+            ClipThumbnailView(media: media, position: position, projectID: projectID, name: name)
             if let player, isCurrent {
                 VideoPlayer(player: player.player)
                     .disabled(true)
@@ -541,6 +583,8 @@ struct ClipPreviewPage: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: isCurrent) {
             guard isCurrent else { player?.player.pause(); return }
+            // A photo has no video to play: its poster is the whole picture, so there is no "poster only" note.
+            guard media.kind != "image" else { return }
             if player == nil {
                 if let projectID, let url = CreationMediaPreview.localOriginal(mediaID: media.id, projectID: projectID) {
                     player = LoopingPlayer(url: url)
@@ -553,7 +597,7 @@ struct ClipPreviewPage: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Clip \(position) preview")
+        .accessibilityLabel(previewLabel)
         .accessibilityIdentifier("clip-preview-player-\(media.id)")
     }
 }

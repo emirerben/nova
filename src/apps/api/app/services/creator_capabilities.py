@@ -60,6 +60,7 @@ from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS
 from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
 from app.services.phone_destination import phone_drawable_visual_kinds
 from app.services.phone_rollout import (
+    TALKING_MULTI_CLIP_MAX_CLIPS,
     phone_guided_narration_supported,
     phone_guided_sfx_supported,
     phone_narrated_title_supported,
@@ -70,6 +71,7 @@ from app.services.phone_rollout import (
     phone_subtitled_title_supported,
     phone_subtitled_video_overlays_supported,
     phone_talking_head_supported,
+    phone_talking_multi_clip_supported,
     phone_user_song_supported,
     phone_voiceover_reaction_beats_supported,
 )
@@ -649,17 +651,31 @@ def resolve_creator_manifest(
                     # phone-format-eligible at this point.
                     phone_format_capability = _available()
                 elif candidate_format == "subtitled":
+                    # KRI-719: with multi-clip Talking live, 1..MAX clips render
+                    # (speakers + cutaways); flag off keeps "exactly one clip".
+                    multi_clip_talking = phone_talking_multi_clip_supported()
+                    talking_clip_ok = (
+                        1 <= clip_count <= TALKING_MULTI_CLIP_MAX_CLIPS
+                        if multi_clip_talking
+                        else clip_count == 1
+                    )
                     phone_format_capability = (
                         _available()
                         if (
                             candidate_format in supported_now
-                            and clip_count == 1
+                            and talking_clip_ok
                             and not has_voiceover
                         )
                         else _unavailable(
                             "phone_format_unavailable",
-                            "talking-to-camera rendering on this iPhone requires exactly "
-                            "one clip and no recorded voiceover",
+                            (
+                                "talking-to-camera rendering on this iPhone requires "
+                                f"1 to {TALKING_MULTI_CLIP_MAX_CLIPS} clips and no "
+                                "recorded voiceover"
+                                if multi_clip_talking
+                                else "talking-to-camera rendering on this iPhone requires "
+                                "exactly one clip and no recorded voiceover"
+                            ),
                         )
                     )
                 elif candidate_format in NARRATED_EDIT_FORMATS:
@@ -1075,7 +1091,12 @@ def compile_strategy_to_plan(
     shape_notices = [*shape_notices, *song_notices]
     # KRI-479: a stray `voice_mode` (no camera-audio montage) is dropped; a no-op otherwise.
     strategy, voice_notices = repair_creator_voice_mode(
-        strategy, route_available=settings.voice_behind_footage_enabled
+        strategy,
+        route_available=(
+            settings.kria_plan_authority_enabled
+            if strategy.voice_mode == "per_clip"
+            else settings.voice_behind_footage_enabled
+        ),
     )
     shape_notices = [*shape_notices, *voice_notices]
     try:

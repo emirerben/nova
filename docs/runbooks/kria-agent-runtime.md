@@ -58,6 +58,42 @@ The terminal state determines the wording and safe action:
 Never retry an ambiguous dispatch by creating a new Job. Reconcile the committed
 Job and deterministic task identity first.
 
+## Retry an approved edit (KRI-674)
+
+For a failed runtime-v2 native export, the iPhone sends
+`POST /creation-threads/{thread_id}/render-retries` with `execution_id` and
+`expected_thread_revision`. It never sends a new creator message. The server
+keeps the same turn, draft, source selection and immutable recipe; it creates a
+new receipt and a fresh 30-minute approval. Approval re-pins that exact recipe
+once under a new native revision. Repeated taps and queue redelivery reuse the
+same attempt. Expired unstarted consent can be renewed after revalidation.
+
+An initial whole-job approval precedes generation creation, so its execution
+may have no variant or generation target. The phone approval hint, direct-retry
+fence and locked exact-retry validation resolve that original generation from
+the Job's stored `creator_generation_id`. A later manual editor Save pins a
+different base generation and retains its direct device retry. Do not substitute
+the variant's published generation: publication replaces it with the output
+attempt ID, while the original creator authority stays unchanged.
+
+A newer request, changed draft/source/ownership/generation, unsupported recipe,
+missing original, or unknown in-flight outcome prevents another export. Old
+receipts and accepted artifacts stay intact. A legacy failure that never saved
+a complete native recipe explicitly asks for a new version and approval; it
+cannot truthfully replay an execution program that does not exist. Cloud frozen
+execution adapters remain follow-up work in KRI-722/KRI-723.
+
+Verification: `bash scripts/check-api.sh test tests/kria/test_render_retry_postgres.py`.
+Use a dedicated scratch database for hardware QA, separate from the automated
+test database (some integration suites truncate it). The DEBUG-only
+`-ui-testing-retry-api` bootstrap accepts an explicit local API URL and fixture
+user UUID through `KRIA_RETRY_TEST_API_URL` / `KRIA_RETRY_TEST_USER_ID`; use a
+separate app bundle and copied originals. It uses real API/worker/device export,
+with an in-memory fixture token store. Its DEBUG-only local storage transport
+requires a matching private host/port and `/kri674-storage/` path; Release keeps
+HTTPS mandatory. Keep the same build installed for a whole attempt so fixture
+file fingerprints stay stable. Never point that fixture at production.
+
 Use the admin helper so the token remains out of shell history:
 
 ```bash
@@ -143,12 +179,29 @@ color emoji to its existing shaped renderer. The regression/export recipe is
 ### Rendered follow-up routing
 
 Once a draft has a rendered snapshot, the planner first runs the narrow
-`nova.creator.brief_extractor` prompt (`2026-10-08-v3`) to turn the follow-up into
+`nova.creator.brief_extractor` prompt (`2026-10-17-v11`) to turn the follow-up into
 typed brief requirements. Text and style changes, plus timing scoped to a
 title, can stay on the current snapshot through editor operations. Broad clip
 timing, stale or unsupported targets, and clarifying outcomes remain in the
 recovery path; they do not silently create a replacement video. An explicit
 full replan or structured clip picker is the path that invokes Main Creator.
+
+The narrow extractor uses `gemini-3.6-flash` first, medium reasoning and a
+4,096-token shared reasoning/answer budget. Pro remains a fallback after a
+definitive transient failure. The 60-second per-call timeout, shared turn
+deadline and unknown-outcome fence still apply: an unknown call never triggers
+an overlapping fallback. Main Creator's model and budget are separate.
+
+KRI-674 follow-up evidence, 2026-10-17: two production extractions on Pro stopped
+at 60 seconds before creating an approval or render. Synthetic checks of the
+final narrow configuration covered EN/TR title changes, ambiguous retry and a
+compound rebuild with a 12,000-character contract plus 40 context messages.
+All four kept their checked requirements in one call, 3.17–14.60 seconds,
+$0.031400 settled in total. Earlier low-budget probes dropped style constraints
+or truncated; these are failed candidates, not passing evidence. The corrected
+prompt requires a description for timing facts and preserves other constraints
+during schema repair. These are live-model checks, not a production iPhone retry
+receipt; that export remains a separate release verification step.
 
 The follow-up binds to the current plan item and draft version before saving.
 Keep that binding and save in the same atomic completion path so a stale turn
@@ -325,6 +378,20 @@ KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 --app nova-video` + restart api and worker re
 pre-fix behaviour. Diagnose: `kria_turn_auto_continued` log lines (turn_id, lease_epoch);
 `GET creation-threads/<id>/turns` shows one turn with several lease epochs and one
 assistant event. Guard: `tests/kria/test_turn_auto_continue_postgres.py`.
+
+Copies of a message (KRI-552): when the creator re-sends their latest message word for word
+(the chat looked stuck), `submit_turn` answers it in one line instead of queuing a second plan
+(`app/kria/duplicate_send.py`). It counts as a copy while that message's turn is pending,
+planning, awaiting approval, executing or observing, or in the 120 s after a turn that ended
+in a render review. A failed turn, a question, a recovery, a tapped answer and a re-send
+minutes later all plan as before. The copy's two events carry `payload.duplicate_of` (the
+first turn's id): the worker's revision fence (`conversation_revision_matches_sync`) and the
+planner/approval-pin readers skip them, so the running turn is not requeued and the pinned
+request is not doubled. `fly secrets set KRIA_DUPLICATE_RESEND_ENABLED=false --app nova-video`
++ restart api restores the old queueing. Diagnose: `GET creation-threads/<id>/events` shows an
+inert `user_message` plus an `assistant_response` with `duplicate_of`; `GET .../turns` shows a
+`completed` respond turn beside the real one. Guard:
+`tests/kria/test_kri552_duplicate_send_postgres.py`.
 
 ## Alerts and release blockers
 

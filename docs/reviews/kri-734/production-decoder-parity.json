@@ -1,0 +1,56 @@
+[
+  {
+    "timing": "cfr",
+    "sample_times": 13,
+    "pixels_exact": true,
+    "region_pixels_exact": true,
+    "pcm_exact": true,
+    "later_window_exact": true,
+    "fallback_used": false
+  },
+  {
+    "timing": "vfr",
+    "sample_times": 13,
+    "pixels_exact": true,
+    "region_pixels_exact": true,
+    "pcm_exact": true,
+    "later_window_exact": true,
+    "fallback_used": false
+  },
+  {
+    "timing": "rotated",
+    "sample_times": 13,
+    "pixels_exact": true,
+    "region_pixels_exact": true,
+    "pcm_exact": true,
+    "later_window_exact": true,
+    "fallback_used": false
+  },
+  {
+    "timing": "offset",
+    "sample_times": 13,
+    "pixels_exact": true,
+    "region_pixels_exact": true,
+    "pcm_exact": true,
+    "later_window_exact": true,
+    "fallback_used": false
+  },
+  {
+    "timing": "coarse_timebase",
+    "sample_times": 13,
+    "pixels_exact": true,
+    "region_pixels_exact": true,
+    "pcm_exact": true,
+    "later_window_exact": true,
+    "fallback_used": false
+  },
+  {
+    "timing": "fine_timebase",
+    "sample_times": 13,
+    "pixels_exact": true,
+    "region_pixels_exact": true,
+    "pcm_exact": true,
+    "later_window_exact": true,
+    "fallback_used": false
+  }
+]

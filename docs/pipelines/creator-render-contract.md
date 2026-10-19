@@ -1142,6 +1142,71 @@ not proof. A physical iPhone is still the end-of-train human check.
 
 ## Offline checks
 
+### Measured phone export gate (KRI-734, first adapter)
+
+The simple-cut phone adapter can additionally verify the candidate MP4's decoded
+picture, audio and static text before publication. See the
+[acceptance cases and coverage](../reviews/kri-734/implementation.md).
+`actual_export_verification.verify_actual_export` compares sampled picture frames
+and one-second PCM windows with the immutable full-timeline analysis proxies;
+Tesseract reads the actual text pixels in the approved region and window. It
+does not call a model or upload originals. The existing format/duration, creator
+contract, source-generation and row/attempt fences still apply.
+
+Enrollment requires `PHONE_ACTUAL_EXPORT_VERIFICATION_ENABLED=true` and an explicit
+`PHONE_ACTUAL_EXPORT_VERIFICATION_USER_IDS` account list (empty enrolls nobody).
+Keep it off until the full API/worker fleet contains the verifier and a protocol-12
+client has passed its canary. A read-time `output_verification_required` hint makes
+that client withhold the local candidate from playback/Save/Share until publication;
+an older client gets 426 for an enrolled request. Historical unmarked requests
+are not enrolled retroactively in picture/audio/OCR checks; all uploads still
+must decode as local ISO media. Turning enrollment off does not waive checks for
+already stamped requests, including exact retries. Roll back enrollment, not the
+verifier code while stamped work remains outstanding.
+
+Only a `checked` report tied to the exact request/digest, source-receipt digest,
+reserved file SHA/size and storage generation can publish. Rejected, partial,
+unsupported or missing evidence cannot replace the last accepted video/poster.
+The report stays beside the rejected attempt. Completion retries cannot revive it;
+an exact render retry needs existing consent and fresh checks. Failed replacement
+receipts cannot borrow their previous ready variant to claim success.
+Changed source receipts require a reviewed new edit; they cannot enter an exact
+retry loop. A measured match with a stale request identity is recorded as rejected.
+
+The first promoted shape is one contiguous original-video track, hard cuts, rate
+1, identity transform/cover fit, static positioned text and original or muted
+camera audio, up to 60 seconds/16 clips/four text layers. This does **not** promote
+speech, music, animated text, effects, cloud or slides. Their existing guards remain;
+KRI-722–725 and the remainder of KRI-734 own additional snapshot/adapter proof.
+Picture checks are sampled; a checked report is not an assertion that every frame
+or subjective creative choice was inspected. See report fields for exact coverage.
+
+Nearby frames share bounded decoding batches without changing the sample clock,
+comparison thresholds or OCR views. Exact-pixel controls cover fractional seeks,
+variable frame timing, display rotation, nonzero timestamps and later source
+windows. See the [production-hardware benchmark](../reviews/kri-734/performance.md)
+for reproducible timings and raw results. The current shared-CPU API execution
+path remains a rollout blocker under sustained load; worker-class benchmark
+results do not change where completion runs or authorize enrollment.
+
+Repeat a check without publication or model calls (private evidence inputs):
+
+```sh
+cd src/apps/api
+python -m app.cli.verify_device_export --status request-status.json \
+  --sources pinned-local-proxies.json --video export.mp4 --brand-tail standard \
+  --report report.json
+```
+
+The local CLI trusts its operator-supplied inputs; production resolves and fences
+the source receipts itself. Real-media regression commands:
+
+```sh
+bash scripts/check-api.sh test tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py tests/kria/test_runtime_phone_v2.py -q
+```
+
+### Existing contract checks
+
 From the repository root:
 
 ```sh
@@ -1150,3 +1215,32 @@ bash scripts/check-api.sh test tests/kria/test_order_verdicts.py tests/routes/te
 bash scripts/check-api.sh test tests/tasks/test_unified_montage_dispatch.py tests/tasks/test_phone_format_matrix.py tests/tasks/test_generative_build.py tests/tasks/test_guided_story_build.py tests/routes/test_device_render.py tests/routes/test_phone_editor_commit.py -q
 bash scripts/preship-check.sh
 ```
+
+## Per-clip camera sound (KRI-674 live verification)
+
+A named camera-audio source can mean ambient sound kept with its picture; it does
+not necessarily mean spoken excerpts. Main Creator v61 can set `voice_mode` to
+`per_clip` when the creator asks for each clip's own sound. This uses the ordinary
+phone montage planner and keeps `audio_source_ids` intact. The compiled recipe
+must prove exactly those sources are audible; missing, muted or extra audio still
+fails verification. No speech detector or request-word matching chooses the lane.
+
+The new value is omitted unless chosen, like the existing voice modes. Explicit
+`continuous` and `excerpts`, and an absent historical mode, keep their established
+interpretation. Workers honor `per_clip` only on plan-authority jobs. This ordinary
+camera-sound mode does not need `SPEECH_EXCERPT_MONTAGE_ENABLED`; Main Creator only
+learns it when plan authority and the phone source-audio capability are available.
+The API and workers must deploy together; the strict pinned contract and native
+recipe schemas do not change.
+
+The route resolver and both worker entry points share the audio-mode decision in
+`creator_render_contract`. A diagnostics import failure cannot become a dependency
+of ordinary rendering. A saved guided picture plan still refuses a spoken-excerpt
+requirement; it can retain named sources only with explicit per-clip audio intent.
+
+Regression evidence crosses real parse/policy, contract projection and dispatch,
+with renderer entries recorded, plus the existing compiled-recipe audio verifier.
+The guards were red before the fix. Fresh Main Creator behavior and actual iPhone
+export/retry/publication remain separate verification steps; these offline checks
+are not a production-video pass. A failed pre-recipe job still needs a new version
+and fresh approval; this change never rewrites an old approved render contract.

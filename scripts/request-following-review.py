@@ -28,7 +28,7 @@ from admin import PROD_URL, load_env
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "tools/request-following-review"
-API_PATH = re.compile(r"/api/cases(?:/[a-f0-9-]{36}(?:/(?:review|export))?)?$")
+API_PATH = re.compile(r"/api/cases(?:/[a-f0-9-]{36}(?:/(?:review|export|media))?)?$")
 MAX_BODY = 256_000
 
 
@@ -37,7 +37,9 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def serve(*, base=None, token=None, store=None, port=4455, open_browser=True):
+def serve(
+    *, base=None, token=None, store=None, port=4455, open_browser=True, batch=None
+):
     session = secrets.token_urlsafe(32)
     upstream = urllib.request.build_opener(NoRedirect())
 
@@ -55,7 +57,7 @@ def serve(*, base=None, token=None, store=None, port=4455, open_browser=True):
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header(
                 "Content-Security-Policy",
-                "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+                "default-src 'self'; media-src 'self' https://storage.googleapis.com https://*.storage.googleapis.com http://127.0.0.1:*; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'",
             )
             self.end_headers()
             self.wfile.write(body)
@@ -82,6 +84,7 @@ def serve(*, base=None, token=None, store=None, port=4455, open_browser=True):
                     200,
                     {
                         "session": session,
+                        "batch": batch,
                         "source": "Private captures"
                         if store
                         else "Production"
@@ -93,6 +96,7 @@ def serve(*, base=None, token=None, store=None, port=4455, open_browser=True):
             files = {
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                "/outcomes.js": ("outcomes.js", "text/javascript; charset=utf-8"),
                 "/style.css": ("style.css", "text/css; charset=utf-8"),
             }
             if self.command == "GET" and parsed.path in files:
@@ -210,8 +214,59 @@ def main():
     source.add_argument("--api-url", default="http://127.0.0.1:8000")
     parser.add_argument("--port", type=int, default=4455)
     parser.add_argument("--no-open", action="store_true")
+    parser.add_argument(
+        "--batch", type=Path, help="Private JSON manifest of proposed review cases"
+    )
     args = parser.parse_args()
+    batch = None
+    if args.batch:
+        path = args.batch.resolve()
+        if (
+            ROOT in path.parents
+            or path.stat().st_mode & 0o077
+            or path.stat().st_size > MAX_BODY
+        ):
+            parser.error(
+                "Keep batch proposals in a mode-600 file outside the repository"
+            )
+        batch = json.loads(path.read_text())
+        if not isinstance(batch, list) or not 1 <= len(batch) <= 20:
+            parser.error("Batch must contain 1–20 case proposals")
+        for item in batch:
+            if (
+                not isinstance(item, dict)
+                or not re.fullmatch(r"[a-f0-9-]{36}", item.get("id", ""))
+                or not re.fullmatch(r"[a-f0-9]{64}", item.get("source_sha256", ""))
+            ):
+                parser.error("Each proposal requires a case ID and source hash")
+            expectations = item.get("expectations")
+            if not isinstance(expectations, list) or not 1 <= len(expectations) <= 50:
+                parser.error("Each proposal requires 1–50 expected instructions")
+            for expected in expectations:
+                if (
+                    not isinstance(expected, dict)
+                    or not isinstance(expected.get("text"), str)
+                    or not 1 <= len(expected["text"]) <= 2000
+                ):
+                    parser.error("Expected instructions must have nonempty text")
+                pointers = expected.get("source_pointers")
+                if (
+                    not isinstance(pointers, list)
+                    or not 1 <= len(pointers) <= 20
+                    or any(
+                        not isinstance(p, str)
+                        or not re.fullmatch(r"/sections/events/[0-9]+/content", p)
+                        for p in pointers
+                    )
+                ):
+                    parser.error(
+                        "Expected instructions require creator-message pointers"
+                    )
+        if len({item["id"] for item in batch}) != len(batch):
+            parser.error("Batch case IDs must be unique")
     if args.store is not None:
+        if batch:
+            parser.error("Prepared batches require API mode")
         sys.path.insert(0, str(ROOT / "src/apps/api"))
         from app.services.request_following_private_store import PrivateReviewStore
 
@@ -243,7 +298,13 @@ def main():
     token = values.get(key, "").strip()
     if not token:
         parser.error(f"Set {key} in the repository .env before starting the review app")
-    serve(base=base, token=token, port=args.port, open_browser=not args.no_open)
+    serve(
+        base=base,
+        token=token,
+        port=args.port,
+        open_browser=not args.no_open,
+        batch=batch,
+    )
 
 
 if __name__ == "__main__":

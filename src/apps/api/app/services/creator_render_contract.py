@@ -23,6 +23,7 @@ from app.kria.brief_route import chapter_list
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.kria.reply_language import say
+from app.kria.spoken_text_ask import requirement_spoken_text
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import voice_tail_slack_s
 from app.pipeline.sequence_text_evidence import text_matches
@@ -112,6 +113,33 @@ class CreatorRenderContractError(UnsupportedPhonePlan):
         self.field_path = field_path
         self.alternative = alternative
         self.missing_text = missing_text
+
+
+class TextPlacementError(CreatorRenderContractError):
+    """A confirmed text IS on screen, but not where its approved role requires.
+
+    Carries the failed requirement so a MANUAL editor Save (the creator moved, re-timed or
+    re-worded the text on purpose) can relax exactly that role to ``any`` (KRI-736) while
+    every automatic caller keeps treating it as the ordinary refusal it subclasses.
+    """
+
+    def __init__(self, message: str, *, requirement: TextRequirement, **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+        self.requirement = requirement
+
+
+class AudioChoiceError(CreatorRenderContractError):
+    """The camera-sound requirement no longer matches what the edit plays.
+
+    ``field`` is the contract field (``original_audio`` or ``audio_source_ids``). A MANUAL
+    editor Save (the creator muted or un-muted a clip, or moved the camera-sound level)
+    clears that field instead of refusing (KRI-736); automatic callers see the ordinary
+    refusal this subclasses.
+    """
+
+    def __init__(self, message: str, *, field: str, **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+        self.field = field
 
 
 def decline_payload(exc: BaseException) -> dict[str, str]:
@@ -628,14 +656,9 @@ ADAPTER_DECLARATIONS: dict[str, AdapterDeclaration] = {
             require_voiceover=_VOICE_CONFLICT,
         ),
         # _run_phone_unified_montage_job -> _run_phone_guided_job.
-        _phone(
-            "phone_guided_unified_montage",
-            set(),
-            audio_source_ids=Decline(
-                "capability_unavailable",
-                "Ask for a spoken-excerpt montage, which can keep that camera audio.",
-            ),
-        ),
+        # Keep the exact source-id requirement. The shared phone verifier
+        # refuses a compiled recipe that cannot prove the required sources.
+        _phone("phone_guided_unified_montage", set()),
         # _run_phone_voiceover_montage_job: routed to when the contract needs the voice.
         _phone(
             "phone_voiceover_montage",
@@ -1055,6 +1078,7 @@ def build_render_contract(
     sequence_placed = all(status == "resolved" for _p, _n, _m, status in sequence) and any(
         clip_ids.intersection(members) for _p, _n, members, _s in sequence
     )
+    talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
     if brief:
         for requirement in brief.live():
             if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
@@ -1069,6 +1093,11 @@ def build_render_contract(
                     continue
                 durations.append(float(requirement.facts["duration_s"]))
             if requirement.kind == "text" and requirement.literal:
+                if talking_edit and requirement_spoken_text(requirement) is not None:
+                    # KRI-707: a Talking edit shows text on a spoken word only where the
+                    # take says it (`phone_spoken_text`). Its own receipt answers it ("not
+                    # heard" / "can't"), so pinning it would refuse an honest render.
+                    continue
                 shot_index = None
                 if requirement.is_shot_text:
                     labels = list(typed.shot_labels or ()) if typed else []
@@ -1352,6 +1381,36 @@ def _phone_decline(
     )
 
 
+def _placement_decline(
+    requirement: TextRequirement, message: str, *, field_path: str
+) -> CreatorRenderContractError:
+    """The ``exact_texts`` refusal for a text whose words are present but misplaced."""
+
+    typed = _phone_decline("exact_texts", message, field_path=field_path)
+    if requirement.role == "any":
+        return typed  # nothing narrower to relax: a plain presence/hold failure
+    return TextPlacementError(
+        message,
+        requirement=requirement,
+        decline_reason=typed.decline_reason,
+        field_path=typed.field_path,
+        alternative=typed.alternative,
+    )
+
+
+def _audio_decline(requirement: str, message: str) -> CreatorRenderContractError:
+    """A camera-sound refusal that remembers which contract field it came from."""
+
+    typed = _phone_decline(requirement, message)
+    return AudioChoiceError(
+        message,
+        field=requirement,
+        decline_reason=typed.decline_reason,
+        field_path=typed.field_path,
+        alternative=typed.alternative,
+    )
+
+
 def unresolved_decline(message: str) -> CreatorRenderContractError:
     """The typed refusal for an unresolved approved requirement (needs a choice)."""
 
@@ -1416,6 +1475,30 @@ def stamped_plan_contract(
     if not candidates or candidates.get(PLAN_AUTHORITY_FIELD) is None:
         return None
     return read_render_contract(assembly)
+
+
+def camera_audio_requires_speech(has_audio_sources: bool, voice_mode: str | None) -> bool:
+    """Named camera sound only needs spoken excerpts when that is its delivery mode."""
+    return has_audio_sources and voice_mode != "per_clip"
+
+
+def job_requires_camera_speech(
+    contract: CreatorRenderContract | None, candidates: Mapping[str, Any]
+) -> bool:
+    """Read the approved audio mode without introducing a renderer/shadow dependency.
+
+    Only plan-authority jobs may opt into per-clip sound. An absent mode or
+    an unstamped job keeps its historical spoken-excerpt interpretation.
+    """
+    strategy = candidates.get("creator_strategy")
+    mode = (
+        strategy.get("voice_mode")
+        if candidates.get(PLAN_AUTHORITY_FIELD) is not None and isinstance(strategy, Mapping)
+        else None
+    )
+    return camera_audio_requires_speech(
+        bool(contract and contract.audio_source_ids), mode if isinstance(mode, str) else None
+    )
 
 
 def plan_voiceover_path(contract: CreatorRenderContract | None, attached: str | None) -> str | None:
@@ -1695,7 +1778,7 @@ def verify_phone_recipe(
         # A bed that names the camera's file plays the camera audio too.
         original_ids.add(bed_asset.media_id)
     if contract.original_audio == "forbid" and original_ids:
-        raise _phone_decline(
+        raise _audio_decline(
             "original_audio", "This edit can't use the camera audio you turned off."
         )
     if (contract.original_audio == "require" or contract.audio_source_ids) and source_audio is None:
@@ -1704,9 +1787,9 @@ def verify_phone_recipe(
             "I couldn't verify audio in the approved source files.",
         )
     if contract.original_audio == "require" and not original_ids:
-        raise _phone_decline("original_audio", "This edit needs audible camera audio.")
+        raise _audio_decline("original_audio", "This edit needs audible camera audio.")
     if contract.audio_source_ids and original_ids != set(contract.audio_source_ids):
-        raise _phone_decline(
+        raise _audio_decline(
             "audio_source_ids", "This edit couldn't keep the confirmed camera-audio sources."
         )
 
@@ -1806,8 +1889,8 @@ def verify_phone_recipe(
                 if row["end_s"] - row["start_s"] + frame >= requirement.duration_s
             ]
             if not matches:
-                raise _phone_decline(
-                    "exact_texts",
+                raise _placement_decline(
+                    requirement,
                     "This edit couldn't keep confirmed text on screen long enough.",
                     field_path=(
                         "opening_title_duration_s"
@@ -1844,8 +1927,8 @@ def verify_phone_recipe(
             ):
                 matches = []
         if not matches:
-            raise _phone_decline(
-                "exact_texts",
+            raise _placement_decline(
+                requirement,
                 "This edit put confirmed text in the wrong place.",
                 field_path=text_field_path(requirement),
             )

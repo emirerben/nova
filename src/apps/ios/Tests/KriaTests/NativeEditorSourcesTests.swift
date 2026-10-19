@@ -158,11 +158,11 @@ final class NativeEditorSourcesTests: XCTestCase {
             "render_destination": .string("device")]
         var document = EditorDocument(capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
         let pool = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: nil)], baseGeneration: "g")
-        XCTAssertEqual(NativePhoneTalkingSource.sourceIndex(variant: variant, document: document, pool: pool, lanesEditable: true), 0)
+        XCTAssertEqual(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: true), [0])
         // Cards and sounds closed: the server sent no lanes, so only the finished MP4 shows them.
-        XCTAssertNil(NativePhoneTalkingSource.sourceIndex(variant: variant, document: document, pool: pool, lanesEditable: false))
+        XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: false))
         let twoSources = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: nil), .init(clipIndex: 1, nativeSource: nil)], baseGeneration: "g")
-        XCTAssertNil(NativePhoneTalkingSource.sourceIndex(variant: variant, document: document, pool: twoSources, lanesEditable: true))
+        XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: twoSources, lanesEditable: true))
 
         var edited = document
         edited.textElements = [.init(id: "later", text: "Preserve this")]
@@ -176,20 +176,89 @@ final class NativeEditorSourcesTests: XCTestCase {
         XCTAssertEqual(try NativePhoneTalkingSource.hydrate(hydrated, clipIndex: 0, duration: 21.5), hydrated)
         XCTAssertThrowsError(try NativePhoneTalkingSource.hydrate(document, clipIndex: 0, duration: 0))
         // Already hydrated: the gate still recognizes it on a rebuild.
-        XCTAssertEqual(NativePhoneTalkingSource.sourceIndex(variant: variant, document: hydrated, pool: pool, lanesEditable: true), 0)
+        XCTAssertEqual(NativePhoneTalkingSource.sourceIndices(variant: variant, document: hydrated, pool: pool, lanesEditable: true), [0])
 
         let authored = EditorDocument(clips: [.init(id: "shot", clipIndex: 0, inS: 0, durationS: 2)],
             capabilities: ["timeline": .init(editable: false)])
-        XCTAssertNil(NativePhoneTalkingSource.sourceIndex(variant: variant, document: authored, pool: pool, lanesEditable: true))
+        XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: authored, pool: pool, lanesEditable: true))
         XCTAssertEqual(try NativePhoneTalkingSource.hydrate(authored, clipIndex: 0, duration: 5), authored)
         document.capabilities["timeline"] = .init(editable: true)
-        XCTAssertNil(NativePhoneTalkingSource.sourceIndex(variant: variant, document: document, pool: pool, lanesEditable: true))
+        XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: true))
         document.capabilities["timeline"] = .init(editable: false)
         variant["render_destination"] = .string("cloud")
-        XCTAssertNil(NativePhoneTalkingSource.sourceIndex(variant: variant, document: document, pool: pool, lanesEditable: true))
+        XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: true))
         variant["render_destination"] = .string("device")
         variant["resolved_archetype"] = .string("guided_story")
-        XCTAssertNil(NativePhoneTalkingSource.sourceIndex(variant: variant, document: document, pool: pool, lanesEditable: true))
+        XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: true))
+    }
+
+    /// KRI-719: a Talking edit with several videos plays its speakers back to
+    /// back, in the receipt's order; footage clips in the pool are not
+    /// speakers. A speaker missing from the pool falls back to the MP4.
+    func testPhoneTalkingEditWithSeveralVideosPlaysEverySpeakerInOrder() throws {
+        func source(_ id: String) -> NativeTimelineSource {
+            NativeTimelineSource(mediaID: id, sourceURL: URL(string: "https://example.com/\(id).mov"), original: nil, localRequired: false)
+        }
+        let pool = NativeEditorSourcePool(clips: [
+            .init(clipIndex: 0, nativeSource: source("footage-a")),
+            .init(clipIndex: 1, nativeSource: source("speaker-b")),
+            .init(clipIndex: 2, nativeSource: source("speaker-a")),
+        ], baseGeneration: "g")
+        var variant: [String: JSONValue] = ["resolved_archetype": .string("subtitled"), "render_destination": .string("device"),
+            "phone_talking_multi_clip": .object(["version": .number(1),
+                "speaker_media_ids": .array([.string("speaker-a"), .string("speaker-b")])])]
+        let document = EditorDocument(capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
+        XCTAssertEqual(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: true), [2, 1])
+
+        let hydrated = try NativePhoneTalkingSource.hydrate(document, speakers: [.init(clipIndex: 2, duration: 8), .init(clipIndex: 1, duration: 5.5)],
+                                                            removed: [(3, 4)])
+        // The cut applies to the first speaker only; the second plays whole after it.
+        XCTAssertEqual(hydrated.clips.map(\.clipIndex), [2, 2, 1])
+        XCTAssertEqual(hydrated.clips.map(\.inS), [0, 4, 0])
+        XCTAssertEqual(hydrated.clips.compactMap(\.durationS), [3, 4, 5.5])
+        XCTAssertEqual(Set(hydrated.clips.compactMap(\.id)).count, 3)
+        XCTAssertEqual(hydrated.clips.last?.raw["source_duration_s"], .number(5.5))
+        XCTAssertEqual(NativePhoneTalkingSource.sourceIndices(variant: variant, document: hydrated, pool: pool, lanesEditable: true), [2, 1])
+        XCTAssertThrowsError(try NativePhoneTalkingSource.hydrate(document, speakers: []))
+
+        variant["phone_talking_multi_clip"] = .object(["speaker_media_ids": .array([.string("speaker-a"), .string("gone")])])
+        XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: true))
+        variant["phone_talking_multi_clip"] = .object(["speaker_media_ids": .array([])])
+        XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: true))
+    }
+
+    /// KRI-719: the receipt's footage windows map onto the source pool for the live preview, sorted by start.
+    /// Anything the preview could not draw faithfully (unknown clip, a speaker, overlap, a bad window) is nil,
+    /// so the editor shows the finished MP4 instead of a video without its cutaways.
+    func testPhoneTalkingCutawaysComeFromTheReceiptWindows() {
+        func source(_ id: String) -> NativeTimelineSource {
+            NativeTimelineSource(mediaID: id, sourceURL: URL(string: "https://example.com/\(id).mov"), original: nil, localRequired: false)
+        }
+        let pool = NativeEditorSourcePool(clips: [
+            .init(clipIndex: 0, nativeSource: source("take")),
+            .init(clipIndex: 1, nativeSource: source("street")),
+            .init(clipIndex: 2, nativeSource: source("market")),
+        ], baseGeneration: "g")
+        func variant(_ rows: [JSONValue]?) -> [String: JSONValue] {
+            var receipt: [String: JSONValue] = ["version": .number(1), "speaker_media_ids": .array([.string("take")])]
+            if let rows { receipt["cutaways"] = .array(rows) }
+            return ["resolved_archetype": .string("subtitled"), "render_destination": .string("device"),
+                    "phone_talking_multi_clip": .object(receipt)]
+        }
+        func row(_ id: String, _ start: Double, _ end: Double) -> JSONValue {
+            .object(["media_id": .string(id), "start_s": .number(start), "end_s": .number(end)])
+        }
+        XCTAssertEqual(NativePhoneTalkingSource.cutaways(variant: variant([row("market", 9, 12), row("street", 3, 6.5)]), pool: pool, speakerIndices: [0]),
+                       [.init(clipIndex: 1, start: 3, end: 6.5), .init(clipIndex: 2, start: 9, end: 12)])
+        // No receipt (one clip) or no footage placed: nothing to draw, the speakers still preview.
+        XCTAssertEqual(NativePhoneTalkingSource.cutaways(variant: ["resolved_archetype": .string("subtitled")], pool: pool, speakerIndices: [0]), [])
+        XCTAssertEqual(NativePhoneTalkingSource.cutaways(variant: variant(nil), pool: pool, speakerIndices: [0]), [])
+        XCTAssertEqual(NativePhoneTalkingSource.cutaways(variant: variant([]), pool: pool, speakerIndices: [0]), [])
+        XCTAssertNil(NativePhoneTalkingSource.cutaways(variant: variant([row("gone", 3, 6)]), pool: pool, speakerIndices: [0]))
+        XCTAssertNil(NativePhoneTalkingSource.cutaways(variant: variant([row("take", 3, 6)]), pool: pool, speakerIndices: [0]))
+        XCTAssertNil(NativePhoneTalkingSource.cutaways(variant: variant([row("street", 3, 6), row("market", 5, 8)]), pool: pool, speakerIndices: [0]))
+        XCTAssertNil(NativePhoneTalkingSource.cutaways(variant: variant([row("street", 6, 3)]), pool: pool, speakerIndices: [0]))
+        XCTAssertNil(NativePhoneTalkingSource.cutaways(variant: variant([.string("street")]), pool: pool, speakerIndices: [0]))
     }
 
     /// KRI-232: job 62716037's speech cleanup removed three spans; the Talking

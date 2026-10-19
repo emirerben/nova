@@ -332,15 +332,25 @@ final class ChatWorkspaceTests: XCTestCase {
 
     /// The fallback is what the composer/picker allow before `/capabilities`
     /// has loaded (or if it fails to load) -- it must match the server's real
-    /// default (50) for every format except talking-to-camera, which is
-    /// genuinely capped at 1 clip server-side. A stale lower fallback (the
-    /// old value was 10) under-caps what a slow/offline first load allows.
+    /// default (50) for every format except talking-to-camera, which takes
+    /// at most 10 clips (KRI-719: speakers plus cutaways). A stale lower
+    /// fallback (the old value was 10) under-caps what a slow/offline first
+    /// load allows. Once loaded, the server's number always wins: a server
+    /// with multi-clip Talking off still caps Talking at 1.
     func testCreationFormatFallbackClipLimitProtectsTalkingToCameraOffline() {
-        XCTAssertEqual(CreationFormat.talkingToCamera.fallbackMaximumClipCount, 1)
+        XCTAssertEqual(CreationFormat.talkingToCamera.fallbackMaximumClipCount, 10)
         XCTAssertEqual(CreationFormat.montage.fallbackMaximumClipCount, 50)
         XCTAssertEqual(CreationFormat.narrated.fallbackMaximumClipCount, 50)
         XCTAssertEqual(CreationFormat.slides.fallbackMaximumClipCount, 50)
         XCTAssertEqual(CreationFormat.fallbackMaximumClipCountWithoutFormat, 50)
+
+        XCTAssertEqual(CreationFormat.maximumClipCount(for: .talkingToCamera, serverLimits: [:]), 10)
+        XCTAssertEqual(CreationFormat.maximumClipCount(for: .talkingToCamera, serverLimits: [.talkingToCamera: 1]), 1,
+                       "a server with multi-clip Talking off keeps Talking at one clip")
+        XCTAssertEqual(CreationFormat.maximumClipCount(for: .talkingToCamera, serverLimits: [.montage: 50]), 10,
+                       "another format's limit never stands in for Talking's")
+        XCTAssertEqual(CreationFormat.maximumClipCount(for: .montage, serverLimits: [.montage: 20]), 20)
+        XCTAssertEqual(CreationFormat.maximumClipCount(for: nil, serverLimits: [.talkingToCamera: 1]), 50)
     }
 
     func testAttachedClipCountIgnoresVoiceoverAndVisualMedia() {
@@ -459,6 +469,19 @@ final class ChatWorkspaceTests: XCTestCase {
     func testRenderingWithPendingPlanStaysRendering() {
         XCTAssertEqual(
             WorkspaceStage.resolve(status: .rendering, awaitsNewPlanConfirmation: true, isChoosingFormat: false, hasFormat: true),
+            .rendering
+        )
+    }
+
+    func testFailedNativeRetryApprovalIsVisibleEvenWhenOldJobStillAwaitsDevice() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .rendering, awaitsNewPlanConfirmation: true,
+                isChoosingFormat: false, hasFormat: true, approvedRenderRetryPending: true),
+            .direction
+        )
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .rendering, awaitsNewPlanConfirmation: false,
+                isChoosingFormat: false, hasFormat: true, approvedRenderRetryPending: true),
             .rendering
         )
     }

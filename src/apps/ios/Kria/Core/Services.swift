@@ -145,6 +145,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread
     func deleteProject(_ project: ProjectSummary) async throws
     func projects() async throws -> [ProjectSummary]
+    /// One page of chats, newest first. `nextCursor` is nil on the last page.
+    func projectsPage(cursor: String?) async throws -> ProjectPage
     func project(threadID: UUID) async throws -> CreationThread
     func creationCapabilities() async throws -> CreationCapabilities
     /// KRI-640: the last capabilities read for this session if it is at most `maxAge` seconds old, else nil. Never touches the network.
@@ -161,6 +163,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func removeVisual(itemID: String, assetID: String) async throws
     func retryVisual(itemID: String, assetID: String) async throws -> CreationVisual
     func library() async throws -> [ProjectSummary]
+    /// One page of the library, newest first. `nextCursor` is nil on the last page.
+    func libraryPage(cursor: String?, limit: Int) async throws -> LibraryPage
     func refreshLibraryPosters(jobIDs: [UUID], brokenJobIDs: [UUID]) async throws -> [LibraryPoster]
     func createThread(message: String?) async throws -> CreationThread
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession
@@ -196,6 +200,9 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     /// (KRI-561). `generation` pins the song the question was built against; a 409 `song_changed` means it was
     /// replaced. A 404 means the server does not offer it.
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink
+    /// Whisper text for a dictated recording (KRI-742). `contextTerms` are the creator's own clip/song names.
+    /// A 404 means the server has dictation off.
+    func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta
     func draft(threadID: UUID) async throws -> DraftSnapshot
@@ -222,6 +229,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     /// KRI-443: Stop on the live plan feed. A 409 `turn_not_cancellable` means the render can no longer be stopped.
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
+    func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted
     /// `speechCleanupAware` must always be sent `true` from this client build --
     /// it tells the server this decision understands the `speech_cleanup_*` 409
     /// codes and the `speech_cleanup` thread projection, so gating the decision
@@ -232,7 +240,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     /// are the creator's video-shape pick (KRI-306). They are passed ONLY when the
     /// thread offered a `render_shape` -- the API rejects unknown keys and a
     /// choice nothing offered -- and are encoded absent, never null, when nil.
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws
     func playbackURL(jobID: UUID) async throws -> URL
     /// KRI-200: best-effort report of an editor player item that failed on this phone.
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws
@@ -267,9 +275,40 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func uploadFile(to reservation: UploadReservation, fileURL: URL) async throws
 }
 
+/// A page of the library (finished and in-progress videos).
+struct LibraryPage: Sendable {
+    let projects: [ProjectSummary]
+    let nextCursor: String?
+}
+
+/// A page of the chat list. An older server never sends a cursor, which reads as "that was everything".
+struct ProjectPage: Sendable {
+    let projects: [ProjectSummary]
+    let nextCursor: String?
+}
+
+/// `POST /dictation/transcribe` (KRI-742). `reason == "no_speech"` comes with empty text.
+struct DictationTranscriptResponse: Decodable, Equatable, Sendable {
+    let text: String
+    let reason: String?
+}
+
 extension KriaAPIClient {
+    func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted { throw APIError.unsupported }
+    /// Substitutes that only know the whole library: everything as the first page, nothing after it.
+    func libraryPage(cursor: String?, limit: Int) async throws -> LibraryPage {
+        LibraryPage(projects: cursor == nil ? try await library() : [], nextCursor: nil)
+    }
+    /// Substitutes that only know the unpaged list: one page, nothing after it.
+    func projectsPage(cursor: String?) async throws -> ProjectPage {
+        ProjectPage(projects: cursor == nil ? try await projects() : [], nextCursor: nil)
+    }
     func textPreferenceMemory() async throws -> TextPreferenceMemory { throw APIError.unsupported }
     func mutateTextPreferenceMemory(path: String, method: String, body: [String: JSONValue]) async throws -> TextPreferenceOperation { throw APIError.unsupported }
+    /// Existing/programmatic callers grant zero repairs unless they showed the consent control.
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws {
+        try await decideApproval(threadID: threadID, approvalID: approvalID, decision: decision, expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit, automaticRepairAttempts: 0)
+    }
     /// Decisions that carry no video-shape pick (denials, and threads that offered none).
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws {
         try await decideApproval(threadID: threadID, approvalID: approvalID, decision: decision, expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: nil, landscapeFit: nil)
@@ -281,6 +320,7 @@ extension KriaAPIClient {
 /// implemented by a substitute.
 extension KriaAPIClient {
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
+    func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse { throw APIError.unsupported }
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot { throw APIError.unsupported }
     func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit]) async throws -> TurnAccepted { throw APIError.unsupported }
     func undoPlanSection(threadID: UUID, sectionID: PlanSectionID, expectedThreadRevision: Int, expectedBlockRevision: Int, expectedDraftRevision: Int) async throws -> PlanSectionUndoResult { throw APIError.unsupported }
@@ -868,8 +908,19 @@ struct ApprovalSnapshot: Codable, Sendable, Identifiable {
     let costSummary: String?
     let expiresAt: Date
     let approvalFingerprint: String
+    var automaticRepairLimit: Int? = nil
+    var retryOfExecutionID: String? = nil
     var id: String { approvalID }
-    enum CodingKeys: String, CodingKey { case status; case approvalID = "approval_id"; case turnID = "turn_id"; case draftID = "draft_id"; case draftRevision = "draft_revision"; case consequenceSummary = "consequence_summary"; case costSummary = "cost_summary"; case expiresAt = "expires_at"; case approvalFingerprint = "approval_fingerprint" }
+    enum CodingKeys: String, CodingKey { case status; case approvalID = "approval_id"; case turnID = "turn_id"; case draftID = "draft_id"; case draftRevision = "draft_revision"; case consequenceSummary = "consequence_summary"; case costSummary = "cost_summary"; case expiresAt = "expires_at"; case approvalFingerprint = "approval_fingerprint"; case automaticRepairLimit = "automatic_repair_limit"; case retryOfExecutionID = "retry_of_execution_id" }
+}
+struct RenderRetryAccepted: Codable, Sendable {
+    let turnID: String
+    let approvalID: String
+    let threadRevision: Int
+    let replayed: Bool
+    enum CodingKeys: String, CodingKey {
+        case turnID = "turn_id", approvalID = "approval_id", threadRevision = "thread_revision", replayed
+    }
 }
 enum JSONValue: Codable, Equatable, Sendable {
     case string(String), number(Double), bool(Bool), object([String: JSONValue]), array([JSONValue]), null
@@ -976,7 +1027,10 @@ private enum KriaClientProtocolContract {
     /// 11 (single-word captions): draws the recipe's `karaoke.single_word` text layers (one word on screen at a time,
     /// one layer per cue). The server emits that mode only to this protocol and answers 426 `client_update_required`
     /// to older builds, which cannot decode the key.
-    static let version = 11
+    /// 12 (KRI-734): withholds unverified local exports from playback/Save/Share
+    /// when the server declares `output_verification_required`.
+    /// 13: accepts durable background output checks and resumes status polling.
+    static let version = 13
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1086,7 +1140,14 @@ struct KriaAPI: KriaAPIClient {
     let tokenStore: TokenStore
     let session: URLSession
     private let capabilitiesCache = CreationCapabilitiesCache()
-    private var capabilitiesOwner: String { (try? tokenStore.read())?.refreshToken ?? "" }
+    /// Who the cached capabilities belong to. The account (`sub`) rather than the refresh token: that token rotates on
+    /// every refresh, and a rotation between two concurrent callers made the second one miss the first one's
+    /// in-flight read and repeat it.
+    private var capabilitiesOwner: String {
+        guard let session = try? tokenStore.read() else { return "" }
+        let claims = Self.jwtClaims(session.accessToken)
+        return ["sub", "user_id", "email"].compactMap { claims?[$0] as? String }.first ?? session.refreshToken
+    }
     /// Compile-time integration seam generated from the server-owned OpenAPI
     /// subset. Handwritten request policy currently wraps it with Keychain
     /// refresh/retry behavior; endpoint DTO drift still fails this target.
@@ -1139,7 +1200,15 @@ struct KriaAPI: KriaAPIClient {
     }
     func textPreferenceMemory() async throws -> TextPreferenceMemory { try await request(path: "me/memory", method: "GET", bodyData: nil, decode: TextPreferenceMemory.self) }
     func mutateTextPreferenceMemory(path: String, method: String, body: [String: JSONValue]) async throws -> TextPreferenceOperation { try await request(path: path, method: method, bodyData: JSONEncoder().encode(body), decode: TextPreferenceOperation.self) }
-    func projects() async throws -> [ProjectSummary] { try await request(path: "creation-threads", method: "GET", bodyData: nil, decode: [CreationThread].self).map(\.summary) }
+    func projects() async throws -> [ProjectSummary] { try await projectsPage(cursor: nil).projects }
+    func projectsPage(cursor: String?) async throws -> ProjectPage {
+        let result = try await requestWithResponse(
+            path: "creation-threads", method: "GET",
+            query: cursor.map { [URLQueryItem(name: "cursor", value: $0)] } ?? [],
+            bodyData: nil, decode: [CreationThread].self
+        )
+        return ProjectPage(projects: result.value.map(\.summary), nextCursor: result.response.value(forHTTPHeaderField: "X-Next-Cursor"))
+    }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
     func creationCapabilities() async throws -> CreationCapabilities {
         try await capabilitiesCache.fetch(owner: capabilitiesOwner) { try await fetchCreationCapabilities() }
@@ -1154,6 +1223,17 @@ struct KriaAPI: KriaAPIClient {
         // Opening the drawer prefetches too; a read from the last minute is fresh enough.
         guard await recentCreationCapabilities(maxAge: 60) == nil else { return }
         _ = try? await creationCapabilities()
+    }
+    func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse {
+        let boundary = "kria-\(UUID().uuidString)"
+        var body = Data()
+        func append(_ text: String) { body.append(Data(text.utf8)) }
+        append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"dictation.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n")
+        body.append(audio)
+        append("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"context_terms\"\r\n\r\n")
+        append(String(data: (try? JSONEncoder().encode(contextTerms)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]")
+        append("\r\n--\(boundary)--\r\n")
+        return try await request(path: "dictation/transcribe", method: "POST", headers: ["Content-Type": "multipart/form-data; boundary=\(boundary)"], bodyData: body, decode: DictationTranscriptResponse.self, timeoutInterval: 30)
     }
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink {
         try await request(path: "creation-threads/\(threadID.uuidString)/song-audio", method: "GET",
@@ -1173,19 +1253,22 @@ struct KriaAPI: KriaAPIClient {
     func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse {
         try await request(path: "plan-items/\(itemID)/slide-post/thought-summaries", method: "GET", bodyData: nil, decode: KriaThoughtSummaryResponse.self)
     }
+    func libraryPage(cursor: String?, limit: Int) async throws -> LibraryPage {
+        var query = [URLQueryItem(name: "limit", value: String(limit))]
+        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        let page = try await request(path: "me/jobs", method: "GET", query: query, bodyData: nil, decode: LibraryResponse.self)
+        var seenJobIDs = Set<String>()
+        return LibraryPage(projects: page.jobs.filter { seenJobIDs.insert($0.id).inserted }.map(\.summary), nextCursor: page.nextCursor)
+    }
+    /// The whole library, every page in turn, for callers that must see all of it (the editor looking up a source).
     func library() async throws -> [ProjectSummary] {
         var summaries: [ProjectSummary] = []
-        var seenJobIDs = Set<String>()
+        var seenJobIDs = Set<UUID>()
         var seenCursors = Set<String>()
         var cursor: String?
-
         while true {
-            var query = [URLQueryItem(name: "limit", value: "60")]
-            if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
-            let page = try await request(path: "me/jobs", method: "GET", query: query, bodyData: nil, decode: LibraryResponse.self)
-            for job in page.jobs where seenJobIDs.insert(job.id).inserted {
-                summaries.append(job.summary)
-            }
+            let page = try await libraryPage(cursor: cursor, limit: 60)
+            for project in page.projects where seenJobIDs.insert(project.id).inserted { summaries.append(project) }
             guard let nextCursor = page.nextCursor else { return summaries }
             guard seenCursors.insert(nextCursor).inserted else { throw APIError.invalidResponse }
             cursor = nextCursor
@@ -1322,7 +1405,12 @@ struct KriaAPI: KriaAPIClient {
         try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel-render", method: "POST", bodyData: try JSONEncoder().encode(CancelRenderRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
     }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)", method: "GET", bodyData: nil, decode: ApprovalSnapshot.self) }
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit)), decode: ApprovalResponse.self) }
+    func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted {
+        try await request(path: "creation-threads/\(threadID.uuidString)/render-retries", method: "POST",
+            bodyData: JSONSerialization.data(withJSONObject: ["execution_id": executionID.uuidString,
+                "expected_thread_revision": expectedRevision]), decode: RenderRetryAccepted.self)
+    }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit, automaticRepairAttempts: automaticRepairAttempts > 0 ? automaticRepairAttempts : nil)), decode: ApprovalResponse.self) }
     func playbackURL(jobID: UUID) async throws -> URL { let response = try await request(path: "me/jobs/\(jobID.uuidString)/playback-url", method: "GET", bodyData: nil, decode: PlaybackResponse.self); guard let url = URL(string: response.videoURL) else { throw APIError.invalidResponse }; return url }
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws {
         _ = try await request(path: "me/jobs/\(jobID.uuidString)/playback-diagnostics", method: "POST", bodyData: try JSONEncoder().encode(report), decode: EmptyProjectResponse.self)
@@ -1400,6 +1488,11 @@ struct KriaAPI: KriaAPIClient {
     }
 
     func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil) async throws -> T {
+        try await requestWithResponse(path: path, method: method, query: query, headers: headers, bodyData: bodyData, decode: decode, requiresAuth: requiresAuth, timeoutInterval: timeoutInterval).value
+    }
+
+    /// `request`, also returning the HTTP response, for the few routes that answer in headers as well as the body.
+    func requestWithResponse<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil) async throws -> (value: T, response: HTTPURLResponse) {
         var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)
         components?.queryItems = query.isEmpty ? nil : query
         // URLComponents preserves `+` in query-item values, while FastAPI
@@ -1417,9 +1510,18 @@ struct KriaAPI: KriaAPIClient {
         if let acceptLanguage = Self.acceptLanguage() { request.setValue(acceptLanguage, forHTTPHeaderField: "Accept-Language") }
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
-        let storedSession = requiresAuth ? try tokenStore.read() : nil
+        var storedSession = requiresAuth ? try tokenStore.read() : nil
+        // A token that is about to expire (or already has) is refreshed BEFORE the request, instead of the request
+        // failing with a 401 and being replayed: after any idle period that is two round trips off every launch.
+        if requiresAuth, let current = storedSession, Self.isExpiringSoon(current.accessToken) {
+            storedSession = try await refreshAhead(of: current)
+        }
         if let token = storedSession?.accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        if let bodyData { request.httpBody = bodyData; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        if let bodyData {
+            request.httpBody = bodyData
+            // A caller that sets its own Content-Type (multipart dictation upload) keeps it.
+            if request.value(forHTTPHeaderField: "Content-Type") == nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        }
         var (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth)
         // The server answers a request Postgres aborted as a deadlock victim with
         // `409 {"code": "concurrent_update", "retryable": true}`. It was rolled back, so
@@ -1492,13 +1594,64 @@ struct KriaAPI: KriaAPIClient {
             let problem = Self.decodeProblem(from: data)
             throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data), retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init), code: problem?.code, problemMessage: problem?.message))
         }
-        if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return empty }
-        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return try decoder.decode(T.self, from: data)
+        if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return (empty, http) }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return (try decoder.decode(T.self, from: data), http)
     }
+    /// How close to its `exp` an access token is refreshed ahead of a request.
+    static let proactiveRefreshWindow: TimeInterval = 60
+
+    /// True when the token is a JWT whose `exp` is within `proactiveRefreshWindow` (or past). Anything else, such as
+    /// a dev-auth token with no `exp`, is left to the 401 path.
+    static func isExpiringSoon(_ accessToken: String, now: Date = .now) -> Bool {
+        guard let exp = (jwtClaims(accessToken)?["exp"] as? NSNumber)?.doubleValue else { return false }
+        return Date(timeIntervalSince1970: exp).timeIntervalSince(now) < proactiveRefreshWindow
+    }
+
+    /// The payload of a JWT, or nil for anything that is not one.
+    static func jwtClaims(_ token: String) -> [String: Any]? {
+        let parts = token.split(separator: ".")
+        guard parts.count >= 2 else { return nil }
+        var value = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        value += String(repeating: "=", count: (4 - value.count % 4) % 4)
+        guard let data = Data(base64Encoded: value) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    /// Rotates the session through the same coordinator the 401 path uses, so concurrent callers share one rotation
+    /// and the single-use refresh token is never replayed (KRI-119).
+    private func refreshAhead(of current: MobileSession) async throws -> MobileSession {
+        do {
+            return try await refreshCoordinator.refresh(
+                failedAccessToken: current.accessToken, baseURL: baseURL, tokenStore: tokenStore, session: session
+            )
+        } catch let error as APIError where error == .sessionExpired {
+            clearExpiredSession()
+            throw error
+        } catch {
+            // Offline or a server hiccup: send with the token we have; the 401 path retries the refresh if it matters.
+            return current
+        }
+    }
+
     /// Sends `request`, refreshing an expired access token once.
     private func send(_ request: inout URLRequest, storedSession: MobileSession?, requiresAuth: Bool) async throws -> (Data, URLResponse) {
+        let route = Perf.routeTemplate(method: request.httpMethod, path: request.url?.path ?? "")
+        let requestID = UUID().uuidString
+        Perf.begin("net.request", id: requestID, route)
+        #if DEBUG
+        PerfCounters.shared.increment("net \(route)")
+        // Which chat a full-projection read was for (last 4 characters of its id): tells re-reading the open chat
+        // apart from sweeping other chats.
+        if route == "GET /creation-threads/:id", request.url?.query?.contains("projection=full") == true,
+           let id = request.url?.lastPathComponent {
+            PerfCounters.shared.increment("fullread \(id.suffix(4))")
+        }
+        #endif
         var (data, response) = try await session.data(for: request)
+        var retried401 = false
+        defer { Perf.end("net.request", id: requestID, "\(route) \((response as? HTTPURLResponse)?.statusCode ?? 0) retried401=\(retried401)") }
         if requiresAuth, let http = response as? HTTPURLResponse, http.statusCode == 401, let storedSession {
+            retried401 = true
             let refreshed: MobileSession
             do {
                 refreshed = try await refreshCoordinator.refresh(
@@ -1830,6 +1983,7 @@ private struct ApprovalDecisionRequest: Encodable {
     let speechCleanupChoice: String?
     let outputOrientation: String?
     let landscapeFit: String?
+    let automaticRepairAttempts: Int?
     enum CodingKeys: String, CodingKey {
         case expectedThreadRevision = "expected_thread_revision"
         case expectedDraftRevision = "expected_draft_revision"
@@ -1839,6 +1993,7 @@ private struct ApprovalDecisionRequest: Encodable {
         case speechCleanupChoice = "speech_cleanup_choice"
         case outputOrientation = "output_orientation"
         case landscapeFit = "landscape_fit"
+        case automaticRepairAttempts = "automatic_repair_attempts"
     }
 }
 private struct UploadCancellation: Decodable { let reservationID: String; let status: String; enum CodingKeys: String, CodingKey { case status; case reservationID = "reservation_id" } }

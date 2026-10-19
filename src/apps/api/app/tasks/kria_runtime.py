@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -49,11 +49,14 @@ from app.kria.brief_checks import (
     plan_facts_from_strategy,
     reply_from_receipts,
     requirements_to_check_at_draft,
+    speech_cleanup_review_note,
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
+from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.editor_receipts import (
     bind_editor_receipts,
+    receipt_lead,
     reply_from_diff,
     reply_from_editor_receipts,
 )
@@ -115,7 +118,7 @@ from app.services.choice_questions import (
     open_conflicts,
     tag_event,
 )
-from app.services.creation_thread_titles import matches_conversation_revision
+from app.services.creation_thread_titles import conversation_revision_matches_sync
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
@@ -171,8 +174,8 @@ def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: in
     """Pin every creator instruction visible to the approved source turn."""
     messages = [
         str(content).strip()
-        for (content,) in db.execute(
-            select(CreationThreadEvent.content)
+        for content, payload in db.execute(
+            select(CreationThreadEvent.content, CreationThreadEvent.payload)
             .where(
                 CreationThreadEvent.thread_id == thread_id,
                 CreationThreadEvent.role == "user",
@@ -181,7 +184,8 @@ def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: in
             )
             .order_by(CreationThreadEvent.sequence)
         ).all()
-        if str(content).strip()
+        # KRI-552: a re-sent copy of a message adds no instruction to the pinned request.
+        if str(content).strip() and not is_duplicate_answer(payload)
     ]
     request = "\n".join(messages)
     return request if len(request) <= 12_000 else None
@@ -207,7 +211,7 @@ class _ApprovalDispatchClaim:
     target_job_id: uuid.UUID | None
     target_variant_id: str | None
     target_generation_id: str | None
-    creator_request: str
+    creator_request: str = ""
     brief_binding: dict[str, Any] | None = None
     preflight_analysis_id: uuid.UUID | None = None
     speech_cleanup_analysis_id: uuid.UUID | None = None
@@ -274,7 +278,7 @@ def _complete_response_turn(
         thread = db.execute(
             select(CreationThread).where(CreationThread.id == turn.thread_id).with_for_update()
         ).scalar_one()
-        if not matches_conversation_revision(thread, claimed_thread_revision):
+        if not conversation_revision_matches_sync(db, thread, claimed_thread_revision):
             turn.status = "pending"
             turn.lease_owner = None
             turn.lease_expires_at = None
@@ -332,6 +336,8 @@ def _complete_response_turn(
                     else {}
                 ),
                 **({"choice_question": plan.choice_question} if plan.choice_question else {}),
+                # KRI-738: tappable lengths; the prose above still lists them for old clients.
+                **({"options": plan.reply_options} if plan.reply_options else {}),
                 **(
                     {"creative_copy_resolution": creative_copy_resolution}
                     if creative_copy_resolution
@@ -530,6 +536,16 @@ def _state_event_fields(state_id: str | None, trace: dict[str, Any]) -> dict[str
         **({"based_on_client_state_id": state_id} if state_id else {}),
         **trace,
     }
+
+
+def _receipt_lead_fields(
+    lead: str | None, also_changed: Sequence[str], receipts: Sequence[Any]
+) -> dict[str, Any]:
+    """KRI-739: the lead line + unclaimed changes shown above the receipt rows. Only an editor turn
+    that bound receipts has them; every other event stays byte-identical."""
+    if not lead or not receipts:
+        return {}
+    return {"reply_lead": lead, **({"also_changed": list(also_changed)} if also_changed else {})}
 
 
 def _unresolved_choice_plan(
@@ -870,7 +886,7 @@ def _complete_draft_turn(
         thread = db.execute(
             select(CreationThread).where(CreationThread.id == turn.thread_id).with_for_update()
         ).scalar_one()
-        if not matches_conversation_revision(thread, claimed_thread_revision):
+        if not conversation_revision_matches_sync(db, thread, claimed_thread_revision):
             turn.status = "pending"
             turn.lease_owner = None
             turn.lease_expires_at = None
@@ -1076,6 +1092,10 @@ def _complete_draft_turn(
         if scope_note:
             reply_text = f"{reply_text} {scope_note}".strip()
         requirement_receipts: list[dict[str, Any]] = []
+        # KRI-739: an editor turn's one-line lead and its unclaimed changes. The chat shows them
+        # above the receipt rows; `reply_text` keeps the full prose for older clients and the web.
+        reply_lead: str | None = None
+        also_changed: list[str] = []
         effective_brief_updates = planned.brief_updates
         brief = None
         speed_notice: str | None = None  # KRI-689
@@ -1171,12 +1191,18 @@ def _complete_draft_turn(
                                 facts.text_styles or (),
                                 unmet=[item.model_dump() for item in arguments.unmet_requests],
                             )
+                            also_changed = describe_diff(
+                                unbound, live_text_count=compiled.diff.live_text_count, limit=2
+                            )
                             reply_text = reply_from_editor_receipts(
                                 checked,
                                 bound_receipts,
-                                unbound=describe_diff(
-                                    unbound, live_text_count=compiled.diff.live_text_count, limit=2
-                                ),
+                                unbound=also_changed,
+                                notices=planned.policy_notices,
+                                notes=arguments.notes,
+                            )
+                            reply_lead = receipt_lead(
+                                bound_receipts,
                                 notices=planned.policy_notices,
                                 notes=arguments.notes,
                             )
@@ -1607,6 +1633,7 @@ def _complete_draft_turn(
                         if requirement_receipts
                         else {}
                     ),
+                    **_receipt_lead_fields(reply_lead, also_changed, requirement_receipts),
                 },
             )
             turn.plan_json = plan.model_dump(mode="json")
@@ -1716,6 +1743,7 @@ def _complete_draft_turn(
                 "receipt_ids": [str(draft_execution.id)],
                 **_state_event_fields(state_id, state_trace),
                 **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
+                **_receipt_lead_fields(reply_lead, also_changed, requirement_receipts),
             },
         )
         _append_sync_event(
@@ -1905,9 +1933,15 @@ def _owns_turn_lease(
     )
 
 
-def _model_message(source: Any) -> str:
-    """The creator's words as the planner and brief extractor should read them (KRI-575)."""
-    return model_text(getattr(source, "payload", None), getattr(source, "content", None))
+def _model_message(source: Any, *, language: str | None = None) -> str:
+    """The creator's words as the planner and brief extractor should read them (KRI-575).
+
+    Callers that run before the turn binds the chat's language pass it (KRI-694), so a tapped
+    answer's neutral sentence is in the chat's language, like the history rows read later.
+    """
+    return model_text(
+        getattr(source, "payload", None), getattr(source, "content", None), language=language
+    )
 
 
 def _answers_clip_question(source: Any) -> bool:
@@ -1995,7 +2029,8 @@ def _claim(
             claimed_snapshot["live_scope"] = live_scope
         return (
             claimed_snapshot,
-            _model_message(source),
+            # KRI-694: the task binds the chat's language only after this claim.
+            _model_message(source, language=thread_reply_language(thread)),
             int(turn.lease_epoch),
             int(thread.revision),
             _stored_editor_state(turn),
@@ -2075,7 +2110,7 @@ def _complete_read_turn(
         thread = db.execute(
             select(CreationThread).where(CreationThread.id == turn.thread_id).with_for_update()
         ).scalar_one()
-        if not matches_conversation_revision(thread, claimed_thread_revision):
+        if not conversation_revision_matches_sync(db, thread, claimed_thread_revision):
             # The receipt describes a superseded snapshot. Remove its
             # uncommitted row, release the lease, and republish this durable
             # turn so the next claim observes the new project revision.
@@ -2743,7 +2778,8 @@ def extract_kria_brief(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         source = db.get(CreationThreadEvent, turn.source_event_id)
         if thread is None or source is None:
             return {"turn_id": turn_id, "status": "ignored"}
-        snapshot, message = _snapshot(thread), _model_message(source)
+        snapshot = _snapshot(thread)
+        message = _model_message(source, language=snapshot.get("reply_language"))
     if not snapshot.get("item_id"):
         return {"turn_id": turn_id, "status": "ignored"}
     try:
@@ -2789,6 +2825,11 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
     leaves ``accepted`` as the recovery ledger for the minute reconciler.
     """
 
+    from app.kria.render_retry import claim_render_retry  # noqa: PLC0415
+
+    handled, retry_claim = claim_render_retry(approval_id)
+    if handled:
+        return retry_claim
     with sync_session() as db, ExitStack() as language:
         approval_ref = db.get(CreatorAgentApproval, approval_id)
         if approval_ref is None or not approval_ref.execution_ids:
@@ -3436,7 +3477,17 @@ def _device_render_state(job: Job, execution: CreatorAgentExecution) -> str | No
         if isinstance(minimum, int) and status.request.identity.recipe_revision < minimum:
             states.append("pending")
         elif status.phase == "published":
-            states.append("ready")
+            from app.services.device_render import (  # noqa: PLC0415
+                checked_export_report,
+                device_record,
+            )
+
+            record = device_record(job, record_variant)
+            states.append(
+                "ready"
+                if checked_export_report(record, status, str(record.get("published_attempt") or ""))
+                else "failed"
+            )
         elif status.phase == "needs_attention":
             states.append("failed")
         else:
@@ -3902,7 +3953,21 @@ def _phone_gate_refusal_copy(reason: str) -> str:
     from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
 
     english = PHONE_GATE_MESSAGES.get(reason, (None, None))[1]
-    message = say(en=english or "", tr=_PHONE_GATE_MESSAGES_TR.get(reason) or english or "")
+    turkish = _PHONE_GATE_MESSAGES_TR.get(reason)
+    if reason == "subtitled_clip_count_unsupported":
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            TALKING_MULTI_CLIP_MAX_CLIPS,
+            phone_talking_multi_clip_supported,
+        )
+
+        if phone_talking_multi_clip_supported():
+            # KRI-719: the reason now means "more than the cap", not "not one".
+            turkish = (
+                "Kameraya konuşma videoları iPhone'unda en fazla "
+                f"{TALKING_MULTI_CLIP_MAX_CLIPS} klipten oluşturulur. Fazla klipleri kaldır "
+                "ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+            )
+    message = say(en=english or "", tr=turkish or english or "")
     lead = message or say(
         en="That kind of edit isn't available for iPhone renders yet.",
         tr="Bu tür bir düzenleme iPhone'da henüz kullanılamıyor.",
@@ -4351,7 +4416,12 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
         publish_preflight_after_commit(preflight_analysis_id)
 
     dispatch_reason: str | None = None
-    if getattr(claim, "draft_kind", "strategy") == "editor":
+    if getattr(claim, "draft_kind", "strategy") == "retry":
+        # Claim committed the same recipe under a new device identity. There is
+        # no planner, media analysis or broker render task to invoke.
+        outcome = "dispatched"
+        result_job_id = str(claim.target_job_id)
+    elif getattr(claim, "draft_kind", "strategy") == "editor":
         if (
             claim.target_job_id is None
             or claim.target_variant_id is None
@@ -4722,6 +4792,37 @@ def _source_fingerprints(job: Job) -> dict[str, str]:
 
 
 def _approved_generation_review(
+    db: Any,
+    thread: CreationThread,
+    job: Job,
+    variant: dict,
+    execution: CreatorAgentExecution,
+    default_text: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    """The finished render's reply, plus what its speech cleanup cut and left (KRI-551).
+
+    The cleanup note is read from the variant's own cut record, so it survives a lost brief
+    binding (the requirement receipts then cannot say a retake was not cut).
+    """
+    text, receipts = _approved_generation_requirements_review(
+        db, thread, job, variant, execution, default_text
+    )
+    contract = (job.assembly_plan or {}).get("speech_cleanup_contract")
+    note = speech_cleanup_review_note(
+        variant,
+        text=text,
+        # Consented cleanup never runs the retake detector; the older auto path does when
+        # its lever is on, so only then must the reply not deny a restart cut.
+        retake_cut_possible=contract != "required_v1" and bool(settings.retake_cut_enabled),
+    )
+    if not note:
+        return text, receipts
+    # A requirement list is multi-line: keep the note off its last bullet.
+    separator = "\n\n" if "\n" in text else " "
+    return f"{text}{separator}{note}", receipts
+
+
+def _approved_generation_requirements_review(
     db: Any,
     thread: CreationThread,
     job: Job,
@@ -5157,7 +5258,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 # published device render is matched by revision (above).
                 generation_id=None if device_state == "ready" else pinned_generation_id,
             )
-            if variant is not None:
+            if variant is not None and device_state != "failed":
                 variant_id = str(variant["variant_id"])
                 generation_id = str(variant.get("render_generation_id") or "") or None
                 execution.status = "completed"
@@ -5266,6 +5367,9 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             if device_failed
             else None
         )
+        output_check_failed = bool(
+            device_decline and device_decline.get("field_path") == "export_verification"
+        )
         typed_decline = (
             device_decline
             if device_failed
@@ -5288,7 +5392,17 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 deterministic = True
         recovery = "manual" if device_failed else ("ask_user" if deterministic else "retry")
         retryable = not device_failed and not deterministic
-        if device_decline is not None:
+        from app.kria.render_retry import retry_program_available  # noqa: PLC0415
+
+        exact_retry_available = retry_program_available(job, execution)
+        native_without_program = bool((job.assembly_plan or {}).get("native_device_only")) and (
+            not device_failed and not deterministic and not exact_retry_available
+        )
+        if device_failed and exact_retry_available:
+            recovery, retryable = "retry", True
+        elif native_without_program:
+            recovery, retryable = "ask_user", False
+        if device_decline is not None and not output_check_failed:
             # The contract refused this edit, so the phone's own Retry (which re-pins the
             # same refused recipe) is a dead end, and nothing re-runs it automatically.
             # The creator's real next step is a new message, never a retry button.
@@ -5375,21 +5489,60 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         if device_decline is not None:
             from app.services.device_render import has_accepted_artifact  # noqa: PLC0415
 
-            failure_content = _device_refusal_copy(
-                device_decline,
-                last_good=has_accepted_artifact(
-                    job, str(execution.target_variant_id or "") or None
+            last_good = has_accepted_artifact(job, str(execution.target_variant_id or "") or None)
+            if output_check_failed:
+                failure_content = (
+                    say(
+                        en=(
+                            "The exported video hasn't passed its checks against "
+                            "your approved edit. "
+                            "Your approved edit is saved. Retry the same edit after reviewing "
+                            "its approval."
+                        ),
+                        tr=(
+                            "Dışa aktarılan video, onayladığın düzenlemeye göre yapılan "
+                            "kontrolleri geçemedi. Onayladığın düzenleme kayıtlı. "
+                            "Onayını gözden geçirip aynı düzenlemeyi yeniden dene."
+                        ),
+                    )
+                    + " "
+                    + (
+                        say(en=_LAST_GOOD_STAYS, tr="Son iyi sürümün hâlâ duruyor.")
+                        if last_good
+                        else say(en=_NOTHING_PUBLISHED, tr="Yeni bir video oluşturulmadı.")
+                    )
+                )
+            else:
+                failure_content = _device_refusal_copy(device_decline, last_good=last_good)
+        elif device_failed and exact_retry_available:
+            failure_content = say(
+                en=(
+                    "Your iPhone couldn't finish the render. Your approved edit is still "
+                    "saved. Retry the same edit on your iPhone after reviewing its approval."
+                ),
+                tr=(
+                    "iPhone'un videoyu tamamlayamadı. Onayladığın düzenleme hâlâ kayıtlı: "
+                    "iPhone'unda aynı düzenlemeyi yeniden denemeden önce onayını gözden geçir."
                 ),
             )
         elif device_failed:
             failure_content = say(
+                en="Your iPhone stopped this export. Your approved edit is saved. "
+                "Check the device error before trying again.",
+                tr="iPhone'un bu dışa aktarımı durdurdu. Onayladığın düzenleme kayıtlı. "
+                "Yeniden denemeden önce cihazdaki hatayı kontrol et.",
+            )
+        elif native_without_program:
+            failure_content = say(
                 en=(
-                    "Your iPhone couldn't finish the render. Your approved edit is still "
-                    "saved: open the project on your iPhone and tap Retry."
+                    "The render stopped before a complete render plan was saved. "
+                    "Your approved direction and footage are safe. "
+                    "Ask for a new version and review its approval."
                 ),
                 tr=(
-                    "iPhone'un videoyu tamamlayamadı. Onayladığın düzenleme hâlâ kayıtlı: "
-                    'projeyi iPhone\'unda açıp "Retry" düğmesine dokun.'
+                    "Video, eksiksiz oluşturma planı kaydedilmeden durdu. "
+                    "Onayladığın yön ve görüntüler güvende. "
+                    "Yeni bir sürüm isteyip onayını gözden geçir."
                 ),
             )
         elif recovery_message is not None:
@@ -5559,101 +5712,116 @@ def _expire_pending_approvals() -> list[str]:
         )
     for approval_id in pending:
         try:
-            with sync_session() as db, ExitStack() as language:
-                ref = db.get(CreatorAgentApproval, approval_id)
-                if ref is None:
-                    continue
-                # Canonical order (subset): Session -> Turn -> Approval -> Execution -> Thread.
-                session = db.execute(
-                    select(CreatorAgentSession)
-                    .where(CreatorAgentSession.id == ref.session_id)
-                    .with_for_update()
-                ).scalar_one_or_none()
-                turn = db.execute(
-                    select(CreatorAgentTurn)
-                    .where(CreatorAgentTurn.id == ref.turn_id)
-                    .with_for_update()
-                ).scalar_one_or_none()
-                approval = db.execute(
-                    select(CreatorAgentApproval)
-                    .where(CreatorAgentApproval.id == approval_id)
-                    .with_for_update()
-                ).scalar_one_or_none()
-                execution = None
-                try:
-                    execution_id = uuid.UUID(str((ref.execution_ids or [None])[0]))
-                    execution = db.execute(
-                        select(CreatorAgentExecution)
-                        .where(CreatorAgentExecution.id == execution_id)
-                        .with_for_update()
-                    ).scalar_one_or_none()
-                except (TypeError, ValueError, IndexError):
-                    execution = None
-                thread = db.execute(
-                    select(CreationThread)
-                    .where(CreationThread.id == ref.thread_id)
-                    .with_for_update()
-                ).scalar_one_or_none()
-                if (
-                    session is None
-                    or turn is None
-                    or approval is None
-                    or thread is None
-                    or approval.status != "pending"
-                ):
-                    continue
-                if isinstance(getattr(execution, "result", None), dict) and (
-                    "strategy_media_before" in execution.result
-                ):
-                    continue
-                # KRI-520: this sweep has no turn; the notice follows the chat's language.
-                _bind_thread_language(language, thread)
-                now = datetime.now(UTC)
-                error = {
-                    "code": "approval_expired",
-                    "retryable": False,
-                    "recovery": "refresh_replan",
-                }
-                approval.status = "expired"
-                if execution is not None and execution.status == "awaiting_approval":
-                    execution.status = "stale"
-                    execution.error = error
-                    execution.completed_at = now
-                if turn.status == "awaiting_approval":
-                    turn.status = "failed"
-                    turn.completed_at = now
-                    turn.error = error
-                if session.status != "rendering":
-                    session.status = "awaiting_feedback"
-                _append_sync_event(
-                    db,
-                    thread,
-                    role="assistant",
-                    event_type="assistant_error",
-                    content=say(
-                        en=(
-                            "That approval expired before it was decided, so nothing was "
-                            "rendered. Tell me what you want and I'll prepare it again."
-                        ),
-                        tr=(
-                            "Bu onay karara bağlanmadan süresi doldu, o yüzden hiçbir video "
-                            "oluşturulmadı. Ne istediğini söyle, yeniden hazırlayayım."
-                        ),
-                    ),
-                    payload={
-                        "turn_id": str(turn.id),
-                        "approval_id": str(approval.id),
-                        "code": "approval_expired",
-                        "recovery": "refresh_replan",
-                    },
-                )
-                db.commit()
-                successor = _promote_queued_successor_sync(thread.id)
-                if successor is not None:
-                    successors.append(successor)
+            successor = _expire_overdue_approval(approval_id)
         except Exception:  # noqa: BLE001 - one bad approval must not stop the sweep
             log.warning("kria_approval_expiry_failed", approval_id=str(approval_id), exc_info=True)
+            continue
+        if successor is not None:
+            successors.append(successor)
     return successors
+
+
+def _expire_overdue_approval(approval_id: uuid.UUID) -> str | None:
+    """Expire one approval the sweep found overdue; return the successor turn to publish.
+
+    None when it is gone, no longer pending, or carries a strategy media stash (see
+    `_expire_pending_approvals`). It does not re-check `expires_at`: the sweep's query did.
+    """
+    with sync_session() as db, ExitStack() as language:
+        ref = db.get(CreatorAgentApproval, approval_id)
+        if ref is None:
+            return None
+        # Canonical order (subset): Session -> Turn -> Approval -> Execution -> Thread.
+        session = db.execute(
+            select(CreatorAgentSession)
+            .where(CreatorAgentSession.id == ref.session_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        turn = db.execute(
+            select(CreatorAgentTurn).where(CreatorAgentTurn.id == ref.turn_id).with_for_update()
+        ).scalar_one_or_none()
+        # populate_existing: `ref` was read before the lock, and an expiry or
+        # decision committed in between (the lazy expiry in `submit_turn`, a deny)
+        # must not look pending here, or it is expired and announced twice.
+        approval = db.execute(
+            select(CreatorAgentApproval)
+            .where(CreatorAgentApproval.id == approval_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if approval is None or approval.status != "pending":
+            # Let go before waiting on Thread: the `submit_turn` that just closed
+            # it holds Thread and then needs Session FOR KEY SHARE for its new
+            # turn's foreign key, so waiting here deadlocks that request.
+            return None
+        execution = None
+        try:
+            execution_id = uuid.UUID(str((ref.execution_ids or [None])[0]))
+            execution = db.execute(
+                select(CreatorAgentExecution)
+                .where(CreatorAgentExecution.id == execution_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+        except (TypeError, ValueError, IndexError):
+            execution = None
+        thread = db.execute(
+            select(CreationThread).where(CreationThread.id == ref.thread_id).with_for_update()
+        ).scalar_one_or_none()
+        if (
+            session is None
+            or turn is None
+            or approval is None
+            or thread is None
+            or approval.status != "pending"
+        ):
+            return None
+        if isinstance(getattr(execution, "result", None), dict) and (
+            "strategy_media_before" in execution.result
+        ):
+            return None
+        # KRI-520: this sweep has no turn; the notice follows the chat's language.
+        _bind_thread_language(language, thread)
+        now = datetime.now(UTC)
+        error = {
+            "code": "approval_expired",
+            "retryable": False,
+            "recovery": "refresh_replan",
+        }
+        approval.status = "expired"
+        if execution is not None and execution.status == "awaiting_approval":
+            execution.status = "stale"
+            execution.error = error
+            execution.completed_at = now
+        if turn.status == "awaiting_approval":
+            turn.status = "failed"
+            turn.completed_at = now
+            turn.error = error
+        if session.status != "rendering":
+            session.status = "awaiting_feedback"
+        _append_sync_event(
+            db,
+            thread,
+            role="assistant",
+            event_type="assistant_error",
+            content=say(
+                en=(
+                    "That approval expired before it was decided, so nothing was "
+                    "rendered. Tell me what you want and I'll prepare it again."
+                ),
+                tr=(
+                    "Bu onay karara bağlanmadan süresi doldu, o yüzden hiçbir video "
+                    "oluşturulmadı. Ne istediğini söyle, yeniden hazırlayayım."
+                ),
+            ),
+            payload={
+                "turn_id": str(turn.id),
+                "approval_id": str(approval.id),
+                "code": "approval_expired",
+                "recovery": "refresh_replan",
+            },
+        )
+        db.commit()
+        return _promote_queued_successor_sync(thread.id)
 
 
 def _reconcile_kria_turns_body() -> dict[str, int]:

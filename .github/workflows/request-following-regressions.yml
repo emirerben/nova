@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/request-following-regressions.yml'
       - 'scripts/request-following-regressions.py'
+      - 'scripts/request-following-live-report.py'
       - 'scripts/request-following-loop.py'
       - 'scripts/request-following-review.py'
       - 'tools/request-following-review/**'
@@ -72,9 +73,17 @@ jobs:
         run: python -m alembic upgrade head
       - name: Run existing offline regressions and reports
         run: python scripts/request-following-regressions.py --output .request-following-report
+      - name: Fetch reviewed recent exports
+        if: always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          REQUEST_FOLLOWING_REPORT_TOKEN: ${{ secrets.REQUEST_FOLLOWING_REPORT_TOKEN }}
+        run: python scripts/request-following-live-report.py --output .request-following-report
       - name: Publish summary
         if: always()
         run: |
+          if [ -f .request-following-report/reviewed-sessions.md ]; then
+            cat .request-following-report/reviewed-sessions.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f .request-following-report/summary.md ]; then
             cat .request-following-report/summary.md >> "$GITHUB_STEP_SUMMARY"
           else
@@ -85,5 +94,6 @@ jobs:
         with:
           name: request-following-${{ github.run_id }}-${{ github.run_attempt }}
           path: .request-following-report/
-          if-no-files-found: warn
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 14

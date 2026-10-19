@@ -306,6 +306,47 @@ import KriaMediaEngine
         XCTAssertEqual(low.transform.positionY, (0.4 * 1920).rounded(.toNearestOrEven) - 960, "a card already above the band is untouched")
     }
 
+    /// KRI-719: a Talking edit with several videos shows its footage full frame and muted over the speakers,
+    /// right above them and under every card, exactly in the receipt's windows. Same clamps as the server's
+    /// `_compile_cutaway_track`: never past the speakers or the footage, and a window under 0.5 s is dropped.
+    func testTalkingFootageCutawaysDrawMutedFullFrameUnderEveryCard() throws {
+        let (source, clip) = talkingSource(duration: 4)
+        let (document, items, media) = cardDocument()
+        func footage(_ index: Int, duration: Double) -> ResolvedEditorSource {
+            ResolvedEditorSource(clipIndex: index, mediaID: "footage-\(index)",
+                asset: MediaAsset(id: "local-\(index)", relativePath: "footage-\(index).mov",
+                    fingerprint: AssetFingerprint(hex: String(repeating: "\(index)", count: 64), byteCount: 100), duration: duration),
+                url: URL(fileURLWithPath: "/fixture/footage-\(index).mov"))
+        }
+        let sources = [0: source, 1: footage(1, duration: 0.9), 2: footage(2, duration: 10), 3: footage(3, duration: 5)]
+        let cutaways: [NativePhoneTalkingSource.Cutaway] = [
+            .init(clipIndex: 1, start: 0.2, end: 1.6),   // footage runs out at 0.9 s: no frozen last frame
+            .init(clipIndex: 2, start: 2.0, end: 6.0),   // never past the 4 s of speakers
+            .init(clipIndex: 3, start: 3.7, end: 5.0),   // 0.3 s left: a flicker, dropped
+        ]
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let program = try compiler.compile(document: document, clips: [clip], items: items, sources: sources, mediaSources: media,
+                                           deviceCaptions: true, talkingCutaways: cutaways)
+        let video = try XCTUnwrap(program.recipe.tracks.first(where: { $0.id == "video" })).clips
+        XCTAssertEqual(video.map(\.sourceAssetID), ["source-0"], "the speaker track is untouched")
+        let overlays = try XCTUnwrap(program.recipe.tracks.first(where: { $0.id == "overlays" })).clips
+        XCTAssertEqual(overlays.map(\.id), ["cutaway-0", "cutaway-1", "overlay:full", "overlay:pip-low", "overlay:pip-high"])
+        let footageClips = Array(overlays.prefix(2))
+        XCTAssertEqual(footageClips.map(\.sourceAssetID), ["source-1", "source-2"])
+        XCTAssertEqual(footageClips.map(\.timelineStart), [0.2, 2.0])
+        XCTAssertEqual(footageClips[0].sourceDuration, 0.9, accuracy: 1e-9)
+        XCTAssertEqual(footageClips[1].sourceDuration, 2.0, accuracy: 1e-9)
+        XCTAssertTrue(footageClips.allSatisfy { $0.volume == 0 && $0.transform == .identity && $0.sourceStart == 0 && $0.overlayAboveText != true })
+        XCTAssertEqual(program.assetURLs["source-2"], URL(fileURLWithPath: "/fixture/footage-2.mov"))
+        XCTAssertNil(program.assetURLs["source-3"], "a dropped window loads no footage")
+        let reference = try XCTUnwrap(program.recipe.assetManifest?.assets.first(where: { $0.id == "source-1" }))
+        XCTAssertEqual(reference.source, .original(mediaID: "footage-1"))
+
+        // A footage clip that never resolved refuses the preview rather than showing the speaker in its place.
+        XCTAssertThrowsError(try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source], mediaSources: media,
+                                                  deviceCaptions: true, talkingCutaways: [.init(clipIndex: 1, start: 0.2, end: 1.6)]))
+    }
+
     /// Pins the narrow condition: a cloud variant keeps the legacy ffmpeg stack (cards above text, z order, no clamp).
     func testCloudRenderedCardsStayAboveCaptionsInZOrderWithoutClamp() throws {
         let (source, clip) = talkingSource(duration: 4)

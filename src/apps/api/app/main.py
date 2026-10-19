@@ -44,6 +44,7 @@ from app.routes import (
     creator_workspace,
     dev_qa_storage,
     device_render,
+    dictation,
     editor_sources,
     generative_jobs,
     kria_runtime,
@@ -379,6 +380,9 @@ app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(
     admin_request_following.router, prefix="/admin/request-following", tags=["admin"]
 )
+app.include_router(
+    admin_request_following.report_router, prefix="/request-following-report", tags=["reports"]
+)
 app.include_router(admin_jobs.router, prefix="/admin/jobs", tags=["admin-jobs"])
 app.include_router(admin_kria.router, prefix="/admin/kria", tags=["admin-kria"])
 app.include_router(
@@ -421,6 +425,7 @@ app.include_router(personas.router, prefix="/personas", tags=["personas"])
 app.include_router(content_plans.router, prefix="/content-plans", tags=["content-plans"])
 app.include_router(creation_threads.router, prefix="/creation-threads", tags=["creation-threads"])
 app.include_router(thought_summaries.router, tags=["thought-summaries"])
+app.include_router(dictation.router, prefix="/dictation", tags=["dictation"])
 app.include_router(kria_runtime.router, prefix="/creation-threads", tags=["kria-runtime-v2"])
 app.include_router(plan_items.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(editor_sources.router, prefix="/plan-items", tags=["plan-items"])

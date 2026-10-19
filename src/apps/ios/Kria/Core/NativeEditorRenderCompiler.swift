@@ -36,6 +36,8 @@ enum NativeEditorRenderError: Error, Equatable {
     static let deviceCardMaxYFraction = 0.62
     /// The engine's text-layer cap (`EditRecipe.validate`). A recipe over it is refused whole.
     static let maxTextLayers = KriaMediaEngine.EditRecipe.maxTextLayers
+    /// Mirrors `_MIN_CUTAWAY_S` (app/pipeline/phone_subtitled_plan.py): a shorter footage window reads as a flicker.
+    static let minimumTalkingCutawayS = 0.5
 
     init(fontDirectory: URL) throws {
         handwritingLayout = try AuthoredHandwritingLayout(url: fontDirectory.appendingPathComponent("handwriting-strokes.json"))
@@ -61,13 +63,17 @@ enum NativeEditorRenderError: Error, Equatable {
     ///
     /// `songCaptionShift` (KRI-576): re-times the song's lyric caption rows for the live preview only; nil leaves
     /// every row exactly as the document has it.
+    ///
+    /// `talkingCutaways` (KRI-719): a multi-clip Talking edit's muted full-frame footage windows, drawn from
+    /// `sources` like the speakers. Server state, not document content: preview only.
     func compile(document: EditorDocument, clips: [EditorClip], items: [NativeEditorTimelineItem],
                  sources: [Int: ResolvedEditorSource], audioSources: [String: ResolvedEditorSource] = [:], mediaSources: [String: ResolvedEditorSource] = [:],
                  referenceOnlyMusic: Bool = false, sourceAudioPreserved: Bool = true,
                  songBed: NativeEditorSongBed? = nil,
                  deviceCaptions: Bool = false,
                  songCaptionShift: NativeSongCaptionShift? = nil,
-                 skippedMediaOverlayIDs: Set<String> = []) throws -> NativeEditorRenderProgram {
+                 skippedMediaOverlayIDs: Set<String> = [],
+                 talkingCutaways: [NativePhoneTalkingSource.Cutaway] = []) throws -> NativeEditorRenderProgram {
         for (name, populated) in [
             ("carousel", document.carouselMoment != nil),
         ] where populated { throw NativeEditorRenderError.unsupportedLane(name) }
@@ -315,6 +321,22 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         if !excerptClips.isEmpty { audioTracks.append(TimelineTrack(id: "clip-audio", kind: .audio, clips: excerptClips)) }
         var overlays: [TimelineClip] = []
+        // KRI-719 footage cutaways go first: the server's `talking-head-cutaways` track sits right above the
+        // speakers and below every card (`compile_phone_subtitled_plan`). Same clamps as its
+        // `_compile_cutaway_track`: never past the speakers, never past the footage (no frozen last frame),
+        // and a window left under half a second is dropped.
+        for (index, cutaway) in talkingCutaways.enumerated() {
+            guard let source = sources[cutaway.clipIndex], let fingerprint = source.asset.fingerprint,
+                  let available = source.asset.duration else { throw NativeEditorRenderError.missingSource(cutaway.clipIndex) }
+            let end = min(cutaway.end, total, cutaway.start + max(0, available - cutaway.sourceStart))
+            guard end - cutaway.start >= Self.minimumTalkingCutawayS else { continue }
+            let id = "source-\(cutaway.clipIndex)"
+            assets[id] = MediaAsset(id: id, relativePath: id, fingerprint: fingerprint)
+            references[id] = RenderAssetReference(id: id, fingerprint: try RenderFingerprint(fingerprint), source: .original(mediaID: source.mediaID))
+            urls[id] = source.url
+            overlays.append(TimelineClip(id: "cutaway-\(index)", sourceAssetID: id, sourceStart: cutaway.sourceStart,
+                sourceDuration: end - cutaway.start, timelineStart: cutaway.start, transform: .identity, volume: 0))
+        }
         // A device-rendered variant is finished from the server's pinned recipe, which draws every card BELOW
         // the text layers (no server writer ever sets `overlay_above_text`), full-screen cutaways below PiP
         // cards, and clamps PiP cards out of the caption band (`phone_subtitled_plan._compile_overlay_track`,

@@ -65,6 +65,11 @@ class KriaTurnPlan(_KriaModel):
     )
     # KRI-282: conflict-choice payload (options to tap). Same omit-when-unset rule.
     choice_question: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
+    # KRI-738: tappable lengths for a "how short/long?" question. Plain text answers (the tap
+    # sends the chip's text), unlike ``choice_question``. Same omit-when-unset rule.
+    reply_options: list[str] | None = Field(
+        default=None, max_length=4, exclude_if=lambda value: not value
+    )
 
     @field_validator("intents")
     @classmethod

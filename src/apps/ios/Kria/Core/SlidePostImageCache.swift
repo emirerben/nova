@@ -14,8 +14,16 @@ import UIKit
 final class SlidePostImageCache: @unchecked Sendable {
     enum Variant: String, Sendable {
         case thumb, preview
+        /// A gallery card's poster (9:16, about 170 pt wide): sharper than a strip thumbnail, far smaller than a preview.
+        case poster
         /// Longest edge, in pixels, the cached copy is decoded at.
-        var maxPixel: Int { self == .thumb ? 360 : 1600 }
+        var maxPixel: Int {
+            switch self {
+            case .thumb: 360
+            case .poster: 960
+            case .preview: 1600
+            }
+        }
     }
     enum LoadError: Error, Equatable { case expired, failed }
     typealias Fetcher = @Sendable (URL) async throws -> Data

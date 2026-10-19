@@ -15,6 +15,7 @@ from sqlalchemy import select, update
 
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
+from app.kria import runtime
 from app.kria.api_schemas import ApprovalDecisionBody, SubmitTurnBody
 from app.kria.runtime import (
     RuntimeFailure,
@@ -74,6 +75,27 @@ def _make_stale(session_id: uuid.UUID) -> None:
         db.commit()
 
 
+def _runtime_clock_past_expiry(monkeypatch: pytest.MonkeyPatch, approval_id: uuid.UUID) -> None:
+    """Expire the approval for `app.kria.runtime`'s lazy checks only, never in the database.
+
+    xdist workers share one database, and any other worker's `reconcile_kria_turns` sweep
+    expires every pending approval already past `expires_at` by the database clock. A row
+    expired with `_expire` can be swept between this test's revision read and its request
+    (`thread_revision_stale`). Moving only the runtime's clock keeps the row out of every
+    sweep while `submit_turn` / `decide_approval` still see it as overdue.
+    """
+    with sync_session() as db:
+        expires_at = db.get(CreatorAgentApproval, approval_id).expires_at
+    ahead = expires_at - datetime.now(UTC) + timedelta(minutes=1)
+
+    class _PastExpiry(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001, ANN206
+            return datetime.now(tz) + ahead
+
+    monkeypatch.setattr("app.kria.runtime.datetime", _PastExpiry)
+
+
 def _turn_status(turn_id: str) -> str:
     with sync_session() as db:
         return db.get(CreatorAgentTurn, uuid.UUID(turn_id)).status
@@ -105,13 +127,7 @@ async def test_deny_also_dismisses_an_expired_approval(monkeypatch) -> None:  # 
     user_id, thread_id, _session_id, approval_id, queued_id = await _pending_with_queued_successor(
         monkeypatch
     )
-    with sync_session() as db:
-        db.execute(
-            update(CreatorAgentApproval)
-            .where(CreatorAgentApproval.id == approval_id)
-            .values(expires_at=datetime.now(UTC) - timedelta(minutes=5))
-        )
-        db.commit()
+    _runtime_clock_past_expiry(monkeypatch, approval_id)
     body = _body(approval_id, thread_id)
     async with AsyncSessionLocal() as db:
         decision, successor = await decide_approval(
@@ -314,7 +330,7 @@ async def test_submit_expires_an_overdue_approval_instead_of_deadlocking(  # noq
         item_id = db.get(CreatorAgentSession, session_id).plan_item_id
         awaiting_turn_id = db.get(CreatorAgentApproval, approval_id).turn_id
     before = _stash_media_mutation(approval_id, item_id) if with_stash else None
-    _expire(approval_id)
+    _runtime_clock_past_expiry(monkeypatch, approval_id)
 
     accepted, _publish = await _submit(user_id, thread_id, "the new message after expiry")
 
@@ -348,6 +364,109 @@ async def test_submit_expires_an_overdue_approval_instead_of_deadlocking(  # noq
     messages = _user_messages(thread_id)
     assert messages.count("a follow-up while the approval waits") == 1
     assert messages.count("the new message after expiry") == 1
+
+
+def _expiry_notices(thread_id: uuid.UUID) -> list[str]:
+    with sync_session() as db:
+        return [
+            c
+            for (c,) in db.execute(
+                select(CreationThreadEvent.content).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "assistant_error",
+                )
+            )
+            if "expired" in (c or "")
+        ]
+
+
+@pytest.mark.asyncio
+async def test_a_sweep_expiry_racing_the_lazy_expiry_still_accepts_the_message(  # noqa: ANN001
+    monkeypatch,
+) -> None:
+    """The sweep expires the approval after `submit_turn` saw it pending and released the
+    thread, before the lazy expiry locks it. That notice is the only change the creator
+    could not have seen, so the message is accepted (not `thread_revision_stale`) and
+    the expiry is announced once."""
+    user_id, thread_id, _s, approval_id, queued_id = await _pending_with_queued_successor(
+        monkeypatch
+    )
+    _runtime_clock_past_expiry(monkeypatch, approval_id)
+    lazy_expiry = runtime._expire_blocking_approval
+    swept: list[str | None] = []
+
+    async def _sweep_first(db, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        # The sweep's per-approval step, on this row only: the whole-database sweep would
+        # also close other workers' overdue approvals mid-test.
+        swept.append(rt._expire_overdue_approval(approval_id))
+        return await lazy_expiry(db, **kwargs)
+
+    monkeypatch.setattr(runtime, "_expire_blocking_approval", _sweep_first)
+
+    accepted, _publish = await _submit(user_id, thread_id, "the new message after expiry")
+
+    assert swept == [queued_id]
+    with sync_session() as db:
+        assert db.get(CreatorAgentApproval, approval_id).status == "expired"
+    assert len(_expiry_notices(thread_id)) == 1
+    assert _turn_status(queued_id) == "pending"
+    assert accepted.status == "queued"
+    assert _user_messages(thread_id).count("the new message after expiry") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_thread_write_after_the_lazy_expiry_is_read_back_before_the_message(  # noqa: ANN001
+    monkeypatch,
+) -> None:
+    """`submit_turn` re-locks the thread after the lazy expiry committed. Anything another
+    writer committed in between (here the generated chat title) must be read back: the
+    session's kept `revision` reused that event's number and the message failed with
+    `uq_creation_thread_events_revision`."""
+    user_id, thread_id, _s, approval_id, _queued = await _pending_with_queued_successor(monkeypatch)
+    _runtime_clock_past_expiry(monkeypatch, approval_id)
+    promote = runtime._promote_queued_successor
+    titled: list[bool] = []
+
+    async def _title_lands_meanwhile(db, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        successor = await promote(db, **kwargs)
+        if not titled:
+            titled.append(True)
+            with sync_session() as sync_db:
+                thread = sync_db.get(CreationThread, thread_id, with_for_update=True)
+                rt._append_sync_event(
+                    sync_db,
+                    thread,
+                    role="system",
+                    event_type="thread_title_generated",
+                    content=None,
+                    payload={"title": "Matcha update"},
+                )
+                thread.state = {
+                    **(thread.state or {}),
+                    "title_source": "generated",
+                    "title_generated_revision": thread.revision,
+                }
+                sync_db.commit()
+        return successor
+
+    monkeypatch.setattr(runtime, "_promote_queued_successor", _title_lands_meanwhile)
+
+    accepted, _publish = await _submit(user_id, thread_id, "the new message after expiry")
+
+    assert titled
+    with sync_session() as db:
+        revision = int(db.get(CreationThread, thread_id).revision)
+        revisions = [
+            r
+            for (r,) in db.execute(
+                select(CreationThreadEvent.revision).where(
+                    CreationThreadEvent.thread_id == thread_id
+                )
+            )
+        ]
+    assert accepted.status == "queued"
+    assert accepted.thread_revision == revision == max(revisions)
+    assert _user_messages(thread_id).count("the new message after expiry") == 1
 
 
 @pytest.mark.asyncio

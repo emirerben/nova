@@ -20,8 +20,9 @@ enum ChatUITestTransport {
 
 /// UI fixtures must never read or rotate a developer's Keychain session.
 struct ChatUITestTokenStore: TokenStore {
-    func read() throws -> MobileSession? { nil }
-    func write(_ session: MobileSession) throws {}
+    // `KRIA_FIXTURE_EXPIRED_TOKEN=1` (perf): an in-memory expired session, so the 401 -> refresh path runs.
+    func read() throws -> MobileSession? { PerfFixture.expiredToken ? PerfTokenState.shared.current : nil }
+    func write(_ session: MobileSession) throws { if PerfFixture.expiredToken { PerfTokenState.shared.store(session) } }
     func delete() throws {}
 }
 
@@ -30,6 +31,10 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     private var delayedResponse: DispatchWorkItem?
     override func startLoading() {
+        if PerfFixture.isFullProjectionRead(request) {
+            Perf.mark("fixture.full.arrived")
+            PerfCounters.shared.setOnce("fixture fullDelayMS", Int(PerfFixture.delay(for: request) * 1000))
+        }
         // `KRIA_SLIDE_POST_CAPS=slow`: capabilities answer after 6s (the slide editor must not wait for them).
         let slowCapabilities = request.url?.path.hasSuffix("/capabilities") == true
             && ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "slow"
@@ -42,9 +47,26 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
             let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
             delayedResponse = work
             DispatchQueue.global().asyncAfter(deadline: .now() + (slowRead ? 10 : slowCapabilities ? 6 : 5), execute: work)
+        } else if PerfFixture.delay(for: request) > 0 {
+            // Concurrent queue: parallel requests overlap the way they do on a real network.
+            let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
+            delayedResponse = work
+            DispatchQueue.global().asyncAfter(deadline: .now() + PerfFixture.delay(for: request), execute: work)
         } else { finishLoading() }
     }
     private func finishLoading() {
+        if PerfFixture.isFullProjectionRead(request) { Perf.mark("fixture.full.sent") }
+        if let perf = PerfFixture.respond(request) {
+            guard let url = request.url,
+                  let response = HTTPURLResponse(url: url, statusCode: perf.status, httpVersion: nil, headerFields: perf.headers.merging(["Content-Type": "application/json"]) { first, _ in first }) else {
+                client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+                return
+            }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: perf.data)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
         let fixture: (Int, Data)? = ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] != nil
             ? CreationChatFixture.shared.respond(request)
             : (503, Data())
@@ -150,7 +172,10 @@ final class CreationChatFixture: @unchecked Sendable {
         if path == "/creation-threads/capabilities" {
             // `KRIA_SLIDE_POST_CAPS=fail`: the capabilities request never gets an answer.
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "fail" { return nil }
-            var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", 1), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
+            // `KRIA_CHAT_TALKING_MAX_CLIPS`: Talking's cap. 10 is a server with KRI-719 multi-clip Talking on;
+            // `1` is one with it off (a single pick then closes Apple's picker on its own).
+            let talkingMaxClips = ProcessInfo.processInfo.environment["KRIA_CHAT_TALKING_MAX_CLIPS"].flatMap(Int.init) ?? 10
+            var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", talkingMaxClips), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" { capabilities["live_plan_review_enabled"] = true }
             // `KRIA_CHAT_PLAN_BLOCKS_VERSION=2`: the server speaks live-plan contract v2 (structured payloads,
             // 8 sections including post_caption, Review entry points). Absent = an older feed-only server.
@@ -166,13 +191,15 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_STICKERS"] == "1" { capabilities["slide_post_stickers"] = true }
             // KRIA_TEXT_BEND (KRI-646): the Bend slider. The server only advertises it to protocol 9 builds.
             if ProcessInfo.processInfo.environment["KRIA_TEXT_BEND"] == "1" { capabilities["text_bend"] = true }
+            // KRIA_VOICE_DICTATION (KRI-742): the mic button; the engine is scripted (see DictationController).
+            if ProcessInfo.processInfo.environment["KRIA_VOICE_DICTATION"] == "1" { capabilities["voice_dictation"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_SIZES"] == "1" {
                 capabilities["slide_post_framing"] = true
                 capabilities["slide_post_sizes"] = true
             }
             // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
             // sends the clip_question payload but does not advertise the capability (old-server fallback).
-            if ["1", "history"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
+            if ["1", "history", "photo"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
             // KRIA_CHAT_SONG_ORDER: "1" = server advertises media.song, song_order_questions and
             // song_order_placements (the song timeline, KRI-561); "list" = media.song and song_order_questions only
             // (the vertical order list, an older server); "legacy" = it still sends the song_order_question payload
@@ -236,8 +263,8 @@ final class CreationChatFixture: @unchecked Sendable {
             }
             if request.httpMethod == "POST" {
                 let id = UUID().uuidString
-                let fixtureEvents: [[String: Any]] = ProcessInfo.processInfo.environment["KRIA_CHAT_LONG_HISTORY"] == "1"
-                    ? (0..<24).map { index in
+                let fixtureEvents: [[String: Any]] = PerfFixture.longHistoryCount != nil
+                    ? (0..<(PerfFixture.longHistoryCount ?? 24)).map { index in
                         ["id": UUID().uuidString, "sequence": index, "revision": index + 1,
                          "role": index.isMultiple(of: 2) ? "user" : "assistant",
                          "event_type": index.isMultiple(of: 2) ? "user_message" : "assistant_response",
@@ -249,6 +276,8 @@ final class CreationChatFixture: @unchecked Sendable {
                 var seededState: [String: Any] = [:]
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "history" {
                     (seededEvents, seededState) = Self.realShapeClipQuestionHistory()
+                } else if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "photo" {
+                    (seededEvents, seededState) = Self.realShapeClipQuestionHistory(poolPhoto: true)
                 }
                 let thread: [String: Any] = ["id": id, "title": "Untitled project", "status": "active", "revision": seededEvents.count, "runtime_version": runtime, "state": seededState, "events": seededEvents, "active_plan_item_id": id, "updated_at": "2026-09-10T10:00:00Z"]
                 threads[id] = thread
@@ -269,7 +298,17 @@ final class CreationChatFixture: @unchecked Sendable {
         if parts.first == "plan-items", parts.count >= 2, ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_FIXTURE"] == "1" {
             return slideResponse(request, itemID: parts[1], parts: parts, body: body)
         }
+        // KRI-693 (`KRIA_CHAT_CLIP_QUESTION=photo`): the plan item's Visuals hold the pool photo the picker offers.
+        if parts.first == "plan-items", parts.last == "assets", ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "photo" {
+            let photo = Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")?.absoluteString ?? ""
+            return response(["assets": [["id": Self.poolPhotoAssetID, "kind": "image", "status": "ready", "media_status": "available",
+                                         "source_filename": "N1_09_visual.jpg", "display_url": photo]], "max_assets": 10])
+        }
         if parts.first == "plan-items" { return response(["assets": [], "max_assets": 10]) }
+        // `KRIA_CHAT_SEED_THREADS` (perf): an account that already has chats, each built the first time it is asked for.
+        if parts.count >= 2, threads[parts[1]] == nil, let index = PerfFixture.seededIndex(of: parts[1]) {
+            threads[parts[1]] = PerfFixture.seededThread(index, runtime: runtime)
+        }
         guard parts.count >= 2, var thread = threads[parts[1]] else { return response(["detail": "Fixture route missing"], status: 404) }
         let id = parts[1]
         if parts.count == 3, parts[2] == "brief" { return response(Self.fixtureBrief(threadID: id)) }
@@ -484,6 +523,36 @@ final class CreationChatFixture: @unchecked Sendable {
                 append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": turnID, "turn_value": "response"])
                 append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
                 append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+            } else if runtime == 2, let replyFixture = ProcessInfo.processInfo.environment["KRIA_CHAT_REPLY_FIXTURE"] {
+                // Reply-UX fixtures (options / receipts / receipt-single), shaped like the server's `assistant_response`.
+                let text = body["message"] as? String ?? ""
+                switch replyFixture {
+                case "options":
+                    if text.hasPrefix("About ") {
+                        // Echo what the server received so the UI test can pin that a chip is sent as plain text.
+                        append("assistant_response", text: "Got it. reply[\(text)]", payload: ["turn_id": turnID, "turn_value": "response"])
+                    } else {
+                        append("assistant_response", text: "The clips are about 1.3 seconds each right now. How short should they be: about 1 second, about 0.8 seconds, or about 0.5 seconds? Or tell me a number of seconds.",
+                               payload: ["turn_id": turnID, "turn_value": "question",
+                                         "options": ["About 1 second", "About 0.8 seconds", "About 0.5 seconds"]])
+                    }
+                default:
+                    let single = replyFixture == "receipt-single"
+                    // An older server (or a review turn): the same receipts with no `reply_lead` / `also_changed`.
+                    let noLead = replyFixture == "receipts-no-lead"
+                    let receipts: [[String: Any]] = [
+                        ["requirement_id": "req-length", "status": "met", "verification": "checked",
+                         "reason": "Set 11 clips to 0.8s; Video length 45.64s → 39.78s"],
+                        ["requirement_id": "req-drone", "status": "not_possible", "reason": "None of your clips is aerial footage."],
+                    ]
+                    append("assistant_response",
+                           text: single ? "Have a look: Make the clips about 0.8 seconds (I changed: Set 11 clips to 0.8s; Video length 45.64s → 39.78s)."
+                                        : "- Couldn't: End on a drone shot. None of your clips is aerial footage.\n- Done: Make the clips about 0.8 seconds. Set 11 clips to 0.8s; Video length 45.64s → 39.78s.\nAlso changed: Retimed the title (0–4.3s → 3–7.3s).",
+                           payload: ["turn_id": turnID, "turn_value": "response",
+                                     "requirement_receipts": single ? [receipts[0]] : receipts]
+                               .merging(noLead ? [:] : ["reply_lead": single ? "Done." : "I did 1 of your 2 asks.",
+                                                        "also_changed": ["Retimed the title (0–4.3s → 3–7.3s)"]]) { $1 })
+                }
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] == "1",
                (thread["job"] as? [String: Any])?["status"] as? String == "ready" {
                 editorTurnIDs[id] = turnID
@@ -625,7 +694,8 @@ final class CreationChatFixture: @unchecked Sendable {
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_BRIEF"] == "1" {
                     // What the server sends after a render: the reply plus one receipt per requirement.
                     append("assistant_review", text: "The cut is ready. I did most of what you asked; one thing needs your call.",
-                           payload: ["turn_id": id, "turn_value": "review", "requirement_receipts": Self.fixtureReceipts])
+                           payload: ["turn_id": id, "turn_value": "review", "requirement_receipts": Self.fixtureReceipts,
+                                     "reply_lead": "Partly done.", "also_changed": ["Retimed the title (0–4.3s → 3–7.3s)"]])
                 }
             }
         }
@@ -801,8 +871,13 @@ final class CreationChatFixture: @unchecked Sendable {
         }
     }
 
-    static func realShapeClipQuestionHistory() -> (events: [[String: Any]], state: [String: Any]) {
-        let ids = realShapeMediaIDs
+    /// KRI-693: the Visuals photo the `photo` fixture's picker offers next to three chat clips.
+    static let poolPhotoAssetID = "d9627a79-b228-4db0-9cbb-201f6f921bb2"
+
+    /// `poolPhoto`: three chat clips plus one Visuals photo candidate, named by the server in Turkish.
+    static func realShapeClipQuestionHistory(poolPhoto: Bool = false) -> (events: [[String: Any]], state: [String: Any]) {
+        let ids = poolPhoto ? Array(realShapeMediaIDs.prefix(3)) : realShapeMediaIDs
+        let candidates = poolPhoto ? ids + ["asset-\(poolPhotoAssetID)"] : ids
         var events: [[String: Any]] = []
         func append(_ type: String, role: String, content: String = "", payload: [String: Any] = [:]) {
             events.append(["id": UUID().uuidString, "sequence": events.count, "revision": events.count + 1, "role": role,
@@ -818,12 +893,16 @@ final class CreationChatFixture: @unchecked Sendable {
         }
         append("user_message", role: "user", content: "Make a day vlog of the tournament, grouped by sport.",
                payload: ["turn_id": "t1", "turn_status": "accepted", "runtime_version": 2])
+        let category: [String: Any] = ["op": "group", "key": "group:dodgeball", "label": "dodgeball",
+                                       "candidate_media_ids": candidates, "suggested_media_ids": [String]()]
+        var clipQuestion: [String: Any] = ["version": 1, "allow_none": true, "question_id": "real-shape-q", "categories": [category]]
+        if poolPhoto {
+            clipQuestion["candidate_media"] = [["media_id": "asset-\(poolPhotoAssetID)", "kind": "image", "label": "Fotoğraf 1"]]
+        }
         append("assistant_response", role: "assistant",
                content: "I couldn't tell which of your clips show \"dodgeball\". Tap the clips that do, or tell me there aren't any.",
                payload: ["turn_id": "t1", "turn_value": "question", "receipt_ids": [String](), "next_actions": [String](), "schema_version": 2,
-                         "clip_question": ["version": 1, "allow_none": true, "question_id": "real-shape-q",
-                                           "categories": [["op": "group", "key": "group:dodgeball", "label": "dodgeball",
-                                                           "candidate_media_ids": ids, "suggested_media_ids": [String]()]]] as [String: Any]])
+                         "clip_question": clipQuestion])
         return (events, ["format": "montage", "media": media])
     }
 
@@ -831,6 +910,7 @@ final class CreationChatFixture: @unchecked Sendable {
         ["thread_id": threadID, "version": 1,
          "requirements": [
             ["id": "req-labels", "kind": "text", "scope": "per_clip", "description": "Label each clip with its place", "status": "met"],
+            ["id": "req-length", "kind": "duration", "scope": "per_clip", "description": "Make the clips about 0.8 seconds", "status": "met"],
             ["id": "req-order", "kind": "order", "scope": "route", "description": "Follow the pier-to-lighthouse route", "status": "partial"],
             ["id": "req-drone", "kind": "select", "scope": "clip", "description": "End on a drone shot", "status": "not_possible"],
          ],

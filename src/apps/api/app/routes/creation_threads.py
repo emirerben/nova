@@ -8,6 +8,8 @@ remain authoritative for media, strategy and rendering respectively.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -26,7 +28,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -375,6 +377,8 @@ class CreationCapabilitiesOut(BaseModel):
     # on, `textBend` verified, and a build declaring X-Kria-Client-Protocol >=
     # text_bend_min_client_protocol.
     text_bend: bool = False
+    # KRI-742: the chat composers show a mic button (VOICE_DICTATION_ENABLED).
+    voice_dictation: bool = False
     slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
@@ -810,9 +814,23 @@ def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web"
 
 
 def _format_clip_limit(edit_format: str | None) -> int:
-    """Mirror the format-specific limit enforced by the PlanItem setup UI."""
+    """Mirror the format-specific limit enforced by the PlanItem setup UI.
 
-    return 1 if edit_format == "subtitled" else _MAX_CLIPS_PER_ITEM
+    Talking to camera (`subtitled`) is one clip. With KRI-719's multi-clip
+    rollout live (`phone_talking_multi_clip_supported()`) it carries up to
+    `TALKING_MULTI_CLIP_MAX_CLIPS` (speakers + muted cutaways) -- the same cap
+    the dispatch gate enforces, so a creator can never attach more than the
+    phone will render.
+    """
+
+    if edit_format == "subtitled":
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            TALKING_MULTI_CLIP_MAX_CLIPS,
+            phone_talking_multi_clip_supported,
+        )
+
+        return TALKING_MULTI_CLIP_MAX_CLIPS if phone_talking_multi_clip_supported() else 1
+    return _MAX_CLIPS_PER_ITEM
 
 
 def _safe_filename(filename: str) -> str:
@@ -2087,6 +2105,7 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
     from app.services.nova_steps import (
         render_notes_from_beat_receipt,
         render_notes_from_overlay_receipt,
+        render_notes_from_talking_multi_clip_receipt,
     )
     from app.tasks.content_plan_build import job_failure_message
 
@@ -2114,6 +2133,10 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
         primary_variant.get("phone_beat_receipt") if primary_variant is not None else None
     ) + render_notes_from_overlay_receipt(
         primary_variant.get("phone_overlay_receipt") if primary_variant is not None else None
+    )
+    # KRI-719: which clips spoke back to back and which other clips found room.
+    render_notes += render_notes_from_talking_multi_clip_receipt(
+        primary_variant.get("phone_talking_multi_clip") if primary_variant is not None else None
     )
     # KRI-286: what the phone compiler repaired so this plan could render (never silent).
     repair_notes = primary_variant.get("phone_repair_notes") if primary_variant else None
@@ -3762,6 +3785,10 @@ async def capabilities(
             and client_protocol is not None
             and client_protocol >= settings.text_bend_min_client_protocol
         ),
+        "voice_dictation": bool(
+            settings.voice_dictation_enabled
+            and (settings.openai_api_key or settings.whisper_backend != "openai-api")
+        ),
         "creation_mode": (
             "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"
         ),
@@ -3967,21 +3994,59 @@ async def create_thread(
     return await _response(db, thread)
 
 
+def _encode_thread_cursor(row: CreationThread) -> str:
+    raw = f"{row.updated_at.isoformat()}|{row.id}"
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def _decode_thread_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+        stamp, _, identifier = raw.partition("|")
+        return datetime.fromisoformat(stamp), uuid.UUID(identifier)
+    except (ValueError, binascii.Error, UnicodeDecodeError) as exc:
+        raise RuntimeFailure(400, "cursor_invalid", "That page cursor is not valid.") from exc
+
+
 @router.get("", response_model=list[CreationThreadOut])
 async def list_threads(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
     include_archived: bool = Query(False),
     limit: int = Query(20, ge=1, le=50),
+    cursor: Annotated[str | None, Query()] = None,
+    response: Response = None,  # type: ignore[assignment]  # injected by FastAPI; None in direct calls
 ) -> list[CreationThreadOut]:
+    """Newest first. `cursor` (the `X-Next-Cursor` of the previous page) continues past it, so
+    chats beyond the newest ``limit`` stay reachable. The body is unchanged for a client that
+    sends no cursor; the header is the only addition and appears only when more chats exist."""
     stmt = select(CreationThread).where(CreationThread.creator_id == user.id)
     if not include_archived:
         stmt = stmt.where(CreationThread.status == "active")
-    rows = (
-        (await db.execute(stmt.order_by(CreationThread.updated_at.desc()).limit(limit)))
+    if cursor is not None:
+        stamp, identifier = _decode_thread_cursor(cursor)
+        stmt = stmt.where(
+            or_(
+                CreationThread.updated_at < stamp,
+                and_(CreationThread.updated_at == stamp, CreationThread.id < identifier),
+            )
+        )
+    # One extra row says whether another page exists; `id` breaks ties so a page boundary never
+    # skips a chat.
+    fetched = (
+        (
+            await db.execute(
+                stmt.order_by(CreationThread.updated_at.desc(), CreationThread.id.desc()).limit(
+                    limit + 1
+                )
+            )
+        )
         .scalars()
         .all()
     )
+    rows = list(fetched[:limit])
+    if len(fetched) > limit and response is not None and rows:
+        response.headers["X-Next-Cursor"] = _encode_thread_cursor(rows[-1])
     job_ids = {row.active_job_id for row in rows if row.active_job_id is not None}
     jobs_by_id: dict[uuid.UUID, Job] = {}
     if job_ids:

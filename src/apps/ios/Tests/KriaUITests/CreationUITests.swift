@@ -224,11 +224,14 @@ final class CreationUITests: XCTestCase {
 
     /// Full-access Photos returns to the attachment flow on Done. A selected
     /// talking-to-camera clip advances to overlays; Done there returns to chat.
+    /// The single pick closes Apple's picker on its own only while the server
+    /// caps Talking at one clip (multi-clip Talking off, KRI-719).
     func testLibraryPickerReturnsToChatByDoneAndBySinglePick() {
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
         app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-apple-photo-picker"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_TALKING_MAX_CLIPS"] = "1"
         app.launch()
         createFreshChat(in: app)
         let card = app.buttons["format-talking_to_camera"]
@@ -299,6 +302,64 @@ final class CreationUITests: XCTestCase {
         dismissFailure.tap()
         XCTAssertFalse(selectedClipFailure.exists)
         XCTAssertTrue(photos.isHittable, "The user can choose the clip again after dismissing the failure")
+    }
+
+    /// KRI-719: with multi-clip Talking on, the Talking footage step explains the talking video plus
+    /// extra clips and lets the creator pick three videos at once. All three are read from Photos and
+    /// reach upload (the offline fixture has no upload reservations, so each surfaces as a named failure).
+    func testTalkingToCameraPicksThreeVideos() {
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+        let card = app.buttons["format-talking_to_camera"]
+        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        XCTAssertTrue(app.staticTexts["Choose the video of you talking, plus any clips to show while you talk."].waitForExistence(timeout: 5),
+                      app.debugDescription)
+        XCTAssertTrue(app.staticTexts["MP4, MOV · up to 10 clips"].exists)
+        let chooseVideos = app.buttons["choose-videos"]
+        XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
+        chooseVideos.tap()
+        XCTAssertTrue(app.staticTexts["The video of you talking, plus any clips to show while you talk."].waitForExistence(timeout: 5))
+        func allowFullAccess(_ alert: XCUIElement) -> Bool {
+            guard alert.buttons.count == 3 else { return false }
+            alert.buttons.element(boundBy: 1).tap()
+            return true
+        }
+        let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
+        defer { removeUIInterruptionMonitor(monitor) }
+        let photos = app.buttons["Choose from Photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        photos.tap()
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
+
+        let tiles = (0..<3).map { app.buttons["gallery-tile-\($0)"] }
+        XCTAssertTrue(tiles[0].waitForExistence(timeout: 40), app.debugDescription)
+        let count = app.staticTexts["gallery-count"]
+        XCTAssertTrue(eventually { count.label.hasPrefix("0 of 10") }, count.label)
+        for (index, tile) in tiles.enumerated() {
+            tile.tap()
+            XCTAssertTrue(eventually { count.label.hasPrefix("\(index + 1) of 10") }, count.label)
+        }
+        XCTAssertEqual(tiles[2].value as? String, "Selected, 3")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Talking to camera with three videos picked"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["photos-picker-done"].tap()
+
+        // Three picks reach upload and come back as three failed files: none was dropped by a one-clip cap.
+        let reachedUpload = app.staticTexts["The data couldn\u{2019}t be read because it isn\u{2019}t in the correct format."]
+        XCTAssertTrue(reachedUpload.waitForExistence(timeout: 25), app.debugDescription)
+        if app.buttons["attachment-done"].exists { app.buttons["attachment-done"].tap() }
+        let failures = app.staticTexts["footage-upload-failures-message"]
+        XCTAssertTrue(failures.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(eventually(timeout: 10) { failures.label.hasPrefix("3 files") }, failures.label)
     }
 
     func testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes() {
@@ -380,7 +441,7 @@ final class CreationUITests: XCTestCase {
         }
     }
 
-    /// KRI-207: after a render the creator sees one chip per requirement, sees which names were
+    /// KRI-207: after a render the creator sees one static receipt row per requirement, sees which names were
     /// guessed, and can start correcting one with a single tap.
     func testReceiptChipsAndGuessedNamesStartACorrection() {
         let app = XCUIApplication()
@@ -399,28 +460,32 @@ final class CreationUITests: XCTestCase {
         confirm.tap()
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
 
-        // One chip per requirement, named from the brief. The chips wait for the brief before they
-        // show, so there is no bare-"Done" phase; still wait on the label rather than assume timing.
-        let met = app.buttons["requirement-chip-req-labels"]
-        let partial = app.buttons["requirement-chip-req-order"]
-        let couldNot = app.buttons["requirement-chip-req-drone"]
+        // One static row per requirement, named from the brief. The rows wait for the brief before they
+        // show, so there is no placeholder phase; still wait on the label rather than assume timing.
+        func row(_ id: String) -> XCUIElement { app.descendants(matching: .any)["requirement-chip-\(id)"].firstMatch }
+        let met = row("req-labels")
+        let partial = row("req-order")
+        let couldNot = row("req-drone")
         XCTAssertTrue(met.waitForExistence(timeout: 10))
         func waitForLabel(_ element: XCUIElement, _ label: String) {
             let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label), object: element)
             XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed, "\(element.identifier) label: \(element.label)")
         }
-        waitForLabel(met, "Done: Label each clip with its place")
-        waitForLabel(partial, "Partly done: Follow the pier-to-lighthouse route")
-        waitForLabel(couldNot, "Couldn’t do: End on a drone shot")
-
-        // A chip explains itself when tapped. The transcript is still settling to the bottom as the
-        // ready stage arrives, so let the chip stop moving first or the tap lands on its neighbour.
-        let reason = app.staticTexts["requirement-reason-req-order"]
-        XCTAssertFalse(reason.exists)
+        // The reason is part of the row from the start: nothing to tap, nothing to expand.
+        waitForLabel(met, "Done: Label each clip with its place. Every clip has its own place name.")
+        waitForLabel(partial, "Partly done: Follow the pier-to-lighthouse route. Your clips were filmed from the lighthouse to the pier, the reverse of the route you gave. I kept filming order; tell me if you want your route order instead.")
+        waitForLabel(couldNot, "Couldn’t do: End on a drone shot. None of your clips is aerial footage.")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "requirement-chip-")).count, 0,
+                       "Receipts are static rows, not tappable pills")
+        // The server's short lead replaces the long prose (which the old builds and the web still show).
+        XCTAssertTrue(app.staticTexts["Kria: Partly done."].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Kria: The cut is ready. I did most of what you asked; one thing needs your call."].exists)
+        let also = app.staticTexts["requirement-also-changed"]
+        scrollIntoView(also, in: app)
+        XCTAssertEqual(also.label, "Also: Retimed the title (0–4.3s → 3–7.3s)")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "receipt-rows-with-brief"; shot.lifetime = .keepAlways; add(shot)
         scrollIntoView(partial, in: app)
-        partial.tap()
-        XCTAssertTrue(reason.waitForExistence(timeout: 3))
-        XCTAssertTrue(reason.label.contains("I kept filming order"))
 
         // The guess that knows its clip says which; the plain one doesn't invent a number.
         let guessed = app.buttons["guessed-name-0"]
@@ -457,6 +522,42 @@ final class CreationUITests: XCTestCase {
         let appended = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "Clip 4 isn't Harbor Point, it's Besiktas\nThat isn't Old Lighthouse, it's "), object: composer)
         XCTAssertEqual(XCTWaiter.wait(for: [appended], timeout: 5), .completed)
+    }
+
+    /// KRI-742: talk instead of type. The microphone and recognizer are scripted (a simulator has neither); the
+    /// composer, mic button, controller and send path are the real ones. Live words appear while listening, the
+    /// server text replaces them on stop, and the result is an ordinary sendable message.
+    func testDictationShowsLiveWordsThenServerTextAndIsSendable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_VOICE_DICTATION"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+
+        let mic = app.buttons["chat-dictate"]
+        XCTAssertTrue(mic.waitForExistence(timeout: 10), "The mic appears once the server advertises voice_dictation")
+        XCTAssertGreaterThanOrEqual(mic.frame.height, 44)
+        let composer = app.textFields["Message Kria"]
+        mic.tap()
+
+        let live = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "make the intro shorter"), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [live], timeout: 5), .completed, "Live words appear while listening")
+        XCTAssertEqual(mic.label, "Stop dictation")
+
+        mic.tap()
+        let final = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Make the intro shorter and add the beach clip first."), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [final], timeout: 8), .completed, "The server text replaces the live words")
+        XCTAssertEqual(mic.label, "Dictate message")
+        XCTAssertTrue(app.buttons["chat-send-message"].isEnabled)
+
+        app.buttons["chat-send-message"].tap()
+        let sent = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value != %@", "Make the intro shorter and add the beach clip first."), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [sent], timeout: 8), .completed, "Sending clears the composer")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Dictation sent"
+        shot.lifetime = .keepAlways
+        add(shot)
     }
 
     func testClipsOnlySubmissionUsesSuggestAnEdit() {
@@ -653,11 +754,11 @@ final class CreationUITests: XCTestCase {
 
     /// A history shaped like the production Olympics thread (48 phone-proxy clips, the question newest, no
     /// suggestions). `thumbs` seeds cached posters for the first 24 so both tile states show.
-    private func launchRealShapeHistory(thumbs: Bool = false) -> XCUIApplication {
+    private func launchRealShapeHistory(thumbs: Bool = false, question: String = "history") -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
-        app.launchEnvironment["KRIA_CHAT_CLIP_QUESTION"] = "history"
+        app.launchEnvironment["KRIA_CHAT_CLIP_QUESTION"] = question
         if thumbs { app.launchEnvironment["KRIA_CHAT_CLIP_THUMBS"] = "1" }
         app.launch()
         // Same drawer path as `createFreshChat`, for a seeded thread that is already past the format prompt.
@@ -762,6 +863,25 @@ final class CreationUITests: XCTestCase {
         XCTAssertGreaterThan(count, 8, "auto-scroll kept selecting as rows passed under the finger: \(count)")
     }
 
+    /// KRI-693: a Visuals photo in the picker shows its thumbnail and reads as a photo in the chat's language,
+    /// while the chat clips beside it stay "Clip N".
+    func testPickerShowsAVisualsPhotoWithItsThumbnailAndAPhotoName() {
+        let app = launchRealShapeHistory(thumbs: true, question: "photo")
+        XCTAssertTrue(app.descendants(matching: .any)["clip-card"].waitForExistence(timeout: 20))
+        app.buttons["clip-choose"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
+        let photoID = "asset-d9627a79-b228-4db0-9cbb-201f6f921bb2"
+        let photo = app.buttons["clip-thumb-group:dodgeball-\(photoID)"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 5))
+        XCTAssertEqual(photo.label, "Fotoğraf 1")
+        XCTAssertEqual(app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[0])"].label, "Clip 1", "chat clips are unchanged")
+        // The thumbnail arrives from Visuals; until it does the tile is a placeholder named like the photo.
+        let placeholder = app.descendants(matching: .any)["clip-placeholder-\(photoID)"]
+        let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: placeholder)
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 15), .completed, "the photo never got its thumbnail")
+        shoot(app, "kri693-photo-tile")
+    }
+
     /// KRI-282 root-cause pin: the production-shaped question must always produce the card, never just text.
     func testRealShapeHistoryShowsClipQuestionCardAndOpensTheGridSheet() {
         let app = launchRealShapeHistory(thumbs: true)
@@ -856,6 +976,129 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["clip-card-answered"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.descendants(matching: .any)["clip-card-answered"].label, "Dodgeball: 2 clips · Football: 1 clip")
         XCTAssertFalse(app.buttons["clip-choose"].exists)
+    }
+
+    // MARK: reply UX: answer chips + one receipt
+
+    private func launchReplyFixture(_ mode: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_REPLY_FIXTURE"] = mode
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let next = app.buttons["Send clips"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        next.tap()
+        return app
+    }
+
+    private func attachScreenshot(_ app: XCUIApplication, _ name: String) {
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = name; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    /// A question that offers answers shows them as chips plus "Other…"; a chip sends its exact text as an
+    /// ordinary message, "Other…" only opens the composer, and an answered question leaves no chips behind.
+    func testReplyOptionChipsSendTheTappedLabelAndOtherOnlyFocusesTheComposer() {
+        let app = launchReplyFixture("options")
+        let first = app.buttons["reply-option-0"], second = app.buttons["reply-option-1"], third = app.buttons["reply-option-2"]
+        let other = app.buttons["reply-option-other"]
+        XCTAssertTrue(second.waitForExistence(timeout: 15))
+        XCTAssertEqual(first.label, "About 1 second")
+        XCTAssertEqual(second.label, "About 0.8 seconds")
+        XCTAssertEqual(third.label, "About 0.5 seconds")
+        XCTAssertEqual(other.label, "Other…")
+        for chip in [first, second, third, other] { XCTAssertGreaterThanOrEqual(chip.frame.height, 44, chip.identifier) }
+        // The prose above the chips is unchanged (old builds rely on it).
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: The clips are about 1.3 seconds each")).firstMatch.exists)
+        attachScreenshot(app, "reply-option-chips")
+
+        // "Other…": the creator is put in the composer, and nothing is sent.
+        let sentBefore = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:")).count
+        other.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Other… focuses the composer")
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:")).count, sentBefore,
+                       "Other… must not send a message")
+        XCTAssertFalse(app.staticTexts["You: Other…"].exists)
+        XCTAssertTrue(second.exists, "The question is still open")
+        attachScreenshot(app, "reply-option-other-composer-focused")
+
+        // A chip sends exactly its label, as plain text.
+        app.staticTexts["workspace-project-title"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
+        scrollIntoView(second, in: app)
+        second.tap()
+        XCTAssertTrue(app.staticTexts["You: About 0.8 seconds"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "reply[About 0.8 seconds]")).firstMatch
+            .waitForExistence(timeout: 10), "the server received the chip text as the message")
+        // Answered: no tappable chips remain in the history.
+        XCTAssertTrue(app.buttons["reply-option-1"].waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["reply-option-other"].exists)
+    }
+
+    /// After an edit the result is said once: a short lead, then one static row per ask with its reason
+    /// already visible, and the request text appears a single time.
+    func testReplyWithReceiptsShowsOneLeadAndStaticRowsOnce() {
+        let app = launchReplyFixture("receipts")
+        XCTAssertTrue(app.staticTexts["Kria: I did 1 of your 2 asks."].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Couldn't: End on a drone shot")).count, 0,
+                       "The long prose is replaced by the lead")
+        func row(_ id: String) -> XCUIElement { app.descendants(matching: .any)["requirement-chip-\(id)"].firstMatch }
+        let done = row("req-length"), couldNot = row("req-drone")
+        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        func waitForLabel(_ element: XCUIElement, _ label: String) {
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label), object: element)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed, "\(element.identifier) label: \(element.label)")
+        }
+        // The reason is visible with no tap.
+        waitForLabel(done, "Done: Make the clips about 0.8 seconds. Set 11 clips to 0.8s; Video length 45.64s → 39.78s")
+        waitForLabel(couldNot, "Couldn’t do: End on a drone shot. None of your clips is aerial footage.")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "requirement-chip-")).count, 0, "no pills")
+        for request in ["Make the clips about 0.8 seconds", "End on a drone shot"] {
+            // XCUITest also lists a row's inner text as its own element; what matters is that the request is
+            // named in exactly one receipt row and no longer in the assistant's own text.
+            let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "requirement-chip-", request))
+            XCTAssertEqual(rows.count, 1, "\(request) is named in exactly one receipt row")
+            XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "Kria:", request)).count, 0,
+                           "\(request) is not repeated in the reply prose")
+        }
+        let also = app.staticTexts["requirement-also-changed"]
+        scrollIntoView(also, in: app)
+        XCTAssertEqual(also.label, "Also: Retimed the title (0–4.3s → 3–7.3s)")
+        attachScreenshot(app, "receipt-lead-and-rows")
+    }
+
+    /// One ask: the creator's own message is right above, so the row is just the outcome and the reason.
+    func testReplyWithOneReceiptShowsNoRequestTitle() {
+        let app = launchReplyFixture("receipt-single")
+        XCTAssertTrue(app.staticTexts["Kria: Done."].waitForExistence(timeout: 20))
+        let done = app.descendants(matching: .any)["requirement-chip-req-length"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        XCTAssertEqual(done.label, "Done: Set 11 clips to 0.8s; Video length 45.64s → 39.78s")
+        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Make the clips about 0.8 seconds")).count, 0)
+        attachScreenshot(app, "receipt-single-row")
+    }
+
+    /// No `reply_lead` (an older server, or a review turn whose prose still lists the reasons): the prose
+    /// is shown as before and the rows are only outcome + request, never a second copy of the reasons.
+    func testReplyWithReceiptsButNoLeadKeepsTheProseAndShowsTitleOnlyRows() {
+        let app = launchReplyFixture("receipts-no-lead")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Couldn't: End on a drone shot")).firstMatch
+            .waitForExistence(timeout: 20), "the full prose is still the message")
+        func row(_ id: String) -> XCUIElement { app.descendants(matching: .any)["requirement-chip-\(id)"].firstMatch }
+        let done = row("req-length"), couldNot = row("req-drone")
+        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        func waitForLabel(_ element: XCUIElement, _ label: String) {
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label), object: element)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed, "\(element.identifier) label: \(element.label)")
+        }
+        waitForLabel(done, "Done: Make the clips about 0.8 seconds")
+        waitForLabel(couldNot, "Couldn’t do: End on a drone shot")
+        XCTAssertFalse(app.staticTexts["requirement-also-changed"].exists, "the prose already says what else changed")
     }
 
     // MARK: conflict-choice question (KRI-282)

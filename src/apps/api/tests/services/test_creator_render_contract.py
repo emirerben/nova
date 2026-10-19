@@ -601,7 +601,7 @@ def test_declared_phone_declines_match_the_real_entry_points(adapter):
         ("phone_speech_montage", "require_voiceover"): "requirement_conflict",
         ("phone_voiceover_montage", "audio_source_ids"): "requirement_conflict",
         ("phone_narrated", "audio_source_ids"): "requirement_conflict",
-        ("phone_guided_unified_montage", "audio_source_ids"): "capability_unavailable",
+        ("phone_guided_unified_montage", "audio_source_ids"): "evidence_missing",
     }
     declaration = ADAPTER_DECLARATIONS[adapter]
     cases = _phone_cases()

@@ -57,35 +57,24 @@ def sequence_role(row: Mapping[str, Any]) -> str:
     return "any"
 
 
-def text_matches(
-    rows: Iterable[Mapping[str, Any]],
-    wanted: str,
-    *,
-    role: str = "any",
-    tolerance_s: float = 0.1,
-    allow_missing_role: bool = True,
+def complete_sequences(
+    rows: Iterable[Mapping[str, Any]], *, tolerance_s: float = 0.1
 ) -> list[dict[str, Any]]:
-    """Find exact visible text, including a valid complete fragment sequence."""
+    """Compose every complete, contiguous fragment sequence into one row.
+
+    A sequence is complete when its ordinals run 1..N without a gap, its fragments play in
+    ordinal order with each starting where the last ended (within ``tolerance_s``), and they
+    agree on role and media.  The composed row carries the joined text, the first start and
+    last end (in the first fragment's key style), the inherited role, and the lineage.
+    """
 
     materialized = [dict(row) for row in rows]
-    wanted_normalized = normalize_text(wanted)
-    matches: list[dict[str, Any]] = []
-    for row in materialized:
-        if normalize_text(row.get("text", "")) != wanted_normalized:
-            continue
-        if (
-            role != "any"
-            and row.get("role") != role
-            and not (allow_missing_role and row.get("role") is None)
-        ):
-            continue
-        matches.append(row)
-
     groups: dict[str, list[dict[str, Any]]] = {}
     for row in materialized:
         lineage = sequence_lineage(row)
         if lineage is not None:
             groups.setdefault(lineage[0], []).append(row)
+    composed_rows: list[dict[str, Any]] = []
     for source, members in groups.items():
         parsed = [(sequence_lineage(row), row) for row in members]
         if any(item[0] is None for item in parsed):
@@ -122,27 +111,50 @@ def text_matches(
                 break
             previous_end = end
         else:
-            composed = " ".join(normalize_text(row["text"]) for row in chronological)
             first = chronological[0]
-            inherited_role = first.get("role") or sequence_role(first)
-            if (
-                role != "any"
-                and inherited_role != role
-                and not (allow_missing_role and inherited_role is None)
-            ):
-                continue
-            if normalize_text(composed) == wanted_normalized:
-                start_key = "start" if "start" in first else "start_s"
-                end_key = "end" if "end" in first else "end_s"
-                matches.append(
-                    {
-                        "text": composed,
-                        start_key: float(first[start_key]),
-                        end_key: float(chronological[-1][end_key]),
-                        "role": inherited_role or "any",
-                        "media_id": first.get("media_id"),
-                        "sequence_source_id": source,
-                        "sequence_ordinals": ordinals,
-                    }
-                )
+            start_key = "start" if "start" in first else "start_s"
+            end_key = "end" if "end" in first else "end_s"
+            composed_rows.append(
+                {
+                    "text": " ".join(normalize_text(row["text"]) for row in chronological),
+                    start_key: float(first[start_key]),
+                    end_key: float(chronological[-1][end_key]),
+                    "role": first.get("role") or sequence_role(first),
+                    "media_id": first.get("media_id"),
+                    "sequence_source_id": source,
+                    "sequence_ordinals": ordinals,
+                }
+            )
+    return composed_rows
+
+
+def text_matches(
+    rows: Iterable[Mapping[str, Any]],
+    wanted: str,
+    *,
+    role: str = "any",
+    tolerance_s: float = 0.1,
+    allow_missing_role: bool = True,
+) -> list[dict[str, Any]]:
+    """Find exact visible text, including a valid complete fragment sequence."""
+
+    materialized = [dict(row) for row in rows]
+    wanted_normalized = normalize_text(wanted)
+    matches: list[dict[str, Any]] = []
+    for row in materialized:
+        if normalize_text(row.get("text", "")) != wanted_normalized:
+            continue
+        if (
+            role != "any"
+            and row.get("role") != role
+            and not (allow_missing_role and row.get("role") is None)
+        ):
+            continue
+        matches.append(row)
+
+    for composed in complete_sequences(materialized, tolerance_s=tolerance_s):
+        if role != "any" and composed["role"] != role:
+            continue
+        if normalize_text(composed["text"]) == wanted_normalized:
+            matches.append(composed)
     return matches

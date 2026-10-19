@@ -2,6 +2,176 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.44.0] - 2026-10-19
+
+### Changed
+- fix(ios): show export checking and repair progress in live chat (#1677) <!-- release-pr: 1677 -->
+
+## [0.80.43.0] - 2026-10-18
+
+### Added
+- feat: background export verification and bounded approved repairs (KRI-734/KRI-726) (#1663) <!-- release-pr: 1663 -->
+
+## [0.80.42.0] - 2026-10-18
+
+### Changed
+- fix(kria): answer a re-sent copy of a message instead of queuing and re-planning it (KRI-552) (#1672) <!-- release-pr: 1672 -->
+
+## [0.80.41.0] - 2026-10-18
+
+### Changed
+- fix(kria): a Visuals photo in the clip picker shows its thumbnail and reads as a photo (KRI-693) (#1673) <!-- release-pr: 1673 -->
+
+## [0.80.40.0] - 2026-10-18
+
+### Fixed
+- fix(kria): phone Talking shows a creator's text on the word they say (KRI-707) (#1674) <!-- release-pr: 1674 -->
+
+## [0.80.39.0] - 2026-10-18
+
+### Changed
+- fix(kria): clip-picker answer follows the chat language (KRI-694) (#1670) <!-- release-pr: 1670 -->
+
+## [0.80.38.0] - 2026-10-18
+
+### Changed
+- fix(kria): Voiceover cleanup says what it cut and left, no more retakes promise (KRI-551) (#1669) <!-- release-pr: 1669 -->
+
+## [0.80.37.0] - 2026-10-18
+
+### Fixed
+- fix(kria): phone Voiceover chats leave out spoken-word labels instead of refusing every turn (KRI-691) (#1667) <!-- release-pr: 1667 -->
+
+## [0.80.36.0] - 2026-10-18
+
+### Changed
+- fix(kria): the review sees a word-by-word hook as shown; replay the real Lisbon plan (KRI-560) (#1671) <!-- release-pr: 1671 -->
+
+## [0.80.35.0] - 2026-10-18
+
+### Changed
+- feat(ios): talk to Kria — voice dictation in the chat composers (KRI-742) (#1665) <!-- release-pr: 1665 -->
+
+## [0.80.34.0] - 2026-10-18
+
+### Changed
+- perf(ios): the editor opens faster: overlapped requests, parallel clips, sources not re-hashed (KRI-714) (#1666) <!-- release-pr: 1666 -->
+
+## [0.80.33.0] - 2026-10-18
+
+### Fixed
+- fix(kria): longer clips reach back into footage; tappable length answers; one receipt per edit (KRI-737/738/739) (#1664) <!-- release-pr: 1664 -->
+
+## [0.80.32.0] - 2026-10-18
+
+### Changed
+- test(ios): editor-session tests wait on a 60 s deadline instead of fixed 1–5 s loops (#1659) <!-- release-pr: 1659 -->
+
+## [0.80.31.0] - 2026-10-18
+
+### Changed
+- fix(kria): keep clip-picker answers bound to the intent across reworded rows (KRI-697) (#1658) <!-- release-pr: 1658 -->
+
+## [0.80.30.0] - 2026-10-18
+
+### Changed
+- fix(kria): re-read locked rows when the approval sweep races a new message (#1657) <!-- release-pr: 1657 -->
+
+## [0.80.29.0] - 2026-10-18
+
+### Changed
+- feat(ios): several videos on Talking edits in the iPhone app (KRI-719, phase 2) (#1642) <!-- release-pr: 1642 -->
+
+## [0.80.28.0] - 2026-10-17
+
+### Changed
+- perf(ios): gallery posters are remembered and the library loads a page at a time (KRI-713) (#1662) <!-- release-pr: 1662 -->
+
+## [0.80.27.0] - 2026-10-17
+
+### Changed
+- feat(talking): several videos on iPhone Talking edits, flag off (KRI-719, phase 1) (#1636) <!-- release-pr: 1636 -->
+
+## [0.80.26.0] - 2026-10-17
+
+### Fixed
+- fix: require approval for whole-job render retries (KRI-674) (#1661) <!-- release-pr: 1661 -->
+
+## [0.80.25.0] - 2026-10-17
+
+### Changed
+- perf(ios): stop the chat redrawing everything on every upload tick (KRI-712) (#1660) <!-- release-pr: 1660 -->
+
+## [0.80.24.0] - 2026-10-17
+
+### Fixed
+- Keep each clip's camera sound without requiring speech (KRI-674) (#1656) <!-- release-pr: 1656 -->
+
+## [0.80.23.0] - 2026-10-17
+
+### Changed
+- fix(editor): manual editor edits win over the approved opening/closing text rules on Save (KRI-736) (#1655) <!-- release-pr: 1655 -->
+
+## [0.80.22.0] - 2026-10-17
+
+### Changed
+- perf(ios): saved transcript, early token refresh, quieter sweep, reachable older chats (KRI-711) (#1651) <!-- release-pr: 1651 -->
+
+## [0.80.21.0] - 2026-10-17
+
+### Fixed
+- KRI-674: prevent follow-up AI timeouts before render approval (#1653) <!-- release-pr: 1653 -->
+
+## [0.80.20.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save no longer rejects a clip window within 50ms of the source end (KRI-736) (#1654) <!-- release-pr: 1654 -->
+
+## [0.80.19.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save accepts text with a null role (KRI-736) (#1652) <!-- release-pr: 1652 -->
+
+## [0.80.18.0] - 2026-10-17
+
+### Changed
+- feat(ios): perf benchmark harness - signposts, fixtures, KriaPerfUITests, bench.sh (KRI-710) (#1641) <!-- release-pr: 1641 -->
+
+## [0.80.17.0] - 2026-10-17
+
+### Changed
+- Connect reviewed video exports to daily request-following reports (#1649) <!-- release-pr: 1649 -->
+
+## [0.80.16.0] - 2026-10-17
+
+### Fixed
+- KRI-674: Retry the approved native edit without replanning (#1647) <!-- release-pr: 1647 -->
+
+## [0.80.15.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save never fails because a text ends past the new timeline (KRI-736) (#1650) <!-- release-pr: 1650 -->
+
+## [0.80.14.0] - 2026-10-17
+
+### Changed
+- fix(editor): Save after deleting a clip no longer fails with unsupported_phone_edit (KRI-736) (#1648) <!-- release-pr: 1648 -->
+
+## [0.80.13.0] - 2026-10-17
+
+### Changed
+- feat(media): backfill historical uploads into Saved uploads (#1640) <!-- release-pr: 1640 -->
+
+## [0.80.12.0] - 2026-10-17
+
+### Changed
+- test(ios): scrub seek-latency test waits up to 60 s for the real frame (#1634) <!-- release-pr: 1634 -->
+
+## [0.80.11.0] - 2026-10-17
+
+### Changed
+- fix(ci): make daily request-following reports downloadable (#1645) <!-- release-pr: 1645 -->
+
 ## [0.80.10.0] - 2026-10-17
 
 ### Changed

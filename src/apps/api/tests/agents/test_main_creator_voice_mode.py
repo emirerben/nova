@@ -64,7 +64,7 @@ def _parse(raw: str, agent_input=None):
 
 
 def test_parse_carries_the_model_authored_voice_mode() -> None:
-    for mode in ("continuous", "excerpts"):
+    for mode in ("continuous", "excerpts", "per_clip"):
         output = _parse(_raw(voice_mode=mode))
         assert isinstance(output.action, ProposeStrategy)
         assert output.action.strategy.voice_mode == mode

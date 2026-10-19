@@ -101,11 +101,12 @@ struct ProjectsDrawer: View {
                     KriaIcon(.gallery)
                     Text("Gallery").font(KriaFont.body(15).weight(.medium))
                     Spacer()
-                    Text("\(model.libraryProjects.count) \(model.libraryProjects.count == 1 ? "video" : "videos")").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    Text("\(model.libraryProjects.count)\(model.libraryNextCursor == nil ? "" : "+") \(model.libraryProjects.count == 1 && model.libraryNextCursor == nil ? "video" : "videos")").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 }.frame(minHeight: 44).padding(.horizontal, 12)
             }
             VStack(alignment: .leading, spacing: 10) {
                 Text("Recent chats").font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk).padding(.horizontal, 12)
+                    .onAppear { Perf.end("drawer.open") }
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 3) {
                         if model.projects.isEmpty {
@@ -121,6 +122,12 @@ struct ProjectsDrawer: View {
                                 }.buttonStyle(.plain)
                                 ProjectActionsMenu(project: project)
                             }.background(project.id == model.selectedProject?.id ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        if model.projectsNextCursor != nil {
+                            // Reaching the end of the loaded chats fetches the next older page.
+                            ProgressView().padding(12).frame(maxWidth: .infinity)
+                                .accessibilityIdentifier("drawer-loading-older-chats")
+                                .onAppear { Task { await model.loadMoreProjects() } }
                         }
                     }
                 }
@@ -169,6 +176,8 @@ struct ChatMessageRow: View {
     /// KRI-282: how to present `message.clipQuestion`. nil (old server, flag off, not a question) = text question only.
     var clipSelectionMode: ClipSelectionCardMode? = nil
     var clipSelectionMedia: [CreationAttachedMedia] = []
+    /// KRI-694: the chat's reply language, which the clip answer is posted in.
+    var clipSelectionLanguage: ClipAnswerLanguage = .english
     /// KRI-374: how to present `message.songOrderQuestion`. nil (old server, flag off, not a question) = text only.
     var songOrderMode: SongOrderCardMode? = nil
     var songOrderMedia: [CreationAttachedMedia] = []
@@ -180,6 +189,9 @@ struct ChatMessageRow: View {
     var choiceQuestionMode: ChoiceQuestionCardMode? = nil
     /// KRI-588: how to present `message.songRangeQuestion`. nil (old server, flag off, not a question) = text only.
     var songRangeMode: SongRangeCardMode? = nil
+    /// Tappable answers for a plain `assistant_response` question. nil = not the newest unanswered question
+    /// (or no options): no chips are drawn, so history never keeps stale tappable answers.
+    var replyOptionsMode: ReplyOptionsMode? = nil
 
     private static let userBubbleShape = UnevenRoundedRectangle(
         topLeadingRadius: 18,
@@ -206,6 +218,10 @@ struct ChatMessageRow: View {
                     .copyableMessage(message.content, previewShape: Self.userBubbleShape)
                     .accessibilityLabel("You: \(message.content)")
                     .accessibilityIdentifier("chat-message-\(message.id)")
+                    .onAppear {
+                        Perf.endOpenOnNextFrame("launch.toPixels")
+                        Perf.endOpenOnNextFrame("chat.toPixels")
+                    }
             }
             .frame(maxWidth: .infinity)
         } else {
@@ -215,14 +231,16 @@ struct ChatMessageRow: View {
                 if message.isProposal {
                     Text("Proposed direction").font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.zinc)
                 }
-                ChatResponseText(content: message.content, startedAt: responseStartedAt)
+                // With receipts and a server `reply_lead`, the lead replaces the long prose: the receipt rows
+                // below carry each fact once. No lead (old server) = today's text, unchanged.
+                ChatResponseText(content: message.displayedContent, startedAt: responseStartedAt)
                     .font(KriaFont.body(14))
                     .foregroundStyle(KriaColor.ink)
                     .lineSpacing(4)
-                    .copyableMessage(message.content, previewShape: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .copyableMessage(message.displayedContent, previewShape: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     // On the text, not the stack: a stack's label is applied to
                     // every child, which read each option chip as the question.
-                    .accessibilityLabel("Kria: \(message.content)")
+                    .accessibilityLabel("Kria: \(message.displayedContent)")
                 if !message.options.isEmpty, let onSelectOption {
                     QuestionOptionsRow(
                         options: message.options,
@@ -230,8 +248,12 @@ struct ChatMessageRow: View {
                         select: onSelectOption
                     )
                 }
+                if !message.replyOptions.isEmpty, let replyOptionsMode {
+                    ReplyOptionChips(options: message.replyOptions, mode: replyOptionsMode)
+                }
                 if let question = message.clipQuestion, let clipSelectionMode {
-                    ClipSelectionCard(question: question, media: clipSelectionMedia, projectID: projectID, mode: clipSelectionMode)
+                    ClipSelectionCard(question: question, media: clipSelectionMedia, projectID: projectID, mode: clipSelectionMode,
+                                      language: clipSelectionLanguage)
                         .id(question.questionID)
                 }
                 if let question = message.songOrderQuestion, let songOrderMode, let projectID {
@@ -253,7 +275,11 @@ struct ChatMessageRow: View {
                         .id(question.questionID)
                 }
                 if !message.receipts.isEmpty {
-                    RequirementChipsView(receipts: message.receipts, requirements: requirements, titlesReady: briefSettled, correct: onCorrectGuess)
+                    RequirementChipsView(
+                        receipts: message.receipts, requirements: requirements, titlesReady: briefSettled,
+                        alsoChanged: message.usesReplyLead ? message.alsoChanged : [],
+                        showsReasons: message.usesReplyLead, correct: onCorrectGuess
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -413,6 +439,46 @@ private struct SlidePostFormatCard: View {
     }
 }
 
+/// Footage-step wording that depends on the server's clip cap.
+enum FootageStageCopy {
+    /// "1 clip", "10 clips".
+    static func count(_ value: Int, _ noun: String) -> String {
+        "\(value) \(noun)\(value == 1 ? "" : "s")"
+    }
+
+    /// Talking to camera: one take, or (KRI-719) the take plus clips shown
+    /// while the creator talks when the server allows more than one.
+    static func talkingBody(maximumClipCount: Int) -> String {
+        maximumClipCount > 1
+            ? "Choose the video of you talking, plus any clips to show while you talk."
+            : "Choose one clear take. I’ll keep your voice at the center."
+    }
+
+    /// The Add media sheet's footage subtitle.
+    static func attachmentSubtitle(talking: Bool, maximumClipCount: Int) -> String {
+        talking && maximumClipCount > 1
+            ? "The video of you talking, plus any clips to show while you talk."
+            : "Choose the clips you want Kria to work with."
+    }
+}
+
+/// Per-upload progress, read by the views that draw it rather than held as `@State` by the whole workspace: a
+/// progress tick used to re-evaluate the entire chat screen (every row, the composer, the timeline), several times
+/// a second for as long as anything uploaded. Observation re-runs only the bodies that read `values`.
+@Observable final class UploadProgressStore {
+    var values: [UUID: Double] = [:]
+}
+
+/// One upload's progress bar. Reading the store here, not in the parent, keeps a tick local to the bar.
+struct UploadProgressBar: View {
+    let store: UploadProgressStore
+    let recordID: UUID
+
+    var body: some View {
+        ProgressView(value: store.values[recordID] ?? 0).frame(width: 60).tint(KriaColor.ink)
+    }
+}
+
 struct FootageStage: View {
     let format: CreationFormat
     let mediaCount: Int
@@ -423,7 +489,7 @@ struct FootageStage: View {
     var preparingCount = 0
     /// `BackgroundUploadCoordinator.previewVersion`, so thumbnails re-read from disk as they appear.
     var previewVersion = 0
-    let progress: [UUID: Double]
+    let progress: UploadProgressStore
     let addFootage: () -> Void
     let changeFormat: () -> Void
     var attachedMedia: [CreationAttachedMedia] = []
@@ -446,7 +512,7 @@ struct FootageStage: View {
     /// One bar for every clip on its way. With uploads overlapping, showing only the first upload's
     /// progress would misrepresent the rest; a clip still being prepared counts as 0.
     private var overallProgress: Double {
-        FootageReadiness.overallProgress(uploads: uploads.map { progress[$0.id] ?? 0 }, preparingCount: preparingCount)
+        FootageReadiness.overallProgress(uploads: uploads.map { progress.values[$0.id] ?? 0 }, preparingCount: preparingCount)
     }
     private var visualsReadiness: FootageReadiness {
         FootageReadiness(attachedCount: format.usesVisualPool ? visualCount : 0, pendingCount: uploads.count + preparingCount)
@@ -459,8 +525,8 @@ struct FootageStage: View {
                 bodyText: format.usesVisualPool
                     ? "Choose the photos and videos for your post. You can mix both."
                     : format == .talkingToCamera
-                    ? "Choose one clear take. I’ll keep your voice at the center."
-                    : "Choose the moments you want me to work with. You can add up to \(maximumClipCount) clips."
+                    ? FootageStageCopy.talkingBody(maximumClipCount: maximumClipCount)
+                    : "Choose the moments you want me to work with. You can add up to \(FootageStageCopy.count(maximumClipCount, "clip"))."
             )
 
             Button(action: addFootage) {
@@ -474,7 +540,7 @@ struct FootageStage: View {
                     Text(format.usesVisualPool ? "Add photos & videos" : "Choose videos")
                         .font(KriaFont.body(14).weight(.semibold))
                         .foregroundStyle(KriaColor.ink)
-                    Text(format.usesVisualPool ? "Photos or videos · up to \(maximumClipCount) items" : "MP4, MOV · up to \(maximumClipCount) clips")
+                    Text(format.usesVisualPool ? "Photos or videos · up to \(FootageStageCopy.count(maximumClipCount, "item"))" : "MP4, MOV · up to \(FootageStageCopy.count(maximumClipCount, "clip"))")
                         .font(KriaFont.body(11))
                         .foregroundStyle(KriaColor.zinc)
                 }
@@ -545,7 +611,7 @@ struct FootageStage: View {
                             CreationRecordThumbnail(recordID: record.id, version: previewVersion)
                             Text(BackgroundUploadCoordinator.displayFilename(record.filename)).font(KriaFont.body(12)).lineLimit(1)
                             Spacer()
-                            ProgressView(value: progress[record.id] ?? 0).tint(KriaColor.ink).frame(width: 60)
+                            ProgressView(value: progress.values[record.id] ?? 0).tint(KriaColor.ink).frame(width: 60)
                         }
                     }
                 }
@@ -630,6 +696,7 @@ struct DirectionStage: View {
     /// (older server, nothing choosable) hides the picker; the parent reads the pick
     /// when it sends the approval, so `decide` needs no extra argument.
     var renderShape: (offer: RenderShapeOffer, choice: Binding<RenderShapeChoice>)? = nil
+    var automaticRepairs: Binding<Bool>? = nil
     let isBusy: Bool
     var responseStartedAt: Date? = nil
     /// `decision` is "approve" or "deny". `cleanupChoice` is only meaningful on
@@ -654,8 +721,8 @@ struct DirectionStage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             AssistantHeading(
-                title: "Here’s the direction I’ll use",
-                bodyText: "I’ve shaped a clear creative direction from your footage and what you told me."
+                title: approval.retryOfExecutionID == nil ? "Here’s the direction I’ll use" : "Retry your approved edit",
+                bodyText: approval.retryOfExecutionID == nil ? "I’ve shaped a clear creative direction from your footage and what you told me." : "This reruns the saved edit with the same clips, text, timing and audio."
             )
 
             VStack(alignment: .leading, spacing: 14) {
@@ -668,11 +735,12 @@ struct DirectionStage: View {
                     .foregroundStyle(KriaColor.ink)
                     .copyableMessage(directionTitle, previewShape: RoundedRectangle(cornerRadius: 8))
 
-                Rectangle().fill(KriaColor.line).frame(height: 1)
-
-                DirectionRow(label: "Format", value: "\(format?.title ?? "Video") · short-form")
-                DirectionRow(label: "Rhythm", value: "Natural, intentional")
-                DirectionRow(label: "Opening", value: "The story, right away")
+                if approval.retryOfExecutionID == nil {
+                    Rectangle().fill(KriaColor.line).frame(height: 1)
+                    DirectionRow(label: "Format", value: "\(format?.title ?? "Video") · short-form")
+                    DirectionRow(label: "Rhythm", value: "Natural, intentional")
+                    DirectionRow(label: "Opening", value: "The story, right away")
+                }
             }
             .padding(16)
             .background(KriaColor.sage)
@@ -690,9 +758,20 @@ struct DirectionStage: View {
                 .font(KriaFont.body(12))
                 .foregroundStyle(KriaColor.zinc)
 
+            if let automaticRepairs {
+                Toggle(isOn: automaticRepairs) {
+                    Text("Allow up to 2 automatic repairs")
+                        .font(KriaFont.body(14).weight(.medium))
+                    Text("If a video check fails, Kria can rebuild it with the same clips, text, timing and sound. Permission lasts 30 minutes.")
+                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+                }
+                .disabled(isBusy)
+                .accessibilityIdentifier("automatic-repair-consent")
+            }
+
             cleanupActions
 
-            Button("Change direction") { decide("deny", nil, nil) }
+            Button(approval.retryOfExecutionID == nil ? "Change direction" : "Cancel retry") { decide("deny", nil, nil) }
                 .buttonStyle(CanonicalSecondaryButtonStyle())
                 .disabled(isBusy)
         }
@@ -703,7 +782,7 @@ struct DirectionStage: View {
         let resolution = cleanupResolution
         switch resolution.offer {
         case .plain:
-            Button("Create this video") { decide("approve", nil, resolution.analysisID) }
+            Button(approval.retryOfExecutionID == nil ? "Create this video" : "Retry approved edit") { decide("approve", nil, resolution.analysisID) }
                 .buttonStyle(CanonicalPrimaryButtonStyle())
                 .disabled(isBusy)
         case .checking:
@@ -1016,6 +1095,64 @@ struct QuestionOptionButton: View {
     }
 }
 
+/// Newest-unanswered-question state for `ReplyOptionChips`. History rows get no mode, so they draw no chips.
+struct ReplyOptionsMode {
+    /// Sends the tapped label as a normal user message (plain text, no structured answer).
+    let select: (String) -> Void
+    /// "Other…": puts the creator in the composer; nothing is sent.
+    let other: () -> Void
+}
+
+/// A filled capsule: no stroke, Inter, 44pt tap height. Shared by the reply-option chips so the style
+/// lives in one place (the outlined `PromptChip` predates the no-borders rule and is left alone).
+struct KriaFilledChip: View {
+    let text: String
+    var systemImage: String? = nil
+    var foreground: Color = KriaColor.ink
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(text)
+                    .font(KriaFont.body(13).weight(.medium))
+                    .multilineTextAlignment(.leading)
+                if let systemImage {
+                    Image(systemName: systemImage).font(.system(size: 11, weight: .semibold))
+                }
+            }
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 44)
+            .background(KriaColor.fill)
+            .clipShape(Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(text)
+    }
+}
+
+/// The offered answers of a clarifying question as tappable chips, plus "Other…" to type a different one.
+struct ReplyOptionChips: View {
+    let options: [String]
+    let mode: ReplyOptionsMode
+
+    var body: some View {
+        PlanChipFlow(spacing: 8) {
+            ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                KriaFilledChip(text: option) { mode.select(option) }
+                    .accessibilityIdentifier("reply-option-\(index)")
+            }
+            KriaFilledChip(text: "Other…", systemImage: "pencil", foreground: KriaColor.mutedInk, action: mode.other)
+                .accessibilityIdentifier("reply-option-other")
+        }
+        .padding(.top, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("reply-options")
+    }
+}
+
 struct FailedStage: View {
     var title = "Your video wasn't made"
     var bodyText = "Your direction and footage are safe. Refresh the project or tell me what you want to change."
@@ -1187,41 +1324,109 @@ struct ChatComposer: View {
     var blocksSubmission = false
     var placeholder = "Tell Kria what you want…"
     var isFocused: FocusState<Bool>.Binding
+    /// KRI-742: pass a controller (only when the server advertises `voice_dictation`) to show the mic.
+    var dictation: DictationController? = nil
+    var dictationTerms: () -> [String] = { [] }
     let attach: () -> Void
     let send: () -> Void
 
+    private var dictationIsBusy: Bool {
+        dictation.map { $0.phase == .finalizing || $0.phase == .requestingPermission } ?? false
+    }
     private var canSend: Bool {
         (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || canSendWithoutText) && !isSending && !blocksSubmission
-            && !ChatSubmission.isBareCorrectionStub(text)
+            && !ChatSubmission.isBareCorrectionStub(text) && !dictationIsBusy
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 4) {
-            Button(action: attach) { KriaIcon(.plus).frame(width: 44, height: 44) }
-                .disabled(!canAttach).accessibilityLabel("Attach footage")
-                .accessibilityHint(canAttach ? "" : "Choose a video format first")
-            TextField(placeholder, text: $text, axis: .vertical)
-                .font(KriaFont.body(15)).lineLimit(1...4)
-                .frame(minHeight: 44).accessibilityLabel("Message Kria")
-                .focused(isFocused)
-                .submitLabel(.send)
-                .onSubmit {
-                    if canSend {
-                        send()
-                    } else {
-                        isFocused.wrappedValue = false
+        VStack(alignment: .leading, spacing: 0) {
+            if let notice = dictation?.notice {
+                Text(notice)
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                    .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 2)
+                    .accessibilityIdentifier("chat-dictation-notice")
+            }
+            HStack(alignment: .bottom, spacing: 4) {
+                Button(action: attach) { KriaIcon(.plus).frame(width: 44, height: 44) }
+                    .disabled(!canAttach).accessibilityLabel("Attach footage")
+                    .accessibilityHint(canAttach ? "" : "Choose a video format first")
+                TextField(dictation?.isListening == true && text.isEmpty ? "Listening…" : placeholder, text: $text, axis: .vertical)
+                    .font(KriaFont.body(15)).lineLimit(1...4)
+                    .frame(minHeight: 44).accessibilityLabel("Message Kria")
+                    .focused(isFocused)
+                    .submitLabel(.send)
+                    // Dictated words are written into the field; typing over them mid-sentence would race the recognizer.
+                    .disabled(dictation?.isActive == true)
+                    .onSubmit {
+                        if canSend {
+                            send()
+                        } else {
+                            isFocused.wrappedValue = false
+                        }
                     }
+                if let dictation {
+                    Button { toggleDictation(dictation) } label: { DictationMicLabel(dictation: dictation) }
+                        .disabled(dictationIsBusy || (isSending && !dictation.isListening))
+                        .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate message")
+                        .accessibilityIdentifier("chat-dictate")
                 }
-            Button(action: send) {
-                Image(systemName: isSending ? "ellipsis" : "arrow.up")
-                    .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
-                    .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
-            }.disabled(!canSend).opacity(canSend ? 1 : 0.45)
-                .accessibilityLabel(isSending ? "Sending message" : (canSendWithoutText && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Send clips" : "Send message"))
-                .accessibilityIdentifier("chat-send-message")
+                Button(action: sendTapped) {
+                    Image(systemName: isSending ? "ellipsis" : "arrow.up")
+                        .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+                        .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
+                }.disabled(!canSend).opacity(canSend ? 1 : 0.45)
+                    .accessibilityLabel(isSending ? "Sending message" : (canSendWithoutText && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Send clips" : "Send message"))
+                    .accessibilityIdentifier("chat-send-message")
+            }
         }
         .padding(7).kriaFloatingSurface(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .padding(.horizontal, 14).padding(.vertical, 12)
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: dictation?.phase)
+        .onDisappear { dictation?.cancel() }
+    }
+
+    private func toggleDictation(_ dictation: DictationController) {
+        if dictation.isActive {
+            Task { await dictation.stop() }
+        } else {
+            isFocused.wrappedValue = false
+            dictation.start(base: text, contextTerms: dictationTerms()) { text = $0 }
+        }
+    }
+
+    /// Sending while the mic is live finishes the dictation first, so the message carries the final text.
+    private func sendTapped() {
+        guard let dictation, dictation.isListening else { send(); return }
+        Task {
+            await dictation.stop()
+            if canSend { send() }
+        }
+    }
+}
+
+/// The mic button's face: a mic at rest, a stop square inside a ring that breathes with the voice while
+/// listening, a spinner while the server pass runs.
+struct DictationMicLabel: View {
+    let dictation: DictationController
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            switch dictation.phase {
+            case .idle:
+                Image(systemName: "mic").font(.system(size: 19, weight: .medium)).foregroundStyle(KriaColor.ink)
+            case .requestingPermission, .finalizing:
+                ProgressView().controlSize(.small).tint(KriaColor.ink)
+            case .listening:
+                Circle().fill(KriaColor.butter.opacity(0.55))
+                    .scaleEffect(KriaMotion.isReduced(reduceMotion) ? 1 : 1 + dictation.level * 0.22)
+                    .animation(.easeOut(duration: 0.08), value: dictation.level)
+                Circle().fill(KriaColor.butter).frame(width: 34, height: 34)
+                Image(systemName: "stop.fill").font(.system(size: 13, weight: .bold)).foregroundStyle(KriaColor.ink)
+            }
+        }
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
     }
 }
 

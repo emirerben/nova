@@ -699,7 +699,46 @@ class DispatchResult:
 # earlier policy layer (`app.agents._schemas.creator_policy
 # .effective_render_program`) already raises for a proposed strategy before
 # a Job ever exists. Keep the two in sync if either wording changes.
-PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
+class _PhoneGateMessages(dict[str, tuple[str, str]]):
+    """`PHONE_GATE_MESSAGES` with one flag-aware entry (KRI-719).
+
+    `subtitled_clip_count_unsupported` says "exactly one clip" in the stored
+    table. When multi-clip Talking is live the same reason means "more than the
+    cap", so reads (`[...]` / `.get`) swap in the matching sentence at call
+    time. Flag off: the stored table is returned untouched. Membership, `items`
+    and `values` still see the stored (flag-off) entry; only the code is read
+    from those.
+    """
+
+    _KEY = "subtitled_clip_count_unsupported"
+
+    def _live(self, key: object, stored: tuple[str, str]) -> tuple[str, str]:
+        if key != self._KEY:
+            return stored
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            TALKING_MULTI_CLIP_MAX_CLIPS,
+            phone_talking_multi_clip_supported,
+        )
+
+        if not phone_talking_multi_clip_supported():
+            return stored
+        return (
+            stored[0],
+            "Talking-to-camera videos render on your iPhone with up to "
+            f"{TALKING_MULTI_CLIP_MAX_CLIPS} clips. Remove the extra clips and try "
+            "again. No fallback edit was rendered.",
+        )
+
+    def __getitem__(self, key: str) -> tuple[str, str]:
+        return self._live(key, super().__getitem__(key))
+
+    def get(self, key, default=None):  # type: ignore[no-untyped-def,override]
+        if key not in self:
+            return default
+        return self[key]
+
+
+_PHONE_GATE_MESSAGES_STORED: dict[str, tuple[str, str]] = {
     "device_render_unsupported": (
         "device_render_unsupported",
         "This project cannot render entirely on this iPhone. Its existing video is unchanged.",
@@ -793,6 +832,7 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
         "Ask for this edit without your song. No fallback edit was rendered.",
     ),
 }
+PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = _PhoneGateMessages(_PHONE_GATE_MESSAGES_STORED)
 
 
 # `Job.failure_reason` -> a human sentence for the client's failure card
@@ -2187,9 +2227,11 @@ def _dispatch_item_render(
         )
         from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
         from app.services.phone_rollout import (  # noqa: PLC0415
+            TALKING_MULTI_CLIP_MAX_CLIPS,
             phone_guided_narration_supported,
             phone_render_supported_formats,
             phone_talking_head_supported,
+            phone_talking_multi_clip_supported,
         )
         from app.services.phone_sources import bind_phone_sources  # noqa: PLC0415
 
@@ -2327,13 +2369,25 @@ def _dispatch_item_render(
                     if "subtitled" not in supported_now:
                         phone_gate = "unsupported_format"
                         raise ValueError(f"analysis proxies cannot render '{fmt}' on iPhone yet")
-                    if len(clip_paths) != 1:
+                    # KRI-719: with multi-clip Talking live, 1..MAX clips are
+                    # fine (speakers + cutaways). Flag off: exactly one.
+                    _subtitled_max_clips = (
+                        TALKING_MULTI_CLIP_MAX_CLIPS if phone_talking_multi_clip_supported() else 1
+                    )
+                    if not 1 <= len(clip_paths) <= _subtitled_max_clips:
                         # `compile_phone_subtitled_plan` also enforces
-                        # exactly one clip, but failing closed HERE avoids
+                        # the clip count, but failing closed HERE avoids
                         # binding phone sources and minting a Job that is
                         # doomed to fail once the worker picks it up.
                         phone_gate = "subtitled_clip_count_unsupported"
-                        raise ValueError("subtitled phone rendering requires exactly one clip")
+                        raise ValueError(
+                            "subtitled phone rendering requires "
+                            + (
+                                f"1 to {_subtitled_max_clips} clips"
+                                if _subtitled_max_clips > 1
+                                else "exactly one clip"
+                            )
+                        )
                 elif fmt not in supported_now:
                     phone_gate = "unsupported_format"
                     raise ValueError(f"analysis proxies cannot render '{fmt}' on iPhone yet")
@@ -2364,13 +2418,22 @@ def _dispatch_item_render(
                     _MAX_CLIP_DURATION_S as _SUBTITLED_MAX_CLIP_S,
                 )
 
-                _original = getattr(phone_sources[0], "original", None)
-                _duration = getattr(_original, "duration_s", None)
-                if isinstance(_duration, int | float) and _duration > _SUBTITLED_MAX_CLIP_S:
-                    # Deterministic compiler reject otherwise: fail closed
-                    # before minting a Job that can never render.
-                    phone_gate = "subtitled_clip_too_long"
-                    raise ValueError("subtitled phone rendering clip exceeds the max duration")
+                # KRI-719: a multi-clip declared Talking item checks EVERY
+                # source (any over-cap clip dooms the render); anything else
+                # keeps the first-source-only check byte-identical.
+                _checked_sources = (
+                    phone_sources
+                    if fmt == "subtitled" and phone_talking_multi_clip_supported()
+                    else phone_sources[:1]
+                )
+                for _source in _checked_sources:
+                    _original = getattr(_source, "original", None)
+                    _duration = getattr(_original, "duration_s", None)
+                    if isinstance(_duration, int | float) and _duration > _SUBTITLED_MAX_CLIP_S:
+                        # Deterministic compiler reject otherwise: fail closed
+                        # before minting a Job that can never render.
+                        phone_gate = "subtitled_clip_too_long"
+                        raise ValueError("subtitled phone rendering clip exceeds the max duration")
         # KRI-174 Phase 1.5: admin-authored via `PUT
         # /admin/plan-items/{id}/phone-lanes` (`PlanItem.phone_lane_request`).
         # Gated on the same flag `_run_phone_subtitled_job` checks, plus the

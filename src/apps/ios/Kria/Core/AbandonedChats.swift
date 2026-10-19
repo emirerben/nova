@@ -20,6 +20,28 @@ struct ChatDraftStore {
     private var all: [String: String] { defaults.dictionary(forKey: Self.key) as? [String: String] ?? [:] }
 }
 
+/// Chats known to hold a user message. That never stops being true, so a chat in this set can never be an
+/// abandoned-chat candidate, and the full read the sweep (and leaving a chat) makes to find out is skipped.
+struct ChatKeeperStore {
+    private let defaults: UserDefaults
+    private static let key = "kria.chats-with-user-messages"
+    /// Oldest entries fall off first; a forgotten chat only costs one more read.
+    static let limit = 1000
+
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+
+    func contains(_ id: UUID) -> Bool { all.contains(id.uuidString) }
+
+    func insert(_ id: UUID) {
+        var ids = all
+        guard !ids.contains(id.uuidString) else { return }
+        ids.append(id.uuidString)
+        defaults.set(Array(ids.suffix(Self.limit)), forKey: Self.key)
+    }
+
+    private var all: [String] { defaults.stringArray(forKey: Self.key) ?? [] }
+}
+
 enum AbandonedChat {
     /// A chat is abandoned when nothing was ever sent, nothing is staged, and the composer is empty.
     /// Staged media counts as a draft, same as unsent text.

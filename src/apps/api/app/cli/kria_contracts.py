@@ -17,6 +17,8 @@ from app.kria.api_schemas import (
     DraftUndoBody,
     DraftWriteBody,
     KriaProblemOut,
+    RenderRetryBody,
+    RenderRetryOut,
     SubmitTurnBody,
     ThreadDeltaOut,
     TurnAccepted,
@@ -36,6 +38,7 @@ from app.kria.device_render import (
     DeviceRenderFailureOut,
     DeviceRenderIdentity,
     DeviceRenderStatus,
+    DeviceRenderStatusOut,
     DeviceRetryBody,
     DeviceRetryOut,
 )
@@ -122,6 +125,8 @@ class SlidePostMutationResponse(BaseModel):
 
 
 API_MODELS = (
+    RenderRetryBody,
+    RenderRetryOut,
     SubmitTurnBody,
     TurnAccepted,
     TurnCancelBody,
@@ -151,6 +156,7 @@ MOBILE_API_MODELS = (
     DeviceAssetDownloadBody,
     DeviceAssetDownloadOut,
     DeviceRenderStatus,
+    DeviceRenderStatusOut,
     DeviceRenderCapabilities,
     DeviceExportReservationBody,
     DeviceExportReservationOut,
@@ -579,6 +585,15 @@ def mobile_openapi_json() -> str:
                     "responses": _json_responses(TurnAccepted, status_code="202"),
                 },
             },
+            "/creation-threads/{thread_id}/render-retries": {
+                "parameters": [thread_id],
+                "post": {
+                    "operationId": "retryApprovedRender",
+                    "security": bearer,
+                    "requestBody": _json_request(RenderRetryBody),
+                    "responses": _json_responses(RenderRetryOut, status_code="202"),
+                },
+            },
             "/creation-threads/{thread_id}/messages": {
                 "parameters": [thread_id],
                 "post": {
@@ -906,7 +921,7 @@ def mobile_openapi_json() -> str:
                             "schema": {"type": "string", "minLength": 1, "maxLength": 160},
                         }
                     ],
-                    "responses": _json_responses(DeviceRenderStatus),
+                    "responses": _json_responses(DeviceRenderStatusOut),
                 },
             },
             "/me/jobs/{job_id}/device-render/assets": {

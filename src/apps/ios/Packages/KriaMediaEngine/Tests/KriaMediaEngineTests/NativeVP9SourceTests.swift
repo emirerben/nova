@@ -61,7 +61,8 @@ final class NativeVP9SourceTests: XCTestCase {
         }
         let again = try await NativeVP9Source.shared.prepare(source, cacheDirectory: cache)
         XCTAssertEqual(output, again)
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: cache.path).count, 1)
+        // One proxy, however often it is prepared. (The cache directory also holds remembered source fingerprints.)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: cache.path).filter { $0.hasSuffix(".mp4") }.count, 1)
         let passthrough = try await NativeVP9Source.shared.prepare(output, cacheDirectory: cache)
         XCTAssertEqual(passthrough, output)
     }

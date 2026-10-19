@@ -757,6 +757,30 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-708-caption-correction"),
             ),
             (
+                "src/apps/api/app/pipeline/phone_spoken_text.py",
+                (True, "covered", "kri-707-talking-spoken-text"),
+            ),
+            (
+                "src/apps/api/app/kria/spoken_text_ask.py",
+                (True, "covered", "kri-707-talking-spoken-text"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_talking_cutaways.py",
+                (True, "covered", "kri-719-talking-multi-clip"),
+            ),
+            (
+                "src/apps/api/app/kria/duplicate_send.py",
+                (True, "covered", "kri-552-duplicate-resend"),
+            ),
+            (
+                "src/apps/api/app/kria/text_trim.py",
+                (True, "covered", "kri-552-duplicate-resend"),
+            ),
+            (
+                "src/apps/api/tests/pipeline/test_phone_talking_cutaways.py",
+                (True, "covered", "kri-719-talking-multi-clip"),
+            ),
+            (
                 "src/apps/api/app/services/length_planning.py",
                 (True, "covered", "kri-681-named-line-windows"),
             ),
@@ -794,7 +818,23 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/device_render.py",
-                (True, "covered", "kri-669-gameday"),
+                (
+                    True,
+                    "covered",
+                    "kri-492-length-ownership,kri-669-gameday,kri-726-background-recovery",
+                ),
+            ),
+            (
+                "src/apps/api/app/kria/automatic_export_repair.py",
+                (True, "covered", "kri-726-background-recovery"),
+            ),
+            (
+                "src/apps/api/app/tasks/export_verification.py",
+                (True, "covered", "kri-726-background-recovery"),
+            ),
+            (
+                "src/apps/api/tests/integration/test_background_export_completion.py",
+                (True, "covered", "kri-726-background-recovery"),
             ),
             (
                 "src/apps/api/app/pipeline/pinned_text.py",

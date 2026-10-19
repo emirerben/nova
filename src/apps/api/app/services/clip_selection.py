@@ -9,6 +9,10 @@ Everything is derived from the thread's own events (question payloads + the user
 carrying ``clip_selection``), so selections persist across later turns without extra
 state: the full creator request is re-planned every turn and these are re-applied to the
 same intents.
+
+KRI-697: a re-plan rewords the model-written ``attribute`` (and so the key), so each
+category also carries the intent's ``intent_id`` and ``creator_text``; an answer stays
+bound to those across turns and the newest answer for an intent wins.
 """
 
 from __future__ import annotations
@@ -18,12 +22,13 @@ import unicodedata
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from itertools import groupby
+from typing import Any, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.kria.reply_language import say
-from app.schemas.clip_intents import ClipIntent
+from app.schemas.clip_intents import ClipIntent, ClipIntentOp
 
 CLIP_QUESTION_VERSION = 1
 MAX_QUESTION_CLIPS = 50  # == MAX_CREATOR_MEDIA_REFS
@@ -35,6 +40,10 @@ _FALLBACK_MIN_SIMILARITY = 0.5
 # clips a creator tapped for "include: laundry" can never become the clips an
 # "exclude: laundry" leaves out (an exclude is never a picker category of its own).
 _MEMBERSHIP_OPS = frozenset({"group", "include"})
+# KRI-697: an `intent_id` binds an answer only with a 4+ letter word outside these generic
+# words AND not as one word plus digits ("clip_1", "media2"): a re-plan may reuse those
+# positional ids for a different intent. A descriptive id ("caption_rule3_text") binds.
+_GENERIC_ID_WORDS = frozenset({*get_args(ClipIntentOp), "intent", "item"})
 
 
 class _Strict(BaseModel):
@@ -83,7 +92,10 @@ def _words(text: str) -> list[str]:
 
 
 def intent_key(intent: ClipIntent) -> str:
-    """Stable per-category key: normalised op + attribute (``include:dodgeball``)."""
+    """Per-category key: normalised op + attribute (``include:dodgeball``).
+
+    Stable within a turn only: a re-plan may reword the attribute (see ``_identities``).
+    """
     slug = "-".join(_words(intent.attribute))
     return f"{intent.op}:{slug}"[:_KEY_MAX]
 
@@ -97,6 +109,24 @@ def _ops_compatible(a: str, b: str) -> bool:
     return a == b or (a in _MEMBERSHIP_OPS and b in _MEMBERSHIP_OPS)
 
 
+def _identities(intent_id: object, creator_text: object) -> list[str]:
+    """What a picker answer stays bound to when a later turn rewords the row (KRI-697)."""
+    out: list[str] = []
+    if isinstance(intent_id, str):
+        folded = intent_id.casefold()
+        words = ["".join(run) for alpha, run in groupby(folded, str.isalpha) if alpha]
+        # One word, then an optional separator and digits: "clip_1", "media2", "slot".
+        tail = folded.removeprefix(words[0]) if len(words) == 1 else None
+        if tail is not None and tail[:1] in ("_", "-"):
+            tail = tail[1:]
+        positional = tail is not None and (tail == "" or tail.isdigit())
+        if not positional and any(len(w) >= 4 and w not in _GENERIC_ID_WORDS for w in words):
+            out.append(f"id:{intent_id}")
+    if isinstance(creator_text, str) and (text := "-".join(_words(creator_text))):
+        out.append(f"text:{text}")
+    return out
+
+
 # ── Question construction ─────────────────────────────────────────────────────
 
 
@@ -105,10 +135,38 @@ def category_label(intent: ClipIntent) -> str:
     return " ".join(intent.attribute.split()) or "these clips"
 
 
+def _photo_candidates(
+    kept: list[dict[str, Any]], media_kinds: dict[str, str]
+) -> list[dict[str, str]]:
+    """KRI-693: the question's photo candidates, named in the chat's language.
+
+    A candidate id says nothing about its kind, so the app drew a Visuals photo as
+    "Clip 9". Only photos get an entry (video rows are unchanged), numbered in clip
+    order among the photos this question actually offers.
+    """
+    offered = {m for cat in kept for m in cat["candidate_media_ids"]}
+    photos = [m for m, kind in media_kinds.items() if kind == "image" and m in offered]
+    return [
+        {
+            "media_id": media_id,
+            "kind": "image",
+            "label": say(en=f"Photo {n}", tr=f"Fotoğraf {n}"),
+        }
+        for n, media_id in enumerate(photos, 1)
+    ]
+
+
 def build_clip_question(
-    categories: list[dict[str, Any]], *, question_id: str | None = None
+    categories: list[dict[str, Any]],
+    *,
+    question_id: str | None = None,
+    media_kinds: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
-    """The additive ``clip_question`` payload; ``None`` when there is nothing to pick from."""
+    """The additive ``clip_question`` payload; ``None`` when there is nothing to pick from.
+
+    ``media_kinds`` (media id -> ``"video"``/``"image"``, in clip order) lets the payload
+    name its photo candidates; without it, or with no photo offered, the payload is unchanged.
+    """
     kept: list[dict[str, Any]] = []
     seen: set[str] = set()
     for cat in categories:
@@ -122,6 +180,8 @@ def build_clip_question(
                 "key": cat["key"],
                 "label": cat["label"][:80],
                 "op": cat["op"],
+                # KRI-697: the answer's identity across re-plans (the app ignores these).
+                **{f: cat[f] for f in ("intent_id", "creator_text") if cat.get(f)},
                 "candidate_media_ids": candidates,
                 "suggested_media_ids": [
                     m for m in dict.fromkeys(cat.get("suggested_media_ids") or []) if m in allowed
@@ -130,11 +190,14 @@ def build_clip_question(
         )
     if not kept:
         return None
+    kept = kept[:MAX_QUESTION_CATEGORIES]
+    photos = _photo_candidates(kept, media_kinds) if media_kinds else []
     return {
         "version": CLIP_QUESTION_VERSION,
         "question_id": question_id or str(uuid.uuid4()),
-        "categories": kept[:MAX_QUESTION_CATEGORIES],
+        "categories": kept,
         "allow_none": True,
+        **({"candidate_media": photos} if photos else {}),
     }
 
 
@@ -176,20 +239,34 @@ def clip_question_text(categories: list[dict[str, Any]]) -> str:
 class SelectionEntry:
     media_ids: tuple[str, ...] = ()
     none: bool = False
+    # Order of the creator's answer in the thread: the newest answer for an intent wins.
+    seq: int = field(default=0, compare=False)
 
 
 @dataclass(frozen=True)
 class ClipSelections:
     by_key: dict[str, SelectionEntry] = field(default_factory=dict)
+    # ``_identities`` value -> (op the answer was given under, newest answer).
+    by_identity: dict[str, tuple[str, SelectionEntry]] = field(default_factory=dict)
 
     def __bool__(self) -> bool:
         return bool(self.by_key)
 
     def match(self, intent: ClipIntent) -> SelectionEntry | None:
-        """Exact key first, then token-set similarity on the attribute (op-compatible)."""
+        """Newest of the exact key / identity answers, else token-set similarity.
+
+        Every route is op-compatible. Identity (``intent_id`` / ``creator_text``) keeps an
+        answer when a re-plan rewords the attribute ("when I say ..." -> "the clip for
+        rule 3"), which token similarity cannot (KRI-697).
+        """
         key = intent_key(intent)
-        if key in self.by_key:
-            return self.by_key[key]
+        hits = [self.by_key[key]] if key in self.by_key else []
+        for identity in _identities(intent.intent_id, intent.creator_text):
+            op, entry = self.by_identity.get(identity, ("", None))
+            if entry is not None and _ops_compatible(op, intent.op):
+                hits.append(entry)
+        if hits:
+            return max(hits, key=lambda e: e.seq)
         want = set(_words(intent.attribute))
         if not want:
             return None
@@ -234,6 +311,14 @@ def fold_clip_selections(
     """Replay question/selection events (chronological) into the standing selections."""
     questions: dict[str, dict[str, Any]] = {}
     by_key: dict[str, SelectionEntry] = {}
+    by_identity: dict[str, tuple[str, SelectionEntry]] = {}
+
+    def record(category: dict[str, Any], entry: SelectionEntry) -> None:
+        by_key[category["key"]] = entry
+        for identity in _identities(category.get("intent_id"), category.get("creator_text")):
+            by_identity[identity] = (str(category.get("op") or ""), entry)
+
+    seq = 0
     for role, payload in events:
         if not isinstance(payload, dict):
             continue
@@ -247,17 +332,22 @@ def fold_clip_selections(
         question = questions.get(str(selection.get("question_id")))
         if question is None:
             continue
-        keys = [c.get("key") for c in question.get("categories", []) if c.get("key")]
+        categories = {
+            c["key"]: c
+            for c in question.get("categories", [])
+            if isinstance(c, dict) and c.get("key")
+        }
+        seq += 1
         if selection.get("skipped"):
-            for key in keys:
-                by_key[key] = SelectionEntry(none=True)
+            for category in categories.values():
+                record(category, SelectionEntry(none=True, seq=seq))
             continue
         for answer in selection.get("answers", []):
-            key = answer.get("key")
-            if key in keys:
+            category = categories.get(answer.get("key"))
+            if category is not None:
                 ids = tuple(answer.get("media_ids") or ())
-                by_key[key] = SelectionEntry(media_ids=ids, none=not ids)
+                record(category, SelectionEntry(media_ids=ids, none=not ids, seq=seq))
         for key in selection.get("none_keys", []):
-            if key in keys:
-                by_key[key] = SelectionEntry(none=True)
-    return ClipSelections(by_key)
+            if key in categories:
+                record(categories[key], SelectionEntry(none=True, seq=seq))
+    return ClipSelections(by_key, by_identity)

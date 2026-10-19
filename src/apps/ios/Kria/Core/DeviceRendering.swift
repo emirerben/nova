@@ -14,9 +14,13 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
     let publishedGeneration: String?
     /// Saved document bound to the immutable recipe, including while its export is pending.
     let baseGeneration: String?
-    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation", baseGeneration = "base_generation" }
-    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil, baseGeneration: String? = nil) {
+    let retryRequiresApproval: Bool
+    let outputVerificationRequired: Bool
+    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation", baseGeneration = "base_generation", retryRequiresApproval = "retry_requires_approval", outputVerificationRequired = "output_verification_required" }
+    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil, baseGeneration: String? = nil, retryRequiresApproval: Bool = false, outputVerificationRequired: Bool = false) {
         self.phase = phase; self.request = request; self.reason = reason; self.reasonCode = reasonCode; self.publishedGeneration = publishedGeneration; self.baseGeneration = baseGeneration
+        self.retryRequiresApproval = retryRequiresApproval
+        self.outputVerificationRequired = outputVerificationRequired
     }
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -25,6 +29,8 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
         reasonCode = try container.decodeIfPresent(String.self, forKey: .reasonCode)
         publishedGeneration = try container.decodeIfPresent(String.self, forKey: .publishedGeneration)
         baseGeneration = try container.decodeIfPresent(String.self, forKey: .baseGeneration)
+        retryRequiresApproval = try container.decodeIfPresent(Bool.self, forKey: .retryRequiresApproval) ?? false
+        outputVerificationRequired = try container.decodeIfPresent(Bool.self, forKey: .outputVerificationRequired) ?? false
         let raw = try container.decode(JSONValue.self, forKey: .request)
         request = try RecipeJSON.decoder().decode(DeviceRenderRequest.self, from: JSONEncoder().encode(raw))
         try request.recipe.validate()
@@ -124,7 +130,22 @@ extension KriaAPI {
     }
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws {
         let result = try await request(path: "me/jobs/\(body.identity.jobID.uuidString)/device-render/complete", method: "POST", bodyData: RecipeJSON.encoder().encode(body), decode: DeviceExportCompletion.self)
-        guard result.status == "published" else { throw APIError.invalidResponse }
+        if result.status == "published" { return }
+        guard result.status == "checking" else { throw APIError.invalidResponse }
+        // The committed worker check survives app suspension or a lost HTTP
+        // response. Poll only lightweight status reads, never completion POSTs.
+        // A network failure leaves the local receipt resumable; no rerender.
+        for _ in 0..<450 {
+            try await Task.sleep(for: .seconds(2))
+            let status = try await deviceRender(jobID: body.identity.jobID, variantID: body.identity.variantID)
+            guard status.request.identity == body.identity else { throw APIError.conflict }
+            if status.phase == "published" {
+                guard status.publishedGeneration == body.attemptID.uuidString.lowercased() else { throw APIError.conflict }
+                return
+            }
+            guard status.phase == "syncing" else { throw APIError.conflict }
+        }
+        throw URLError(.timedOut)
     }
     func reportDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, reasonCode: String, detail: String) async throws -> DeviceRenderFailureAck {
         try await request(
@@ -166,6 +187,21 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
     let api: any KriaAPIClient
     // A separate session keeps API Bearer credentials out of storage PUT requests.
     var uploadSession: URLSession = URLSession(configuration: .ephemeral)
+    private static func acceptsStorageURL(_ url: URL) -> Bool {
+        if url.scheme == "https" { return true }
+        #if DEBUG
+        // Explicit scratch-API hardware journey only. Release storage stays HTTPS.
+        guard ProcessInfo.processInfo.arguments.contains("-ui-testing-retry-api"),
+              let address = ProcessInfo.processInfo.environment["KRIA_RETRY_TEST_API_URL"],
+              let base = URL(string: address), let host = base.host,
+              host == "localhost" || host == "127.0.0.1" || host.hasPrefix("192.168.") || host.hasPrefix("10."),
+              base.scheme == "http", url.scheme == "http", url.host == host,
+              url.port == base.port, url.path.hasPrefix("/kri674-storage/") else { return false }
+        return true
+        #else
+        return false
+        #endif
+    }
     func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool {
         do {
             let status = try await api.deviceRender(jobID: identity.jobID, variantID: identity.variantID)
@@ -184,7 +220,7 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         }
         let fingerprint = try await Task.detached { try SHA256Fingerprinter().fingerprint(file: file) }.value
         let reservation = try await api.reserveDeviceExport(DeviceExportUploadBody(identity: identity, attemptID: attemptID, fileSizeBytes: fingerprint.byteCount, sha256: fingerprint.hex, brandTail: brandTail))
-        guard reservation.attemptID == attemptID, reservation.uploadURL.scheme == "https", reservation.expiresAt > Date() else { throw APIError.invalidResponse }
+        guard reservation.attemptID == attemptID, Self.acceptsStorageURL(reservation.uploadURL), reservation.expiresAt > Date() else { throw APIError.invalidResponse }
         var put = URLRequest(url: reservation.uploadURL)
         put.httpMethod = "PUT"
         for (name, value) in reservation.uploadHeaders { put.setValue(value, forHTTPHeaderField: name) }
@@ -334,6 +370,19 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
             urls[asset.id] = try await Task.detached {
                 try PlayableAudioFile.prepare(source: verified, fingerprint: fingerprint, directory: playableAudio)
             }.value
+        }
+        if let recovery = request.recovery {
+            guard recovery.action == "normalize_sources", (1...2).contains(recovery.attempt),
+                  !recovery.assetIDs.isEmpty, recovery.assetIDs.count <= 16,
+                  Set(recovery.assetIDs).count == recovery.assetIDs.count else { throw APIError.invalidResponse }
+            let directory = project.appending(path: "repair-sources/\(request.identity.recipeRevision)", directoryHint: .isDirectory)
+            for id in recovery.assetIDs {
+                guard let asset = manifest.assets.first(where: { $0.id == id }),
+                      case .original = asset.source, let original = urls[id] else { throw APIError.invalidResponse }
+                // `PortableAssetResolver` above has just checked the approved
+                // original fingerprint. A decoding copy changes no recipe field.
+                urls[id] = try await NativeVP9Source.shared.prepare(original, cacheDirectory: directory, forceNormalization: true)
+            }
         }
         return urls
     }

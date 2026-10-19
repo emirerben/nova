@@ -628,6 +628,46 @@ def render_notes_from_overlay_receipt(receipt: dict[str, Any] | None) -> list[st
     return notes
 
 
+def render_notes_from_talking_multi_clip_receipt(receipt: dict[str, Any] | None) -> list[str]:
+    """KRI-719: creator-safe lines for a multi-clip phone Talking edit's
+    `phone_talking_multi_clip` receipt -- how many clips spoke back to back,
+    how many other clips covered them, and which clip found no room (named
+    by its upload position, the order the chat lists them in). ``[]`` for
+    ``None``, a non-dict, or a receipt with nothing to say."""
+    if not isinstance(receipt, dict):
+        return []
+    speakers = receipt.get("speaker_media_ids")
+    speaker_n = len(speakers) if isinstance(speakers, list) else 0
+    cutaways = receipt.get("cutaways")
+    shown_n = (
+        len({row.get("media_id") for row in cutaways if isinstance(row, dict)})
+        if isinstance(cutaways, list)
+        else 0
+    )
+    unplaced = receipt.get("unplaced")
+    unplaced_rows = (
+        [row for row in unplaced if isinstance(row, dict)] if isinstance(unplaced, list) else []
+    )
+    notes: list[str] = []
+    if speaker_n > 1:
+        notes.append(f"Played your {speaker_n} talking clips back to back")
+    footage_n = shown_n + len(unplaced_rows)
+    if footage_n:
+        noun = "clip" if footage_n == 1 else "clips"
+        if unplaced_rows:
+            notes.append(f"Showed {shown_n} of your {footage_n} other {noun} full screen")
+        else:
+            notes.append(f"Showed your {footage_n} other {noun} full screen while you talk")
+    for row in unplaced_rows[:_MAX_MISSED_DETAIL_LINES]:
+        position = row.get("position")
+        name = f"clip {position}" if isinstance(position, int) and position > 0 else "one clip"
+        if row.get("reason") == "clip_too_short":
+            notes.append(f"{name.capitalize()} was too short to show")
+        else:
+            notes.append(f"There wasn't room in the video to show {name} too")
+    return notes
+
+
 _HUMANIZERS: dict[tuple[str, str], _Humanizer] = {
     ("assembly", "clip_metadata_done"): _humanize_clip_metadata_done,
     ("assembly", "song_match_done"): _humanize_song_match_done,

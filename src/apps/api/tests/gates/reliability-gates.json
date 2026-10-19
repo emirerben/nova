@@ -771,7 +771,7 @@
       "tickets": [
         "KRI-542"
       ],
-      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana d\u00f6n\u00fc\u015ft\u00fcremedim').",
+      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana dönüştüremedim').",
       "boundary": "model_budget",
       "fix_prs": [
         1493
@@ -808,7 +808,8 @@
         "KRI-533",
         "KRI-537",
         "KRI-541",
-        "KRI-549"
+        "KRI-549",
+        "KRI-551"
       ],
       "symptom": "Every phone Voiceover ask read 'Couldn't verify' at draft time; then photo-on-words and crowd-noise asks; then captions and pause cuts; then caption language and name spelling, although the render did them.",
       "boundary": "reply",
@@ -829,7 +830,8 @@
         "tests/kria/test_brief_marathon_receipts.py",
         "tests/tasks/test_marathon_render_ready_review.py",
         "tests/kria/test_brief_rendered_speech_facts.py",
-        "tests/kria/test_draft_receipts_defer.py"
+        "tests/kria/test_draft_receipts_defer.py",
+        "tests/tasks/test_kri551_cleanup_review_note.py"
       ],
       "harness": "real_reply",
       "kill_switch": null,
@@ -862,9 +864,10 @@
       "id": "kri-546-montage-receipts",
       "tickets": [
         "KRI-546",
-        "KRI-651"
+        "KRI-651",
+        "KRI-674"
       ],
-      "symptom": "Phone Montage render-ready reply said 'Do\u011frulayamad\u0131m' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
+      "symptom": "Phone Montage render-ready reply said 'Doğrulayamadım' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
       "boundary": "publication",
       "fix_prs": [
         1503,
@@ -886,7 +889,9 @@
         "src/apps/api/app/agents/clip_intent_planner.py",
         "src/apps/api/app/services/clip_intent_planning.py",
         "src/apps/api/app/routes/creator_agent.py",
-        "src/apps/api/prompts/clip_intent_planner.txt"
+        "src/apps/api/prompts/clip_intent_planner.txt",
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/tests/kria/test_brief_provider_recovery_postgres.py"
       ],
       "regression_tests": [
         "tests/kria/test_brief_montage_render_asks.py",
@@ -900,8 +905,8 @@
       "harness": "real_reply",
       "kill_switch": null,
       "evidence": {
-        "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read",
-        "live_model": "n/a",
+        "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read; KRI-674 follow-up timeout: stalled Pro transport causes both EN/TR healthy rendered follow-ups to fail before the fix (2 failed, 2 passed); Flash-first preserves successful clarification and single-call unknown recovery (4 passed).",
+        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17–14.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
         "native_output": "Berlin re-run job a7d69a5b (2026-10-08) was the incident; post-fix phone re-send pending; KRI-651: native simulator export and pixel checks passed 2026-10-13 (exact hook, color emoji, no context caption)",
         "production": "merged 2026-10-08"
       },
@@ -918,7 +923,8 @@
         "EN/TR saved opening and closing placement reaches plan approval through real clip inventory",
         "one-clip caption and raw mixed requests remain inventoried even when absent from the brief or candidates",
         "later placement changes and stale copy do not inherit prior approval",
-        "narrow follow-up extractor provider failure remains typed with saved footage"
+        "narrow follow-up extractor provider failure remains typed with saved footage",
+        "narrow rendered follow-up chooses the interactive model before contact; provider outcome unknown still stops without fallback or brief mutation"
       ],
       "neighbours_gap": [
         "approved/published generation lineage is not a typed invariant at the publication boundary (KRI-577 item 1)",
@@ -1087,27 +1093,54 @@
       "tickets": [
         "KRI-552"
       ],
-      "symptom": "A second copy of the same chat message, run after the render, read cleanup asks as caption intents and re-planned finished work.",
+      "symptom": "A second copy of the same chat message, sent because the chat looked stuck, threw the running turn back to plan again, doubled the pinned request, queued a second plan and, after the render, asked the creator to restate finished work ('caption: long pauses').",
       "boundary": "persistence",
-      "status": "gap",
+      "status": "open_pr",
       "owner": "KRI-552",
-      "gap_reason": "Resend at 69 s during a 113 s turn is confirmed; the race mechanism is unproven. Needs a trace before orchestration changes (KRI-577 item 4).",
-      "paths": [],
-      "regression_tests": [],
-      "harness": "pending",
-      "kill_switch": null,
-      "evidence": {
-        "offline_replay": "none",
-        "live_model": "n/a",
-        "native_output": "incident observed on phone 2026-10-08",
-        "production": "unfixed"
-      },
-      "neighbours_covered": [],
-      "neighbours_gap": [
-        "semantic resend / idempotency across turns",
-        "completed-output reuse"
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/kria/duplicate_send.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/text_trim.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/services/creation_thread_titles.py",
+        "src/apps/api/app/agents/clip_intent_planner.py",
+        "src/apps/api/prompts/clip_intent_planner.txt"
       ],
-      "follow_ups": [],
+      "regression_tests": [
+        "tests/kria/test_kri552_duplicate_send_postgres.py",
+        "tests/kria/test_text_trim.py",
+        "tests/agents/test_clip_intent_planner.py::test_kri552_the_prod_shape_still_asks_but_never_cuts_a_label_mid_word",
+        "tests/agents/test_clip_intent_planner.py::test_kri552_the_prompt_sends_speech_cleanup_to_the_step_that_owns_it"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "kria_duplicate_resend_enabled",
+      "evidence": {
+        "offline_replay": "Postgres-backed submit_turn + run_kria_turn replay of prod seq 7/9/19: the copy sent mid-planning used to requeue the first turn ('requeued', a second Main Creator run) and sit queued; now it is answered in one line (EN/TR), the first turn completes in one pass with its own brief v1 pinned, and no queued turn blocks the next message. Retries (failed turn, question, no review, 10 min later, tapped answer) still plan.",
+        "live_model": "n/a (the cleanup rule in the clip-intent prompt, 2026-10-18.1, is unverified against a live model)",
+        "native_output": "unknown",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "copy while the first turn plans",
+        "copy while the draft waits for approval",
+        "copy just after the render review",
+        "Turkish chat",
+        "same client_event_id replay",
+        "retry after a failed turn or a question is never swallowed",
+        "a different message mid-planning still requeues the first turn",
+        "planner and approval pin read the message once"
+      ],
+      "neighbours_gap": [
+        "the empty brief binding on prod turn a0913b2e is not reproduced: replaying the old flow bound brief v1 to the first turn; only its pinned request was doubled",
+        "cleanup asks misfiled as caption intents rely on the prompt rule (model behaviour), not a parser rule",
+        "iOS shows the generic Thinking row (and the live thought line is dropped) during a requeue",
+        "semantic (not byte-identical) re-sends"
+      ],
+      "follow_ups": [
+        "KRI-551 (retake cleanup itself)"
+      ],
       "red_control": "not_applicable"
     },
     {
@@ -1342,7 +1375,8 @@
     {
       "id": "kri-698-simpler-approval",
       "tickets": [
-        "KRI-698"
+        "KRI-698",
+        "KRI-674"
       ],
       "status": "open_pr",
       "owner": "KRI-698",
@@ -1351,19 +1385,34 @@
       "paths": [
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/app/kria/brief_binding.py",
-        "src/apps/api/tests/kria/test_runtime_simpler_version_loop.py"
+        "src/apps/api/tests/kria/test_runtime_simpler_version_loop.py",
+        "src/apps/api/app/kria/render_retry.py",
+        "src/apps/api/app/routes/kria_runtime.py",
+        "src/apps/api/tests/kria/test_render_retry_postgres.py",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
+        "src/apps/ios/Kria/Features/DeviceRenderPanel.swift",
+        "src/apps/ios/Kria/Features/CreationConfirmationStage.swift",
+        "src/apps/ios/Kria/Features/CanonicalChatComponents.swift",
+        "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift",
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/ios/Kria/Features/NativeEditorView.swift",
+        "src/apps/ios/Kria/Features/NativeEditorComponents.swift",
+        "src/apps/api/app/kria/device_render.py",
+        "src/apps/ios/Kria/Core/DeviceRenderSessions.swift",
+        "src/apps/ios/Kria/Core/DeviceRendering.swift"
       ],
       "regression_tests": [
         "tests/kria/test_runtime_simpler_version_loop.py",
         "tests/kria/test_brief_binding.py",
-        "tests/kria/test_request_binding_journey.py"
+        "tests/kria/test_request_binding_journey.py",
+        "tests/kria/test_render_retry_postgres.py"
       ],
       "harness": "mocked_internal",
       "kill_switch": null,
       "evidence": {
-        "offline_replay": "Red before fix: durable brief stayed v1, declined/unrelated/stale replies reached approval. Real Postgres, approval, dispatch claim, native compiler, immutable pin and publication authority guard; planner output replayed.",
+        "offline_replay": "Red before fix: durable brief stayed v1, declined/unrelated/stale replies reached approval. Real Postgres, approval, dispatch claim, native compiler, immutable pin and publication authority guard; planner output replayed. KRI-674: typed HTTP/real Postgres consent and dispatch journeys; model entrypoint is a failing sentinel, not replayed planner output.",
         "live_model": "Not run; no paid calls.",
-        "native_output": "scripts/ios/kri-698-simpler-version.py prepares the exact pinned recipe for AudioParityFixtureTests and verifies actual MP4 title, length, clip order and audio; synthetic sources, macOS AVFoundation. Physical iPhone/original N2 footage pending.",
+        "native_output": "scripts/ios/kri-698-simpler-version.py prepares the exact pinned recipe for AudioParityFixtureTests and verifies actual MP4 title, length, clip order and audio; synthetic sources, macOS AVFoundation. Physical iPhone/original N2 footage pending. KRI-674: physical iPhone13Pro Retry/approval/AVFoundation/upload/publication passed on a local scratch backend; exact recipe, revision2->3, one turn, zero AgentRuns, 6.6s H264/AAC; stale completion409. See docs/reviews/kri-674-exact-retry.md.",
         "production": "Not deployed."
       },
       "neighbours_covered": [
@@ -1373,11 +1422,13 @@
         "later request restores text",
         "accepted omissions survive a subsequent unresolved choice",
         "unwaived text and missing retained title still fail verification",
-        "pin redelivery is idempotent"
+        "pin redelivery is idempotent",
+        "KRI-674: frozen native recipe retry keeps turn/draft/recipe; fresh expiring consent; concurrent taps; lost queue acknowledgement; newer request refusal; no-program legacy failure is explicit."
       ],
       "neighbours_gap": [
         "Planner output is replayed at _plan_with_live_agent; fresh model behavior is not measured.",
-        "Original N2 phone source files are unavailable on this host; physical-device replay remains pending."
+        "Original N2 phone source files are unavailable on this host; physical-device replay remains pending.",
+        "KRI-674: cloud prepared-execution adapters and legacy pre-plan failures require KRI-722/KRI-723."
       ],
       "follow_ups": [
         "KRI-721",
@@ -1385,6 +1436,226 @@
       ],
       "red_control": "not_applicable",
       "journey": "kri-492-length-ownership"
+    },
+    {
+      "id": "kri-674-whole-job-retry-consent",
+      "tickets": [
+        "KRI-674"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-674",
+      "symptom": "An initial whole-job native render has no execution generation target. The phone retry gate treated it as legacy, while typed exact recovery rejected its stored original generation as stale.",
+      "boundary": "dispatch",
+      "journey": "kri-492-length-ownership",
+      "paths": [
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/api/app/services/device_render.py",
+        "src/apps/api/app/kria/render_retry.py",
+        "src/apps/api/tests/kria/test_render_retry_postgres.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_render_retry_postgres.py"
+      ],
+      "harness": "mocked_internal",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Before product changes on b841d07fa, real-Postgres HTTP cases produced 3 failures / 5 passes: whole-job failed/dispatched approval hints were false and typed recovery returned stale. The shared original-generation binding passes the full 25-case retry suite. Planning is a failing sentinel; dispatch is recorded, not a live renderer.",
+        "live_model": "Not needed for this ownership-only change; no paid model diagnostics run.",
+        "native_output": "The preceding live check produced an inspected original-footage export with the same semantic recipe/digest, but no new runtime approval/receipt. This does not qualify the fresh-consent retry path. A new controlled-failure cycle remains pending after this fix.",
+        "production": "Not deployed; fresh production-account retry with explicit approval remains pending."
+      },
+      "neighbours_covered": [
+        "initial whole-job source has null variant/generation targets",
+        "local failure before the runtime observer finishes still requires approval",
+        "variant-scoped runtime retries remain fenced",
+        "later manual editor generations retain direct native retry for both original source scopes",
+        "typed whole-job recovery reuses the turn, approved draft and recipe with fresh consent and no planner"
+      ],
+      "neighbours_gap": [
+        "fresh production-account approval-to-export cycle after deployment"
+      ],
+      "follow_ups": [
+        "KRI-734"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-674-per-clip-camera-audio",
+      "tickets": [
+        "KRI-674"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-674",
+      "symptom": "A five-second flag/scarf montage preserving original camera audio was approved, then rejected for having no speech because every named audio source selected the spoken-excerpt lane.",
+      "boundary": "dispatch",
+      "paths": [
+        "src/apps/api/app/agents/_schemas/creator_agent.py",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/services/creator_capabilities.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/app/services/render_route.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/tests/agents/test_main_creator_voice_mode.py",
+        "src/apps/api/tests/kria/test_voice_flag_gating.py",
+        "src/apps/api/tests/services/test_phone_speech_montage_job.py",
+        "src/apps/api/tests/tasks/test_voice_behind_footage_dispatch.py"
+      ],
+      "regression_tests": [
+        "tests/agents/test_main_creator_voice_mode.py",
+        "tests/kria/test_voice_flag_gating.py",
+        "tests/services/test_creator_render_contract.py",
+        "tests/services/test_phone_speech_montage_job.py",
+        "tests/services/test_render_route.py",
+        "tests/services/test_render_route_invariance.py",
+        "tests/tasks/test_voice_behind_footage_dispatch.py",
+        "tests/tasks/test_route_shadow_dispatch.py",
+        "tests/tasks/test_unified_montage_dispatch.py"
+      ],
+      "harness": "mocked_internal",
+      "kill_switch": null,
+      "journey": "kri-492-length-ownership",
+      "evidence": {
+        "offline_replay": "Before implementation: parser/policy/worker/flag checks 4 failed and 27 passed; direct speech entry attempted transcription of a non-speaking source; adapter source-evidence declaration failed once. After fix: 704 focused checks pass. Real strategy/contract/worker code, with renderer entries recorded; real compiled-recipe audio verifier guards source mismatch.",
+        "live_model": "Not run for the new Main Creator v61 guidance. The separate Brief Extractor timeout fix v11 is deployed and reached live approval.",
+        "native_output": "Pending actual iPhone export with per-clip sound, exact source-window/audio comparison and immutable retry proof.",
+        "production": "Not deployed; prior live job failed before any device recipe or export."
+      },
+      "neighbours_covered": [
+        "Explicit per-clip sound retains named audio IDs without requiring a speaker",
+        "Continuous voice, selected excerpts and absent historical mode retain their existing lane",
+        "Unstamped jobs ignore the new delivery mode",
+        "Speech-excerpt flag off still permits ordinary per-clip sound; plan-authority flag off does not advertise it",
+        "Unknown mode remains unset; unused field remains omitted and JSON schema unchanged",
+        "Wrong, muted or extra audible source still fails compiled-recipe verification",
+        "Optional diagnostics import failure cannot prevent ordinary rendering"
+      ],
+      "neighbours_gap": [
+        "Renderer entries in the dispatch guard are recorders; model behavior and physical video/audio are separate release checks."
+      ],
+      "follow_ups": [
+        "KRI-674 live-device verification"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-734-actual-phone-export",
+      "tickets": [
+        "KRI-734"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-734",
+      "symptom": "An internally valid native recipe and format-correct MP4 can publish different picture, text or sound. A failed replacement can settle completed from its last-good artifact.",
+      "boundary": "publication",
+      "journey": "kri-492-length-ownership",
+      "paths": [
+        "src/apps/api/app/services/actual_export_verification.py",
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/api/app/services/device_render.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/ios/Kria/Core/DeviceRenderSessions.swift",
+        "src/apps/ios/Kria/Core/DeviceRendering.swift",
+        "src/apps/ios/Kria/Features/DeviceRenderPanel.swift"
+      ],
+      "regression_tests": [
+        "tests/integration/test_actual_export_verification.py",
+        "tests/integration/test_actual_export_completion.py",
+        "tests/routes/test_actual_export_publication.py",
+        "tests/kria/test_runtime_phone_v2.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": "phone_actual_export_verification_enabled",
+      "evidence": {
+        "offline_replay": "Before publication edits, seven completion controls accepted unchecked/missing evidence; two observer controls completed unchecked/failed replacements. Real FFmpeg/Tesseract positives and ten wrong source/window/order/text/position/time/rate/audio negatives exercise decoded bytes. HTTP completion checks use real media; DB/storage transport are doubles.",
+        "live_model": "No model calls or paid evaluation. Existing approved recipe is the authority.",
+        "native_output": "Retained physical-iPhone KRI-674 export passes the new verifier locally: exact recorded recipe digest and file checksum, 5s edit plus 1.6s brand tail. This is a new check of an existing export, not a fresh device canary.",
+        "production": "Not deployed or enrolled. Explicit protocol-12 pilot and all-fleet verifier revision required."
+      },
+      "neighbours_covered": [
+        "wrong source and order",
+        "wrong source window",
+        "missing/moved/short/overlong static title",
+        "double/muted sound",
+        "playback-rate duration mismatch",
+        "last-good retention",
+        "rejected completion fast path",
+        "old native share UI refused",
+        "exact retry retains required checks after enrollment disabled"
+      ],
+      "neighbours_gap": [
+        "fresh protocol-12 device canary after deployment",
+        "prepared execution snapshots (KRI-722/723)",
+        "speech/music/effects/cloud/slides (KRI-724/725)",
+        "sampled picture checks are not an every-frame perceptual guarantee"
+      ],
+      "follow_ups": [
+        "KRI-734 remains open for additional promoted adapters and fresh device/cloud proof",
+        "KRI-722",
+        "KRI-723",
+        "KRI-724",
+        "KRI-725"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-726-background-recovery",
+      "tickets": [
+        "KRI-734",
+        "KRI-726",
+        "KRI-674"
+      ],
+      "symptom": "Inline export checks time out on the API; unchecked exports must stay hidden and any corrective render must retain the exact approved edit and bounded original consent. Live iPhone polling exposed a Retry owner-lock inversion.",
+      "boundary": "publication",
+      "status": "open_pr",
+      "owner": "KRI-726",
+      "fix_prs": [
+        1663
+      ],
+      "journey": "kri-726-background-recovery",
+      "paths": [
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/api/app/tasks/export_verification.py",
+        "src/apps/api/app/kria/automatic_export_repair.py",
+        "src/apps/api/app/kria/render_retry.py",
+        "src/apps/api/app/kria/device_render.py",
+        "src/apps/api/app/kria/api_schemas.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/ios/Kria/Core/DeviceRendering.swift",
+        "src/apps/ios/Kria/Core/DeviceRenderSessions.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/NativeVP9Source.swift"
+      ],
+      "regression_tests": [
+        "tests/routes/test_background_export_verification.py",
+        "tests/routes/test_actual_export_publication.py",
+        "tests/integration/test_background_export_completion.py",
+        "tests/integration/test_actual_export_completion.py",
+        "tests/kria/test_automatic_export_repair.py",
+        "tests/kria/test_render_retry_lock_order_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "phone_actual_export_verification_enabled",
+      "evidence": {
+        "offline_replay": "Actual MP4 decoding and PostgreSQL concurrent claims, durable broker-gap recovery, immutable recipe/last-good guards, finite repair permission. Owner-lock inversion reproduced before the fix and passes after it.",
+        "live_model": "No model calls; deterministic source normalization only.",
+        "native_output": "iPhone 13 Pro: consent and checking UI observed; deliberately wrong export rejected; first repair issued. Completion pending restored Xcode UI-test authorization.",
+        "production": "Not deployed; enrollment remains off."
+      },
+      "neighbours_covered": [
+        "duplicate completion and worker delivery",
+        "lost initial queue dispatch",
+        "stale or missing consent and unknown outcomes",
+        "same failure without a new corrective action",
+        "owner-first Retry locking under live phone polling"
+      ],
+      "neighbours_gap": [
+        "other render adapters",
+        "text-only repair",
+        "automatic repair while iOS suspends rendering"
+      ],
+      "follow_ups": [
+        "KRI-723 preparation migration and broader adapter promotion"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

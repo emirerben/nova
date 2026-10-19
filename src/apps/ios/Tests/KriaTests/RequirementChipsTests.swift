@@ -101,4 +101,30 @@ final class RequirementChipsTests: XCTestCase {
         XCTAssertEqual(one.id, InferredLabel(text: "Harbor Point", mediaID: "m", clipIndex: 3).id)
         XCTAssertNotEqual(one.id, InferredLabel(text: "Harbor Point", mediaID: "m2", clipIndex: 4).id)
     }
+
+    /// The lead and "also changed" only count next to receipts, and only a plain `assistant_response`
+    /// question carries reply chips; odd types never throw.
+    func testReplyExtrasAreTolerantAndScopedToTheirEvents() {
+        let payload: [String: JSONValue] = [
+            "reply_lead": .string(" Done. "), "also_changed": .array([.string("Retimed the title"), .number(3), .string("")]),
+            "options": .array([.string("About 1 second"), .null, .string("  ")]), "turn_value": .string("question"),
+        ]
+        let withReceipts = ReplyExtras.parse(payload: payload, eventType: "assistant_response", hasReceipts: true)
+        XCTAssertEqual(withReceipts.lead, "Done.")
+        XCTAssertEqual(withReceipts.alsoChanged, ["Retimed the title"])
+        XCTAssertEqual(withReceipts.options, ["About 1 second"])
+
+        let noReceipts = ReplyExtras.parse(payload: payload, eventType: "assistant_response", hasReceipts: false)
+        XCTAssertNil(noReceipts.lead)
+        XCTAssertTrue(noReceipts.alsoChanged.isEmpty)
+
+        XCTAssertTrue(ReplyExtras.parse(payload: payload, eventType: "assistant_question", hasReceipts: false).options.isEmpty,
+                      "Legacy question events keep their own options path")
+        var notAQuestion = payload; notAQuestion["turn_value"] = .string("response")
+        XCTAssertTrue(ReplyExtras.parse(payload: notAQuestion, eventType: "assistant_response", hasReceipts: false).options.isEmpty)
+        let odd = ReplyExtras.parse(payload: ["reply_lead": .number(1), "also_changed": .string("x"), "options": .object([:]),
+                                              "turn_value": .string("question")], eventType: "assistant_response", hasReceipts: true)
+        XCTAssertEqual(odd, ReplyExtras(lead: nil, alsoChanged: [], options: []))
+        XCTAssertEqual(ReplyExtras.parse(payload: nil, eventType: "assistant_response", hasReceipts: true), odd)
+    }
 }

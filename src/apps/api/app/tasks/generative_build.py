@@ -2510,6 +2510,7 @@ def _run_generative_job_impl(
                     REQUIREMENT_VERSION_FIELD,
                     CreatorRenderContractError,
                     check_phone_dispatch_contract,
+                    job_requires_camera_speech,
                     read_render_contract,
                     speech_edit_not_built,
                 )
@@ -2524,7 +2525,7 @@ def _run_generative_job_impl(
                     raise CreatorRenderContractError(
                         "This edit lost its approved requirements; please try again."
                     )
-                required_speech = bool(contract and contract.audio_source_ids)
+                required_speech = job_requires_camera_speech(contract, candidates)
                 if contract is not None:
                     # A recording's mere presence cannot override the approved
                     # soundtrack. Historical jobs retain their original dispatch.
@@ -6446,6 +6447,9 @@ def _run_phone_unified_montage_job(
 
 # KRI-136: variant receipt for a multi-clip phone Talking head.
 PHONE_TALKING_HEAD_FIELD = "phone_talking_head"
+# KRI-719: variant receipt for a multi-clip declared Talking edit: which clips
+# speak, where each footage clip covers them, and which clips found no room.
+PHONE_TALKING_MULTI_CLIP_FIELD = "phone_talking_multi_clip"
 
 
 def _phone_talking_head_cutaways(
@@ -6493,6 +6497,69 @@ def _phone_talking_head_cutaways(
         )
         for window in schedule_broll(speaker_duration_s, broll)
     )
+
+
+def _classify_phone_talking_clips(
+    clip_metas: list,
+    clip_id_to_local: dict[str, str],
+    probe_map: dict,
+    *,
+    caption_language: str | None,
+    job_id: str,
+) -> tuple[Any, dict[str, Any]]:
+    """KRI-719: split a multi-clip declared Talking edit's clips (upload order)
+    into speakers and footage (`phone_talking_cutaways.classify_talking_clips`).
+
+    Measures each clip's audio presence (KRI-653: a silent or inaudible clip is
+    never a speaker and is not transcribed, so Whisper cannot hallucinate words
+    over it) and its Whisper transcript (content-addressed cache, so the speaker
+    the caption pass transcribes again is a cache hit), counted and paced over its
+    spoken span by `speech_evidence`. A transcription failure
+    scores that clip zero words: it becomes footage instead of failing the job.
+    Returns ``(roles, transcripts_by_clip_id)``.
+    """
+    from app.pipeline.phone_talking_cutaways import (  # noqa: PLC0415
+        TalkingClipEvidence,
+        classify_talking_clips,
+        speech_evidence,
+    )
+    from app.pipeline.transcribe import transcribe_whisper_cached  # noqa: PLC0415
+    from app.services.clip_speech import audio_presence  # noqa: PLC0415
+
+    evidence: list[TalkingClipEvidence] = []
+    transcripts: dict[str, Any] = {}
+    for meta in clip_metas:
+        cid = str(meta.clip_id)
+        path = clip_id_to_local.get(cid)
+        if not path:
+            continue
+        duration_s = float(getattr(probe_map.get(path), "duration_s", 0.0) or 0.0)
+        audible = audio_presence(path).status not in ("silent", "inaudible")
+        word_count = 0
+        speech_span_s: float | None = None
+        if audible:
+            try:
+                transcript = transcribe_whisper_cached(path, language=caption_language)
+            except Exception as exc:  # noqa: BLE001 - one clip's transcript never fails the job
+                log.warning(
+                    "talking_multi_clip_transcribe_failed",
+                    job_id=job_id,
+                    clip_id=cid,
+                    error=str(exc)[:200],
+                )
+            else:
+                transcripts[cid] = transcript
+                word_count, speech_span_s = speech_evidence(transcript.words or [])
+        evidence.append(
+            TalkingClipEvidence(
+                clip_id=cid,
+                duration_s=duration_s,
+                word_count=word_count,
+                audible=audible,
+                speech_span_s=speech_span_s,
+            )
+        )
+    return classify_talking_clips(evidence), transcripts
 
 
 # KRI-178 beat-receipt bookkeeping, shared by the phone Talking and (KRI-519)
@@ -6660,13 +6727,19 @@ def _run_phone_subtitled_job(
         SilentAudioPlanDeclined,
         UnsupportedPhonePlan,
     )
+    from app.pipeline.phone_spoken_text import SPOKEN_TEXT_FIELD  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import remap_lanes_for_cut  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
         SFX_DUCK_RECEIPT_FIELD,
+        PhoneCutaway,
         compile_phone_subtitled_plan,
         sfx_duck_receipt,
     )
     from app.pipeline.phone_subtitled_title import talking_closing_window  # noqa: PLC0415
+    from app.pipeline.phone_talking_cutaways import (  # noqa: PLC0415
+        TalkingClipRoles,
+        schedule_footage_cutaways,
+    )
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.silence_cut import (  # noqa: PLC0415
         is_filler_token,
@@ -6679,12 +6752,15 @@ def _run_phone_subtitled_job(
         pin_device_request,
     )
     from app.services.phone_rollout import (  # noqa: PLC0415
+        TALKING_MULTI_CLIP_MAX_CLIPS,
         phone_subtitled_closing_title_supported,
         phone_subtitled_overlays_supported,
         phone_subtitled_reaction_beats_supported,
+        phone_subtitled_spoken_text_supported,
         phone_subtitled_title_supported,
         phone_subtitled_video_overlays_supported,
         phone_talking_head_supported,
+        phone_talking_multi_clip_supported,
         validate_phone_pilot_recipe,
     )
     from app.services.phone_sources import (  # noqa: PLC0415
@@ -6794,7 +6870,15 @@ def _run_phone_subtitled_job(
     # `phone_talking_head_supported()`; the real archetype is re-verified
     # post-ingest below. Everything else keeps the single-clip contract.
     multi_clip = len(bindings) >= 2
-    if multi_clip and not (self_narrated and phone_talking_head_supported()):
+    # KRI-719: a declared Talking item with 2+ clips plays its speech clips back
+    # to back and covers them with the rest (`_classify_phone_talking_clips`).
+    talking_multi = (
+        edit_format == "subtitled"
+        and multi_clip
+        and phone_talking_multi_clip_supported()
+        and len(bindings) <= TALKING_MULTI_CLIP_MAX_CLIPS
+    )
+    if multi_clip and not ((self_narrated and phone_talking_head_supported()) or talking_multi):
         raise ValueError("Phone subtitled rendering requires exactly one clip")
 
     clip_paths_gcs: list[str] = list(all_candidates.get("clip_paths") or [])
@@ -6875,6 +6959,16 @@ def _run_phone_subtitled_job(
         )
     closing_text_rows: list[dict] = []
     closing_text_receipt: dict[str, Any] | None = None
+    # KRI-707: the creator's text on a word they say ("big 'ATAKAN' when I say 'Atakan'"),
+    # read off the pinned brief. Read only while its rollout is on, so the flag-off recipe
+    # and variant stay byte-identical.
+    spoken_text_asks = (
+        _phone_spoken_text_asks(snapshot) if phone_subtitled_spoken_text_supported() else ()
+    )
+    spoken_text_rows: list[dict] = []
+    spoken_text_receipt: dict[str, Any] | None = None
+    # The take's words on the timeline the recipe plays, for `spoken_text_asks`.
+    timeline_words: list[Any] = []
 
     # KRI-174 lane state. Kept at these empty defaults when the flag is off
     # (or there is no lane request), so the fences/persistence below become
@@ -6961,10 +7055,53 @@ def _run_phone_subtitled_job(
                         f"archetype={archetype!r}"
                     )
 
+            binding_by_proxy = {row.proxy_path: row for row in bindings}
+            # KRI-719: which clips speak (main track, back to back) and which
+            # are footage (muted cutaways), plus each extra speaker's transcript.
+            talking_roles: TalkingClipRoles | None = None
+            extra_speaker_ids: tuple[str, ...] = ()
+            extra_speaker_bindings: tuple = ()
+            talking_transcripts: dict[str, Any] = {}
+            talking_cutaway_windows: list[dict] = []
+            talking_unplaced: list[dict] = []
+            talking_lanes_skipped = False
+            if talking_multi:
+                talking_roles, talking_transcripts = _classify_phone_talking_clips(
+                    clip_metas,
+                    clip_id_to_local,
+                    probe_map,
+                    caption_language=caption_language_req,
+                    job_id=job_id,
+                )
+                spine_clip_id = talking_roles.speakers[0]
+                extra_speaker_ids = talking_roles.speakers[1:]
+                extra = []
+                for extra_id in extra_speaker_ids:
+                    extra_binding = binding_by_proxy.get(clip_id_to_gcs.get(extra_id))
+                    if extra_binding is None:
+                        raise UnsupportedPhonePlan(
+                            "Talking speaker clip has no matching phone source binding"
+                        )
+                    extra.append(extra_binding)
+                extra_speaker_bindings = tuple(extra)
+                record_pipeline_event(
+                    "phone",
+                    "talking_multi_clip_roles",
+                    {"clips": list(talking_roles.receipt)},
+                )
+                if extra_speaker_bindings and media_lanes_enabled:
+                    # v1: cards, sounds and beats are grounded against ONE
+                    # speaker clip's own timeline and frames, so they stay off
+                    # when several clips speak (the receipt says so).
+                    talking_lanes_skipped = True
+                    media_lanes_enabled = False
+                    overlay_grounding_enabled = False
+                    beats_enabled = False
+                    video_overlays_enabled = False
+
             clip_id = spine_clip_id if multi_clip else next(iter(clip_id_to_local))
             clip_path = clip_id_to_local[clip_id]
             gcs_path = clip_id_to_gcs.get(clip_id)
-            binding_by_proxy = {row.proxy_path: row for row in bindings}
             binding = binding_by_proxy.get(gcs_path) if multi_clip else bindings[0]
             if binding is None or gcs_path != binding.proxy_path:
                 raise UnsupportedPhonePlan("subtitled clip has no matching phone source binding")
@@ -6983,7 +7120,7 @@ def _run_phone_subtitled_job(
             # Its own decline type so chat shows this message, not "your iPhone can't render".
             if _silent_audio_status(clip_path, job_id=job_id) is not None:
                 raise SilentAudioPlanDeclined(" ".join(_SPEECH_FALLBACK_DECLINES["silent_audio"]))
-            if multi_clip:
+            if multi_clip and not talking_multi:
                 cutaways = _phone_talking_head_cutaways(
                     speaker_clip_id=clip_id,
                     speaker_duration_s=float(probe.duration_s),
@@ -7069,7 +7206,7 @@ def _run_phone_subtitled_job(
                     ),
                     landscape_fit=landscape_fit,
                 )
-                if settings.phone_speaker_face_fill_enabled
+                if settings.phone_speaker_face_fill_enabled and not extra_speaker_bindings
                 else None
             )
             speaker_position_x = speaker_framing.position_x if speaker_framing else None
@@ -7224,6 +7361,9 @@ def _run_phone_subtitled_job(
                     if opening_cut_only or not is_filler_token(item["text"])
                 ]
                 cues = build_plain_cues(cut_words, attach_words=True, budget=PHONE_CUE_BUDGET)
+                if spoken_text_asks:
+                    # KRI-707: the SPOKEN words (never a requested caption language), cut.
+                    timeline_words = remap_words(words, cut_plan)
             else:
                 transcript = transcribe_whisper_cached(
                     clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
@@ -7309,6 +7449,34 @@ def _run_phone_subtitled_job(
                 cues = build_plain_cues(
                     transcript.words, attach_words=True, budget=PHONE_CUE_BUDGET
                 )
+                if spoken_text_asks:
+                    timeline_words = list(transcript.words)
+                # KRI-719: each extra speaker's own words, shifted to where it
+                # plays (right after the speakers before it). Built per clip so
+                # one caption line never spans two clips.
+                extra_offset_s = float(binding.original.duration_s)
+                for extra_id, extra_binding in zip(
+                    extra_speaker_ids, extra_speaker_bindings, strict=True
+                ):
+                    extra_transcript = talking_transcripts.get(extra_id)
+                    # `build_plain_cues`' own `offset_s` SUBTRACTS (a trim), so
+                    # the words move forward here instead.
+                    extra_words = [
+                        Word(
+                            text=word.text,
+                            start_s=float(word.start_s) + extra_offset_s,
+                            end_s=float(word.end_s) + extra_offset_s,
+                            confidence=word.confidence,
+                        )
+                        for word in (getattr(extra_transcript, "words", None) or [])
+                    ]
+                    if extra_words:
+                        cues = cues + build_plain_cues(
+                            extra_words, attach_words=True, budget=PHONE_CUE_BUDGET
+                        )
+                        if spoken_text_asks:
+                            timeline_words.extend(extra_words)
+                    extra_offset_s += float(extra_binding.original.duration_s)
             cues = correct_caption_cues(
                 cues,
                 detected_lang,
@@ -7342,9 +7510,52 @@ def _run_phone_subtitled_job(
                     position_x=speaker_position_x or 0.0,
                 )
 
+            # KRI-719: the whole main track -- the first speaker's (cut) span
+            # plus every extra speaker in full.
+            talking_timeline_s = sum(
+                max(0.0, end - start) for start, end in speaker_keep_segments
+            ) + sum(float(extra.original.duration_s) for extra in extra_speaker_bindings)
+            if spoken_text_asks:
+                spoken_text_rows, spoken_text_receipt = _phone_talking_spoken_text_rows(
+                    spoken_text_asks,
+                    words=timeline_words,
+                    cues=cues,
+                    caption_style=caption_style,
+                    shown_rows=title_rows,
+                    timeline_duration_s=talking_timeline_s,
+                    binding=binding,
+                    clip_path=clip_path,
+                    keep_segments=speaker_keep_segments,
+                    landscape_fit=framed_fit,
+                    position_x=speaker_position_x or 0.0,
+                )
+
             def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
                 if not talking_closing_text:
                     return [], None
+                if extra_speaker_bindings:
+                    # The ending plays the LAST speaker: place the text off its
+                    # face on its own clock, then move it to where it plays.
+                    last = extra_speaker_bindings[-1]
+                    last_duration_s = float(last.original.duration_s)
+                    rows, receipt = _phone_talking_closing_rows(
+                        talking_closing_text,
+                        photo_card=None,
+                        photo_aspect=None,
+                        binding=last,
+                        clip_path=clip_id_to_local.get(extra_speaker_ids[-1]),
+                        keep_segments=[(0.0, last_duration_s)],
+                        landscape_fit=landscape_fit,
+                    )
+                    offset_s = talking_timeline_s - last_duration_s
+                    return [
+                        {
+                            **row,
+                            "start_s": float(row["start_s"]) + offset_s,
+                            "end_s": float(row["end_s"]) + offset_s,
+                        }
+                        for row in rows
+                    ], receipt
                 return _phone_talking_closing_rows(
                     talking_closing_text,
                     photo_card=photo_card,
@@ -7354,6 +7565,62 @@ def _run_phone_subtitled_job(
                     keep_segments=speaker_keep_segments,
                     landscape_fit=framed_fit,
                     position_x=speaker_position_x or 0.0,
+                )
+
+            def _schedule_talking_footage(blocked: list[tuple[float, float]]) -> tuple:
+                """KRI-719: the footage clips as muted full-frame cutaways over
+                the speakers, sharing the timeline with ``blocked`` windows."""
+                if talking_roles is None or not talking_roles.footage:
+                    return ()
+                footage_bindings: dict[str, Any] = {}
+                for footage_id in talking_roles.footage:
+                    footage_binding = binding_by_proxy.get(clip_id_to_gcs.get(footage_id))
+                    if footage_binding is None:
+                        raise UnsupportedPhonePlan(
+                            "Talking footage clip has no matching phone source binding"
+                        )
+                    footage_bindings[footage_id] = footage_binding
+                word_starts = [
+                    float(word["start_s"])
+                    for cue in cues or []
+                    for word in (cue.get("words") or [])
+                    if isinstance(word, dict) and word.get("start_s") is not None
+                ]
+                windows, unplaced = schedule_footage_cutaways(
+                    [
+                        (fid, float(footage_bindings[fid].original.duration_s))
+                        for fid in talking_roles.footage
+                    ],
+                    duration_s=talking_timeline_s,
+                    word_starts=word_starts,
+                    blocked=[(float(row["start_s"]), float(row["end_s"])) for row in title_rows]
+                    + blocked,
+                )
+                talking_cutaway_windows[:] = [
+                    {
+                        "media_id": footage_bindings[w.clip_id].media_id,
+                        "start_s": w.start_s,
+                        "end_s": w.end_s,
+                    }
+                    for w in windows
+                ]
+                # Upload position: chat names a clip by where it sits in the list.
+                position = {
+                    row["clip_id"]: index + 1 for index, row in enumerate(talking_roles.receipt)
+                }
+                talking_unplaced[:] = [
+                    {
+                        "media_id": footage_bindings[row["clip_id"]].media_id,
+                        "position": position.get(row["clip_id"]),
+                        "reason": row["reason"],
+                    }
+                    for row in unplaced
+                ]
+                return tuple(
+                    PhoneCutaway(
+                        binding=footage_bindings[w.clip_id], start_s=w.start_s, end_s=w.end_s
+                    )
+                    for w in windows
                 )
 
             sfx_duck: dict | None = None
@@ -7367,14 +7634,23 @@ def _run_phone_subtitled_job(
                     cut_plan=cut_plan,
                     cutaways=cutaways,
                     landscape_fit=landscape_fit,
+                    additional_speakers=extra_speaker_bindings,
                     **framed_compile,
                 )
             if not media_lanes_enabled:
                 closing_text_rows, closing_text_receipt = _closing_rows_for(None)
-                styled_rows = generation_style_rows(title_rows + closing_text_rows, job_id=job_id)
+                styled_rows = generation_style_rows(
+                    title_rows + spoken_text_rows + closing_text_rows, job_id=job_id
+                )
                 title_ids = {row["id"] for row in title_rows}
+                spoken_ids = {row["id"] for row in spoken_text_rows}
                 title_rows = [row for row in styled_rows if row["id"] in title_ids]
-                closing_text_rows = [row for row in styled_rows if row["id"] not in title_ids]
+                spoken_text_rows = [row for row in styled_rows if row["id"] in spoken_ids]
+                closing_text_rows = [
+                    row for row in styled_rows if row["id"] not in title_ids | spoken_ids
+                ]
+                if talking_multi:
+                    cutaways = _schedule_talking_footage([])
                 recipe = compile_phone_subtitled_plan(
                     speaker_bindings,
                     caption_cues=cues,
@@ -7382,8 +7658,11 @@ def _run_phone_subtitled_job(
                     cut_plan=cut_plan,
                     cutaways=cutaways,
                     landscape_fit=landscape_fit,  # type: ignore[arg-type]
-                    text_elements=title_rows + closing_text_rows,
-                    text_elements_user_edited=bool(title_rows or closing_text_rows),
+                    text_elements=title_rows + spoken_text_rows + closing_text_rows,
+                    text_elements_user_edited=bool(
+                        title_rows or spoken_text_rows or closing_text_rows
+                    ),
+                    additional_speakers=extra_speaker_bindings,
                     **framed_compile,
                 )
             else:
@@ -7735,6 +8014,16 @@ def _run_phone_subtitled_job(
                                 reason="speech_cleanup_cut",
                             )
 
+                if talking_multi:
+                    # Full-screen Visuals keep their slots; footage fills the gaps.
+                    cutaways = _schedule_talking_footage(
+                        [
+                            (float(card.start_s), float(card.end_s))
+                            for card in (lanes.overlays if lanes is not None else [])
+                            if card.display_mode == "fullscreen"
+                        ]
+                    )
+
                 def _compile_lanes(text_rows: list[dict]) -> Any:
                     styled = generation_style_rows(text_rows, job_id=job_id)
                     for row, updated in zip(text_rows, styled, strict=True):
@@ -7751,6 +8040,7 @@ def _run_phone_subtitled_job(
                         landscape_fit=landscape_fit,  # type: ignore[arg-type]
                         text_elements=text_rows,
                         text_elements_user_edited=bool(text_rows),
+                        additional_speakers=extra_speaker_bindings,
                         **framed_compile,
                     )
 
@@ -7772,14 +8062,16 @@ def _run_phone_subtitled_job(
                             if lanes is not None and beat_closing_card_id
                             else None
                         )
-                        recipe = _compile_lanes(title_rows + closing_text_rows)
+                        recipe = _compile_lanes(title_rows + spoken_text_rows + closing_text_rows)
                         if closing_text_rows and closing_text_rows[0]["end_s"] < (
                             recipe.duration - 1e-3
                         ):
                             # An ending clip plays after the speaker: closing text
                             # runs to the very end, which the contract checks.
                             closing_text_rows = [{**closing_text_rows[0], "end_s": recipe.duration}]
-                            recipe = _compile_lanes(title_rows + closing_text_rows)
+                            recipe = _compile_lanes(
+                                title_rows + spoken_text_rows + closing_text_rows
+                            )
                         sfx_duck = sfx_duck_receipt(lanes, recipe)
                         break
                     except SubtitledLaneError as exc:
@@ -7997,21 +8289,40 @@ def _run_phone_subtitled_job(
                 # A face crop IS a crop: the editor's bars/crop control shows it,
                 # and a Save without a bars/crop change keeps it.
                 new_entry["landscape_fit"] = "fill"
-        if title_rows or closing_text_rows:
+        if title_rows or spoken_text_rows or closing_text_rows:
             # KRI-467: the title is an ordinary saved text row. `user_edited`
             # makes the read path serve it beside the projected caption
             # mirrors (an unedited caption variant serves the mirrors alone).
-            # KRI-514: the closing text is a second one.
-            new_entry["text_elements"] = title_rows + closing_text_rows
+            # KRI-514: the closing text is a second one. KRI-707: so is text
+            # on a word the creator says.
+            new_entry["text_elements"] = title_rows + spoken_text_rows + closing_text_rows
             new_entry["text_elements_user_edited"] = True
             new_entry["text_elements_materialized_from"] = (
-                "opening_title" if title_rows else "closing_title"
+                "opening_title"
+                if title_rows
+                else "spoken_text"
+                if spoken_text_rows
+                else "closing_title"
             )
         if title_rows:
             new_entry["opening_title_placement"] = title_receipt
+        if spoken_text_receipt is not None:
+            # KRI-707: where each text-on-a-word ask landed, or why not; the brief
+            # receipt's evidence at render-ready.
+            new_entry[SPOKEN_TEXT_FIELD] = spoken_text_receipt
         if closing_text_rows:
             new_entry["closing_title_placement"] = closing_text_receipt
-        if multi_clip:
+        if talking_multi and talking_roles is not None:
+            new_entry[PHONE_TALKING_MULTI_CLIP_FIELD] = {
+                "version": 1,
+                "speaker_media_ids": [binding.media_id]
+                + [extra.media_id for extra in extra_speaker_bindings],
+                "cutaways": list(talking_cutaway_windows),
+                "unplaced": list(talking_unplaced),
+                "clips": list(talking_roles.receipt),
+                **({"lanes_skipped": "multiple_speakers"} if talking_lanes_skipped else {}),
+            }
+        if multi_clip and not talking_multi:
             # KRI-136: the phone Talking lane (and its editor) owns this
             # variant, so `resolved_archetype` stays "subtitled"; this receipt
             # says it is really the multi-clip Talking head and which clip
@@ -8065,7 +8376,9 @@ def _run_phone_subtitled_job(
         job_id,
         recipe,
         lambda: {
-            "clip_count": 1 + len({cutaway.binding.media_id for cutaway in cutaways}),
+            "clip_count": 1
+            + len(extra_speaker_bindings)
+            + len({cutaway.binding.media_id for cutaway in cutaways}),
             "captions": list(cues or []),
             **(
                 {"title": title_rows[0]["text"], "title_bar_id": title_rows[0].get("id")}
@@ -8361,6 +8674,83 @@ def _phone_talking_closing_rows(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return [placed], receipt
+
+
+def _phone_spoken_text_asks(snapshot: dict) -> tuple:
+    """KRI-707: the texts the creator wants on screen when they say a word, read
+    deterministically off the approved brief pinned on the job
+    (``creator_brief_binding``), never a prompt field. Empty without a readable
+    binding, so the render runs exactly as before."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.spoken_text_ask import brief_spoken_texts  # noqa: PLC0415
+
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return ()
+    try:
+        return brief_spoken_texts(BriefBinding.model_validate(raw_binding).resolve())
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_spoken_text.binding_unreadable", error=str(exc)[:200])
+        return ()
+
+
+def _phone_talking_spoken_text_rows(
+    asks: Any,
+    *,
+    words: list[Any],
+    cues: list[dict],
+    caption_style: str,
+    shown_rows: list[dict],
+    timeline_duration_s: float,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+    position_x: float = 0.0,
+) -> tuple[list[dict], dict[str, Any]]:
+    """KRI-707: one text row per ``asks`` entry the take says, from the word's start
+    (cut-timeline ``words``), placed off the speaker's face and clear of the
+    captions and ``shown_rows`` (the title), plus the receipt of every ask.
+    ``binding`` / ``clip_path`` / ``keep_segments`` are the first speaker's, so a
+    row past its span (a KRI-719 extra speaker) protects the fallback face."""
+    from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+    from app.pipeline.phone_spoken_text import spoken_text_rows  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import place_talking_title  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    display_width, display_height = display_dims(binding.original)
+    scale = fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale
+    speaker_span_s = sum(max(0.0, end - start) for start, end in keep_segments)
+
+    def place(row: dict, avoid: Any) -> tuple[dict, dict[str, Any]]:
+        return place_talking_title(
+            row,
+            clip_path=clip_path if float(row["start_s"]) < speaker_span_s else None,
+            keep_segments=keep_segments,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=_STORY_CANVAS,
+            scale=scale,
+            position_x=position_x,
+            avoid=avoid,
+        )
+
+    rows, receipt = spoken_text_rows(
+        asks,
+        words=words,
+        cues=cues,
+        caption_style=caption_style,
+        timeline_duration_s=timeline_duration_s,
+        canvas=_STORY_CANVAS,
+        place=place,
+        shown_rows=shown_rows,
+    )
+    try:
+        record_pipeline_event("phone", "subtitled_spoken_text", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return rows, receipt
 
 
 def _phone_narrated_cleaned_narration(job_id: str, snapshot: dict) -> NarrationTrack:

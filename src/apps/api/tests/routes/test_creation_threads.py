@@ -15,6 +15,7 @@ from starlette.requests import Request
 from app.agents._schemas.persona import Persona as PersonaSchema
 from app.auth import get_current_user, is_native_client, kria_client_protocol
 from app.config import settings
+from app.kria.runtime import RuntimeFailure
 from app.main import app
 from app.models import ContentPlan, CreatorAgentSession, Job, PlanItem
 from app.models import Persona as PersonaRow
@@ -33,6 +34,7 @@ from app.routes.creation_threads import (
     _available_formats,
     _client_id,
     _creator_agent_projection,
+    _decode_thread_cursor,
     _exclude_referenced_project_storage,
     _fill_default_title_if_needed,
     _format_clip_limit,
@@ -4737,6 +4739,64 @@ async def test_list_returns_lightweight_project_summaries() -> None:
     assert output[0].job is None
 
 
+def _list_row(updated_at: datetime) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=uuid.uuid4(),
+        status="active",
+        revision=1,
+        state={},
+        content_plan_id=None,
+        active_plan_item_id=None,
+        active_creator_agent_session_id=None,
+        active_job_id=None,
+        created_at=updated_at,
+        updated_at=updated_at,
+    )
+
+
+def _list_db(rows: list[SimpleNamespace]) -> Mock:
+    result = Mock()
+    result.scalars.return_value.all.return_value = rows
+    db = Mock()
+    db.execute = AsyncMock(return_value=result)
+    db.get = AsyncMock(return_value=None)
+    return db
+
+
+@pytest.mark.asyncio
+async def test_list_sets_no_cursor_header_when_every_chat_fits_on_the_page() -> None:
+    response = Response()
+    rows = [_list_row(datetime.now(UTC)) for _ in range(2)]
+    output = await list_threads(
+        SimpleNamespace(id=uuid.uuid4()), _list_db(rows), limit=2, response=response
+    )
+    assert len(output) == 2
+    assert "x-next-cursor" not in response.headers
+
+
+@pytest.mark.asyncio
+async def test_list_returns_exactly_limit_rows_and_a_cursor_for_the_next_page() -> None:
+    response = Response()
+    base = datetime(2026, 10, 1, tzinfo=UTC)
+    rows = [_list_row(base - timedelta(hours=index)) for index in range(3)]
+    output = await list_threads(
+        SimpleNamespace(id=uuid.uuid4()), _list_db(rows), limit=2, response=response
+    )
+    assert [item.id for item in output] == [str(rows[0].id), str(rows[1].id)]
+    stamp, identifier = _decode_thread_cursor(response.headers["x-next-cursor"])
+    assert (stamp, identifier) == (rows[1].updated_at, rows[1].id)
+
+
+@pytest.mark.asyncio
+async def test_list_rejects_a_malformed_cursor() -> None:
+    with pytest.raises(RuntimeFailure) as raised:
+        await list_threads(
+            SimpleNamespace(id=uuid.uuid4()), _list_db([]), limit=2, cursor="not-a-cursor"
+        )
+    assert raised.value.code == "cursor_invalid"
+
+
 @pytest.mark.asyncio
 async def test_list_summaries_batch_active_job_and_agent_status_for_safe_actions() -> None:
     user = SimpleNamespace(id=uuid.uuid4())
@@ -6210,3 +6270,152 @@ async def test_manual_rename_accepts_an_intervening_generated_title(monkeypatch)
     assert thread.title == "Summer Memories"
     assert thread.state["title_source"] == "user"
     db.commit.assert_awaited_once()
+
+
+# --- KRI-719: multi-clip Talking to camera clip cap ---------------------------
+
+
+def _enable_multi_clip_talking(monkeypatch: pytest.MonkeyPatch, *, flag: bool = True) -> None:
+    from app.services.phone_rollout import PHONE_TALKING_HEAD_FEATURES
+
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", True)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(PHONE_TALKING_HEAD_FEATURES)
+    )
+    monkeypatch.setattr(settings, "talking_multi_clip_enabled", flag)
+
+
+def test_talking_clip_limit_stays_one_without_the_multi_clip_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_multi_clip_talking(monkeypatch, flag=False)
+    assert _format_clip_limit("subtitled") == 1
+
+
+def test_talking_clip_limit_is_ten_with_the_multi_clip_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routes.creation_threads import _media_capabilities
+
+    _enable_multi_clip_talking(monkeypatch)
+    assert _format_clip_limit("subtitled") == 10
+    # Other formats are untouched.
+    assert _format_clip_limit("montage") == 50
+    item = SimpleNamespace(edit_format="subtitled", voiceover_gcs_path=None, song_gcs_path=None)
+    assert _media_capabilities(item=item, clip_count=3, visual_count=0)["clips"]["max"] == 10
+
+
+def test_talking_clip_limit_needs_the_device_features_not_just_the_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flag alone must not raise the cap while the phone cannot render cutaways."""
+    _enable_multi_clip_talking(monkeypatch)
+    monkeypatch.setattr(settings, "phone_render_verified_features", [])
+    assert _format_clip_limit("subtitled") == 1
+
+
+@pytest.mark.asyncio
+async def test_capability_manifest_advertises_ten_talking_clips_only_with_the_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def talking_max(manifest: dict) -> int:
+        return next(f["max_clips"] for f in manifest["formats"] if f["edit_format"] == "subtitled")
+
+    _enable_multi_clip_talking(monkeypatch, flag=False)
+    off = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=True)
+    assert talking_max(off) == 1
+    _enable_multi_clip_talking(monkeypatch)
+    on = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=True)
+    assert talking_max(on) == 10
+
+
+@pytest.mark.asyncio
+async def test_talking_upload_reservation_enforces_ten_clip_limit_with_the_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_multi_clip_talking(monkeypatch)
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        active_plan_item_id=uuid.uuid4(),
+    )
+    item = SimpleNamespace(
+        edit_format="subtitled",
+        clip_gcs_paths=[f"users/u/existing-{n}.mp4" for n in range(10)],
+    )
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+
+    with pytest.raises(HTTPException, match="capped at 10 clips") as exc:
+        await upload_urls(
+            _request(),
+            str(thread.id),
+            UploadBody(
+                files=[
+                    UploadFile(
+                        filename="clip-11.mp4",
+                        content_type="video/mp4",
+                        file_size_bytes=10,
+                        client_upload_id="clip-11",
+                    )
+                ]
+            ),
+            user,
+            db,
+        )
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_talking_attachment_enforces_ten_clip_limit_with_the_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_multi_clip_talking(monkeypatch)
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_plan_item_id=uuid.uuid4(),
+        state={"media": [], "media_count": 10},
+    )
+    item = SimpleNamespace(
+        edit_format="subtitled",
+        current_job_id=None,
+        clip_gcs_paths=[f"users/u/clip-{n}.mp4" for n in range(10)],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+    )
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda path: SimpleNamespace(size=100, content_type="video/mp4"),
+    )
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+
+    with pytest.raises(HTTPException, match="capped at 10 clips") as exc:
+        await attach_media(
+            _request(),
+            str(thread.id),
+            AttachBody(
+                media=[MediaInput(media_id="clip-11.mp4", kind="video")],
+                client_event_id="attach-eleventh-talking",
+                expected_revision=0,
+            ),
+            user,
+            db,
+        )
+    assert exc.value.status_code == 409

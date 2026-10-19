@@ -2443,6 +2443,41 @@ agree. Guards: `tests/pipeline/test_narrated_title.py`,
 `testReadOnlyTitleCompilesLikeTheExportedPhoneTitle`, overlay fixture
 `narrated_title_fit.json`.
 
+## Several videos on a phone Talking edit (KRI-719)
+
+Env `TALKING_MULTI_CLIP_ENABLED` (default `false`; api + worker) plus phone
+`subtitled` and the `PHONE_TALKING_HEAD_FEATURES` device features
+(`phone_rollout.phone_talking_multi_clip_supported()`, the single gate for the
+clip cap, dispatch, manifest and worker). On: a declared Talking item takes up
+to `TALKING_MULTI_CLIP_MAX_CLIPS` (10) clips.
+
+- **Speakers vs footage** (`pipeline/phone_talking_cutaways.classify_talking_clips`,
+  worker `_classify_phone_talking_clips`): a clip speaks when its audio is present
+  and Whisper hears >= 6 words at >= 0.8 words/s. Speakers play back to back on
+  the main track in upload order (`compile_phone_subtitled_plan(additional_speakers=...)`),
+  captions built per clip and shifted. No clear speaker: the wordiest clip speaks.
+- **Footage** becomes muted full-frame cutaways on the KRI-136 `talking-head-cutaways`
+  track, timed by `schedule_footage_cutaways` (KRI-297 rules: 2.5 s hook and title
+  free, 1 s tail, 1.5-4 s windows, word-snapped, never over a full-screen Visual).
+  No room: receipt `unplaced` with upload position, shown as chat render notes.
+- **v1 limits**: speech cleanup refused for any multi-clip Talking (KRI-720); with
+  2+ speakers the KRI-174 lanes (cards, sounds, beats) and KRI-547 face fill are
+  skipped (`lanes_skipped`); cloud Talking still uses only the first clip, so keep
+  the flag off until the cloud renderer lands (plans/027 phase 3).
+- **Receipt**: `variants[i].phone_talking_multi_clip` (speakers, cutaways, unplaced,
+  per-clip roles); trace event `phone/talking_multi_clip_roles`.
+- **Editor Save** keeps speakers and cutaways from the pinned recipe
+  (`speaker_binding_from_recipe`, `additional_speakers_from_recipe`, `cutaways_from_recipe`).
+- **iOS live preview** (`NativePhoneTalkingSource.sourceIndices`) plays the receipt's
+  `speaker_media_ids` in order as locked composite clips, and draws the receipt's
+  `cutaways` windows (`NativePhoneTalkingSource.cutaways`) muted and full frame above
+  them, below every card, with `_compile_cutaway_track`'s clamps. Cutaways are preview
+  state only: never in the editor document, so nothing selects, moves or Saves them.
+  A speaker or cutaway clip missing from the source pool (or a malformed / overlapping
+  window) falls back to the finished MP4. The receipt windows equal the pinned recipe's
+  `talking-head-cutaways` clips (`_assert_receipt_cutaways_match_recipe` in
+  `tests/tasks/test_phone_subtitled_narrated_dispatch.py`).
+
 ## Hook titles on phone Talking edits (KRI-467)
 
 A confirmed `opening_title` on a phone Talking edit (`subtitled`: one clip, or
@@ -2535,6 +2570,37 @@ Tests: `tests/tasks/test_phone_subtitled_closing_title_worker.py`,
 `tests/pipeline/test_phone_subtitled_title.py` (closing section),
 `tests/kria/test_strategy_policy.py::test_closing_text_*`,
 `tests/services/test_phone_reaction_grounding.py::test_closing_card_*`.
+
+### Text on a spoken word on phone Talking edits (KRI-707)
+
+"“Atakan” dediğimde ekrana büyük “ATAKAN” yazısı gelsin" (boat kit T1, thread
+D2E99325, 2026-10-16) is a brief `text` requirement with the literal and its
+spoken trigger in `facts.triggers`. Nothing drew it, so the first receipt said
+"that exact text isn't in this draft", "simpler version" dropped it, and after
+KRI-705 the draft said "can't" while the contract still pinned the text, so the
+phone pin refused the render ("missing confirmed on-screen text"). Now, with no
+model or prompt involved:
+
+- **Ask.** `app.kria.spoken_text_ask` reads a live `global` text requirement with a
+  literal and non-empty triggers (structured fields only, KRI-667).
+- **Worker.** `_phone_talking_spoken_text_rows` finds the first time the take says
+  a trigger in the take's own words on the cut timeline (the reaction-beat token
+  match, so "Atakan'ı" says "Atakan"; never the caption cues, which correction can
+  strip of word timings) and adds a row `spoken-text-<requirement id>`: the
+  title's look, fading in on the word for 2 s, placed by `place_talking_title`
+  off the face and clear of the captions and title shown then (the face wins when
+  both can't be cleared). Persisted in `text_elements` plus a
+  `spoken_text_placement` receipt (`placed` / `not_heard` / `no_time` / `error`).
+- **Receipts.** Before approval: "I'll show it the moment you say that word ...",
+  a Talking plan line like the start cut (never "a simpler version?"). After
+  render: met when shown off the face; partial with the reason otherwise.
+- **Contract.** A Talking edit no longer pins such a text in `exact_texts`: it shows
+  only where the take says the word, and its receipt answers it.
+
+Kill switch: `fly secrets set PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED=false --app
+nova-video` + restart (api + worker). The draft says "can't" again and no row is
+placed; rows already on a variant keep rendering and survive Saves.
+Tests: `tests/tasks/test_kri707_talking_spoken_text.py`.
 
 ## Your song montages (KRI-374)
 

@@ -14,10 +14,18 @@ public struct DeviceRenderIdentity: Codable, Equatable, Sendable {
     }
 }
 
+public struct DeviceRepairInstruction: Codable, Equatable, Sendable {
+    public let action: String
+    public let attempt: Int
+    public let assetIDs: [String]
+    private enum CodingKeys: String, CodingKey { case action, attempt; case assetIDs = "assetIds" }
+}
+
 public struct DeviceRenderRequest: Codable, Equatable, Sendable {
     public let identity: DeviceRenderIdentity
     public let recipe: EditRecipe
-    public init(identity: DeviceRenderIdentity, recipe: EditRecipe) { self.identity = identity; self.recipe = recipe }
+    public let recovery: DeviceRepairInstruction?
+    public init(identity: DeviceRenderIdentity, recipe: EditRecipe, recovery: DeviceRepairInstruction? = nil) { self.identity = identity; self.recipe = recipe; self.recovery = recovery }
 }
 
 public enum DeviceRenderPhase: String, Codable, Sendable {

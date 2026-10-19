@@ -16,9 +16,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from google.api_core.exceptions import NotFound
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
@@ -37,6 +37,7 @@ from app.kria.device_render import (
     DeviceRenderFailureOut,
     DeviceRenderIdentity,
     DeviceRenderStatus,
+    DeviceRenderStatusOut,
     DeviceRetryBody,
     DeviceRetryOut,
     finished_durations,
@@ -49,7 +50,14 @@ from app.kria.render_assets import (
     VoiceoverRenderAsset,
 )
 from app.limiter import limiter
-from app.models import ContentPlan, Job, PlanItem, PlanItemAsset, TemporaryMediaUpload
+from app.models import (
+    ContentPlan,
+    CreatorAgentExecution,
+    Job,
+    PlanItem,
+    PlanItemAsset,
+    TemporaryMediaUpload,
+)
 from app.routes.generative_jobs import PLAYBACK_URL_TTL_MIN
 from app.schemas.edit_proposal import NarrationTrack
 from app.services.content_plan_persona import PlanPersonaOwnershipError, load_owned_plan_persona
@@ -59,8 +67,12 @@ from app.services.device_narration_binding import authorized_device_narration
 from app.services.device_render import (
     apply_device_failure_variant_update,
     apply_retry_variant_reset,
+    approved_export_sources,
+    approved_runtime_generation,
+    checked_export_report,
     device_record,
     device_status,
+    export_source_digest,
     fail_first_render_on_refusal,
     has_accepted_artifact,
     mark_device_failed,
@@ -175,7 +187,7 @@ async def _refuse_publication(
         mark_device_failed(
             job,
             refusal.variant_id,
-            reason_code="unsupported_recipe",
+            reason_code="export_failed" if stage == "actual_export" else "unsupported_recipe",
             detail=str(refusal.cause)[:500],
         )
     except (KeyError, ValueError):
@@ -220,19 +232,84 @@ def _record(job: Job, identity: DeviceRenderIdentity) -> tuple[dict, DeviceRende
     return record, status
 
 
-@router.get("/jobs/{job_id}/device-render", response_model=DeviceRenderStatus)
+async def _expire_repair_permission(
+    db: AsyncSession,
+    job: Job,
+    record: dict,
+    status: DeviceRenderStatus,
+) -> bool:
+    if status.request.recovery is None or status.phase in {"published", "needs_attention"}:
+        return False
+    raw = (record.get("repair_authority") or {}).get("expires_at")
+    try:
+        live = datetime.fromisoformat(raw) > datetime.now(UTC)
+    except (ValueError, TypeError):
+        live = False
+    if live:
+        return False
+    record["repair_stopped"] = "approval_expired"
+    save_device_record(job, status.request.identity.variant_id, record)
+    mark_device_failed(
+        job,
+        status.request.identity.variant_id,
+        reason_code="export_failed",
+        detail=(
+            "Automatic repair permission expired. Your approved edit is saved. "
+            "Review Retry approved edit to continue."
+        ),
+    )
+    await db.commit()
+    return True
+
+
+async def _runtime_retry_execution(db: AsyncSession, job: Job, record: dict) -> uuid.UUID | None:
+    generation = record.get("base_generation")
+    generation_targets = [CreatorAgentExecution.target_generation_id == generation]
+    # Only the original whole-job generation can inherit its null target.
+    # A later manual Save must retain its independent device retry path.
+    original_generation = approved_runtime_generation(job, None)
+    if original_generation is not None and original_generation == generation:
+        generation_targets.append(CreatorAgentExecution.target_generation_id.is_(None))
+    return (
+        await db.execute(
+            select(CreatorAgentExecution.id)
+            .where(
+                CreatorAgentExecution.target_job_id == job.id,
+                CreatorAgentExecution.tool_name == "render.request",
+                or_(*generation_targets),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+@router.get("/jobs/{job_id}/device-render", response_model=DeviceRenderStatusOut)
 async def get_device_render(
     job_id: uuid.UUID,
     user: CurrentUser,
     variant_id: str = Query(..., min_length=1, max_length=160),
     db: AsyncSession = Depends(get_db),
-) -> DeviceRenderStatus:
+) -> DeviceRenderStatusOut:
     job = await _owned_job(db, user.id, job_id)
     try:
         status = device_status(job, variant_id)
     except KeyError as exc:
         raise HTTPException(404, "Device recipe unavailable") from exc
     record, status = _record(job, status.request.identity)
+    if await _expire_repair_permission(db, job, record, status):
+        record, status = _record(job, status.request.identity)
+    verification_required = "actual_export_policy" in record
+    if verification_required:
+        from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+        if (current_client_protocol() or 0) < 13:
+            raise HTTPException(
+                426, detail={"code": "client_update_required", "feature": "export_verification"}
+            )
+        if status.phase == "published" and not checked_export_report(
+            record, status, str(record.get("published_attempt") or "")
+        ):
+            raise HTTPException(409, "This export has no matching successful output check")
     from app.services.phone_text_styling import (
         PHONE_TEXT_STYLE_FIELD,
         require_phone_text_style_client,
@@ -259,6 +336,14 @@ async def get_device_render(
         raise HTTPException(
             426, detail={"code": "client_update_required", "feature": "single_word_text"}
         )
+    status = DeviceRenderStatusOut(
+        **status.model_dump(),
+        output_verification_required=verification_required,
+        retry_requires_approval=(
+            status.phase != "published"
+            and await _runtime_retry_execution(db, job, record) is not None
+        ),
+    )
     now = datetime.now(UTC)
     last_polled_raw = record.get("last_polled_at")
     should_touch = True
@@ -763,12 +848,18 @@ async def retry_device_export(
     identity = body.identity
     job = await _owned_job(db, user.id, job_id)
     try:
-        _, status = _record(job, identity)
+        record, status = _record(job, identity)
     except _ContractRefusal as refusal:
         await _refuse_publication(db, job, refusal, stage="retry")
         raise
     if status.phase != "needs_attention":
         raise HTTPException(409, "Render is not awaiting a retry")
+    runtime_execution = await _runtime_retry_execution(db, job, record)
+    if runtime_execution is not None:
+        raise HTTPException(
+            409,
+            "Open this project's chat and review Retry approved edit before rendering again.",
+        )
     try:
         new_status = retry_device_render(job, identity.variant_id)
     except CreatorRenderContractError as exc:
@@ -793,6 +884,8 @@ def _verify_export(
     brand_tail: str = "none",
     *,
     poster_job_id: uuid.UUID | None = None,
+    source_bindings: dict | None = None,
+    verification_report: dict | None = None,
 ) -> str | None:
     """Verify the phone's export; with ``poster_job_id``, also publish its poster.
 
@@ -809,7 +902,20 @@ def _verify_export(
             if hashlib.file_digest(source, "sha256").hexdigest() != expected_sha256:
                 raise ValueError("export checksum mismatch")
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(local)],
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-protocol_whitelist",
+                "file,pipe",
+                "-f",
+                "mov",
+                "-show_streams",
+                "-show_format",
+                "-of",
+                "json",
+                str(local),
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -863,6 +969,39 @@ def _verify_export(
             0.1, 2 / recipe.frame_rate
         ):
             raise ValueError("export duration mismatch")
+        if verification_report is not None:
+            from app.services.actual_export_verification import (
+                verify_actual_export,  # noqa: PLC0415
+            )
+
+            sources = {}
+            total_size = 0
+            try:
+                for index, (media_id, binding) in enumerate((source_bindings or {}).items()):
+                    target = Path(directory) / f"reference-{index}.mp4"
+                    storage.download_generation_to_file(
+                        binding.proxy_path, str(target), generation=binding.generation
+                    )
+                    total_size += target.stat().st_size
+                    if total_size > 128 * 1024 * 1024:
+                        raise ValueError("reference download budget")
+                    sources[media_id] = target
+                verification_report.update(
+                    verify_actual_export(local, status, sources, brand_tail=brand_tail)
+                )
+            except Exception as exc:  # noqa: BLE001 - uncertainty blocks publication
+                verification_report.update(
+                    status="partial",
+                    checks=[
+                        {
+                            "kind": "evidence",
+                            "status": "missing",
+                            "reason": type(exc).__name__,
+                        }
+                    ],
+                )
+            if verification_report.get("status") != "checked":
+                return None
         if poster_job_id is None:
             return None
         # Reuse the verified download: phone renders never pass through a
@@ -884,30 +1023,112 @@ def _verify_export(
 @limiter.limit("5/minute")
 async def complete_device_export(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     job_id: uuid.UUID,
     body: DeviceExportCompleteBody,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DeviceExportCompleteOut:
-    user_id = user.id
+    result = await _complete_device_export(job_id, body, user.id, db)
+    if result.status == "checking":
+        response.status_code = 202
+        from app.tasks.export_verification import enqueue  # noqa: PLC0415
+
+        background_tasks.add_task(enqueue, str(job_id), str(user.id), body.model_dump(mode="json"))
+    return result
+
+
+async def _complete_device_export(
+    job_id: uuid.UUID,
+    body: DeviceExportCompleteBody,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+    *,
+    verification_token: str | None = None,
+) -> DeviceExportCompleteOut:
     job = await _owned_job(db, user_id, job_id)
     try:
         record, status = _record(job, body.identity)
     except _ContractRefusal as refusal:
         await _refuse_publication(db, job, refusal)
         raise
+    if await _expire_repair_permission(db, job, record, status):
+        raise HTTPException(409, "Automatic repair permission expired")
     attempt_id = str(body.attempt_id)
     if status.phase == "published":
         if record.get("published_attempt") != attempt_id:
             raise HTTPException(409, "Another export was published")
+        if not checked_export_report(record, status, attempt_id):
+            raise HTTPException(409, "This export has no matching successful output check")
         return DeviceExportCompleteOut(identity=body.identity)
     if status.phase != "syncing":
         raise HTTPException(409, "Render no longer accepts completion")
     attempt = record["attempts"].get(attempt_id)
     if attempt is None:
         raise HTTPException(409, "Export was not reserved")
+    if "actual_export_policy" in record:
+        from app.tasks.export_verification import claim_valid  # noqa: PLC0415
+
+        if verification_token is None:
+            from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+            if (current_client_protocol() or 0) < 13:
+                raise HTTPException(
+                    426,
+                    detail={"code": "client_update_required", "feature": "background_verification"},
+                )
+            active = record.get("verification_attempt")
+            if active and active != attempt_id:
+                raise HTTPException(409, "Another export is being checked")
+            if "verification_task" not in attempt:
+                attempt["verification_task"] = {
+                    "state": "queued",
+                    "runs": 0,
+                    "queued_at": datetime.now(UTC).isoformat(),
+                }
+                record["verification_attempt"] = attempt_id
+                save_device_record(job, body.identity.variant_id, record)
+                from app.kria.automatic_export_repair import bind_repair_grant  # noqa: PLC0415
+
+                await bind_repair_grant(db, job, body.identity.variant_id)
+                await db.commit()
+            return DeviceExportCompleteOut(status="checking", identity=body.identity)
+        if record.get("verification_attempt") != attempt_id or not claim_valid(
+            record, attempt_id, verification_token
+        ):
+            raise HTTPException(409, "Verification claim changed")
+    verification_report: dict | None = {} if "actual_export_policy" in record else None
+    policy = record.get("actual_export_policy")
+    bindings = (
+        approved_export_sources(job, status.request) if verification_report is not None else None
+    )
+    sources_digest = export_source_digest(bindings) if bindings is not None else None
+    if verification_report is not None:
+        supported_policy = isinstance(policy, dict) and policy.get("version") == 1
+        if not supported_policy or policy.get("source_receipts_digest") != sources_digest:
+            verification_report.update(
+                status="rejected" if supported_policy else "unsupported",
+                checks=[{"kind": "authority", "status": "failed"}],
+            )
+            record["attempts"][attempt_id]["actual_export_verification"] = verification_report
+            save_device_record(job, body.identity.variant_id, record)
+            cause = CreatorRenderContractError(
+                "I couldn't confirm this export belongs to your approved edit.",
+                decline_reason="evidence_missing" if supported_policy else "capability_unavailable",
+                field_path="source_identity" if supported_policy else "render_verifier",
+                alternative="Review and approve a new edit before exporting again.",
+            )
+            await _refuse_publication(db, job, _ContractRefusal(cause, body.identity.variant_id))
+            raise HTTPException(422, "Export verification authority changed")
+    verify_kwargs = (
+        {"source_bindings": bindings, "verification_report": verification_report}
+        if verification_report is not None
+        else {}
+    )
     # Do not hold database locks while downloading/probing the MP4. Reacquire the full fence below.
     await db.rollback()
+    metadata = None
     try:
         metadata = await asyncio.to_thread(storage.object_metadata, attempt["path"])
         if (
@@ -925,15 +1146,25 @@ async def complete_device_export(
             status,
             attempt.get("brand_tail", "none"),
             poster_job_id=job_id,
+            **verify_kwargs,
         )
     except FileNotFoundError as exc:
         raise HTTPException(409, "Export upload has not finished") from exc
     except (ValueError, KeyError, subprocess.SubprocessError) as exc:
-        raise HTTPException(422, "Export does not match the approved recipe") from exc
+        if verification_report is None:
+            raise HTTPException(422, "Export does not match the approved recipe") from exc
+        verification_report.update(
+            status="rejected", checks=[{"kind": "format", "status": "failed"}]
+        )
+        poster_path = None
     # A short-lived (5-min) default TTL here would expire long before playback:
     # match the playback TTL every other read path re-signs against (see
     # PLAYBACK_URL_TTL_MIN docstring in generative_jobs.py).
-    url = await asyncio.to_thread(storage.signed_get_url, attempt["path"], PLAYBACK_URL_TTL_MIN)
+    url = (
+        await asyncio.to_thread(storage.signed_get_url, attempt["path"], PLAYBACK_URL_TTL_MIN)
+        if verification_report is None or verification_report.get("status") == "checked"
+        else None
+    )
     job = await _owned_job(db, user_id, job_id)
     try:
         record, status = _record(job, body.identity)
@@ -943,9 +1174,83 @@ async def complete_device_export(
     if status.phase == "published":
         if record.get("published_attempt") != attempt_id:
             raise HTTPException(409, "Another export was published")
+        if not checked_export_report(record, status, attempt_id):
+            raise HTTPException(409, "This export has no matching successful output check")
         return DeviceExportCompleteOut(identity=body.identity)
     if status.phase != "syncing":
         raise HTTPException(409, "Render no longer accepts completion")
+    if verification_token is not None:
+        if await _expire_repair_permission(db, job, record, status):
+            raise HTTPException(409, "Automatic repair permission expired")
+        from app.tasks.export_verification import claim_valid  # noqa: PLC0415
+
+        if not claim_valid(record, attempt_id, verification_token):
+            raise HTTPException(409, "Verification claim changed")
+        record["attempts"][attempt_id]["verification_task"].update(state="done")
+    if verification_report is not None:
+        # Fence the source/policy snapshot again after downloading and decoding.
+        if (
+            record.get("actual_export_policy") != policy
+            or export_source_digest(approved_export_sources(job, status.request)) != sources_digest
+        ):
+            raise HTTPException(409, "Export verification authority changed")
+        verification_report.update(
+            artifact_path=attempt["path"],
+            storage_generation=str(metadata.generation) if metadata is not None else None,
+            source_receipts_digest=sources_digest,
+        )
+        record["attempts"][attempt_id]["actual_export_verification"] = verification_report
+        if record.get("repair_history"):
+            row = record["repair_history"][-1]
+            row["outcome"] = verification_report.get("status", "partial")
+            row["completed_at"] = datetime.now(UTC).isoformat()
+            row["elapsed_s"] = (
+                datetime.now(UTC) - datetime.fromisoformat(row["started_at"])
+            ).total_seconds()
+            row["result"] = copy.deepcopy(verification_report)
+            row["model_cost_usd"] = 0
+            row["infrastructure_cost_usd"] = None
+        if not checked_export_report(record, status, attempt_id):
+            if verification_report.get("status") == "checked":
+                verification_report["status"] = "rejected"
+                verification_report.setdefault("checks", []).append(
+                    {"kind": "authority", "status": "failed"}
+                )
+            else:
+                verification_report["status"] = verification_report.get("status") or "partial"
+            save_device_record(job, body.identity.variant_id, record)
+            from app.kria.automatic_export_repair import repair_failed_export  # noqa: PLC0415
+
+            if await repair_failed_export(
+                db, job, body.identity.variant_id, attempt_id, verification_report
+            ):
+                await db.commit()
+                return DeviceExportCompleteOut(status="checking", identity=body.identity)
+            failed = next(
+                (
+                    row.get("kind")
+                    for row in verification_report.get("checks", [])
+                    if row.get("status") != "passed"
+                ),
+                "output",
+            )
+            cause = CreatorRenderContractError(
+                "I couldn't confirm this export belongs to your approved edit."
+                if failed == "authority"
+                else (
+                    f"I couldn't confirm the exported video's {failed} matches your approved edit."
+                ),
+                decline_reason="evidence_missing",
+                field_path="export_verification",
+                alternative=(
+                    "Retry this same approved edit; the output must pass its checks "
+                    "before it can replace your video."
+                ),
+            )
+            await _refuse_publication(
+                db, job, _ContractRefusal(cause, body.identity.variant_id), stage="actual_export"
+            )
+            raise HTTPException(422, "Export does not match the approved recipe")
     try:
         # This is deliberately inside the reacquired owner/row fence.  The
         # byte probe above only proves the file against the recipe; publication
@@ -992,6 +1297,11 @@ async def complete_device_export(
             "poster_path": poster_path,
             "output_url": url,
             "render_destination": "device",
+            **(
+                {"actual_export_verification": verification_report}
+                if verification_report is not None
+                else {}
+            ),
             **finished_durations(status.request.recipe.duration, attempt.get("brand_tail", "none")),
         }
         if v.get("variant_id") == body.identity.variant_id

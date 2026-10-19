@@ -46,6 +46,12 @@ and a placed clip never contributes audio -- so no new native primitive is
 needed. Cutaway footage may be landscape (it is centre-cropped, like the
 cloud's b-roll reframe); only the speaker clip is letterboxed. With
 ``cutaways=()`` the output is byte-identical to the single-clip shape.
+
+Multi-speaker Talking (KRI-719): ``additional_speakers`` plays more clips WITH
+speech on the same main track, back to back after the first speaker, each
+with its own audio, at full length. The first speaker alone carries any
+cleanup cut (``cut_plan``/``keep_segments``) and the KRI-547 face fill. With
+``additional_speakers=()`` the output is byte-identical.
 """
 
 from __future__ import annotations
@@ -189,6 +195,7 @@ def compile_phone_subtitled_plan(
     text_elements: Sequence[Mapping[str, Any]] = (),
     text_elements_user_edited: bool = False,
     speaker_position_x: float | None = None,
+    additional_speakers: tuple[PhoneSourceBinding, ...] = (),
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
 
@@ -304,6 +311,13 @@ def compile_phone_subtitled_plan(
     variant flag that picks the karaoke settle color. Empty (the default) is
     byte-identical to the pre-KRI-467 recipe.
 
+    ``additional_speakers`` (KRI-719, optional) appends more speaker clips to
+    the main track, in the given order, right after the first speaker's
+    (possibly cut) segments: each plays in full with its own audio and its
+    own ``landscape_fit`` transform. ``caption_cues``, ``text_elements`` and
+    ``cutaways`` are then expressed on that combined timeline. Rejects a
+    duplicate speaker, a non-video one, or one longer than 300 s.
+
     ``speaker_position_x`` (KRI-547, optional) face-fills a LANDSCAPE speaker
     clip instead: identity scale (the engine's cover fill) shifted this many
     canvas pixels to the right on EVERY speaker `TimelineClip`, clamped so no
@@ -395,6 +409,47 @@ def compile_phone_subtitled_plan(
             )
         )
         cursor += seg_duration
+    seen_speakers = {binding.media_id}
+    for extra_index, extra in enumerate(additional_speakers):
+        extra_original = extra.original
+        if extra.media_id in seen_speakers:
+            raise UnsupportedPhonePlan("a Talking speaker clip cannot play twice")
+        seen_speakers.add(extra.media_id)
+        if extra_original.width is None or extra_original.height is None:
+            raise UnsupportedPhonePlan("phone subtitled plan requires a video source clip")
+        if extra_original.duration_s > _MAX_CLIP_DURATION_S:
+            raise UnsupportedPhonePlan(
+                "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
+            )
+        extra_asset = extra.render_asset()
+        manifest[extra_asset.id] = extra_asset
+        assets[extra_asset.id] = MediaAsset(
+            id=extra_asset.id,
+            relative_path=extra_asset.id,
+            fingerprint=AssetFingerprint(
+                hex=extra_original.sha256, byte_count=extra_original.byte_count
+            ),
+            duration=extra_original.duration_s,
+            natural_size=MediaSize(width=extra_original.width, height=extra_original.height),
+            orientation_degrees=extra_original.orientation_degrees,
+            is_proxy_available=True,
+        )
+        extra_width, extra_height = _display_dims(extra_original)
+        extra_duration = float(extra_original.duration_s)
+        if extra_duration <= 0:
+            continue
+        main_clips.append(
+            TimelineClip(
+                id=f"speaker-{extra_index + 1}",
+                source_asset_id=extra_asset.id,
+                source_start=0.0,
+                source_duration=extra_duration,
+                timeline_start=cursor,
+                rate=1.0,
+                transform=fit_transform(extra_width, extra_height, _STORY_CANVAS, landscape_fit),
+            )
+        )
+        cursor += extra_duration
     speaker_end = cursor
     from app.services.phone_text_styling import register_generation_timeline
 
@@ -483,7 +538,7 @@ def compile_phone_subtitled_plan(
     if cutaways:
         cutaway_track = _compile_cutaway_track(
             cutaways,
-            speaker_media_id=binding.media_id,
+            speaker_media_ids=frozenset(seen_speakers),
             speaker_end=speaker_end,
             assets=assets,
             manifest=manifest,
@@ -956,7 +1011,7 @@ def _compile_video_overlay_clip(
 def _compile_cutaway_track(
     cutaways: tuple[PhoneCutaway, ...],
     *,
-    speaker_media_id: str,
+    speaker_media_ids: frozenset[str],
     speaker_end: float,
     assets: dict[str, MediaAsset],
     manifest: dict[str, object],
@@ -977,7 +1032,7 @@ def _compile_cutaway_track(
     for index, cutaway in enumerate(sorted(cutaways, key=lambda c: (c.start_s, c.end_s))):
         cut_binding = cutaway.binding
         original = cut_binding.original
-        if cut_binding.media_id == speaker_media_id:
+        if cut_binding.media_id in speaker_media_ids:
             raise UnsupportedPhonePlan("a Talking-head cutaway cannot reuse the speaker clip")
         if original.width is None or original.height is None:
             raise UnsupportedPhonePlan("a Talking-head cutaway requires a video clip")
@@ -1048,21 +1103,46 @@ def cutaways_from_recipe(
     return tuple(cutaways)
 
 
+def additional_speakers_from_recipe(
+    recipe: EditRecipeV2, bindings: tuple[PhoneSourceBinding, ...]
+) -> tuple[PhoneSourceBinding, ...]:
+    """KRI-719: the speakers a pinned recipe plays AFTER the first one on its
+    main (``"subtitled"``) track, in timeline order -- the inverse of
+    ``compile_phone_subtitled_plan(additional_speakers=...)``. ``()`` for a
+    single-speaker recipe. The muted ending clip on the same track is a
+    Visuals-pool asset with no phone source binding, so it never matches."""
+    if len(bindings) == 1:
+        return ()
+    main_track = next((t for t in recipe.tracks if t.id == "subtitled"), None)
+    if main_track is None:
+        return ()
+    by_media_id = {b.media_id: b for b in bindings}
+    ordered: list[PhoneSourceBinding] = []
+    for clip in sorted(main_track.clips, key=lambda c: c.timeline_start):
+        speaker = by_media_id.get(clip.source_asset_id)
+        if speaker is not None and speaker not in ordered:
+            ordered.append(speaker)
+    return tuple(ordered[1:])
+
+
 def speaker_binding_from_recipe(
     recipe: EditRecipeV2, bindings: tuple[PhoneSourceBinding, ...]
 ) -> PhoneSourceBinding:
-    """The binding whose asset plays on a pinned recipe's main
+    """The binding whose asset plays FIRST on a pinned recipe's main
     (``"subtitled"``) track -- the speaker. With one binding this is always
     that binding; a multi-clip Talking head picks the spine out of all of
-    them. Raises ``ValueError`` when no binding matches."""
+    them, and a multi-speaker Talking edit (KRI-719) its first speaker (the
+    rest: `additional_speakers_from_recipe`). Raises ``ValueError`` when no
+    binding matches."""
     if len(bindings) == 1:
         return bindings[0]
     main_track = next((t for t in recipe.tracks if t.id == "subtitled"), None)
-    main_assets = {clip.source_asset_id for clip in main_track.clips} if main_track else set()
-    matches = [b for b in bindings if b.media_id in main_assets]
-    if len(matches) != 1:
-        raise ValueError("Talking-head recipe has no single speaker clip")
-    return matches[0]
+    by_media_id = {b.media_id: b for b in bindings}
+    for clip in sorted(main_track.clips if main_track else [], key=lambda c: c.timeline_start):
+        speaker = by_media_id.get(clip.source_asset_id)
+        if speaker is not None:
+            return speaker
+    raise ValueError("Talking-head recipe has no single speaker clip")
 
 
 def _compile_sfx_track(

@@ -149,6 +149,27 @@ def test_published_record_is_ready_and_needs_attention_is_failed() -> None:
     assert _device_render_state(published, _execution(variant=VARIANT, minimum=1)) == "ready"
 
 
+def test_promoted_record_cannot_settle_ready_without_actual_output_proof() -> None:
+    job = _device_job()
+    _publish(job)
+    record = device_record(job, VARIANT)
+    record["actual_export_policy"] = {"version": 1}
+    save_device_record(job, VARIANT, record)
+    assert _device_render_state(job, _execution(variant=VARIANT, minimum=1)) == "failed"
+
+
+def test_refused_replacement_cannot_complete_using_the_last_good_video():
+    job = _device_job()
+    _publish(job)
+    record = device_record(job, VARIANT)
+    record["status"]["phase"] = "needs_attention"
+    save_device_record(job, VARIANT, record)
+    outcome, execution, events = _observe(job, {})
+    assert outcome == "failed"
+    assert execution.status == "failed"
+    assert events[-1]["event_type"] == "assistant_render_failed"
+
+
 def test_a_record_older_than_the_pinned_edit_revision_stays_pending() -> None:
     job = _device_job(revision=1)
     _publish(job)  # revision 1 published; the approved edit pinned revision 2
@@ -732,19 +753,46 @@ def test_editor_edit_with_no_render_section_ignores_a_stale_device_record() -> N
     assert _device_render_state(job, execution) is None
 
 
-def test_device_render_failure_points_the_creator_at_the_phone_not_chat_retry() -> None:
+def test_device_render_failure_offers_the_saved_edit_retry() -> None:
     job = _device_job()
     mark_device_failed(job, VARIANT, reason_code="thermal", detail="")
     _, execution, events = _observe(
         job,
         {"target_variant_id": VARIANT, "result": {"editor_prep": {"device_recipe_revision": 1}}},
     )
-    assert execution.error["recovery"] == "manual"
-    assert execution.error["retryable"] is False
+    assert execution.error["recovery"] == "retry"
+    assert execution.error["retryable"] is True
     failed = events[-1]
-    assert failed["payload"]["recovery"] == "manual"
+    assert failed["payload"]["recovery"] == "retry"
     assert "iPhone" in failed["content"]
-    assert "retry without rebuilding" not in failed["content"]
+    assert "Retry the same edit" in failed["content"]
+    assert "after reviewing its approval" in failed["content"]
+
+
+def test_actual_output_failure_keeps_exact_retry_without_repeating_the_request():
+    from app.services.creator_render_contract import CreatorRenderContractError
+    from app.services.device_render import record_contract_decline
+
+    job = _device_job()
+    record_contract_decline(
+        job,
+        VARIANT,
+        CreatorRenderContractError(
+            "The export did not pass its checks.",
+            decline_reason="evidence_missing",
+            field_path="export_verification",
+        ),
+        stage="actual_export",
+    )
+    record = device_record(job, VARIANT)
+    record["actual_export_policy"] = {"version": 1}
+    save_device_record(job, VARIANT, record)
+    mark_device_failed(job, VARIANT, reason_code="export_failed", detail="Output check failed")
+    _, execution, events = _observe(job, {"target_variant_id": VARIANT})
+    assert execution.error["recovery"] == "retry"
+    assert execution.error["retryable"] is True
+    assert "approved edit" in events[-1]["content"]
+    assert "checks" in events[-1]["content"]
 
 
 def test_a_cloud_render_failure_keeps_the_chat_retry_recovery() -> None:
@@ -1460,8 +1508,9 @@ def test_a_device_failure_with_no_recorded_refusal_keeps_the_phone_retry_copy() 
 
     _, execution, events = _observe_refusal(job)
 
-    assert execution.error["recovery"] == "manual"
-    assert "tap Retry" in events[-1]["content"]
+    assert execution.error["recovery"] == "retry"
+    assert "Retry the same edit" in events[-1]["content"]
+    assert "after reviewing its approval" in events[-1]["content"]
     assert "decline_reason" not in execution.error
 
 

@@ -13,7 +13,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import structlog
@@ -40,6 +40,7 @@ from app.kria.contracts import (
     KriaTurnPlan,
     RequirementReceipt,
 )
+from app.kria.duplicate_send import duplicate_reply, find_duplicate_send
 from app.kria.language import is_help_question, is_status_question
 from app.kria.reply_language import (
     remember_reply_language,
@@ -393,7 +394,11 @@ async def _owned_thread(
         CreationThread.creator_id == creator_id,
     )
     if lock:
-        statement = statement.with_for_update()
+        # populate_existing: a session that already holds this thread from an earlier
+        # transaction (expire_on_commit=False; `submit_turn`'s re-entry after a lazy
+        # approval expiry) must read the row it just locked. A kept `revision` collides
+        # with any event committed in between (uq_creation_thread_events_revision).
+        statement = statement.with_for_update().execution_options(populate_existing=True)
     thread = (await db.execute(statement)).scalar_one_or_none()
     if thread is None:
         raise RuntimeFailure(404, "thread_not_found", "Creation thread not found")
@@ -732,6 +737,19 @@ async def submit_turn(
                     else body.expected_thread_revision
                 ),
             )
+    # KRI-552: the creator's identical re-send of their latest message (the chat looked stuck)
+    # is a copy. It is answered below and never planned: queued, it threw the running turn back
+    # to plan again and, after the render, asked the creator to restate what was already done.
+    duplicate = None
+    if (
+        settings.kria_duplicate_resend_enabled
+        and scope is None
+        and choice_selection is None
+        and body.clip_selection is None
+        and body.song_order is None
+        and body.song_range is None
+    ):
+        duplicate = await find_duplicate_send(db, thread, body.message)
     # KRI-520: the chat's reply language after this message, stored on the locked
     # thread row (committed with the event below; rolled back with a refusal).
     reply_language = resolve_reply_language(
@@ -742,6 +760,8 @@ async def submit_turn(
     with reply_language_for(reply_language):
         if scope is not None:
             pass  # "Update: captions, music" is never a status or help question
+        elif duplicate is not None:
+            inert_response = ("progress", duplicate_reply(duplicate))
         elif is_status_question(body.message):
             status = getattr(active, "status", None)
             if status in {"pending", "planning"}:
@@ -787,6 +807,10 @@ async def submit_turn(
     if inert_response is not None:
         turn_value, message = inert_response
         turn_id = uuid.uuid4()
+        # KRI-552: marks both events as a copy of `duplicate.turn_id`'s message. The worker's
+        # revision fence and the planner's reads skip them, so a copy never disturbs the turn
+        # it repeats.
+        copy_of = {"duplicate_of": str(duplicate.turn_id)} if duplicate is not None else {}
         source = await _append_event(
             db,
             thread,
@@ -799,6 +823,7 @@ async def submit_turn(
                 "turn_id": str(turn_id),
                 "turn_status": "completed",
                 "inert": True,
+                **copy_of,
             },
             client_event_id=body.client_event_id,
         )
@@ -814,6 +839,7 @@ async def submit_turn(
                 "receipt_ids": [],
                 "next_actions": [],
                 "schema_version": 2,
+                **copy_of,
             },
         )
         plan = KriaTurnPlan(mode="respond", turn_value=turn_value, response=message)
@@ -1807,7 +1833,10 @@ async def _expire_blocking_approval(
     """Lazily expire an overdue pending approval that blocks `submit_turn` (KRI-295).
 
     Returns the thread revision after expiry, or None when nothing was expired
-    (decided/extended meanwhile). The caller must hold NO locks: this re-acquires
+    (decided/extended meanwhile). An approval someone else expired after `submit_turn`
+    saw it pending (the reconcile sweep, between that rollback and these locks) counts
+    as expired here too: its notice is the bump the creator could not have seen, exactly
+    as when this call writes it. The caller must hold NO locks: this re-acquires
     them in canonical order (PlanItem -> Session -> Turn -> Approval -> Execution
     -> Thread), exactly like `decide_approval`. `submit_turn` therefore rolls back
     (releasing its Thread lock) before calling this, rather than locking Thread
@@ -1848,6 +1877,9 @@ async def _expire_blocking_approval(
         if has_stash
         else None
     )
+    # populate_existing on every row read above without a lock (`approval_ref`, the
+    # execution and stash-path session peeks): the reconcile sweep may have expired this
+    # approval in between, and a kept "pending" would expire and announce it twice.
     session = (
         await db.execute(
             select(CreatorAgentSession)
@@ -1856,6 +1888,7 @@ async def _expire_blocking_approval(
                 CreatorAgentSession.creator_id == creator_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     turn = (
@@ -1873,6 +1906,7 @@ async def _expire_blocking_approval(
             select(CreatorAgentApproval)
             .where(CreatorAgentApproval.id == approval_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     execution = None
@@ -1882,9 +1916,14 @@ async def _expire_blocking_approval(
                 select(CreatorAgentExecution)
                 .where(CreatorAgentExecution.id == execution_id)
                 .with_for_update()
+                .execution_options(populate_existing=True)
             )
         ).scalar_one_or_none()
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
+    if approval is not None and approval.status == "expired":  # expired by the sweep meanwhile
+        revision = int(thread.revision)
+        await db.rollback()
+        return revision
     if (
         session is None
         or turn is None
@@ -2021,8 +2060,20 @@ async def decide_approval(
         if decision == "approve"
         else None
     )
+    retry_execution = None
+    if getattr(approval_ref, "execution_ids", None):
+        retry_execution = await db.get(
+            CreatorAgentExecution, uuid.UUID(str(approval_ref.execution_ids[0]))
+        )
+    is_render_retry = bool(
+        retry_execution is not None
+        and isinstance((retry_execution.result or {}).get("render_retry"), dict)
+    )
     is_strategy_approval = bool(
-        document_peek is not None and document_peek.kind == "strategy" and document_peek.strategy
+        document_peek is not None
+        and document_peek.kind == "strategy"
+        and document_peek.strategy
+        and not is_render_retry
     )
     # A deny (or, further below, a lazy expiry) must reverse an already
     # -committed strategy media mutation, if this approval's render execution
@@ -2051,7 +2102,11 @@ async def decide_approval(
                 and isinstance(execution_peek.result, dict)
                 and "strategy_media_before" in execution_peek.result
             )
-    needs_plan_item_lock = is_strategy_approval or deny_restore_pending
+    needs_plan_item_lock = (
+        is_strategy_approval
+        or deny_restore_pending
+        or (decision == "approve" and body.automatic_repair_attempts > 0)
+    )
     plan_item = (
         await _lock_strategy_plan_item(
             db, session_id=approval_ref.session_id, creator_id=creator_id
@@ -2059,6 +2114,9 @@ async def decide_approval(
         if needs_plan_item_lock
         else None
     )
+    # populate_existing on every locked re-read of a row peeked above (approval, draft,
+    # execution, and the session on the strategy path): that copy predates the lock, so
+    # a concurrent expiry (the reconcile sweep) or pin change would otherwise go unseen.
     session = (
         await db.execute(
             select(CreatorAgentSession)
@@ -2067,6 +2125,7 @@ async def decide_approval(
                 CreatorAgentSession.creator_id == creator_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if session is None:
@@ -2104,6 +2163,7 @@ async def decide_approval(
                 CreatorEditDraft.thread_id == thread_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     approval = (
@@ -2115,6 +2175,7 @@ async def decide_approval(
                 CreatorAgentApproval.creator_id == creator_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     execution: CreatorAgentExecution | None = None
@@ -2131,6 +2192,7 @@ async def decide_approval(
                     select(CreatorAgentExecution)
                     .where(CreatorAgentExecution.id == execution_id)
                     .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).scalar_one_or_none()
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
@@ -2242,6 +2304,25 @@ async def decide_approval(
             recovery="refresh_replan",
             current_revision=int(thread.revision),
         )
+    if (
+        is_render_retry
+        and decision == "approve"
+        and (body.output_orientation is not None or body.landscape_fit is not None)
+    ):
+        retry_shape = retry_execution.result["render_retry"].get("render_shape", {})
+        if any(
+            value is not None and value != retry_shape.get(key)
+            for key, value in (
+                ("output_orientation", body.output_orientation),
+                ("landscape_fit", body.landscape_fit),
+            )
+        ):
+            raise RuntimeFailure(
+                409,
+                "render_retry_requires_change",
+                "Retry keeps the approved video shape. Ask for a new version to change it.",
+                phase="approval",
+            )
     if decision == "approve" and (
         draft.draft_revision != body.expected_draft_revision or not draft.is_head
     ):
@@ -2306,8 +2387,10 @@ async def decide_approval(
     # and applied at claim time (`_claim_approval_dispatch`), so a deny -- which
     # never reaches the claim -- has nothing to undo.
     render_shape_stash: dict[str, str] | None = None
-    if decision == "approve" and (
-        body.output_orientation is not None or body.landscape_fit is not None
+    if (
+        decision == "approve"
+        and not is_render_retry
+        and (body.output_orientation is not None or body.landscape_fit is not None)
     ):
         render_shape_stash = await _validated_render_shape(
             db,
@@ -2365,6 +2448,25 @@ async def decide_approval(
             db, item=plan_item, execution=execution
         )
 
+    if decision == "approve" and body.automatic_repair_attempts:
+        if execution is None:
+            raise RuntimeFailure(
+                409, "approval_target_missing", "The render for this approval is unavailable."
+            )
+        from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+
+        grant_item = plan_item or await db.get(PlanItem, session.plan_item_id)
+        execution.result = {
+            **(execution.result or {}),
+            "automatic_repair_grant": {
+                "version": 1,
+                "max_attempts": 2,
+                "used": 0,
+                "approved_at": now.isoformat(),
+                "expires_at": (now + timedelta(minutes=30)).isoformat(),
+                "media_snapshot": snapshot_media(grant_item),
+            },
+        }
     approval.status = "approved" if decision == "approve" else "denied"
     if decision == "deny":
         turn.status = "completed"
@@ -2435,7 +2537,19 @@ async def read_approval(
     ).scalar_one_or_none()
     if approval is None:
         raise RuntimeFailure(404, "approval_not_found", "Approval not found", phase="approval")
+    retry_of_execution_id = None
+    if approval.execution_ids:
+        execution = await db.get(CreatorAgentExecution, uuid.UUID(str(approval.execution_ids[0])))
+        result = getattr(execution, "result", None)
+        if isinstance(result, dict) and isinstance(result.get("render_retry"), dict):
+            retry_of_execution_id = result["render_retry"].get("source_execution_id")
     return ApprovalSnapshotOut(
+        automatic_repair_limit=(
+            2
+            if settings.phone_actual_export_verification_enabled
+            and creator_id in settings.phone_actual_export_verification_user_ids
+            else 0
+        ),
         approval_id=str(approval.id),
         turn_id=str(approval.turn_id),
         draft_id=str(approval.draft_id) if approval.draft_id else None,
@@ -2445,6 +2559,7 @@ async def read_approval(
         cost_summary=approval.cost_summary,
         expires_at=approval.expires_at,
         approval_fingerprint=approval_fingerprint(approval),
+        retry_of_execution_id=retry_of_execution_id,
     )
 
 
