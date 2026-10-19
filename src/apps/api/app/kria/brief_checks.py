@@ -5240,6 +5240,23 @@ def _is_spoken_text_cue(req: BriefRequirement) -> bool:
     )
 
 
+def spoken_text_literals(brief: CreativeBrief | None) -> tuple[str, ...]:
+    """KRI-692: the exact text of each live ask to show a line when the creator says a word.
+
+    The clip planner also reads such an ask as a `caption` clip intent, which is a question
+    with no clip to answer it; the planner uses these to keep it out of the clip inventory.
+    """
+    if brief is None:
+        return ()
+    return tuple(
+        dict.fromkeys(
+            req.literal
+            for req in brief.live()
+            if req.kind == "text" and req.literal and _is_spoken_text_cue(req)
+        )
+    )
+
+
 def _talking_shows_spoken_text(req: BriefRequirement) -> bool:
     """KRI-707: the phone Talking worker can place this text: its fields name the text and
     the spoken word (`spoken_text_ask`), and the lane is rolled out."""
