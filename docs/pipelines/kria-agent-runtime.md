@@ -472,6 +472,12 @@ reply English and prompts byte-identical).
   (`reply_language_for` / `bind_reply_language`): `submit_turn`, `run_kria_turn` (from the
   trusted snapshot), approval dispatch, render observation and expiry. Server copy is written
   `say(en=..., tr=...)`; unbound means English.
+- **Render workers (KRI-765).** A Celery worker has no chat. Dispatch stamps
+  `assembly_plan["creator_reply_language"]` beside `creator_brief_binding`, and the phone
+  montage/narrated writers bind it (`generative_build._worker_reply_language`) around the
+  requirement receipts and the block recovery they store. A reason that names clips can't be
+  re-worded by the chat afterwards, so it must be written in one language. No stamp (English
+  chat, older job) = English, as before.
 - **Models.** Main Creator, the edit copilot and the clip-intent agents get
   `reply_language`; for Turkish their prompt ends with `prompt_language_line("tr")`, which
   asks for every creator-facing sentence in Turkish while on-video text stays exactly as the

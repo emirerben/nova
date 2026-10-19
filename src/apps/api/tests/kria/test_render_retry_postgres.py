@@ -430,27 +430,71 @@ def test_unknown_work_does_not_start_another_attempt(client):
     assert response.json()["problem"]["code"] == "render_retry_outcome_unknown"
 
 
-def test_observer_does_not_promise_an_exact_retry_without_saved_program(client):
+def _observe_without_saved_program(case, *, reason, language=None):
     from app.tasks.kria_runtime import _observe_dispatched_execution
 
-    case = seed_failed(snapshot=False)
     with sync_session() as db:
         db.get(CreatorAgentExecution, case.execution_id).status = "dispatched"
         db.get(CreatorAgentTurn, case.turn_id).status = "observing"
         db.get(CreatorAgentSession, case.session_id).status = "rendering"
-        db.get(Job, case.job_id).failure_reason = "creation_text_timeout"
+        db.get(Job, case.job_id).failure_reason = reason
+        if language is not None:
+            thread = db.get(CreationThread, case.thread_id)
+            thread.state = {**(thread.state or {}), "reply_language": language}
         db.commit()
     assert _observe_dispatched_execution(case.execution_id)[0] == "failed"
     with sync_session() as db:
-        event = db.scalar(
+        return db.scalar(
             select(CreationThreadEvent)
             .where(CreationThreadEvent.thread_id == case.thread_id)
             .order_by(CreationThreadEvent.sequence.desc())
             .limit(1)
         )
-        assert event.payload["recovery"] == "ask_user"
-        assert "complete render plan" in event.content
-        assert "retry without rebuilding" not in event.content
+
+
+# KRI-765: a native job with no saved program has no exact retry, but its card must still say
+# WHY it stopped when the failure code has words (prod job d4f1b2d8: `creation_text_failed`
+# showed only "stopped before a complete render plan was saved"). Failure modes: the generic
+# line hides a known cause; a known cause promises a retry that does not exist (recovery stays
+# `ask_user`); an unknown code loses its generic line; a Turkish chat gets English.
+@pytest.mark.parametrize(
+    ("reason", "language", "cause"),
+    [
+        ("creation_text_failed", None, "keeping your approved wording"),
+        ("creation_text_timeout", None, "took longer than our AI allows"),
+        ("creation_text_failed", "tr", "Onayladığın yazıyı koruyarak metni hazırlayamadım"),
+        ("plan_ai_timeout", "tr", "Yapay zekâ bu düzenlemeyi planlarken çok uzun sürdü"),
+    ],
+)
+def test_observer_names_the_cause_when_there_is_no_saved_program(client, reason, language, cause):
+    case = seed_failed(snapshot=False)
+    event = _observe_without_saved_program(case, reason=reason, language=language)
+    assert event.payload["recovery"] == "ask_user"
+    assert event.payload["code"] == reason
+    assert cause in event.content
+    assert "retry without rebuilding" not in event.content
+    assert "complete render plan" not in event.content
+    assert "eksiksiz oluşturma planı" not in event.content
+    # The honest next step: a new approved version (there is no retry for this render).
+    way_forward = "ask for a new version" if language is None else "yeni bir sürüm iste"
+    assert way_forward in event.content
+
+
+@pytest.mark.parametrize(
+    ("language", "line"),
+    [
+        (None, "complete render plan"),
+        ("tr", "eksiksiz oluşturma planı"),
+    ],
+)
+def test_observer_keeps_the_generic_line_for_a_code_nothing_has_words_for(client, language, line):
+    case = seed_failed(snapshot=False)
+    event = _observe_without_saved_program(
+        case, reason="render_identity_mismatch", language=language
+    )
+    assert event.payload["recovery"] == "ask_user"
+    assert line in event.content
+    assert "retry without rebuilding" not in event.content
 
 
 def test_expired_retry_approval_does_not_repin(client):

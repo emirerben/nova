@@ -1340,3 +1340,90 @@ def test_a_pacing_ask_is_not_recorded_as_a_dropped_speed_ask(harness):
         for row in job.assembly_plan["unified_montage"]["requirement_receipts"]
     }
     assert "r5" not in receipts or receipts["r5"]["status"] != "not_possible"
+
+
+# --- KRI-765: a blocked render's recovery is written in the chat's language ---
+# A Turkish chat got "Your clips are in filming order, but these aren't where you asked:
+# M1_03 (last). Taslağın kaydedildi. ..." because the worker bound no language when it wrote
+# the receipt reason, and the chat can only re-word reasons that have no clip names in them.
+
+
+def _unmet_sequence_job(harness, monkeypatch, *, language: str | None):
+    import dataclasses
+
+    from app.kria import brief_checks
+    from app.kria.brief_binding import BriefBinding
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r4",
+                kind="order",
+                scope="global",
+                description="in the order I filmed",
+                facts={"key": "capture_time"},
+            )
+        ],
+    )
+    job, *_ = harness(brief=brief)
+    job.assembly_plan["creator_brief_binding"] = BriefBinding.create(
+        uuid.uuid4(), brief
+    ).model_dump(mode="json")
+    if language is not None:
+        job.assembly_plan["creator_reply_language"] = language
+    real = brief_checks.plan_facts_from_unified_montage
+    monkeypatch.setattr(
+        brief_checks,
+        "plan_facts_from_unified_montage",
+        lambda record: dataclasses.replace(
+            real(record), strict_order=True, sequence_unmet=("M1_03 (last)",)
+        ),
+    )
+    return job
+
+
+def _blocked_recovery(job) -> tuple[str, list[dict]]:
+    with pytest.raises(UnsupportedPhonePlan) as caught:
+        gb._run_phone_unified_montage_job(
+            str(job.id),
+            copy.deepcopy(job.assembly_plan),
+            job.all_candidates,
+            ownership_epoch=3,
+        )
+    recovery = job.assembly_plan["request_recovery"]
+    assert recovery["message"] == str(caught.value)
+    return recovery["message"], recovery["requirement_receipts"]
+
+
+def test_a_turkish_chat_blocked_order_is_written_in_turkish_by_the_worker(harness, monkeypatch):
+    job = _unmet_sequence_job(harness, monkeypatch, language="tr")
+    message, receipts = _blocked_recovery(job)
+    assert message == (
+        "Klipler çekim sırasında, ama bunlar istediğin yerde değil: M1_03 (last). "
+        "Taslağın kaydedildi. Tekrar mı deneyeyim, yoksa isteği sadeleştireyim mi?"
+    )
+    assert "filming order" not in message
+    # The stored receipt is Turkish too: the chat re-words nothing it cannot match.
+    assert receipts[0]["reason"] == (
+        "Klipler çekim sırasında, ama bunlar istediğin yerde değil: M1_03 (last)."
+    )
+
+
+@pytest.mark.parametrize("language", [None, "en"])
+def test_an_english_or_unstamped_blocked_order_is_unchanged(harness, monkeypatch, language):
+    job = _unmet_sequence_job(harness, monkeypatch, language=language)
+    message, receipts = _blocked_recovery(job)
+    assert message == (
+        "Your clips are in filming order, but these aren't where you asked: M1_03 (last). "
+        "Your draft is saved. Should I try again or simplify this request?"
+    )
+    assert receipts[0]["reason"].startswith("Your clips are in filming order")
+
+
+def test_the_worker_language_does_not_leak_into_the_next_task(harness, monkeypatch):
+    from app.kria.reply_language import current_reply_language
+
+    job = _unmet_sequence_job(harness, monkeypatch, language="tr")
+    _blocked_recovery(job)
+    assert current_reply_language() is None
