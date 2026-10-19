@@ -152,6 +152,8 @@
   "KriaUITests/SlidePostUITests/testNewlyReadyAssetBecomesASlideWithoutTapping": 24.7,
   "KriaUITests/SlidePostUITests/testPasteAddsCopiedTextToTheSelectedSlide": 17.4,
   "KriaUITests/SlidePostUITests/testReEnteringAfterBackAlwaysLandsInTheSlideEditor": 27.2,
+  "KriaUITests/SlidePostUITests/testRenamingASlidePostFromTheDrawerKeepsTheAlertOpen": 28.5,
+  "KriaUITests/SlidePostUITests/testSliderFormatTileMatchesTheOtherTilesPictureSize": 14.2,
   "KriaUITests/SlidePostUITests/testReadySlidePostOpenedFromDrawerNeverReachesVideoEditor": 12.0,
   "KriaUITests/SlidePostUITests/testRichLayoutFromTheDrawerWhenCapabilitiesFailToLoad": 20.2,
   "KriaUITests/SlidePostUITests/testRichLayoutFromTheGalleryForEveryCapabilityState": 50.2,
