@@ -203,6 +203,22 @@ _CLIP_INTENT_LEAVES = (
 )
 
 FIELD_MATRIX: dict[str, FieldRule] = {
+    **_rules(
+        "supported",
+        "render_contract:order",
+        "editorial_plan.beats[].media_ids[]",
+        note="The approved editorial sequence is checked against the rendered picture order.",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "creation_text_composition",
+        "editorial_plan",
+        "editorial_plan.viewer_goal",
+        "editorial_plan.beats[]",
+        "editorial_plan.beats[].purpose",
+        "editorial_plan.beats[].text_goal",
+        note="Writing purposes accompany footage windows; compiled text is pinned for replay.",
+    ),
     # Hard requirements projected by build_render_contract.
     **_rules(
         "upstream_resolved",
@@ -1308,6 +1324,38 @@ def build_render_contract(
             )
         elif rows:
             order_ids = tuple(apply_sequence(order_ids, rows))
+    if typed is not None and typed.editorial_plan is not None:
+        from app.services.editorial_plan import editorial_order
+
+        assignments = (media_snapshot or {}).get("clip_assignments") or []
+        selected = set(typed.selected_media_ids or ())
+        available = [
+            str(row["media_id"])
+            for row in assignments
+            if isinstance(row, Mapping)
+            and row.get("media_id")
+            and str(row["media_id"]) not in hidden_ids
+            and (not selected or str(row["media_id"]) in selected)
+        ]
+        if media_snapshot is None:
+            # Job factory projection precedes media binding. Dispatch validates the
+            # complete set again against the approval's immutable media snapshot.
+            available = [mid for beat in typed.editorial_plan.beats for mid in beat.media_ids]
+        try:
+            order_ids = tuple(
+                editorial_order(
+                    typed.editorial_plan,
+                    available,
+                    required_order=order_ids if order_required or clip_order else (),
+                    sequence=sequence_rows(raw.get("resolved_clip_intents")),
+                )
+            )
+        except ValueError as exc:
+            raise CreatorRenderContractError(
+                "The proposed story does not match the selected footage or confirmed order."
+            ) from exc
+        order_required = True
+        order_basis = "approved_editorial_plan"
     if durations and any(abs(value - durations[0]) > 0.001 for value in durations[1:]):
         raise CreatorRenderContractError(
             "Your confirmed edit lengths conflict, so I can't render it safely.",

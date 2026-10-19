@@ -31,6 +31,7 @@ from pydantic.json_schema import SkipJsonSchema
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
 from app.schemas.clip_intents import MAX_CLIP_INTENTS, ResolvedClipIntent
 from app.schemas.edit_frame_schedule import EditFrameSchedule
+from app.schemas.editorial_plan import EditorialPlan
 from app.schemas.text_composition import TextCompositionProgram
 from app.schemas.text_style_intent import LabelPosition, TitleAnimation
 from app.schemas.user_song import SongCaptionTrack, UserSongPlan
@@ -1264,6 +1265,10 @@ class EditProposalSnapshot(BaseModel):
     )
     direction: ProposalDirection = "guided_story"
     goal: str = Field(default="", max_length=500)
+    editorial_plan: EditorialPlan | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
     pace: ProposalPace = "balanced"
     # No artificial floor — see ProposalBrief.duration_s.
     duration_s: ProposalDuration

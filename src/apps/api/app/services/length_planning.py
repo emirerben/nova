@@ -123,6 +123,61 @@ def _sources(
     return sources
 
 
+def _editorial_reading_floors(
+    strategy: Mapping[str, Any], sources: list[dict[str, Any]], budget: float | None
+) -> list[BestPartsConflict]:
+    """Reserve readable explanations before windows are shown for approval.
+
+    Three seconds accommodates the writer's maximum minimum reading time. This
+    only allocates the existing duration budget; it never extends an approved edit.
+    """
+    if strategy.get("editorial_plan") is None:
+        return []
+    from app.schemas.editorial_plan import EditorialPlan
+
+    plan = EditorialPlan.model_validate(strategy["editorial_plan"])
+    by_id = {source["media_id"]: source for source in sources}
+    conflicts = []
+    for beat in plan.beats:
+        if not beat.text_goal:
+            continue
+        group = [by_id[mid] for mid in beat.media_ids if mid in by_id]
+        floor = max(3.0, sum(source["minimum_duration_s"] for source in group))
+        allocation = select_best_parts(
+            group,
+            target_duration_s=floor,
+            minimum_duration_s={row["media_id"]: row["minimum_duration_s"] for row in group},
+            maximum_duration_s={
+                row["media_id"]: row["maximum_duration_s"]
+                for row in group
+                if row["maximum_duration_s"] is not None
+            },
+        )
+        if allocation.conflicts or allocation.duration_s < floor - 1 / 30:
+            conflicts.append(
+                BestPartsConflict(
+                    "editorial_text_capacity",
+                    floor,
+                    allocation.capacity_s,
+                    "This story beat needs more footage time for its explanation: " + beat.purpose,
+                )
+            )
+        else:
+            for part in allocation.parts:
+                by_id[part.media_id]["minimum_duration_s"] = part.duration_s
+    required = sum(source["minimum_duration_s"] for source in sources)
+    if budget is not None and required > budget + 0.001:
+        conflicts.append(
+            BestPartsConflict(
+                "editorial_text_capacity",
+                required,
+                budget,
+                "The selected duration cannot fit readable explanations for every planned beat.",
+            )
+        )
+    return conflicts
+
+
 def build_length_plan(
     strategy: Mapping[str, Any],
     media_snapshot: Mapping[str, Any],
@@ -180,7 +235,15 @@ def build_length_plan(
         if natural_owner == "song"
         else None
     )
-    pre_conflicts: list[BestPartsConflict] = []
+    pre_conflicts: list[BestPartsConflict] = (
+        _editorial_reading_floors(
+            strategy,
+            ordered_sources,
+            creator_target_s if creator_target_s is not None else natural_duration_s,
+        )
+        if eligible
+        else []
+    )
     is_single_hero = strategy.get("edit_format") == "single_hero"
     # A proven creator target changes the owner label, not the source-window
     # allocator: footage still supplies the exact realizable windows.
