@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.49.0] - 2026-10-19
+
+### Fixed
+- fix(kria): require executable evidence before approval (KRI-721) (#1683) <!-- release-pr: 1683 -->
+
 ## [0.80.48.0] - 2026-10-19
 
 ### Changed
