@@ -305,6 +305,22 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
     )
     assert track is None
     with sync_session() as db:
+        changed_job = db.get(Job, uuid.UUID(dispatched.job_id))
+        changed_job.all_candidates = {
+            **changed_job.all_candidates,
+            "creator_strategy": {
+                **changed_job.all_candidates["creator_strategy"],
+                "licensed_sfx": {"effect_id": "unapproved-later-choice"},
+            },
+        }
+        db.commit()
+    reloaded, track = await asyncio.to_thread(
+        _guided_execution_plan, dispatched.job_id, guided, emit_decided=False
+    )
+    assert reloaded == loaded and track is None, (
+        "Later planning inputs cannot alter a frozen recommendation"
+    )
+    with sync_session() as db:
         item = db.get(PlanItem, item_id)
         job = db.get(Job, uuid.UUID(dispatched.job_id))
         frozen = job.assembly_plan["guided_story_execution_plan"]

@@ -48,10 +48,11 @@ A fresh collection edit/resume diagnostic is installed separately as `com.kria.a
 
 - API regression/free replay: **1,821 passed, 15 skipped**, `.dev/camera-roll-final-regression.log`. No optional paid live evaluation. The final source-quality/prompt update also passes 1,217 checks and 15 skips in `.dev/quality-reuse-and-budget.log`.
 - Real PostgreSQL selection → draft → separate approval → job factory → frozen worker-plan read; changed-collection cancellation, owner/source fences and $0 cache controls.
-- Native unit gate: 1,843 executed, 24 skipped, zero failures; `test-results/ios/unit.CoK4hk/unit.xcresult`.
+- Native unit gate after main integration: 1,857 executed, 24 skipped, zero failures; `test-results/ios/unit.yHdAC0/unit.xcresult`.
 - Native collection correction/removal/relaunch and story replacement/sound/rejection UI passed; `.dev/story-review-6.xcresult` and `.dev/story-review-7.xcresult`. The no-second-selection update also passes `.dev/all-added-content-ui.xcresult` (five state checks and two UI journeys).
 - `make verify-editor-timeline`: 209 web tests, 28 desktop and 42 mobile browser cases, 582 backend cases passed; `.dev/editor-timeline-gate.log`.
 - Actual-media verification/completion/publication: 44 passed before the combined run.
+- Frozen worker plan hardening: 239 passed; later mutable SFX/music/label inputs cannot change approved choices. Shared pre-PR gates: 1,043 passed after this change. Agent contract replay: five passed, no model calls.
 - Migration 0122 forward/backward and authored-choice downgrade guard verified. Migration 0123 fresh upgrade, empty downgrade/re-upgrade and reviewed-story preservation guard passed in a newly created/disposed scratch database; `.dev/schema-roundtrip.log`.
 
 Repeat the feature checks:
