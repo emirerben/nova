@@ -113,6 +113,7 @@ Scratch PostgreSQL: `nova_kri721_approval_readiness_test`.
 - Final focused command: `bash scripts/check-api.sh test tests/kria/test_approval_readiness_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/gates/test_reliability_gates.py -q -x` — **171 passed**.
 - `bash scripts/preship-check.sh` — scoped lint/format and **622 selected incident
   regression tests passed**. Dedicated KRI-721 CI journey also selects the new tests.
+- CI selector contracts: `python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v` — **66 passed**. The new journey is explicitly included in the shared-planner selection expectation.
 - No prompt/model changes or paid model calls. Ordinary first-draft checking adds
   no model call. Previously unextracted scoped chat edits add one bounded call to
   the existing Brief Extractor. Live latency and spend for that extra call are not
