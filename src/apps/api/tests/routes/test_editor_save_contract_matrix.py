@@ -121,6 +121,10 @@ def _assert_expect(outcome: Outcome, expect: Expect) -> None:
     if expect.error_contains is not None:
         assert expect.error_contains in outcome.error_text
     if outcome.error is not None:
+        # A refused Save still owes its row-specific proof (diagnostics, "nothing
+        # recompiled", "slides untouched"); only the success-shape asserts below are skipped.
+        if expect.check is not None:
+            expect.check(outcome)
         return
     if expect.order_ids is not None:
         assert outcome.contract["order_ids"] == expect.order_ids
