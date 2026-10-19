@@ -199,8 +199,10 @@ Seventeen actionable candidates passed real scratch committed save/reopen,
 stale-write rejection, undo, restore and cleanup. Three hook questions/options
 have no executable strategy and are explicitly not applicable to draft persistence.
 One synthetic compiler false rejection was corrected without changing the original
-live journal. Compound/timing checks retain extra animation changes as failures
-of preservation even when an edit parses, compiles and saves.
+live journal. Compound/timing checks retain animation changes as recorded-state differences.
+The earlier brief contains fade requirements, so a difference can fulfill an
+outstanding instruction. A transparent post-run source audit now displays those
+clauses; the initial preservation checklist is not a fulfillment verdict.
 
 The final ledger is $2.424762 metered plus $1.716306 retained original unknown
 liability, $4.141068 accounted and $1.518932 remaining. No active submissions,

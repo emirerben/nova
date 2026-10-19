@@ -1,14 +1,14 @@
 # Final verification — 19 October 2026
 
 Task branch: `codex/creator-model-comparison`; isolated checkout:
-`/private/tmp/nova-creator-model-comparison`. Integrated fetched main `ef671ddca`
-(suggestion-chip runtime/daily-cap additions) after `db31fbe47` (editor Save matrix).
+`/private/tmp/nova-creator-model-comparison`. Integrated fetched main `30a17e05c` (restored-clip Save fix), after `ef671ddca`
+(suggestion-chip runtime/daily-cap additions) and `db31fbe47` (editor Save matrix).
 The shared checkout and physical-device sessions were left intact.
 
 ## Offline integration
 
-**5,122 passed, 15 skipped, seven expected failures, zero unexpected failures** in
-88.61 seconds. Dummy provider keys and `NOVA_EVAL_MODE=replay`; provider contracts
+**5,139 passed, 15 skipped, seven expected failures, zero unexpected failures** in
+90.32 seconds. Dummy provider keys and `NOVA_EVAL_MODE=replay`; provider contracts
 use actual SDKs with HTTP mock transports. PostgreSQL uses only the disposable
 `nova_creator_model_comparison_test` database. The paid ledger is a separate database.
 
@@ -45,10 +45,10 @@ sidecars. The seven strict expected failures come from upstream suggestion-chip
 validator-gap fixtures. They are not silently counted as passes. Before that upstream
 integration the selected suite passed 4,215 tests with 15 skips.
 
-Logs: `/private/tmp/nova-comparison-final-integration-tests.log` and
+Logs: `/private/tmp/nova-comparison-last-integration-tests.log` and
 `/private/tmp/nova-comparison-final-selector.log`. Selector checks: **41 tests pass**.
 Scoped Ruff/format, whitespace, release metadata, journey mapping and preship
-reliability checks are recorded in `/private/tmp/nova-comparison-morning-preship.log`;
+reliability checks are recorded in `/private/tmp/nova-comparison-hardened-preship.log`;
 439 mapped incident checks passed. The manifest conflict from two appended journeys
 was resolved by preserving both complete entries.
 
@@ -99,7 +99,11 @@ Another acceptance caught server `json_guarded` configuration mistakenly selecti
 native transport; the fix preserves the exact explicit selection and legacy defaults.
 
 State checks are source-bound operator proposals, with human review pending. They
-retain extra fade entrances and fade-out phases as preservation findings. Word timing
+retain fade entrances and fade-out phases as recorded-state differences. The earlier
+brief contains carry-over fade requirements, so these differences must not be
+misreported as automatic fulfillment failures. The private board displays those
+source clauses. This is an explicitly post-run audit; the original operator checklist
+is retained and supplies no human quality score. Word timing
 charts show exact adjacent overlaps instead of inferring visual fulfillment.
 The owned native Save feasibility probe was refused by the local
 `guided_story_editor_v2_disabled` gate; no gate was toggled to claim export evidence.
@@ -113,7 +117,8 @@ files still require a separate eligibility/purge check before reuse.
 
 ## Final source and database hardening
 
-After the broad integration run, **58 focused checks passed** (1.97 seconds).
+The final broad run includes the hardening cases. The preceding focused run also
+passed **58 checks** (1.97 seconds).
 They include five new DSN rejection cases: query overrides for host, host address,
 database and service, plus a missing host that could inherit remote environment
 settings. Scratch writes require an explicit loopback host, a `_test` database

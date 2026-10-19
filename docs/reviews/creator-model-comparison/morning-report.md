@@ -54,8 +54,9 @@ corrected checks are separate receipts against the same returned bytes.
 The compound real request distinguishes instruction following from plausible copy:
 two candidates preserve all nine requested label strings, including duplicates and
 Unicode, and add the exact last-clip title. One also changes previously static
-labels to fade entrances. That extra change is visible as a preservation failure,
-even though its JSON, compilation and persistence all succeed.
+labels to fade entrances. The earlier brief includes a global fade instruction,
+so this recorded-state change cannot automatically be called unwanted. The private
+board now displays those source clauses beside the diagnostic preservation checks.
 
 A separately versioned JSON serialization guard is available as an explicit opt-in
 profile. It is not a reliable repair: a live guarded response still emitted invalid
@@ -73,8 +74,12 @@ apply to those conversational responses.
 
 The final timing cases also preserve the first/last clip exception and use a
 three-second opener. Two usable opener edits differ in adjacent word overlap;
-one additionally adds fade-out phases to eleven existing words. Exact intervals
-and a word timeline chart are shown privately. These are state observations, not
+one also adds fade-out phases to eleven existing words. The earlier title brief
+asks for fade in and fade out, so that change may address an outstanding request.
+The initial preservation checklist incompletely reflected these carry-over rules;
+its original measurements remain archived. This transparent post-run clarification
+is not a preregistered quality score. Exact intervals, the source clauses and a word
+timeline chart are shown privately. These are state observations, not
 a watched-render or human quality verdict. All three persistent-title strategies
 carry the exact three literals and requested corners in structured fields.
 

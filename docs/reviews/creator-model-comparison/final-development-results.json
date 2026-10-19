@@ -189,5 +189,6 @@
     "current_comparison_affected": false,
     "older_initial_main_context_corrected_to_reconstruction": 1,
     "details": "provenance-corrections.json"
-  }
+  },
+  "state_check_interpretation": "Recorded-state preservation is diagnostic. Earlier fade requirements can demand a state change. The initial checklist incompletely reflected carry-over style rules; its original measurements are retained, with a transparent post-run source audit and no fulfillment score."
 }
