@@ -13,6 +13,7 @@ struct NativeEditorProjectHeader: View {
     /// KRI-306: opens the video-shape sheet. The button only exists when the server
     /// advertises the shape capabilities; otherwise the slot stays an invisible balance.
     var onVideoShape: () -> Void = {}
+    var onSources: () -> Void = {}
 
     /// Same floating header as the chat (`WorkspaceTopRow` + `WorkspaceModeSwitch`),
     /// in the same place, so switching Chat <-> Editor feels like a tab switch.
@@ -57,6 +58,10 @@ struct NativeEditorProjectHeader: View {
     /// instead of a disabled icon that reads as a broken download button.
     private var exportMenu: some View {
         Menu {
+            if session.document.textElements.contains(where: { ResearchCitation.from($0) != nil }) {
+                Button("Sources", systemImage: "book.closed", action: onSources)
+                    .accessibilityIdentifier("native-editor-sources-button")
+            }
             if let reason = session.exportBlockReason {
                 Button(reason, systemImage: "info.circle") {}
                     .disabled(true)

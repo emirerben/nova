@@ -410,6 +410,44 @@ async def run_copilot_turn(
             detail="edit_copilot_failed",
         ) from exc
 
+    if output.research_request is not None:
+        from app.services.researched_text import ResearchUnavailable, run_researched_revision
+
+        try:
+            output = await asyncio.to_thread(
+                run_researched_revision,
+                output.research_request,
+                utterance=body.message,
+                snapshot=body.snapshot,
+                ctx=RunContext(
+                    job_id=str(job_id),
+                    request_id=_paid_request_id(body, job_id=job_id),
+                    request_id_authoritative=bool(body.client_request_id),
+                    deadline_monotonic=deadline_monotonic,
+                    timeout_override_s=timeout_override_s,
+                ),
+            )
+        except (ResearchUnavailable, TerminalError) as exc:
+            if isinstance(exc, (AiBudgetExceededError, ProviderOutcomeUnknownError)):
+                raise
+            output = EditCopilotOutput(
+                intent="clarify",
+                ops=[],
+                confidence=1,
+                needs_clarification=True,
+                reply=(
+                    str(exc) + ". The edit is unchanged."
+                    if isinstance(exc, ResearchUnavailable)
+                    else "Search did not return usable explanations. The edit is unchanged."
+                ),
+                unmet_requests=[
+                    {
+                        "request": "research",
+                        "reason": "Sources or footage binding could not be verified",
+                    }
+                ],
+            )
+
     # Ops ride only genuine edit turns: a disobedient model returning
     # intent="reject"/"describe"/"clarify" WITH ops must not have them applied
     # while the reply text says nothing was done (adversarial review F5).

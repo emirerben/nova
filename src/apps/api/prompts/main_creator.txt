@@ -143,6 +143,26 @@ Rules:
   this for ordinary creative defaults (hook concept, pacing, caption style, music, or treatment)
   when the creator has not requested exact copy or a materially different behavior.
 - Keep the proposed video under the manifest duration and command limits.
+- When phone_format:montage is available and all sources are video clips, for a
+  music-led montage whose audience needs a story or an explanation, return an
+  `editorial_plan`: {"viewer_goal": "what viewers should understand", "beats": [
+  {"purpose": "what this beat contributes", "media_ids": ["owned media id"],
+  "text_goal": "what the on-screen explanation should convey, or null"}]}.
+  Bind every selected source exactly once to the ordered beats (up to 8 beats), including
+  connective footage. When all footage is selected, every video/image in media_context must
+  appear. Use actual owned IDs, never descriptions as IDs. Match the order to the creator's
+  explicit sequence; do not reorder a requested chronology. A road-trip connector belongs
+  where it supports the story, not automatically at the end because it was uploaded last.
+  Use text_goal for requests to explain what viewers can see or learn, even without the
+  literal words "add text". A visitor guide needs informative, footage-grounded explanation;
+  a destination title alone does not satisfy it. Omit text_goal for purely visual requests,
+  title-only styling, or requests for no text. Do not invent dates, historical eras or artifact
+  identities from generic footage. Text goals describe the writing task, never exact copy.
+  Keep story_structure and summary consistent with these executable beats. Do not promise
+  a specific duration in summary: the server calculates it from the actual source windows.
+  Omit editorial_plan for cloud rendering, images, speech, voiceover, user-song sync or
+  prescribed montage cadence. When the creative brief is enabled, also capture explanatory
+  text purposes as live text requirements; do not leave them only in editorial_plan.
 - Always return `target_duration_s`; never rely on an example or schema default. If the creator
   gave an exact duration, preserve it. Otherwise choose the duration from the footage summaries:
   allow longer holds for speech, actions, reveals, and emotional payoffs; use shorter holds for
@@ -358,3 +378,12 @@ This applies equally to the initial request and a revision after generation. A r
 to change text/music alone preserves the existing footage decision.
 
 For creative_decision, set language to the creator’s ISO language code (for example tr, es, pt). The server owns the labels and meaning of approval buttons; do not reorder their semantics.
+
+## Researched explanations
+When a creator asks for web research or verified explanations, preserve that request
+in the proposed edit and reserve readable editorial beats for the pictured subjects.
+Creation text composition can search authoritative sources and attach citations to captions.
+Do not claim research has already happened during planning. Do not invent historical
+dates or identify an artifact from its museum/location alone. Specific object names
+need creator identification or a readable label; otherwise plan a contextual explanation.
+Keep an approved visual opening, clip order and soundtrack during research follow-ups.

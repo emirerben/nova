@@ -234,6 +234,15 @@ def test_matrix_dispositions_are_valid_and_owned():
 
 # strategy fragment that sets each `supported` path -> it must change the contract.
 _SUPPORTED_FRAGMENTS = {
+    "editorial_plan.beats[].media_ids[]": {
+        "editorial_plan": {
+            "viewer_goal": "A visitor journey",
+            "beats": [
+                {"purpose": "Open outside", "media_ids": ["a"]},
+                {"purpose": "End inside", "media_ids": ["b"]},
+            ],
+        }
+    },
     "creator_duration_s": {"creator_duration_s": 30},
     "audio_strategy": {"audio_strategy": "voiceover"},
     "montage_audio": {"montage_audio": {"preserve_source_audio": False}},
