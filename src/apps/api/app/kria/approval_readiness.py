@@ -342,6 +342,7 @@ def readiness_matches(saved: object, current: dict[str, Any]) -> bool:
 
 
 def readiness_reply(brief: CreativeBrief | None, report: dict[str, Any]) -> str:
+    """Display identified blocked requirements; never derive execution from prose."""
     by_id = {r.id: r for r in brief.live()} if brief else {}
     lines = [
         say(
