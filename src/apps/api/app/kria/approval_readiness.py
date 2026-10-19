@@ -1,0 +1,406 @@
+"""Server-owned, revision-bound evidence for offering render approval (KRI-721).
+
+This assesses executable commitments, not completed output. Actual export
+verification must still pass independently. Unknown is never an executable pass.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import hashlib
+import json
+from collections.abc import Mapping
+from types import SimpleNamespace
+from typing import Any
+
+from pydantic import BaseModel
+
+from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
+from app.config import settings
+from app.kria.brief import CreativeBrief
+from app.kria.brief_binding import media_identity, snapshot_media
+from app.kria.brief_checks import (
+    _wants_source_sound_kept,
+    build_receipts,
+    plan_facts_from_editor_payload,
+    plan_facts_from_strategy,
+)
+from app.kria.reply_language import say
+from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
+from app.models import ContentPlan, Persona
+from app.services.creator_render_contract import (
+    ADAPTER_DECLARATIONS,
+    FIELD_MATRIX,
+    build_render_contract,
+)
+from app.services.creator_sessions import resolve_item_creator_context
+from app.services.length_planning import read_length_plan
+
+READINESS_KEY = "approval_readiness"
+NOT_READY = "approval_requirements_not_ready"
+
+
+def _json(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if dataclasses.is_dataclass(value):
+        return _json(dataclasses.asdict(value))
+    if isinstance(value, Mapping):
+        return {str(k): _json(v) for k, v in value.items()}
+    if isinstance(value, (set, frozenset)):
+        return sorted(_json(v) for v in value)
+    if isinstance(value, (list, tuple)):
+        return [_json(v) for v in value]
+    return value
+
+
+def digest(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            _json(value),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode()
+    ).hexdigest()
+
+
+class StrategyItemView:
+    """Resolve the capabilities of the proposed format without mutating the item."""
+
+    def __init__(self, item: Any, strategy: Mapping[str, Any]):
+        self._item = item
+        self.edit_format = strategy.get("edit_format") or item.edit_format
+        from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+        from app.services.speech_cleanup_decision import resolve_next_audio_mode  # noqa: PLC0415
+
+        self.audio_mode = (
+            resolve_next_audio_mode(CreativeStrategy.model_validate(strategy), item)
+            or item.audio_mode
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._item, name)
+
+
+async def resolve_readiness_manifest(db, item, strategy):  # noqa: ANN001, ANN201
+    plan = await db.get(ContentPlan, item.content_plan_id)
+    persona = await db.get(Persona, plan.persona_id) if plan is not None else None
+    if persona is None:
+        raise ValueError("The edit's capability context is unavailable")
+    manifest, _ = await resolve_item_creator_context(
+        db,
+        StrategyItemView(item, strategy) if strategy else item,
+        persona=persona,
+        guided_capability_enabled=True,
+        runs_guided_voiceover=False,
+    )
+    return manifest
+
+
+def assess_readiness(
+    brief: CreativeBrief | None,
+    strategy: Mapping[str, Any] | None,
+    *,
+    media: dict,
+    manifest: ResolvedCreatorManifest | None,
+    editor_payload: dict | None = None,
+    editor_text_diff: list[dict] | None = None,
+) -> dict[str, Any]:
+    """Account for every live ID using existing policy, checkers and contract."""
+    requirements = brief.live() if brief is not None else []
+    strategy = strategy or {}
+    policy_problem = None
+    contract = None
+    if manifest is None:
+        policy_problem = say(
+            en="I haven't established which renderer can make this edit yet.",
+            tr="Bu düzenlemeyi hangi oluşturucunun yapabileceğini henüz belirleyemedim.",
+        )
+    elif editor_payload is not None:
+        dispatch = manifest.capabilities.get("dispatch_render")
+        if dispatch is None or not dispatch.available:
+            policy_problem = say(
+                en="Rendering is unavailable for this edit right now.",
+                tr="Bu düzenleme şu anda oluşturulamıyor.",
+            )
+    else:
+        try:
+            typed = CreativeStrategy.model_validate(strategy)
+            checked = check_strategy_for_runtime_v2(
+                manifest, typed, ask_before_simplifying=True, ask_about_stated_settings=True
+            )
+            # Re-running policy must not silently repair an approved promise.
+            if isinstance(checked, RefusedStrategy):
+                policy_problem = checked.question
+            elif checked.strategy.model_dump(mode="json") != typed.model_dump(mode="json"):
+                policy_problem = say(
+                    en=(
+                        "This renderer would change the proposed edit. "
+                        "I need to prepare the supported version first."
+                    ),
+                    tr=(
+                        "Bu oluşturucu önerilen düzenlemeyi değiştirir. "
+                        "Önce desteklenen sürümü hazırlamam gerekiyor."
+                    ),
+                )
+            dispatch = manifest.capabilities.get("dispatch_render")
+            if dispatch is None or not dispatch.available:
+                policy_problem = say(
+                    en="Rendering is unavailable for this edit right now.",
+                    tr="Bu düzenleme şu anda oluşturulamıyor.",
+                )
+            contract = build_render_contract(
+                generation_id="approval-readiness",
+                strategy=strategy,
+                brief=brief,
+                media_snapshot=media,
+            )
+            if contract is not None and contract.unresolved:
+                policy_problem = contract.unresolved[0]
+        except ValueError:
+            policy_problem = say(
+                en="The proposed edit isn't supported by the current renderer or footage.",
+                tr="Önerilen düzenleme mevcut oluşturucu veya çekimlerle desteklenmiyor.",
+            )
+    if brief is None:
+        policy_problem = say(
+            en="I need to establish the requested changes before offering approval.",
+            tr="Onay sunmadan önce istenen değişiklikleri belirlemem gerekiyor.",
+        )
+    ids = [m.media_id for m in manifest.media] if manifest else []
+    facts = (
+        plan_facts_from_editor_payload(editor_payload, editor_text_diff)
+        if editor_payload is not None
+        else plan_facts_from_strategy(strategy, clip_ids=ids, manifest=manifest)
+    )
+    # Use the existing source-bounded execution plan, never the model's duration
+    # target as proof. The same validator is used by the render path.
+    envelope = media.get("length_plan")
+    if (
+        editor_payload is None
+        and isinstance(envelope, Mapping)
+        and envelope.get("window_eligible") is True
+    ):
+        try:
+            parts = read_length_plan(
+                envelope,
+                [
+                    SimpleNamespace(
+                        media_id=row.get("media_id"),
+                        kind=row.get("kind", "video"),
+                        duration_s=row.get("duration_s"),
+                        proxy_path=row.get("gcs_path"),
+                        storage_generation=row.get("storage_generation", row.get("generation")),
+                    )
+                    for row in media.get("clip_assignments") or []
+                    if isinstance(row, Mapping)
+                ],
+            )
+            if parts:
+                facts = dataclasses.replace(facts, duration_s=sum(p.duration_s for p in parts))
+        except ValueError:
+            pass  # Missing/invalid execution evidence stays unknown, never a pass.
+    receipts = {
+        r.requirement_id: r
+        for r in build_receipts(
+            requirements,
+            facts,
+            include_unchecked=True,
+            strict_order=True,
+        )
+    }
+    delegated = {
+        str(req_id)
+        for answer in strategy.get("choice_answers") or []
+        if isinstance(answer, Mapping) and answer.get("source") == "creator_delegated"
+        for req_id in answer.get("requirement_ids") or []
+    }
+    rows = []
+    for req in requirements:
+        receipt = receipts.get(req.id)
+        proven = (
+            receipt is not None and receipt.verification == "checked" and receipt.status == "met"
+        )
+        owner = "brief_checks"
+        # Original camera audio is an explicit executable contract commitment;
+        # it is not a claim that the final mix has already been listened to.
+        if (
+            contract is not None
+            and _wants_source_sound_kept(req)
+            and contract.original_audio == "require"
+            and strategy.get("audio_strategy") == "original_audio"
+            and not strategy.get("licensed_music")
+        ):
+            proven, owner = True, FIELD_MATRIX["audio_strategy"].owner
+        disposition = (
+            "unsupported"
+            if policy_problem
+            else "delegated"
+            if proven and req.id in delegated
+            else "executable"
+            if proven
+            else "unsupported"
+            if receipt is not None
+            and receipt.verification == "checked"
+            and receipt.status == "not_possible"
+            else "needs_choice"
+            if receipt is not None and receipt.verification == "checked"
+            else "evidence_missing"
+        )
+        reason = policy_problem or (
+            receipt.reason
+            if receipt is not None and receipt.verification == "checked"
+            else say(
+                en="I haven't established how to render this change yet.",
+                tr="Bu değişikliği nasıl oluşturacağımı henüz belirleyemedim.",
+            )
+        )
+        if proven and owner != "brief_checks":
+            reason = say(
+                en="Original camera audio is required by the render contract.",
+                tr="Oluşturma sözleşmesi kameranın özgün sesini zorunlu tutuyor.",
+            )
+        rows.append(
+            {
+                "requirement_id": req.id,
+                "disposition": disposition,
+                "reason": reason,
+                "evidence_owner": owner,
+            }
+        )
+    report = {
+        "schema_version": 1,
+        "ready": not policy_problem
+        and all(r["disposition"] in {"executable", "delegated"} for r in rows),
+        "brief_version": brief.version if brief else 0,
+        "brief_digest": digest(brief.model_dump(mode="json") if brief else None),
+        "strategy_digest": digest(
+            {
+                "strategy": strategy,
+                "editor_payload": editor_payload,
+                "editor_text_diff": editor_text_diff,
+            }
+        ),
+        "media_digest": digest(media_identity(media)),
+        "prepared_evidence_digest": digest(envelope),
+        "capabilities_digest": digest(
+            {
+                "capabilities": manifest.capabilities if manifest else None,
+                "verified_phone_features": sorted(settings.phone_render_verified_features),
+                "field_matrix": FIELD_MATRIX,
+                "adapters": ADAPTER_DECLARATIONS,
+            }
+        ),
+        "requirements": rows,
+        "policy_problem": policy_problem,
+    }
+    # Pydantic values in capability records are serialized without model text.
+    report["digest"] = digest(_identity(report))
+    return report
+
+
+def _identity(report: dict[str, Any]) -> dict[str, Any]:
+    # Localized explanatory copy is not execution authority.
+    return {
+        **{
+            key: report[key]
+            for key in (
+                "schema_version",
+                "ready",
+                "brief_version",
+                "brief_digest",
+                "strategy_digest",
+                "media_digest",
+                "prepared_evidence_digest",
+                "capabilities_digest",
+            )
+        },
+        "requirements": [
+            {
+                key: row[key]
+                for key in (
+                    "requirement_id",
+                    "disposition",
+                    "evidence_owner",
+                )
+            }
+            for row in report["requirements"]
+        ],
+    }
+
+
+def readiness_matches(saved: object, current: dict[str, Any]) -> bool:
+    try:
+        return (
+            isinstance(saved, dict)
+            and current["ready"]
+            and saved["digest"] == digest(_identity(saved)) == current["digest"]
+        )
+    except (KeyError, TypeError):
+        return False
+
+
+def readiness_reply(brief: CreativeBrief | None, report: dict[str, Any]) -> str:
+    by_id = {r.id: r for r in brief.live()} if brief else {}
+    lines = [
+        say(
+            en="I need to resolve these changes before you approve:",
+            tr="Onaylamadan önce şu değişiklikleri netleştirmem gerekiyor:",
+        )
+    ]
+    for row in report["requirements"]:
+        if row["disposition"] not in {"executable", "delegated"}:
+            lines.append(f"- {by_id[row['requirement_id']].text()}: {row['reason']}")
+    if len(lines) == 1 and report.get("policy_problem"):
+        lines.append(str(report["policy_problem"]))
+    return "\n".join(lines)
+
+
+class ApprovalReadinessError(ValueError):
+    pass
+
+
+def requires_readiness(document, creator_id):  # noqa: ANN001, ANN201
+    return (document.brief_coverage or {}).get(READINESS_KEY) is not None or (
+        settings.approval_readiness_for(creator_id) and document.brief_binding is not None
+    )
+
+
+async def assess_saved_document(db, item, document, *, require_same_assessment=True):  # noqa: ANN001, ANN201
+    """Retry/Undo use the same gate without rebuilding the approved content."""
+    if document.brief_binding is None:
+        raise ApprovalReadinessError(
+            say(
+                en="I need a saved request and its source evidence before offering this render.",
+                tr="Bu oluşturmayı sunmadan önce kayıtlı istek ve kaynak kanıtları gerekiyor.",
+            )
+        )
+    brief = document.brief_binding.resolve()
+    manifest = await resolve_readiness_manifest(db, item, document.strategy)
+    report = assess_readiness(
+        brief,
+        document.strategy,
+        media=document.brief_binding.media_snapshot,
+        manifest=manifest,
+        editor_payload=document.editor_payload,
+        editor_text_diff=document.editor_text_diff,
+    )
+    if digest(media_identity(snapshot_media(item))) != report["media_digest"]:
+        raise ApprovalReadinessError(
+            say(
+                en="The saved edit's footage changed. Ask me to prepare it again.",
+                tr="Kayıtlı düzenlemenin çekimleri değişti. Yeniden hazırlamamı iste.",
+            )
+        )
+    if not report["ready"]:
+        raise ApprovalReadinessError(readiness_reply(brief, report))
+    saved = (document.brief_coverage or {}).get(READINESS_KEY)
+    if require_same_assessment and saved is not None and not readiness_matches(saved, report):
+        raise ApprovalReadinessError(
+            say(
+                en="The saved edit's rendering evidence changed. Ask me to prepare it again.",
+                tr="Kayıtlı düzenlemenin oluşturma kanıtları değişti. Yeniden hazırlamamı iste.",
+            )
+        )
+    return report

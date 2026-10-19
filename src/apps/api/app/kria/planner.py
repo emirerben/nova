@@ -525,6 +525,8 @@ class PlannedKriaTurn:
     # The manifest this turn planned against, so the receipt checks resolve
     # reaction beats (owned images, capability) exactly as approval will.
     brief_manifest: ResolvedCreatorManifest | None = None
+    # KRI-721: resolved for the proposed format, without applying it to the item.
+    readiness_manifest: ResolvedCreatorManifest | None = None
     brief_coverage: dict | None = None
     brief_expected_version: int | None = None
     media_snapshot: dict | None = None
@@ -3672,6 +3674,8 @@ async def _plan_scoped_turn(
     """
     from app.kria import plan_review  # noqa: PLC0415
 
+    # Provider calls release the transaction and expire ORM rows.
+    scoped_creator_id, scoped_item_id = persona.user_id, item.id
     # KRI-598: runtime v2 has no guided-proposal step, so it never offers guided voiceover.
     manifest, _ = await resolve_item_creator_context(
         db, item, persona=persona, runs_guided_voiceover=False
@@ -3810,7 +3814,38 @@ async def _plan_scoped_turn(
                 }
             }
         )
-    return _planned(plan)
+    planned = _planned(plan)
+    if settings.approval_readiness_for(scoped_creator_id) and plan.mode == "act" and model_scope:
+        prior_brief = await load_latest_brief(db, thread_id)
+        expected_version = prior_brief.version if prior_brief else 0
+        updates, route = await extract_deferred_brief(
+            db,
+            thread_id=thread_id,
+            item_id=scoped_item_id,
+            creator_id=scoped_creator_id,
+            user_message=user_message,
+        )
+        if route is None:
+            return _reply(
+                say(
+                    en=(
+                        "I need to clarify the requested changes before offering this render. "
+                        "Your saved edit is unchanged."
+                    ),
+                    tr=(
+                        "Bu oluşturmayı sunmadan önce istenen değişiklikleri "
+                        "netleştirmem gerekiyor. "
+                        "Kayıtlı düzenlemen değişmedi."
+                    ),
+                )
+            )
+        planned = replace(
+            planned,
+            brief_updates=updates,
+            brief_route="editor_ops",
+            brief_expected_version=expected_version,
+        )
+    return planned
 
 
 async def _plan_live_turn(

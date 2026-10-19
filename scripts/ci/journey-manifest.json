@@ -802,6 +802,21 @@
         "src/apps/api/tests/fixtures/kri560_lisbon_word_by_word_hook.json",
         "src/apps/api/tests/kria/test_kri560_lisbon_word_by_word_hook.py"
       ]
+    },
+    {
+      "id": "kri-721-approval-readiness",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py",
+      "paths": [
+        "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/kria/plan_review.py",
+        "src/apps/api/app/kria/render_retry.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/config.py",
+        "src/apps/api/tests/kria/test_approval_readiness_postgres.py"
+      ]
     }
   ]
 }
