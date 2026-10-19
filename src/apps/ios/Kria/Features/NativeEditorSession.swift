@@ -3456,11 +3456,26 @@ struct NativeEditorTemporaryVideo {
         flushDeferredSourcePreviewUpdate()
     }
 
+    /// Dragging or nudging a clip to a new place. The server offers it as `clips.reorder`; a variant that lists
+    /// no such capability falls back to the timeline section's editability.
+    var canReorderClips: Bool { canEditTimeline && canEditOperation(["clips.reorder"], section: .timeline) }
+
     func moveSelected(by offset: TimeInterval) {
-        guard canEditTimeline, let id = selectedClipID, let index = clipSlotIndex(id.uuidString), abs(offset) > 0.000001 else { return }
-        let destination = min(max(0, index + (offset < 0 ? -1 : 1)), document.clips.count - 1)
-        guard destination != index else { return }
-        transactDocument(section: .timeline) { doc in let clip = doc.clips.remove(at: index); doc.clips.insert(clip, at: destination) }
+        guard canReorderClips, let id = selectedClipID, abs(offset) > 0.000001 else { return }
+        let ordered = timelineClips
+        guard let index = ordered.firstIndex(where: { $0.id == id }) else { return }
+        moveClip(id: id, toIndex: min(max(0, index + (offset < 0 ? -1 : 1)), ordered.count - 1))
+    }
+
+    /// Puts a clip at `toIndex` among the clips as the timeline draws them. One undo step; the length is unchanged
+    /// because each cut stays at its position (`NativeEditorInteraction.reorderedSlots`).
+    func moveClip(id: UUID, toIndex: Int) {
+        guard canReorderClips else { return }
+        let ordered = timelineClips
+        guard ordered.indices.contains(toIndex),
+              let from = clipSlotIndex(id.uuidString),
+              let to = clipSlotIndex(ordered[toIndex].id.uuidString), from != to else { return }
+        transactDocument(section: .timeline) { $0.clips = NativeEditorInteraction.reorderedSlots($0.clips, from: from, to: to) }
     }
 
     func slideSourceWindow(by offset: TimeInterval) {
@@ -6302,13 +6317,28 @@ struct NativeEditorTemporaryVideo {
 
     private var carriesGuidedLabelsWithTimeline: Bool {
         changedSections.contains(.timeline) && canEditSection(.text)
-            && GuidedLabelRebase.hasLabels(document.textElements, includeFreeText: ridesGuidedTimeline)
+            && GuidedLabelRebase.hasLabels(document.textElements, includeFreeText: isGuidedStory)
     }
 
-    /// A guided story times EVERY text on its absolute output seconds, so any clip-timing edit
-    /// must re-time all of it (chat / creator text, group titles, `montage-text-*`), not just the
-    /// per-clip labels. Other archetypes keep their own text rules.
-    private var ridesGuidedTimeline: Bool { previewVariant["resolved_archetype"] == .string("guided_story") }
+    /// Only a guided story's server skips its own text projection when the Save carries the text
+    /// lane, so only its timeline commits always send text. Every other archetype sends text when
+    /// the rebase actually changed it (the `.text` section is then dirty).
+    private var isGuidedStory: Bool { previewVariant["resolved_archetype"] == .string("guided_story") }
+
+    /// Archetypes whose text is timed by speech (captions, the talking cut), not by a clip timeline.
+    /// Their text keeps its own rules; the speech compiler re-times it.
+    private static let speechTimedArchetypes: Set<String> = ["subtitled", "narrated", "talking_head"]
+
+    /// A clip-timeline video times EVERY text on its absolute output seconds, so any clip-timing
+    /// edit (delete, trim, extend, reorder) must re-time all of it (chat / creator text, group
+    /// titles, `montage-text-*`), not just the per-clip labels, or the render compiler skips
+    /// whatever now starts past the end. That holds for a guided story AND for every montage-family
+    /// edit: the phone montage writers, voiceover montages, day vlog, single hero, and montage
+    /// variants that carry no `resolved_archetype` at all (KRI-715). Speech-timed archetypes opt out.
+    private var ridesGuidedTimeline: Bool {
+        guard let archetype = previewVariant["resolved_archetype"]?.stringValue, !archetype.isEmpty else { return true }
+        return !Self.speechTimedArchetypes.contains(archetype)
+    }
 
     /// Source media ids by `clip_index`, for slots that do not carry a `media_id` themselves
     /// (the server resolves them from the guided revision's `sources[clip_index]`).
@@ -6520,10 +6550,18 @@ struct NativeEditorTemporaryVideo {
         let media = mediaIDsByClipIndex
         guard GuidedLabelRebase.windows(of: previous.clips, mediaByClipIndex: media)
                 != GuidedLabelRebase.windows(of: next.clips, mediaByClipIndex: media) else { return }
+        let before = Dictionary(next.textElements.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         next.textElements = GuidedLabelRebase.rebase(
             next.textElements, oldSlots: previous.clips, newSlots: next.clips,
             mediaByClipIndex: media, includeFreeText: freeText
-        )
+        ).map { element in
+            // A text the edit did not move stays byte-identical: stamping its segment_id alone
+            // would mark the text lane dirty (and send it) for a clip edit that never touched it.
+            guard let original = before[element.id],
+                  abs(original.startS - element.startS) < 0.000_001,
+                  abs(original.endS - element.endS) < 0.000_001 else { return element }
+            return original
+        }
     }
     private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil, isCurrent: Bool = true) {
         // A completed cloud render remains a useful, non-editable fallback

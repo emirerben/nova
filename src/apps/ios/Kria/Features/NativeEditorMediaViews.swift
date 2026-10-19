@@ -1150,6 +1150,25 @@ private struct NativePreviewObjectView: View {
     }
 }
 
+/// One clip block lifted for reorder. `windows` are the committed clip windows, `preview` where each position
+/// lands once the lifted clip sits at `target`; `travel` is the lifted block's timeline displacement (seconds).
+private struct ClipReorderDrag {
+    let clipID: UUID
+    let from: Int
+    var travel: TimeInterval
+    var target: Int
+    let windows: [(start: TimeInterval, end: TimeInterval)]
+    var preview: [(start: TimeInterval, end: TimeInterval)]
+
+    /// The position a clip originally at `index` occupies once `from` has moved to `target`.
+    func previewPosition(of index: Int) -> Int {
+        if index == from { return target }
+        if from < index, index <= target { return index - 1 }
+        if target <= index, index < from { return index + 1 }
+        return index
+    }
+}
+
 /// One in-flight drag's auto-scroll bookkeeping. A class (not a struct) so
 /// the display-link tick closure can read/write it by reference without
 /// SwiftUI re-rendering on every tick.
@@ -1259,6 +1278,12 @@ struct NativeMiniStrip: View {
     /// timed-block trim, or a clip's trailing trim) is active.
     @State private var autoScroll: DragAutoScrollContext?
     @State private var edgeScroller = NativeTimelineEdgeScroller()
+    /// Non-nil while a clip block is lifted for reorder. The document is not touched until the drop, which
+    /// commits one undo step; everything drawn during the drag comes from this value.
+    @State private var clipReorder: ClipReorderDrag?
+    @State private var reorderHaptic = UIImpactFeedbackGenerator(style: .medium)
+    @State private var reorderTickHaptic = UISelectionFeedbackGenerator()
+    @State private var reorderDropHaptic = UIImpactFeedbackGenerator(style: .light)
     /// A second, independent safety net beside each gesture's own cancel
     /// detection (@GestureState reset) — stops the scroller if the app
     /// leaves .active outright (backgrounding, Control Center, a system
@@ -1438,7 +1463,7 @@ struct NativeMiniStrip: View {
             // Center, backgrounding, a system alert) can race gesture-level
             // cancellation, and this must never leave the timeline scrolling
             // with no finger attached.
-            if phase != .active { endAutoScroll() }
+            if phase != .active { endAutoScroll(); cancelClipReorder() }
         }
         .sheet(isPresented: $isPresentingAddClip) { NativeEditorAddClipSheet(session: session) }
         // The add-clip sheet closes as soon as a file is chosen, so a failure has to surface here.
@@ -1805,7 +1830,8 @@ struct NativeMiniStrip: View {
         }
         .frame(height: timelineHeight)
         .onAppear { refreshItems() }
-        .onChange(of: session.document) { _, _ in refreshItems() }
+        // A change from elsewhere (undo, chat edit) mid-drag makes the lifted order stale: drop it uncommitted.
+        .onChange(of: session.document) { _, _ in cancelClipReorder(); refreshItems() }
     }
 
     private func playheadX(for width: CGFloat) -> CGFloat {
@@ -1861,7 +1887,7 @@ struct NativeMiniStrip: View {
         ZStack(alignment: .topLeading) {
             Canvas { context, size in
                 for (index, clip) in clips.enumerated() {
-                    let frame = clipFrame(clip, playheadX: playheadX)
+                    let frame = displayClipFrame(clip, index: index, playheadX: playheadX)
                     guard frame.maxX >= 0, frame.minX <= size.width else { continue }
                     let visible = frame.intersection(CGRect(origin: .zero, size: size))
                     guard !visible.isNull, visible.width > 0 else { continue }
@@ -1897,10 +1923,15 @@ struct NativeMiniStrip: View {
                 NativeClipSurface(
                     clip: clip,
                     index: index,
-                    frame: clipFrame(clip, playheadX: playheadX),
+                    frame: displayClipFrame(clip, index: index, playheadX: playheadX),
                     isSelected: session.selectedClipID == clip.id,
+                    isLifted: clipReorder?.clipID == clip.id,
+                    canReorder: session.canReorderClips,
                     pixelsPerSecond: pixelsPerSecond,
                     onSelect: { select(clip) },
+                    onReorderStart: { beginClipReorder(clip, index: index, viewportGlobalRange: viewportGlobalRange) },
+                    onReorderChange: { travel, x in updateClipReorder(travel: travel, globalX: x) },
+                    onReorderEnd: { commit in endClipReorder(commit: commit) },
                     onTrimStart: { edge in
                         beginTrimHaptics(selection: EditorSelection(kind: .clip, id: clip.id.uuidString), edge: edge, start: clip.start, end: clip.end)
                         session.beginTrim(clipID: clip.id, edge: edge)
@@ -2001,10 +2032,10 @@ struct NativeMiniStrip: View {
         nativePersistedTimelineItems(for: session)
     }
 
-    private var suppressTimelineSelection: Bool { session.isTimingGestureActive || isPinching || panStartTime != nil || Date().timeIntervalSince(lastPanAt) < 0.2 }
+    private var suppressTimelineSelection: Bool { session.isTimingGestureActive || clipReorder != nil || isPinching || panStartTime != nil || Date().timeIntervalSince(lastPanAt) < 0.2 }
 
     private func dismissClipSelection() {
-        guard session.selection?.kind == .clip, !session.isTimingGestureActive else { return }
+        guard session.selection?.kind == .clip, !session.isTimingGestureActive, clipReorder == nil else { return }
         session.select(nil)
     }
 
@@ -2372,11 +2403,78 @@ struct NativeMiniStrip: View {
         )
     }
 
+    /// What the filmstrip draws: the committed frame, or — while a clip is lifted — the lifted block under the
+    /// finger and every other block where it will sit after the drop.
+    private func displayClipFrame(_ clip: EditorClip, index: Int, playheadX: CGFloat) -> CGRect {
+        let base = clipFrame(clip, playheadX: playheadX)
+        guard let drag = clipReorder, drag.preview.indices.contains(index) else { return base }
+        if clip.id == drag.clipID { return base.offsetBy(dx: CGFloat(drag.travel) * pixelsPerSecond, dy: 0) }
+        let slot = drag.previewPosition(of: index)
+        let x = playheadX + CGFloat(drag.preview[slot].start - clock.currentTime) * pixelsPerSecond
+        return CGRect(x: x, y: base.minY, width: base.width, height: base.height)
+    }
+
+    // MARK: - Clip reorder (long press, then drag)
+
+    /// The lifted block's raw travel is clamped so the block stays inside the video; the returned centre time is
+    /// the auto-scroll pin marker (it stops changing once the block meets either end).
+    private func applyClipReorder(raw: TimeInterval) -> TimeInterval? {
+        guard var drag = clipReorder, drag.windows.indices.contains(drag.from) else { return nil }
+        let origin = drag.windows[drag.from]
+        let lower = (drag.windows.first?.start ?? origin.start) - origin.start
+        let upper = (drag.windows.last?.end ?? origin.end) - origin.end
+        drag.travel = min(max(raw, lower), max(lower, upper))
+        let center = (origin.start + origin.end) / 2 + drag.travel
+        let target = NativeEditorInteraction.clipReorderTarget(windows: drag.windows, from: drag.from, liftedCenter: center)
+        if target != drag.target {
+            drag.target = target
+            drag.preview = NativeEditorInteraction.reorderedClipWindows(windows: drag.windows, from: drag.from, to: target)
+            reorderTickHaptic.selectionChanged()
+        }
+        clipReorder = drag
+        return center
+    }
+
+    private func beginClipReorder(_ clip: EditorClip, index: Int, viewportGlobalRange: ClosedRange<CGFloat>) {
+        guard session.canReorderClips, clipReorder == nil, !session.isTimingGestureActive, !isPinching,
+              panStartTime == nil, clips.indices.contains(index) else { return }
+        session.pausePlayback()
+        session.selectClip(clip.id)
+        let windows = clips.map { (start: $0.start, end: $0.end) }
+        clipReorder = ClipReorderDrag(clipID: clip.id, from: index, travel: 0, target: index, windows: windows, preview: windows)
+        reorderHaptic.impactOccurred()
+        beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: { applyClipReorder(raw: $0) })
+    }
+
+    private func updateClipReorder(travel: TimeInterval, globalX: CGFloat) {
+        guard clipReorder != nil else { return }
+        applyCompensatedDrag(raw: travel, applyRaw: { applyClipReorder(raw: $0) })
+        updateAutoScrollX(globalX)
+    }
+
+    /// Drop: one `moveClip` (one undo step) when the block landed somewhere new. State is cleared first so the
+    /// document change the commit causes is not mistaken for an outside edit.
+    private func endClipReorder(commit: Bool) {
+        guard let drag = clipReorder else { return }
+        clipReorder = nil
+        endAutoScroll()
+        guard commit, drag.target != drag.from else { return }
+        session.moveClip(id: drag.clipID, toIndex: drag.target)
+        reorderDropHaptic.impactOccurred()
+        refreshItems()
+    }
+
+    private func cancelClipReorder() {
+        guard clipReorder != nil else { return }
+        clipReorder = nil
+        endAutoScroll()
+    }
+
     private var timelinePanGesture: some Gesture {
         DragGesture(minimumDistance: 10, coordinateSpace: .global)
             .onChanged { value in
                 guard abs(value.translation.width) > abs(value.translation.height),
-                      !session.isTimingGestureActive, !isPinching, playheadStartTime == nil else { return }
+                      !session.isTimingGestureActive, clipReorder == nil, !isPinching, playheadStartTime == nil else { return }
                 let start = panStartTime ?? clock.currentTime
                 panStartTime = start
                 lastPanAt = .now
@@ -2690,8 +2788,15 @@ private struct NativeClipSurface: View {
     let index: Int
     let frame: CGRect
     let isSelected: Bool
+    let isLifted: Bool
+    let canReorder: Bool
     let pixelsPerSecond: CGFloat
     let onSelect: () -> Void
+    /// Long press, then drag, moves the block to a new position. `onReorderChange` reports the finger's travel in
+    /// seconds and its global x (for edge auto-scroll); `onReorderEnd(false)` is a cancelled gesture.
+    let onReorderStart: () -> Void
+    let onReorderChange: (TimeInterval, CGFloat) -> Void
+    let onReorderEnd: (Bool) -> Void
     let onTrimStart: (NativeTrimEdge) -> Void
     let onTrimChange: (NativeTrimEdge, TimeInterval) -> Void
     let onTrimEnd: () -> Void
@@ -2709,6 +2814,15 @@ private struct NativeClipSurface: View {
         NativeClipBlockGeometry.windowDuration(clip, minimum: minimumDuration)
     }
 
+    // Same press-then-drag recipe as NativeTimelineBar: the travel is measured from the finger's global x at the
+    // moment the press is recognised (a sequenced drag's own `translation` loses the travel before its first
+    // sample), and @GestureState is the only reliable cancel signal.
+    @State private var isReordering = false
+    @State private var reorderAnchorX: CGFloat?
+    @GestureState private var touchX: (down: CGFloat, latest: CGFloat)?
+    @GestureState private var reorderGestureActive = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -2719,6 +2833,35 @@ private struct NativeClipSurface: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onSelect)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                        .updating($touchX) { value, touch, _ in touch = (value.startLocation.x, value.location.x) }
+                )
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.45, maximumDistance: 8)
+                        .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+                        .updating($reorderGestureActive) { _, active, _ in active = true }
+                        .onChanged { value in
+                            guard canReorder, case .second(true, let drag) = value else { return }
+                            if !isReordering {
+                                isReordering = true
+                                // A recognition that arrives with a drag sample may already count it in `latest`;
+                                // touch-down can't.
+                                reorderAnchorX = drag == nil ? touchX?.latest : touchX?.down
+                                onReorderStart()
+                            }
+                            if let drag {
+                                let travel = drag.location.x - (reorderAnchorX ?? drag.startLocation.x)
+                                onReorderChange(TimeInterval(travel / max(1, pixelsPerSecond)), drag.location.x)
+                            }
+                        }
+                        .onEnded { _ in
+                            let wasReordering = isReordering
+                            isReordering = false
+                            reorderAnchorX = nil
+                            if wasReordering { onReorderEnd(true) }
+                        }
+                )
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Clip \(index + 1), \(duration, specifier: "%.1f") seconds")
                 .accessibilityValue(String(format: "%.3f", duration))
@@ -2753,12 +2896,26 @@ private struct NativeClipSurface: View {
             }
         }
         .frame(width: max(44, frame.width), height: frame.height)
+        .scaleEffect(isLifted && !reduceMotion ? 1.04 : 1)
+        .shadow(color: .black.opacity(isLifted ? 0.22 : 0), radius: isLifted ? 5 : 0, y: 3)
+        .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.62), value: isLifted)
         .position(x: frame.midX, y: frame.midY)
         // A selected clip owns both edge handles. Raise the whole surface so
         // the trailing handle at an adjacent clip boundary is not covered by
-        // the later clip's hit stack.
-        .zIndex(isSelected ? 1 : 0)
+        // the later clip's hit stack. A lifted block rides above its neighbours.
+        .zIndex(isLifted ? 2 : isSelected ? 1 : 0)
         .allowsHitTesting(frame.maxX >= 0)
+        .onChange(of: reorderGestureActive) { _, active in
+            // A cancelled gesture (system gesture, Control Center) never calls onEnded: drop it uncommitted.
+            if !active && isReordering {
+                isReordering = false
+                reorderAnchorX = nil
+                onReorderEnd(false)
+            }
+        }
+        .onDisappear {
+            if isReordering { isReordering = false; onReorderEnd(false) }
+        }
     }
 }
 
