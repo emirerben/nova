@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -317,6 +317,61 @@ def apply_creator_selections(
     return settled, remaining, dropped
 
 
+def _nameable(intent: ClipIntent) -> bool:
+    """True when a clip the creator names by file name fully answers this intent.
+
+    Whatever a tapped clip answers (``picker_eligible``), plus ``exclude`` (KRI-763): "skip
+    M1_05" names the clip to leave out, and an exclude is never a picker category.
+    """
+    return intent.op == "exclude" or picker_eligible(intent)
+
+
+def superseded_pin_ids(
+    *,
+    intents: list[ClipIntent],
+    pinned: list[ResolvedClipIntent],
+    latest_user_message: str | None,
+    quotes: Mapping[str, str],
+) -> set[str]:
+    """Earlier first/last pins that a file-name pin in the latest message replaces (KRI-763).
+
+    The whole conversation is re-planned every turn, so "first = the clip where Caro brings
+    the tray" (message 1) and "first clip M1_08" (message 2) both come back as ``first``
+    pins: two clips led the edit, or the first one was asked about again though the creator
+    had just named the clip. A later message that pins a position by file name decides it.
+
+    ``pinned`` are the intents settled by file name this turn; ``quotes`` maps intent ids to
+    the creator words each came from. Only a pin whose words are NOT in the latest message
+    is replaced: pins from one message stack as before, and an intent of unknown origin
+    stays. ``then`` rows (no position) are never touched.
+    """
+    latest = fold_text(latest_user_message or "")
+    if not latest:
+        return set()
+
+    def in_latest(intent_id: str) -> bool:
+        quote = quotes.get(intent_id)
+        return bool(quote) and fold_text(quote) in latest
+
+    positions = {
+        pin.position
+        for pin in pinned
+        if pin.op == "order"
+        and pin.position in ("first", "last")
+        and len(pin.assignments) == 1
+        and in_latest(pin.intent_id)
+    }
+    return {
+        intent.intent_id
+        for intent in intents
+        if intent.op == "order"
+        and intent.position in positions
+        and not intent.order_by
+        and intent.intent_id in quotes
+        and not in_latest(intent.intent_id)
+    }
+
+
 def apply_file_name_references(
     intents: list[ClipIntent],
     *,
@@ -342,7 +397,7 @@ def apply_file_name_references(
     by_id = {clip.media_id: clip for clip in clips}
     named: dict[str, list[NameReference]] = {}
     for intent in intents:
-        if intent.label_source != "clip" or intent.order_by or not picker_eligible(intent):
+        if intent.label_source != "clip" or intent.order_by or not _nameable(intent):
             continue
         refs, others = index.references(intent.attribute)
         if refs and names_only(others) and all(ref.media_id for ref in refs):
@@ -403,7 +458,7 @@ def _settle(
     assignments = _selected_assignments(
         intent, media_ids, by_id, creator_request, evidence=evidence
     )
-    if not media_ids or not picker_eligible(intent) or assignments is None:
+    if not media_ids or not _nameable(intent) or assignments is None:
         return None
     caption_text = caption_grounding = None
     if intent.op == "caption":
@@ -676,6 +731,17 @@ async def plan_and_resolve_clip_intents(
     named, visual_intents, split = apply_file_name_references(
         visual_intents, clips=clips, creator_request=creator_request
     )
+    # KRI-763: a first/last pin named by file in the latest message replaces an earlier one.
+    superseded = superseded_pin_ids(
+        intents=intents,
+        pinned=named,
+        latest_user_message=latest_user_message,
+        quotes={i.intent_id: i.source_quote for i in output.intents},
+    )
+    if superseded:
+        dropped_ids = dropped_ids | superseded
+        selected = [s for s in selected if s.intent_id not in superseded]
+        visual_intents = [i for i in visual_intents if i.intent_id not in superseded]
     if dropped_ids or split:
         intents = [
             piece
