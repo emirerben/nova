@@ -122,6 +122,40 @@ Scratch PostgreSQL: `nova_kri721_approval_readiness_test`.
 Physical approval UI evidence is recorded below separately from exported-output
 verification and production deployment.
 
-Final physical recheck is waiting for exclusive iPhone time after the Troya
-production journey. Initial physical tests held approval but exposed the phone
-normalization mismatch above; they are not claimed as a complete successful flow.
+## Final physical iPhone approval proof
+
+**Passed 2026-10-19 08:00:23 UTC**, iPhone 13 Pro, isolated
+`com.kria.app.qa.kri721`, with source code from `3bd820014` (branch HEAD
+`15c98d0fa` also contains the CI expectation fix). The normal iOS application
+source and its existing explicit QA launch mode were used. The production app,
+its account and saved edit were not touched by this check.
+
+1. Sent: `Make a six-second edit with only the title "Gameday." and remove only
+   the wind noise.` The UI offered the named omission and no Create approval.
+   Server proof: title/duration executable, only wind removal unresolved, no
+   policy-level error, zero approvals and zero dispatches.
+2. Tapped the exact `Make this simpler version` choice. Server proof: brief v2
+   superseded only r3; r1/r2 remained executable; exactly one pending approval.
+3. Tapped `Create this video` once. The real HTTP approval endpoint accepted and
+   published exactly once. No additional model call, no worker error.
+
+Three physical XCUITest phases passed, with mandatory API/DB assertions between
+phases on the Mac. This retained and strengthened the negative control while
+avoiding the test runner's separate local-network permission problem. Only the
+provider transport and broker publisher were substituted. No internal policy,
+compiler, receipt, source-window validator or approval logic was mocked.
+
+Artifacts retained outside Git:
+
+- `/private/tmp/kri721-qa/verified-summary.json`
+- `/private/tmp/kri721-qa/final-phase1.xcresult`
+- `/private/tmp/kri721-qa/final-phase2.xcresult`
+- `/private/tmp/kri721-qa/final-phase3.xcresult`
+- `/private/tmp/kri721-qa/final-flow.log`
+- `/private/tmp/kri721-qa/run_checked_phases.py` and `ui/Probe.swift`
+
+This verifies approval eligibility and exact consent on a physical phone using
+replayed provider output and a real local API/database. Dispatch intentionally
+stopped after the approval boundary: **no new native export, live-model result or
+production deployment is claimed**. The phone was released after the QA app
+terminated; production remains unenrolled.
