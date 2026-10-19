@@ -747,16 +747,25 @@
     },
     {
       "id": "kri-736-save-after-delete",
-      "needs_native": false,
-      "api_tests": "tests/routes/test_phone_guided_clip_delete_text_fit.py tests/routes/test_phone_guided_clip_delete_order_contract.py tests/routes/test_phone_manual_edits_win.py",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_editor_save_contract_matrix.py",
+      "xctests": [
+        "KriaTests/EditorSaveMatrixTests/testEverySourceWindowVerdictMatchesTheServer",
+        "KriaTests/EditorSaveMatrixTests/testANewTextIsEncodedWithTheRoleTheServerAccepts"
+      ],
       "paths": [
+        "src/apps/api/app/agents/_schemas/text_element.py",
         "src/apps/api/app/pipeline/phone_authored_timeline.py",
+        "src/apps/api/app/services/authored_editor.py",
         "src/apps/api/app/services/authored_text_fit.py",
         "src/apps/api/app/services/creator_render_contract.py",
         "src/apps/api/app/services/phone_editor.py",
-        "src/apps/api/tests/routes/test_phone_guided_clip_delete_text_fit.py",
-        "src/apps/api/tests/routes/test_phone_guided_clip_delete_order_contract.py",
-        "src/apps/api/tests/routes/test_phone_manual_edits_win.py",
+        "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
+        "src/apps/ios/Kria/Features/KriaCropEditor.swift",
+        "src/apps/ios/Tests/Fixtures/editor_save_matrix.json",
+        "src/apps/ios/Tests/KriaTests/EditorSaveMatrixTests.swift",
+        "src/apps/api/tests/routes/_editor_save_matrix.py",
+        "src/apps/api/tests/routes/test_editor_save_contract_matrix.py",
         "src/apps/api/tests/services/test_phone_editor_render_contract.py"
       ]
     },
