@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.56.0] - 2026-10-19
+
+### Changed
+- fix(ios): retain newly restored clips in chat drafts (#1688) <!-- release-pr: 1688 -->
+
 ## [0.80.55.0] - 2026-10-19
 
 ### Fixed
