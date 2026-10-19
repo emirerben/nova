@@ -72,7 +72,7 @@ cp .env.example .env            # fill in values
 ./scripts/dev-auto.sh            # single-command dev env with hot reload
 ```
 
-`dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only), runs migrations, then launches API (`uvicorn --reload`), Celery worker (`watchfiles`), and Next.js (HMR) natively. Logs go to `.dev/<service>.log`. Do NOT restart servers manually (hot reload). Stop with `./scripts/dev-stop.sh`. A plan stuck in `generating` after a worker crash: `python3 scripts/dev/reset-stuck-plans.py` (local-only).
+`dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only), runs migrations, launches API (`uvicorn --reload`), Celery worker (`watchfiles`), and Next.js (HMR) natively. Logs go to `.dev/<service>.log`. Do NOT restart servers manually (hot reload). Stop with `./scripts/dev-stop.sh`. A plan stuck in `generating` after a worker crash: `python3 scripts/dev/reset-stuck-plans.py` (local-only).
 
 Alternatives:
 - `./scripts/dev-no-docker.sh` — same flow but assumes postgres@16 + redis already running
@@ -100,11 +100,12 @@ make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 - Frontend typecheck: `cd src/apps/web && npx tsc --noEmit`
 - Frontend tests: `cd src/apps/web && npm test` (Jest)
 - Kria gates: `make verify-kria`; iOS: `make ios-verify`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
-- Pre-PR gate: `bash scripts/preship-check.sh` — scoped ruff, tsc, drift vs origin/main, VERSION slot, `[skip-*]` markers, KRI-577 gates for changed paths. Run before every PR.
+- Pre-PR gate: `bash scripts/preship-check.sh` — ruff, drift, release metadata, KRI-577 gates, journey mapping, fix-chain WARN. Run before every PR.
 - Reliability gates (KRI-577): `python3 scripts/reliability-gates.py select|run|red-control`; ledger `tests/gates/reliability-gates.json`; checklist `docs/runbooks/pr-acceptance-checklist.md`; scratch DB `bash scripts/dev/test-db.sh`.
 
 ## Testing rules
 - **Never write unit tests after you write code** (they restate the implementation and pass by construction).
+- 2 fix PRs on a ticket ⇒ failure-mode list before the 3rd (`docs/runbooks/linear-workflow.md`).
 - **Highly prefer E2E tests as the sole testing mechanism.** Use them to verify complex features work, and end with a verifiable, repeatable artifact (`make verify-overlays` `report.json` + `montage.png`, Playwright report/trace, XCUITest result bundle, `make local-render` MP4 + its command).
 - **If you must test a system in isolation, first write down all the ways it could fail, then write the code.**
 - Exempt (keep current): guard tests named in this file, cross-platform parity fixtures, `tests/evals/` fixtures (replay evals run in `test-api`). Prune audit: `docs/reviews/kri-198-test-prune.md`.

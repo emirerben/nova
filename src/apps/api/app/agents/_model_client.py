@@ -243,6 +243,10 @@ class GeminiClient(ModelClient):
 
     # ── Single invocation (no retry — runtime owns that) ──────────
 
+    def generation_config(self) -> dict[str, Any]:
+        """Provider capabilities explicitly enabled by a specialized client."""
+        return {}
+
     def invoke(
         self,
         *,
@@ -272,7 +276,7 @@ class GeminiClient(ModelClient):
             )
         contents.append(prompt)
 
-        cfg_kwargs: dict[str, Any] = {}
+        cfg_kwargs: dict[str, Any] = self.generation_config()
         if response_json:
             cfg_kwargs["response_mime_type"] = "application/json"
         if max_output_tokens is not None:

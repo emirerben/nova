@@ -32,7 +32,7 @@ from app.config import settings
 
 log = structlog.get_logger()
 
-PRICE_VERSION = "google-ai-2026-09-08.v3"
+PRICE_VERSION = "google-ai-2026-10-19.v4"
 DEFAULT_MAX_OUTPUT_TOKENS = 8_192
 _IMAGE_TILE_SIZE_PX = 768
 _IMAGE_TOKENS_PER_TILE = 258
@@ -205,6 +205,11 @@ def calculate_cost_usd(model: str, usage: UsageMeter) -> float:
         cost += Decimal(video_output) * (Decimal("17.50") - output_rate)
 
     cost /= Decimal(1_000_000)
+    if lowered.startswith("gemini-2.5"):
+        # Conservatively charge the paid tier even when an account has free quota.
+        cost += Decimal("0.035") * max(
+            0, int((usage.token_details or {}).get("grounded_search_requests", 0))
+        )
     return float(cost.quantize(Decimal("0.000001")))
 
 

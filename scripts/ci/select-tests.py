@@ -95,14 +95,39 @@ def journey_affected(path):
     return path in JOURNEY_POLICY_PATHS
 
 
+def journey_ids_for_path(path):
+    """Journey ids a relevant path selects; empty means the path is unmapped.
+
+    Single source of truth shared by the CI selector and `unmapped-paths`, so
+    the local preship report can never disagree with what CI will decide.
+    """
+    if path in JOURNEY_POLICY_PATHS:
+        return {journey["id"] for journey in JOURNEYS}
+    matches = [
+        (len(prefix), journey["id"])
+        for journey in JOURNEYS
+        for prefix in journey["paths"]
+        if matches_journey_path(path, prefix)
+    ]
+    if not matches:
+        return set()
+    longest = max(length for length, _ in matches)
+    return {journey_id for length, journey_id in matches if length == longest}
+
+
+def journey_diff_paths(base, head):
+    """Changed paths on the merge-base diff; raises on any git/decoding error."""
+    ancestor = git("merge-base", base, head).decode().strip()
+    raw = git("diff", "--no-renames", "--name-only", "-z", ancestor, head)
+    return [p.decode("utf-8") for p in raw.split(b"\0") if p]
+
+
 def journey_details(event, base, head):
     """Return (selected, coverage, fixture ids); unknown inputs fail closed."""
     if event != "pull_request":
         return True, "covered", ",".join(journey["id"] for journey in JOURNEYS)
     try:
-        ancestor = git("merge-base", base, head).decode().strip()
-        raw = git("diff", "--no-renames", "--name-only", "-z", ancestor, head)
-        paths = [p.decode("utf-8") for p in raw.split(b"\0") if p]
+        paths = journey_diff_paths(base, head)
         relevant = [path for path in paths if journey_affected(path)]
         if not paths:
             return True, "gap", ""
@@ -110,21 +135,10 @@ def journey_details(event, base, head):
             return False, "not_applicable", ""
         selected = set()
         for path in relevant:
-            if path in JOURNEY_POLICY_PATHS:
-                selected.update(journey["id"] for journey in JOURNEYS)
-                continue
-            matches = [
-                (len(prefix), journey["id"])
-                for journey in JOURNEYS
-                for prefix in journey["paths"]
-                if matches_journey_path(path, prefix)
-            ]
-            if not matches:
+            ids = journey_ids_for_path(path)
+            if not ids:
                 return True, "gap", ""
-            longest = max(length for length, _ in matches)
-            selected.update(
-                journey_id for length, journey_id in matches if length == longest
-            )
+            selected.update(ids)
         return (
             True,
             "covered",
@@ -134,6 +148,17 @@ def journey_details(event, base, head):
         )
     except (subprocess.CalledProcessError, UnicodeError, OSError):
         return True, "gap", ""
+
+
+def unmapped_journey_paths(base, head, paths=None):
+    """Journey-relevant changed paths with no manifest mapping (raises on git error).
+
+    `paths` replaces the git diff (used for uncommitted files in preship)."""
+    if paths is None:
+        paths = journey_diff_paths(base, head)
+    return [
+        path for path in paths if journey_affected(path) and not journey_ids_for_path(path)
+    ]
 
 
 def git(*args):
@@ -532,6 +557,32 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "validate-mapping":
         validate_journey_mapping(os.environ["COVERAGE"], os.environ["JOURNEY_IDS"])
         return
+    if len(sys.argv) > 1 and sys.argv[1] == "unmapped-paths":
+        # Local preship helper (KRI-749): name the paths that make CI's
+        # journey-mapping check fail closed. Exit 1 on any unmapped path or
+        # git error; usage: unmapped-paths --base <ref> [--head <ref>], or
+        # unmapped-paths --stdin to classify newline-separated paths instead.
+        args = sys.argv[2:]
+        use_stdin = "--stdin" in args
+        opts = dict(zip(*[iter([a for a in args if a != "--stdin"])] * 2))
+        base, head = opts.get("--base"), opts.get("--head", "HEAD")
+        if not base and not use_stdin:
+            print(
+                "usage: unmapped-paths --base <ref> [--head <ref>] | --stdin",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        try:
+            unmapped = unmapped_journey_paths(
+                base,
+                head,
+                [p for p in sys.stdin.read().splitlines() if p] if use_stdin else None,
+            )
+        except (subprocess.CalledProcessError, UnicodeError, OSError) as error:
+            print(f"unmapped-paths: git diff failed: {error}", file=sys.stderr)
+            sys.exit(1)
+        print("\n".join(unmapped))
+        sys.exit(1 if unmapped else 0)
     if len(sys.argv) > 1 and sys.argv[1] == "gate":
         print(
             gate(

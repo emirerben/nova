@@ -1130,6 +1130,34 @@ async def _mint_restore_turn(
         brief_binding=head_snapshot.get("brief_binding"),
         brief_coverage=head_snapshot.get("brief_coverage"),
     )
+    from app.kria.approval_readiness import (  # noqa: PLC0415
+        NOT_READY,
+        ApprovalReadinessError,
+        assess_saved_document,
+        requires_readiness,
+    )
+    from app.kria.runtime import RuntimeFailure  # noqa: PLC0415
+
+    readiness_report = None
+    if requires_readiness(document, thread.creator_id):
+        item = target.item
+        try:
+            readiness_report = await assess_saved_document(
+                db,
+                item,
+                document,
+                require_same_assessment=False,
+            )
+        except ApprovalReadinessError as exc:
+            raise RuntimeFailure(409, NOT_READY, str(exc), phase="approval") from exc
+        document = document.model_copy(
+            update={
+                "brief_coverage": {
+                    **(document.brief_coverage or {}),
+                    "approval_readiness": readiness_report,
+                }
+            }
+        )
     row = await _insert_revision(db, target=target, document=document, parent=head)
     snapshot, snapshot_hash = canonical_snapshot(document)  # noqa: F841 - hash is the row's
     turn_id = uuid.uuid4()
@@ -1223,7 +1251,15 @@ async def _mint_restore_turn(
         target_manifest_hash=session.manifest_hash,
         target_ownership_epoch=int(session.ownership_epoch),
         status="awaiting_approval",
-        result={"consequence": "Start one render from this exact draft.", "creator_request": reply},
+        result={
+            "consequence": "Start one render from this exact draft.",
+            "creator_request": reply,
+            **(
+                {"approval_readiness_digest": readiness_report["digest"]}
+                if readiness_report is not None
+                else {}
+            ),
+        },
         started_at=now,
         awaiting_approval_at=now,
     )

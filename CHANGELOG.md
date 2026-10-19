@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.51.0] - 2026-10-19
+
+### Changed
+- ci(preship): journey-mapping check + second-fix-PR rule (KRI-749, KRI-751) (#1680) <!-- release-pr: 1680 -->
+
+## [0.80.50.0] - 2026-10-19
+
+### Changed
+- fix(ios): slide-post rename alert + Slider format tile size, sliding and Lisbon Taberna photos (#1684) <!-- release-pr: 1684 -->
+
+## [0.80.49.0] - 2026-10-19
+
+### Fixed
+- fix(kria): require executable evidence before approval (KRI-721) (#1683) <!-- release-pr: 1683 -->
+
+## [0.80.48.0] - 2026-10-19
+
+### Changed
+- feat: add footage-bound research and native source citations (#1679) <!-- release-pr: 1679 -->
+
+## [0.80.47.0] - 2026-10-19
+
+### Changed
+- feat(ios): long-press and drag a clip block in the timeline to reorder clips (KRI-755) (#1682) <!-- release-pr: 1682 -->
+
+## [0.80.46.0] - 2026-10-19
+
+### Changed
+- fix(editor): text follows clip delete for every timeline archetype (KRI-715) (#1646) <!-- release-pr: 1646 -->
+
+## [0.80.45.0] - 2026-10-19
+
+### Changed
+- chore: add .mailmap so emirerben and Emir Erben count as one author (#1678) <!-- release-pr: 1678 -->
+
+## [0.80.44.0] - 2026-10-19
+
+### Changed
+- fix(ios): show export checking and repair progress in live chat (#1677) <!-- release-pr: 1677 -->
+
 ## [0.80.43.0] - 2026-10-18
 
 ### Added

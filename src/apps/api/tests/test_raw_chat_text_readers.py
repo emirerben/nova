@@ -92,6 +92,12 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "receipt wording for the approved brief requirements",
         None,
     ),
+    "kria/approval_readiness.py": (
+        "plan_time",
+        "readiness_reply quotes already-identified blocked requirements for the creator; "
+        "it never interprets prose or decides route, duration, voice, order or required text",
+        frozenset({"readiness_reply"}),
+    ),
     "kria/editor_receipts.py": (
         "plan_time",
         "editor-turn receipt wording: quotes the turn's stated requirement back beside what "

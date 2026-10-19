@@ -11,6 +11,7 @@ struct ChatWorkspaceView: View {
     @State private var drawerMounted = false
     @State private var showsGallery = false
     @State private var showsAccount = false
+    @State private var projectActions = ProjectActionsPresenter()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -28,6 +29,8 @@ struct ChatWorkspaceView: View {
             ),
             content: workspace
         )
+        .environment(projectActions)
+        .projectActionAlerts(projectActions)
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: showsProjects)
         .onChange(of: showsProjects) { _, isOpen in
             guard isOpen else { return }
@@ -662,11 +665,13 @@ private struct CreationWorkspaceView: View {
 
     /// The feed hosts the device build (instead of the status card) while the phone is preparing, rendering
     /// or finished cleanly. Anything that needs the creator (stopped, needs attention, a failed sync with a
-    /// message, superseded) hands over to `DeviceRenderPanel`, which owns retry and recovery.
+    /// message, superseded), output checking, or automatic repair hands over to
+    /// `DeviceRenderPanel`, which owns verification and recovery progress.
     private var feedHostsDeviceBuild: Bool {
         guard let key = deviceRenderKey, showsPlanFeed else { return false }
         guard let presentation = model.deviceRenders.presentations[key] else { return true }
         guard deviceBuildStage != nil else { return false }
+        guard !presentation.outputVerificationPending, presentation.repairAttempt == nil else { return false }
         return presentation.message == nil && !presentation.requiresServerRetry
     }
 

@@ -139,6 +139,7 @@ from app.services.kria_editor_ops import (
     build_editor_snapshot,
     clip_facts_by_media_id,
     clip_seen_by_media_id,
+    clip_visible_text_by_media_id,
     coalesce_text_style_ops,
     editor_state_has_lanes,
     resolve_editor_base,
@@ -525,6 +526,8 @@ class PlannedKriaTurn:
     # The manifest this turn planned against, so the receipt checks resolve
     # reaction beats (owned images, capability) exactly as approval will.
     brief_manifest: ResolvedCreatorManifest | None = None
+    # KRI-721: resolved for the proposed format, without applying it to the item.
+    readiness_manifest: ResolvedCreatorManifest | None = None
     brief_coverage: dict | None = None
     brief_expected_version: int | None = None
     media_snapshot: dict | None = None
@@ -1259,6 +1262,11 @@ async def _copilot_clip_context(
         seen = clip_seen_by_media_id(job, variant, list(item.clip_assignments or []))
         if seen:
             context["seen"] = seen
+        visible_text = clip_visible_text_by_media_id(
+            job, variant, list(item.clip_assignments or [])
+        )
+        if visible_text:
+            context["visible_text"] = visible_text
     except Exception:  # noqa: BLE001 - fail open to no descriptions
         log.warning("kria_copilot_clip_seen_unavailable", thread_id=str(thread_id), exc_info=True)
     try:
@@ -3483,7 +3491,7 @@ async def _gate_unresolved_choices(
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         arguments = apply_intent.arguments
     planned = replace(planned, plan=plan)
-    if not settings.kria_choice_questions_enabled:
+    if not settings.kria_choice_questions_enabled and not strategy.get("editorial_plan"):
         return planned
     brief: CreativeBrief | None = None
     # Only a creator with a brief BINDING has a dispatch contract that reads the brief, so
@@ -3560,6 +3568,38 @@ async def _gate_unresolved_choices(
     length_plan = (
         enriched_snapshot.get("length_plan") if isinstance(enriched_snapshot, dict) else None
     )
+    if strategy.get("editorial_plan") is not None:
+        from app.services.editorial_plan import editorial_summary
+
+        if isinstance(length_plan, dict) and any(
+            conflict.get("code") == "editorial_text_capacity"
+            for conflict in length_plan.get("conflicts", [])
+        ):
+            return replace(
+                planned,
+                plan=KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=say(
+                        en=(
+                            "The planned explanations need more reading time than this edit "
+                            "allows. Should we use a longer edit or explain fewer parts?"
+                        ),
+                        tr=(
+                            "Planlanan açıklamaları okumak için bu videoda yeterli süre yok. "
+                            "Videoyu uzatalım mı, yoksa daha az bölümü mü açıklayalım?"
+                        ),
+                    ),
+                ),
+            )
+
+        windows = length_plan.get("windows", []) if isinstance(length_plan, dict) else []
+        duration = sum(float(row["source_end_s"]) - float(row["source_start_s"]) for row in windows)
+        summary = editorial_summary(strategy["editorial_plan"], duration or None)
+        arguments = {**arguments, "summary": summary}
+        apply_intent = apply_intent.model_copy(update={"arguments": arguments})
+        plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
+        planned = replace(planned, plan=plan)
     plan_notices = [
         notice
         for notice in (
@@ -3576,6 +3616,8 @@ async def _gate_unresolved_choices(
         apply_intent = apply_intent.model_copy(update={"arguments": arguments})
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         planned = replace(planned, plan=plan)
+    if not settings.kria_choice_questions_enabled:
+        return planned
     resolution = resolve_choices(
         strategy,
         answered_brief(brief, strategy),
@@ -3672,6 +3714,8 @@ async def _plan_scoped_turn(
     """
     from app.kria import plan_review  # noqa: PLC0415
 
+    # Provider calls release the transaction and expire ORM rows.
+    scoped_creator_id, scoped_item_id = persona.user_id, item.id
     # KRI-598: runtime v2 has no guided-proposal step, so it never offers guided voiceover.
     manifest, _ = await resolve_item_creator_context(
         db, item, persona=persona, runs_guided_voiceover=False
@@ -3810,7 +3854,38 @@ async def _plan_scoped_turn(
                 }
             }
         )
-    return _planned(plan)
+    planned = _planned(plan)
+    if settings.approval_readiness_for(scoped_creator_id) and plan.mode == "act" and model_scope:
+        prior_brief = await load_latest_brief(db, thread_id)
+        expected_version = prior_brief.version if prior_brief else 0
+        updates, route = await extract_deferred_brief(
+            db,
+            thread_id=thread_id,
+            item_id=scoped_item_id,
+            creator_id=scoped_creator_id,
+            user_message=user_message,
+        )
+        if route is None:
+            return _reply(
+                say(
+                    en=(
+                        "I need to clarify the requested changes before offering this render. "
+                        "Your saved edit is unchanged."
+                    ),
+                    tr=(
+                        "Bu oluşturmayı sunmadan önce istenen değişiklikleri "
+                        "netleştirmem gerekiyor. "
+                        "Kayıtlı düzenlemen değişmedi."
+                    ),
+                )
+            )
+        planned = replace(
+            planned,
+            brief_updates=updates,
+            brief_route="editor_ops",
+            brief_expected_version=expected_version,
+        )
+    return planned
 
 
 async def _plan_live_turn(
