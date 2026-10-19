@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Photos
 import KriaMediaEngine
 
 /// Mirrors the server-owned MediaAssetOut and immutable source contract.
@@ -240,5 +241,83 @@ extension KriaAPI {
         } else if let id = target.assetID { return try await savedMediaAsset(id: id) }
         let finalized: [String: JSONValue] = ["client_event_id": .string("ios-finalize-\(target.reservationID)")]
         return try await request(path: "me/media-assets/uploads/\(target.reservationID)/finalize", method: "POST", bodyData: JSONEncoder().encode(finalized), decode: SavedMediaAsset.self)
+    }
+}
+
+/// Fingerprint matching over an explicit selection. Never enumerates the Photos library.
+/// The same catalogue/original store is used by recommendations and normal projects.
+@MainActor enum CollectionOriginalRelinker {
+    struct Result: Sendable {
+        var matched: [UUID: String] = [:]
+        var inspected = 0
+        var bytesRead: Int64 = 0
+    }
+    static func link(file: URL, assets: [SavedMediaAsset], owner: String) async throws -> Set<UUID> {
+        guard assets.count <= 50,
+              let bytes = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              bytes <= 256 * 1024 * 1024,
+              assets.contains(where: { $0.fingerprint?.byteCount == Int64(bytes) }) else { throw SavedMediaError.originalRequired }
+        let fingerprint = try await Task.detached { try SHA256Fingerprinter().fingerprint(file: file) }.value
+        var matched = Set<UUID>()
+        for asset in assets where asset.fingerprint == fingerprint {
+            try await MediaLibraryOriginals(owner: owner).relink(assetID: asset.id, fingerprint: fingerprint, file: file)
+            matched.insert(asset.id)
+        }
+        guard !matched.isEmpty else { throw SavedMediaError.originalRequired }
+        return matched
+    }
+    static func match(assets: [SavedMediaAsset], identifiers: [String], owner: String, progress: ((Result) -> Void)? = nil) async throws -> Result {
+        guard assets.count <= 50, identifiers.count <= 50 else { throw APIError.invalidResponse }
+        let wanted = assets.filter { $0.kind == "video" && $0.fingerprint != nil }
+        let maximum = min(256 * 1024 * 1024, wanted.compactMap { $0.fingerprint?.byteCount }.max() ?? 0)
+        guard maximum > 0 else { return Result() }
+        var result = Result()
+        let library = MediaLibraryOriginals(owner: owner)
+        for asset in wanted {
+            if let fingerprint = asset.fingerprint, let local = library.localURL(assetID: asset.id, fingerprint: fingerprint),
+               try await Task.detached(operation: { try SHA256Fingerprinter().fingerprint(file: local) }).value == fingerprint {
+                result.matched[asset.id] = "already-linked"
+            }
+        }
+        progress?(result)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(120))
+        for identifier in Set(identifiers) {
+            try Task.checkCancellation()
+            guard ContinuousClock.now < deadline, result.matched.count < wanted.count, result.bytesRead + maximum <= 1024 * 1024 * 1024 else { break }
+            let pending = wanted.filter { result.matched[$0.id] == nil }
+            let fetched = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
+            guard let photo = fetched.firstObject, photo.mediaType == .video else { continue }
+            let possible = pending.filter { asset in
+                guard case .object(let contract) = asset.metadata["upload_contract"],
+                      case .object(let proxy) = contract["proxy"], case .object(let original) = proxy["original"],
+                      case .number(let duration) = original["duration_s"],
+                      case .number(let width) = original["width"], case .number(let height) = original["height"] else { return true }
+                return abs(duration - photo.duration) <= 0.2 &&
+                    [Int(width), Int(height)].sorted() == [photo.pixelWidth, photo.pixelHeight].sorted()
+            }
+            guard !possible.isEmpty else { continue }
+            result.inspected += 1
+            progress?(result)
+            let file: URL
+            do {
+                file = try await withThrowingTaskGroup(of: URL.self) { group in
+                    group.addTask { try await PhotosLibraryAssetExporter(maximumBytes: maximum).exportFile(localIdentifier: identifier) }
+                    group.addTask { try await Task.sleep(for: .seconds(30)); throw LibraryAssetExportError.timedOut }
+                    defer { group.cancelAll() }
+                    guard let first = try await group.next() else { throw LibraryAssetExportError.writeFailed }
+                    return first
+                }
+            } catch LibraryAssetExportError.byteLimitExceeded { result.bytesRead += maximum; continue }
+            catch LibraryAssetExportError.timedOut { result.bytesRead += maximum; continue }
+            defer { try? FileManager.default.removeItem(at: file) }
+            let fingerprint = try await Task.detached { try SHA256Fingerprinter().fingerprint(file: file) }.value
+            result.bytesRead += fingerprint.byteCount
+            for asset in possible where asset.fingerprint == fingerprint {
+                try await MediaLibraryOriginals(owner: owner).relink(assetID: asset.id, fingerprint: fingerprint, file: file)
+                result.matched[asset.id] = identifier
+            }
+            progress?(result)
+        }
+        return result
     }
 }

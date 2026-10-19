@@ -66,21 +66,29 @@ def test_relevance_replay_cannot_invent_or_duplicate_source_intervals():
     assert client.invocations == 1
 
 
-def test_story_replay_keeps_review_copy_out_of_the_execution_contract():
+def test_story_replay_separates_review_reasoning_from_proposed_creative_copy():
     value = evidence()
     story = {
         "title": "Arrival after dark",
-        "hook": "The ferry crossing",
-        "payoff": "The lit house",
-        "rationale": "Recorded arrival",
         "moment_ids": [value.candidates[0].id],
+        "content_plan": {
+            "audience": "Evening walkers",
+            "angle": "A crossing ends in an unexpected light",
+            "why_it_works": "The last view answers the opening question.",
+            "opening_text": "What is waiting across the water?",
+            "closing_text": None,
+            "caption": "An evening crossing.",
+            "beat_reasons": ["The light resolves the question"],
+        },
     }
     client = CassetteModelClient(json.dumps({"stories": [story]}))
     agent = CameraRollStoriesAgent(client)
     output = agent.run(value, ctx=build_eval_run_context("camera-roll/late-arrival", is_live=False))
     assert output.stories[0].moment_ids == [value.candidates[0].id]
     assert "on_screen_copy" not in output.model_dump()
-    assert "none is on-screen" in agent.render_prompt(value)
+    assert "PROPOSED copy requiring creator review" in agent.render_prompt(value)
+    assert output.stories[0].content_plan.opening_text == "What is waiting across the water?"
+    assert output.stories[0].rationale == story["content_plan"]["why_it_works"]
     assert client.invocations == 1
     with pytest.raises(SchemaError):
         agent.parse(json.dumps({"stories": [story] * 4}), value)

@@ -360,6 +360,16 @@ def _picture_similarity(expected: np.ndarray, actual: np.ndarray, mask: np.ndarr
     return float(np.mean(scores))
 
 
+def _watermark_bounds(width: float, height: float) -> tuple[float, float, float, float]:
+    """Approved native brand tile, in top-left canvas coordinates.
+
+    Mirrors KriaBranding.watermarkTileRect: one constrained scale for the mark,
+    inset and padded shadow tile. BrandingTests supplies the parity oracle.
+    """
+    scale = min(width / 1080, height / 1920)
+    return 30 * scale, height - 534 * scale, 223 * scale, height - 415 * scale
+
+
 def _bounds(layer, recipe) -> tuple[int, int, int, int]:
     # Runs carry absolute positions and glyph origins. A conservative OCR region
     # includes ascenders, descenders and the final glyph, never the whole frame.
@@ -490,7 +500,15 @@ def verify_actual_export(
         mask = np.ones((size[1], size[0]), dtype=bool)
         # The shipped watermark is fixed brand furniture, not authored content.
         if brand_tail == "standard":
-            mask[int(size[1] * 0.85) :, int(size[0] * 0.6) :] = False
+            x0, y0, x1, y1 = _watermark_bounds(recipe.canvas.width, recipe.canvas.height)
+            mask[
+                int(y0 * size[1] / recipe.canvas.height) : math.ceil(
+                    y1 * size[1] / recipe.canvas.height
+                ),
+                int(x0 * size[0] / recipe.canvas.width) : math.ceil(
+                    x1 * size[0] / recipe.canvas.width
+                ),
+            ] = False
         for x0, y0, x1, y1 in rects:
             if x1 <= x0 or y1 <= y0:
                 raise ValueError("unmeasurable_text_region")

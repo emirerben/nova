@@ -105,6 +105,21 @@ from app.schemas.media_assets import (
     MediaAssetUploadBody,
     MediaAssetUploadOut,
 )
+from app.schemas.media_collections import (
+    CollectionIndexBody,
+    CollectionIndexOut,
+    CollectionOut,
+    CollectionStoriesOut,
+    CollectionStoryOut,
+    CollectionWrite,
+    MomentInspectionBody,
+    MomentInspectionOut,
+    MomentSearchOut,
+    SemanticSearchBody,
+    StoryCorrectionBody,
+    StoryReviewBody,
+    StorySelectionBody,
+)
 from app.schemas.slide_post import SlidePostDraft
 from app.services.ios_device_admission import is_legacy_creation_path, is_state_changing_method
 from app.services.slide_post_chat_edit import SlidePostChatEditResponse
@@ -146,6 +161,19 @@ API_MODELS = (
 
 
 MOBILE_API_MODELS = (
+    CollectionIndexBody,
+    CollectionIndexOut,
+    CollectionOut,
+    CollectionStoriesOut,
+    CollectionStoryOut,
+    CollectionWrite,
+    MomentInspectionBody,
+    MomentInspectionOut,
+    MomentSearchOut,
+    SemanticSearchBody,
+    StoryCorrectionBody,
+    StoryReviewBody,
+    StorySelectionBody,
     MediaAssetUploadBody,
     MediaAssetUploadOut,
     MediaAssetFinalizeBody,
@@ -444,6 +472,32 @@ def _add_media_library_contract(document: dict[str, Any]) -> None:
         document["paths"][path] = _openapi30_schema(path_item)
     for name, schema in _openapi30_schema(subset.get("components", {}).get("schemas", {})).items():
         document["components"]["schemas"].setdefault(name, schema)
+
+
+def _add_media_collection_contract(document: dict[str, Any]) -> None:
+    """Use the actual native route models for collection/idea/correction contracts."""
+    from fastapi.openapi.utils import get_openapi
+
+    from app.routes.media_collections import router
+
+    generated = get_openapi(title="Media collections", version="1", routes=router.routes)
+    paths = _openapi30_schema(generated["paths"])
+    for path in paths.values():
+        for method, operation in path.items():
+            if method not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            operation["security"] = [{"mobileBearer": []}]
+            # The strict mobile bearer remains the only native authentication
+            # contract. Never advertise the server-to-server web proxy headers.
+            operation["parameters"] = [
+                parameter
+                for parameter in operation.get("parameters", [])
+                if parameter["name"].lower() not in {"authorization", "x-user-id"}
+            ]
+    document["paths"].update(paths)
+    document["components"]["schemas"].update(
+        _openapi30_schema(generated.get("components", {}).get("schemas", {}))
+    )
 
 
 def mobile_openapi_json() -> str:
@@ -1069,6 +1123,7 @@ def mobile_openapi_json() -> str:
         },
     }
     _add_media_library_contract(document)
+    _add_media_collection_contract(document)
     _add_creation_admission_responses(document)
     return json.dumps(document, indent=2, sort_keys=True) + "\n"
 

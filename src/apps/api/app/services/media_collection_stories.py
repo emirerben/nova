@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from fastapi import HTTPException
 
 from app.agents._model_client import default_client
+from app.agents._runtime import TerminalError
 from app.agents.camera_roll_stories import CameraRollStoriesAgent, CameraRollStoriesOutput
 from app.agents.media_moment_relevance import MomentCandidate, MomentRelevanceInput
 from app.models import MediaCollectionStory
@@ -27,6 +28,7 @@ def event(kind, revision, **fields):
 
 
 def story_out(row):
+    plan = row.story_json.get("content_plan")
     return CollectionStoryOut(
         id=row.id,
         collection_id=row.collection_id,
@@ -37,6 +39,11 @@ def story_out(row):
         rejected=any(
             value["type"] == "rejection" and value["story_revision"] == row.revision
             for value in row.events_json
+        ),
+        on_screen_copy=(
+            [plan["opening_text"], *([plan["closing_text"]] if plan.get("closing_text") else [])]
+            if plan
+            else []
         ),
         **row.story_json,
     )
@@ -95,6 +102,7 @@ async def generate_stories(db, owner, identifier, body):
     digest = hashlib.sha256(
         json.dumps(
             [
+                [spec.name, spec.model, spec.prompt_version],
                 input.model_dump(),
                 [value.evidence.get("index_spec") for value in candidates],
                 body.expected_revision,
@@ -122,13 +130,16 @@ async def generate_stories(db, owner, identifier, body):
                 input,
                 ctx=collection_run_context(
                     creator_id=str(owner),
-                    request_id=f"collection-stories:{digest}",
+                    request_id=f"collection-stories:{digest}:{claim.attempt_token}",
                     deadline_monotonic=time.monotonic() + 25,
                     estimated_max_cost_usd=0.05,
                 ),
             )
             if not await asyncio.to_thread(complete_media_asset_fact, claim, ideas.model_dump()):
                 raise HTTPException(409, "Story evidence changed; retry")
+        except TerminalError as exc:
+            await asyncio.to_thread(complete_media_asset_fact, claim, None, failed=True)
+            raise HTTPException(503, "Ideas could not be completed. Please try again.") from exc
         except Exception:
             await asyncio.to_thread(complete_media_asset_fact, claim, None, failed=True)
             raise
@@ -209,10 +220,28 @@ async def correct_story(db, owner, identifier, story_id, body):
     moments = list(row.moments_json)
     if body.audio_policy is not None:
         row.story_json = {**row.story_json, "audio_policy": body.audio_policy}
+    elif body.content_plan is not None:
+        if len(body.content_plan.beat_reasons) != len(moments):
+            raise HTTPException(422, "Keep one reason for each story moment")
+        row.story_json = {
+            **row.story_json,
+            "content_plan": body.content_plan.model_dump(mode="json"),
+        }
     elif body.moment_order is not None:
         known = {value["id"]: value for value in moments}
         if any(str(value) not in known for value in body.moment_order):
             raise HTTPException(422, "Reordering can use only this story's current moments")
+        if plan := row.story_json.get("content_plan"):
+            reasons = dict(
+                zip((value["id"] for value in moments), plan["beat_reasons"], strict=True)
+            )
+            row.story_json = {
+                **row.story_json,
+                "content_plan": {
+                    **plan,
+                    "beat_reasons": [reasons[str(value)] for value in body.moment_order],
+                },
+            }
         moments = [known[str(value)] for value in body.moment_order]
     else:
         fresh = await candidate_evidence(
@@ -232,6 +261,12 @@ async def correct_story(db, owner, identifier, story_id, body):
         ):
             raise HTTPException(422, "A story cannot repeat the same interval")
         moments[body.replace_index] = replacement.model_dump(mode="json")
+        if plan := row.story_json.get("content_plan"):
+            reasons = list(plan["beat_reasons"])
+            reasons[body.replace_index] = (
+                "Replacement chosen by you; review how it supports this idea."
+            )
+            row.story_json = {**row.story_json, "content_plan": {**plan, "beat_reasons": reasons}}
     if sum(value["end_s"] - value["start_s"] for value in moments) > 60:
         raise HTTPException(422, "This story would exceed sixty seconds")
     row.moments_json = moments
@@ -311,6 +346,14 @@ async def select_story(db, owner, identifier, story_id, body):
     if item is None or item.current_job_id is not None:
         raise HTTPException(409, "Choose a new chat for this story")
     await prepare_story_snapshot(db, owner, row, item)
+    # A chosen idea becomes a named ordinary project, retaining its creative
+    # reason after the collection screen is dismissed. This grants no render consent.
+    thread.title = row.story_json["title"]
+    item.idea = row.story_json["title"]
+    plan = row.story_json.get("content_plan")
+    item.rationale = plan["why_it_works"] if plan else row.story_json["rationale"]
+    if plan:
+        item.filming_suggestion = plan["angle"]
     if len(row.events_json) >= 200:
         raise HTTPException(422, "Start a new story after 200 review actions")
     # submit_turn commits the selection event and durable work in one transaction;

@@ -36,6 +36,19 @@ import SwiftData
             _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
             return
         }
+        if let configuration = CameraRollLiveQA.configuration() {
+            UIApplication.shared.isIdleTimerDisabled = true
+            let container = Self.fallbackContainer()
+            self.container = container
+            let store = AccountUITestTokenStore()
+            let api = KriaAPI(baseURL: configuration.baseURL, tokenStore: store)
+            let auth = AuthStore(tokenStore: store, api: api)
+            try? auth.signIn(with: configuration.session, displayName: "Emir · local QA")
+            auth.acceptAIConsent()
+            _auth = StateObject(wrappedValue: auth)
+            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-account") {
             let container = Self.fallbackContainer()
             self.container = container
@@ -48,7 +61,7 @@ import SwiftData
             _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
             return
         }
-        if ProcessInfo.processInfo.arguments.contains("-camera-roll-collection-ready") || ProcessInfo.processInfo.arguments.contains("-camera-roll-benchmark") || ProcessInfo.processInfo.arguments.contains("-camera-roll-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-device-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-story-review") || ProcessInfo.processInfo.arguments.contains("-camera-roll-export-proof") {
+        if ProcessInfo.processInfo.arguments.contains("-camera-roll-original-link") || ProcessInfo.processInfo.arguments.contains("-camera-roll-collection-ready") || ProcessInfo.processInfo.arguments.contains("-camera-roll-benchmark") || ProcessInfo.processInfo.arguments.contains("-camera-roll-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-device-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-story-review") || ProcessInfo.processInfo.arguments.contains("-camera-roll-export-proof") {
             let container = Self.fallbackContainer()
             self.container = container
             _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore()))
@@ -128,6 +141,9 @@ struct RootView: View {
                 ProgressView("Checking video formats…").task { await NativeLibraryAudit.run(api: KriaAPI()) }
                     .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
                     .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+            }
+            else if ProcessInfo.processInfo.arguments.contains("-camera-roll-original-link") {
+                CameraRollOriginalLinkView()
             }
             else if ProcessInfo.processInfo.arguments.contains("-camera-roll-export-proof") {
                 CameraRollExportProofView()

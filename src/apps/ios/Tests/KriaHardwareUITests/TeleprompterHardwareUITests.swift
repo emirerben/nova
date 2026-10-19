@@ -289,3 +289,101 @@ import XCTest
     }
     #endif
 }
+
+/// Real HTTP journey, explicitly opt-in; no URLProtocol or recipe injection.
+/// Failure cases: wrong/absent originals, missing proposed copy/reasoning, selection
+/// rendering without approval, a changed copy being ignored, and a result that
+/// cannot reopen as an editable project. API/worker/storage use an isolated account copy.
+@MainActor final class CameraRollHardwareFlowTests: XCTestCase {
+    func testSelectedFootageIdeaCorrectionApprovalRenderAndReopen() throws {
+        continueAfterFailure = false
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Requires the owner's paired iPhone and full-quality originals.")
+        #else
+        guard ProcessInfo.processInfo.environment["KRIA_CAMERA_ROLL_LIVE_TEST"] == "1",
+              let raw = ProcessInfo.processInfo.environment["KRIA_CAMERA_ROLL_ASSET_IDS"] else {
+            throw XCTSkip("Enable the isolated own-account hardware journey explicitly.")
+        }
+        let identifiers = raw.split(separator: ",").map(String.init).sorted(by: >)
+        XCTAssertTrue((2...12).contains(identifiers.count))
+        let app = XCUIApplication()
+        let preflight = ProcessInfo.processInfo.environment["KRIA_CAMERA_ROLL_PREFLIGHT_ONLY"] == "1"
+        app.launchArguments = preflight ? ["-camera-roll-original-link"] : ["-camera-roll-live-qa"]
+        app.launch()
+        if preflight {
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Original matching hardware preflight"; shot.lifetime = .keepAlways; add(shot)
+            let linked = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Linked ")).firstMatch
+            XCTAssertTrue(linked.waitForExistence(timeout: 120), app.debugDescription)
+            return
+        }
+        addUIInterruptionMonitor(withDescription: "Local device QA network") { alert in
+            let text = alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " ")
+            guard text.localizedCaseInsensitiveContains("local network") else { return false }
+            if alert.buttons["Allow"].exists { alert.buttons["Allow"].tap(); return true }
+            return false
+        }
+        let menu = app.buttons["workspace-menu-toggle"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 30), app.debugDescription)
+        menu.tap()
+        let collections = app.buttons["camera-roll-collection-open"]
+        XCTAssertTrue(collections.waitForExistence(timeout: 15), app.debugDescription)
+        collections.tap()
+        XCTAssertTrue(app.buttons["collection-choose"].waitForExistence(timeout: 10))
+        app.buttons["collection-choose"].tap()
+        app.buttons["Saved uploads"].tap()
+        for id in identifiers {
+            let row = app.buttons["collection-saved-\(id.uppercased())"]
+            for _ in 0..<8 where !row.isHittable { app.swipeUp() }
+            XCTAssertTrue(row.waitForExistence(timeout: 10), app.debugDescription)
+            row.tap()
+        }
+        app.buttons["collection-saved-add"].tap()
+        let collectionShot = XCTAttachment(screenshot: app.screenshot()); collectionShot.name = "Owned footage selected with linked originals"; collectionShot.lifetime = .keepAlways; add(collectionShot)
+        app.buttons["collection-options"].tap()
+        app.buttons["Analysis options"].tap()
+        let cached = app.switches["Use cached analysis only"]
+        if cached.value as? String == "1" { cached.switches.firstMatch.tap() }
+        app.navigationBars["Analysis options"].buttons["Done"].tap()
+        let direction = app.textFields["collection-story-query"]
+        direction.tap(); direction.typeText("Suggest TikTok ideas worth making from this outing. Give a specific angle, why it could work, and short proposed on-screen wording.")
+        app.buttons["collection-find-stories"].tap()
+        XCTAssertTrue(app.staticTexts["Why it could work"].waitForExistence(timeout: 60), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Proposed on-screen text"].exists)
+        let ideaShot = XCTAttachment(screenshot: app.screenshot()); ideaShot.name = "Real generated TikTok idea and reasoning"; ideaShot.lifetime = .keepAlways; add(ideaShot)
+        app.buttons["story-edit-wording"].firstMatch.tap()
+        let opening = app.descendants(matching: .any)["story-opening-text"].firstMatch
+        XCTAssertTrue(opening.waitForExistence(timeout: 10))
+        opening.tap(); opening.press(forDuration: 1.2)
+        let selectAll = app.menuItems["Select All"].firstMatch
+        let selectAllButton = app.buttons["Select All"].firstMatch
+        if selectAll.waitForExistence(timeout: 2) { selectAll.tap() }
+        else { XCTAssertTrue(selectAllButton.waitForExistence(timeout: 3), app.debugDescription); selectAllButton.tap() }
+        opening.typeText("Would you spend an afternoon here?")
+        XCTAssertEqual(opening.value as? String, "Would you spend an afternoon here?")
+        app.buttons["story-save-wording"].tap()
+        XCTAssertTrue(app.staticTexts["“Would you spend an afternoon here?”"].waitForExistence(timeout: 10))
+        let build = app.buttons["Build this project"].firstMatch
+        for _ in 0..<12 where !build.isHittable { app.swipeUp() }
+        XCTAssertTrue(build.exists); build.tap()
+        let confirm = app.buttons["Create this video"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 90), app.debugDescription)
+        XCTAssertFalse(app.buttons["Open editor"].exists, "Choosing an idea must not render it")
+        let approvalShot = XCTAttachment(screenshot: app.screenshot()); approvalShot.name = "Separate approval of reviewed wording and footage"; approvalShot.lifetime = .keepAlways; add(approvalShot)
+        confirm.tap()
+        let editor = app.buttons["Open editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 180), app.debugDescription)
+        editor.tap()
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 30), app.debugDescription)
+        let resultShot = XCTAttachment(screenshot: app.screenshot()); resultShot.name = "Full-quality rendered idea reopens as an editable project"; resultShot.lifetime = .keepAlways; add(resultShot)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons["workspace-menu-toggle"].waitForExistence(timeout: 30), app.debugDescription)
+        let reopenedEditor = app.buttons["Open editor"]
+        XCTAssertTrue(reopenedEditor.waitForExistence(timeout: 30), app.debugDescription)
+        reopenedEditor.tap()
+        XCTAssertTrue(preview.waitForExistence(timeout: 30), app.debugDescription)
+        let reopenedShot = XCTAttachment(screenshot: app.screenshot()); reopenedShot.name = "Rendered project survives app relaunch"; reopenedShot.lifetime = .keepAlways; add(reopenedShot)
+        #endif
+    }
+}

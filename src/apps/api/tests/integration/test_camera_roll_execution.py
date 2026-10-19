@@ -33,6 +33,7 @@ from app.tasks.kria_runtime import _claim_approval_dispatch, run_kria_turn
 from tests.integration.test_media_collections import collection_world, selection  # noqa: F401, F811
 
 
+@pytest.mark.parametrize("with_content_plan", [False, True], ids=["legacy", "content-plan"])
 @pytest.mark.parametrize("fractional_end", [False, True])
 @pytest.mark.parametrize("change_before_approval", [False, True])
 async def test_selection_prepares_common_draft_then_explicit_approval_freezes_execution(
@@ -40,6 +41,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
     monkeypatch,
     change_before_approval,
     fractional_end,
+    with_content_plan,
 ):
     client, assets, sources, owner, _app = collection_world
     monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
@@ -211,6 +213,23 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                 "hook": "Crossing",
                 "payoff": "Arrival",
                 "rationale": "A journey",
+                **(
+                    {
+                        "content_plan": {
+                            "version": 1,
+                            "format": "text_story",
+                            "audience": "Weekend explorers",
+                            "angle": "A quiet crossing becomes an arrival",
+                            "why_it_works": "The last view answers the opening question.",
+                            "opening_text": "Where does this crossing lead?",
+                            "closing_text": "Worth the trip?",
+                            "caption": "A crossing and an arrival.",
+                            "beat_reasons": ["Establish the journey" for _ in moments],
+                        }
+                    }
+                    if with_content_plan
+                    else {}
+                ),
             },
             moments_json=moments,
             events_json=[],
@@ -244,6 +263,21 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         )
         draft = db.get(CreatorEditDraft, approval.draft_id)
         assert draft.snapshot_json["prepared_collection_story"]["story_id"] == str(story_id)
+        frozen = draft.snapshot_json["prepared_collection_story"]
+        from app.pipeline.guided_story import compile_proposal_execution_plan
+        from app.schemas.edit_proposal import EditProposalSnapshot
+
+        rendered_text = [
+            row["text"]
+            for row in compile_proposal_execution_plan(
+                EditProposalSnapshot.model_validate(frozen["snapshot"])
+            )["text_elements"]
+        ]
+        if with_content_plan:
+            assert rendered_text == ["Where does this crossing lead?", "Worth the trip?"]
+            assert "A journey" not in rendered_text
+        else:
+            assert rendered_text == []
         assert db.get(PlanItem, item_id).edit_proposal is None, (
             "Preparing a recommendation grants no render consent"
         )
@@ -340,11 +374,13 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
             (round(value["start_s"] * 30) / 30, round(value["end_s"] * 30) / 30)
             for value in moments
         ]
-        assert not frozen["text_elements"]
+        assert [row["text"] for row in frozen["text_elements"]] == (
+            ["Where does this crossing lead?", "Worth the trip?"] if with_content_plan else []
+        )
         assert job.assembly_plan["prepared_collection_story"]["story_id"] == str(story_id)
         assert item.edit_proposal["status"] == "approved"
         snapshot = item.edit_proposal["last_approved"]["snapshot"]
-        assert snapshot["text_policy"] == "none"
+        assert snapshot.get("text_policy", "legacy") == ("legacy" if with_content_plan else "none")
         assert [
             (value["source_start_s"], value["source_end_s"]) for value in snapshot["fast_cuts"]
         ] == [

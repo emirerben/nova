@@ -107,6 +107,27 @@ class MomentInspectionOut(BaseModel):
     sample_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class StoryContentPlan(BaseModel):
+    """Suggested creative wording, kept distinct from source-analysis descriptions."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    version: Literal[1] = 1
+    format: Literal["text_story"] = "text_story"
+    audience: str = Field(min_length=1, max_length=200)
+    angle: str = Field(min_length=1, max_length=280)
+    why_it_works: str = Field(min_length=1, max_length=500)
+    opening_text: str = Field(min_length=1, max_length=100)
+    closing_text: str | None = Field(default=None, min_length=1, max_length=100)
+    caption: str = Field(default="", max_length=300)
+    beat_reasons: list[str] = Field(min_length=1, max_length=8)
+
+    @model_validator(mode="after")
+    def bounded_reasons(self):
+        if any(not reason.strip() or len(reason) > 240 for reason in self.beat_reasons):
+            raise ValueError("Each beat needs a short reason")
+        return self
+
+
 class CollectionStoryOut(BaseModel):
     id: UUID
     collection_id: UUID
@@ -116,6 +137,7 @@ class CollectionStoryOut(BaseModel):
     hook: str
     payoff: str
     rationale: str
+    content_plan: StoryContentPlan | None = None
     duration_s: float
     moments: list[MediaMomentOut]
     audio_policy: Literal["preserve_source_audio", "muted"] = "preserve_source_audio"
@@ -142,13 +164,24 @@ class StoryCorrectionBody(StoryReviewBody):
     moment_id: UUID | None = None
     audio_policy: Literal["preserve_source_audio", "muted"] | None = None
     moment_order: list[UUID] | None = Field(default=None, min_length=1, max_length=8)
+    content_plan: StoryContentPlan | None = None
 
     @model_validator(mode="after")
     def one_scoped_change(self):
         replacement = self.replace_index is not None or self.moment_id is not None
         if replacement and (self.replace_index is None or self.moment_id is None):
             raise ValueError("Replacement requires both an index and a moment")
-        if sum((replacement, self.audio_policy is not None, self.moment_order is not None)) != 1:
+        if (
+            sum(
+                (
+                    replacement,
+                    self.audio_policy is not None,
+                    self.moment_order is not None,
+                    self.content_plan is not None,
+                )
+            )
+            != 1
+        ):
             raise ValueError("Change one story section at a time")
         if self.moment_order and len(set(self.moment_order)) != len(self.moment_order):
             raise ValueError("A story cannot repeat the same interval")

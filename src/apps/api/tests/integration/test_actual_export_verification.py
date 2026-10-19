@@ -44,6 +44,20 @@ FFMPEG = (
 )
 
 
+@pytest.mark.parametrize(
+    "canvas,expected",
+    [
+        ((1080, 1920), (30, 1386, 223, 1505)),
+        ((2160, 3840), (60, 2772, 446, 3010)),
+        ((1080, 1350), (21.09375, 974.53125, 156.796875, 1058.203125)),
+    ],
+)
+def test_watermark_evidence_bounds_match_native_compositor(canvas, expected):
+    # Independent placement oracle: KriaMediaEngine BrandingTests pins these
+    # approved tile bounds, including the 4:5 height-constrained scale.
+    assert measured._watermark_bounds(*canvas) == pytest.approx(expected)
+
+
 def ffmpeg(*args):
     subprocess.run(
         [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", *map(str, args)],

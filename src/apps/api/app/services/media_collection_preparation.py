@@ -5,7 +5,7 @@ import json
 from uuid import UUID
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.edit_proposal import (
     EditProposalSnapshot,
@@ -14,6 +14,7 @@ from app.schemas.edit_proposal import (
     MontageAudioPlan,
     StoryBeat,
 )
+from app.schemas.media_collections import StoryContentPlan
 from app.services import media_collections
 from app.services.media_collection_stories import candidate_evidence
 
@@ -33,6 +34,9 @@ class PreparedCollectionStory(BaseModel):
     snapshot: EditProposalSnapshot
     strategy: dict
     compiled_digest: str
+    content_plan: StoryContentPlan | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 async def prepare_story_snapshot(db, owner, story, item):
@@ -116,11 +120,32 @@ async def prepare_story_snapshot(db, owner, story, item):
     )
     if not 30 <= duration_frames <= 60 * 30:
         raise HTTPException(422, "This story cannot fit the supported export duration")
+    content_plan = (
+        StoryContentPlan.model_validate(story.story_json["content_plan"])
+        if story.story_json.get("content_plan")
+        else None
+    )
+    if content_plan and len(content_plan.beat_reasons) != len(cuts):
+        raise HTTPException(422, "Review this idea's sequence before building the project")
+    # Proposed wording is shown verbatim before selection and again in the
+    # shared expiring approval. Source-analysis descriptions never supply copy.
+    copy_fields = (
+        {
+            "opening_title": content_plan.opening_text,
+            "opening_title_duration_s": min(
+                3.0, duration_frames / 30 * (0.65 if content_plan.closing_text else 1)
+            ),
+            "closing_title": content_plan.closing_text,
+            "font_family": "Inter-Bold",
+        }
+        if content_plan
+        else {}
+    )
     snapshot = EditProposalSnapshot(
         direction="fast_montage",
         goal=story.story_json["rationale"],
-        title=story.story_json["title"],
-        text_policy="none",
+        title=content_plan.opening_text if content_plan else story.story_json["title"],
+        text_policy="legacy" if content_plan else "none",
         duration_s=duration_frames / 30,
         media=list(refs.values()),
         story_beats=beats,
@@ -132,11 +157,20 @@ async def prepare_story_snapshot(db, owner, story, item):
             source_media_ids=list(refs),
         ),
         output_orientation="portrait",
+        **copy_fields,
     )
     snapshot = refresh_snapshot_schedule(snapshot)
     compiled = compile_proposal_execution_plan(snapshot)
-    if compiled.get("text_elements"):
-        raise HTTPException(422, "This story unexpectedly adds unconfirmed on-screen text")
+    expected_copy = (
+        [
+            content_plan.opening_text,
+            *([content_plan.closing_text] if content_plan.closing_text else []),
+        ]
+        if content_plan
+        else []
+    )
+    if [value["text"] for value in compiled.get("text_elements", [])] != expected_copy:
+        raise HTTPException(422, "This project cannot preserve the reviewed on-screen wording")
     strategy = {
         "direction": "fast_montage",
         "edit_format": "montage",
@@ -148,6 +182,7 @@ async def prepare_story_snapshot(db, owner, story, item):
         "caption_style": "none",
         "target_duration_s": snapshot.duration_s,
         "rationale": story.story_json["rationale"],
+        **copy_fields,
     }
     return PreparedCollectionStory(
         story_id=story.id,
@@ -157,6 +192,7 @@ async def prepare_story_snapshot(db, owner, story, item):
         snapshot=snapshot,
         strategy=strategy,
         compiled_digest=execution_digest(compiled),
+        content_plan=content_plan,
     )
 
 
@@ -207,6 +243,23 @@ async def plan_selected_story(db, *, reference, thread_id, item_id, creator_id):
         if prepared.snapshot.montage_audio.preserve_source_audio
         else "chosen source windows, muted. No added text or music."
     )
+    if content_plan := story.story_json.get("content_plan"):
+        wording = [
+            content_plan["opening_text"],
+            *([content_plan["closing_text"]] if content_plan.get("closing_text") else []),
+        ]
+        summary = (
+            f"{story.story_json['title']}. {prepared.snapshot.duration_s:g} seconds. "
+            f"{content_plan['angle']} "
+            + (
+                "Original sound. "
+                if prepared.snapshot.montage_audio.preserve_source_audio
+                else "Muted. "
+            )
+            + "Proposed on-screen wording (included only if you approve this draft): "
+            + " / ".join(json.dumps(value, ensure_ascii=False) for value in wording)
+            + ". No added music or narration."
+        )
     return PlannedKriaTurn(
         plan=KriaTurnPlan(
             mode="act",

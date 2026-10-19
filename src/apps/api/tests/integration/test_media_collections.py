@@ -320,6 +320,13 @@ async def test_story_candidates_cover_all_fifty_added_sources_in_bounded_passes(
                     payoff="Arrival",
                     rationale="Recorded arrival",
                     moment_ids=[input.candidates[0].id],
+                    content_plan=dict(
+                        audience="Explorers",
+                        angle="An arrival",
+                        why_it_works="The opening question resolves at the destination.",
+                        opening_text="Where does this lead?",
+                        beat_reasons=["Shows the arrival"],
+                    ),
                 )
             ]
         )
@@ -684,6 +691,13 @@ async def test_story_candidates_corrections_and_rejection_are_separate_from_rend
                     payoff="Finish on the arrival",
                     rationale="The crossing leads into the recorded arrival.",
                     moment_ids=[input.candidates[0].id, input.candidates[-1].id],
+                    content_plan=dict(
+                        audience="Explorers",
+                        angle="A crossing and arrival",
+                        why_it_works="The question is resolved by the arrival.",
+                        opening_text="Where does this lead?",
+                        beat_reasons=["Starts the crossing", "Reveals the destination"],
+                    ),
                 )
             ]
         )
@@ -697,7 +711,7 @@ async def test_story_candidates_corrections_and_rejection_are_separate_from_rend
     first = result.json()["stories"][0]
     assert first["revision"] == 1
     assert first["requires_render_approval"] is True
-    assert first["on_screen_copy"] == []
+    assert first["on_screen_copy"] == ["Where does this lead?"]
     exposure = {"expected_revision": 1, "expected_story_revision": 1, "client_event_id": "shown-1"}
     for _ in range(2):
         shown = await client.post(f"{path}/stories/{first['id']}/expose", json=exposure)
@@ -1000,6 +1014,13 @@ async def test_distinct_collection_requests_share_a_source_without_cache_collisi
                     payoff="The destination",
                     rationale="The recorded journey",
                     moment_ids=[input.candidates[0].id],
+                    content_plan=dict(
+                        audience="Explorers",
+                        angle="An arrival",
+                        why_it_works="The opening question resolves at the destination.",
+                        opening_text="Where does this lead?",
+                        beat_reasons=["Shows the arrival"],
+                    ),
                 )
             ]
         )
@@ -1025,7 +1046,47 @@ async def test_distinct_collection_requests_share_a_source_without_cache_collisi
         cached = await client.post(f"{path}/{operation}", json={**body, "cache_only": True})
         assert cached.status_code == 200, cached.text
     assert len(calls) == 3
+    if operation == "stories":
+        from dataclasses import replace
+
+        previous_id = result.json()["stories"][0]["id"]
+        monkeypatch.setattr(
+            CameraRollStoriesAgent,
+            "spec",
+            replace(CameraRollStoriesAgent.spec, prompt_version="new-creative-plan"),
+        )
+        refreshed = await client.post(f"{path}/stories", json=body)
+        assert refreshed.status_code == 200, refreshed.text
+        assert refreshed.json()["stories"][0]["id"] != previous_id
+        assert len(calls) == 4
     if operation == "inspect":
         fourth = await client.post(f"{path}/inspect", json={**body, "question": "fourth direction"})
         assert fourth.status_code == 429
         assert len(calls) == 3
+
+
+async def test_invalid_story_generation_returns_private_retry_response(
+    collection_world, monkeypatch
+):
+    from app.agents._runtime import TerminalSchemaError
+    from app.agents.camera_roll_stories import CameraRollStoriesAgent
+
+    client, assets, sources, _owner, _app = collection_world
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection(assets, sources))).status_code == 200
+    assert (await client.post(f"{path}/index", json={"expected_revision": 1})).status_code == 200
+
+    attempts = []
+
+    def invalid(self, input, *, ctx):
+        attempts.append(ctx.request_id)
+        raise TerminalSchemaError("private provider response must not leak")
+
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", invalid)
+    response = await client.post(f"{path}/stories", json={"expected_revision": 1, "query": "ferry"})
+    assert response.status_code == 503
+    assert "private provider" not in response.text
+    retry = await client.post(f"{path}/stories", json={"expected_revision": 1, "query": "ferry"})
+    assert retry.status_code == 503
+    assert len(attempts) == 2
+    assert attempts[0] != attempts[1], "A retried lease needs a new paid-call identity"

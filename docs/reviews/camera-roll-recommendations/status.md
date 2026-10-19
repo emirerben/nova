@@ -1,6 +1,6 @@
 # Camera-roll recommendations: implementation and evidence
 
-19 October 2026. Collection, retrieval, targeted inspection and recommendation-to-approval code is implemented. Discovery remains off. Two private previews from the creator’s existing uploads now exist; two story-model calls settled at $0.004802. No production rollout occurred. Human retrieval labels and the creator-account pilot remain outstanding; synthetic correctness checks do not establish recommendation quality.
+19 October 2026. Collection, retrieval, targeted inspection and recommendation-to-approval code is implemented. The creative-plan continuation adds a specific content angle, audience, reasoning, proposed opening/closing text, editable wording and a named ordinary project. All 12 owned upload originals are now fingerprint-linked on the physical iPhone, and a 1080p native example with the reviewed text exists. Final synchronization/reopen verification is still in progress. Discovery remains off; no production rollout occurred. Human retrieval labels and the account study remain outstanding; synthetic correctness checks do not establish recommendation quality.
 
 Worktree: `/private/tmp/nova-kri-729-camera-roll`; branch `codex/kri-729-camera-roll`.
 
@@ -9,7 +9,7 @@ Worktree: `/private/tmp/nova-kri-729-camera-roll`; branch `codex/kri-729-camera-
 - Native explicit Photos/saved-upload selection, time/coarse-place grouping, editable groups, removal/addition, account-scoped resume and multiple saved collections. Photos identifiers remain local. Revocation removes inaccessible candidates and updates the server selection. Picker-only providers require reselection after relaunch. Metadata never proves original-file availability.
 - Existing catalogue reservation/finalize and original-fingerprint stores handle explicit import. Videos upload timeline-preserving analysis copies; originals stay on the iPhone. Photos use the existing saved-upload contract. Cancellation preserves completed bindings.
 - Durable owner/source/version-pinned visual intervals and complete word-timed speech; text search, transcript ranges, semantic reranking and targeted interval inspection. Existing fact leases/cost ledger handle reuse. Results recheck authorization, revision and source generation/size. Existing visibility and overlapping occlusion/unusable-span evidence reaches ranking/story inputs as fallible context; darkness is not automatically rejected.
-- Zero to three grounded stories; interval preview/replacement, order/removal, original/muted sound and rejection. Review descriptions never become on-screen copy. Offered/exposed/corrected/selected events are distinct. Common approval/execution records remain authoritative for export outcomes.
+- Zero to three grounded content ideas with an audience, angle, retention hypothesis, explicit proposed copy, caption and per-shot reasons. Wording edits are durable revisions. Interval preview/replacement, order/removal, original/muted sound and rejection remain available. Review descriptions never become on-screen copy. Offered/exposed/corrected/selected events are distinct. Common approval/execution records remain authoritative for export outcomes.
 - Selection attaches existing sources and prepares the common revisioned draft. A server-owned envelope binds the exact story/collection revisions, guided snapshot and compiled hash. Separate expiring approval remains mandatory. Changed evidence cancels approval. The job factory freezes the compiled plan; the existing worker reads it without another creative plan or music match. Existing retry/last-good guards apply.
 - Initial story exports require actual-output verification even when ordinary enrollment is off. New receipts pin verifier v2; historical receipts remain readable.
 - Offline frozen-label text/semantic comparison and preregistered pilot reports retain failures and unknowns. Reports cannot enable rollout.
@@ -26,13 +26,15 @@ Worktree: `/private/tmp/nova-kri-729-camera-roll`; branch `codex/kri-729-camera-
 | Story generation | One attempt, 20s call / 25s deadline, $0.05 reservation |
 | Targeted inspection | Three distinct checks/revision; <=20s interval, <=64 MiB source, one upload/call, 45s deadline, $0.05 reservation |
 | Story | <=8 complete intervals, <=60s |
-| Export | Original-bound videos, rate 1, hard cuts, portrait cover fit, original/muted sound, no added text/music |
+| Export | Original-bound videos, rate 1, hard cuts, portrait cover fit, reviewed opening/closing text, original/muted sound, no added music |
 
 Photos/other catalogue sources remain metadata/search material; only eligible original-bound videos are offered as executable stories. This slice does not promote cloud/slides/effects or infer relevance from brightness/energy. Unsupported combinations fail before approval.
 
 Admission also requires an explicit account cohort (`MEDIA_COLLECTION_PROPOSAL_USER_IDS`); empty means nobody, and the global switch remains a rollback gate. The server and native screen default to **cached analysis only**. Cache misses cannot acquire work or call a provider. Only an explicitly enabled paid-analysis cohort can turn that choice off. Upload/analysis still needs its own action and existing cost controls.
 
 ## Physical evidence
+
+Creative-plan continuation: the owner-approved matcher checked only the 50 previously selected Photos entries. It linked all 12 owned upload originals (356,970,620 bytes total), requiring exact SHA-256 and byte count. Originals remained on the iPhone. The real signed-session HTTP journey uses an isolated local copy of this account, a dedicated database/queue and local object store, restricted to the exact approved private Mac/iPhone addresses. The production AVFoundation exporter produced a 10.1s H.264/AAC 1080×1920 example from three fingerprint-pinned 4K originals, including the corrected opening text and proposed closing text. The complete upload verification/reopen check is pending; this does not establish a completed pilot. Details and failure controls: [creative project flow](creative-project-flow.md).
 
 The creator selected 53 assets on an iPhone 13 Pro: 24 photos, 29 videos. Metadata resolved in 33.72ms, 32-item passes, 72.1 MiB process peak. No media/provider read/upload occurred. This established the initial metadata ceiling, not original availability or complete product performance. [Aggregate benchmark](metadata-benchmark.json).
 
@@ -52,7 +54,7 @@ Two story-generation requests in an isolated development database settled at **$
 
 This real-input run exposed and reproduced three defects: distinct questions collided with the durable source-fact uniqueness constraint; fractional endpoints could disagree with the 30fps draft schedule; and the native collection refused useful suggestions whenever any clip lacked timed moments. Request-scoped version slots now preserve legacy cache reads and the three-inspection cap; the prepared length is fixed on the shared frame grid before approval; partial coverage is shown without blocking usable footage. HTTP/real-PostgreSQL and native UI red controls fail before these fixes.
 
-The collection now uses the existing Sunlit tokens, Inter/Fraunces type, shared thumbnail loaders and Butter primary action. A compact grid replaces per-item metadata forms. Group editing and analysis details sit behind options; one action confirms an upload only when necessary. Story rationale/arc is collapsed, with thumbnails and precise preview/replacement controls remaining visible. A DEBUG-only offline host can display the private generated results, with intercepted API requests and no real authentication, uploads or publication.
+The collection now uses the existing Sunlit tokens, Inter/Fraunces type, shared thumbnail loaders and Butter primary action. A compact grid replaces per-item metadata forms. Group editing and analysis details sit behind options; one action confirms an upload only when necessary. New ideas show the concise angle, reasoning and proposed copy; legacy story arc detail is collapsed. Thumbnails and precise preview/replacement controls remain available. The earlier DEBUG-only offline host uses intercepted requests; the new hardware journey uses genuine local mobile sessions and real HTTP handlers.
 
 ## Verification
 

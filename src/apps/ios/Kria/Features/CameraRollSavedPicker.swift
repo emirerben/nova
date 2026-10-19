@@ -22,13 +22,15 @@ struct CameraRollSavedPicker: View {
                         else if selected.count < capacity { selected.insert(asset.id) }
                     } label: {
                         HStack {
+                            SavedUploadThumbnail(asset: asset, owner: api.mediaLibraryOwner, api: api) { }
                             Image(systemName: selected.contains(asset.id) ? "checkmark.circle.fill" : "circle")
                             VStack(alignment: .leading) {
                                 Text(asset.displayName)
                                 Text(asset.kind == "image" ? "Photo" : "Video").font(.caption).foregroundStyle(.secondary)
                             }
                         }
-                    }.disabled(asset.source == nil || (!selected.contains(asset.id) && selected.count >= capacity))
+                    }.accessibilityIdentifier("collection-saved-\(asset.id)")
+                        .disabled(asset.source == nil || (!selected.contains(asset.id) && selected.count >= capacity))
                 }
                 if loading { ProgressView("Loading…") }
                 if let error { Text(error).foregroundStyle(KriaColor.failureText); Button("Try again") { Task { await load(more: false) } } }
@@ -38,7 +40,7 @@ struct CameraRollSavedPicker: View {
             .searchable(text: $query, prompt: "Search filenames")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Add \(selected.count)") { onSelect(assets.filter { selected.contains($0.id) }); dismiss() }.disabled(selected.isEmpty) }
+                ToolbarItem(placement: .confirmationAction) { Button("Add \(selected.count)") { onSelect(assets.filter { selected.contains($0.id) }); dismiss() }.disabled(selected.isEmpty).accessibilityIdentifier("collection-saved-add") }
             }
             .task(id: query) { do { try await Task.sleep(for: .milliseconds(200)); await load(more: false) } catch {} }
         }
