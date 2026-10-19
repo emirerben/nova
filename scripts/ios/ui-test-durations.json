@@ -34,6 +34,8 @@
   "KriaUITests/CreationUITests/testLiveThoughtShowsOneLineSummaryAndExpandsOnTap": 52.7,
   "KriaUITests/CreationUITests/testLongPressCopiesPromptsAndRepliesWithoutBlockingOptionTaps": 32.7,
   "KriaUITests/CreationUITests/testReadySuggestionChipsApplyFromTapsNearCapsuleEdges": 23.5,
+  "KriaUITests/CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips": 25.0,
+  "KriaUITests/CreationUITests/testServerSuggestionChipTapNamesTheOfferedChipOnTheTurn": 25.0,
   "KriaUITests/CreationUITests/testReadyVideoFollowupWaitsWithoutReplayingPriorPlan": 63.9,
   "KriaUITests/CreationUITests/testRealShapeHistoryShowsClipQuestionCardAndOpensTheGridSheet": 47.5,
   "KriaUITests/CreationUITests/testReceiptChipsAndGuessedNamesStartACorrection": 43.9,

@@ -770,6 +770,9 @@ class Agent(ABC, Generic[InputT, OutputT]):
                         feature=(
                             "edit_director"
                             if self.spec.name == "nova.edit.director"
+                            # KRI-756: a literal feature name the per-user daily cap keys on.
+                            else "chip_suggester"
+                            if self.spec.name == "nova.chat.suggester"
                             else self.spec.name
                         ),
                         model=model,

@@ -43,6 +43,8 @@ _EXPERIMENT_PURPOSES = frozenset(
     {"live_eval", "provider_smoke", "manual_qa", "omni_lab", "experiment"}
 )
 _OPTIONAL_PURPOSES = frozenset({"optional_background", "style_vision"})
+# KRI-756: ledger feature name of the suggestion-chip wording agent (nova.chat.suggester).
+_SUGGESTER_FEATURE = "chip_suggester"
 _CANARY_PURPOSES = frozenset({"release_canary", "internal_canary"})
 
 # Standard paid-tier USD per one million tokens, verified against the official
@@ -760,6 +762,8 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 scopes.append("purpose:release_canary")
             if request.feature == "edit_director" and creator_id is not None:
                 scopes.append(f"director:{creator_id}:{now.date().isoformat()}")
+            if request.feature == _SUGGESTER_FEATURE and creator_id is not None:
+                scopes.append(f"suggester:{creator_id}:{now.date().isoformat()}")
             if test_run_id:
                 scopes.append(f"test_run:{test_run_id}")
             for scope in sorted(scopes):
@@ -902,6 +906,31 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 if used >= settings.edit_director_daily_paid_limit:
                     _reject(
                         scope="edit_director:user_day",
+                        reset_at=_next_day(now),
+                        cached_behavior_available=request.cached_behavior_available,
+                    )
+
+            if request.feature == _SUGGESTER_FEATURE and creator_id is not None:
+                # KRI-756: a new feature name escapes the director check above, so the chip
+                # wording agent gets its own literal per-user daily cap.
+                used = int(
+                    conn.execute(
+                        text(
+                            "SELECT COUNT(*) FROM ai_cost_reservations "
+                            "WHERE creator_id = :creator_id AND feature = :feature "
+                            "AND created_at >= :day_start "
+                            "AND status IN ('reserved','provider_started','settled','unknown')"
+                        ),
+                        {
+                            "creator_id": str(creator_id),
+                            "feature": _SUGGESTER_FEATURE,
+                            "day_start": datetime(now.year, now.month, now.day, tzinfo=UTC),
+                        },
+                    ).scalar_one()
+                )
+                if used >= settings.kria_suggester_daily_limit_per_user:
+                    _reject(
+                        scope="chip_suggester:user_day",
                         reset_at=_next_day(now),
                         cached_behavior_available=request.cached_behavior_available,
                     )

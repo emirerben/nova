@@ -20,6 +20,9 @@ tmp/
 # Pre-PR overlay-verify outputs (reports + montages from `make verify-overlays`)
 .overlay-verify/
 
+# Suggestion-chip replay eval artifact (OLD vs NEW chips; scripts/suggestion_chip_report.py)
+.chip-eval/
+
 # Built sound-effect library (scripts/seed_sfx_library.py build) — audio never in git
 .sfx-library/
 

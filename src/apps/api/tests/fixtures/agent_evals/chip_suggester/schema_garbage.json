@@ -1,0 +1,20 @@
+{
+ "id": "schema_garbage",
+ "description": "Not JSON at all (twice, so the agent's own schema retry is spent): the task records a schema_error fallback and the set is the template set, with no 500.",
+ "context": "nermin-matcha-update::first_prompt",
+ "raw_text": "Sorry, I can't help with that.",
+ "expect": {
+  "wording": "fallback",
+  "kinds": [
+   "default_edit",
+   "hook",
+   "sfx",
+   "transition"
+  ],
+  "fallback_reason": "schema_error",
+  "stored_status": "fallback"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

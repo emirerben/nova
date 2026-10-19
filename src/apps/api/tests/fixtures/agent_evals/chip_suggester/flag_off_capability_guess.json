@@ -1,0 +1,33 @@
+{
+ "id": "flag_off_capability_guess",
+ "description": "SFX is gated off for this context. A model that knows the cid formula and returns the cid the engine WOULD have minted still cannot resurrect the chip.",
+ "context": "fp_sfx_flag_off",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{guess:sfx}}",
+    "label_template": "Add sound effects",
+    "why": "Packing orders has no sound"
+   },
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Add a hook to the opening",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "kinds": [
+   "default_edit",
+   "hook"
+  ],
+  "drops": {
+   "unknown_cid": 1
+  }
+ },
+ "tags": [
+  "adversarial",
+  "flag_off"
+ ]
+}
