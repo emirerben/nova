@@ -34,11 +34,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v60 (KRI-700) adds the `footage_light` brief fact: the two brief-on renders changed.
 # v63 adds source-backed explanations; no-song fixtures track the deliberate new baseline.
 # v62 grounds a phone montage story in owned clip IDs and explanatory text goals.
+# v64 adds typed unchanged-source audio intent; only the two brief-on renders change.
 PRE_CHANGE_PROMPT_SHA = {
     (True, False): "4684c634fa88dcfec7865a41330b8a781bb706837861c6e7d63c796b8c2d0a2a",
-    (True, True): "e8fc7d381c22d56df0eed4ccb5c05ef46c78a1186ba5027d0579406b3dcb1c1a",
+    (True, True): "9a781353f4aea31a5c947760f6d0afd35adc862a2165d6c7134d39ff1fe638b3",
     (False, False): "9ae7a03343fc258ce0fec6bc86976e6f24b1576bc4ad92920eb5e5b28f1e330d",
-    (False, True): "800c81e8d401ecc2fceb26b6c61123473d54a3c10541d6c022cd50cec1f36e00",
+    (False, True): "4359258a49d91c04bd16d8d77dcd4101d989ff9859d13295f226b15e127f11e0",
 }
 
 
@@ -108,7 +109,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-19-v63"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-19-v64"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 
