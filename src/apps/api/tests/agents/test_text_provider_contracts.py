@@ -214,3 +214,60 @@ def test_gemini_transport_has_the_same_deadline_as_runtime(monkeypatch):
     monkeypatch.setattr(client, "_get", lambda: sdk)
     client.invoke(model="gemini-3.1-pro-preview", prompt="JSON", timeout_s=7)
     assert captured[0]["read"] == 7.0
+
+
+@pytest.mark.parametrize("model_version", [None, "", 42, {"unexpected": "value"}])
+def test_gemini_malformed_model_metadata_keeps_requested_cost_identity(monkeypatch, model_version):
+    """Optional provider metadata cannot replace a priceable requested identity with an object."""
+    from unittest.mock import MagicMock
+
+    from app.agents._model_client import GeminiClient
+
+    response = MagicMock(text="{}", usage_metadata=None, model_version=model_version)
+    client = GeminiClient()
+    sdk = MagicMock()
+    sdk.models.generate_content.return_value = response
+    monkeypatch.setattr(client, "_get", lambda: sdk)
+    result = client.invoke(model="gemini-2.5-flash", prompt="JSON")
+    assert result.model_used == "gemini-2.5-flash"
+    assert result.provider_request_id is None
+    assert calculate_cost_usd(result.model_used, UsageMeter(tokens_in=100)) > 0
+
+
+def test_gemini_missing_optional_metadata_on_legacy_sdk_double(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from app.agents._model_client import GeminiClient
+
+    sdk = MagicMock()
+    sdk.models.generate_content.return_value = MagicMock(text="{}", usage_metadata=None)
+    client = GeminiClient()
+    monkeypatch.setattr(client, "_get", lambda: sdk)
+    result = client.invoke(model="gemini-2.5-flash", prompt="JSON")
+    assert result.model_used == "gemini-2.5-flash"
+    assert result.provider_request_id is None
+
+
+def test_gemini_valid_provider_identity_is_preserved_even_when_unpriced(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.agents._model_client import GeminiClient
+    from app.agents._runtime import AiCostControlPolicyError
+
+    response = SimpleNamespace(
+        text="{}",
+        usage_metadata=None,
+        model_version="unknown-provider-model",
+        response_id="req_real",
+    )
+    client = GeminiClient()
+    monkeypatch.setattr(
+        client,
+        "_get",
+        lambda: SimpleNamespace(models=SimpleNamespace(generate_content=lambda **_: response)),
+    )
+    result = client.invoke(model="gemini-2.5-flash", prompt="JSON")
+    assert result.model_used == "unknown-provider-model"
+    assert result.provider_request_id == "req_real"
+    with pytest.raises(AiCostControlPolicyError, match="unpriced_model"):
+        calculate_cost_usd(result.model_used, UsageMeter(tokens_in=100))

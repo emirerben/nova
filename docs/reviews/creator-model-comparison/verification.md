@@ -156,6 +156,20 @@ The new failure cases failed before the fix, then **67 provider, comparison and
 accounting checks passed** in 3.27 seconds with dummy keys and mock transports.
 Log: `/private/tmp/nova-comparison-sdk-final.log`. No paid profile or result changed.
 
+## CI compatibility regression
+
+The first full CI run exposed 35 failures across both API shards. Legacy Gemini
+SDK doubles return an object for an absent `model_version`; converting that object
+to text replaced the requested model identity and correctly tripped strict pricing.
+The boundary now accepts only nonempty text for optional model/request identities,
+falling back to the requested model only when optional model metadata is malformed.
+An actual unknown model string still fails pricing. Five new cases failed before
+the fix; all six new cases and the affected legacy/provider/accounting suites then
+passed: **138 checks**, 3.28 seconds. No SDK retry, pricing relaxation, paid call or
+historical receipt change was introduced. Logs:
+`/private/tmp/nova-comparison-metadata-red.log` and
+`/private/tmp/nova-comparison-metadata-green.log`.
+
 ## Limits
 
 No production routing, collection cohort, selected-model rollout or deployment was

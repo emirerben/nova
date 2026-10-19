@@ -393,7 +393,7 @@ class GeminiClient(ModelClient):
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             raw_response=response,
-            model_used=str(getattr(response, "model_version", None) or model),
+            model_used=_text_metadata(getattr(response, "model_version", None)) or model,
             provider_request_id=_provider_request_id(response),
             tokens_thoughts=tokens_thoughts,
             tokens_cached=tokens_cached,
@@ -439,10 +439,15 @@ def _usage_details(usage: Any) -> dict[str, Any]:
     }
 
 
+def _text_metadata(value: Any) -> str | None:
+    """Optional SDK metadata must be actual text before it becomes an audit identity."""
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
 def _provider_request_id(response: Any) -> str | None:
-    direct = getattr(response, "response_id", None) or getattr(response, "request_id", None)
-    if direct:
-        return str(direct)[:200]
+    for name in ("response_id", "request_id"):
+        if direct := _text_metadata(getattr(response, name, None)):
+            return direct[:200]
     http_response = getattr(response, "sdk_http_response", None)
     headers = getattr(http_response, "headers", None)
     if headers:
@@ -451,8 +456,8 @@ def _provider_request_id(response: Any) -> str | None:
                 value = headers.get(name)
             except AttributeError:
                 value = None
-            if value:
-                return str(value)[:200]
+            if text := _text_metadata(value):
+                return text[:200]
     return None
 
 
