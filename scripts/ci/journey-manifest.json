@@ -502,6 +502,16 @@
       ]
     },
     {
+      "id": "kri-585-spoken-order",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri585_spoken_order_montage.py tests/pipeline/test_unified_montage_spoken_order.py tests/services/test_spoken_roles.py",
+      "paths": [
+        "src/apps/api/app/kria/narration_notes.py",
+        "src/apps/api/app/services/spoken_roles.py",
+        "src/apps/api/tests/fixtures/kri585_tigre_m1_clips.json"
+      ]
+    },
+    {
       "id": "kri-680-dark-clips",
       "needs_native": false,
       "api_tests": "tests/services/test_kri680_clip_exposure.py tests/kria/test_kri667_clip_exclusions.py",
