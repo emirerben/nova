@@ -260,6 +260,7 @@ class GeminiClient(ModelClient):
         thinking_level: str | None = None,
         timeout_s: float = 30.0,
         thought_summary_callback: Callable[[str], None] | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> ModelInvocation:
         from google.genai import errors as genai_errors  # type: ignore[import]
         from google.genai import types as genai_types  # type: ignore[import]
@@ -277,6 +278,8 @@ class GeminiClient(ModelClient):
         contents.append(prompt)
 
         cfg_kwargs: dict[str, Any] = self.generation_config()
+        if response_schema is not None:
+            cfg_kwargs["response_json_schema"] = response_schema
         if response_json:
             cfg_kwargs["response_mime_type"] = "application/json"
         if max_output_tokens is not None:
@@ -543,9 +546,15 @@ class ModelDispatcher(ModelClient):
         *,
         gemini: GeminiClient | None = None,
         whisper: WhisperClient | None = None,
+        openai: Any = None,
+        anthropic: Any = None,
     ) -> None:
         self._gemini = gemini or GeminiClient()
         self._whisper = whisper or WhisperClient()
+        from app.agents._text_providers import AnthropicTextClient, OpenAITextClient
+
+        self._openai = openai or OpenAITextClient()
+        self._anthropic = anthropic or AnthropicTextClient()
 
     def invoke(
         self,
@@ -560,7 +569,22 @@ class ModelDispatcher(ModelClient):
         thinking_level: str | None = None,
         timeout_s: float = 30.0,
         thought_summary_callback: Callable[[str], None] | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> ModelInvocation:
+        if model in ("gpt-6.1-sol", "claude-sonnet-5-5"):
+            client = self._openai if model == "gpt-6.1-sol" else self._anthropic
+            return client.invoke(
+                model=model,
+                prompt=prompt,
+                media_uri=media_uri,
+                media_mime=media_mime,
+                response_json=response_json,
+                max_output_tokens=max_output_tokens,
+                thinking_budget=thinking_budget,
+                thinking_level=thinking_level,
+                timeout_s=timeout_s,
+                response_schema=response_schema,
+            )
         if model.startswith("gemini"):
             return self._gemini.invoke(
                 model=model,
@@ -573,6 +597,7 @@ class ModelDispatcher(ModelClient):
                 thinking_level=thinking_level,
                 timeout_s=timeout_s,
                 thought_summary_callback=thought_summary_callback,
+                **({"response_schema": response_schema} if response_schema is not None else {}),
             )
         if model == "whisper-1":
             return self._whisper.invoke(

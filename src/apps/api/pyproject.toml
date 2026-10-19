@@ -31,7 +31,8 @@ dependencies = [
     "psycopg2-binary>=2.9",
     "pydantic>=2.7",
     "pydantic-settings>=2.2",
-    "openai>=1.30",
+    "openai>=2.44,<3",
+    "anthropic>=0.116,<1",
     "google-genai>=1.0",
     "google-cloud-storage>=2.16",
     "google-cloud-vision>=3.7",
@@ -136,7 +137,7 @@ observability = [
     # Anthropic SDK powers the online-eval LLM judge (Claude Sonnet). Only
     # invoked when NOVA_ONLINE_EVAL_SAMPLE_RATE > 0 + ANTHROPIC_API_KEY set.
     # Sampled fraction of prod traces gets scored against tests/evals/rubrics/.
-    "anthropic>=0.40",
+    "anthropic>=0.116,<1",
 ]
 dev = [
     "pytest>=8",
@@ -149,7 +150,7 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
     "fonttools>=4.53",
-    "anthropic>=0.40",
+    "anthropic>=0.116,<1",
 ]
 analysis = [
     # Offline analyzer scripts under scripts/overlay_forensics/ and

@@ -32,7 +32,7 @@ from app.config import settings
 
 log = structlog.get_logger()
 
-PRICE_VERSION = "google-ai-2026-10-19.v4"
+PRICE_VERSION = "multi-provider-2026-10-19.v5"
 DEFAULT_MAX_OUTPUT_TOKENS = 8_192
 _IMAGE_TILE_SIZE_PX = 768
 _IMAGE_TOKENS_PER_TILE = 258
@@ -106,6 +106,16 @@ def _price_for(
 ) -> tuple[Decimal, Decimal, Decimal]:
     """Return text/non-audio input, output, and cached-input rates."""
 
+    if model == "gpt-6.1-sol":
+        return (
+            (Decimal("4"), Decimal("15"), Decimal(".20"))
+            if prompt_tokens > 272_000
+            else (Decimal("2"), Decimal("10"), Decimal(".10"))
+        )
+    if model == "claude-sonnet-5-5":
+        return (Decimal("2"), Decimal("10"), Decimal(".10"))
+    if not model.startswith("gemini"):
+        raise AiCostControlPolicyError(scope="pricing:model", reason="unpriced_model")
     lowered = model.lower()
     long_context = prompt_tokens > 200_000
     if lowered.startswith("gemini-3.1-pro"):
@@ -177,6 +187,12 @@ def calculate_cost_usd(model: str, usage: UsageMeter) -> float:
         + Decimal(cached) * cached_rate
         + Decimal(billable_out) * output_rate
     )
+    if model == "claude-sonnet-5-5":
+        writes = max(0, int(usage.token_details.get("cache_creation_input_tokens", 0)))
+        hour = min(
+            writes, max(0, int(usage.token_details.get("cache_creation_1h_input_tokens", 0)))
+        )
+        cost += Decimal(writes - hour) * Decimal(".5") + Decimal(hour) * Decimal("2")
 
     lowered = model.lower()
     if lowered.startswith(("gemini-2.5-flash", "gemini-2.5-flash-lite")):

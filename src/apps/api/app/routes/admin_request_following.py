@@ -188,6 +188,60 @@ async def require_current(db, case):
         raise HTTPException(409, "source_changed_wait_for_collection")
 
 
+@router.get("/comparison-eligibility")
+async def comparison_eligibility(
+    db: DB,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    grant_key: str = Query(max_length=120),
+    captured_at: datetime = Query(),
+    expires_at: datetime = Query(),
+):
+    """Read-only eligibility for private exact captures; returns no case bodies.
+
+    A queue snapshot is not the invocation input. Bind directly to the existing
+    grant and owner instead of requiring a mutable queue version to stay current.
+    Protected holdouts remain unavailable through this development boundary.
+    """
+    from datetime import timedelta
+
+    from app.models import CreationThreadDeletion
+    from app.services.request_following_collection import eligibility_key
+    from app.services.training_eligibility import evaluate_training_eligibility_async
+
+    now = datetime.now(UTC)
+    if (
+        captured_at.tzinfo is None
+        or expires_at.tzinfo is None
+        or not captured_at <= now < expires_at <= captured_at + timedelta(days=30)
+    ):
+        return {"eligible": False}
+    if (
+        not settings.creator_comparison_capture_enabled
+        or str(creator_id) not in settings.creator_comparison_capture_user_ids
+    ):
+        return {"eligible": False}
+    _, _, holdouts, _ = scope()
+    thread = await db.get(CreationThread, thread_id)
+    if (
+        thread is None
+        or thread.creator_id != creator_id
+        or thread_id in holdouts
+        or not in_scope(creator_id, thread_id)
+        or await db.get(CreationThreadDeletion, thread_id)
+    ):
+        return {"eligible": False}
+    # Historical holdout assignment also survives configuration changes.
+    if await db.scalar(
+        select(RequestFollowingCase.id)
+        .where(RequestFollowingCase.thread_id == thread_id, RequestFollowingCase.split == "holdout")
+        .limit(1)
+    ):
+        return {"eligible": False}
+    decision = await evaluate_training_eligibility_async(db, creator_id)
+    return {"eligible": eligibility_key(decision) == grant_key, "checked_at": now.isoformat()}
+
+
 @router.get("/{case_id}")
 async def detail(case_id: uuid.UUID, db: DB):
     case = await get_case(db, case_id)

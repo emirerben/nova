@@ -838,6 +838,25 @@
         "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift",
         "src/apps/ios/Tests/KriaTests/NativeResearchSourcesTests.swift"
       ]
+    },
+    {
+      "id": "creator-model-comparison",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_text_provider_contracts.py tests/agents/test_comparison_workflow.py tests/services/test_text_provider_ledger.py tests/services/test_comparison_capture.py tests/integration/test_comparison_eligibility.py tests/services/test_ai_cost_control.py tests/evals/test_main_creator_evals.py tests/evals/test_edit_copilot_evals.py",
+      "paths": [
+        "src/apps/api/app/agents/_text_providers.py",
+        "src/apps/api/app/services/creator_model_comparison.py",
+        "src/apps/api/app/services/creator_comparison_capture.py",
+        "src/apps/api/app/cli/compare_creator_models.py",
+        "src/apps/api/app/routes/admin_request_following.py",
+        "src/apps/api/app/services/ai_cost_control.py",
+        "src/apps/api/tests/agents/test_text_provider_contracts.py",
+        "src/apps/api/tests/agents/test_comparison_workflow.py",
+        "src/apps/api/tests/services/test_text_provider_ledger.py",
+        "src/apps/api/tests/services/test_comparison_capture.py",
+        "src/apps/api/tests/integration/test_comparison_eligibility.py",
+        "scripts/compare_creator_models.py"
+      ]
     }
   ]
 }
