@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.47.0] - 2026-10-19
+
+### Changed
+- feat(ios): long-press and drag a clip block in the timeline to reorder clips (KRI-755) (#1682) <!-- release-pr: 1682 -->
+
 ## [0.80.46.0] - 2026-10-19
 
 ### Changed
