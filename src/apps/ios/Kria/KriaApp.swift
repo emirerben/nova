@@ -48,7 +48,7 @@ import SwiftData
             _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
             return
         }
-        if ProcessInfo.processInfo.arguments.contains("-camera-roll-benchmark") || ProcessInfo.processInfo.arguments.contains("-camera-roll-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-device-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-story-review") || ProcessInfo.processInfo.arguments.contains("-camera-roll-export-proof") {
+        if ProcessInfo.processInfo.arguments.contains("-camera-roll-collection-ready") || ProcessInfo.processInfo.arguments.contains("-camera-roll-benchmark") || ProcessInfo.processInfo.arguments.contains("-camera-roll-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-device-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-story-review") || ProcessInfo.processInfo.arguments.contains("-camera-roll-export-proof") {
             let container = Self.fallbackContainer()
             self.container = container
             _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore()))
@@ -133,6 +133,8 @@ struct RootView: View {
                 CameraRollExportProofView()
             } else if ProcessInfo.processInfo.arguments.contains("-camera-roll-story-review") {
                 CameraRollStoriesUITestHost()
+            } else if ProcessInfo.processInfo.arguments.contains("-camera-roll-collection-ready") {
+                CameraRollCollectionReadyUITestHost()
             } else if ProcessInfo.processInfo.arguments.contains("-camera-roll-collection") {
             CameraRollCollectionView(api: model.api, fixture: true)
         } else if ProcessInfo.processInfo.arguments.contains("-camera-roll-device-collection") {

@@ -19,23 +19,29 @@ struct CameraRollStoriesView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    Text("Choose a story to prepare its draft. Rendering needs a separate approval in the chat.")
-                    Text("Source windows · No added text or music").font(.footnote).foregroundStyle(.secondary)
-                    Text("Story ideas currently use videos with original iPhone bindings.").font(.footnote).foregroundStyle(.secondary)
-                    if !result.coverage.incompleteSpeech.isEmpty || !result.coverage.unindexed.isEmpty {
-                        Text("Some speech or footage is not fully indexed. Review the source intervals before choosing.")
-                            .font(.footnote).foregroundStyle(KriaColor.failureText)
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                Text("Choose a story to review in chat.")
+                    .font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk)
+                if !result.coverage.incompleteSpeech.isEmpty || !result.coverage.unindexed.isEmpty {
+                    Label("Some footage needs checking", systemImage: "info.circle")
+                        .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                 }
                 if stories.allSatisfy(\.rejected) { ContentUnavailableView("No story to suggest", systemImage: "photo.stack", description: Text("Try a smaller collection or a more specific story. You can also create a video from your chosen footage in chat.")) }
                 ForEach(stories.filter { !$0.rejected }) { story in
-                    Section(story.title) {
-                        Text(story.rationale)
-                        LabeledContent("Hook", value: story.hook)
-                        LabeledContent("Payoff", value: story.payoff)
-                        Text("\(story.duration, specifier: "%.1f") seconds").font(.footnote)
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(story.title).font(KriaFont.display(26))
+                            Spacer()
+                            Text("\(story.duration, specifier: "%.1f") sec").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                        }
+                        DisclosureGroup("Story arc") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(story.rationale).font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk)
+                                Text(story.hook).font(KriaFont.body(14))
+                                Text(story.payoff).font(KriaFont.body(14))
+                            }.padding(.top, 8)
+                        }.font(KriaFont.body(13))
                         Toggle("Original sound", isOn: Binding(
                             get: { story.audioPolicy != "muted" },
                             set: { keep in Task { await change(story, order: nil, audioPolicy: keep ? "preserve_source_audio" : "muted", action: keep ? "sound-original" : "sound-muted") } }
@@ -43,11 +49,19 @@ struct CameraRollStoriesView: View {
                         if story.audioPolicy == "muted" { Text("Muted footage").font(.footnote).foregroundStyle(.secondary) }
                         ForEach(Array(story.moments.enumerated()), id: \.element.id) { index, moment in
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("\(index + 1). \(sourceLabel(moment)) · \(moment.start, specifier: "%.1f")–\(moment.end, specifier: "%.1f")s").font(.subheadline.weight(.medium))
-                                Text(moment.text).font(.subheadline)
-                                if moment.uncertain { Text("AI evidence — review the footage").font(.caption).foregroundStyle(.secondary) }
+                                HStack(alignment: .top, spacing: 12) {
+                                    if let entry = collection.entries.first(where: { $0.savedAsset?.id == moment.assetID }) {
+                                        CameraRollCollectionThumbnail(entry: entry, api: api, size: CGSize(width: 72, height: 88))
+                                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    }
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(moment.text).font(KriaFont.body(14).weight(.medium)).lineLimit(3)
+                                        Text("\(sourceLabel(moment)) · \(moment.start, specifier: "%.1f")–\(moment.end, specifier: "%.1f")s")
+                                            .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                                    }
+                                }
                                 HStack {
-                                    Button("Preview interval") { Task { await preview(moment) } }
+                                    Button("Preview") { Task { await preview(moment) } }
                                     Menu("Replace") {
                                         ForEach(result.coverage.moments.filter { alternative in
                                             !story.moments.contains { $0.id == alternative.id } && (1...20).contains(alternative.end - alternative.start)
@@ -75,24 +89,29 @@ struct CameraRollStoriesView: View {
                                             }
                                         }
                                     }.accessibilityIdentifier("story-replace-\(index)")
-                                }.buttonStyle(.bordered)
-                                Button("Check this interval") { Task { await inspect(moment) } }.font(.footnote)
-                            }.padding(.vertical, 4)
+                                }.buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
+                                Button("Check this clip") { Task { await inspect(moment) } }
+                                    .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk).frame(minHeight: 44)
+                            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                                .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16))
                         }
-                        Button("Choose this story") {
-                            selectionTask = Task { await select(story) }
-                        }.buttonStyle(.borderedProminent).accessibilityIdentifier("story-choose-\(story.id)")
+                        Button { selectionTask = Task { await select(story) } } label: {
+                            Text("Choose this story").frame(maxWidth: .infinity)
+                        }.buttonStyle(KriaPrimaryButtonStyle()).accessibilityIdentifier("story-choose-\(story.id)")
                         Button("Not this story", role: .destructive) { Task { await reject(story) } }
-                    }.disabled(busy)
+                    }.padding(20).background(KriaColor.paper, in: RoundedRectangle(cornerRadius: 22))
+                        .overlay(RoundedRectangle(cornerRadius: 22).stroke(KriaColor.line.opacity(0.6), lineWidth: 1)).disabled(busy)
                 }
-                Section("Targeted check") {
+                DisclosureGroup("Ask about a clip") {
                     TextField("Question about an interval", text: $question)
-                    Text("Checks use a short analysis copy, up to three per collection revision. AI answers can still be wrong.").font(.footnote).foregroundStyle(.secondary)
+                    Text("AI checks can be wrong. Review the footage before choosing.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     if let inspection { Text(inspection).textSelection(.enabled) }
                 }
                 if busy { ProgressView("Preparing…") }
                 if let error { Text(error).foregroundStyle(KriaColor.failureText).accessibilityIdentifier("story-error") }
+                }.padding(24)
             }
+            .background(KriaColor.paper).kriaPage()
             .navigationTitle("Story ideas").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(busy) } }
             .onAppear { stories = result.stories }

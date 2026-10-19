@@ -1,6 +1,6 @@
 # Camera-roll recommendations: implementation and evidence
 
-19 October 2026. Collection, retrieval, targeted inspection and recommendation-to-approval code is implemented. Discovery remains off. No paid model calls or production rollout occurred. Human retrieval labels and the creator-account pilot remain outstanding; synthetic correctness checks do not establish recommendation quality.
+19 October 2026. Collection, retrieval, targeted inspection and recommendation-to-approval code is implemented. Discovery remains off. Two private previews from the creator’s existing uploads now exist; two story-model calls settled at $0.004802. No production rollout occurred. Human retrieval labels and the creator-account pilot remain outstanding; synthetic correctness checks do not establish recommendation quality.
 
 Worktree: `/private/tmp/nova-kri-729-camera-roll`; branch `codex/kri-729-camera-roll`.
 
@@ -44,7 +44,19 @@ The creator has added 50 items (22 photos, 28 videos) in the native metadata-onl
 
 A fresh collection edit/resume diagnostic is installed separately as `com.kria.app.camerarollqa`. `-camera-roll-device-collection` disables upload/analysis and exports only aggregate counts. Device reopen retained all 50 items; manual group correction and permission-state evidence remain pending. Earlier benchmark counts do not prove that product journey.
 
+## Own-upload preview continuation
+
+Twelve existing video analysis copies belonging to the creator’s account were read through exact-generation access and checked against their stored SHA-256/byte receipts (4,679,379 bytes). All twelve had eligible cached visual facts. Seven had timed moments; five had no indexed intervals. No production data/flags changed and no new visual analysis or publication occurred.
+
+Two story-generation requests in an isolated development database settled at **$0.004802**, under the approved shared $2 cap. The existing guided snapshot/phone compiler and production AVFoundation exporter on macOS rendered 10.1s and about 8s examples. Independent source-window/picture/audio checks accepted both (16 and 12 checks). These use analysis copies, with lower detail after portrait cropping; they do not establish full-quality original availability or a physical signed-in recommendation/approval/export journey. The iPhone was disconnected during the initial run. After reconnection, the same frozen recipes also rendered on the physical iPhone in 1.94s and 1.55s. Independent checks accepted both physical outputs (16 and 12 checks), with zero additional provider calls/uploads. These still use the same analysis copies, without a verified link to full-quality Photos originals. The initial unattached launch did not finalize; a foreground console-attached retry completed both, so unattended/background behavior is not established. [Safe aggregate](own-upload-previews.json); source footage, prompts/results, signed URLs, private snapshots and MP4s remain ignored locally.
+
+This real-input run exposed and reproduced three defects: distinct questions collided with the durable source-fact uniqueness constraint; fractional endpoints could disagree with the 30fps draft schedule; and the native collection refused useful suggestions whenever any clip lacked timed moments. Request-scoped version slots now preserve legacy cache reads and the three-inspection cap; the prepared length is fixed on the shared frame grid before approval; partial coverage is shown without blocking usable footage. HTTP/real-PostgreSQL and native UI red controls fail before these fixes.
+
+The collection now uses the existing Sunlit tokens, Inter/Fraunces type, shared thumbnail loaders and Butter primary action. A compact grid replaces per-item metadata forms. Group editing and analysis details sit behind options; one action confirms an upload only when necessary. Story rationale/arc is collapsed, with thumbnails and precise preview/replacement controls remaining visible. A DEBUG-only offline host can display the private generated results, with intercepted API requests and no real authentication, uploads or publication.
+
 ## Verification
+
+Latest own-upload/design continuation: 157 backend/HTTP/migration compatibility checks passed, 1,244 free agent replays passed (15 documented skips), and the final native unit gate executed 1,860 tests (25 skipped, zero failures; `test-results/ios/unit.wmqETh/unit.xcresult`). Three final UI journeys pass in `.dev/camera-roll-final-delivery-ui.xcresult`: partial coverage, collection correction/removal/resume, and story replacement/sound/rejection. The final pre-PR gate passes all 1,043 mapped reliability checks plus scoped lint/typecheck, drift and release metadata checks (`.dev/camera-roll-delivery-preship.log`).
 
 - API regression/free replay: **1,821 passed, 15 skipped**, `.dev/camera-roll-final-regression.log`. No optional paid live evaluation. The final source-quality/prompt update also passes 1,217 checks and 15 skips in `.dev/quality-reuse-and-budget.log`.
 - Real PostgreSQL selection → draft → separate approval → job factory → frozen worker-plan read; changed-collection cancellation, owner/source fences and $0 cache controls.
@@ -65,6 +77,6 @@ KRIA_IOS_TEST_MODE=unit KRIA_SIMULATOR_ID=<dedicated-simulator-id> make ios-veri
 
 ## Pilot and release decision
 
-The creator limited the pilot to **their account** and subsequently authorized model calls when needed for a real test, under the discussed **$2 total ceiling**. No other creator may be enrolled or contacted. `single_creator` reports cannot qualify for wider rollout. The default remains cached-only until the authorized cohort/run budget is configured; no paid call has run yet.
+The creator limited the pilot to **their account** and subsequently authorized model calls when needed for a real test, under the discussed **$2 total ceiling**. No other creator may be enrolled or contacted. `single_creator` reports cannot qualify for wider rollout. Production remains default-off/cached-only. A separate development run used an atomic $2 cap; two calls settled at $0.004802.
 
-No human-labelled holdout or real recommendation exposure exists yet. Do not claim 90% recall, story coherence or pilot conversion. Decision: **hold** pending the account study and independent output review. The broader ten-creator hypothesis remains untested; the narrower user-authorized study replaces participant recruitment for this task. [Protocol](pilot-protocol.md).
+The creator has received two private proxy-quality example renders; this is not a signed-in device pilot or independently reviewed fulfillment study. No human-labelled holdout exists yet. Do not claim 90% recall, story coherence or pilot conversion. Decision: **hold** pending the account study and independent output review. The broader ten-creator hypothesis remains untested; the narrower user-authorized study replaces participant recruitment for this task. [Protocol](pilot-protocol.md).

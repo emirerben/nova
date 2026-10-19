@@ -63,7 +63,7 @@ decision; it never enables a flag or independently certifies private evidence.
 
 The dated final report must link the frozen protocol and privately reviewed
 outputs, report the denominators/unknowns/failures and record an explicit human
-expand/hold decision. Current decision: **hold — no real-account recommendation pilot has run**. Internal
+expand/hold decision. Current decision: **hold — no real-account recommendation pilot has run**. The two private own-upload proxy previews are internal examples, not pilot sessions; no fulfillment/conversion result is inferred from them. Internal
 synthetic physical exports are recorded separately in [physical-export.md](physical-export.md).
 
 ## Frozen-label retrieval comparison

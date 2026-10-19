@@ -59,7 +59,7 @@ limits belong to internal metadata/index/network/model passes, never a second pe
 
 1. Duration is owned by the existing `EditProposalSnapshot.fast_cuts` and guided
    compiler/frame schedule: ordered source windows at rate 1, hard cuts, total
-   duration equal to the sum. No second timeline or recommendation renderer.
+   duration equal to the sum on the shared 30fps frame grid, before consent. No second timeline or recommendation renderer.
 2. This creates a new draft. Replacing a selected moment changes only that cut;
    there are no authored timed lanes to ripple. Generated on-screen copy/music
    are absent. Later timeline edits use the existing guided editor policies.

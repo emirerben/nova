@@ -3,7 +3,7 @@ import SwiftUI
 import KriaMediaEngine
 
 /// Opt-in, offline export proof. Input recipes/synthetic media are copied into the QA
-/// app's Documents/camera-roll-export-proof directory; nothing is fetched or published.
+/// app's Documents directory; nothing is fetched or published.
 struct CameraRollExportProofView: View {
     @State private var status = "Preparing export proof…"
     var body: some View {
@@ -16,12 +16,15 @@ struct CameraRollExportProofView: View {
                 }
         }
     }
+    private var ownUploads: Bool { ProcessInfo.processInfo.arguments.contains("-camera-roll-own-upload-export") }
     private var root: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("camera-roll-export-proof", isDirectory: true)
+        let name = ownUploads ? "camera-roll-own-upload-export" : "camera-roll-export-proof"
+        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(name, isDirectory: true)
     }
     @MainActor private func run() async throws -> String {
         let names = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("cases").path).sorted()
-        guard !names.isEmpty, names.count <= 4, Set(names).isSubset(of: ["correct", "wrong_window", "wrong_audio", "wrong_order"]) else { throw APIError.invalidResponse }
+        let allowed: Set<String> = ownUploads ? ["example_1", "example_2"] : ["correct", "wrong_window", "wrong_audio", "wrong_order"]
+        guard !names.isEmpty, names.count <= allowed.count, Set(names).isSubset(of: allowed) else { throw APIError.invalidResponse }
         var results: [[String: Any]] = []
         for name in names {
             try Task.checkCancellation()
