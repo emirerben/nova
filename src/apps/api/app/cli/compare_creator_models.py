@@ -447,6 +447,7 @@ def _execute(
                                 "skip_agent_run_persist": True,
                                 "skip_langfuse_trace": True,
                                 "skip_comparison_capture": True,
+                                "comparison_case_id": case["id"],
                                 **(
                                     {
                                         "paid_experiment_envelope_id": envelope_id,

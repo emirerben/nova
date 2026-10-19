@@ -62,3 +62,5 @@ schema, holdout, capture and live comparison work. Before implementation:
 - Sol/Gemini lose recursive support: their schemas continue accepting deeper values.
 
 - Known full Sonnet grammar rejection: reject native profile locally; only an explicitly selected JSON profile can run, with all earlier rejections retained. No automatic format fallback.
+
+- A fresh packet/request ID repeats the financially contained unknown case on the same model: reject using the protected case/model identity, even though independent cases may proceed. Missing case attribution also fails closed.

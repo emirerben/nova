@@ -85,7 +85,7 @@ increasing the hold from $0.433948 to $1.716306. Local source/SDK inspection est
 a single SDK attempt; a byte-based input allowance plus two complete output budgets
 estimated $0.517458, below that retained batch. This is financial containment,
 not authoritative actual usage. The row remains `unknown`, counts against every
-budget, and its idempotency key remains fenced. Durable reconciliation permits
+budget, and its idempotency key and case/model identity remain fenced across new manifests. Durable reconciliation permits
 independent cases only; it never releases money or marks the unknown call successful.
 A future authoritative receipt can settle it. Do not clear it because it is old.
 
@@ -103,8 +103,8 @@ mock demonstrated that inherited retry configuration could escape accounting;
 inspection found the historical default client had retries disabled. No historical
 internal retry is claimed as observed.
 
-**4,052 offline tests passed; 15 skipped; preship gates green** (439 mapped incident
-checks; 42 mapped journeys). Six current Main plans passed pure compilation with
+**4,128 offline tests passed; 15 skipped; preship gates green** (439 mapped incident
+checks; 43 mapped journeys). Upstream integration also passed 41 selector tests (168 subtests); final ledger/context hardening passed 47 focused tests. Six current Main plans passed pure compilation with
 zero notices. Copilot returned no edit operations to compile. Candidate saves,
 renders, exports and production model changes were not performed.
 

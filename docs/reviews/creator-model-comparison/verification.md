@@ -4,10 +4,10 @@ Base: `ed90bd9ea859129efb1853b327ca00562ecb54a0` from fetched origin/main.
 Branch: `codex/creator-model-comparison`; isolated checkout:
 `/private/tmp/nova-creator-model-comparison`. Shared original checkout untouched.
 
-**4,052 passed; 15 skipped; no failures** after integrating current main. Provider keys were dummy strings and
+**4,128 passed; 15 skipped; no failures** after integrating current main. Provider keys were dummy strings and
 NOVA_EVAL_MODE=replay. SDK contract tests used httpx.MockTransport. PostgreSQL tests
 used the migrated local task database `nova_creator_model_comparison_test`.
-This offline run made no live provider calls. The separately approved partial live pilot is recorded in pilot-report.md; no paid judge or production mutation ran.
+This offline run made no live provider calls. The separately approved funded live pilot is recorded in pilot-report.md; no paid judge or production mutation ran.
 
 Repeat:
 
@@ -21,7 +21,9 @@ NOVA_EVAL_MODE=replay GEMINI_API_KEY=test OPENAI_API_KEY=sk-test ANTHROPIC_API_K
   tests/test_copilot_outcome_explanations.py tests/services/test_creator_render_contract.py \
   tests/integration/test_actual_export_verification.py \
   tests/integration/test_actual_export_completion.py \
-  tests/routes/test_actual_export_publication.py tests/kria/test_editor_state_turns.py tests/kria/test_approval_readiness_postgres.py -q --eval-mode=replay -rs
+  tests/routes/test_actual_export_publication.py tests/kria/test_editor_state_turns.py tests/kria/test_approval_readiness_postgres.py \
+  tests/pipeline/test_unified_montage_spoken_order.py tests/services/test_spoken_roles.py \
+  tests/tasks/test_kri585_spoken_order_montage.py -q --eval-mode=replay -rs
 ```
 
 The skips are existing live/judge-only checks, fixture applicability, and missing
@@ -34,8 +36,8 @@ cleanup missed them. A dedicated attributed-run cleanup fixed the issue. Earlier
 synthetic rows were removed only from the task scratch database; the final run
 started with zero reservations and passed. No production ledger was touched.
 
-The latest broad run completed in 75.93 seconds; its local log is
-`/private/tmp/nova-comparison-complete-offline-tests.log`. Typed v2 round trips include
+The latest broad run completed in 78.83 seconds; its local log is
+`/private/tmp/nova-comparison-upstream-final-tests.log`. Typed v2 round trips include
 explicit null versus omission. Live pilot observations prompted SDK HTTP controls
 that prove one Gemini submission and a matching transport deadline, plus a real
 PostgreSQL unknown-outcome fence across separate batches in the same envelope.
@@ -55,7 +57,7 @@ Other checks:
 
 These results verify infrastructure and existing product contracts. They do not
 mean any candidate model fulfilled a new request, saved a candidate draft or
-rendered a video. See pilot-report.md for the partial live results and outstanding evidence.
+rendered a video. See pilot-report.md for the funded pilot results and outstanding evidence.
 
 Final preship fetch found a new upstream Main Creator v64 camera-audio fix
 (`220f75b3f`). It was integrated cleanly before delivery; historical paid rows remain
@@ -68,3 +70,17 @@ reject circular Anthropic schemas, preserve deep Sol values and require explicit
 JSON selection for the provider-rejected full Sonnet native grammar. Returned
 usage totals reconcile exactly to the durable pilot ledger. Six current Main plans
 compiled without notices; Copilot returned no supported edit operations.
+
+Final integration: merged fetched `ebcb9874e` cleanly, preserving the provider
+factory in planner and both environment/journey additions. The post-merge suite
+includes all three new spoken-order backend test files. Selector verification:
+41 tests and 168 subtests passed. Model prompts did not change in this integration;
+no new paid request ran. Pure candidate compilation was repeated with zero failures.
+Upstream iOS changes were inherited; no new independent device verification is claimed.
+
+After that full integration run, a final ledger-only hardening bound the retained
+unknown to its protected case/model identity across freshly frozen manifests.
+The final focused ledger/workflow suite passed 47 tests in 0.99 s; it rejects
+missing case attribution and fresh-ID duplicates while preserving independent
+cases and budget counting. No paid call followed this hardening. The original
+unknown receipt was updated with the protected identity without changing money.

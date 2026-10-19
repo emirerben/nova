@@ -538,6 +538,7 @@ def reconcile_unknown_liability(
     retained = Decimal(str(approved_batch_usd))
     maximum = Decimal(str(evidence.get("maximum_call_cost_usd", 0)))
     proof = evidence.get("sha256", "")
+    protected_case = evidence.get("protected_case_id", "")
     try:
         parts = test_run_id.split(":")
         envelope = "comparison:" + str(uuid.UUID(parts[1]))
@@ -553,6 +554,9 @@ def reconcile_unknown_liability(
         or not isinstance(proof, str)
         or len(proof) != 64
         or any(c not in "0123456789abcdef" for c in proof)
+        or not isinstance(protected_case, str)
+        or len(protected_case) != 64
+        or any(c not in "0123456789abcdef" for c in protected_case)
     ):
         raise ValueError("invalid retained-liability reconciliation evidence")
     from app.database import sync_engine  # noqa: PLC0415
@@ -591,6 +595,7 @@ def reconcile_unknown_liability(
             "retained_usd": float(retained),
             "maximum_call_cost_usd": float(maximum),
             "evidence_sha256": proof,
+            "protected_case_id": protected_case,
             "at": datetime.now(UTC).isoformat(),
         }
         conn.execute(
@@ -768,16 +773,24 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 and conn.execute(
                     text(
                         "SELECT EXISTS(SELECT 1 FROM ai_cost_reservations "
-                        "WHERE test_run_id LIKE :prefix AND status='unknown' AND NOT "
+                        "WHERE test_run_id LIKE :prefix AND status='unknown' AND (NOT "
                         "COALESCE((usage_json->'liability_reconciliation'->>'version'='1' "
                         "AND usage_json->'liability_reconciliation'->>'basis'="
                         "'full_approved_batch_retained' "
                         "AND usage_json->'liability_reconciliation'->>'actual_usage_known'='false' "
                         "AND usage_json->'liability_reconciliation'->>'retry_permitted'='false' "
+                        "AND usage_json->'liability_reconciliation'->>'protected_case_id' "
+                        "~ '^[a-f0-9]{64}$' "
                         "AND (usage_json->'liability_reconciliation'->>'retained_usd')::numeric "
-                        "=estimated_cost_usd),false))"
+                        "=estimated_cost_usd),false) OR :case_id='' OR "
+                        "(usage_json->'liability_reconciliation'->>'protected_case_id'=:case_id "
+                        "AND requested_model=:model)))"
                     ),
-                    {"prefix": envelope + ":%"},
+                    {
+                        "prefix": envelope + ":%",
+                        "case_id": str(request.ctx.extra.get("comparison_case_id") or ""),
+                        "model": request.model,
+                    },
                 ).scalar_one()
             ):
                 raise ProviderOutcomeUnknownError(

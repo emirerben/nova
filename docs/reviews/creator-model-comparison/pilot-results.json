@@ -117,14 +117,15 @@
       "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1",
       "first_attempt_parsed": false,
       "error_class": "ProviderOutcomeUnknownError",
-      "metered_usd": 0,
+      "metered_usd": null,
       "runtime_submissions": 1,
       "tokens_cached": 0,
       "output_mode": "json_mime",
       "action_kind": null,
       "copilot_intent": null,
       "copilot_outcome": null,
-      "copilot_ops": null
+      "copilot_ops": null,
+      "retained_usd": 1.716306
     },
     {
       "batch": "pilot-final-main-1-native",
@@ -499,5 +500,6 @@
   "sonnet_native": "Known circular-reference then grammar-size rejection; full native profiles now fail preflight. Explicit JSON tested separately.",
   "commands_executed": false,
   "candidate_saved_or_rendered": false,
-  "production_selection": "unchanged"
+  "production_selection": "unchanged",
+  "unknown_retry_fence": "Original idempotency key plus protected case/model identity across fresh manifests; missing case attribution fails closed."
 }

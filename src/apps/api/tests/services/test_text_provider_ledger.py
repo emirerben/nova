@@ -136,6 +136,8 @@ def test_retained_unknown_allows_independent_case_but_never_duplicate(ledger):  
         request.ctx.extra.update(
             paid_experiment_envelope_id=envelope, approved_envelope_max_usd=2.0
         )
+    first.ctx.extra["comparison_case_id"] = "b" * 64
+    second.ctx.extra["comparison_case_id"] = "c" * 64
     receipt = reserve_paid_call(first)
     mark_paid_call_started(receipt)
     mark_paid_call_unknown(receipt)
@@ -143,6 +145,7 @@ def test_retained_unknown_allows_independent_case_but_never_duplicate(ledger):  
         "provider_call_terminated": True,
         "maximum_call_cost_usd": 0.08,
         "sha256": "a" * 64,
+        "protected_case_id": "b" * 64,
     }
     for invalid in (
         {**evidence, "provider_call_terminated": False},
@@ -165,10 +168,21 @@ def test_retained_unknown_allows_independent_case_but_never_duplicate(ledger):  
     with pytest.raises(ProviderOutcomeUnknownError):
         reserve_paid_call(first)
     assert reserve_paid_call(second)
+    cloned = _request(ledger, "clone-unknown", estimate=0.05, run_id=envelope + ":clone")
+    cloned.ctx.extra.update(
+        paid_experiment_envelope_id=envelope,
+        approved_envelope_max_usd=2.0,
+        comparison_case_id="b" * 64,
+    )
+    with pytest.raises(ProviderOutcomeUnknownError):
+        reserve_paid_call(cloned)
     from app.agents._runtime import AiBudgetExceededError
 
     third = _request(ledger, "over-budget", estimate=1.8, run_id=envelope + ":third")
     third.ctx.extra.update(paid_experiment_envelope_id=envelope, approved_envelope_max_usd=2.0)
+    with pytest.raises(ProviderOutcomeUnknownError):
+        reserve_paid_call(third)  # missing case attribution cannot bypass the fence
+    third.ctx.extra["comparison_case_id"] = "d" * 64
     with pytest.raises(AiBudgetExceededError):
         reserve_paid_call(third)
     with sync_engine.connect() as db:
