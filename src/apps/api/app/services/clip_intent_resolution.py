@@ -31,7 +31,7 @@ import re
 import tempfile
 import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -796,7 +796,9 @@ def picker_eligible(intent: ClipIntent) -> bool:
 
 
 def _build_clip_question(
-    creator_work: list[_IntentWork], clips: list[IntentClip]
+    creator_work: list[_IntentWork],
+    clips: list[IntentClip],
+    creator_words: Mapping[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """One picker category per TAPPABLE unresolved intent, or None when none can be tapped.
 
@@ -819,7 +821,9 @@ def _build_clip_question(
         categories.append(
             {
                 "key": intent_key(work.intent),
-                "label": category_label(work.intent),
+                "label": category_label(
+                    work.intent, creator_words=(creator_words or {}).get(work.intent.intent_id)
+                ),
                 "op": work.intent.op,
                 "intent_id": work.intent.intent_id,
                 "creator_text": work.intent.creator_text,
@@ -1050,13 +1054,16 @@ async def resolve_clip_intents_for_turn(
     max_vision_requeries: int | None = None,
     vision_deadline_s: float | None = None,
     filming_order: bool = False,
+    creator_words: Mapping[str, str] | None = None,
 ) -> IntentResolution:
     """Resolve ``intents`` against ``clips``.
 
     ``max_vision_requeries`` / ``vision_deadline_s`` raise the FOREGROUND vision
     budget for callers (the Kria v2 chat turn) that have no background lane.
     ``filming_order`` (KRI-516): the creator asked for filming order, so the resolver
-    reads the clips in that order (see ``_build_resolver_input``)."""
+    reads the clips in that order (see ``_build_resolver_input``).
+    ``creator_words`` (KRI-692): intent_id -> the creator's verbatim sentence, shown as a
+    picker row's label when the model wrote that label in the wrong language."""
     ctx: RunContext = run_context if isinstance(run_context, RunContext) else RunContext()
 
     # This resolver has no pinned narration/timeline authority. Never send
@@ -2025,7 +2032,7 @@ async def resolve_clip_intents_for_turn(
         and creator_work
         and settings.kria_clip_selection_questions_enabled
     ):
-        clip_question = _build_clip_question(creator_work, clips)
+        clip_question = _build_clip_question(creator_work, clips, creator_words)
         if clip_question is not None:
             turn_question = clip_question_text(clip_question["categories"])
             leftover = [w for w in creator_work if not picker_eligible(w.intent)]

@@ -22,6 +22,10 @@ Ways this can go wrong (written before the fix):
 6. A Turkish chat still shows an English model-written label in the picker.
 7. An English chat, or a label already in Turkish, is rewritten (must stay byte-identical).
 8. The brief is off / has no spoken text: something is dropped anyway.
+9. The label fix leaks past the picker row (review of the first version): the intent's
+   `attribute` is what the resolver searches clips by, what an answer's key and the repeat
+   check bind to, so it must stay the model's own text. A rewritten attribute made two
+   `group` intents quoted from one sentence collapse into one.
 
 Replayed from the real N1 brief lines, message and intent shape. Only the model calls are
 stand-ins (clip-intent planner output, resolver output); the parse, the resolver, the picker
@@ -61,6 +65,7 @@ from app.services.clip_intent_planning import (
     without_spoken_text_captions,
 )
 from app.services.clip_intent_resolution import IntentClip
+from app.services.clip_selection import category_label
 
 # A real Turkish phone Voiceover turn (`narrated_planned` + a recorded voiceover); the N1
 # message, brief and clip intents below replace its words.
@@ -282,13 +287,51 @@ async def test_a_brief_with_no_spoken_text_drops_nothing(
         assert [c["op"] for c in planned.plan.clip_question["categories"]] == ["include", "caption"]
 
 
-# -- 6, 7: a Turkish chat's labels are the creator's words ---------------------------------
+# -- 6, 7, 9: a Turkish chat's picker row shows the creator's words, nothing else changes --
+
+
+async def _plan_in_turkish(monkeypatch, *raw_intents: dict[str, Any]):
+    _replay_models(monkeypatch, *raw_intents)
+    return await plan_and_resolve_clip_intents(
+        creator_request=N1_MESSAGE,
+        latest_user_message=N1_MESSAGE,
+        candidate_intents=None,
+        clips=_clips(),
+        run_context=RunContext(),
+    )
 
 
 async def test_a_turkish_chat_never_shows_an_english_model_label(monkeypatch, turkish_chat) -> None:
-    # The same N1 caption on a non-Voiceover edit still reaches the picker; its label is
+    # The same N1 caption on a non-Voiceover edit still reaches the picker; its row label is
     # now the creator's own sentence, not the model's English phrase.
+    planned = await _plan_in_turkish(monkeypatch, LIGHTS_PHOTO, YIRMI_DAKIKA)
+
+    categories = planned.resolution.clip_question["categories"]
+    assert [c["label"] for c in categories] == [
+        "ışıklı ev fotoğrafını",
+        '"yirmi dakika" dediğimde ekrana "20 dk" yazısı gelsin',
+    ]
+    assert ENGLISH_LABEL not in planned.resolution.question
+    # 9: the row's key is still the model's attribute, so a tapped answer binds as before.
+    assert categories[1]["key"] == "caption:the-moment-yirmi-dakika-is-said"
+
+
+async def test_the_clip_query_and_the_requested_intents_keep_the_models_attribute(
+    monkeypatch, turkish_chat
+) -> None:
+    seen: list[Any] = []
+
+    def _resolve(self, input, *, ctx=None):  # noqa: A002, ANN001
+        seen.append(input)
+        return ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(intent_id="include_lights_photo"),
+                ResolverIntentOut(intent_id="caption_yirmi_dakika"),
+            ]
+        )
+
     _replay_models(monkeypatch, LIGHTS_PHOTO, YIRMI_DAKIKA)
+    monkeypatch.setattr(ClipRequestResolverAgent, "run", _resolve)
     planned = await plan_and_resolve_clip_intents(
         creator_request=N1_MESSAGE,
         latest_user_message=N1_MESSAGE,
@@ -297,51 +340,79 @@ async def test_a_turkish_chat_never_shows_an_english_model_label(monkeypatch, tu
         run_context=RunContext(),
     )
 
-    labels = [c["label"] for c in planned.resolution.clip_question["categories"]]
-    assert labels == [
+    # What the resolver searches clips by, and the intents the strategy keeps: untouched.
+    assert [i.attribute for i in seen[0].intents] == ["ışıklı ev fotoğrafını", ENGLISH_LABEL]
+    assert [i.attribute for i in planned.requested_intents] == [
         "ışıklı ev fotoğrafını",
-        '"yirmi dakika" dediğimde ekrana "20 dk" yazısı gelsin',
+        ENGLISH_LABEL,
     ]
-    assert ENGLISH_LABEL not in planned.resolution.question
 
 
-def _parse(raw_intent: dict[str, Any], *, language: str | None, request: str = N1_MESSAGE):
-    agent = ClipIntentPlannerAgent(None)  # type: ignore[arg-type]
-    out = agent.parse(
-        json.dumps({"intents": [raw_intent], "question": None}),
+def _parse_all(raws: list[dict[str, Any]], *, language: str | None):
+    out = ClipIntentPlannerAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps({"intents": raws, "question": None}),
         ClipIntentPlannerInput(
-            creator_request=request, latest_user_message=request, reply_language=language
+            creator_request=N1_MESSAGE, latest_user_message=N1_MESSAGE, reply_language=language
         ),
     )
-    return out.intents[0]
+    return out.intents
 
 
-def test_the_label_follows_the_chat_language_only_when_it_is_wrong() -> None:
-    # English chat: byte-identical, whatever the model wrote.
-    assert _parse(YIRMI_DAKIKA, language=None).attribute == ENGLISH_LABEL
-    assert _parse(YIRMI_DAKIKA, language="en").attribute == ENGLISH_LABEL
-    # Turkish chat: an English phrase becomes the creator's own words ...
-    assert (
-        _parse(YIRMI_DAKIKA, language="tr").attribute
-        == '"yirmi dakika" dediğimde ekrana "20 dk" yazısı gelsin'
-    )
-    # ... and a label already in Turkish is left alone.
-    assert _parse(LIGHTS_PHOTO, language="tr").attribute == "ışıklı ev fotoğrafını"
-
-
-def test_a_long_creator_sentence_still_fits_the_label_bound() -> None:
-    request = "Show the boat clip " + "and then the quiet river at night " * 8
-    raw = {
-        "intent_id": "include_boat",
-        "op": "include",
-        "attribute": "the boat clip",
-        "source_quote": request,
+def test_two_intents_quoted_from_one_sentence_both_survive_in_a_turkish_chat() -> None:
+    sentence = '"Sergio" dediğimde kaptanla iskeledeki klibi göster'
+    boats = {
+        "intent_id": "group_boats",
+        "op": "group",
+        "attribute": "the boat clips",
+        "source_quote": sentence,
     }
-    # A Turkish chat quoting a long English sentence is out of scope here; the point is that
-    # a replaced label never breaks the 160-character `attribute` bound.
-    attribute = _parse(raw, language="tr", request=request).attribute
-    assert 0 < len(attribute) <= 160
-    assert request.startswith(attribute)
+    docks = {
+        "intent_id": "group_docks",
+        "op": "group",
+        "attribute": "the dock clips",
+        "source_quote": sentence,
+    }
+    # A caption sharing a group's attribute is the other thing a rewrite could collapse.
+    caption = {**YIRMI_DAKIKA, "intent_id": "caption_boats", "attribute": "the boat clips"}
+
+    for language in (None, "tr"):
+        intents = _parse_all([boats, docks, caption], language=language)
+        assert [i.intent_id for i in intents] == ["group_boats", "group_docks", "caption_boats"]
+        assert [i.attribute for i in intents] == [
+            "the boat clips",
+            "the dock clips",
+            "the boat clips",
+        ]
+
+
+def test_the_row_label_changes_only_for_a_wrong_language_turkish_row() -> None:
+    quote = '"yirmi dakika" dediğimde ekrana "20 dk" yazısı gelsin'
+    english = ClipIntent(intent_id="c", op="include", attribute=ENGLISH_LABEL)
+    turkish = ClipIntent(intent_id="i", op="include", attribute="ışıklı ev fotoğrafını")
+
+    # English chat (or none bound): byte-identical, whatever the model wrote.
+    assert category_label(english, creator_words=quote) == ENGLISH_LABEL
+    token = bind_reply_language("en")
+    try:
+        assert category_label(english, creator_words=quote) == ENGLISH_LABEL
+    finally:
+        release_reply_language(token)
+
+    token = bind_reply_language("tr")
+    try:
+        assert category_label(english, creator_words=quote) == quote
+        # Nothing to show instead -> the model's label, never an empty row.
+        assert category_label(english) == ENGLISH_LABEL
+        # A label already in Turkish is left alone.
+        assert category_label(turkish, creator_words=quote) == "ışıklı ev fotoğrafını"
+        # A long sentence is shortened at a word, within the row bound.
+        long_quote = "Ayrıca tekneyi bağladığımız ve sonra uzun uzun beklediğimiz klip " * 4
+        label = category_label(english, creator_words=long_quote)
+        assert len(label) <= 80
+        assert label.endswith("…")
+        assert long_quote.startswith(label.removesuffix("…"))
+    finally:
+        release_reply_language(token)
 
 
 # -- 4, 8: precision of the drop and of the cue reader -------------------------------------

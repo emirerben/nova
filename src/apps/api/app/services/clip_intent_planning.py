@@ -748,6 +748,12 @@ async def plan_and_resolve_clip_intents(
         # KRI-516: chapter captions under a filming-time order are stretches of the day.
         # Omitted otherwise, so every other call is unchanged.
         **({"filming_order": True} if order_by_intents else {}),
+        # KRI-692: a Turkish chat's picker row never shows a model-written English label.
+        **(
+            {"creator_words": {i.intent_id: i.source_quote for i in output.intents}}
+            if current_reply_language() == "tr"
+            else {}
+        ),
     )
     if order_by_intents:
         kept, dropped = keep_chapters_in_filming_order(resolution.intents, clips, creator_request)
