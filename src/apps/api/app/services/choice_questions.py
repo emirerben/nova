@@ -43,6 +43,7 @@ from app.services.clip_facts import (
     capture_from_assignment,
     order_by_capture_time,
 )
+from app.services.clip_order_sequence import ANCHOR_FACTS
 
 CHOICE_QUESTION_VERSION = 1
 MAX_CHOICE_OPTIONS = 6
@@ -280,6 +281,25 @@ def build_choice_question(
     return payload
 
 
+def _after_connector(reason: str) -> str:
+    """``reason`` as it reads after a connector word ("Maalesef ..."): a plain capitalised
+    first word loses its capital (Turkish I / İ aware). Acronyms, camel-case names, quotes,
+    digits and a name with a suffix ("Caro'nun") are the creator's words and stay as written."""
+
+    end = 0
+    while end < len(reason) and reason[end].isalnum():
+        end += 1
+    head, after = reason[:end], reason[end : end + 1]
+    if (
+        len(head) < 2
+        or not head[0].isupper()
+        or head[1:] != head[1:].lower()
+        or after in ("'", "’")
+    ):
+        return reason
+    return {"I": "ı", "İ": "i"}.get(head[0], head[0].lower()) + reason[1:]
+
+
 def choice_question_text(candidate: ConflictCandidate) -> str:
     """Self-sufficient plain text (old builds show only this)."""
     options = candidate.options[:MAX_CHOICE_OPTIONS]
@@ -317,7 +337,8 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
                 f'{only.label}. Reply "{only.label}" to go with that, or change your request.'
             ),
             tr=(
-                f"{candidate.intro} Maalesef {candidate.reason} Yapabileceğim en fazla şu: "
+                f"{candidate.intro} Maalesef {_after_connector(candidate.reason)} "
+                "Yapabileceğim en fazla şu: "
                 f'{only.label}. Bunu istiyorsan "{only.label}" yaz ya da isteğini değiştir.'
             ),
         )
@@ -328,7 +349,10 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
         lines = [
             say(
                 en=f"{candidate.intro} Unfortunately {candidate.reason} Which do you prefer?",
-                tr=f"{candidate.intro} Maalesef {candidate.reason} Hangisini tercih edersin?",
+                tr=(
+                    f"{candidate.intro} Maalesef {_after_connector(candidate.reason)} "
+                    "Hangisini tercih edersin?"
+                ),
             )
         ]
     for index, option in enumerate(options, start=1):
@@ -904,6 +928,68 @@ def _placed_sequence(strategy: Mapping[str, Any]) -> bool:
     )
 
 
+def pin_anchors(req: Any) -> dict[str, str]:
+    """The first / last clips an order requirement names in the creator's own words."""
+
+    facts = getattr(req, "facts", None) or {}
+    out: dict[str, str] = {}
+    for fact, position in ANCHOR_FACTS:
+        words = facts.get(fact)
+        if isinstance(words, str) and _norm_text(words):
+            out[position] = _norm_text(words)
+    return out
+
+
+def is_pin_only_order(req: Any) -> bool:
+    """KRI-762: "this clip first, that clip last" and nothing else about the order.
+
+    Such a requirement is two clip PINS, not an ordering rule the contract cannot verify:
+    the clip-intent resolver places them or raises the clip picker, so the basis question
+    ("upload order or no fixed order?") has nothing to add. A rule fact (`by` / `direction`
+    / `order`) or a capture-time / upload-order key makes it a real ordering ask again.
+    """
+
+    facts = getattr(req, "facts", None) or {}
+    if not pin_anchors(req) or any(facts.get(k) for k in ("by", "direction", "order")):
+        return False
+    key = str(facts.get("key") or "").casefold()
+    return key not in CAPTURE_ORDER_KEYS and key != ATTACHMENT_ORDER_KEY
+
+
+def _pin_intents(strategy: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """The creator's first / last clip asks, as the server read them (any resolution)."""
+
+    return [
+        i
+        for i in strategy.get("resolved_clip_intents") or []
+        if isinstance(i, Mapping)
+        and i.get("op") == "order"
+        and i.get("position") in ("first", "last")
+        and not i.get("order_by")
+        and not i.get("placeholder")
+    ]
+
+
+def _placed_pin_positions(strategy: Mapping[str, Any]) -> set[str]:
+    """Positions ("first" / "last") whose clip the server actually found."""
+
+    return {
+        str(i["position"])
+        for i in _pin_intents(strategy)
+        if i.get("status", "resolved") == "resolved" and i.get("assignments")
+    }
+
+
+def _named_pin_positions(strategy: Mapping[str, Any], brief: Any) -> set[str]:
+    """Positions the creator named a clip for, in the brief or as a clip intent."""
+
+    named = {str(i["position"]) for i in _pin_intents(strategy)}
+    for req in _live(brief):
+        if req.kind == "order":
+            named |= set(pin_anchors(req))
+    return named
+
+
 def _order_basis(
     strategy: Mapping[str, Any], brief: Any, rows: list[Any], cap: ChoiceCapability
 ) -> UnresolvedChoice | None:
@@ -916,9 +1002,10 @@ def _order_basis(
         key = str((req.facts or {}).get("key") or "").casefold()
         if key in CAPTURE_ORDER_KEYS:
             capture_ids.append(str(req.id))
-        elif key != ATTACHMENT_ORDER_KEY:
+        elif key != ATTACHMENT_ORDER_KEY and not is_pin_only_order(req):
             # A key-less or non-capture rule ("clips 1, 2, 3 in that sequence", "along my
-            # route") the contract cannot verify from the approved media.
+            # route") the contract cannot verify from the approved media. First / last
+            # pins are not one (KRI-762): the clip-intent resolver owns them.
             rule_ids.append(str(req.id))
             rule_text.append(_norm_text(req.description or ""))
     wants_capture = strategy.get("ordering_choice") == "chronological" or bool(capture_ids)
@@ -989,6 +1076,10 @@ def _order_basis(
             tr="Bu sırayı kliplerinle karşılaştırıp doğrulayamıyorum, bu yüzden söz veremem.",
         )
         covered = rule_ids
+    # KRI-762: upload order is never the recommended answer against a first / last clip the
+    # creator named and the server has not placed (it would open or close on the wrong clip).
+    # Placed pins are seated on top of any basis, so they do not argue with it.
+    pins_unplaced = bool(_named_pin_positions(strategy, brief) - _placed_pin_positions(strategy))
     options = [
         _option(
             OPT_ATTACHMENT_ORDER,
@@ -997,7 +1088,7 @@ def _order_basis(
                 "The clips play in the order they were added to this project.",
                 "Klipler projeye eklendikleri sırayla oynar.",
             ),
-            recommended=True,
+            recommended=not pins_unplaced,
             aliases=_ATTACHMENT_ALIASES,
             tr_aliases=_ATTACHMENT_TR_ALIASES,
         )
@@ -1025,6 +1116,7 @@ def _order_basis(
                 "Belirli bir sıra vaat etmem ya da kontrol etmem; klipler yine de "
                 "mantıklı bir sırayla oynar.",
             ),
+            recommended=pins_unplaced,
             aliases=(
                 "without order",
                 "no order",
@@ -2706,6 +2798,20 @@ def _disclose(note: str, source: object) -> str:
     )
 
 
+def _pins_description(pins: Mapping[str, str]) -> str:
+    """The pin-only requirement text that outlives an "unordered" answer."""
+
+    first, last = pins.get("first"), pins.get("last")
+    if first and last:
+        return say(
+            en=f"start with {first}; end with {last}",
+            tr=f"{first} ile başla; {last} ile bitir",
+        )
+    if first:
+        return say(en=f"start with {first}", tr=f"{first} ile başla")
+    return say(en=f"end with {last}", tr=f"{last} ile bitir")
+
+
 def answered_brief(brief: Any, strategy: Any) -> Any:
     """``brief`` with the creator's answers applied to the requirements they resolve.
 
@@ -2763,7 +2869,22 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                         }
                     )
                 elif option == OPT_UNORDERED:
-                    changed[req.id] = req.model_copy(update={"status": "superseded"})
+                    pins = pin_anchors(req)
+                    if pins and _placed_pin_positions(data):
+                        # KRI-762: "no fixed order" drops the basis, not the clips the
+                        # creator pinned first / last and the server placed.
+                        changed[req.id] = req.model_copy(
+                            update={
+                                "facts": {
+                                    fact: pins[position]
+                                    for fact, position in ANCHOR_FACTS
+                                    if position in pins
+                                },
+                                "description": _pins_description(pins),
+                            }
+                        )
+                    else:
+                        changed[req.id] = req.model_copy(update={"status": "superseded"})
             elif (
                 kind == CONFLICT_VOICE_VS_DURATION
                 and option == OPT_MATCH_VOICE
