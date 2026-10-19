@@ -219,7 +219,9 @@
       "KriaUITests/DrawingJourneyUITests/testAnimationTabKeepsItsLayoutWhateverTheEntranceIs",
       "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability",
       "KriaUITests/GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview",
-      "KriaUITests/NativeSourceWindowUITests/testRangeSheetSlidesAndResizesTheWindow"
+      "KriaUITests/NativeSourceWindowUITests/testRangeSheetSlidesAndResizesTheWindow",
+      "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingClipReordersKeepsLengthAndUndoesInOneStep",
+      "KriaUITests/NativeEditorInspectorUITests/testQuickSwipeAcrossAClipSeeksInsteadOfReordering"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
