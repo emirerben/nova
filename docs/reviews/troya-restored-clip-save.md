@@ -32,3 +32,22 @@ this record is not evidence of a completed production journey.
 Local evidence is under `/private/tmp/troya-live-ui`: the physical
 `restored-source-save-only-1792432099.xcresult`,
 `restored-source-state-images`, and `restored-save-api-green.log`.
+
+## CI scrub gesture correction
+
+CI 39298590464 and a local reproduction failed the slow-scrub UI scenario.
+The test used 5% of the scroll viewport height as a supposed ruler position.
+The recorded pointer was at y=576.65 with the clip starting at y=585: this
+selected the second clip instead of reliably scrubbing, and subsequent drags
+could trim its duration to 0.226 seconds (0.212 on CI). Diagnostic snapshots
+showed unchanged timeline positions across the supposed ruler drags.
+
+The test now uses the visible Original audio lane for every scrub, reusing the
+same observed-geometry helper already used for its selected-clip checks. All
+preview color, outro, reverse-scrub, pause, and unchanged-duration assertions
+are retained; no timeout, retry, threshold, or coverage exclusion was added.
+The corrected scenario passed with zero failures in 52.760 seconds. Evidence:
+`restored-save-scrub-repro.xcresult`, `restored-save-scrub-trace.xcresult`, and
+`restored-save-scrub-audio.xcresult` under the same local evidence directory.
+This is a test targeting correction; it does not establish physical-device
+research/export success.
