@@ -56,6 +56,27 @@ The roadmap is the Projects view grouped by `Theme` or filtered by `Stage`. Ther
 
 In Progress on start, In Review when the PR opens, Done when the PR merges into `main`. A project is Completed when all its issues are Done or Canceled; post a status update first.
 
+## Fix chains: the second-fix-PR rule
+
+Trigger: a KRI ticket's **second `fix` PR has merged** (counted by `fix`-prefixed commit subjects naming the ticket on `main`). `scripts/preship-check.sh` step 7 warns (never blocks) when the branch's ticket already has two or more.
+
+Before a **third** fix PR on that ticket, write a failure-mode list in the ticket or the PR body. One line per way the feature can still fail, each either:
+
+- names the test that already covers it, or
+- is marked `uncovered - adding test X` (and X lands in the same PR).
+
+Template:
+
+```
+Failure modes for KRI-<n> (after fix #2)
+- <shape / input / state> -> <expected outcome> | covered by <test id>
+- <shape / input / state> -> <expected outcome> | uncovered - adding <test id>
+```
+
+Why: KRI-736 (editor Save) took five fix PRs in one day because each fix covered only the case that had just broken. A listed matrix, with new cases added as rows rather than new files, is the model (KRI-750). If the list cannot be written, the fix is not understood yet: stop and investigate before the third PR.
+
+Watch item: the next ticket that hits two fix PRs should show this list in its third PR; if it does not, the rule is not working and gets tightened.
+
 ## Weekly review (`/roadmap review`)
 
 - Group projects by Theme; show status, open issue count, stale In Progress issues (no update in 7 days) and open `Rollout:` issues.
