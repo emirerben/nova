@@ -47,7 +47,8 @@ _FILLER_WORDS = frozenset(
         "a an the this that it one and then after next finally followed by first last start "
         "end beginning ending opening closing at with in to of put use show play order clip "
         "clips video videos file files footage shot shots ve sonra ardindan ilk son sonda "
-        "sonunda en basta once klip klibi klipler videosu dosya dosyasi ile bu s"
+        "sonunda en basta once klip klibi klipler videosu dosya dosyasi ile bu s "
+        "klibini klibine klibinden klipleri klipten"
     ).split()
 )
 

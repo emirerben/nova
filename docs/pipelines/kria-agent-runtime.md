@@ -378,6 +378,18 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   CLIP_INTENT_EXCLUDE_ENABLED=false -a nova-video`, then restart api and worker.
   Guards: `tests/kria/test_kri667_clip_exclusions.py`, the KRI-667 cases in
   `tests/agents/test_clip_intent_planner.py`.
+  *Look-alike and clashing excludes (KRI-761, Merope café M1)*: `app/kria/clip_exclusions.py`.
+  An exclude the resolver matched to a clip another ask pins (a first/last placement, a
+  creator-written label, media the strategy places) or to 2+ clips only just over the bar
+  (< 0.9) is not guessed: the planner asks with the clip picker (category op `exclude`, the
+  creator taps the clips to leave out, pinned clips are never offered, the matches come
+  pre-ticked). Taps and typed file names are the creator's word and are never asked again;
+  the answer rides `fold_clip_selections`, so it holds on later turns. A file name beside
+  an exclude ("M1_05 klibini") now settles without the resolver (`picker_eligible` is true
+  for `exclude`). An exclude the resolver matched in the head draft that matches nothing
+  now keeps that match (`carry_forward_exclusions`, reads `CreatorEditDraft`, fails open).
+  Picker off (`KRIA_CLIP_SELECTION_QUESTIONS_ENABLED=false`) = the silent pin-wins of
+  KRI-667. Guard: `tests/kria/test_kri761_look_alike_exclusions.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
   none of those sources, the visible opening title is omitted; `Montage` remains
