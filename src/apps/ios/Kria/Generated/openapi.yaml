@@ -1083,6 +1083,16 @@
           "media": {
             "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
           },
+          "media_collection_cache_only": {
+            "default": true,
+            "title": "Media Collection Cache Only",
+            "type": "boolean"
+          },
+          "media_collections": {
+            "default": false,
+            "title": "Media Collections",
+            "type": "boolean"
+          },
           "media_library": {
             "default": false,
             "title": "Media Library",
