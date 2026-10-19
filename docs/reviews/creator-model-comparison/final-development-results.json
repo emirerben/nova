@@ -182,5 +182,12 @@
   "original_live_journals_unchanged": true,
   "structural_regrade": "One synthetic false rejection corrected against the same returned bytes; original status retained.",
   "scores": "No population reliability rate, aggregate quality score or human preference inferred from these related examples.",
-  "privacy": "No creator text, raw output, owned job IDs, grant keys, provider request IDs or letter-to-provider mapping in this aggregate."
+  "privacy": "No creator text, raw output, owned job IDs, grant keys, provider request IDs or letter-to-provider mapping in this aggregate.",
+  "source_provenance_audit": {
+    "prepared_inputs_exact": 20,
+    "selected_main_reimports_passed": 10,
+    "current_comparison_affected": false,
+    "older_initial_main_context_corrected_to_reconstruction": 1,
+    "details": "provenance-corrections.json"
+  }
 }

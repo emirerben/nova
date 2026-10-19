@@ -256,6 +256,12 @@ def prepare_case(case, arm, *, allow_holdout=False):
         "synthetic_control",
     ):
         raise ValueError("source provenance required")
+    if (
+        case.get("source_kind") == "exact_invocation"
+        and case.get("origin_input_sha256")
+        and case["origin_input_sha256"] != digest(case.get("input"))
+    ):
+        raise ValueError("normalized recorded input cannot be used as exact")
     agent = build_agent(case["agent"], arm, None)
     validated = agent.Input.model_validate(case["input"])
     prompt = agent.render_prompt(validated)

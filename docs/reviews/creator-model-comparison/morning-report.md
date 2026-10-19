@@ -78,6 +78,14 @@ and a word timeline chart are shown privately. These are state observations, not
 a watched-render or human quality verdict. All three persistent-title strategies
 carry the exact three literals and requested corners in structured fields.
 
+A final provenance audit corrected an older initial-pilot label: one Main context
+was normalized during validation (`creative_copy_state`) and must be interpreted
+as a reconstructed real context. Original inference journals and charges are
+unchanged. Two of 24 candidate Main imports are now rejected from exact use; all
+ten selected Main inputs reimport exactly, so the current twenty-case corpus and
+seven-request comparison are unaffected. See `provenance-corrections.json`.
+Future freezes refuse a recorded-origin hash mismatch.
+
 ## Remaining evidence
 
 The full model-selection experiment is **not complete**. These are the exact gaps:

@@ -1,6 +1,9 @@
 # Initial funded real-request pilot — 19 October 2026
 
-Historical phase report. Current scope, accounting and evidence are in
+Historical phase report. Provenance correction: one initial Main context was
+normalized during validation and is reconstructed, not an exact historical input.
+See `provenance-corrections.json`; original inference bytes and money are unchanged.
+Current scope, accounting and evidence are in
 [morning report](morning-report.md) and `final-development-results.json`.
 
 The approved inference pilot ran within budget. **Keep production unchanged.**

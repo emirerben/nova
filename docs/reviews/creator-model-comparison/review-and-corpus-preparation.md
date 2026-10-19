@@ -150,7 +150,9 @@ excluded from creative-direction ranking.
 
 The user requested other real content made in the app, without requiring manual
 creator nominations. Complete Main traces from five already approved sources
-yielded 24 exact-input imports. Four selected non-lip-sync cases cover a constrained
+yielded 24 candidate imports; the final exactness audit rejects two normalized
+records from exact use. All selected inputs pass the stricter audit. Four selected
+non-lip-sync cases cover a constrained
 travel montage, a grounded comic hook, a tone correction to a hook, and persistent
 literal titles. Each selected input has a current item/owner binding, no nested
 redactions and a matching creator event before the next creator turn. All source

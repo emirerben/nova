@@ -21,8 +21,11 @@ def require_scratch_database(url):
     parsed = make_url(url)
     if (
         parsed.get_backend_name() != "postgresql"
-        or parsed.host not in (None, "localhost", "127.0.0.1", "::1")
+        or parsed.host not in ("localhost", "127.0.0.1", "::1")
         or not (parsed.database or "").endswith("_test")
+        # libpq query options can override the URL's apparent host/database.
+        # An omitted host can instead inherit a remote PGHOST/PGSERVICE.
+        or parsed.query
     ):
         raise ValueError("comparison persistence requires local PostgreSQL *_test database")
 

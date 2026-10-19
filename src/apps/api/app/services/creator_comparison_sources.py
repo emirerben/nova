@@ -14,6 +14,17 @@ from app.services.creator_comparison_capture import sanitize_input
 from app.services.request_following_cases import digest
 
 
+def _require_unredacted(value):
+    if isinstance(value, dict):
+        if value.get("redacted"):
+            raise ValueError("redacted recorded input is incomplete")
+        for child in value.values():
+            _require_unredacted(child)
+    elif isinstance(value, list):
+        for child in value:
+            _require_unredacted(child)
+
+
 def _bound_case(export, *, input, agent, identity, captured_at, source_kind):
     receipt = export["eligibility"]
     review = export["candidate"]["intent_review"]
@@ -60,6 +71,8 @@ def _bound_case(export, *, input, agent, identity, captured_at, source_kind):
 def from_recorded_main(export, recorded):
     from app.agents.main_creator import MainCreatorAgent
 
+    if recorded.get("agent_name") != "nova.creator.main":
+        raise ValueError("recorded Main invocation required")
     input = copy.deepcopy(recorded["input_json"])
     recovered = []
     for key, value in input.items():
@@ -68,15 +81,39 @@ def from_recorded_main(export, recorded):
                 raise ValueError("nonempty redaction cannot be recovered")
             input[key] = ""
             recovered.append(key)
-    events = export["capture"]["sections"]["events"]
-    if not any(
-        e.get("kind") == "user_message"
-        and e.get("actor") == "user"
-        and e.get("content") == input["user_message"]
-        for e in events
-    ):
-        raise ValueError("recorded request is not in the owned source")
+    _require_unredacted(input)
+    sections = export["capture"]["sections"]
+    item_id = (sections.get("plan_item") or {}).get("id")
+    if not item_id or (input.get("capability_manifest") or {}).get("item_id") != item_id:
+        raise ValueError("recorded Main item differs from owned source")
+
+    def timestamp(value):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("complete source timestamp required") from exc
+        if parsed.tzinfo is None:
+            raise ValueError("source timestamps must have time zones")
+        return parsed
+
+    invoked = timestamp(recorded.get("created_at"))
+    users = [
+        (i, e)
+        for i, e in enumerate(sections["events"])
+        if e.get("kind") == "user_message" and e.get("actor") == "user"
+    ]
+    matches = []
+    for offset, (index, event) in enumerate(users):
+        if event.get("content") != input["user_message"]:
+            continue
+        end = timestamp(users[offset + 1][1].get("created_at")) if offset + 1 < len(users) else None
+        if timestamp(event.get("created_at")) <= invoked and (end is None or invoked < end):
+            matches.append(index)
+    if len(matches) != 1:
+        raise ValueError("one matching creator turn required")
     validated = MainCreatorAgent.Input.model_validate(input)
+    if digest(validated.model_dump(mode="json")) != digest(input):
+        raise ValueError("recorded Main input changed during validation; not exact")
     result = _bound_case(
         export,
         input=validated.model_dump(mode="json"),
@@ -90,6 +127,7 @@ def from_recorded_main(export, recorded):
         origin_prompt_version=recorded["prompt_version"],
         origin_input_sha256=digest(input),
         recovered_empty_fields=recovered,
+        source_pointer=f"/sections/events/{matches[0]}/content",
     )
     return result
 
@@ -167,19 +205,9 @@ def from_recorded_copilot(export, debug, *, run_id, request_event_index):
     recorded = matches[0]
     raw = copy.deepcopy(recorded.get("input_json"))
 
-    def complete(value):
-        if isinstance(value, dict):
-            if value.get("redacted"):
-                raise ValueError("redacted recorded input is incomplete")
-            for child in value.values():
-                complete(child)
-        elif isinstance(value, list):
-            for child in value:
-                complete(child)
-
-    complete(raw)
+    _require_unredacted(raw)
     validated = EditCopilotInput.model_validate(raw).model_dump(mode="json")
-    if validated != raw or not validated["variant_snapshot"]:
+    if digest(validated) != digest(raw) or not validated["variant_snapshot"]:
         raise ValueError("complete unchanged recorded editor input required")
     events = sections["events"]
     if not 0 <= request_event_index < len(events):

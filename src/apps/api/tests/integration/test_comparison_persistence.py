@@ -19,6 +19,11 @@ from app.services.request_following_cases import digest
         "postgresql://remote.example/nova_test",
         "postgresql://localhost/nova_creator_model_comparison_pilot",
         "sqlite:///nova_test",
+        "postgresql:///nova_test",
+        "postgresql://localhost/nova_test?host=remote.example",
+        "postgresql://localhost/nova_test?hostaddr=203.0.113.1",
+        "postgresql://localhost/nova_test?dbname=nova",
+        "postgresql://localhost/nova_test?service=production",
     ],
 )
 def test_persistence_refuses_live_or_nonlocal_database(url):

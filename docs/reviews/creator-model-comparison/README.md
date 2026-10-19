@@ -60,3 +60,8 @@ Earlier phases remain historical records: [initial pilot](pilot-report.md),
 [corpus preparation](review-and-corpus-preparation.md),
 [schema feasibility](schema-feasibility.md), [cost record](cost-estimate.md) and
 [verification](verification.md). Their phase-specific totals are not current totals.
+
+The [provenance correction](provenance-corrections.json) supersedes an older initial
+Main context's exact-input label. It was normalized during validation and is a
+reconstruction. The current twenty prepared inputs and seven-request comparison
+pass the stricter source audit; historical journals and money are unchanged.

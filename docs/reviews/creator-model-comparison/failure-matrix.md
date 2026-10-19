@@ -105,3 +105,14 @@ choices remain those of the production compiler:
 6. Existing `make verify-editor-timeline` and the editor Save matrix provide
    product-contract regression evidence. They do not prove these private
    candidates were rendered, previewed on a phone or exported successfully.
+
+Before final hardening: a PostgreSQL URL can say `localhost/*_test` in its main
+fields while query options override the host, host address, database or service.
+The scratch verifier must reject those DSNs before writes, not trust only the
+parsed host/database fields. No query overrides are needed by the task scratch URL.
+
+Before final source hardening: Main imports must also reject a wrong agent/item,
+missing/naive invocation or event time, an invocation outside the creator turn,
+nested redactions and validation that changes the recorded input. A normalized
+historical record must not remain eligible as an exact-input comparison. Audit the
+prepared/pilot inputs without rewriting historical journals or making paid calls.

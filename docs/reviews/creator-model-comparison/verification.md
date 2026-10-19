@@ -111,6 +111,30 @@ remain outside Git. Derived files are registered for conservative cleanup. The
 loopback server checks current eligibility before serving page bodies; direct HTML
 files still require a separate eligibility/purge check before reuse.
 
+## Final source and database hardening
+
+After the broad integration run, **58 focused checks passed** (1.97 seconds).
+They include five new DSN rejection cases: query overrides for host, host address,
+database and service, plus a missing host that could inherit remote environment
+settings. Scratch writes require an explicit loopback host, a `_test` database
+and no query overrides. The failure cases were demonstrated before the fix.
+
+The reusable Main importer now binds agent identity, owned item and the exact
+timezone-aware creator-turn window; it rejects redacted or normalized inputs.
+Future freezing rejects recorded-origin hash mismatches. All ten selected Main
+inputs reimport exactly. Two of 24 candidate imports fail exactness; one older
+initial-pilot context had also been normalized. Its public provenance is corrected
+separately, without rewriting frozen journals, repeating calls or changing cost.
+The current twenty-case prepared corpus and seven-request comparison are unaffected.
+Logs: `/private/tmp/nova-comparison-final-source-hardening.log`; source audit and
+raw-record reconciliation stay private. See `provenance-corrections.json`.
+
+The private review handler also passed HTTP checks proving eligibility-check
+failure returns no candidate body and a foreign Host is refused. Current sources
+passed read-only rechecks. The pre-push scanner's sole medium warning identified
+the synthetic `expired-grant` integration-test value; it is not a credential.
+An additional scan found zero current source identity/grant values in the Git diff.
+
 ## Limits
 
 No production routing, collection cohort, selected-model rollout or deployment was

@@ -324,3 +324,24 @@ def test_persistence_regrades_structural_candidate_without_rewriting_live_status
     assert report["rows"][0]["model_status"] == "structural_failed"
     assert report["rows"][0]["original_structural_failures"] == row["structural_failures"]
     assert journal_path.read_bytes() == before
+
+
+def test_normalized_import_cannot_be_frozen_as_exact():
+    import json
+    from pathlib import Path
+
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1] / "fixtures/agent_evals/main_creator/montage_strategy.json"
+        ).read_text()
+    )
+    case = {
+        "id": "historical",
+        "agent": "main_creator",
+        "source_kind": "exact_invocation",
+        "split": "development",
+        "input": fixture["input"],
+        "origin_input_sha256": "different-recorded-input",
+    }
+    with pytest.raises(ValueError, match="exact"):
+        prepare_case(case, Arm("O", "gpt-6.1-sol", "medium"))
