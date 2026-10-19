@@ -871,20 +871,13 @@
       ],
       "paths": [
         "src/apps/api/app/agents/_registry.py",
-        "src/apps/api/app/agents/_runtime.py",
         "src/apps/api/app/agents/chip_suggester.py",
         "src/apps/api/app/cli/kria_contracts.py",
-        "src/apps/api/app/config.py",
-        "src/apps/api/app/kria/api_schemas.py",
-        "src/apps/api/app/kria/runtime.py",
-        "src/apps/api/app/routes/creation_threads.py",
-        "src/apps/api/app/services/ai_cost_control.py",
         "src/apps/api/app/services/suggestion_chip_copy.py",
         "src/apps/api/app/services/suggestion_chips.py",
         "src/apps/api/app/services/suggestion_serve.py",
         "src/apps/api/app/services/suggestion_store.py",
         "src/apps/api/app/tasks/kria_clip_understanding.py",
-        "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/app/tasks/kria_suggester.py",
         "src/apps/api/app/worker.py",
         "src/apps/api/prompts/chip_suggester.txt",
@@ -981,7 +974,6 @@
         "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_transitions_already_set.json",
         "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_turkish.json",
         "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_turkish_music_voice.json",
-        "src/apps/api/tests/fixtures/kria_turns/tools.json",
         "src/apps/api/tests/kria/test_plan_review.py",
         "src/apps/api/tests/routes/test_kria_runtime.py",
         "src/apps/api/tests/scripts/test_suggestion_chip_funnel.py",
@@ -989,14 +981,8 @@
         "src/apps/api/tests/services/test_suggestion_chips_postgres.py",
         "src/apps/api/tests/tasks/test_task_time_limits.py",
         "src/apps/ios/Kria/Core/CreationFlow.swift",
-        "src/apps/ios/Kria/Core/Services.swift",
         "src/apps/ios/Kria/Core/SuggestionChips.swift",
-        "src/apps/ios/Kria/Features/CanonicalChatComponents.swift",
-        "src/apps/ios/Kria/Features/ChatUITestTransport.swift",
-        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
-        "src/apps/ios/Kria/Generated/openapi.yaml",
-        "src/apps/ios/Tests/KriaTests/SuggestionChipsTests.swift",
-        "src/apps/ios/Tests/KriaUITests/CreationUITests.swift"
+        "src/apps/ios/Tests/KriaTests/SuggestionChipsTests.swift"
       ]
     }
   ]
