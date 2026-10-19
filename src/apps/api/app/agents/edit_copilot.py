@@ -45,7 +45,7 @@ log = structlog.get_logger()
 
 # v82 (KRI-716): a group title is one add_text across the stretch, never one per clip.
 # v81 (KRI-667/KRI-669): keep claimed_ops honesty and measured heading placement together.
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-19-v84"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-19-v85"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1310,6 +1310,37 @@ def _format_snapshot(snapshot: dict) -> str:
         }
         lines.append("\nSAFE SOURCE POOL SUMMARY (counts/digests only; no source paths):")
         lines.append(_field(json.dumps(summary, ensure_ascii=False), max_chars=1800))
+
+    source_pool = snapshot.get("source_pool")
+    if isinstance(source_pool, list):
+        unused = [
+            row
+            for row in source_pool
+            if isinstance(row, dict) and not row.get("used") and _bulk_row_ready(row)
+        ]
+        lines.append(
+            f"\nUNUSED SOURCE ASSETS: {len(unused)} ready uploaded sources "
+            "outside the active timeline."
+        )
+        lines.append(
+            "add_unused_sources can restore ALL eligible sources of a media kind; never imply "
+            "it selects only a named subset. Reorder newly added clips on the next turn, "
+            "once they have timeline indices."
+        )
+        for row in unused[:20]:
+            seen = row.get("seen") or {}
+            description = seen.get("text") if isinstance(seen, dict) else ""
+            lines.append(
+                f"- clip_index={row.get('clip_index')!r} "
+                f"kind={_field(row.get('kind'), max_chars=12)!r} "
+                f"duration={_fmt_num(_first_number(row, ('duration_s',)))}s "
+                f"seen={_field(description, max_chars=240)!r}"
+            )
+        if len(unused) > 20:
+            lines.append(
+                f"Descriptions shown for 20 of {len(unused)} sources; "
+                "do not infer the remaining subjects."
+            )
 
     guided_revision = snapshot.get("guided_revision")
     if isinstance(guided_revision, dict):
