@@ -35,6 +35,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.agents._runtime import RunContext
 from app.agents._schemas.creator_agent import CreativeStrategy
@@ -45,6 +47,7 @@ from app.agents.clip_request_resolver import (
 )
 from app.agents.main_creator import MainCreatorAgent
 from app.config import settings
+from app.database import sync_session
 from app.kria import planner
 from app.kria.clip_exclusions import (
     BORDERLINE_BELOW,
@@ -53,12 +56,14 @@ from app.kria.clip_exclusions import (
     earlier_exclusions,
     exclusion_question,
 )
+from app.kria.drafts import KriaDraftDocument, canonical_snapshot
 from app.kria.reply_language import bind_reply_language, release_reply_language
+from app.models import CreationThread, CreatorEditDraft
 from app.schemas.clip_intents import ClipAssignment, ClipIntent, ResolvedClipIntent
 from app.services import clip_intent_planning as planning
 from app.services.clip_intent_planning import PlannedIntentResolution
 from app.services.clip_intent_resolution import IntentClip, IntentResolution
-from app.services.clip_selection import ClipSelections, SelectionEntry
+from app.services.clip_selection import ClipSelections, SelectionEntry, fold_clip_selections
 from tests.kria.test_kri667_clip_exclusions import (
     ALL,
     CASE,
@@ -67,6 +72,7 @@ from tests.kria.test_kri667_clip_exclusions import (
     OUTDOOR,
     _agent_input,
 )
+from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 
 
 @pytest.fixture(autouse=True)
@@ -332,6 +338,18 @@ def test_earlier_exclusions_read_a_draft_snapshot_and_fail_open() -> None:
         assert earlier_exclusions(junk) == []  # j
 
 
+class _Savepoint:
+    async def __aenter__(self) -> _Savepoint:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
+
+
+def _fake_db(**kwargs: Any) -> SimpleNamespace:
+    return SimpleNamespace(begin_nested=lambda: _Savepoint(), rollback=AsyncMock(), **kwargs)
+
+
 async def test_the_planner_reads_the_head_draft_and_never_fails_the_turn() -> None:
     head = {
         "strategy": {
@@ -339,15 +357,58 @@ async def test_the_planner_reads_the_head_draft_and_never_fails_the_turn() -> No
         }
     }
     result = SimpleNamespace(scalar_one_or_none=lambda: head)
-    db = SimpleNamespace(execute=AsyncMock(return_value=result), rollback=AsyncMock())
+    db = _fake_db(execute=AsyncMock(return_value=result))
     [intent] = await planner._earlier_exclusions(db, uuid.uuid4())
     assert intent.op == "exclude"
-    # j: a database error, or a db that is not one, yields no earlier match.
-    broken = SimpleNamespace(
-        execute=AsyncMock(side_effect=RuntimeError("boom")), rollback=AsyncMock()
-    )
+    db.rollback.assert_awaited_once()  # the read does not pin a connection
+    # j: a database error, or a db that is not one, yields no earlier match and no rollback
+    # of the turn's own work.
+    broken = _fake_db(execute=AsyncMock(side_effect=RuntimeError("boom")))
     assert await planner._earlier_exclusions(broken, uuid.uuid4()) == []
+    broken.rollback.assert_not_awaited()
     assert await planner._earlier_exclusions(SimpleNamespace(), uuid.uuid4()) == []
+
+
+async def test_the_head_draft_in_a_real_database_feeds_the_earlier_match() -> None:
+    # The query itself, over real rows: only the head draft of the item is read.
+    user_id, thread_id, _session_id = _seed_runtime_project()
+    with sync_session() as db:
+        item_id = db.get(CreationThread, thread_id).active_plan_item_id
+        for revision, clip, head in ((1, "m-old", False), (2, "m05", True)):
+            document = KriaDraftDocument(
+                kind="strategy",
+                strategy={
+                    "edit_format": "montage",
+                    "target_duration_s": 20,
+                    "resolved_clip_intents": [json.loads(_exclude((clip, 0.9)).model_dump_json())],
+                },
+                intent="skip the clip",
+            )
+            body, digest = canonical_snapshot(document)
+            db.add(
+                CreatorEditDraft(
+                    creator_id=user_id,
+                    thread_id=thread_id,
+                    item_id=item_id,
+                    variant_key="first",
+                    draft_revision=revision,
+                    snapshot_json=body,
+                    snapshot_hash=digest,
+                    is_head=head,
+                )
+            )
+            db.flush()
+        db.commit()
+    engine = create_async_engine(
+        settings.database_url.replace("postgresql://", "postgresql+asyncpg://"), poolclass=NullPool
+    )
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            [intent] = await planner._earlier_exclusions(db, item_id)
+            assert await planner._earlier_exclusions(db, uuid.uuid4()) == []
+    finally:
+        await engine.dispose()
+    assert [a.media_id for a in intent.assignments] == ["m05"]
 
 
 # -- (a, b, g, h) resolution: file names and picker answers settle an exclude -------------
@@ -501,6 +562,67 @@ async def test_an_include_answer_is_not_an_exclude_answer_and_the_reverse(monkey
         clip_selections=exclude_answer,
     )
     assert len(seen) == 2
+
+
+async def test_the_creators_answer_to_the_question_holds_on_the_next_turn(monkeypatch) -> None:
+    # Ask -> tap -> the next turn re-plans the whole request with the ask reworded. The
+    # answer binds to the ask (its id), so the clip stays out and nobody is asked again.
+    asked = contested_exclusions(
+        [
+            _pin("c08"),
+            _exclude(
+                ("c08", 0.8),
+                ("c05", 0.8),
+                intent_id="exclude_caro_bending_down",
+                attribute="Caro'nun eğilip tabağı masaya bıraktığı klibi",
+            ),
+        ],
+        _montage(),
+    )
+    _text, question = exclusion_question(asked, CAFE)
+    [category] = question["categories"]
+    events = [
+        ("assistant", {"clip_question": question}),
+        (
+            "user",
+            {
+                "clip_selection": {
+                    "question_id": question["question_id"],
+                    "answers": [{"key": category["key"], "media_ids": ["c05"]}],
+                }
+            },
+        ),
+    ]
+    raw = {
+        "intents": [
+            {
+                "intent_id": "exclude_caro_bending_down",
+                "op": "exclude",
+                "attribute": "Caro'nun eğilip tabağı masaya bıraktığı klip",
+                "source_quote": "Caro'nun eğilip tabağı masaya bıraktığı klibi kullanma",
+            }
+        ],
+        "question": None,
+    }
+
+    def _run(self, input, *, ctx=None):  # noqa: A002, ANN001
+        return self.parse(json.dumps(raw), input)
+
+    monkeypatch.setattr(planning, "default_client", MagicMock())
+    monkeypatch.setattr(ClipIntentPlannerAgent, "run", _run)
+    seen = _resolver_spy(monkeypatch)
+    result = await planning.plan_and_resolve_clip_intents(
+        creator_request="Caro'nun eğilip tabağı masaya bıraktığı klibi kullanma",
+        latest_user_message="Caro'nun eğilip tabağı masaya bıraktığı klibi kullanma",
+        candidate_intents=None,
+        clips=CAFE,
+        run_context=RunContext(),
+        clip_selections=fold_clip_selections(events),
+    )
+    [intent] = result.resolution.intents
+    assert intent.media_ids() == ["c05"] and intent.assignments[0].evidence == "creator selected"
+    assert seen == []
+    assert contested_exclusions(result.resolution.intents, _montage()) == []
 
 
 # -- the turn, through the runtime-v2 planner (c, f, g, k) ---------------------------------

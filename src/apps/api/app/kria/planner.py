@@ -7,7 +7,6 @@ cannot author risk, target pins, idempotency identities, or completion claims.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import contextvars
 import copy
 import functools
@@ -3010,23 +3009,23 @@ async def _earlier_exclusions(db: AsyncSession, item_id: uuid.UUID) -> list[Reso
     """The ``exclude`` intents the item's head draft resolved (KRI-761); [] when unreadable.
 
     Fails open: this only lets an ask keep a match it already had, so no read problem may
-    cost the creator a turn. Releases the transaction, like the thread-event read before it.
+    cost the creator a turn. The read runs in a savepoint (a database error cannot poison
+    the turn's transaction) and releases the transaction like the thread-event read before it.
     """
     try:
-        snapshot = (
-            await db.execute(
-                select(CreatorEditDraft.snapshot_json)
-                .where(CreatorEditDraft.item_id == item_id, CreatorEditDraft.is_head.is_(True))
-                .order_by(CreatorEditDraft.updated_at.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        await db.rollback()
+        async with db.begin_nested():
+            snapshot = (
+                await db.execute(
+                    select(CreatorEditDraft.snapshot_json)
+                    .where(CreatorEditDraft.item_id == item_id, CreatorEditDraft.is_head.is_(True))
+                    .order_by(CreatorEditDraft.updated_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        await db.rollback()  # no connection pinned across the resolver and vision calls
         return earlier_exclusions(snapshot)
     except Exception as exc:  # noqa: BLE001 - an earlier match is a convenience, never a gate
         log.info("kria_earlier_exclusions_unreadable", error_type=type(exc).__name__)
-        with contextlib.suppress(Exception):
-            await db.rollback()
         return []
 
 
