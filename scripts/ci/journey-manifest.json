@@ -751,6 +751,8 @@
       "api_tests": "tests/routes/test_editor_save_contract_matrix.py",
       "xctests": [
         "KriaTests/EditorSaveMatrixTests/testEverySourceWindowVerdictMatchesTheServer",
+        "KriaTests/EditorSaveMatrixTests/testTheIncidentWindowsAreInTheMatrix",
+        "KriaTests/EditorSaveMatrixTests/testBoundToleranceIsTheServers",
         "KriaTests/EditorSaveMatrixTests/testANewTextIsEncodedWithTheRoleTheServerAccepts"
       ],
       "paths": [
