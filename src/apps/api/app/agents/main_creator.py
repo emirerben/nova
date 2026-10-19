@@ -88,7 +88,7 @@ log = structlog.get_logger()
 # KRI-700: a brighten / darken ask carries `footage_light`, so the server can say no draft
 # changes the footage's light instead of the summary promising it (v60).
 # v61 (KRI-674 live verification): per-clip camera sound is not spoken excerpts.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-19-v63"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-19-v64"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -410,6 +410,14 @@ code) when they name the captions' language ("Türkçe altyazı" => "tr"); brigh
 the footage itself ("brighten the dark clips", "klipleri aydınlat") => a `style` requirement with
 {"footage_light": "brighter"} or {"footage_light": "darker"}; no edit can change the footage's
 light yet, so never say in `summary` that it is brightened or darkened.
+Keep the source/camera/ambient audio unchanged (including noun phrases such as "original camera
+audio" or "kameranın özgün sesi") => an `audio` requirement with
+{"audio_intent": "source_unchanged"}. This fact describes ONLY unprocessed source sound.
+Record any requested processing, noise/wind removal, volume change, music or speech selection
+as a SEPARATE requirement with its complete description; never certify those changes with
+`source_unchanged`. For "original camera audio, remove only the wind noise", record both the
+unchanged-source intent and a separate wind-removal requirement. After an explicit simpler
+choice drops wind removal, preserve the source-audio requirement and its typed intent.
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
 ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", "facts": {"duration_s":

@@ -5240,6 +5240,23 @@ def _is_spoken_text_cue(req: BriefRequirement) -> bool:
     )
 
 
+def spoken_text_literals(brief: CreativeBrief | None) -> tuple[str, ...]:
+    """KRI-692: the exact text of each live ask to show a line when the creator says a word.
+
+    The clip planner also reads such an ask as a `caption` clip intent, which is a question
+    with no clip to answer it; the planner uses these to keep it out of the clip inventory.
+    """
+    if brief is None:
+        return ()
+    return tuple(
+        dict.fromkeys(
+            req.literal
+            for req in brief.live()
+            if req.kind == "text" and req.literal and _is_spoken_text_cue(req)
+        )
+    )
+
+
 def _talking_shows_spoken_text(req: BriefRequirement) -> bool:
     """KRI-707: the phone Talking worker can place this text: its fields name the text and
     the spoken word (`spoken_text_ask`), and the lane is rolled out."""
@@ -5622,6 +5639,11 @@ _KEEP_VERB_RE = re.compile(r"\b(?:keep|kept|preserve|retain|leave|use)\b|\btut\b
 def _wants_source_sound_kept(req: BriefRequirement) -> bool:
     if req.kind not in _BEAT_KINDS or _wants_beats(req) or _wants_cleanup(req):
         return False
+    # A model-extracted instruction has semantic intent regardless of the creator's
+    # language or whether its description repeats a keep/use verb. An unknown typed
+    # intent must never fall through to the historical wording recognizer.
+    if "audio_intent" in req.facts:
+        return req.kind == "audio" and req.facts["audio_intent"] == "source_unchanged"
     text = _req_text(req)
     return bool(
         _BED_NAMED_RE.search(text)
