@@ -5622,6 +5622,11 @@ _KEEP_VERB_RE = re.compile(r"\b(?:keep|kept|preserve|retain|leave|use)\b|\btut\b
 def _wants_source_sound_kept(req: BriefRequirement) -> bool:
     if req.kind not in _BEAT_KINDS or _wants_beats(req) or _wants_cleanup(req):
         return False
+    # A model-extracted instruction has semantic intent regardless of the creator's
+    # language or whether its description repeats a keep/use verb. An unknown typed
+    # intent must never fall through to the historical wording recognizer.
+    if "audio_intent" in req.facts:
+        return req.kind == "audio" and req.facts["audio_intent"] == "source_unchanged"
     text = _req_text(req)
     return bool(
         _BED_NAMED_RE.search(text)
