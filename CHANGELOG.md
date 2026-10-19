@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.54.0] - 2026-10-19
+
+### Changed
+- fix(kria): understand unchanged camera audio before approval (KRI-721) (#1687) <!-- release-pr: 1687 -->
+
 ## [0.80.53.0] - 2026-10-19
 
 ### Changed
