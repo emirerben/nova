@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.46.0] - 2026-10-19
+
+### Changed
+- fix(editor): text follows clip delete for every timeline archetype (KRI-715) (#1646) <!-- release-pr: 1646 -->
+
 ## [0.80.45.0] - 2026-10-19
 
 ### Changed
