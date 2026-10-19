@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.59.0] - 2026-10-19
+
+### Changed
+- fix: keep restored clips previewable and saveable through chat (#1698) <!-- release-pr: 1698 -->
+
+## [0.80.58.0] - 2026-10-19
+
+### Changed
+- feat(chat): footage-aware suggestion chips, iOS only, dark (KRI-756) (#1699) <!-- release-pr: 1699 -->
+
 ## [0.80.57.0] - 2026-10-19
 
 ### Changed

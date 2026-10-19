@@ -23,6 +23,8 @@
       "KriaUITests/CreationUITests/testNewChatShowsUsableFormatsWithoutWaitingForMoreReads",
       "KriaUITests/CreationUITests/testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap",
       "KriaUITests/CreationUITests/testReadySuggestionChipsApplyFromTapsNearCapsuleEdges",
+      "KriaUITests/CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips",
+      "KriaUITests/CreationUITests/testServerSuggestionChipTapNamesTheOfferedChipOnTheTurn",
       "KriaUITests/SlidePostUITests/testSlidePostCreationIsTheRichLayoutThenCreateThenKriaPropose",
       "KriaUITests/SlidePostUITests/testReadySlidePostOpenedFromDrawerNeverReachesVideoEditor",
       "KriaUITests/SlidePostUITests/testRichLayoutFromTheDrawerWhenCapabilitiesFailToLoad",
@@ -235,6 +237,7 @@
   },
   "sources": {
     "src/apps/ios/Kria/Core/CreationFlow.swift": "creation",
+    "src/apps/ios/Kria/Core/SuggestionChips.swift": "creation",
     "src/apps/ios/Kria/Features/CreationAttachments.swift": "creation",
     "src/apps/ios/Kria/Features/CreationConfirmationStage.swift": "creation",
     "src/apps/ios/Kria/Features/UploadViews.swift": "creation",

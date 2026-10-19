@@ -1,0 +1,36 @@
+{
+ "id": "dark_kind_guess",
+ "description": "opener_clip and pinned_text are dark (unproven). Guessed cids for them are not live.",
+ "context": "rd_plain_montage",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{guess:opener_clip}}",
+    "label_template": "Open on the first clip",
+    "why": null
+   },
+   {
+    "cid": "{{guess:pinned_text}}",
+    "label_template": "Add a corner line",
+    "why": null
+   },
+   {
+    "cid": "{{cid:sfx}}",
+    "label_template": "Add sound effects",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "kinds": [
+   "sfx"
+  ],
+  "drops": {
+   "unknown_cid": 2
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

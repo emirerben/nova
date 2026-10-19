@@ -104,6 +104,8 @@ final class CreationChatFixture: @unchecked Sendable {
     /// after a draft exists and then turns ready, like an upload that finishes while the editor is open.
     private var lateAssetPolls: [String: Int] = [:]
     private var answeredCapabilitiesRead = false
+    /// KRI-756: how many times each thread asked for its first-prompt chips (the first answer is `pending`).
+    private var suggestionAsks: [String: Int] = [:]
     /// `KRIA_CHAT_SLOW_READS` (KRI-640): GETs of one chat (or anything under it) and every capabilities read but the
     /// first. The project list and the create call stay fast.
     func isSlowRead(_ request: URLRequest) -> Bool {
@@ -159,6 +161,42 @@ final class CreationChatFixture: @unchecked Sendable {
         if end - start < 5 { return (422, "song_range_invalid", "Pick at least five seconds of your song.") }
         return nil
     }
+    /// KRI-756: the server's `SuggestionSetOut`, shaped like the real contract. `ready` once a render finished,
+    /// `first_prompt` while footage is attached and nothing was said, else `none`. The first ask of a first-prompt
+    /// set answers `pending` with chip #1 alone (clip understanding still running); later asks answer the full set,
+    /// under the same `set_id`, as the real server does.
+    private func fixtureSuggestions(id: String, thread: [String: Any]) -> [String: Any] {
+        func chip(_ rank: Int, _ kind: String, _ label: String, _ message: String, why: String? = nil) -> [String: Any] {
+            ["id": "sc_fixture_\(kind)", "kind": kind, "label": label, "message": message, "rank": rank, "default_edit": kind == "default_edit",
+             "anchor": [:] as [String: Any], "capability": "fixture", "why": why ?? NSNull(),
+             "label_source": why == nil ? "template" : "agent", "requires_protocol": NSNull()]
+        }
+        func set(_ state: String, status: String = "ok", wording: String = "agent", understanding: String = "done",
+                 retry: Int? = nil, _ chips: [[String: Any]]) -> [String: Any] {
+            ["schema_version": 1, "set_id": "sg_fixture_\(state)", "state": state, "status": status, "understanding": understanding,
+             "retry_after_s": retry ?? NSNull(), "wording": wording,
+             "anchor": ["media_digest": "fixture", "manifest_hash": NSNull(), "render_generation_id": NSNull(), "variant_id": NSNull()],
+             "chips": chips, "future_field": ["ignored": true]]
+        }
+        let events = thread["events"] as? [[String: Any]] ?? []
+        let media = (thread["state"] as? [String: Any])?["media"] as? [[String: Any]] ?? []
+        if (thread["job"] as? [String: Any])?["status"] as? String == "ready" {
+            return set("ready", [chip(1, "hook", "Add a hook", "Add a hook that matches the video"),
+                                 chip(2, "captions", "Add captions", "Add captions"),
+                                 chip(3, "music", "Turn the music down", "Turn the music down"),
+                                 chip(4, "transition", "Add transitions", "Add transitions between the clips")])
+        }
+        if events.contains(where: { $0["event_type"] as? String == "user_message" }) || media.isEmpty { return set("none", []) }
+        let lead = chip(1, "default_edit", "Let Kria cut the first version", ChatSubmission.mediaOnlyMessage)
+        suggestionAsks[id, default: 0] += 1
+        if suggestionAsks[id] == 1, ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS_PENDING"] != "0" {
+            return set("first_prompt", status: "pending", wording: "pending", understanding: "pending", retry: 2, [lead])
+        }
+        return set("first_prompt", [lead,
+                                    chip(2, "hook", "Add a hook to the opening", "Add a hook that matches the video", why: "the first shot is a quiet one"),
+                                    chip(3, "captions", "Add captions", "Add captions"),
+                                    chip(4, "sfx", "Add sound effects", "Add sound effects")])
+    }
     /// Returns nil when the request should fail without any HTTP response.
     func respond(_ request: URLRequest) -> (Int, Data)? {
         lock.lock(); defer { lock.unlock() }
@@ -177,6 +215,8 @@ final class CreationChatFixture: @unchecked Sendable {
             let talkingMaxClips = ProcessInfo.processInfo.environment["KRIA_CHAT_TALKING_MAX_CLIPS"].flatMap(Int.init) ?? 10
             var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", talkingMaxClips), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" { capabilities["live_plan_review_enabled"] = true }
+            // `KRIA_SUGGESTION_CHIPS=1` (KRI-756): the server offers footage-aware suggestion chips. Unset = an old server.
+            if ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS"] == "1" { capabilities["suggestion_chips"] = true }
             // `KRIA_CHAT_PLAN_BLOCKS_VERSION=2`: the server speaks live-plan contract v2 (structured payloads,
             // 8 sections including post_caption, Review entry points). Absent = an older feed-only server.
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1",
@@ -312,6 +352,11 @@ final class CreationChatFixture: @unchecked Sendable {
         guard parts.count >= 2, var thread = threads[parts[1]] else { return response(["detail": "Fixture route missing"], status: 404) }
         let id = parts[1]
         if parts.count == 3, parts[2] == "brief" { return response(Self.fixtureBrief(threadID: id)) }
+        // KRI-756 (`KRIA_SUGGESTION_CHIPS=1`): the server's chip sets, shaped like `SuggestionSetOut`. Unset = a server without the route.
+        if parts.count == 3, parts[2] == "suggestions" {
+            guard ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS"] == "1" else { return response(["detail": "Not Found"], status: 404) }
+            return response(fixtureSuggestions(id: id, thread: thread))
+        }
         // KRI-561: the signed song URL. The fixture hands out a generated tone as a file URL (no network).
         if parts.count == 3, parts[2] == "song-audio", ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" {
             guard let url = SongTimelineFixture.audioURL() else { return response(["detail": "Fixture audio missing"], status: 404) }
@@ -517,12 +562,19 @@ final class CreationChatFixture: @unchecked Sendable {
                 userPayload["scope"] = scope
                 if let edits = body["manual_edits"] { userPayload["manual_edits"] = edits }
             }
+            // KRI-756: like the server, a stored user message keeps the chip tap it carried. `KRIA_SUGGESTION_CHIPS_ECHO=1`
+            // answers with the received tap so the UI test can pin the wire shape (and that a plain send carries none).
+            if let tap = body["suggestion"] as? [String: Any] { userPayload["suggestion"] = tap }
             append("user_message", role: "user", text: body["message"] as? String, payload: userPayload, clientEventID: turnID)
             if let scope = body["scope"] as? [String] {
                 review.scopedTurn(id: id, initial: reviewInitialBlocks, scope: scope, edits: body["manual_edits"] as? [[String: Any]] ?? [], turnID: turnID)
                 append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": turnID, "turn_value": "response"])
                 append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
                 append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS_ECHO"] == "1" {
+                let tap = body["suggestion"] as? [String: Any]
+                append("assistant_response", text: "Got it. suggestion[\(tap?["set_id"] as? String ?? "none")/\(tap?["chip_id"] as? String ?? "none")]",
+                       payload: ["turn_id": turnID, "turn_value": "response"])
             } else if runtime == 2, let replyFixture = ProcessInfo.processInfo.environment["KRIA_CHAT_REPLY_FIXTURE"] {
                 // Reply-UX fixtures (options / receipts / receipt-single), shaped like the server's `assistant_response`.
                 let text = body["message"] as? String ?? ""

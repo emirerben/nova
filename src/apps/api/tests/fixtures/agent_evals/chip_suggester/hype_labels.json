@@ -1,0 +1,37 @@
+{
+ "id": "hype_labels",
+ "description": "Hype / marketer register in labels is stopped.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "default_label": "Make it viral",
+  "ranked": [
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Go viral with a banger hook",
+    "why": null
+   },
+   {
+    "cid": "{{cid:sfx}}",
+    "label_template": "Unlock next level sound",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "wording": "fallback",
+  "kinds": [
+   "default_edit",
+   "hook",
+   "sfx"
+  ],
+  "label_source": {
+   "default_edit": "template",
+   "hook": "template",
+   "sfx": "template"
+  },
+  "fallback_reason": "label_rejected"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

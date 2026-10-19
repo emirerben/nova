@@ -1,0 +1,53 @@
+{
+ "id": "good_en_first_prompt",
+ "description": "A realistic first-prompt answer: reorders the levers by what the footage shows, rewords three labels inside the vocabulary and writes grounded whys.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "default_label": "Have Kria cut the first version",
+  "ranked": [
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Open with a hook",
+    "why": "The whisking close-up opens the video"
+   },
+   {
+    "cid": "{{cid:sfx}}",
+    "label_template": "Add a few whooshes",
+    "why": "Packing orders has no sound of its own"
+   },
+   {
+    "cid": "{{cid:transition}}",
+    "label_template": "Smooth the cuts between clips",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "kinds": [
+   "default_edit",
+   "hook",
+   "sfx",
+   "transition"
+  ],
+  "label_source": {
+   "default_edit": "agent",
+   "hook": "agent",
+   "sfx": "agent",
+   "transition": "agent"
+  },
+  "labels": {
+   "default_edit": "Have Kria cut the first version",
+   "hook": "Open with a hook"
+  },
+  "why": {
+   "hook": true,
+   "sfx": true,
+   "transition": false
+  },
+  "stored_status": "ok"
+ },
+ "tags": [
+  "natural"
+ ]
+}

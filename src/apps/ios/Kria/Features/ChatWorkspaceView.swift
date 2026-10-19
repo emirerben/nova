@@ -500,6 +500,10 @@ private struct CreationWorkspaceView: View {
     @State private var reviewPresentation: ReviewPlanPresentation?
     @StateObject private var editorSession: NativeEditorSession
     @State private var conversationAcceptedID: UUID?
+    /// KRI-756: the server's latest suggestion chips for this chat. Only read through `suggestionChips(for:)`.
+    @State private var suggestionSet: SuggestionSet?
+    /// The `suggestionScopeKey` that `suggestionSet` was fetched under; a set from another scope is never drawn.
+    @State private var suggestionSetKey: String?
 
     init(project: ProjectSummary, openProjects: @escaping () -> Void, openAccount: @escaping () -> Void) {
         self.project = project
@@ -1338,6 +1342,7 @@ private struct CreationWorkspaceView: View {
             await pollUntilDismissed()
             await capabilities
         }
+        .task(id: suggestionFetchKey) { await loadSuggestions() }
         .task(id: thoughtRequestID) {
             guard let requestID = thoughtRequestID else { return }
             while !Task.isCancelled, (isSending || isThinking), thoughtRequestID == requestID {
@@ -1494,20 +1499,31 @@ private struct CreationWorkspaceView: View {
             .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ChatComposer(
-                text: promptBinding,
-                isSending: isSending || isActing,
-                canAttach: canAttachMedia,
-                canSendWithoutText: readyMediaCount > 0,
-                // be99a3f12 (origin/main): a failed attach never blocks Send.
-                blocksSubmission: isThinking || pendingUploadCount > 0,
-                placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
-                isFocused: $composerFocused,
-                dictation: dictationForComposer,
-                dictationTerms: dictationContextTerms,
-                attach: openAttachments,
-                send: { Task { await send() } }
-            )
+            VStack(spacing: 0) {
+                // KRI-756: the first-prompt chips sit just above the composer, not inside the scrolling transcript.
+                let firstPromptChips = suggestionChips(for: .firstPrompt)
+                if !firstPromptChips.isEmpty {
+                    SuggestionChipRow(chips: firstPromptChips) { sendSuggestion($0) }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
+                        .background(KriaColor.paper)
+                        .accessibilityIdentifier("first-prompt-suggestions")
+                }
+                ChatComposer(
+                    text: promptBinding,
+                    isSending: isSending || isActing,
+                    canAttach: canAttachMedia,
+                    canSendWithoutText: readyMediaCount > 0,
+                    // be99a3f12 (origin/main): a failed attach never blocks Send.
+                    blocksSubmission: isThinking || pendingUploadCount > 0,
+                    placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
+                    isFocused: $composerFocused,
+                    dictation: dictationForComposer,
+                    dictationTerms: dictationContextTerms,
+                    attach: openAttachments,
+                    send: { Task { await send() } }
+                )
+            }
             .accessibilityHidden(projectsDrawerOpen)
             .allowsHitTesting(!projectsDrawerOpen)
         }
@@ -1632,7 +1648,11 @@ private struct CreationWorkspaceView: View {
             ReadyStage(
                 project: currentProject,
                 openEditor: openEditor,
-                suggest: { prompt = $0 }
+                suggest: { prompt = $0 },
+                // Capability on: only server chips are drawn (none yet or none offered => no chips, never the generic fixed
+                // ones). Capability off: nil, the fixed chips.
+                serverSuggestions: SuggestionChipsPolicy.isEnabled(capabilities) ? suggestionChips(for: .ready) : nil,
+                sendSuggestion: { sendSuggestion($0) }
             )
             .id("ready")
             if capabilities?.livePlanReviewAvailable == true, currentProject.runtimeVersion == 2,
@@ -1742,7 +1762,82 @@ private struct CreationWorkspaceView: View {
         completedThoughtSummaries.merge(history) { current, _ in current }
     }
 
-    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil) async {
+    /// KRI-756: the newest chat message, if it is an assistant question nobody has answered. Chips yield to it
+    /// (choice card, clip / song-order / song-range question, reply chips, exact-string options).
+    private var newestMessageIsOpenQuestion: Bool {
+        for event in events.reversed() {
+            if let message = ChatTranscriptMessage.from(event: event) { return message.asksAQuestion }
+        }
+        return false
+    }
+
+    /// KRI-756: which suggestion surface the chat is on right now, if any.
+    private var suggestionSurface: SuggestionSurface? {
+        // Capability off (the default): none of the work below runs, so old servers cost nothing.
+        guard SuggestionChipsPolicy.isEnabled(capabilities) else { return nil }
+        return SuggestionChipsPolicy.surface(
+            enabled: SuggestionChipsPolicy.isEnabled(capabilities), stage: workspaceStage,
+            isSlides: selectedFormat == .slides || isSlidePostProject, isFormatKnown: isFormatKnown,
+            readyMediaCount: readyMediaCount, pendingUploadCount: pendingUploadCount,
+            hasUserMessage: events.contains { $0.eventType == "user_message" },
+            hasPendingMessage: !pendingMessages.isEmpty || isSending || isThinking || isActing,
+            hasOpenQuestion: newestMessageIsOpenQuestion
+        )
+    }
+
+    /// Which set a fetched answer belongs to. A set from another scope is never drawn: other footage on the
+    /// first prompt, another chat once ready. The thread revision is NOT part of it, so a held ready set does not
+    /// blink while the app re-asks after an unrelated event.
+    private var suggestionScopeKey: String {
+        switch suggestionSurface {
+        case .firstPrompt?:
+            return "first|\(project.id)|\(readyMediaCount)|\(CreationAttachedMedia.parse(threadState).map(\.id).joined(separator: ","))"
+        case .ready?:
+            return "ready|\(project.id)"
+        case nil:
+            return "idle"
+        }
+    }
+
+    /// What re-asks the server: a new scope, or (once ready) a new revision, which may carry a new render.
+    private var suggestionFetchKey: String {
+        suggestionSurface == .ready ? "\(suggestionScopeKey)|\(threadRevision)" : suggestionScopeKey
+    }
+
+    /// The chips to draw for one surface; empty unless the chat is on that surface right now.
+    private func suggestionChips(for surface: SuggestionSurface) -> [SuggestionChip] {
+        guard suggestionSurface == surface, suggestionSetKey == suggestionScopeKey else { return [] }
+        // Typing their own prompt: the starter chips step aside (a tap would also replace the draft).
+        if surface == .firstPrompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return [] }
+        return suggestionSet?.chips(forState: surface.rawValue) ?? []
+    }
+
+    private func loadSuggestions() async {
+        guard suggestionSurface != nil else {
+            suggestionSet = nil
+            suggestionSetKey = nil
+            return
+        }
+        let scope = suggestionScopeKey
+        // Another scope's set is dropped at once; the same scope keeps what it holds until a new set_id arrives.
+        if suggestionSetKey != scope { suggestionSet = nil; suggestionSetKey = scope }
+        let api = model.api, threadID = project.id
+        await SuggestionChipsPolicy.poll(
+            fetch: { try await api.creationSuggestions(threadID: threadID) },
+            onSet: { suggestionSet = SuggestionChipsPolicy.merge(current: suggestionSet, incoming: $0) }
+        )
+    }
+
+    /// A chip tap is a real send of the chip's `message` (the old fixed chips only filled the composer), tagged
+    /// with the offered set and chip so the server can attribute it. It rides the ordinary send path, so the
+    /// optimistic bubble, idempotency key and revision handling are shared.
+    private func sendSuggestion(_ chip: SuggestionChip) {
+        guard !isSending, !isActing, !isThinking else { return }
+        let tap = suggestionSet?.setID.map { SuggestionTap(setID: $0, chipID: chip.id) }
+        Task { await send(message: chip.message, suggestion: tap, keepsDraft: true) }
+    }
+
+    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, keepsDraft: Bool = false) async {
         // Slide direction is intentionally handled by SlidePostWorkspaceView.
         // Generic creator runtime has no slide proposal/create tools.
         guard selectedFormat != .slides else { return }
@@ -1752,7 +1847,9 @@ private struct CreationWorkspaceView: View {
                 text: submittedMessage ?? prompt, readyMediaCount: readyMediaCount,
                 pendingUploadCount: pendingUploadCount
               ) else { return }
-        let draftToRestore = submittedMessage == nil ? prompt : message
+        // A chip tap sends the chip's message and leaves the composer alone: whatever the creator typed stays,
+        // and a failed tap never drops the chip's own text (often not in their language) into the composer.
+        let draftToRestore = keepsDraft ? "" : (submittedMessage == nil ? prompt : message)
         isSending = true
         failure = nil
         confirmationConflict = nil
@@ -1801,7 +1898,7 @@ private struct CreationWorkspaceView: View {
                 pendingMessages.append(optimistic)
             }
         }
-        prompt = ""
+        if !keepsDraft { prompt = "" }
         scrollRequest += 1
         songRangeProblem = nil
         if currentProject.runtimeVersion != 2 {
@@ -1839,7 +1936,7 @@ private struct CreationWorkspaceView: View {
                 threadID: project.id, message: message,
                 expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID,
                 editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection,
-                songRange: songRange
+                songRange: songRange, suggestion: suggestion
             )
         } catch let error as APIError where error == .conflict {
             thoughtRequestID = nil; liveThoughtSummaries = []

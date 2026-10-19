@@ -135,6 +135,13 @@ from app.services.speech_cleanup_decision import (
     SpeechCleanupDecisionConflict,
     evaluate_enforce_mode_decision,
 )
+from app.services.suggestion_chips import (
+    SuggestionSetOut,
+    persist_suggestion_set,
+    suggestion_tap_payload,
+    unavailable_set,
+)
+from app.services.suggestion_serve import serve_suggestion_set
 
 log = structlog.get_logger()
 
@@ -396,6 +403,10 @@ class CreationCapabilitiesOut(BaseModel):
     live_plan_review_enabled: bool = False
     # KRI-439: 2 = structured payloads, GET /plan, scoped turns and undo; 1 = the feed only.
     live_plan_review_version: int = 1
+    # KRI-756: GET /{thread_id}/suggestions serves footage-aware chips for this account
+    # (KRIA_SUGGESTION_CHIPS_ENABLED or the cohort list). Clients gate on this bool; a 404 or
+    # empty chips list means "render nothing". No NEXT_PUBLIC twin.
+    suggestion_chips: bool = False
 
 
 class CreateBody(StrictBody):
@@ -3283,6 +3294,8 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
     # public state projection. Remove it defensively while migrating to the
     # private JSONB column.
     public_state.pop("_creator_direction_snapshot_v1", None)
+    # KRI-756: the offered-chip ring is server bookkeeping for tap detection.
+    public_state.pop("suggestion_sets", None)
     private_direction = (
         thread.creator_direction_snapshot
         if isinstance(getattr(thread, "creator_direction_snapshot", None), dict)
@@ -3838,6 +3851,7 @@ async def capabilities(
         "song_range_questions": bool(song_available and settings.song_filming_range_enabled),
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
+        "suggestion_chips": bool(settings.suggestion_chips_for(user.id)),
     }
 
 
@@ -4084,7 +4098,7 @@ async def list_threads(
                 title=getattr(row, "title", None) or _DEFAULT_TITLE,
                 status=row.status,
                 revision=row.revision,
-                state=dict(row.state or {}),
+                state={k: v for k, v in (row.state or {}).items() if k != "suggestion_sets"},
                 content_plan_id=str(row.content_plan_id) if row.content_plan_id else None,
                 active_plan_item_id=str(row.active_plan_item_id)
                 if row.active_plan_item_id
@@ -4289,6 +4303,61 @@ async def record_editor_events(
         )
     await db.commit()
     return await _response(db, thread)
+
+
+@router.get("/{thread_id}/suggestions", response_model=SuggestionSetOut)
+async def thread_suggestions(
+    request: Request,
+    thread_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    response: Response,
+    client_protocol: KriaClientProtocol = None,
+) -> SuggestionSetOut:
+    """KRI-756: footage-aware suggestion chips. Pull-only, idempotent, fail-open.
+
+    Appends no thread event and never changes ``thread.revision`` (the only write is the
+    offered-set ring on ``thread.state``), so it works on v1 and v2 threads and has no 409
+    trap. Flag off / cohort miss: 200 ``status: "unavailable"`` with no chips. Any failure
+    after the ownership check also degrades to that, never a 500.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    if not settings.suggestion_chips_for(user.id):
+        return unavailable_set()
+    thread = await _load(thread_id, user, db)
+    owner_thread_id = thread.id
+    try:
+        served = await serve_suggestion_set(
+            db,
+            thread,
+            user,
+            client_protocol,
+            locale=request.headers.get("accept-language"),
+        )
+        # Release the read transaction, then take the ring write on its own.
+        await db.rollback()
+        await persist_suggestion_set(
+            db,
+            owner_thread_id,
+            served.out,
+            media_digest=served.media_digest,
+            protocol=client_protocol,
+            input_digest=served.input_digest,
+            witness_tiers=served.witness_tiers,
+        )
+        return served.out
+    except Exception:  # noqa: BLE001 - chips are an enhancement; never fail the screen
+        log.warning(
+            "suggestion_chips.error",
+            stage="route",
+            thread_id=str(owner_thread_id),
+            exc_info=True,
+        )
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return unavailable_set()
 
 
 @router.get("/{thread_id}", response_model=CreationThreadOut | ThreadDeltaOut)
@@ -4504,6 +4573,9 @@ async def message_thread(
         event_type="user_message",
         role="user",
         content=body.message,
+        # KRI-756: {"suggestion": {...}} when the text equals an offered chip, else None
+        # (flag off => always None, so existing payloads stay byte-identical).
+        payload=(await suggestion_tap_payload(db, thread, body.message)) or None,
         client_event_id=body.client_event_id,
     )
     state = dict(thread.state or {})

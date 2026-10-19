@@ -133,6 +133,7 @@ final class ChatDraftStagingTests: XCTestCase {
             let (session, fake) = await loaded(snapshot)
             XCTAssertEqual(session.document.clips.map(\.clipIndex), [3, 0, 1, 2])
             XCTAssertEqual(session.timelineClips.count, 4)
+            XCTAssertTrue(session.document.opaqueRecords.values.allSatisfy(\.isEmpty), "valid restored clips must not block native preview as opaque content")
             let added = try XCTUnwrap(session.document.clips.first { $0.clipIndex == 3 })
             XCTAssertNil(added.id, "inventing an ID would fail the server's stale-slot validation")
             XCTAssertEqual(added.durationS, 3)
