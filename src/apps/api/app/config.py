@@ -847,11 +847,20 @@ class Settings(BaseSettings):
     # Deploy readers everywhere before enabling snapshot writers.
     kria_brief_binding_enabled: bool = False
     kria_brief_binding_user_ids: Annotated[list[str], NoDecode] = []
+    # KRI-721: enroll new approval writers only after API/worker readers deploy.
+    # Existing stamped assessments remain mandatory when enrollment is disabled.
+    kria_approval_readiness_enabled: bool = False
+    kria_approval_readiness_user_ids: Annotated[list[str], NoDecode] = []
     # NoDecode: pydantic-settings would otherwise JSON-decode the env string
     # before the validator below runs, crashing boot on a bare id or CSV.
     kria_creative_brief_user_ids: Annotated[list[str], NoDecode] = []
 
-    @field_validator("kria_creative_brief_user_ids", "kria_brief_binding_user_ids", mode="before")
+    @field_validator(
+        "kria_creative_brief_user_ids",
+        "kria_brief_binding_user_ids",
+        "kria_approval_readiness_user_ids",
+        mode="before",
+    )
     @classmethod
     def parse_creative_brief_user_ids(cls, value: object) -> object:
         if not isinstance(value, str):
@@ -880,6 +889,12 @@ class Settings(BaseSettings):
         """Writer cohort only; readers always honor previously saved bindings."""
         return self.kria_brief_binding_enabled or (
             user_id is not None and str(user_id) in set(self.kria_brief_binding_user_ids)
+        )
+
+    def approval_readiness_for(self, user_id: object) -> bool:
+        return self.brief_binding_for(user_id) and (
+            self.kria_approval_readiness_enabled
+            or str(user_id) in self.kria_approval_readiness_user_ids
         )
 
     def creative_brief_for(self, user_id: object) -> bool:

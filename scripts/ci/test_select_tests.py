@@ -617,8 +617,12 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates",
+                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates,kri-721-approval-readiness",
                 ),
+            ),
+            (
+                "src/apps/api/app/kria/approval_readiness.py",
+                (True, "covered", "kri-721-approval-readiness"),
             ),
             (
                 "src/apps/api/app/tasks/content_plan_build.py",
