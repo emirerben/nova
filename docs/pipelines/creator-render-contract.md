@@ -1181,6 +1181,13 @@ KRI-722–725 and the remainder of KRI-734 own additional snapshot/adapter proof
 Picture checks are sampled; a checked report is not an assertion that every frame
 or subjective creative choice was inspected. See report fields for exact coverage.
 
+The OCR reader keeps exact text and punctuation matching at confidence >=40. It
+tries the approved region's actual pixels and colour-isolated pixels at 2× and
+native size: forced enlargement can attach background specks to large letters.
+A native-size reading corrects that measurement without stripping punctuation or
+painting expected copy. Each OCR call has a five-second timeout; the overall
+verification deadline and picture/audio thresholds remain unchanged.
+
 Nearby frames share bounded decoding batches without changing the sample clock,
 comparison thresholds or OCR views. Exact-pixel controls cover fractional seeks,
 variable frame timing, display rotation, nonzero timestamps and later source

@@ -383,9 +383,35 @@ import XCTest
         XCTAssertTrue(reopenedEditor.waitForExistence(timeout: 30), app.debugDescription)
         reopenedEditor.tap()
         XCTAssertTrue(preview.waitForExistence(timeout: 30), app.debugDescription)
+        assertEditableOriginalsAndWording(in: app)
+        let reopenedShot = XCTAttachment(screenshot: app.screenshot()); reopenedShot.name = "Rendered project survives app relaunch"; reopenedShot.lifetime = .keepAlways; add(reopenedShot)
+        #endif
+    }
+
+    func testPublishedProjectReopensWithEditableOriginalsAndText() throws {
+        continueAfterFailure = false
+        guard ProcessInfo.processInfo.environment["KRIA_CAMERA_ROLL_REOPEN_TEST"] == "1",
+              let title = ProcessInfo.processInfo.environment["KRIA_CAMERA_ROLL_PROJECT_TITLE"] else {
+            throw XCTSkip("Enable the owner's already published project check explicitly.")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-live-qa"]
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["workspace-menu-toggle"].waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertEqual(app.staticTexts["workspace-project-title"].label, title)
+        let editor = app.buttons["Open editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 30), app.debugDescription)
+        editor.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 30), app.debugDescription)
+        assertEditableOriginalsAndWording(in: app)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Published camera-roll project reopened after relaunch"; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    private func assertEditableOriginalsAndWording(in app: XCUIApplication) {
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch.exists)
-        let clip = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "native-editor-timeline-clip-")).firstMatch
-        XCTAssertTrue(clip.exists, "Reopening must retain editable source clips")
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 15), "Reopening must retain editable source clips: \(app.debugDescription)")
+        XCTAssertTrue(clip.isEnabled)
         let textTool = app.buttons["native-editor-tool-text"]
         XCTAssertTrue(textTool.isEnabled)
         textTool.tap()
@@ -403,7 +429,15 @@ import XCTest
         XCTAssertEqual(editableWording.value as? String, "Would you spend an afternoon here?")
         let editableShot = XCTAttachment(screenshot: app.screenshot()); editableShot.name = "Original clips and reviewed wording remain editable after relaunch"; editableShot.lifetime = .keepAlways; add(editableShot)
         app.buttons["native-editor-text-inspector-done"].tap()
-        let reopenedShot = XCTAttachment(screenshot: app.screenshot()); reopenedShot.name = "Rendered project survives app relaunch"; reopenedShot.lifetime = .keepAlways; add(reopenedShot)
-        #endif
+        let fallback = app.descendants(matching: .any)["native-editor-preview-fallback"].firstMatch
+        XCTAssertFalse(fallback.exists, "The editable source preview must replace the finished-video fallback")
+        let play = app.buttons["native-editor-play-pause"]
+        let clock = app.staticTexts["native-editor-current-time"]
+        let before = clock.value as? String
+        play.tap()
+        let advanced = expectation(for: NSPredicate(format: "value != %@", before ?? "0:00.0"), evaluatedWith: clock)
+        wait(for: [advanced], timeout: 8)
+        play.tap()
+        XCTAssertFalse(fallback.exists)
     }
 }
