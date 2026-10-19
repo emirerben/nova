@@ -1,10 +1,10 @@
 # Paid evaluation cost record — approved $5.66 pilot
 
-User approved **$5.66 total**, retaining the **$2 per-batch ceiling**. Final
-actual-input preregistration reserved at most **$5.260004** across five batches.
-The partial pilot settled **$0.163816** and holds **$0.433948** for one unknown
-Gemini timeout: **$0.597764 settled plus held**. All further paid submissions are
-stopped. Sonnet's insufficient-credit rejection released its reservation at $0.
+User approved **$5.66 total**, retaining the **$2 per-batch ceiling**. The funded
+pilot confirmed **$0.728250** of inference charges. **$1.716306** remains retained
+for the original unknown Gemini call: **$2.444556 total accounted budget**, leaving
+**$3.215444** after the hold. Actual Gemini usage remains unknown. The hold was
+increased to its full approved batch; it was never released or falsely settled.
 See [pilot report](pilot-report.md) and `pilot-results.json`.
 
 The sizing below is the original historical estimate shown before approval,
@@ -56,20 +56,17 @@ spend request. Price the actual development and held-out corpus after collection
 repetitions, additional schema/reasoning arms and retries multiply the budget.
 Do not authorize the full experiment from this small reference set.
 
-## Continuation boundaries
+## Final accounting and limits
 
-Reconcile the exact unknown Gemini receipt from authoritative provider usage before
-another submission in this envelope. Confirm that the configured Anthropic account is funded. The user approved
-labeled reconstructions; the updated Copilot preflight maximum is $0.935036,
-inside the same approval envelope. The late Gemini request ended in ReadError
-without authoritative usage, so its unknown reservation remains. Never start a new
-envelope ID to bypass held money. New hardening changes the runtime/schema hashes,
-so superseded frozen profiles intentionally fail drift checks; pin a new profile
-while retaining the same approved envelope and historical failures.
+Anthropic funding was confirmed. Native schema rejections released at zero; the
+completed invalid-JSON Copilot response remains billed. Separate preregistrations
+record the acyclic correction and explicit JSON controls. All used the original
+envelope UUID, with immutable profile versions and prior failures retained.
 
-Schema and sealed-executor implementation is complete offline. Provider acceptance,
-held-out data, human scoring and finalist exports remain evidence gaps. No further
-spend approval is implied for a larger corpus.
+No new paid run is active. The unknown Gemini receipt stays fenced and counted
+until authoritative usage arrives; local-only full-batch financial containment
+allowed independent cases to finish. Do not retry it or use a new envelope identity.
+Remaining money does not authorize a larger corpus, paid judging, exports or rollout.
 
 Sources:
 - [OpenAI Sol model](https://developers.openai.com/api/docs/models/gpt-6.1-sol)

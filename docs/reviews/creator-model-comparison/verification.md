@@ -4,7 +4,7 @@ Base: `ed90bd9ea859129efb1853b327ca00562ecb54a0` from fetched origin/main.
 Branch: `codex/creator-model-comparison`; isolated checkout:
 `/private/tmp/nova-creator-model-comparison`. Shared original checkout untouched.
 
-**4,049 passed; 15 skipped; no failures** after integrating current main. Provider keys were dummy strings and
+**4,052 passed; 15 skipped; no failures** after integrating current main. Provider keys were dummy strings and
 NOVA_EVAL_MODE=replay. SDK contract tests used httpx.MockTransport. PostgreSQL tests
 used the migrated local task database `nova_creator_model_comparison_test`.
 This offline run made no live provider calls. The separately approved partial live pilot is recorded in pilot-report.md; no paid judge or production mutation ran.
@@ -34,8 +34,8 @@ cleanup missed them. A dedicated attributed-run cleanup fixed the issue. Earlier
 synthetic rows were removed only from the task scratch database; the final run
 started with zero reservations and passed. No production ledger was touched.
 
-The latest broad run completed in 56.58 seconds; its local log is
-`/private/tmp/nova-comparison-final-integrated-tests.log`. Typed v2 round trips include
+The latest broad run completed in 75.93 seconds; its local log is
+`/private/tmp/nova-comparison-complete-offline-tests.log`. Typed v2 round trips include
 explicit null versus omission. Live pilot observations prompted SDK HTTP controls
 that prove one Gemini submission and a matching transport deadline, plus a real
 PostgreSQL unknown-outcome fence across separate batches in the same envelope.
@@ -60,3 +60,11 @@ rendered a video. See pilot-report.md for the partial live results and outstandi
 Final preship fetch found a new upstream Main Creator v64 camera-audio fix
 (`220f75b3f`). It was integrated cleanly before delivery; historical paid rows remain
 pinned to v63, and no paid comparison is rerun across that prompt change.
+
+Funded continuation checks: retained full-batch liability preserves unknown status,
+counts against envelope caps, permits an independent case and refuses duplicate
+submission. Ordinary unreconciled unknowns still stop the envelope. Tests also
+reject circular Anthropic schemas, preserve deep Sol values and require explicit
+JSON selection for the provider-rejected full Sonnet native grammar. Returned
+usage totals reconcile exactly to the durable pilot ledger. Six current Main plans
+compiled without notices; Copilot returned no supported edit operations.

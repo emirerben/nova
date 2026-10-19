@@ -1,72 +1,50 @@
 # Main Creator / Edit Copilot comparison
 
-The provider integration, typed output transport, private request workflow and sealed
-holdout runner are implemented. The approved $5.66 pilot ran partially and is
-**blocked**, with no model recommendation or production change.
+The approved real-request inference pilot ran within $5.66. **Production remains
+Gemini; no quality winner is established.** Read the [pilot report](pilot-report.md),
+[aggregate results](pilot-results.json), [verification](verification.md),
+[schema details](schema-feasibility.md) and [cost record](cost-estimate.md).
 
-Read the [pilot report](pilot-report.md), [verification](verification.md),
-[schema details](schema-feasibility.md), [cost record](cost-estimate.md) and
-[original plan](plan.md). KRI-727 remains the acceptance context: assess request
-fulfillment independently of parsing and recorded exports.
+Main Creator's current v64 JSON pair parsed and compiled for Sonnet and Sol.
+Sonnet was faster and costlier on two related inputs. Copilot's one reconstructed
+unsupported-operation case parsed for Gemini and Sol; Sonnet JSON returned invalid
+JSON. Full Sonnet native grammar was rejected by the provider and now fails local
+preflight. Sol native passed all tested inputs. These are compatibility and latency
+observations, not a request-fulfillment or export-quality verdict.
 
-## Implemented
+## Implementation
 
-- Gemini, Anthropic Messages (`claude-sonnet-5-5`) and OpenAI Responses
-  (`gpt-6.1-sol`, store=false), with independent per-agent model/reasoning/output
-  controls. Production defaults remain Gemini high, JSON, existing runtime retry
-  policy; native output is opt-in.
-- Typed model-owned Main Creator fields and all 66 registered Copilot operations,
-  preserving authoritative product parsing, identity and execution checks.
-- Explicit SDK retry/deadline control, metered reservations, normalized usage,
-  per-batch caps and one shared approved envelope. Unknown outcomes retain money
-  and prevent another paid submission across that envelope.
-- Default-off exact invocation capture, separately labeled historical input recovery
-  and editor-context reconstruction, current owner/consent/expiry checks, private
-  files and redacted observability. No creator text is committed here.
-- Immutable manifests, replay, dry-run, blinded private review packets, resume
-  fences and expiry/revocation purge including registered derived copies.
-- Separate sealed holdout registration/execution and evaluator eligibility token;
-  creator/media-event split overlap is rejected. Ordinary development readers deny
-  holdout data. The executor returns aggregate metrics without output bodies.
+- Gemini, Anthropic Messages and OpenAI Responses (store=false), independent
+  per-agent model/reasoning/output controls; production defaults unchanged.
+- Typed model-owned Main fields and 66 Copilot operations; explicit null/omission
+  semantics, original parsers/compiler/ownership checks. Full native Sonnet is
+  blocked pending a verified capability-scoped grammar; JSON is explicit.
+- Per-call accounting, SDK retry/deadline controls, $2 batches and one shared
+  approved envelope. Unknown calls remain fenced and counted. A terminated call
+  with documented conservative full-batch retention may permit independent cases;
+  no caller-context flag can release or bypass the original reservation.
+- Default-off private exact capture, labeled historical/reconstructed imports,
+  current eligibility checks, blinded review and derived-copy expiry purge.
+- Separate sealed holdout registration/execution and evaluator token; development
+  access rejects holdouts and split overlap. No real holdout corpus was available.
 
-## Operator workflow
+Operator entrypoint: `src/apps/api/.venv/bin/python scripts/compare_creator_models.py
+--help`. Private directories are 700 and files 600. Replay never constructs SDK
+clients or reserves money. Live requires pinned manifests, current eligibility,
+explicit approval and the durable development ledger. Reuse the same envelope ID.
+Never retry unknown submissions under fresh identities. See plan.md for collection,
+scoring and actual-export boundaries.
 
-Use `src/apps/api/.venv/bin/python scripts/compare_creator_models.py --help`.
-Commands include `schema-audit`, `freeze`, `dry-run`, `replay`, `live`, `report`,
-`purge`, `seal`, `sealed-run` and `approve-envelope`. External private directories
-must be mode 700; input, packet, journal and review files are mode 600.
+## Evidence and budget
 
-Replay uses recorded responses through the real parsers; it never constructs an
-SDK client or reserves money. Live requires `NOVA_EVAL_MODE=live`, development
-attribution, cost control, current eligibility and manifest-bound approval. Batches
-remain capped at $2 even within an approved envelope. Keep the same envelope ID
-when superseding a preflight; prior costs and unknown reservations still count.
-Runtime drift invalidates frozen profiles and requires a new pinned manifest.
+Confirmed spend **$0.728250**, retained unknown liability **$1.716306**, combined
+**$2.444556**. Gemini actual usage is still unknown; the full original batch remains
+reserved rather than falsely settled. All returned usage reconciles to the ledger.
+Source scope: one creator/event, two recorded Main inputs, one approved reconstructed
+Copilot context, zero live holdouts. Candidate commands were never executed.
 
-For prospective production capture, deploy through the normal approval workflow,
-configure durable private directories and explicit user allowlists, and preserve
-existing training eligibility. The allowlist is not a consent grant. Holdouts
-require their separate directory/token. Historical reviewed source imports can
-instead recheck the existing review-export endpoint; these do not require deploying
-the new capture endpoints. Source review is retained as source review, never
-presented as fresh human approval of a reconstructed input.
-
-Run `purge --packet ... --directory ... --check-eligibility` while retaining copies.
-It removes expired/revoked bodies and registered derived files. No recurring purge
-or production capture was activated. Never upload private packets to public CI.
-
-## Remaining experiment evidence
-
-Two exact recorded Main inputs and one reconstructed Copilot context are ready,
-all from one reviewed creator/source. The holdout queue has no eligible cases.
-The user explicitly approved labeled reconstructions; the Copilot continuation
-packet has passed an offline preflight at a $0.935036 maximum. Historical prompts were not
-fully archived; Main inputs were evaluated with pinned current v63 prompts.
-
-The user plans to fund the configured Anthropic account; funding completion has
-not yet been confirmed. The Gemini request eventually ended in ReadError without usage; its receipt still
-needs authoritative usage reconciliation;
-never release an unknown reservation or retry it merely to unblock the experiment.
-Human obligation scoring, live Copilot outputs, holdout repetitions and finalist
-save/reload/export review remain outstanding. Three valid compiled plans establish
-inference compatibility only; their commands were never executed.
+The private review packet is
+`/private/tmp/nova-model-comparison-private/funded-blind-review.html`.
+Human scoring, supported Copilot tasks, independent holdouts and finalist exports
+remain outstanding. Run expiry/revocation purge while retaining private copies;
+no recurring purge, capture cohort or production deployment was activated.
