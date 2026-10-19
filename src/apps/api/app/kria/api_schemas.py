@@ -101,6 +101,17 @@ class EditorStateIn(_StrictBody):
         return self
 
 
+class SuggestionTapIn(_StrictBody):
+    """KRI-756: which offered suggestion chip this message came from (optional, additive).
+
+    Validated against the offered-set ring on the thread; absent or invalid falls back to
+    matching the message text against the offered chips. Never changes what the turn does.
+    """
+
+    set_id: str = Field(min_length=1, max_length=64)
+    chip_id: str = Field(min_length=1, max_length=64)
+
+
 class SubmitTurnBody(_StrictBody):
     message: str = Field(min_length=1, max_length=4000)
     client_event_id: str = Field(min_length=1, max_length=160)
@@ -115,6 +126,9 @@ class SubmitTurnBody(_StrictBody):
     song_range: SongRangeAnswerIn | None = None
     # KRI-282: the answer to a conflict-choice question; old clients omit it.
     choice_selection: ChoiceSelectionIn | None = None
+    # KRI-756 (dark behind KRIA_SUGGESTION_CHIPS_ENABLED): the chip the message was sent from.
+    # Telemetry only: outside `request_digest`, ignored by the planner; old clients omit it.
+    suggestion: SuggestionTapIn | None = None
     # KRI-441 (live plan & review, dark behind LIVE_PLAN_REVIEW_ENABLED): the plan
     # sections this turn may change. Typed `str` so an unknown/duplicate/empty list gets
     # the contract's `scope_invalid` problem (runtime.validate_scope), not a generic 422.

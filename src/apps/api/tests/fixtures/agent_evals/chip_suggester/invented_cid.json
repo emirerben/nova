@@ -1,0 +1,33 @@
+{
+ "id": "invented_cid",
+ "description": "A cid that was never offered is dropped; the real ones survive.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "sc_000000000000",
+    "label_template": "Add a hook to the opening",
+    "why": null
+   },
+   {
+    "cid": "{{cid:sfx}}",
+    "label_template": "Add sound effects",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "kinds": [
+   "default_edit",
+   "sfx"
+  ],
+  "drops": {
+   "unknown_cid": 1
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

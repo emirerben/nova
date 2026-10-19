@@ -1,0 +1,46 @@
+{
+ "name": "fp_single_clip_broll",
+ "description": "One silent clip: nothing to put a transition between.",
+ "tags": [
+  "single_clip"
+ ],
+ "context": {
+  "thread_id": "thread-fp_single_clip_broll",
+  "state": "first_prompt",
+  "language": "en",
+  "client_protocol": 2,
+  "media_digest": "digest-fp_single_clip_broll",
+  "understanding": "complete",
+  "runtime_version": 2,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "pouring matcha into a glass",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [
+     {
+      "start_s": 1.0,
+      "end_s": 2.5,
+      "label": "the pour"
+     }
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "kinds": [
+   "default_edit",
+   "hook",
+   "sfx"
+  ],
+  "kinds_exclude": [
+   "transition"
+  ]
+ }
+}

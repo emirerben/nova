@@ -1,0 +1,49 @@
+{
+ "name": "fp_understanding_pending",
+ "description": "Clip understanding still running: default edit only, client re-GETs in 3 s.",
+ "tags": [
+  "pending"
+ ],
+ "context": {
+  "thread_id": "thread-fp_understanding_pending",
+  "state": "first_prompt",
+  "language": "en",
+  "client_protocol": 2,
+  "media_digest": "digest-fp_understanding_pending",
+  "understanding": "pending",
+  "runtime_version": 2,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-2",
+    "ordinal": 2,
+    "kind": "video",
+    "subject": "",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": []
+   }
+  ]
+ },
+ "expect": {
+  "state": "first_prompt",
+  "understanding": "pending",
+  "retry_after_s": 3,
+  "kinds": [
+   "default_edit"
+  ]
+ }
+}

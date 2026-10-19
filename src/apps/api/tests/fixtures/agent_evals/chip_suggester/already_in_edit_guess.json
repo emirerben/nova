@@ -1,0 +1,31 @@
+{
+ "id": "already_in_edit_guess",
+ "description": "Quiet music is already in this edit. A guessed music cid is not live, so it is not shown.",
+ "context": "rd_music_quiet",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{guess:music}}",
+    "label_template": "Turn the music down",
+    "why": null
+   },
+   {
+    "cid": "{{cid:sfx}}",
+    "label_template": "Add sound effects",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "kinds": [
+   "sfx"
+  ],
+  "drops": {
+   "unknown_cid": 1
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

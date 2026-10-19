@@ -1344,6 +1344,8 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(confirm.waitForExistence(timeout: 10))
         confirm.tap()
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
+        // Capability off (no KRIA_SUGGESTION_CHIPS): no server chip row is drawn at all.
+        XCTAssertFalse(app.descendants(matching: .any)["ready-suggestions"].exists)
 
         let composer = app.textFields["Message Kria"]
         for (suggestion, dy) in [("Try a stronger opening", 0.15), ("Make it warmer", 0.85)] {
@@ -1355,6 +1357,79 @@ final class CreationUITests: XCTestCase {
             let applied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", suggestion), object: composer)
             XCTAssertEqual(XCTWaiter.wait(for: [applied], timeout: 3), .completed, "Edge tap on '\(suggestion)' was ignored")
         }
+    }
+
+    /// KRI-756 journey, capability ON (server stubbed): while clip understanding is pending only chip #1 shows; the
+    /// full set then lands under the same set_id without moving chip #1; a tap SENDS the chip's `message` (not its
+    /// label) and the row goes; the finished video offers the server's chips instead of the two fixed ones. The
+    /// capability-OFF half is `testReadySuggestionChipsApplyFromTapsNearCapsuleEdges` above, which launches without
+    /// `KRIA_SUGGESTION_CHIPS` and still pins the fixed chips.
+    func testServerSuggestionChipsSendOnTapAndReplaceFixedChips() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_SUGGESTION_CHIPS"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+
+        // Pending: chip #1 alone, no generic fixed strings.
+        let defaultEdit = app.buttons["Let Kria cut the first version"]
+        XCTAssertTrue(defaultEdit.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Add captions"].exists, "Only chip #1 shows while the server is still working")
+        XCTAssertFalse(app.buttons["Use suggestion: Try a stronger opening"].exists)
+        // The set lands: four chips in rank order, chip #1 first and unchanged; `why` rides in the accessibility label.
+        let hook = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Add a hook to the opening")).firstMatch
+        XCTAssertTrue(hook.waitForExistence(timeout: 15))
+        XCTAssertEqual(hook.label, "Add a hook to the opening, the first shot is a quiet one")
+        XCTAssertTrue(app.buttons["Add captions"].exists)
+        XCTAssertTrue(app.buttons["Add sound effects"].exists)
+        XCTAssertEqual(app.descendants(matching: .any)["suggestion-chip-0"].label, "Let Kria cut the first version")
+        XCTAssertLessThan(defaultEdit.frame.minX, hook.frame.minX + 1, "Chip #1 stays first")
+        for chip in [defaultEdit, hook, app.buttons["Add captions"], app.buttons["Add sound effects"]] {
+            XCTAssertGreaterThanOrEqual(chip.frame.height, 44)
+        }
+        // A chip is a real send, not a fill of the composer: the message is the chip's `message`, not its label.
+        defaultEdit.tap()
+        XCTAssertTrue(app.staticTexts["You: Suggest an edit."].waitForExistence(timeout: 10))
+        XCTAssertTrue(defaultEdit.waitForNonExistence(timeout: 5), "Chips go once the creator has said something")
+        XCTAssertFalse(app.buttons["Add captions"].exists)
+
+        let confirm = app.buttons["Create this video"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.tap()
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
+
+        let captions = app.buttons["Add captions"]
+        XCTAssertTrue(captions.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Turn the music down"].exists)
+        XCTAssertFalse(app.buttons["Use suggestion: Try a stronger opening"].exists)
+        XCTAssertFalse(app.buttons["Use suggestion: Make it warmer"].exists)
+        captions.tap()
+        XCTAssertTrue(app.staticTexts["You: Add captions"].waitForExistence(timeout: 10))
+    }
+
+    /// KRI-756 wire check on the runtime-v2 turn path: a chip tap carries `suggestion {set_id, chip_id}` and the exact
+    /// `message`; a typed message carries none. The stub echoes what it received.
+    func testServerSuggestionChipTapNamesTheOfferedChipOnTheTurn() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_SUGGESTION_CHIPS"] = "1"
+        app.launchEnvironment["KRIA_SUGGESTION_CHIPS_PENDING"] = "0"
+        app.launchEnvironment["KRIA_SUGGESTION_CHIPS_ECHO"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+
+        let captions = app.buttons["Add captions"]
+        XCTAssertTrue(captions.waitForExistence(timeout: 15))
+        captions.tap()
+        XCTAssertTrue(app.staticTexts["You: Add captions"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Got it. suggestion[sg_fixture_first_prompt/sc_fixture_captions]"].waitForExistence(timeout: 10))
+        XCTAssertTrue(captions.waitForNonExistence(timeout: 5))
     }
 
     /// Taps "Create this video" and waits for the recovery card's message,
