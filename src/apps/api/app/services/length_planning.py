@@ -210,6 +210,7 @@ def build_length_plan(
     spoken_moments: Mapping[str, tuple[float, float]] | None = None,
     quiet_moments: Mapping[str, tuple[float, float]] | None = None,
     spoken_order: Mapping[str, Any] | None = None,
+    named_lines: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
 
@@ -228,6 +229,10 @@ def build_length_plan(
     KRI-585: ``quiet_moments`` seats a clip's window inside a stretch with no words and
     caps it there; ``spoken_order`` (``spoken_roles.SpokenSeats.record``) rides on the plan
     as ``spoken_order`` so the reply reads what was seated.
+
+    KRI-760: ``named_lines`` (``spoken_quotes.named_line_records``) rides on the plan as
+    ``named_lines``, where each line the creator wants heard whole is said, so the receipt
+    can check the finished cut holds it.
     """
 
     natural_owner = natural_length_owner(strategy)
@@ -554,6 +559,8 @@ def build_length_plan(
         plan["closing_quote"] = quote
     if spoken_order:
         plan["spoken_order"] = dict(spoken_order)
+    if named_lines:
+        plan["named_lines"] = [dict(row) for row in named_lines]
     if licensed_music is not None:
         plan["licensed_music"] = dict(licensed_music)
     elif isinstance(strategy.get("selected_music_section"), Mapping):

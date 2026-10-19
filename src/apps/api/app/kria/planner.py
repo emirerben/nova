@@ -68,7 +68,7 @@ from app.kria.brief import (
     route_requirements,
     wants_clip_descriptions,
 )
-from app.kria.brief_checks import spoken_text_literals
+from app.kria.brief_checks import spoken_text_literals, whole_line_quotes
 from app.kria.brief_route import loose_text
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
@@ -176,8 +176,9 @@ from app.services.song_range import (
 )
 from app.services.spoken_quotes import (
     closing_quote_notice,
-    described_line_moments,
+    described_lines,
     ground_closing_quote,
+    named_line_records,
 )
 from app.services.spoken_roles import SpokenSeats
 
@@ -238,7 +239,14 @@ def _enrich_best_parts_snapshot(
         if isinstance(closing_quote, Mapping) and closing_quote.get("status") == "found"
         else []
     )
-    described = described_line_moments(_described_clip_texts(brief), media_snapshot, skip_ids=held)
+    quotes = _whole_line_quotes(brief)
+    described = {
+        media_id: found.window
+        for media_id, found in described_lines(
+            _described_clip_texts(brief), media_snapshot, skip_ids=held, lines=quotes
+        ).items()
+    }
+    named = named_line_records(quotes, media_snapshot, skip_ids=held)
 
     def windows_for(seats: SpokenSeats | None) -> dict[str, Any]:
         quiet_id = seats.quiet_close[0] if seats and seats.quiet_close else None
@@ -260,6 +268,7 @@ def _enrich_best_parts_snapshot(
             spoken_moments={**dict([opening] if opening else []), **described},
             quiet_moments=dict([quiet]) if quiet else None,
             spoken_order=seats.record() if seats is not None else None,
+            named_lines=named,
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is
@@ -303,11 +312,22 @@ def _described_clip_texts(brief: CreativeBrief | None) -> list[str]:
         return []
     texts: list[str] = []
     for req in brief.live():
+        if whole_line_quotes(req):
+            # KRI-760: "'...' dediği cümle baştan sona duyulsun" names its clip by the line
+            # (`_whole_line_quotes`); the rest of the sentence describes no clip.
+            continue
         if req.kind not in ("audio", "order"):
             continue
         texts.extend(text for text in (req.description, req.literal) if text)
         texts.extend(value for value in req.facts.values() if isinstance(value, str))
     return texts
+
+
+def _whole_line_quotes(brief: CreativeBrief | None) -> list[str]:
+    """The lines the creator wants heard whole (KRI-760), without repeats."""
+    if brief is None:
+        return []
+    return list(dict.fromkeys(quote for req in brief.live() for quote in whole_line_quotes(req)))
 
 
 def _moment_count_notice(
