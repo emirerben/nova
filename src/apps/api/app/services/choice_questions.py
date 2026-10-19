@@ -370,11 +370,20 @@ def simpler_version_question(refusal_fields: Sequence[str] | None = None) -> dic
     question where a bare "yes" would be ambiguous, so it passes nothing.
     """
     refusal = refusal_fields is not None
+    # The payload carries only the options (the reply text asks the question), but the
+    # candidate stays self-sufficient and in the chat's language for `choice_question_text`.
     question = build_choice_question(
         ConflictCandidate(
             conflict_id=SIMPLER_VERSION_REASON,
-            intro="",
-            reason="",
+            intro=say(
+                en="This edit cannot carry out that exact combination of requests.",
+                tr="Bu düzenleme istediklerinin bu birleşimini aynen yapamıyor.",
+            ),
+            reason=say(
+                en="Should I try a different approach, or make this simpler version?",
+                tr="Farklı bir yol mu deneyeyim, yoksa bunun daha basit bir sürümünü mü "
+                "hazırlayayım?",
+            ),
             kind=STRATEGY_REFUSAL_KIND if refusal else None,
             options=(
                 ConflictOption(
