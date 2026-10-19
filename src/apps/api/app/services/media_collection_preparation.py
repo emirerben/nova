@@ -108,12 +108,20 @@ async def prepare_story_snapshot(db, owner, story, item):
                 duration_s=length,
             )
         )
+    # The shared scheduler rounds source boundaries to the 30 fps output grid.
+    # Pin its resulting length before preparing consent; arbitrary measured
+    # endpoints (for example 9.98s) need not land on a frame boundary.
+    duration_frames = sum(
+        round(value.source_end_s * 30) - round(value.source_start_s * 30) for value in cuts
+    )
+    if not 30 <= duration_frames <= 60 * 30:
+        raise HTTPException(422, "This story cannot fit the supported export duration")
     snapshot = EditProposalSnapshot(
         direction="fast_montage",
         goal=story.story_json["rationale"],
         title=story.story_json["title"],
         text_policy="none",
-        duration_s=sum(value.output_duration_s for value in cuts),
+        duration_s=duration_frames / 30,
         media=list(refs.values()),
         story_beats=beats,
         fast_cuts=cuts,

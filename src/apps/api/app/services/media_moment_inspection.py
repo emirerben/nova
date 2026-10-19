@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app import storage
 from app.agents._model_client import default_client
@@ -21,7 +21,12 @@ from app.pipeline.clip_cache import (
     complete_media_asset_fact,
 )
 from app.services import media_collections, media_moments
-from app.services.media_collection_analysis import claim_collection_analysis, collection_run_context
+from app.services.media_collection_analysis import (
+    REQUEST_SCHEMA_TAG,
+    claim_collection_analysis,
+    collection_run_context,
+    get_collection_analysis,
+)
 
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_INSPECTIONS = 3
@@ -174,11 +179,17 @@ async def inspect_moment(db, owner, identifier, body):
     count = await db.scalar(
         select(func.count())
         .select_from(MediaAssetAnalysis)
-        .where(MediaAssetAnalysis.user_id == owner, MediaAssetAnalysis.schema_version == schema)
+        .where(
+            MediaAssetAnalysis.user_id == owner,
+            or_(
+                MediaAssetAnalysis.schema_version == schema,
+                MediaAssetAnalysis.schema_version.startswith(
+                    schema + REQUEST_SCHEMA_TAG, autoescape=True
+                ),
+            ),
+        )
     )
-    from app.pipeline.clip_cache import get_media_asset_fact
-
-    cached = await asyncio.to_thread(get_media_asset_fact, key)
+    cached = await asyncio.to_thread(get_collection_analysis, key)
     if cached is None and count >= MAX_INSPECTIONS:
         raise HTTPException(429, "This collection's three targeted inspections are used")
     claim = await asyncio.to_thread(

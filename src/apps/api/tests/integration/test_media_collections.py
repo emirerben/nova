@@ -961,3 +961,71 @@ def test_real_targeted_read_crops_bytes_before_one_bounded_model_call(tmp_path, 
     )
     assert len(uploads) == len(calls) == 1
     assert result["sample_sha256"] == hashlib.sha256(uploads[0]).hexdigest()
+
+
+@pytest.mark.parametrize("operation", ["semantic-search", "stories", "inspect"])
+async def test_distinct_collection_requests_share_a_source_without_cache_collisions(
+    collection_world, monkeypatch, operation
+):
+    from app.agents.camera_roll_stories import (
+        CameraRollStoriesAgent,
+        CameraRollStoriesOutput,
+        StoryIdea,
+    )
+    from app.agents.media_moment_relevance import MomentRelevanceAgent, MomentRelevanceOutput
+    from app.services import media_moment_inspection
+
+    client, assets, sources, _owner, _app = collection_world
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    selected = selection(assets, sources)
+    selected["members"] = selected["members"][:1]
+    assert (await client.put(path, json=selected)).status_code == 200
+    assert (await client.post(f"{path}/index", json={"expected_revision": 1})).status_code == 200
+    moments = (
+        await client.get(f"{path}/moments", params={"query": "ferry", "expected_revision": 1})
+    ).json()["moments"]
+    calls = []
+
+    def rank(self, input, *, ctx):
+        calls.append(input.query)
+        return MomentRelevanceOutput(moment_ids=[input.candidates[0].id])
+
+    def stories(self, input, *, ctx):
+        calls.append(input.query)
+        return CameraRollStoriesOutput(
+            stories=[
+                StoryIdea(
+                    title="Outing",
+                    hook="An arrival",
+                    payoff="The destination",
+                    rationale="The recorded journey",
+                    moment_ids=[input.candidates[0].id],
+                )
+            ]
+        )
+
+    def inspect(source, moment, question, *, ctx):
+        calls.append(question)
+        return {
+            "answer": "Visible",
+            "confidence": 0.8,
+            "evidence": "Recorded footage",
+            "sample_sha256": "a" * 64,
+        }
+
+    monkeypatch.setattr(MomentRelevanceAgent, "run", rank)
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", stories)
+    monkeypatch.setattr(media_moment_inspection, "inspect_interval", inspect)
+    for query in ["first direction", "second direction", "third direction"]:
+        body = {"expected_revision": 1, "query": query}
+        if operation == "inspect":
+            body = {"expected_revision": 1, "moment_id": moments[0]["id"], "question": query}
+        result = await client.post(f"{path}/{operation}", json=body)
+        assert result.status_code == 200, result.text
+        cached = await client.post(f"{path}/{operation}", json={**body, "cache_only": True})
+        assert cached.status_code == 200, cached.text
+    assert len(calls) == 3
+    if operation == "inspect":
+        fourth = await client.post(f"{path}/inspect", json={**body, "question": "fourth direction"})
+        assert fourth.status_code == 429
+        assert len(calls) == 3

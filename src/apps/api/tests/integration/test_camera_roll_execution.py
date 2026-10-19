@@ -25,6 +25,7 @@ from app.models import (
     MediaAssetAnalysis,
     MediaAssetSource,
     MediaCollectionStory,
+    MediaSourceMoment,
     Persona,
     PlanItem,
 )
@@ -32,11 +33,13 @@ from app.tasks.kria_runtime import _claim_approval_dispatch, run_kria_turn
 from tests.integration.test_media_collections import collection_world, selection  # noqa: F401, F811
 
 
+@pytest.mark.parametrize("fractional_end", [False, True])
 @pytest.mark.parametrize("change_before_approval", [False, True])
 async def test_selection_prepares_common_draft_then_explicit_approval_freezes_execution(
     collection_world,  # noqa: F811
     monkeypatch,
     change_before_approval,
+    fractional_end,
 ):
     client, assets, sources, owner, _app = collection_world
     monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
@@ -155,6 +158,12 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
     moments = (
         await client.get(f"{path}/moments", params={"query": "ferry", "expected_revision": 1})
     ).json()["moments"]
+    if fractional_end:
+        async with AsyncSessionLocal() as db:
+            moment = await db.get(MediaSourceMoment, uuid.UUID(moments[0]["id"]))
+            moment.end_s -= 0.02
+            moments[0]["end_s"] = moment.end_s
+            await db.commit()
     async with AsyncSessionLocal() as db:
         persona = Persona(
             user_id=owner.id,
@@ -327,7 +336,10 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         assert loaded == frozen, "The worker must consume the frozen choices verbatim"
         assert [
             (value["source_start_s"], value["source_end_s"]) for value in frozen["story_timeline"]
-        ] == [(value["start_s"], value["end_s"]) for value in moments]
+        ] == [
+            (round(value["start_s"] * 30) / 30, round(value["end_s"] * 30) / 30)
+            for value in moments
+        ]
         assert not frozen["text_elements"]
         assert job.assembly_plan["prepared_collection_story"]["story_id"] == str(story_id)
         assert item.edit_proposal["status"] == "approved"
@@ -335,7 +347,10 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         assert snapshot["text_policy"] == "none"
         assert [
             (value["source_start_s"], value["source_end_s"]) for value in snapshot["fast_cuts"]
-        ] == [(value["start_s"], value["end_s"]) for value in moments]
+        ] == [
+            (round(value["start_s"] * 30) / 30, round(value["end_s"] * 30) / 30)
+            for value in moments
+        ]
         assert (
             item.edit_proposal["planning_diagnostics"]["prepared_collection_story"][
                 "compiled_digest"
