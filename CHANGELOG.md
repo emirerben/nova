@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.51.0] - 2026-10-19
+
+### Changed
+- ci(preship): journey-mapping check + second-fix-PR rule (KRI-749, KRI-751) (#1680) <!-- release-pr: 1680 -->
+
 ## [0.80.50.0] - 2026-10-19
 
 ### Changed
