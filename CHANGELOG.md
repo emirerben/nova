@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.46.0] - 2026-10-19
+
+### Changed
+- fix(editor): text follows clip delete for every timeline archetype (KRI-715) (#1646) <!-- release-pr: 1646 -->
+
+## [0.80.45.0] - 2026-10-19
+
+### Changed
+- chore: add .mailmap so emirerben and Emir Erben count as one author (#1678) <!-- release-pr: 1678 -->
+
+## [0.80.44.0] - 2026-10-19
+
+### Changed
+- fix(ios): show export checking and repair progress in live chat (#1677) <!-- release-pr: 1677 -->
+
 ## [0.80.43.0] - 2026-10-18
 
 ### Added

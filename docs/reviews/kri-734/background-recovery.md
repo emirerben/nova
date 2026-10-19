@@ -11,6 +11,12 @@ publication gate. The phone withholds playback, Save and Share for unchecked
 candidates, polls lightweight status reads, and resumes after interruption.
 Last-good video/poster/URL data is retained on failure.
 
+The live chat feed yields to `DeviceRenderPanel` while
+`outputVerificationPending` or `repairAttempt` is present. The feed previously
+treated a finished local export as finished planning and masked the existing
+checking and repair messages. Ordinary preparation and export still use the
+live feed; measured checking and automatic recovery show their actual status.
+
 ## Original approval and corrective action
 
 The approval card offers **Allow up to 2 automatic repairs**, with a visible
@@ -88,12 +94,30 @@ passed on a fresh task-owned simulator. The complete clean-simulator run then pa
 
 ## Rollout
 
-The feature is not deployed or enabled. Deploy API and workers with enrollment
-off, install protocol 13 on the pilot iPhone, then enable the existing
-`PHONE_ACTUAL_EXPORT_VERIFICATION_ENABLED` and account allowlist deliberately.
+PR #1663 deployed as `be0dcc23863c3a9d68a552392aa17fb93786c3af` with enrollment
+off. After installing protocol 13 on the pilot iPhone, the existing
+`PHONE_ACTUAL_EXPORT_VERIFICATION_ENABLED` flag and explicit account allowlist
+were enabled for one account. API and worker settings matched, all six managed
+machines retained the checked image, and the production health check passed.
 New clients omit repair consent when no offer was shown, preserving older-server
 approval compatibility. Disabling enrollment cannot waive an already required
-check. The phone proof is complete. CI and the normal review/merge/deploy process still apply.
+check. Other accounts remain unenrolled.
+
+On October 19, a real-account production run on the iPhone 13 Pro rejected an
+injected wrong picture, normalized the affected original and passed all 13
+actual-output checks before publication. The original two-repair permission
+spent one attempt; recovery took 31.40 seconds in this single short-edit test.
+The canonical recipe and source-receipt digests were unchanged, the repair
+recorded zero model calls, and the copied phone movie matched the checked upload
+byte for byte. The injection existed only in a private, exact-job-scoped build.
+
+That run exposed the live-feed status masking described above. The follow-up
+client displayed **Checking your video** with Play, Save and Share absent. A
+later preparation attempt also stopped before export because its planner text
+omitted the saved title's final period. The strict text guard remained intact;
+this separate preparation mismatch is not repaired by source normalization.
+Complete production background/resume and repair-state evidence is tracked
+separately from the successful backend recovery and isolated QA proof.
 
 This remains the first simple-cut phone adapter. KRI-723's broader preparation
 migration, other render adapters, text-only repairs and camera-roll recommendations
