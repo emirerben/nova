@@ -128,7 +128,7 @@ else
     if [ "$J_SEL" = "false" ]; then
       pass "no journey-affecting paths in this diff"
     elif OUT="$(COVERAGE="$J_COV" JOURNEY_IDS="$J_IDS" python3 "$SELECT" validate-mapping 2>&1)"; then
-      pass "every journey-relevant path is mapped; CI will run: $J_IDS"
+      pass "every journey-relevant path is mapped; CI will run $(echo "$J_IDS" | tr ',' '\n' | grep -c .) journey(s)"
     else
       fail "journey mapping would fail CI (coverage=$J_COV) — unmapped path(s):"
       UNMAPPED="$(python3 "$SELECT" unmapped-paths --base "$MB" --head HEAD 2>&1)"
