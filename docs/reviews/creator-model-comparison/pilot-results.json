@@ -115,5 +115,7 @@
   "compiled_plans": "three accepted without executing commands",
   "live_schema_version": "typed-presence-v1",
   "latest_schema_version": "typed-presence-v2_offline_only",
-  "schema_effect": "native schema and provider effects are not isolated in this pilot"
+  "schema_effect": "native schema and provider effects are not isolated in this pilot",
+  "submission_count_scope": "runtime invocations; historical Gemini SDK internal HTTP attempts were not observed",
+  "held_amount_scope": "ledger reservation, not authoritative unknown usage or a guaranteed final charge ceiling"
 }

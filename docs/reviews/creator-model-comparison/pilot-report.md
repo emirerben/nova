@@ -10,13 +10,15 @@ a Gemini request timed out with unknown billing, stopping further paid work.
 | Main: original input | Timeout, 131.4 s, $0.433948 held | Blocked without submission | Parsed, 17.8 s, $0.048564 |
 | Copilot: reconstructed context | Not run | Not run | Not run |
 
-Times are runner elapsed times. All three parsed responses passed the real pure
+Times are runner elapsed times. Recorded submission counts measure runtime
+invocations; historical Gemini SDK internal HTTP attempts were not observed. All three parsed responses passed the real pure
 strategy compiler with zero notices. No commands, persisted candidate edits or
 renders were executed. Request fulfillment remains unscored pending human review;
 parsing and compilation do not establish quality.
 
 **Settled $0.163816; unknown held $0.433948; combined $0.597764.** A separate durable
-local pilot ledger retains all paid receipts. The shared envelope is
+local pilot ledger retains the observed receipts. The held amount is a reservation,
+not authoritative unknown usage or a guaranteed final charge ceiling. The shared envelope is
 `e8a5c866-dd24-426e-8322-0b6a1789488b`; do not reset its identity or retry the unknown
 request. Each batch remains capped at $2. See `pilot-results.json` for aggregate
 rows and `pilot-preregistration.json` for the pre-call frozen configuration.
