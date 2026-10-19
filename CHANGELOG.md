@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.55.0] - 2026-10-19
+
+### Fixed
+- fix(montage): a camera-sound montage follows what the clips say (KRI-585) (#1675) <!-- release-pr: 1675 -->
+
 ## [0.80.54.0] - 2026-10-19
 
 ### Changed
