@@ -107,15 +107,15 @@ from app.services.choice_questions import (
     CONFLICT_WHICH_VOICE,
     KEEP_OPEN_REASON,
     MAX_ASKS_PER_QUESTION,
+    SIMPLER_VERSION_REASON,
     ChoiceCapability,
-    ConflictCandidate,
-    ConflictOption,
     answered_brief,
     build_choice_question,
     choice_question_text,
     count_asks,
     match_open_choice,
     open_conflicts,
+    simpler_version_question,
     tag_event,
 )
 from app.services.creation_thread_titles import conversation_revision_matches_sync
@@ -701,37 +701,6 @@ def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resoluti
     )
 
 
-_SIMPLER_VERSION_REASON = "simplification_requires_choice"
-
-
-def _simpler_version_question() -> dict[str, Any]:
-    """Use the existing exact option matcher; an arbitrary next reply is not consent."""
-    return build_choice_question(
-        ConflictCandidate(
-            conflict_id=_SIMPLER_VERSION_REASON,
-            intro="",
-            reason="",
-            options=(
-                ConflictOption(
-                    "different_approach",
-                    label=say(en="Try a different approach", tr="Farklı bir yol dene"),
-                ),
-                ConflictOption(
-                    "simpler_version",
-                    label=say(en="Make this simpler version", tr="Daha basit sürümü hazırla"),
-                    aliases=(
-                        "simpler version",
-                        "make it more basic",
-                        "skip, decide for me",
-                        "Make this simpler version",
-                        "Daha basit sürümü hazırla",
-                    ),
-                ),
-            ),
-        )
-    )
-
-
 def _simpler_version_already_offered(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
@@ -763,7 +732,7 @@ def _simpler_version_already_offered(
         payload = payload if isinstance(payload, Mapping) else {}
         coverage = payload.get("brief_coverage")
         if not isinstance(coverage, Mapping) or coverage.get("reason") not in {
-            _SIMPLER_VERSION_REASON,
+            SIMPLER_VERSION_REASON,
             "approval_requirements_not_ready",
         }:
             continue
@@ -792,7 +761,7 @@ def _simpler_version_already_offered(
             brief.version
         }:
             return False
-        question = payload.get("choice_question") or _simpler_version_question()
+        question = payload.get("choice_question") or simpler_version_question()
         selection = (source_event.payload or {}).get("choice_selection")
         if isinstance(selection, Mapping):
             return (
@@ -1406,7 +1375,7 @@ def _complete_draft_turn(
             recovery = KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
-                choice_question=_simpler_version_question() if can_offer_simpler else None,
+                choice_question=simpler_version_question() if can_offer_simpler else None,
                 response=(
                     f"{reply_text}\n{draft_state} "
                     + (
@@ -1444,7 +1413,7 @@ def _complete_draft_turn(
                     "stage": "draft",
                     "reason": "approval_requirements_not_ready"
                     if readiness_required
-                    else _SIMPLER_VERSION_REASON,
+                    else SIMPLER_VERSION_REASON,
                     **({"approval_readiness": readiness_report} if readiness_required else {}),
                 },
                 brief_expected_version=planned.brief_expected_version,

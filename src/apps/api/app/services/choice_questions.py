@@ -343,6 +343,64 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
     return "\n".join(lines)
 
 
+SIMPLER_VERSION_REASON = "simplification_requires_choice"
+# Marks the question a server policy refusal asked (KRI-759), as opposed to the one the
+# receipts path asks: only this one carries the fields it offered to leave out.
+STRATEGY_REFUSAL_KIND = "strategy_refusal"
+_SIMPLER_YES_ALIASES = (
+    "evet",
+    "yes",
+    "yes please",
+    "evet lütfen",
+    "tamam",
+    "evet daha sade sürümü hazırla",
+    "evet daha basit sürümü hazırla",
+    "daha sade sürümü hazırla",
+    "daha sade sürüm",
+)
+
+
+def simpler_version_question(refusal_fields: Sequence[str] | None = None) -> dict[str, Any]:
+    """ "Try a different approach" / "Make this simpler version" (exact-match options).
+
+    ``refusal_fields`` is set by the planner when the server's own policy refused the
+    strategy (KRI-759): the question then also records which fields the simpler version
+    leaves out, and a plain "evet" / "yes" answers it, because that refusal ends in a
+    yes/no ("Should I make a simpler version?"). The receipts path asks a two-way
+    question where a bare "yes" would be ambiguous, so it passes nothing.
+    """
+    refusal = refusal_fields is not None
+    question = build_choice_question(
+        ConflictCandidate(
+            conflict_id=SIMPLER_VERSION_REASON,
+            intro="",
+            reason="",
+            kind=STRATEGY_REFUSAL_KIND if refusal else None,
+            options=(
+                ConflictOption(
+                    "different_approach",
+                    label=say(en="Try a different approach", tr="Farklı bir yol dene"),
+                ),
+                ConflictOption(
+                    "simpler_version",
+                    label=say(en="Make this simpler version", tr="Daha basit sürümü hazırla"),
+                    aliases=(
+                        "simpler version",
+                        "make it more basic",
+                        "skip, decide for me",
+                        "Make this simpler version",
+                        "Daha basit sürümü hazırla",
+                        *(_SIMPLER_YES_ALIASES if refusal else ()),
+                    ),
+                ),
+            ),
+        )
+    )
+    if refusal:
+        question["dropped_fields"] = sorted(set(refusal_fields or ()))
+    return question
+
+
 # ── Replaying thread events ───────────────────────────────────────────────────
 
 Events = Iterable[tuple[str, "dict[str, Any] | None"]]
@@ -493,6 +551,39 @@ def fold_choice_answers(events: Events) -> dict[str, str]:
             continue
         answers[str(conflict)] = str(selection["option_key"])
     return answers
+
+
+def simpler_version_accepted(events: Events, dropped_fields: Iterable[str]) -> bool:
+    """Did THIS turn's answer take the simpler version a policy refusal offered? (KRI-759)
+
+    ``events`` are ``(role, payload)`` in chronological order, the current turn's user
+    message last. True only when that message carries a ``choice_selection`` of
+    ``simpler_version`` for the question that was open just before it, and that question
+    offered to leave out every field the policy is dropping now (only a policy refusal
+    records ``dropped_fields``; the receipts path's question has none). Consent is per
+    question: an older "yes", the receipts path's question, or a refusal about something
+    else never counts.
+    """
+    rows = [(role, payload) for role, payload in events if isinstance(payload, dict)]
+    last_user = next(
+        (i for i in range(len(rows) - 1, -1, -1) if rows[i][0] == "user"),
+        None,
+    )
+    if last_user is None:
+        return False
+    selection = rows[last_user][1].get("choice_selection")
+    if not isinstance(selection, dict) or selection.get("option_key") != "simpler_version":
+        return False
+    question = latest_open_choice_question(rows[:last_user])
+    if (
+        question is None
+        or question.get("question_id") != selection.get("question_id")
+        or question.get("conflict") != SIMPLER_VERSION_REASON
+    ):
+        return False
+    offered = {str(name) for name in question.get("dropped_fields") or ()}
+    dropping = set(dropped_fields)
+    return bool(dropping) and dropping <= offered
 
 
 # ── The collector (KRI-476 / PR-C) ────────────────────────────────────────────
@@ -2932,4 +3023,8 @@ __all__ = [
     "fold_choice_answers",
     "latest_open_choice_question",
     "split_groups",
+    "SIMPLER_VERSION_REASON",
+    "STRATEGY_REFUSAL_KIND",
+    "simpler_version_accepted",
+    "simpler_version_question",
 ]

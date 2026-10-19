@@ -108,6 +108,7 @@ from app.schemas.user_song import SONG_ALIGNMENT_VERSION
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
     ORDER_VS_GROUP_OPTIONS,
+    SIMPLER_VERSION_REASON,
     ChoiceCapability,
     answered_brief,
     ask_user_choice,
@@ -117,6 +118,8 @@ from app.services.choice_questions import (
     fold_choice_answers,
     length_inputs_waiting,
     resolve_choices,
+    simpler_version_accepted,
+    simpler_version_question,
     tag_event,
 )
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
@@ -2323,6 +2326,17 @@ def title_hold_grounded(
     return False
 
 
+async def _simpler_version_accepted(
+    db: AsyncSession, thread_id: uuid.UUID, fields: Sequence[str]
+) -> bool:
+    """KRI-759: this turn answers a policy refusal's "simpler version?" with yes."""
+    if not fields or not settings.kria_choice_questions_enabled:
+        return False
+    if not isinstance(db, AsyncSession):
+        return False  # no live session (a planner harness), so no thread to read an answer from
+    return simpler_version_accepted(await _load_thread_events(db, thread_id), fields)
+
+
 async def _plan_creator_action(
     db: AsyncSession,
     *,
@@ -2478,9 +2492,7 @@ async def _plan_creator_action(
             action = action.model_copy(update={"strategy": scoped})
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
-        checked = check_strategy_for_runtime_v2(
-            manifest,
-            action.strategy,
+        check_kwargs: dict[str, Any] = {
             **({"ask_before_simplifying": True} if settings.brief_binding_for(creator_id) else {}),
             # KRI-476: also ask before a repair drops a title hold / full-screen ask the
             # creator stated. Off with the choice-questions flag: identical to before.
@@ -2515,11 +2527,51 @@ async def _plan_creator_action(
                 or action.strategy.media_scope == "all"
                 else {}
             ),
-        )
+        }
+        checked = check_strategy_for_runtime_v2(manifest, action.strategy, **check_kwargs)
+        if (
+            isinstance(checked, RefusedStrategy)
+            and checked.code == SIMPLER_VERSION_REASON
+            and await _simpler_version_accepted(db, thread_id, checked.fields)
+        ):
+            # KRI-759: the creator took the simpler version this very refusal offered
+            # (a tap, or "evet"). Draft what the check keeps instead of asking again, and
+            # say in the reply what was left out.
+            accepted = check_strategy_for_runtime_v2(
+                manifest,
+                action.strategy,
+                **{
+                    key: value
+                    for key, value in check_kwargs.items()
+                    if key not in ("ask_before_simplifying", "ask_about_stated_settings")
+                },
+            )
+            if not isinstance(accepted, RefusedStrategy):
+                log.info(
+                    "kria_simpler_version_accepted",
+                    thread_id=str(thread_id),
+                    fields=list(checked.fields),
+                )
+                checked = replace(
+                    accepted,
+                    notices=(*accepted.notices, *([checked.agreed] if checked.agreed else [])),
+                )
         if isinstance(checked, RefusedStrategy):
             log.info("kria_strategy_refused", thread_id=str(thread_id), code=checked.code)
             return PlannedKriaTurn(
-                plan=KriaTurnPlan(mode="respond", turn_value="question", response=checked.question),
+                plan=KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=checked.question,
+                    # KRI-759: a "simpler version?" needs buttons, or a "yes" is only a new
+                    # message that replans into the same refusal.
+                    choice_question=(
+                        simpler_version_question(checked.fields)
+                        if checked.code == SIMPLER_VERSION_REASON
+                        and settings.kria_choice_questions_enabled
+                        else None
+                    ),
+                ),
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
             )

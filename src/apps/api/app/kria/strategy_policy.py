@@ -270,6 +270,12 @@ class CheckedStrategy:
 class RefusedStrategy:
     question: str
     code: str
+    # KRI-759 (only a `simplification_requires_choice` refusal sets these): the strategy
+    # fields the check would drop, and, when the server rewrote them silently, what was
+    # dropped in the creator's words (`agreed` is the same as a done-deal line, for the
+    # reply that follows when the creator accepts the simpler version).
+    fields: tuple[str, ...] = ()
+    agreed: str = ""
 
 
 SONG_CAPTIONS_NEED_SONG_CODE = "song_captions_need_song"
@@ -666,10 +672,10 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
     )
 
 
-def _drops_requested_action(
+def _dropped_fields(
     before: CreativeStrategy, after: CreativeStrategy, *, stated_settings: bool = False
-) -> bool:
-    """Semantic losses need consent; styling normalization can still recover."""
+) -> tuple[str, ...]:
+    """The strategy fields a check lost (`selected_media_ids` = a selected clip left out)."""
     prior = before.model_dump(mode="json")
     next_values = after.model_dump(mode="json")
     fields = (
@@ -691,17 +697,174 @@ def _drops_requested_action(
         # full-screen Visuals are creator-stated; a renderer that cannot honour them used
         # to drop them silently inside `compile_strategy_to_plan`.
         fields = (*fields, "opening_title_duration_s", "overlay_display")
-    if any(
-        prior.get(key) not in (None, [], "") and prior.get(key) != next_values.get(key)
+    lost = [
+        key
         for key in fields
-    ):
-        return True
+        if prior.get(key) not in (None, [], "") and prior.get(key) != next_values.get(key)
+    ]
     # PR 1556 review: a clip the strategy selected that the checked plan no longer has is
     # a lost ask (a reorder, or a clip added to the selection, is not).
     kept = set(next_values.get("selected_media_ids") or ())
     if any(media_id not in kept for media_id in prior.get("selected_media_ids") or ()):
-        return True
-    return prior.get("caption_style") == "none" and next_values.get("caption_style") != "none"
+        lost.append("selected_media_ids")
+    if prior.get("caption_style") == "none" and next_values.get("caption_style") != "none":
+        lost.append("caption_style")
+    return tuple(lost)
+
+
+def _drops_requested_action(
+    before: CreativeStrategy, after: CreativeStrategy, *, stated_settings: bool = False
+) -> bool:
+    """Semantic losses need consent; styling normalization can still recover."""
+    return bool(_dropped_fields(before, after, stated_settings=stated_settings))
+
+
+# What a lost field is called in the creator's words. A noun phrase, so it reads in a list
+# in either language without case endings.
+_LOST_FIELD_WORDS: dict[str, tuple[str, str]] = {
+    "clip_intents": ("your clip instructions", "klip talimatların"),
+    "reaction_beats": ("the visuals timed to your words", "sözlerine göre zamanlanan görseller"),
+    "closing_visual_id": ("the closing visual", "kapanış görseli"),
+    "closing_badge_id": ("the closing badge", "kapanış rozeti"),
+    "opening_title": ("your opening title", "açılış başlığın"),
+    "shot_labels": ("your clip labels", "klip etiketlerin"),
+    "closing_title": ("your closing title", "kapanış başlığın"),
+    "pinned_texts": ("your on-screen texts", "ekran yazıların"),
+    "execution_contract": ("the exact voiceover plan", "seslendirme planın"),
+    "mixed_media_timing": ("the photo and video timing", "fotoğraf ve video zamanlaman"),
+    "licensed_sfx": ("the sound effects", "ses efektleri"),
+    "opening_title_duration_s": (
+        "how long your title stays",
+        "başlığının ekranda kalma süresi",
+    ),
+    "overlay_display": ("full-screen Visuals", "tam ekran Visuals"),
+    "caption_style": ("your no-captions choice", "altyazısız isteğin"),
+}
+
+
+def _clip_numbers(manifest: ResolvedCreatorManifest, media_ids: Sequence[str]) -> list[int]:
+    """The clips' places among the project's own clips, as the app numbers them (1-based)."""
+    own = [media.media_id for media in manifest.media if not media.media_id.startswith("asset-")]
+    return sorted(own.index(media_id) + 1 for media_id in media_ids if media_id in own)
+
+
+def _join_numbers(numbers: Sequence[int]) -> str:
+    words = [str(number) for number in numbers]
+    if len(words) < 2:
+        return "".join(words)
+    return say(
+        en=f"{', '.join(words[:-1])} and {words[-1]}",
+        tr=f"{', '.join(words[:-1])} ve {words[-1]}",
+    )
+
+
+def _length_reason(
+    manifest: ResolvedCreatorManifest, wanted: float, possible: float, played: Sequence[str]
+) -> str:
+    """Why a once-only montage can't be as long as asked: it can't outrun the clips it plays."""
+    own_count = sum(1 for media in manifest.media if not media.media_id.startswith("asset-"))
+    numbers = _clip_numbers(manifest, played)
+    if numbers and len(numbers) < own_count:
+        # Name the clips that are in, so a pick narrower than the creator meant shows.
+        if len(numbers) > 6:
+            return say(
+                en=(
+                    f"Only {len(numbers)} of your {own_count} clips are in this edit and "
+                    f"together they run about {possible:g} seconds, so the video can't be "
+                    f"{wanted:g} seconds."
+                ),
+                tr=(
+                    f"Bu düzenlemede {own_count} klipten yalnızca {len(numbers)} tanesi var ve "
+                    f"birlikte yaklaşık {possible:g} saniye sürüyor, bu yüzden video "
+                    f"{wanted:g} saniye olamıyor."
+                ),
+            )
+        several = len(numbers) > 1
+        which = _join_numbers(numbers)
+        return say(
+            en=(
+                f"Only {'clips' if several else 'clip'} {which} "
+                f"{'are' if several else 'is'} in this edit and "
+                f"{'together they run' if several else 'it runs'} about {possible:g} seconds, "
+                f"so the video can't be {wanted:g} seconds."
+            ),
+            tr=(
+                f"Bu düzenlemede yalnızca {which}. {'klipler' if several else 'klip'} var ve "
+                f"{'birlikte ' if several else ''}yaklaşık {possible:g} saniye sürüyor, bu "
+                f"yüzden video {wanted:g} saniye olamıyor."
+            ),
+        )
+    return say(
+        en=(
+            f"Your clips add up to about {possible:g} seconds, so the video can't be "
+            f"{wanted:g} seconds."
+        ),
+        tr=(
+            f"Klipler toplam yaklaşık {possible:g} saniye, bu yüzden video {wanted:g} saniye "
+            "olamıyor."
+        ),
+    )
+
+
+def _lost_in_words(
+    manifest: ResolvedCreatorManifest,
+    before: CreativeStrategy,
+    after: CreativeStrategy,
+    fields: Sequence[str],
+) -> tuple[str, str]:
+    """(why the creator's request can't all be kept, the same as a done deal), or ("", "").
+
+    Names only what the creator can act on: which clips are out, which length changed and
+    why (a once-only montage can't run longer than the clips it plays), and the plain name
+    of anything else. A field with no plain name here keeps the generic sentence.
+    """
+    reasons: list[str] = []
+    agreed: list[str] = []
+    named: list[tuple[str, str]] = []
+    for field in fields:
+        if field == "selected_media_ids":
+            gone = [m for m in before.selected_media_ids if m not in after.selected_media_ids]
+            numbers = _clip_numbers(manifest, gone)
+            if not numbers or len(numbers) > 6:
+                named.append(("the media you picked", "seçtiğin medya"))
+                continue
+            several = len(numbers) > 1
+            which = _join_numbers(numbers)
+            reasons.append(
+                say(
+                    en=f"{'Clips' if several else 'Clip'} {which} can't be in this edit.",
+                    tr=f"{which}. {'klipler' if several else 'klip'} bu düzenlemeye giremiyor.",
+                )
+            )
+            agreed.append(
+                say(
+                    en=f"I left out {'clips' if several else 'clip'} {which}.",
+                    tr=f"{which}. {'klipleri' if several else 'klibi'} dışarıda bıraktım.",
+                )
+            )
+        elif field == "target_duration_s":
+            wanted, possible = before.target_duration_s, after.target_duration_s
+            reasons.append(_length_reason(manifest, wanted, possible, after.selected_media_ids))
+            agreed.append(
+                say(
+                    en=f"I made it {possible:g} seconds instead of {wanted:g}.",
+                    tr=f"{wanted:g} saniye yerine {possible:g} saniyelik yaptım.",
+                )
+            )
+        elif field in _LOST_FIELD_WORDS:
+            named.append(_LOST_FIELD_WORDS[field])
+        else:
+            return "", ""
+    if named:
+        names = ", ".join(say(en=en, tr=tr) for en, tr in named)
+        reasons.append(
+            say(
+                en=f"This edit can't keep: {names}.",
+                tr=f"Bu düzenlemede korunamayanlar: {names}.",
+            )
+        )
+        agreed.append(say(en=f"Left out: {names}.", tr=f"Çıkardıklarım: {names}."))
+    return " ".join(reasons), " ".join(agreed)
 
 
 def _repair_detail(before: CreativeStrategy, after: CreativeStrategy) -> str:
@@ -859,18 +1022,27 @@ def check_strategy_for_runtime_v2(
         # that specialist, so keep the selection the model boundary normalized.
         checked = checked.model_copy(update={"selected_media_ids": strategy.selected_media_ids})
     all_notices = (*notices, *(localize_known_message(n) for n in edit_plan.notices))
-    if ask_before_simplifying and (
-        lost_asks
-        or clips_left_out
-        or visuals_left_out
-        or _drops_requested_action(baseline, checked, stated_settings=ask_about_stated_settings)
-    ):
+    dropped = (
+        _dropped_fields(baseline, checked, stated_settings=ask_about_stated_settings)
+        if ask_before_simplifying
+        else ()
+    )
+    left_out_media = bool(lost_asks or clips_left_out or visuals_left_out)
+    if ask_before_simplifying and (left_out_media or dropped):
         # The creator-stated setting that was dropped comes first: a notice alone (e.g.
         # Visuals left out of a voiceover edit) may not be what made this a question.
         repair = _repair_detail(baseline, checked) if ask_about_stated_settings else ""
-        details = " ".join(part for part in (repair, *all_notices) if part) or say(
-            en="This edit cannot carry out that exact combination of requests.",
-            tr="Bu düzenleme istediklerinin bu birleşimini aynen yapamıyor.",
+        stated = " ".join(part for part in (repair, *all_notices) if part)
+        # KRI-759: a silent server rewrite has no notice. Say what it dropped instead of the
+        # generic sentence, and keep the same words for the reply that follows an "OK".
+        lost, agreed = ("", "") if stated else _lost_in_words(manifest, baseline, checked, dropped)
+        details = (
+            stated
+            or lost
+            or say(
+                en="This edit cannot carry out that exact combination of requests.",
+                tr="Bu düzenleme istediklerinin bu birleşimini aynen yapamıyor.",
+            )
         )
         # KRI-519: a first request has no draft to be "unchanged".
         has_edit = manifest.current_edit is not None and manifest.current_edit.status != "none"
@@ -888,6 +1060,8 @@ def check_strategy_for_runtime_v2(
         return RefusedStrategy(
             question=f"{details} {tail}",
             code="simplification_requires_choice",
+            fields=(*dropped, *(("left_out_media",) if left_out_media else ())),
+            agreed=agreed,
         )
     return CheckedStrategy(strategy=checked, notices=all_notices)
 
