@@ -84,3 +84,24 @@ schema, holdout, capture and live comparison work. Before implementation:
   and picture/audio review. A missing/failed output cannot disappear from a denominator.
 - Source shortages and unavailable exports remain incomplete evidence. Broad work
   approval does not create training consent, new independent creators, or human scores.
+
+## Timing comparison boundary
+
+The final timing cases evaluate existing operations; they do not introduce a new
+editor timing feature or change product projection rules. The six timeline
+choices remain those of the production compiler:
+
+1. Duration is owned by the ordered compiler timeline, not model prose. Compare
+   the compiled slots and total with the recorded input and source bounds.
+2. Existing `compile_editor_ops` ripple/projection owns affected text lanes;
+   continuous audio is not rewritten by a text/clip-duration request. Check each
+   returned payload for unrelated lane changes.
+3. This experiment has no scrub/playback surface. Existing virtual-timeline and
+   editor browser gates retain canonical duration and inverse mapping coverage.
+4. Duration edits trim/extend only within existing compiler/source limits. A
+   model cannot relax minimum lengths, source bounds or transition rules.
+5. One candidate is one draft snapshot; verify exact prior-state undo and a
+   separate-session restored reopen. No model op is applied to production.
+6. Existing `make verify-editor-timeline` and the editor Save matrix provide
+   product-contract regression evidence. They do not prove these private
+   candidates were rendered, previewed on a phone or exported successfully.

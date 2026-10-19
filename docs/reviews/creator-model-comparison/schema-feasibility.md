@@ -7,7 +7,9 @@ clear from omission. Original semantic/ownership/cross-field validators remain
 mandatory. Existing 61 Main and 179 Copilot fixture round trips pass offline.
 
 Sol accepted live native Main v1/v2 and Copilot v2 responses. Gemini used its JSON
-baseline; Gemini native provider acceptance was not tested. These observations
+baseline in the matched comparison. A later native smoke failed before a usable
+response and its reservation released at zero; the specific provider diagnostic
+was not retained, so the exact cause is unverified. Gemini native is not certified. These observations
 establish input-specific compatibility, not subjective quality or full export safety.
 
 After funding, Sonnet rejected recursive JSONValue definitions. An explicit acyclic
@@ -29,3 +31,11 @@ Sources checked through gstack browse:
 
 Actual provider rejections are retained in the private journals; sanitized outcomes
 and frozen profiles are in the preregistration/result artifacts in this directory.
+
+The explicit `json_guarded` profile appends a versioned serialization instruction,
+counts it in the prompt hash/estimate and preserves task rules. It can be selected
+independently through server configuration without accidentally selecting native
+transport. A live guarded compound Copilot response still emitted invalid markup.
+The profile is an experiment, not a successful format-reliability fix. Lower-effort
+legacy JSON alignment controls parsed and preserved the recorded stacked layout;
+one task cannot establish broad effort equivalence.

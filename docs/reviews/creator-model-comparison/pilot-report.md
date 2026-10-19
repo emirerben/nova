@@ -1,4 +1,7 @@
-# Funded real-request pilot — 19 October 2026
+# Initial funded real-request pilot — 19 October 2026
+
+Historical phase report. Current scope, accounting and evidence are in
+[morning report](morning-report.md) and `final-development-results.json`.
 
 The approved inference pilot ran within budget. **Keep production unchanged.**
 Sonnet is a promising Main Creator latency candidate in JSON mode; Sol has the

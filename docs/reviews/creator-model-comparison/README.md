@@ -1,65 +1,62 @@
 # Main Creator / Edit Copilot comparison
 
-The approved real-request inference pilot remains within $5.66. **Production remains
-Gemini; no quality winner is established.** The latest
-[non-lip-sync continuation](next-content-results.json) ran six calls on two exact
-real inputs: all three Main plans parsed/compiled, and two Copilot edits passed all
-ten preservation checks while the third response failed JSON parsing. Human blind
-preferences and actual export verification remain pending.
+Read the [morning report](morning-report.md) and
+[final development results](final-development-results.json).
+**Production remains Gemini. No quality winner is established.**
 
-Current metered spend is **$1.168546**, with **$1.716306** retained unknown liability;
-**$2.775148** remains. Read the initial [pilot report](pilot-report.md),
-[aggregate results](pilot-results.json), [verification](verification.md),
-[schema details](schema-feasibility.md) and [cost record](cost-estimate.md).
+The latest real-content comparison covers seven actual requests, eight blinded
+panels and 24 candidate slots, plus one native-schema smoke. Twenty of 25 recent
+calls returned parsed outputs; 17 actionable candidates passed real scratch
+save/reopen, stale-write rejection, undo, restore and cleanup. Three conversational
+hook responses have no executable draft. Failed responses remain visible.
 
-In the initial pilot, Main Creator's current v64 JSON pair parsed and compiled for Sonnet and Sol.
-Sonnet was faster and costlier on two related inputs. Copilot's one reconstructed
-unsupported-operation case parsed for Gemini and Sol; Sonnet JSON returned invalid
-JSON. Full Sonnet native grammar was rejected by the provider and now fails local
-preflight. Sol native passed all tested inputs. These are compatibility and latency
-observations, not a request-fulfillment or export-quality verdict.
+Twenty exact inputs are prepared, ten per agent, across five development threads
+from one creator. They add task variety, not independent creator coverage.
+Human preferences, independent holdouts and actual candidate exports are pending.
+Lip-sync is excluded from creative-direction ranking after the user's correction;
+its technical criterion is matching the song's timestamps.
+
+The original $5.66 envelope reconciles to **$2.424762 metered** plus **$1.716306
+retained unknown liability**, **$4.141068 accounted**, and **$1.518932 remaining**.
+No calls are reserved or running. The original Gemini unknown is still protected
+against retry under fresh manifests; its actual usage is not fabricated.
 
 ## Implementation
 
-- Gemini, Anthropic Messages and OpenAI Responses (store=false), independent
-  per-agent model/reasoning/output controls; production defaults unchanged.
-- Typed model-owned Main fields and 66 Copilot operations; explicit null/omission
-  semantics, original parsers/compiler/ownership checks. Full native Sonnet is
-  blocked pending a verified capability-scoped grammar; JSON is explicit.
-- Per-call accounting, SDK retry/deadline controls, $2 batches and one shared
-  approved envelope. Unknown calls remain fenced and counted. A terminated call
-  with documented conservative full-batch retention may permit independent cases;
-  no caller-context flag can release or bypass the original reservation.
-- Default-off private exact capture, labeled historical/reconstructed imports,
-  current eligibility checks, blinded review and derived-copy expiry purge.
-- Separate sealed holdout registration/execution and evaluator token; development
-  access rejects holdouts and split overlap. No real holdout corpus was available.
+- Gemini, Anthropic Messages and OpenAI Responses (`store=false`), independent
+  model/reasoning/output controls; default production routing unchanged.
+- Typed model-owned Main fields and 66 Copilot operations with null/omission
+  semantics and original parser/compiler/ownership validation. Sol native passed
+  the tested inputs. Full Sonnet native remains blocked after grammar rejection;
+  Gemini native smoke failed. Neither is certified by an offline schema audit.
+- Explicit versioned `json_guarded` transport profile, separate from legacy JSON
+  and native profiles. Live evidence shows it does not reliably fix Sonnet markup.
+- Accurate accounting, one-attempt SDK controls, <=$2 batches and one shared
+  envelope; unknown calls remain reserved and fenced.
+- Default-off exact capture, owned recorded-Copilot import, current eligibility,
+  private blinded review and conservative derived-copy expiry/revocation index.
+- Scratch-only PostgreSQL persistence verification with separate inference and
+  verifier fingerprints. Original structural verdicts remain immutable when a
+  harness bug is corrected and returned bytes are verified again.
+- Sealed holdout registration requires complete owner/media exclusions and source
+  fingerprints. The new admin inventory endpoint returns metadata only. No real
+  holdout corpus or collection cohort was activated.
 
 Operator entrypoint: `src/apps/api/.venv/bin/python scripts/compare_creator_models.py
---help`. Private directories are 700 and files 600. Replay never constructs SDK
-clients or reserves money. Live requires pinned manifests, current eligibility,
-explicit approval and the durable development ledger. Reuse the same envelope ID.
-Never retry unknown submissions under fresh identities. See plan.md for collection,
-scoring and actual-export boundaries.
+--help`. Use `import-copilot` for owned recorded invocation inputs and
+`verify-persistence` for frozen returned candidates. The latter accepts only local
+PostgreSQL databases ending `_test`; never point it at the paid pilot ledger.
+Live inference requires immutable manifests, current eligibility and the approved
+ledger envelope. Replay never constructs SDK clients or reserves money.
 
-## Evidence and budget
+The private readable review is
+`/private/tmp/nova-model-comparison-private/readable-blind-review.html`.
+Provider mappings and diagnostics remain private. Direct files cannot observe a
+later revocation; recheck eligibility and purge before reuse. No recurring purge,
+production deployment or selected-model rollout was activated.
 
-Initial-phase confirmed spend was **$0.728250**, retained unknown liability **$1.716306**,
-combined **$2.444556**. Original Gemini actual usage is still unknown; the full original batch remains
-reserved rather than falsely settled. All returned usage reconciles to the ledger.
-Source scope: one creator/event, two recorded Main inputs, one approved reconstructed
-Copilot context, zero live holdouts. Candidate commands were never executed.
-
-The current readable private review is
-`/private/tmp/nova-model-comparison-private/readable-blind-review.html`;
-`funded-blind-review.html` preserves the earlier pilot.
-Human scoring, supported Copilot tasks, independent holdouts and finalist exports
-remain outstanding. Run expiry/revocation purge while retaining private copies;
-no recurring purge, capture cohort or production deployment was activated.
-
-The [review and corpus preparation](review-and-corpus-preparation.md) now provides
-a readable private blind board, four selected non-lip-sync Main inputs and eight
-exact supported Copilot development inputs with offline parser/compiler checks.
-Turn-specific human grading remains pending. The independent holdout intake is
-prepared, with zero cases enrolled. Lip-sync is excluded from creative-direction
-ranking after the user's feedback; its technical criterion is song timestamp matching.
+Earlier phases remain historical records: [initial pilot](pilot-report.md),
+[non-lip-sync continuation](next-content-results.json),
+[corpus preparation](review-and-corpus-preparation.md),
+[schema feasibility](schema-feasibility.md), [cost record](cost-estimate.md) and
+[verification](verification.md). Their phase-specific totals are not current totals.

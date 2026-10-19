@@ -1,11 +1,11 @@
 # Paid evaluation cost record — approved $5.66 pilot
 
-User approved **$5.66 total**, retaining the **$2 per-batch ceiling**. The funded
-pilot confirmed **$0.728250** of inference charges. **$1.716306** remains retained
-for the original unknown Gemini call: **$2.444556 total accounted budget**, leaving
-**$3.215444** after the hold. Actual Gemini usage remains unknown. The hold was
-increased to its full approved batch; it was never released or falsely settled.
-See [pilot report](pilot-report.md) and `pilot-results.json`.
+User approved **$5.66 total**, retaining the **$2 per-batch ceiling**. Final
+metered inference is **$2.424762**, with **$1.716306** retained for the original
+unknown Gemini call: **$4.141068 accounted**, leaving **$1.518932**. No active
+reserved/provider-started calls remain. Unknown actual usage is still unavailable;
+its full original batch was retained and the protected request was never retried.
+See [morning report](morning-report.md) and `final-development-results.json`.
 
 The sizing below is the original historical estimate shown before approval,
 retained for audit. Official standard API rates were checked 19 October 2026.

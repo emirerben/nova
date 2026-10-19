@@ -2,7 +2,7 @@
 
 Compare Nova's current Gemini configuration with `claude-sonnet-5-5` and `gpt-6.1-sol` on authorized real creator requests. Deliver the provider adapters, accurate accounting, structured-output improvements, reasoning controls, private evaluation workflow, and a reviewed result for each agent. Choose Main Creator and Edit Copilot independently; keeping Gemini is a valid outcome.
 
-Status: the approved inference pilot completed with limitations, 19 October 2026. Provider integration, private capture/import, sealed holdout infrastructure, accounting and typed Sol output are implemented. Sonnet's full native grammar was rejected and is blocked locally; explicit JSON controls were run. Confirmed spend is $0.728250 plus $1.716306 retained unknown Gemini liability, inside $5.66. The unknown request was never retried. No production selection, human quality verdict, live holdout corpus, candidate persistence or actual export evidence exists. See [pilot report](pilot-report.md). Original planning revision: `ac15c4726`.
+Status, 19 October 2026: provider/accounting/capture/holdout infrastructure and the approved development inference pilot are implemented. Twenty exact inputs are prepared. The latest comparison has 25 calls on seven real requests (including profile controls), 20 parsed outputs and 17 actionable candidates verified through real scratch persistence. Confirmed metered spend is $2.424762 plus $1.716306 retained unknown liability, inside the original $5.66 envelope. Human blind review, independent real holdouts and actual finalist exports remain incomplete; production routing stays Gemini. See [morning report](morning-report.md) and [current results](final-development-results.json). Original planning revision: `ac15c4726`.
 
 **1. Scope and existing work**
 
@@ -203,9 +203,9 @@ If the experiment supports a provider change, prepare a separate agent-specific 
 
 Deliver reviewed code, offline journey results, private corpus/manifest with eligibility and split metadata, dry-run and budget estimates, approved live result files, blinded human reviews, exact export evidence for supported finalists, a sanitized per-agent recommendation, and rollout/rollback instructions. Report unfinished evidence as pending.
 
-Immediate dependencies are authorization to resume implementation setup after automatic review rejected the fetch, a task-local development environment, permitted real-request access, and later approval of concrete paid batches. Credential availability, eligible case counts, full schema compatibility, and broad actual-export coverage remain facts to verify rather than assumptions.
+Setup, environment, authorized source access and approved pilot execution have been resolved. Remaining dependencies are human judgments, independent eligible creators/media with complete exclusions, and finalist actual exports. The residual pilot budget does not authorize the separately priced full repeated holdout experiment.
 
-Execution is not complete until the real comparison and required output review are finished. At present only this plan and source-level feasibility checks are complete.
+Implementation and the approved development inference pilot are complete. The full selection experiment remains incomplete until human review, genuinely independent holdouts and required actual-output evidence are available. Milestones A–D have implementation/offline evidence; E has a limited paid development pilot. F remains pending, and G has reviewable default-off infrastructure with no model rollout or deployment. No missing evidence is waived by a successful parser or test suite.
 
 **References**
 
