@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.53.0] - 2026-10-19
+
+### Changed
+- fix(kria): a text-on-a-spoken-word ask is never a clip-picker question on a Voiceover edit (KRI-692) (#1668) <!-- release-pr: 1668 -->
+
 ## [0.80.52.0] - 2026-10-19
 
 ### Changed

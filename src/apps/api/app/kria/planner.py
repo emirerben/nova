@@ -36,7 +36,10 @@ from app.agents._schemas.creator_agent import (
     ResolvedCreatorManifest,
     ReviewDecision,
 )
-from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
+from app.agents._schemas.edit_format import (
+    CLIP_INTENT_FREE_EDIT_FORMATS,
+    NARRATED_EDIT_FORMATS,
+)
 from app.agents.brief_extractor import BriefExtractionInput, BriefExtractorAgent
 from app.agents.clip_intent_planner import ConfirmedTitleCopy
 from app.agents.length_options import length_options
@@ -65,6 +68,7 @@ from app.kria.brief import (
     route_requirements,
     wants_clip_descriptions,
 )
+from app.kria.brief_checks import spoken_text_literals
 from app.kria.brief_route import loose_text
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
@@ -812,6 +816,14 @@ def _clip_intent_resolution_plan(
 # -- KRI-374: uncertain-takes gate for lip-sync song montages ------------------
 
 _SONG_ALIGNMENT_POLL_S = 1.5
+
+
+def _is_voiceover_strategy(strategy: Any) -> bool:
+    """A narrated edit spined by the creator's recorded voiceover (KRI-692)."""
+    return (
+        getattr(strategy, "edit_format", None) in NARRATED_EDIT_FORMATS
+        and getattr(strategy, "audio_strategy", None) == "voiceover"
+    )
 
 
 def _is_lipsync_song_strategy(strategy: Any) -> bool:
@@ -2024,6 +2036,7 @@ async def _plan_from_creator_output(
     clip_scope_texts: Sequence[str] = (),
     requested_media: Mapping[str, str] | None = None,
     describe_clips: bool = False,
+    spoken_text: Sequence[str] = (),
 ) -> PlannedKriaTurn:
     """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
     decision = getattr(output, "creative_decision", None)
@@ -2070,6 +2083,7 @@ async def _plan_from_creator_output(
         clip_scope_texts=clip_scope_texts,
         requested_media=requested_media,
         describe_clips=describe_clips,
+        spoken_text=spoken_text,
     )
     return replace(planned, creative_copy_resolution=resolution)
 
@@ -2281,6 +2295,7 @@ async def _plan_creator_action(
     clip_scope_texts: Sequence[str] = (),
     requested_media: Mapping[str, str] | None = None,
     describe_clips: bool = False,
+    spoken_text: Sequence[str] = (),
 ) -> PlannedKriaTurn:
     action = output.action
     if isinstance(action, ProposeStrategy):
@@ -2601,6 +2616,13 @@ async def _plan_creator_action(
                 **({"clip_selections": clip_selections} if clip_selections else {}),
                 # KRI-612: "explain the footages" puts a line from the footage on each clip.
                 **({"describe_clips": True} if describe_clips else {}),
+                # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
+                # never a clip question; its receipt tells the creator.
+                **(
+                    {"spoken_text": spoken_text}
+                    if spoken_text and _is_voiceover_strategy(action.strategy)
+                    else {}
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - no provider failure may mint a draft
             log.warning(
@@ -4496,6 +4518,7 @@ async def _plan_live_turn(
         clip_scope_texts=_brief_clip_scope_texts(effective),
         requested_media=requested_media(effective, (media.media_id for media in manifest.media)),
         describe_clips=wants_clip_descriptions(effective),
+        spoken_text=spoken_text_literals(effective),
     )
     return replace(
         planned,
