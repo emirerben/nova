@@ -3456,11 +3456,26 @@ struct NativeEditorTemporaryVideo {
         flushDeferredSourcePreviewUpdate()
     }
 
+    /// Dragging or nudging a clip to a new place. The server offers it as `clips.reorder`; a variant that lists
+    /// no such capability falls back to the timeline section's editability.
+    var canReorderClips: Bool { canEditTimeline && canEditOperation(["clips.reorder"], section: .timeline) }
+
     func moveSelected(by offset: TimeInterval) {
-        guard canEditTimeline, let id = selectedClipID, let index = clipSlotIndex(id.uuidString), abs(offset) > 0.000001 else { return }
-        let destination = min(max(0, index + (offset < 0 ? -1 : 1)), document.clips.count - 1)
-        guard destination != index else { return }
-        transactDocument(section: .timeline) { doc in let clip = doc.clips.remove(at: index); doc.clips.insert(clip, at: destination) }
+        guard canReorderClips, let id = selectedClipID, abs(offset) > 0.000001 else { return }
+        let ordered = timelineClips
+        guard let index = ordered.firstIndex(where: { $0.id == id }) else { return }
+        moveClip(id: id, toIndex: min(max(0, index + (offset < 0 ? -1 : 1)), ordered.count - 1))
+    }
+
+    /// Puts a clip at `toIndex` among the clips as the timeline draws them. One undo step; the length is unchanged
+    /// because each cut stays at its position (`NativeEditorInteraction.reorderedSlots`).
+    func moveClip(id: UUID, toIndex: Int) {
+        guard canReorderClips else { return }
+        let ordered = timelineClips
+        guard ordered.indices.contains(toIndex),
+              let from = clipSlotIndex(id.uuidString),
+              let to = clipSlotIndex(ordered[toIndex].id.uuidString), from != to else { return }
+        transactDocument(section: .timeline) { $0.clips = NativeEditorInteraction.reorderedSlots($0.clips, from: from, to: to) }
     }
 
     func slideSourceWindow(by offset: TimeInterval) {
