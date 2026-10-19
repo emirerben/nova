@@ -108,11 +108,51 @@ struct NewChatButton: View {
     }
 }
 
+/// Carries a rename/delete request from a `ProjectActionsMenu` to `ProjectActionAlerts`.
+///
+/// The alerts used to hang off each menu. A drawer row sits in a `LazyVStack` that is re-laid-out when
+/// the alert's keyboard appears, which tore the row (and its open alert) down. Slide posts only reach
+/// rename through those rows, so the alert closed as soon as it opened.
+@MainActor @Observable
+final class ProjectActionsPresenter {
+    enum Request: Equatable { case rename(UUID), delete(UUID) }
+    var request: Request?
+    /// The project with a rename or delete in flight; its menu is disabled.
+    var busyProjectID: UUID?
+}
+
 struct ProjectActionsMenu: View {
     let project: ProjectSummary
     /// The chat header floats over the transcript; drawer rows keep the plain label.
     var floating = false
     @EnvironmentObject private var model: AppModel
+    /// Nil in previews that render a row without a workspace host; the menu then does nothing.
+    @Environment(ProjectActionsPresenter.self) private var presenter: ProjectActionsPresenter?
+    private var current: ProjectSummary { model.projects.first { $0.id == project.id } ?? project }
+    private var deletionBlocked: Bool { current.status == .rendering || model.uploads.records.contains { $0.projectID == project.id } }
+
+    var body: some View {
+        Menu {
+            Button("Rename project") { presenter?.request = .rename(project.id) }
+            Button(deletionBlocked ? "Delete after rendering or uploading" : "Delete project", role: .destructive) { presenter?.request = .delete(project.id) }
+                .disabled(deletionBlocked)
+        } label: {
+            if floating {
+                KriaIcon(.more).frame(width: 44, height: 44).kriaFloatingSurface(Circle())
+            } else {
+                KriaIcon(.more).frame(width: 44, height: 44)
+            }
+        }
+        .disabled(presenter?.busyProjectID == project.id).accessibilityLabel("Project actions for \(current.workspaceTitle)")
+    }
+}
+
+/// Presents the rename and delete alerts for `ProjectActionsMenu`. Attach it once, high in the tree
+/// (`ChatWorkspaceView`), where no scrolling list or keyboard layout can dismantle it.
+struct ProjectActionAlerts: ViewModifier {
+    let presenter: ProjectActionsPresenter
+    @EnvironmentObject private var model: AppModel
+    @State private var target: ProjectSummary?
     @State private var renaming = false
     @State private var deleting = false
     @State private var title = ""
@@ -124,56 +164,68 @@ struct ProjectActionsMenu: View {
     @State private var deleteError: String?
     @State private var renameIdentity = UUID().uuidString
     @State private var submittedTitle: String?
-    private var current: ProjectSummary { model.projects.first { $0.id == project.id } ?? project }
-    private var deletionBlocked: Bool { current.status == .rendering || model.uploads.records.contains { $0.projectID == project.id } }
+    private var current: ProjectSummary? {
+        guard let target else { return nil }
+        return model.projects.first { $0.id == target.id } ?? target
+    }
 
-    var body: some View {
-        Menu {
-            Button("Rename project") { title = current.workspaceTitle; submittedTitle = nil; renameIdentity = UUID().uuidString; renameError = nil; renaming = true }
-            Button(deletionBlocked ? "Delete after rendering or uploading" : "Delete project", role: .destructive) { deleteError = nil; deleting = true }
-                .disabled(deletionBlocked)
-        } label: {
-            if floating {
-                KriaIcon(.more).frame(width: 44, height: 44).kriaFloatingSurface(Circle())
-            } else {
-                KriaIcon(.more).frame(width: 44, height: 44)
-            }
-        }
-        .disabled(busy).accessibilityLabel("Project actions for \(current.workspaceTitle)")
-        .alert("Rename project", isPresented: $renaming) {
-            TextField("Project name", text: $title)
-                .accessibilityIdentifier("rename-project-title")
-            Button("Cancel", role: .cancel) { renameError = nil }
-                .disabled(busy)
-            Button(busy ? "Saving…" : "OK") { rename() }
-                .disabled(busy || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || title.count > 120)
-        } message: {
-            Text(renameError ?? "Enter a name up to 120 characters.")
-        }
-        .alert("Delete this project?", isPresented: $deleting) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete project", role: .destructive) {
-                busy = true
-                Task {
-                    do { try await model.deleteProject(current) }
-                    catch { self.deleteError = "The project couldn’t be deleted. It may have changed or still be rendering. Try again after refreshing." }
-                    busy = false
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: presenter.request) { _, request in
+                guard let request else { return }
+                presenter.request = nil
+                switch request {
+                case .rename(let id):
+                    guard let project = model.projects.first(where: { $0.id == id }) else { return }
+                    target = project
+                    title = project.workspaceTitle; submittedTitle = nil; renameIdentity = UUID().uuidString; renameError = nil; renaming = true
+                case .delete(let id):
+                    guard let project = model.projects.first(where: { $0.id == id }) else { return }
+                    target = project
+                    deleteError = nil; deleting = true
                 }
             }
-        } message: { Text("This permanently deletes the project and its rendered videos and media. This cannot be undone.") }
-        .alert("Couldn’t delete project", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
-            Button("OK", role: .cancel) { deleteError = nil }
-        } message: { Text(deleteError ?? "") }
+            .alert("Rename project", isPresented: $renaming) {
+                TextField("Project name", text: $title)
+                    .accessibilityIdentifier("rename-project-title")
+                Button("Cancel", role: .cancel) { renameError = nil }
+                    .disabled(busy)
+                Button(busy ? "Saving…" : "OK") { rename() }
+                    .disabled(busy || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || title.count > 120)
+            } message: {
+                Text(renameError ?? "Enter a name up to 120 characters.")
+            }
+            .alert("Delete this project?", isPresented: $deleting) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete project", role: .destructive) {
+                    guard let project = current else { return }
+                    setBusy(true)
+                    Task {
+                        do { try await model.deleteProject(project) }
+                        catch { self.deleteError = "The project couldn’t be deleted. It may have changed or still be rendering. Try again after refreshing." }
+                        setBusy(false)
+                    }
+                }
+            } message: { Text("This permanently deletes the project and its rendered videos and media. This cannot be undone.") }
+            .alert("Couldn’t delete project", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
+                Button("OK", role: .cancel) { deleteError = nil }
+            } message: { Text(deleteError ?? "") }
     }
+
+    private func setBusy(_ value: Bool) {
+        busy = value
+        presenter.busyProjectID = value ? target?.id : nil
+    }
+
     private func rename() {
-        guard !busy else { return }
+        guard !busy, let project = current else { return }
         let cleaned = title.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         if submittedTitle != cleaned { renameIdentity = UUID().uuidString; submittedTitle = cleaned }
         renameError = nil
-        busy = true
+        setBusy(true)
         Task {
             do {
-                try await model.renameProject(current, title: cleaned, clientEventID: renameIdentity)
+                try await model.renameProject(project, title: cleaned, clientEventID: renameIdentity)
                 renaming = false; renameError = nil; submittedTitle = nil; renameIdentity = UUID().uuidString
             } catch {
                 if error as? APIError == .conflict {
@@ -182,7 +234,13 @@ struct ProjectActionsMenu: View {
                 } else { self.renameError = "The name couldn’t be saved. Your text is still here; try again." }
                 renaming = true
             }
-            busy = false
+            setBusy(false)
         }
+    }
+}
+
+extension View {
+    func projectActionAlerts(_ presenter: ProjectActionsPresenter) -> some View {
+        modifier(ProjectActionAlerts(presenter: presenter))
     }
 }
