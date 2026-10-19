@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.44.0] - 2026-10-19
+
+### Changed
+- fix(ios): show export checking and repair progress in live chat (#1677) <!-- release-pr: 1677 -->
+
 ## [0.80.43.0] - 2026-10-18
 
 ### Added
