@@ -42,3 +42,14 @@ schema, holdout, capture and live comparison work. Before implementation:
 - Reconstructed real context is labeled separately from exact historical input.
   No human review is fabricated; source-reviewed expectations retain their original
   pointer and review identity. Unreviewed tasks cannot become a quality verdict.
+# Retained-liability continuation, preregistered before implementation
+
+- No usage receipt: preserve `unknown`, reserve the full original approved batch,
+  label actual billing unknown, and never retry that logical submission.
+- A still-running call, wrong envelope, decreased liability, invalid evidence hash,
+  or retention below the locally established maximum: refuse reconciliation.
+- Reconciled unknown remains counted across batches and concurrent reservations;
+  independent cases may continue, but the original idempotency key stays fenced.
+- An ordinary unknown without this durable reconciliation still stops the envelope.
+- A later real receipt may settle actual usage; a conservative hold is never
+  reported as metered spend or successful inference.

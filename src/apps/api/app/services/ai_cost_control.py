@@ -521,6 +521,87 @@ def _envelope_spend(conn: Any, envelope: str) -> Decimal:
     return Decimal(str(value or 0))
 
 
+def reconcile_unknown_liability(
+    reservation_id: uuid.UUID,
+    *,
+    test_run_id: str,
+    approved_batch_usd: float,
+    evidence: dict[str, Any],
+) -> None:
+    """Retain the entire approved batch for a terminated, unmetered call.
+
+    Local operator action only: no HTTP endpoint or caller-context bypass. This
+    is financial containment, not a usage receipt. The unknown status and original
+    idempotency fence remain; only independent batches may continue. Never release
+    money, label it settled, or authorize a larger envelope through this action.
+    """
+    retained = Decimal(str(approved_batch_usd))
+    maximum = Decimal(str(evidence.get("maximum_call_cost_usd", 0)))
+    proof = evidence.get("sha256", "")
+    try:
+        parts = test_run_id.split(":")
+        envelope = "comparison:" + str(uuid.UUID(parts[1]))
+        valid_run = parts[0] == "comparison" and len(parts) == 3 and bool(parts[2])
+    except (ValueError, IndexError):
+        valid_run = False
+    if (
+        not valid_run
+        or not retained.is_finite()
+        or not maximum.is_finite()
+        or not 0 < maximum <= retained <= 2
+        or evidence.get("provider_call_terminated") is not True
+        or not isinstance(proof, str)
+        or len(proof) != 64
+        or any(c not in "0123456789abcdef" for c in proof)
+    ):
+        raise ValueError("invalid retained-liability reconciliation evidence")
+    from app.database import sync_engine  # noqa: PLC0415
+
+    with sync_engine.begin() as conn:
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:scope,0))"),
+            {"scope": "envelope:" + envelope},
+        )
+        row = (
+            conn.execute(
+                text("SELECT * FROM ai_cost_reservations WHERE id=:id FOR UPDATE"),
+                {"id": str(reservation_id)},
+            )
+            .mappings()
+            .one()
+        )
+        if (
+            row["test_run_id"] != test_run_id
+            or row["environment"] != "development"
+            or row["usage_purpose"] != "live_eval"
+            or row["status"] != "unknown"
+            or retained < row["estimated_cost_usd"]
+        ):
+            raise ValueError("reservation cannot be reconciled by retained liability")
+        metadata = dict(row["usage_json"] or {})
+        prior = metadata.get("liability_reconciliation") or {}
+        metadata["liability_reconciliation"] = {
+            "version": 1,
+            "basis": "full_approved_batch_retained",
+            "actual_usage_known": False,
+            "retry_permitted": False,
+            "original_estimated_cost_usd": prior.get(
+                "original_estimated_cost_usd", float(row["estimated_cost_usd"])
+            ),
+            "retained_usd": float(retained),
+            "maximum_call_cost_usd": float(maximum),
+            "evidence_sha256": proof,
+            "at": datetime.now(UTC).isoformat(),
+        }
+        conn.execute(
+            text(
+                "UPDATE ai_cost_reservations SET estimated_cost_usd=:retained, "
+                "usage_json=CAST(:metadata AS JSONB),updated_at=now() WHERE id=:id"
+            ),
+            {"id": str(reservation_id), "retained": retained, "metadata": json.dumps(metadata)},
+        )
+
+
 def _override_total(conn: Any, scope: str, now: datetime) -> Decimal:
     value = conn.execute(
         text(
@@ -687,7 +768,14 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 and conn.execute(
                     text(
                         "SELECT EXISTS(SELECT 1 FROM ai_cost_reservations "
-                        "WHERE test_run_id LIKE :prefix AND status='unknown')"
+                        "WHERE test_run_id LIKE :prefix AND status='unknown' AND NOT "
+                        "COALESCE((usage_json->'liability_reconciliation'->>'version'='1' "
+                        "AND usage_json->'liability_reconciliation'->>'basis'="
+                        "'full_approved_batch_retained' "
+                        "AND usage_json->'liability_reconciliation'->>'actual_usage_known'='false' "
+                        "AND usage_json->'liability_reconciliation'->>'retry_permitted'='false' "
+                        "AND (usage_json->'liability_reconciliation'->>'retained_usd')::numeric "
+                        "=estimated_cost_usd),false))"
                     ),
                     {"prefix": envelope + ":%"},
                 ).scalar_one()

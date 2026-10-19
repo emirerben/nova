@@ -117,3 +117,73 @@ def test_unknown_submission_fences_the_entire_envelope(ledger):  # noqa: F811
     mark_paid_call_unknown(receipt)
     with pytest.raises(ProviderOutcomeUnknownError):
         reserve_paid_call(second)
+
+
+def test_retained_unknown_allows_independent_case_but_never_duplicate(ledger):  # noqa: F811
+    import uuid
+
+    from app.services.ai_cost_control import (
+        mark_paid_call_started,
+        mark_paid_call_unknown,
+        reconcile_unknown_liability,
+        reserve_paid_call,
+    )
+
+    envelope = "comparison:" + str(uuid.uuid4())
+    first = _request(ledger, "closed-unknown", estimate=0.05, run_id=envelope + ":first")
+    second = _request(ledger, "independent", estimate=0.10, run_id=envelope + ":second")
+    for request in (first, second):
+        request.ctx.extra.update(
+            paid_experiment_envelope_id=envelope, approved_envelope_max_usd=2.0
+        )
+    receipt = reserve_paid_call(first)
+    mark_paid_call_started(receipt)
+    mark_paid_call_unknown(receipt)
+    evidence = {
+        "provider_call_terminated": True,
+        "maximum_call_cost_usd": 0.08,
+        "sha256": "a" * 64,
+    }
+    for invalid in (
+        {**evidence, "provider_call_terminated": False},
+        {**evidence, "maximum_call_cost_usd": 0.3},
+        {**evidence, "sha256": "invalid"},
+    ):
+        with pytest.raises(ValueError):
+            reconcile_unknown_liability(
+                receipt.id,
+                test_run_id=first.ctx.test_run_id,
+                approved_batch_usd=0.2,
+                evidence=invalid,
+            )
+    reconcile_unknown_liability(
+        receipt.id,
+        test_run_id=first.ctx.test_run_id,
+        approved_batch_usd=0.2,
+        evidence=evidence,
+    )
+    with pytest.raises(ProviderOutcomeUnknownError):
+        reserve_paid_call(first)
+    assert reserve_paid_call(second)
+    from app.agents._runtime import AiBudgetExceededError
+
+    third = _request(ledger, "over-budget", estimate=1.8, run_id=envelope + ":third")
+    third.ctx.extra.update(paid_experiment_envelope_id=envelope, approved_envelope_max_usd=2.0)
+    with pytest.raises(AiBudgetExceededError):
+        reserve_paid_call(third)
+    with sync_engine.connect() as db:
+        row = (
+            db.execute(
+                text(
+                    "SELECT status,estimated_cost_usd,settled_cost_usd,usage_json "
+                    "FROM ai_cost_reservations WHERE id=:id"
+                ),
+                {"id": receipt.id},
+            )
+            .mappings()
+            .one()
+        )
+    assert row["status"] == "unknown"
+    assert float(row["estimated_cost_usd"]) == 0.2
+    assert row["settled_cost_usd"] is None
+    assert row["usage_json"]["liability_reconciliation"]["actual_usage_known"] is False
