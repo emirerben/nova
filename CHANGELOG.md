@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.52.0] - 2026-10-19
+
+### Changed
+- fix: preserve clip targets and expose unused uploaded footage (#1686) <!-- release-pr: 1686 -->
+
 ## [0.80.51.0] - 2026-10-19
 
 ### Changed
