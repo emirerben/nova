@@ -144,9 +144,17 @@ def test_sonnet_usage_and_only_visible_text():
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"media_uri": "gs://private/video"}, {"thinking_level": "minimal"}, {"thinking_budget": 100}],
+    [
+        {"media_uri": "gs://private/video"},
+        {"thinking_level": "minimal"},
+        {"thinking_level": "max"},
+        {"thinking_budget": 100},
+    ],
 )
-def test_unsupported_inputs_fail_without_sdk(kwargs):
+def test_unsupported_inputs_fail_without_sdk(kwargs, monkeypatch):
+    monkeypatch.setattr(
+        OpenAITextClient, "_get", lambda _: pytest.fail("SDK construction forbidden")
+    )
     with pytest.raises(TerminalError):
         OpenAITextClient().invoke(model="gpt-6.1-sol", prompt="JSON", **kwargs)
 

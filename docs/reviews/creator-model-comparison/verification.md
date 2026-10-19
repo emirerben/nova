@@ -1,4 +1,4 @@
-# Final verification — 19 October 2026
+# Final verification — overnight 19–20 October 2026
 
 Task branch: `codex/creator-model-comparison`; isolated checkout:
 `/private/tmp/nova-creator-model-comparison`. Integrated fetched main `30a17e05c` (restored-clip Save fix), after `ef671ddca`
@@ -140,6 +140,21 @@ passed read-only rechecks. Pre-push scanner warnings identified the synthetic `e
 and the reserved documentation IP used by a negative DSN test. Neither is a
 credential or creator data.
 An additional scan found zero current source identity/grant values in the Git diff.
+
+## SDK qualification
+
+A final dependency/API-contract audit qualified Google GenAI **2.10.0**, OpenAI
+**2.44.0** and Anthropic **0.116.0**. The Google requirement is now `>=2.10,<3`,
+matching the version used by the live pilot and the retry/deadline contract tests;
+it no longer permits an unqualified 1.x installation.
+
+Sol effort `max` is rejected by both experiment preparation and the provider
+boundary before SDK construction; the qualified Responses contract uses `xhigh`
+instead. Anthropic retains its distinct SDK effort set. Labels are never silently
+translated. Existing unsupported-input tests now explicitly forbid SDK construction.
+The new failure cases failed before the fix, then **67 provider, comparison and
+accounting checks passed** in 3.27 seconds with dummy keys and mock transports.
+Log: `/private/tmp/nova-comparison-sdk-final.log`. No paid profile or result changed.
 
 ## Limits
 

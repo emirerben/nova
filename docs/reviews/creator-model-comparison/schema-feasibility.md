@@ -39,3 +39,9 @@ transport. A live guarded compound Copilot response still emitted invalid markup
 The profile is an experiment, not a successful format-reliability fix. Lower-effort
 legacy JSON alignment controls parsed and preserved the recorded stacked layout;
 one task cannot establish broad effort equivalence.
+
+Qualified SDKs: Google GenAI 2.10.0, OpenAI 2.44.0 and Anthropic 0.116.0. The
+Google floor is now `>=2.10,<3` for the verified retry/deadline path. Sol enables
+low/medium/high/xhigh; `max` fails locally rather than being sent or silently
+translated. Anthropic's separate SDK effort contract is retained. Only the
+registered pilot profiles have live evidence; SDK acceptance is not model quality.

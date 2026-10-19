@@ -116,3 +116,9 @@ missing/naive invocation or event time, an invocation outside the creator turn,
 nested redactions and validation that changes the recorded input. A normalized
 historical record must not remain eligible as an exact-input comparison. Audit the
 prepared/pilot inputs without rewriting historical journals or making paid calls.
+
+Final SDK audit, before the configuration fix: the qualified Google SDK is 2.10.0,
+so the dependency declaration must not permit an unqualified 1.x runtime. The
+qualified OpenAI 2.44 Responses effort contract has `xhigh` but no `max`;
+Sol `max` must fail before SDK construction and experiment pricing. Keep the
+Anthropic contract's separate effort set and never silently translate a label.

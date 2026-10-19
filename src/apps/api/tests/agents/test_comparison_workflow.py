@@ -345,3 +345,8 @@ def test_normalized_import_cannot_be_frozen_as_exact():
     }
     with pytest.raises(ValueError, match="exact"):
         prepare_case(case, Arm("O", "gpt-6.1-sol", "medium"))
+
+
+def test_sol_max_effort_fails_experiment_preflight():
+    with pytest.raises(ValueError, match="effort"):
+        build_agent("main_creator", Arm("O", "gpt-6.1-sol", "max"), None)

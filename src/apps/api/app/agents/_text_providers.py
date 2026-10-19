@@ -17,6 +17,10 @@ from app.agents._runtime import (
 from app.config import settings
 
 TEXT_MODELS = {"gpt-6.1-sol": "openai", "claude-sonnet-5-5": "anthropic"}
+TEXT_EFFORTS = {
+    "gpt-6.1-sol": ("low", "medium", "high", "xhigh"),
+    "claude-sonnet-5-5": ("low", "medium", "high", "xhigh", "max"),
+}
 
 
 def paid_provider(model: str) -> str | None:
@@ -28,7 +32,7 @@ def _preflight(model, expected, media_uri, media_mime, thinking_budget, thinking
         raise TerminalError("unsupported text model")
     if media_uri or media_mime or thinking_budget is not None:
         raise TerminalError("text provider does not support media or thinking_budget")
-    if thinking_level not in (None, "low", "medium", "high", "xhigh", "max"):
+    if thinking_level is not None and thinking_level not in TEXT_EFFORTS[model]:
         raise TerminalError("unsupported reasoning effort")
 
 

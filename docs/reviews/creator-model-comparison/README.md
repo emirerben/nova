@@ -31,6 +31,8 @@ against retry under fresh manifests; its actual usage is not fabricated.
   Gemini native smoke failed. Neither is certified by an offline schema audit.
 - Explicit versioned `json_guarded` transport profile, separate from legacy JSON
   and native profiles. Live evidence shows it does not reliably fix Sonnet markup.
+- Provider-specific effort preflight and qualified SDK floors (Google GenAI 2.10,
+  OpenAI 2.44, Anthropic 0.116); unsupported Sol `max` is rejected before SDK use.
 - Accurate accounting, one-attempt SDK controls, <=$2 batches and one shared
   envelope; unknown calls remain reserved and fenced.
 - Default-off exact capture, owned recorded-Copilot import, current eligibility,

@@ -129,10 +129,10 @@ def build_agent(name, arm: Arm, client):
             "Sonnet rejected the full Main Creator/Copilot compiled grammar; "
             "select an explicit JSON profile until a capability-scoped schema is verified"
         )
+    from app.agents._text_providers import TEXT_EFFORTS
+
     efforts = (
-        ("low", "medium", "high")
-        if arm.model.startswith("gemini")
-        else ("low", "medium", "high", "xhigh", "max")
+        ("low", "medium", "high") if arm.model.startswith("gemini") else TEXT_EFFORTS[arm.model]
     )
     if arm.effort not in efforts:
         raise ValueError("unsupported effort")
