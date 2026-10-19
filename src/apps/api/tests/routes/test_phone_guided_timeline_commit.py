@@ -10,177 +10,21 @@ changed here; a failing scenario is pinned as a strict xfail with its exact erro
 
 from __future__ import annotations
 
-import copy
-import uuid
-from types import SimpleNamespace
-
 import pytest
 
-from app.kria.device_render import make_device_request
-from app.kria.media_sources import OriginalMediaDescriptor
-from app.pipeline.guided_story import GuidedStoryExecutionPlan, compile_execution_plan
-from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.routes import generative_jobs as gj
-from app.schemas.edit_proposal import (
-    ClipLabel,
-    EditProposalSnapshot,
-    FastMontageCut,
-    MediaRef,
-    StoryBeat,
-    canonical_media_digest,
-)
-from app.services.device_render import device_status, pin_device_request
+from app.services.device_render import device_status
 from app.services.kria_editor_ops import KriaEditorOpError, compile_editor_ops
-from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 
-FRAME_S = 1.0 / 30.0
-# `authoredText` (per-clip label bars) and `crossfade` (set by the transition ops) are the
-# device-verified capabilities a guided timeline edit needs beyond the basic text set; the
-# flag flip must be paired with both being in PHONE_RENDER_VERIFIED_FEATURES in prod.
-_VERIFIED = [
-    "basicComposition",
-    "local1080Export",
-    "positionedText",
-    "animatedText",
-    "audioMix",
-    "authoredText",
-    "crossfade",
-]
-CLIP_COUNT = 4
-CLIP_S = 7.5
-SOURCE_S = 10.0
-
-
-def _guided_phone_job(monkeypatch, *, count=CLIP_COUNT, clip_s=CLIP_S):
-    from app.config import settings
-
-    monkeypatch.setattr(gj.settings, "phone_rendering_enabled", True)
-    monkeypatch.setattr(
-        gj.settings,
-        "phone_render_verified_features",
-        _VERIFIED,
-    )
-    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
-    monkeypatch.setattr(settings, "edit_transitions_enabled", True, raising=False)
-    monkeypatch.setattr(settings, "kria_guided_timeline_ops", True, raising=False)
-
-    job_id = uuid.uuid4()
-    media = [
-        MediaRef(
-            lane="clip",
-            media_id=f"m{i}",
-            gcs_path=f"generative-jobs/{job_id}/sources/analysis-proxy-m{i}.mp4",
-            generation="123",
-            kind="video",
-            duration_s=SOURCE_S,
-        )
-        for i in range(count)
-    ]
-    snapshot = EditProposalSnapshot(
-        direction="fast_montage",
-        duration_s=round(count * clip_s),
-        title="Weekend",
-        opening_title="Weekend in Lisbon",
-        video_reuse_policy="once",
-        media=media,
-        fast_cuts=[
-            FastMontageCut(
-                cut_id=f"cut-{i}",
-                media_id=f"m{i}",
-                source_start_s=1.0,
-                source_end_s=1.0 + clip_s,
-                output_duration_s=clip_s,
-                role="hook" if i == 0 else "build",
-            )
-            for i in range(count)
-        ],
-        clip_labels=[
-            ClipLabel(
-                media_id=f"m{i}",
-                text=f"Place {i}",
-                provenance="creator",
-                min_display_s=1.0,
-            )
-            for i in range(count)
-        ],
-        story_beats=[
-            StoryBeat(
-                beat_id="story",
-                topic="Scene",
-                media_ids=[m.media_id for m in media][:4],
-                duration_s=round(count * clip_s),
-            )
-        ],
-    )
-    guided = {
-        "proposal_version": 1,
-        "media_digest": canonical_media_digest(media),
-        "approved_proposal": snapshot.model_dump(mode="json"),
-        "media_identities": [
-            {k: getattr(m, k) for k in ("lane", "media_id", "gcs_path", "generation", "kind")}
-            for m in media
-        ],
-    }
-    plan = compile_execution_plan(guided, track=None)
-    bindings = tuple(
-        PhoneSourceBinding(
-            media_id=m.media_id,
-            proxy_path=m.gcs_path,
-            generation="123",
-            original=OriginalMediaDescriptor(
-                sha256=f"{i + 1:x}" * 64,
-                byte_count=1000,
-                duration_s=SOURCE_S,
-                width=1920,
-                height=1080,
-                has_audio=True,
-            ),
-        )
-        for i, m in enumerate(media)
-    )
-    job = SimpleNamespace(
-        id=job_id,
-        user_id=uuid.uuid4(),
-        status="awaiting_device",
-        current_phase=None,
-        mode="content_plan",
-        all_candidates={"clip_paths": []},
-        assembly_plan={
-            "guided_edit": guided,
-            "guided_story_execution_plan": plan,
-            PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings],
-            "variants": [
-                {
-                    "variant_id": "guided_story",
-                    "resolved_archetype": "guided_story",
-                    "render_destination": "device",
-                    "render_status": "awaiting_device",
-                    "render_generation_id": "first",
-                    "duration_s": plan["resolved_duration_s"],
-                    "text_mode": "agent_text",
-                    "intro_mode": "linear",
-                    "intro_layout": "linear",
-                    "text_elements": copy.deepcopy(plan["text_elements"]),
-                }
-            ],
-        },
-    )
-    pin_device_request(
-        job,
-        make_device_request(
-            job_id=job.id,
-            variant_id="guided_story",
-            revision=1,
-            recipe=compile_phone_guided_plan(
-                GuidedStoryExecutionPlan.model_validate(plan), bindings
-            ),
-        ),
-        base_generation="first",
-    )
-    variant = job.assembly_plan["variants"][0]
-    revision = gj._guided_v2_revision(job, variant)
-    assert revision is not None
-    return job, variant, revision
+# The guided phone job builder lives with the Save contract matrix (KRI-750).
+from tests.routes._editor_save_matrix import (
+    CLIP_COUNT,
+    CLIP_S,
+    FRAME_S,
+)
+from tests.routes._editor_save_matrix import (
+    guided_phone_job as _guided_phone_job,
+)
 
 
 def _commit(job, variant, revision, ops):

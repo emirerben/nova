@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.57.0] - 2026-10-19
+
+### Changed
+- test(editor): one Save contract matrix for every edit shape (KRI-750) (#1681) <!-- release-pr: 1681 -->
+
 ## [0.80.56.0] - 2026-10-19
 
 ### Changed
