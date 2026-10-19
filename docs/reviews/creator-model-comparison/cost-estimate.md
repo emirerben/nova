@@ -59,9 +59,10 @@ Do not authorize the full experiment from this small reference set.
 ## Continuation boundaries
 
 Reconcile the exact unknown Gemini receipt from authoritative provider usage before
-another submission in this envelope. Fund the configured Anthropic account or
-explicitly select an existing funded endpoint. Resolve the reconstructed Copilot
-input preference; otherwise obtain a fresh exact invocation. Never start a new
+another submission in this envelope. Confirm that the configured Anthropic account is funded. The user approved
+labeled reconstructions; the updated Copilot preflight maximum is $0.935036,
+inside the same approval envelope. The late Gemini request ended in ReadError
+without authoritative usage, so its unknown reservation remains. Never start a new
 envelope ID to bypass held money. New hardening changes the runtime/schema hashes,
 so superseded frozen profiles intentionally fail drift checks; pin a new profile
 while retaining the same approved envelope and historical failures.

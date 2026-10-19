@@ -59,11 +59,13 @@ or production capture was activated. Never upload private packets to public CI.
 
 Two exact recorded Main inputs and one reconstructed Copilot context are ready,
 all from one reviewed creator/source. The holdout queue has no eligible cases.
-The reconstructed Copilot preference remains pending. Historical prompts were not
+The user explicitly approved labeled reconstructions; the Copilot continuation
+packet has passed an offline preflight at a $0.935036 maximum. Historical prompts were not
 fully archived; Main inputs were evaluated with pinned current v63 prompts.
 
-Sonnet needs a funded configured account or an explicitly selected existing funded
-endpoint. The timed-out Gemini receipt needs authoritative usage reconciliation;
+The user plans to fund the configured Anthropic account; funding completion has
+not yet been confirmed. The Gemini request eventually ended in ReadError without usage; its receipt still
+needs authoritative usage reconciliation;
 never release an unknown reservation or retry it merely to unblock the experiment.
 Human obligation scoring, live Copilot outputs, holdout repetitions and finalist
 save/reload/export review remain outstanding. Three valid compiled plans establish

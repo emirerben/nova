@@ -106,8 +106,7 @@
   },
   "blockers": [
     "Anthropic account rejected Sonnet for insufficient credits.",
-    "One Gemini request is outcome unknown after 130 seconds; the envelope is fenced.",
-    "Copilot reconstructed-context preference remains pending."
+    "One Gemini request is outcome unknown after 130 seconds; the envelope is fenced."
   ],
   "quality_verdict": "unassessed_pending_human_review",
   "production_selection": "unchanged",
@@ -117,5 +116,14 @@
   "latest_schema_version": "typed-presence-v2_offline_only",
   "schema_effect": "native schema and provider effects are not isolated in this pilot",
   "submission_count_scope": "runtime invocations; historical Gemini SDK internal HTTP attempts were not observed",
-  "held_amount_scope": "ledger reservation, not authoritative unknown usage or a guaranteed final charge ceiling"
+  "held_amount_scope": "ledger reservation, not authoritative unknown usage or a guaranteed final charge ceiling",
+  "reconstructed_context_use": "user_approved_2026-10-19",
+  "anthropic_funding": "user_intends_to_fund_not_yet_confirmed",
+  "gemini_late_completion": {
+    "elapsed_ms": 2372988,
+    "outcome": "transport_error",
+    "error_class": "ReadError",
+    "authoritative_usage_received": false,
+    "reservation": "retained_unknown"
+  }
 }

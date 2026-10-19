@@ -32,7 +32,8 @@ with the pinned current v63 prompt; the original full prompts were not archived.
 
 One Copilot context uses the real correction and the real server snapshot builder
 on persisted prior job state. It is explicitly reconstructed, not an original
-Copilot invocation; the user's preference remains pending. All three tasks share
+Copilot invocation; the user subsequently approved labeled reconstructions. Its updated v2 packet
+passed offline preflight at a $0.935036 maximum. All three tasks share
 one creator/source. No live held-out case exists. The sealed executor is
 implemented but has no corpus to assess.
 
@@ -59,8 +60,9 @@ new timeout controls do not retrospectively prove it was cancelled or unbilled.
 
 1. Reconcile authoritative usage for the exact timed-out Gemini receipt; preserve
    its timeout as an observed failure even if usage later arrives.
-2. Restore Anthropic credit or explicitly select an existing funded route.
-3. Resolve reconstructed Copilot input use or collect a fresh exact invocation.
+2. Confirm funding of the configured Anthropic account; the user has chosen this route.
+3. The labeled Copilot reconstruction is now approved and preflighted. Recheck
+   source eligibility immediately before its eventual paid submission.
 4. Freeze updated runtime/schema profiles inside the same remaining approval,
    retaining previous costs and failures. Complete missing live arms, then human
    obligation scoring using the private blinded packet.
@@ -72,3 +74,16 @@ The private script-free review packet is
 `/private/tmp/nova-model-comparison-private/pilot-blind-review.html`; detailed
 source bodies and outputs remain outside Git in mode-600 files under a mode-700
 directory. The packet contains randomized labels and no recorded human scores.
+
+## Continuation update
+
+The old Gemini process exited after 2,372,988 ms with ReadError and no
+authoritative usage. This ends the local wait, not the unknown billing state.
+Its reservation and envelope fence remain intact. No new paid submissions were
+made after the user's reconstruction approval/funding-intent reply.
+
+The continuation envelope preserves the original UUID and $5.66 approval, replaces
+only the unsubmitted Copilot packet, and retains all historical costs/failures.
+Updated manifest estimates sum to $5.258154; this does not imply a billing receipt
+for the unknown request. See `continuation-preflight.json`. Funding confirmation
+and authoritative Gemini usage are still required before paid continuation.
