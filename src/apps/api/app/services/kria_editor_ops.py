@@ -217,6 +217,7 @@ def _safe_slot(
     moment: str | None = None,
     facts: list[dict[str, Any]] | None = None,
     seen: str | None = None,
+    visible_text: str | None = None,
 ) -> dict[str, Any]:
     slot: dict[str, Any] = {
         "key": str(row.get("slot_id") or f"slot-{index}"),
@@ -246,6 +247,8 @@ def _safe_slot(
         slot["facts"] = facts
     if seen:
         slot["seen"] = {"text": seen, "provenance": "vision"}
+    if visible_text:
+        slot["visible_text"] = visible_text[:1000]
     return slot
 
 
@@ -322,8 +325,12 @@ def _seen_text(analysis: object, *, kind: str = "video") -> str:
     return "; ".join(parts)[:_MAX_SEEN_CHARS]
 
 
-def clip_seen_by_media_id(
-    job: Any, variant: dict[str, Any], assignments: list[dict[str, Any]]
+def _clip_description_by_media_id(
+    job: Any,
+    variant: dict[str, Any],
+    assignments: list[dict[str, Any]],
+    *,
+    visible_text: bool = False,
 ) -> dict[str, str]:
     """Path-free vision descriptions per guided clip (``analysis["understanding"]``).
 
@@ -346,10 +353,32 @@ def clip_seen_by_media_id(
         media_id = media_by_path.get(str(row.get("gcs_path")))
         if media_id is None:
             continue
-        text = _seen_text(row.get("analysis"), kind=str(row.get("kind") or "video"))
+        if visible_text:
+            from app.services.clip_understanding import clip_record  # noqa: PLC0415
+
+            analysis = row.get("analysis")
+            text = clip_record(
+                analysis if isinstance(analysis, dict) else None,
+                kind=str(row.get("kind") or "video"),
+            ).on_screen_text[:1000]
+        else:
+            text = _seen_text(row.get("analysis"), kind=str(row.get("kind") or "video"))
         if text:
             out[media_id] = text
     return out
+
+
+def clip_seen_by_media_id(
+    job: Any, variant: dict[str, Any], assignments: list[dict[str, Any]]
+) -> dict[str, str]:
+    return _clip_description_by_media_id(job, variant, assignments)
+
+
+def clip_visible_text_by_media_id(
+    job: Any, variant: dict[str, Any], assignments: list[dict[str, Any]]
+) -> dict[str, str]:
+    """Actual stored OCR, never legacy speech or previous editorial captions."""
+    return _clip_description_by_media_id(job, variant, assignments, visible_text=True)
 
 
 def _clip_label_links(job: Any, variant: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -835,6 +864,7 @@ def build_editor_snapshot(
     clip_context = clip_context or {}
     facts_by_media = clip_context.get("facts") or {}
     seen_by_media = clip_context.get("seen") or {}
+    visible_by_media = clip_context.get("visible_text") or {}
     slot_rows = _variant_slots(variant, job)
     guided_source_labels = _slot_moments(job, variant, slot_rows)
     label_links = _clip_label_links(job, variant)
@@ -857,6 +887,7 @@ def build_editor_snapshot(
                 ),
                 facts=facts_by_media.get(media_id) if isinstance(media_id, str) else None,
                 seen=seen_by_media.get(media_id) if isinstance(media_id, str) else None,
+                visible_text=visible_by_media.get(media_id) if isinstance(media_id, str) else None,
             )
         )
     duration = visual_block_variant_duration(variant)
@@ -1759,7 +1790,7 @@ def _validate_timing_numbers(op: dict[str, Any]) -> None:
 
 
 def _op_add_text(state: _DraftState, op: dict[str, Any]) -> None:
-    if any(key in op for key in ("style_from", "patch", "clip_id")):
+    if any(key in op for key in ("style_from", "patch", "clip_id", "research")):
         # KRI-219 v2 extension (style copy / patch / clip-linked label).
         from app.services.kria_editor_ops_text import add_text_v2  # noqa: PLC0415
 

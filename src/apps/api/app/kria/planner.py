@@ -139,6 +139,7 @@ from app.services.kria_editor_ops import (
     build_editor_snapshot,
     clip_facts_by_media_id,
     clip_seen_by_media_id,
+    clip_visible_text_by_media_id,
     coalesce_text_style_ops,
     editor_state_has_lanes,
     resolve_editor_base,
@@ -1259,6 +1260,11 @@ async def _copilot_clip_context(
         seen = clip_seen_by_media_id(job, variant, list(item.clip_assignments or []))
         if seen:
             context["seen"] = seen
+        visible_text = clip_visible_text_by_media_id(
+            job, variant, list(item.clip_assignments or [])
+        )
+        if visible_text:
+            context["visible_text"] = visible_text
     except Exception:  # noqa: BLE001 - fail open to no descriptions
         log.warning("kria_copilot_clip_seen_unavailable", thread_id=str(thread_id), exc_info=True)
     try:

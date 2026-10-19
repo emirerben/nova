@@ -32,12 +32,13 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v57 (KRI-661) adds the mixed-Visuals `overlay_display` rule: all four changed again.
 # v59 (KRI-669/KRI-667) combines heading relationships and language-neutral brief facts.
 # v60 (KRI-700) adds the `footage_light` brief fact: the two brief-on renders changed.
+# v63 adds source-backed explanations; no-song fixtures track the deliberate new baseline.
 # v62 grounds a phone montage story in owned clip IDs and explanatory text goals.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "7d76bcb89b51efa933dbf00f08d717d7611352b26a6f3e39aec24fbcfa83b3ca",
-    (True, True): "44ef46e2af229a899dfec39c6498dc28365a2ce6e6ce2eff252032121d076ee1",
-    (False, False): "e9ddd67f104bc0d141ac3e1ef49971592620e10887e873ea4e265381fe98eeaa",
-    (False, True): "6d136615d8e4c0e0954c4a01d35dc6e275c9852f70a0e1104bee9db9a7a4db3a",
+    (True, False): "4684c634fa88dcfec7865a41330b8a781bb706837861c6e7d63c796b8c2d0a2a",
+    (True, True): "e8fc7d381c22d56df0eed4ccb5c05ef46c78a1186ba5027d0579406b3dcb1c1a",
+    (False, False): "9ae7a03343fc258ce0fec6bc86976e6f24b1576bc4ad92920eb5e5b28f1e330d",
+    (False, True): "800c81e8d401ecc2fceb26b6c61123473d54a3c10541d6c022cd50cec1f36e00",
 }
 
 
@@ -107,7 +108,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-18-v62"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-19-v63"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

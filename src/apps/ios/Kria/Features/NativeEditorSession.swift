@@ -2268,6 +2268,18 @@ struct NativeEditorTemporaryVideo {
             resolvedSources = try Dictionary(uniqueKeysWithValues: Set(timelineClips.compactMap(\.sourceClipIndex)).map { index in
                 var sourceURL = url
                 var sourceFingerprint = fingerprint
+                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-captured-creation"),
+                   ProcessInfo.processInfo.environment["KRIA_UI_FIXTURE_LOCAL_SOURCES"] == "1" {
+                    // Physical QA copies server-compiled sources into this separate app's Documents.
+                    // Missing media must fail visibly, never substitute the bundled demo footage.
+                    let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("researchqa")
+                    let paths = try JSONDecoder().decode([String: String].self,
+                        from: Data(contentsOf: root.appendingPathComponent("source-files.json")))
+                    guard let name = paths[String(index)] else { throw NativeEditorRenderError.missingVideoTrack }
+                    sourceURL = root.appendingPathComponent(name)
+                    sourceFingerprint = try SHA256Fingerprinter().fingerprint(file: sourceURL)
+                }
                 if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-color-cuts") {
                     sourceURL = FileManager.default.temporaryDirectory.appendingPathComponent("scrub-color-\(index).png")
                     let image = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 160)).image { context in

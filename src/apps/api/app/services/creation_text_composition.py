@@ -54,6 +54,12 @@ _TEXT_OPS = frozenset(
     }
 )
 _INSTRUCTIONS = """CREATION TEXT COMPOSITION
+If the creator asks for web research, fact checking or verified facts in any language,
+return research_request: {topic: public topic without URLs/private details,
+request_quote: exact creator words requesting research}, intent="describe", a short
+reply explaining that research is needed, and ops=[].
+A server research step will supply cited facts and compose footage-bound captions.
+Never invent sources or claim research from memory.
 This is the initial draft assembled from the creator's request. Complete ALL requested text
 behavior using the available text operations. Read the full request, not just the brief's
 shortened summary. Preserve the already-planned media order, source windows and audio: those
@@ -106,7 +112,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v10-exact-beat-timing",
+        prompt_version="v11-source-backed-research",
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )
@@ -641,7 +647,13 @@ def compose_creation_text(
         seen_text = " ".join(
             value for value in evidence.values() if isinstance(value, str) and value
         )
-        model_slots.append({**slot, **({"seen": {"text": seen_text}} if seen_text else {})})
+        model_slots.append(
+            {
+                **slot,
+                "visible_text": evidence.get("on_screen_text", ""),
+                **({"seen": {"text": seen_text}} if seen_text else {}),
+            }
+        )
     model_snapshot: dict[str, Any] = {
         "allowed_op_families": ["text", "text_timeline"],
         "editor_ops_version": 2,
@@ -684,6 +696,12 @@ def compose_creation_text(
             raise CreationTextTimeoutError(
                 f"Text composition timed out for {len(slots)} clips", slot_count=len(slots)
             ) from exc
+    if output.research_request is not None:
+        from app.services.researched_text import run_researched_revision
+
+        output = run_researched_revision(
+            output.research_request, utterance=creator_request, snapshot=model_snapshot, ctx=ctx
+        )
     if (
         output.needs_clarification
         or output.unmet_requests
@@ -691,7 +709,12 @@ def compose_creation_text(
         or output.intent not in {"edit", "describe"}
         or (output.intent == "edit" and not output.ops)
     ):
-        raise CreationTextCompositionError("Text composition is incomplete: " + output.reply)
+        details = "; ".join(
+            str(row.get("reason", "")) for row in output.unmet_requests if row.get("reason")
+        )
+        raise CreationTextCompositionError(
+            "Text composition is incomplete: " + (details or output.reply)
+        )
     operations = output.ops
     _check_added_text(operations, text_requirements)
     if caption_lane is not None:

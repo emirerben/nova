@@ -796,3 +796,19 @@ async def test_clip_context_failures_degrade_to_no_context(monkeypatch) -> None:
     )
 
     assert context == {}
+
+
+def test_research_visible_labels_reach_snapshot_without_legacy_speech_as_identity():
+    from app.services.kria_editor_ops import clip_visible_text_by_media_id
+
+    job, variant = _job_and_variant()
+    assignments = _assignments()
+    assignments[0]["analysis"] = {
+        "understanding": {"kind": "video", "on_screen_text": "Object 42: marble relief"}
+    }
+    assignments[1]["analysis"] = {"on_screen_text": "I think this is Object 99"}
+    labels = clip_visible_text_by_media_id(job, variant, assignments)
+    assert labels == {"clip-0": "Object 42: marble relief"}
+    result = build_editor_snapshot(job, variant, clip_context={"visible_text": labels})
+    assert result["slots"][0]["visible_text"] == "Object 42: marble relief"
+    assert not result["slots"][1].get("visible_text")

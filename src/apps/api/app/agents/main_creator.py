@@ -88,7 +88,7 @@ log = structlog.get_logger()
 # KRI-700: a brighten / darken ask carries `footage_light`, so the server can say no draft
 # changes the footage's light instead of the summary promising it (v60).
 # v61 (KRI-674 live verification): per-clip camera sound is not spoken excerpts.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-18-v62"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-19-v63"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
