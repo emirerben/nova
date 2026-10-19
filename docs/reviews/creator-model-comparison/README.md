@@ -48,3 +48,8 @@ The private review packet is
 Human scoring, supported Copilot tasks, independent holdouts and finalist exports
 remain outstanding. Run expiry/revocation purge while retaining private copies;
 no recurring purge, capture cohort or production deployment was activated.
+
+The [review and corpus preparation](review-and-corpus-preparation.md) now provides
+a readable private blind board and eight exact supported Copilot development
+inputs with offline parser/compiler checks. Turn-specific human grading remains
+pending. The independent holdout intake is prepared, with zero cases enrolled.
