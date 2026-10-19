@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.50.0] - 2026-10-19
+
+### Changed
+- fix(ios): slide-post rename alert + Slider format tile size, sliding and Lisbon Taberna photos (#1684) <!-- release-pr: 1684 -->
+
 ## [0.80.49.0] - 2026-10-19
 
 ### Fixed
