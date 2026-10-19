@@ -183,3 +183,26 @@ reserved/provider-started calls remain. The original unknown is still fenced.
 Both updated private pages were checked again in gstack; the six candidate slots
 are complete, with no external resources, console errors or horizontal overflow
 at 1440 px and 320 px. No candidate media was rendered or watched.
+
+## Final overnight checkpoint
+
+This preparation is now superseded by [the morning report](morning-report.md)
+and `final-development-results.json`. Twenty exact inputs are prepared (ten per
+agent, five development threads, one creator). The private board contains eight
+panels for seven real requests, 24 candidate slots and two word-timing charts;
+one additional native feasibility smoke is reported separately. Provider mappings
+remain private and human preferences remain unrecorded.
+
+Seventeen actionable candidates passed real scratch committed save/reopen,
+stale-write rejection, undo, restore and cleanup. Three hook questions/options
+have no executable strategy and are explicitly not applicable to draft persistence.
+One synthetic compiler false rejection was corrected without changing the original
+live journal. Compound/timing checks retain extra animation changes as failures
+of preservation even when an edit parses, compiles and saves.
+
+The final ledger is $2.424762 metered plus $1.716306 retained original unknown
+liability, $4.141068 accounted and $1.518932 remaining. No active submissions,
+new uncertain outcomes, retries, fallbacks, production edits or candidate exports
+occurred. The original unknown remains protected across manifests. Real independent
+holdouts remain at zero; the registration path now refuses incomplete owner/media
+inventories and missing source fingerprints instead of implying independence.

@@ -88,10 +88,13 @@ The full model-selection experiment is **not complete**. These are the exact gap
   already exposed creator; development recaptures cannot become unseen holdouts.
   Complete owner and media exclusions must precede prospective enrollment.
 - No candidate video has been rendered, watched or verified as an actual export.
+  A read-only attempt to stage an owned candidate through the native Save path
+  was refused by the local `guided_story_editor_v2_disabled` gate; that diagnostic
+  is retained privately. No feature gate was changed to manufacture export evidence.
   Scratch draft persistence and existing export-verifier tests do not supply that
   evidence. Physical-device sessions owned by other work were left alone.
 - No fresh capture cohort, recurring purge, selected-model rollout or production
-  deployment was activated. File-mode review cannot detect a later revocation;
+  deployment was activated. The loopback server rechecks eligibility before each served page. Direct file-mode review cannot detect a later revocation;
   eligibility and derived-copy purge must run before further use. Private artifacts
   are indexed for conservative expiry/revocation cleanup.
 

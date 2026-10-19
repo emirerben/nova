@@ -1,86 +1,119 @@
-# Offline verification — 19 October 2026
+# Final verification — 19 October 2026
 
-Base: `ed90bd9ea859129efb1853b327ca00562ecb54a0` from fetched origin/main.
-Branch: `codex/creator-model-comparison`; isolated checkout:
-`/private/tmp/nova-creator-model-comparison`. Shared original checkout untouched.
+Task branch: `codex/creator-model-comparison`; isolated checkout:
+`/private/tmp/nova-creator-model-comparison`. Integrated fetched main `ef671ddca`
+(suggestion-chip runtime/daily-cap additions) after `db31fbe47` (editor Save matrix).
+The shared checkout and physical-device sessions were left intact.
 
-**4,128 passed; 15 skipped; no failures** after integrating current main. Provider keys were dummy strings and
-NOVA_EVAL_MODE=replay. SDK contract tests used httpx.MockTransport. PostgreSQL tests
-used the migrated local task database `nova_creator_model_comparison_test`.
-This offline run made no live provider calls. The separately approved funded live pilot is recorded in pilot-report.md; no paid judge or production mutation ran.
+## Offline integration
 
-Repeat:
+**5,122 passed, 15 skipped, seven expected failures, zero unexpected failures** in
+88.61 seconds. Dummy provider keys and `NOVA_EVAL_MODE=replay`; provider contracts
+use actual SDKs with HTTP mock transports. PostgreSQL uses only the disposable
+`nova_creator_model_comparison_test` database. The paid ledger is a separate database.
+
+The final run covers all agent and replay-eval suites, accounting/provider ledger,
+private capture/eligibility, sealed holdouts, recorded-source imports, JSON profile
+selection, real draft persistence, request-following review, creator render contracts,
+actual-export verifier/publication guards, editor Save matrix, draft/approval fences,
+spoken-order regressions and the new upstream suggester guards/PostgreSQL caps.
+
+Reproduce the selected run from the task root:
 
 ```sh
 NOVA_EVAL_MODE=replay GEMINI_API_KEY=test OPENAI_API_KEY=sk-test ANTHROPIC_API_KEY=test \
   bash scripts/check-api.sh test tests/agents/ tests/evals/ \
   tests/services/test_ai_cost_control.py tests/services/test_text_provider_ledger.py \
-  tests/services/test_comparison_capture.py tests/integration/test_comparison_eligibility.py \
+  tests/services/test_comparison_capture.py tests/services/test_suggestion_chips_guards.py \
+  tests/services/test_suggestion_chips_postgres.py \
+  tests/integration/test_comparison_eligibility.py \
+  tests/integration/test_comparison_development_inventory.py \
+  tests/integration/test_comparison_persistence.py \
   tests/integration/test_request_following_queue.py \
   tests/incidents/test_request_following_private_review.py tests/test_edit_copilot.py \
   tests/test_copilot_outcome_explanations.py tests/services/test_creator_render_contract.py \
   tests/integration/test_actual_export_verification.py \
-  tests/integration/test_actual_export_completion.py \
-  tests/routes/test_actual_export_publication.py tests/kria/test_editor_state_turns.py tests/kria/test_approval_readiness_postgres.py \
-  tests/pipeline/test_unified_montage_spoken_order.py tests/services/test_spoken_roles.py \
-  tests/tasks/test_kri585_spoken_order_montage.py -q --eval-mode=replay -rs
+  tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py \
+  tests/routes/test_editor_save_contract_matrix.py tests/kria/test_editor_state_turns.py \
+  tests/kria/test_approval_readiness_postgres.py tests/pipeline/test_unified_montage_spoken_order.py \
+  tests/services/test_spoken_roles.py tests/tasks/test_kri585_spoken_order_montage.py \
+  -q --eval-mode=replay -rs
 ```
 
-The skips are existing live/judge-only checks, fixture applicability, and missing
-unrelated template ground-truth/transcript sidecars. They do not establish live
-model quality or physical-device export verification.
+Skips are existing live/judge-only checks, fixture applicability and missing unrelated
+sidecars. The seven strict expected failures come from upstream suggestion-chip
+validator-gap fixtures. They are not silently counted as passes. Before that upstream
+integration the selected suite passed 4,215 tests with 15 skips.
 
-The initial broad run exposed synthetic reservation leakage from the new provider
-ledger tests. Runtime reservation keys are hashes, so the reused fixture's prefix
-cleanup missed them. A dedicated attributed-run cleanup fixed the issue. Earlier
-synthetic rows were removed only from the task scratch database; the final run
-started with zero reservations and passed. No production ledger was touched.
+Logs: `/private/tmp/nova-comparison-final-integration-tests.log` and
+`/private/tmp/nova-comparison-final-selector.log`. Selector checks: **41 tests pass**.
+Scoped Ruff/format, whitespace, release metadata, journey mapping and preship
+reliability checks are recorded in `/private/tmp/nova-comparison-morning-preship.log`;
+439 mapped incident checks passed. The manifest conflict from two appended journeys
+was resolved by preserving both complete entries.
 
-The latest broad run completed in 78.83 seconds; its local log is
-`/private/tmp/nova-comparison-upstream-final-tests.log`. Typed v2 round trips include
-explicit null versus omission. Live pilot observations prompted SDK HTTP controls
-that prove one Gemini submission and a matching transport deadline, plus a real
-PostgreSQL unknown-outcome fence across separate batches in the same envelope.
+## Editor timing regression gate
 
-Other checks:
-- SDK HTTP contracts: exact settings, one request on timeout/500, cache/thinking usage.
-- PostgreSQL: settlement, unknown no-retry fence, aggregate/concurrent budget guards.
-- Real admin HTTP + PostgreSQL: wrong admin token, owner mismatch, stale grant,
-  protected holdout and revocation rejected; no private body returned.
-- Capture: complete context/prompt binding, 600 files, duplicate publication,
-  disabled/revoked capture and signed capability removal.
-- CLI: freeze, immutable prompt/spec/price binding, offline replay with ledger enabled,
-  resume, manifest-bound paid approval refusal, expiry purge and redacted projections.
-- Three reference cases x three arms: nine parser/structural passes at $0.
-- Scoped ruff and format, git diff whitespace checks, preship reliability gates:
-  439 mapped gate checks passed. Journey manifest includes the new comparison paths.
+The default `make verify-editor-timeline` passed 209 frontend checks but its default
+browser concurrency produced six desktop failures and three flaky cases, primarily
+navigation/load timeouts. No frontend product file differs from integrated main.
+The initial failure log is retained; it is not reported as a green default invocation.
 
-These results verify infrastructure and existing product contracts. They do not
-mean any candidate model fulfilled a new request, saved a candidate draft or
-rendered a video. See pilot-report.md for the funded pilot results and outstanding evidence.
+Running the same browser assertions with `--workers=2 --retries=0` passed:
 
-Final preship fetch found a new upstream Main Creator v64 camera-audio fix
-(`220f75b3f`). It was integrated cleanly before delivery; historical paid rows remain
-pinned to v63, and no paid comparison is rerun across that prompt change.
+- **28 desktop browser cases**, 40.8 seconds.
+- **42 mobile browser cases**, 45.8 seconds.
+- **582 backend timing checks**, 22.89 seconds.
+- Frontend `npx tsc --noEmit`, exit zero with no output.
 
-Funded continuation checks: retained full-batch liability preserves unknown status,
-counts against envelope caps, permits an independent case and refuses duplicate
-submission. Ordinary unreconciled unknowns still stop the envelope. Tests also
-reject circular Anthropic schemas, preserve deep Sol values and require explicit
-JSON selection for the provider-rejected full Sonnet native grammar. Returned
-usage totals reconcile exactly to the durable pilot ledger. Six current Main plans
-compiled without notices; Copilot returned no supported edit operations.
+Commands for the browser override, from `src/apps/web`:
 
-Final integration: merged fetched `ebcb9874e` cleanly, preserving the provider
-factory in planner and both environment/journey additions. The post-merge suite
-includes all three new spoken-order backend test files. Selector verification:
-41 tests and 168 subtests passed. Model prompts did not change in this integration;
-no new paid request ran. Pure candidate compilation was repeated with zero failures.
-Upstream iOS changes were inherited; no new independent device verification is claimed.
+```sh
+CI=true npx playwright test --project=desktop-editor --workers=2 --retries=0
+CI=true npx playwright test --project=iphone13 --project=iphone14 \
+  mobile-video-editor.spec.ts --workers=2 --retries=0
+```
 
-After that full integration run, a final ledger-only hardening bound the retained
-unknown to its protected case/model identity across freshly frozen manifests.
-The final focused ledger/workflow suite passed 47 tests in 0.99 s; it rejects
-missing case attribution and fresh-ID duplicates while preserving independent
-cases and budget counting. No paid call followed this hardening. The original
-unknown receipt was updated with the protected identity without changing money.
+The backend half used the exact nine files in the Make target, through
+`scripts/check-api.sh`, on the scratch database. Logs:
+`/private/tmp/nova-comparison-editor-timeline.log`,
+`/private/tmp/nova-comparison-desktop-serial.log`,
+`/private/tmp/nova-comparison-mobile-timeline.log`, and
+`/private/tmp/nova-comparison-backend-timeline.log`. Browser reports/traces are local
+worktree artifacts. These are synthetic product regressions, not real candidate exports.
+
+## Returned real-candidate evidence
+
+The recent phases have 25 calls on seven real requests, including profile controls
+and one native smoke. Twenty returned parsed outputs; **17 actionable candidates**
+passed real scratch committed reopen, stale-write rejection, exact undo, restore,
+reopen and cleanup. Three hook questions/options have no executable draft and are
+marked not applicable. Five unusable responses remain in the denominators.
+
+A real clip-label response exposed a synthetic fixture bug: cut-to-media identity
+was dropped. A new acceptance failed first, then the fixture reconstruction was
+fixed. A genuinely wrong clip still fails the drift guard, and creator-edited label
+provenance is retained. Original live statuses were not rewritten; source-context
+compilation and persistence are separate receipts against the same returned bytes.
+Another acceptance caught server `json_guarded` configuration mistakenly selecting
+native transport; the fix preserves the exact explicit selection and legacy defaults.
+
+State checks are source-bound operator proposals, with human review pending. They
+retain extra fade entrances and fade-out phases as preservation findings. Word timing
+charts show exact adjacent overlaps instead of inferring visual fulfillment.
+The owned native Save feasibility probe was refused by the local
+`guided_story_editor_v2_disabled` gate; no gate was toggled to claim export evidence.
+
+Private pages were checked with gstack at 1440 px and 320 px: eight panels, 24 slots,
+two word charts and twenty prepared requests; no horizontal overflow, external
+resources, console errors or visible provider identities. Raw responses and mappings
+remain outside Git. Derived files are registered for conservative cleanup. The
+loopback server checks current eligibility before serving page bodies; direct HTML
+files still require a separate eligibility/purge check before reuse.
+
+## Limits
+
+No production routing, collection cohort, selected-model rollout or deployment was
+activated. No paid judge ran. No candidate was rendered or watched. No independent
+real holdout or human score was fabricated. See `morning-report.md` for the resulting
+selection limits and `final-development-results.json` for reconciled money and counts.

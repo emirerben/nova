@@ -18,7 +18,7 @@ its technical criterion is matching the song's timestamps.
 
 The original $5.66 envelope reconciles to **$2.424762 metered** plus **$1.716306
 retained unknown liability**, **$4.141068 accounted**, and **$1.518932 remaining**.
-No calls are reserved or running. The original Gemini unknown is still protected
+No submissions are active. The original Gemini unknown is still protected
 against retry under fresh manifests; its actual usage is not fabricated.
 
 ## Implementation
@@ -51,8 +51,8 @@ ledger envelope. Replay never constructs SDK clients or reserves money.
 
 The private readable review is
 `/private/tmp/nova-model-comparison-private/readable-blind-review.html`.
-Provider mappings and diagnostics remain private. Direct files cannot observe a
-later revocation; recheck eligibility and purge before reuse. No recurring purge,
+Provider mappings and diagnostics remain private. The loopback server rechecks eligibility before serving each page. Direct files
+cannot observe later revocation; recheck eligibility and purge before reuse. No recurring purge,
 production deployment or selected-model rollout was activated.
 
 Earlier phases remain historical records: [initial pilot](pilot-report.md),
