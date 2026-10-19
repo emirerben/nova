@@ -11,6 +11,7 @@ struct ChatWorkspaceView: View {
     @State private var drawerMounted = false
     @State private var showsGallery = false
     @State private var showsAccount = false
+    @State private var projectActions = ProjectActionsPresenter()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -28,6 +29,8 @@ struct ChatWorkspaceView: View {
             ),
             content: workspace
         )
+        .environment(projectActions)
+        .projectActionAlerts(projectActions)
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: showsProjects)
         .onChange(of: showsProjects) { _, isOpen in
             guard isOpen else { return }

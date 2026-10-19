@@ -365,7 +365,7 @@ struct FormatStage: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     BundledPosterImage(name: format.imageName)
                                         .scaledToFill()
-                                        .frame(width: 156, height: 164)
+                                        .frame(width: FormatTileMetrics.image.width, height: FormatTileMetrics.image.height)
                                         .clipped()
                                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                     Text(format.title)
@@ -403,7 +403,7 @@ private struct SlidePostFormatCard: View {
             ZStack(alignment: .bottomTrailing) {
                 Button(action: select) {
                     SlidePostFormatCover(paused: $paused)
-                        .frame(width: 156, height: 156)
+                        .frame(width: FormatTileMetrics.image.width, height: FormatTileMetrics.image.height)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .contentShape(Rectangle())
                 }
