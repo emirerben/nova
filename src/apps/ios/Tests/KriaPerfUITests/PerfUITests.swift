@@ -278,6 +278,86 @@ final class PerfUITests: XCTestCase {
         print("PERF testScrollQuietTranscript timeline.build=\(Double(rebuilds) / Double(iterations))")
     }
 
+    // MARK: Editor
+
+    private var editorEnvironment: [String: String] {
+        ["KRIA_EDITOR_FIXTURE": "1", "KRIA_CHAT_LONG_HISTORY": "12"]
+    }
+
+    /// Opens the chat's finished render in the native editor and waits until it has finished opening (the preview built
+    /// from the source clips). The counters are read through their own window, which stays readable under the editor.
+    private func openEditor(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let open = app.buttons["Open editor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 20), "The chat offers no Open editor", file: file, line: line)
+        open.tap()
+        XCTAssertTrue(app.staticTexts["native-editor-duration"].waitForExistence(timeout: 30), "The editor never opened", file: file, line: line)
+        let deadline = Date().addingTimeInterval(60)
+        while Date() < deadline {
+            if counters(app)["t editor.open.done"] != nil { return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTFail("The editor never finished opening", file: file, line: line)
+    }
+
+    /// A first open: nothing downloaded yet, so the editor fetches the job, downloads and hashes three clips, and builds
+    /// the preview.
+    func testEditorOpen() {
+        var book = CounterBook()
+        measure(metrics: [interval("editor.open"), interval("editor.preview")], options: options) {
+            let app = makeApp(reset: true, editorEnvironment)
+            app.launch()
+            waitForTranscript(app)
+            openEditor(app)
+            book.add(counters(app))
+            app.terminate()
+        }
+        book.report("testEditorOpen", prefixes: ["net ", "source", "sha256", "t "])
+    }
+
+    /// Opening a project whose sources an earlier session already downloaded (a fresh launch, so a fresh editor
+    /// session, but the on-disk source cache is warm).
+    func testEditorReopenWarm() {
+        let warm = makeApp(reset: true, editorEnvironment)
+        warm.launch()
+        waitForTranscript(warm)
+        openEditor(warm)
+        warm.terminate()
+        var book = CounterBook()
+        measure(metrics: [interval("editor.open"), interval("editor.preview")], options: options) {
+            let app = makeApp(editorEnvironment)
+            app.launch()
+            waitForTranscript(app)
+            openEditor(app)
+            book.add(counters(app))
+            app.terminate()
+        }
+        book.report("testEditorReopenWarm", prefixes: ["net ", "source", "sha256", "t "])
+    }
+
+    /// What playing the open editor costs: CPU and hitches over a rewind and two seconds of playback, repeated, with the
+    /// launch and the open outside the measured block. (The CPU metric cannot take an explicit start and stop on a
+    /// device, so the rewind swipes are inside; they cost the same for every build compared.) The editor's playhead
+    /// moves many times a second, which is what a body that reads it at the top of a large view would pay for. The
+    /// playhead is the timeline's scroll position, so swiping the timeline back rewinds.
+    func testEditorPlayback() {
+        let app = makeApp(reset: true, editorEnvironment)
+        app.launch()
+        waitForTranscript(app)
+        openEditor(app)
+        let play = app.buttons["native-editor-play-pause"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10))
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 10))
+        var metrics: [XCTMetric] = [XCTCPUMetric(application: app)]
+        if #available(iOS 26, *) { metrics.append(XCTHitchMetric(application: app)) }
+        measure(metrics: metrics, options: options) {
+            for _ in 0..<2 { timeline.swipeRight(velocity: .fast) }
+            play.tap()
+            RunLoop.current.run(until: Date().addingTimeInterval(2))
+            play.tap()
+        }
+    }
+
     // MARK: Gallery
 
     /// The first poster on screen. On failure the accessibility tree is printed, so a missing poster can be told

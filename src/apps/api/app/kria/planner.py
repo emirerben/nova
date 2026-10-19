@@ -39,6 +39,7 @@ from app.agents._schemas.creator_agent import (
 from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
 from app.agents.brief_extractor import BriefExtractionInput, BriefExtractorAgent
 from app.agents.clip_intent_planner import ConfirmedTitleCopy
+from app.agents.length_options import length_options
 from app.agents.main_creator import (
     MAIN_CREATOR_CONVERSATION_MAX,
     CreativeCopyDecision,
@@ -67,11 +68,14 @@ from app.kria.brief import (
 from app.kria.brief_route import loose_text
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
+from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.reply_language import current_reply_language, say
 from app.kria.strategy_policy import (
     RefusedStrategy,
     check_strategy_for_runtime_v2,
+    renderable_clip_intents,
     song_captions_refusal,
+    transcript_labels_dropped_notice,
 )
 from app.kria.style_asks import brief_moment_ask
 from app.kria.voiceover_clips import keep_every_voiceover_clip
@@ -703,6 +707,8 @@ async def _load_raw_creator_request(
         .scalars()
         .all()
     )
+    # KRI-552: a re-sent copy of a message adds no instruction; read twice it doubled every ask.
+    rows = [row for row in rows if not is_duplicate_answer(getattr(row, "payload", None))]
     return _full_creator_request(rows, current_message=user_message)
 
 
@@ -1526,6 +1532,8 @@ async def _load_editor_target(
         .scalars()
         .all()
     )
+    # KRI-552: a re-sent copy of a message is not conversation.
+    rows = [row for row in rows if not is_duplicate_answer(getattr(row, "payload", None))]
     rows.reverse()
     conversation = [
         {"role": row.role, "content": model_text(getattr(row, "payload", None), row.content)[:1000]}
@@ -1665,6 +1673,15 @@ async def _plan_editor_revision(
             mode="respond",
             turn_value=("question" if response.outcome == "clarification" else "recovery"),
             response=reply,
+            # KRI-738: tappable lengths, only on a question and only those the reply states.
+            reply_options=(
+                [
+                    option["label"]
+                    for option in length_options(getattr(response, "length_options", None), reply)
+                ]
+                if response.outcome == "clarification"
+                else None
+            ),
         )
     return None
 
@@ -1752,6 +1769,8 @@ async def _load_creator_inputs(
         .scalars()
         .all()
     )
+    # KRI-552: a re-sent copy of a message, and the one-line answer it got, are not conversation.
+    rows = [row for row in rows if not is_duplicate_answer(getattr(row, "payload", None))]
     rows.reverse()
     creator_summary, item_summary = creator_context(persona, item)
     extra: dict = {}
@@ -2600,13 +2619,41 @@ async def _plan_creator_action(
             manifest.narration is None
             or action.strategy.execution_contract != "guided_voiceover_v1"
         ):
-            return PlannedKriaTurn(
-                plan=_clip_intent_resolution_plan(
-                    question=_labels_need_voiceover_reply(),
-                    status="needs_creator",
+            kept_intents = renderable_clip_intents(manifest, planned.requested_intents)
+            if kept_intents is None:
+                return PlannedKriaTurn(
+                    plan=_clip_intent_resolution_plan(
+                        question=_labels_need_voiceover_reply(),
+                        status="needs_creator",
+                    ),
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                )
+            # KRI-691: a native voiceover chat can never draw a narration label, so the
+            # question above dead-ended every turn. Leave the label out and say so; the
+            # resolver never saw it, so the other intents are already resolved.
+            planned = replace(
+                planned,
+                requested_intents=kept_intents,
+                resolution=replace(
+                    planned.resolution,
+                    intents=[
+                        intent
+                        for intent in planned.resolution.intents
+                        if intent.label_source != "transcript"
+                    ],
                 ),
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
+            )
+            notice = transcript_labels_dropped_notice()
+            if notice not in policy_notices:
+                action = action.model_copy(
+                    update={"summary": " ".join([action.summary.strip(), notice]).strip()}
+                )
+                policy_notices = (*policy_notices, notice)
+            log.info(
+                "kria_transcript_labels_dropped",
+                thread_id=str(thread_id),
+                kept=len(kept_intents),
             )
         if planned.resolution.vision_answers:
             try:

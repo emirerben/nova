@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-10-16-v82",
+  "prompt_version": "2026-10-18-v83",
   "input": {
     "utterance": "group clips 2 to 4 and add one title that says Aston Villa",
     "prior_turns": [],

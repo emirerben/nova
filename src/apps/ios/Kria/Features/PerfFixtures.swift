@@ -1,5 +1,6 @@
 #if DEBUG
 import Foundation
+import KriaMediaEngine
 import SwiftData
 import SwiftUI
 
@@ -17,6 +18,7 @@ import SwiftUI
 /// | `KRIA_FIXTURE_UPLOAD_TICKS`      | `1` = an upload reports progress ten times a second                             |
 /// | `KRIA_PERF_DISK_STORE`           | `1` = SwiftData/transcript cache live on disk so a second launch starts warm    |
 /// | `KRIA_PERF_COUNTERS`             | `1` = show the invisible `perf-counters` element (request/rebuild/fetch counts)  |
+/// | `KRIA_EDITOR_FIXTURE`            | `1` = seeded chats have a finished render the editor can open: job status, timeline, three source clips |
 ///
 /// `-perf-reset` wipes the disk store on launch.
 enum PerfFixture {
@@ -31,6 +33,8 @@ enum PerfFixture {
     static var diskStore: Bool { env["KRIA_PERF_DISK_STORE"] == "1" }
     /// `KRIA_PERF_COUNTERS=1` mounts the invisible `perf-counters` readout over the chat fixture.
     static var countersProbe: Bool { env["KRIA_PERF_COUNTERS"] == "1" }
+    /// `KRIA_EDITOR_FIXTURE=1`: seeded chats are ready, and the editor's own requests are answered (see `editorResponse`).
+    static var editorFixture: Bool { env["KRIA_EDITOR_FIXTURE"] == "1" }
     static var resetRequested: Bool { ProcessInfo.processInfo.arguments.contains("-perf-reset") }
 
     /// `KRIA_CHAT_LONG_HISTORY`: `1` keeps the 24 messages drawer tests rely on; any other integer is a message count.
@@ -85,6 +89,7 @@ enum PerfFixture {
             }
             if !PerfTokenState.shared.accepts(request) { return unauthorized }
         }
+        if editorFixture, method == "GET", let response = editorResponse(path: path) { return response }
         if method == "GET", path == "/creation-threads", seedThreadCount > 0 {
             return seededThreadList(query: query)
         }
@@ -92,6 +97,55 @@ enum PerfFixture {
             return galleryPage(query: query)
         }
         return nil
+    }
+
+    // MARK: Editor
+
+    /// The finished render the editor plays first: a bundled clip, as a `file://` URL (AVPlayer's network stack is not
+    /// interceptable, so an https URL would fail and trigger retries that are not what is being measured).
+    static var editorRenderURL: String {
+        Bundle.main.url(forResource: "montage", withExtension: "mp4")?.absoluteString ?? "file:///missing.mp4"
+    }
+    /// Three source clips per project: the bundled montage, the bundled Istanbul clip, and the montage again.
+    static let editorSourceFiles = ["montage", "istanbul", "montage"]
+
+    /// The routes the editor's load path calls beyond the chat's own: job status (the variant and its timeline),
+    /// the source pool, and no saved draft.
+    private static func editorResponse(path: String) -> Response? {
+        let parts = path.split(separator: "/").map(String.init)
+        if parts.count == 3, parts[0] == "generative-jobs", parts[2] == "status" {
+            let slots: [[String: Any]] = [(4.6, 0), (6.0, 1), (4.6, 2)].map { duration, index in
+                ["slot_id": "s\(index)", "clip_index": index, "in_s": 0, "duration_s": 2, "source_duration_s": duration, "removed": false]
+            }
+            return json(["variants": [[
+                "variant_id": "montage", "render_generation_id": "gen-1", "render_status": "ready", "duration_s": 6.0,
+                "output_url": editorRenderURL, "resolved_archetype": "montage",
+                "editor_capabilities": ["timeline": true, "text_elements": true, "mix": false],
+                "user_timeline": ["slots": slots],
+            ]]])
+        }
+        if parts.count == 5, parts[0] == "generative-jobs", parts[2] == "variants", parts[4] == "timeline" {
+            let clips: [[String: Any]] = editorSourceFiles.indices.map { index in
+                ["clip_index": index, "native_source": [
+                    "media_id": "clip-\(index)", "source_url": "https://\(PerfSourceURLProtocol.host)/clip\(index).mp4",
+                    "original": NSNull(), "local_required": false,
+                ] as [String: Any]]
+            }
+            return json(["base_generation": "gen-1", "clips": clips, "slots": [], "native_assets": []])
+        }
+        if parts.count == 3, parts[0] == "creation-threads", parts[2] == "draft" {
+            return json(["detail": "No draft"], status: 404)
+        }
+        return nil
+    }
+
+    /// Counts every file the media engine hashes, wherever it does it (the editor hashes whole video files, and how
+    /// many bytes is what the benchmark reports; the bundled clips are far too small to show it in time).
+    static func installHashObserver() {
+        SHA256Fingerprinter.observer = { byteCount in
+            PerfCounters.shared.increment("sha256.files")
+            PerfCounters.shared.increment("sha256.bytes", by: Int(byteCount))
+        }
     }
 
     private static var unauthorized: Response {
@@ -129,11 +183,19 @@ enum PerfFixture {
                 "payload": [String: Any](), "created_at": timestamp(hoursAgo: index),
             ]
         }
-        return [
+        var thread: [String: Any] = [
             "id": id, "title": "Chat \(index + 1)", "status": "active", "revision": count, "runtime_version": runtime,
             "state": ["format": "montage", "edit_format": "montage"], "events": events,
             "active_plan_item_id": id, "updated_at": timestamp(hoursAgo: index),
         ]
+        if editorFixture {
+            // A finished render, so the chat offers "Open editor". The job id is the thread id.
+            thread["active_job_id"] = id
+            thread["job"] = ["id": id, "status": "ready", "variants": [
+                ["variant_id": "montage", "render_status": "ready", "output_url": editorRenderURL],
+            ]]
+        }
+        return thread
     }
 
     /// The seeded chat a thread id names, if any. Chats are built when first asked for, not up front: building 60 chats
@@ -275,6 +337,43 @@ final class PerfPosterURLProtocol: URLProtocol, @unchecked Sendable {
     override func stopLoading() { pending?.cancel() }
 }
 
+/// Serves the editor's source clips (`https://fixture-sources.invalid/clipN.mp4`) from bundled videos, after the
+/// fixture latency. Attached to the source resolver's private download session in Debug builds, because that session
+/// is created by the resolver and can never see a process-wide protocol.
+final class PerfSourceURLProtocol: URLProtocol, @unchecked Sendable {
+    static let host = "fixture-sources.invalid"
+    private var pending: DispatchWorkItem?
+
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == host }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        PerfCounters.shared.increment("source.download")
+        let work = DispatchWorkItem { [weak self] in self?.respond() }
+        pending = work
+        DispatchQueue.global().asyncAfter(deadline: .now() + PerfFixture.delay(for: request), execute: work)
+    }
+
+    private func respond() {
+        guard let url = request.url,
+              let index = Int(url.lastPathComponent.dropFirst("clip".count).prefix { $0.isNumber }),
+              PerfFixture.editorSourceFiles.indices.contains(index),
+              let file = Bundle.main.url(forResource: PerfFixture.editorSourceFiles[index], withExtension: "mp4"),
+              let data = try? Data(contentsOf: file),
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [
+                  "Content-Type": "video/mp4", "Content-Length": String(data.count),
+              ]) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() { pending?.cancel() }
+}
+
 extension PerfFixture {
     /// The picture for a gallery poster URL (`https://fixture-posters.invalid/<id>.jpg?sig=...`), or nil for any other
     /// URL. Served to the poster cache directly, so it works on a physical phone too, where `AsyncImage` bypasses the
@@ -300,6 +399,8 @@ extension PerfFixture {
         let directory = URL.applicationSupportDirectory.appending(path: "perf", directoryHint: .isDirectory)
         if resetRequested {
             try? FileManager.default.removeItem(at: directory)
+            // The editor's downloaded sources, so a cold open really has to download and hash them.
+            try? FileManager.default.removeItem(at: URL.cachesDirectory.appending(path: "native-editor-preview", directoryHint: .isDirectory))
             // Synchronous on purpose: the transcript cache must be empty before the first chat opens.
             try? FileManager.default.removeItem(at: URL.applicationSupportDirectory.appending(path: "Transcripts", directoryHint: .isDirectory))
             // And the gallery's poster pictures, so a "first open" really has to fetch them.
@@ -307,6 +408,26 @@ extension PerfFixture {
         }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return try! ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, url: directory.appending(path: "Kria.store")))
+    }
+}
+
+/// The `perf-counters` readout in its own window above everything, so a test can read it while a full-screen modal (the
+/// editor) hides the chat underneath from the accessibility tree.
+@MainActor enum PerfCountersWindow {
+    private static var window: UIWindow?
+
+    static func installIfNeeded() {
+        guard PerfFixture.countersProbe, window == nil,
+              let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        let overlay = UIWindow(windowScene: scene)
+        overlay.windowLevel = .alert + 1
+        overlay.isUserInteractionEnabled = false
+        let host = UIHostingController(rootView: PerfCountersProbe())
+        host.view.backgroundColor = .clear
+        overlay.rootViewController = host
+        overlay.frame = CGRect(x: 0, y: 0, width: 4, height: 4)
+        overlay.isHidden = false
+        window = overlay
     }
 }
 

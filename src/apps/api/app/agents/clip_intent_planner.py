@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
 from app.kria.reply_language import current_reply_language, prompt_language_line
+from app.kria.text_trim import trim_at_word
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import (
     CREATOR_CAPTION_MAX_CHARS,
@@ -229,7 +230,8 @@ def _preview(raw_intent: object, language: str | None = None) -> str:
     attribute = raw_intent.get("attribute")
     op = raw_intent.get("op")
     text = " ".join(_sanitize_text(attribute).split()) if isinstance(attribute, str) else ""
-    text = text[:_LABEL_PREVIEW_CHARS].strip() or fallback
+    # KRI-552: whole words only; "...restart the kilometer t" read like a broken message.
+    text = trim_at_word(text, _LABEL_PREVIEW_CHARS).strip() or fallback
     if isinstance(op, str) and op in _PREVIEW_OPS:
         return f"{_copy(language, en=op, tr=_OP_NAMES_TR[op])}: {text}"
     return text
@@ -278,7 +280,8 @@ def salvage_question(
         en=" Please restate just those so I can add them.",
         tr=" Sadece bunları yeniden yazar mısın, ekleyeyim.",
     )
-    return (text + tail)[:_QUESTION_MAX_CHARS]
+    # The ask to restate is the point of the question: shorten the list in front of it, never it.
+    return trim_at_word(text, _QUESTION_MAX_CHARS - len(tail)) + tail
 
 
 def _unique_intent_id(intent_id: str, taken: set[str]) -> str:
@@ -990,7 +993,9 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         # KRI-651: inventory receives saved title placement and the owned clip count.
         # KRI-667: the `exclude` op (CLIP_INTENT_EXCLUDE_ENABLED; off renders the
         # 2026-10-13.1 prompt byte-for-byte).
-        prompt_version="2026-10-14.1",
+        # KRI-552: "cut my long pauses" / "cut the part where I restart" are speech cleanup,
+        # never a caption (or any other) intent.
+        prompt_version="2026-10-18.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,

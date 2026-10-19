@@ -134,8 +134,10 @@ def cmd_compare(args: argparse.Namespace) -> int:
         word, delta = verdict(b, n, key)
         percent = (delta / b["median"] * 100) if b["median"] else 0.0
         print(f"| {key} | {fmt(b['median'], b['unit'])} | {fmt(n['median'], n['unit'])} | {percent:+.0f}% | {word} |")
-    for key in sorted(set(base["counters"]) & set(new["counters"])):
-        b, n = base["counters"][key], new["counters"][key]
+    # A counter that never ticks is never written, so one missing from a run means zero (a build that stopped hashing
+    # files reports no hash counter at all); a key missing from both runs is not shown.
+    for key in sorted(set(base["counters"]) | set(new["counters"])):
+        b, n = base["counters"].get(key, 0.0), new["counters"].get(key, 0.0)
         # Counts that depend on timing (poll loops, rebuilds while scrolling) wobble by a few percent between
         # identical runs; only a change beyond that, or beyond half a request, is a difference.
         word = "same" if abs(b - n) <= max(0.5, 0.1 * abs(b)) else ("improved" if n < b else "regressed")

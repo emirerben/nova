@@ -1,0 +1,429 @@
+{
+  "captured_at": "2026-10-18T06:04:47.103513+00:00",
+  "implementation_sha256": "92cfcffec10b07d60184fc456bbd3707d12dd2e26636db7f263e221b77bdced9",
+  "python": "3.11.17",
+  "system": "Linux",
+  "measurement": "verification_only_staged_local_files_no_transfer_or_fixture_creation",
+  "cases": [
+    {
+      "name": "native-5s",
+      "kind": "retained_native",
+      "duration_s": 5.0,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "median_s": 5.784244,
+      "min_s": 5.77286,
+      "max_s": 5.875461,
+      "runs": [
+        {
+          "wall_s": 5.875461,
+          "cpu_s": 6.36717,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 4
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.271532
+            },
+            "picture_decode": {
+              "calls": 5,
+              "wall_s": 3.887345
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.393168
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.100346
+            }
+          }
+        },
+        {
+          "wall_s": 5.77286,
+          "cpu_s": 6.265895,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 4
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.280159
+            },
+            "picture_decode": {
+              "calls": 5,
+              "wall_s": 3.797973
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.40169
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.073798
+            }
+          }
+        },
+        {
+          "wall_s": 5.784244,
+          "cpu_s": 6.286284,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 4
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.270143
+            },
+            "picture_decode": {
+              "calls": 5,
+              "wall_s": 3.857252
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.385478
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.065567
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "synthetic-5s",
+      "kind": "synthetic",
+      "duration_s": 5.0,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "median_s": 4.654854,
+      "min_s": 4.56034,
+      "max_s": 4.789891,
+      "runs": [
+        {
+          "wall_s": 4.56034,
+          "cpu_s": 4.923193,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 4
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.272139
+            },
+            "picture_decode": {
+              "calls": 5,
+              "wall_s": 2.516096
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.378346
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.081689
+            }
+          }
+        },
+        {
+          "wall_s": 4.654854,
+          "cpu_s": 5.028578,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 4
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.268857
+            },
+            "picture_decode": {
+              "calls": 5,
+              "wall_s": 2.541781
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.37611
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.153442
+            }
+          }
+        },
+        {
+          "wall_s": 4.789891,
+          "cpu_s": 5.139358,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 4
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.285335
+            },
+            "picture_decode": {
+              "calls": 5,
+              "wall_s": 2.586987
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.391003
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.22479
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "synthetic-30s",
+      "kind": "synthetic",
+      "duration_s": 30.0,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "median_s": 10.060199,
+      "min_s": 10.020795,
+      "max_s": 10.129113,
+      "runs": [
+        {
+          "wall_s": 10.020795,
+          "cpu_s": 10.803413,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 30,
+            "text:passed": 4
+          },
+          "picture_samples": 62,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.300811
+            },
+            "picture_decode": {
+              "calls": 9,
+              "wall_s": 7.530971
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.428578
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.205814
+            }
+          }
+        },
+        {
+          "wall_s": 10.129113,
+          "cpu_s": 10.916505,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 30,
+            "text:passed": 4
+          },
+          "picture_samples": 62,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.284379
+            },
+            "picture_decode": {
+              "calls": 9,
+              "wall_s": 7.632959
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.430452
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.210525
+            }
+          }
+        },
+        {
+          "wall_s": 10.060199,
+          "cpu_s": 10.874232,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 30,
+            "text:passed": 4
+          },
+          "picture_samples": 62,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.293829
+            },
+            "picture_decode": {
+              "calls": 9,
+              "wall_s": 7.55182
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.427625
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.204149
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "synthetic-60s",
+      "kind": "synthetic",
+      "duration_s": 60.0,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "median_s": 17.48599,
+      "min_s": 17.393715,
+      "max_s": 17.663351,
+      "runs": [
+        {
+          "wall_s": 17.393715,
+          "cpu_s": 18.52692,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 60,
+            "text:passed": 4
+          },
+          "picture_samples": 122,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.266304
+            },
+            "picture_decode": {
+              "calls": 17,
+              "wall_s": 14.616132
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.476369
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.17101
+            }
+          }
+        },
+        {
+          "wall_s": 17.48599,
+          "cpu_s": 18.628907,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 60,
+            "text:passed": 4
+          },
+          "picture_samples": 122,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.26612
+            },
+            "picture_decode": {
+              "calls": 17,
+              "wall_s": 14.826506
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.440669
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.149828
+            }
+          }
+        },
+        {
+          "wall_s": 17.663351,
+          "cpu_s": 18.827444,
+          "status": "checked",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 60,
+            "text:passed": 4
+          },
+          "picture_samples": 122,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 0.273213
+            },
+            "picture_decode": {
+              "calls": 17,
+              "wall_s": 14.812958
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 0.465651
+            },
+            "ocr": {
+              "calls": 8,
+              "wall_s": 1.200362
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "tools": {
+    "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tesseract": "tesseract 5.5.0"
+  }
+}

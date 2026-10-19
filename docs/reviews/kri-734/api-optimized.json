@@ -1,0 +1,92 @@
+{
+  "captured_at": "2026-10-18T06:05:08.493017+00:00",
+  "implementation_sha256": "92cfcffec10b07d60184fc456bbd3707d12dd2e26636db7f263e221b77bdced9",
+  "python": "3.11.17",
+  "system": "Linux",
+  "measurement": "verification_only_staged_local_files_no_transfer_or_fixture_creation",
+  "cases": [
+    {
+      "name": "native-5s",
+      "kind": "retained_native",
+      "duration_s": 5.0,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "median_s": 90.718701,
+      "min_s": 90.718701,
+      "max_s": 90.718701,
+      "runs": [
+        {
+          "wall_s": 90.718701,
+          "cpu_s": 6.817362,
+          "status": "partial",
+          "checks": {
+            "duration:passed": 1,
+            "picture:passed": 2,
+            "audio:passed": 6,
+            "text:passed": 1,
+            "evidence:missing": 1
+          },
+          "picture_samples": 12,
+          "stages": {
+            "probe": {
+              "calls": 3,
+              "wall_s": 5.038521
+            },
+            "picture_decode": {
+              "calls": 9,
+              "wall_s": 73.997406
+            },
+            "audio_decode": {
+              "calls": 4,
+              "wall_s": 5.923045
+            },
+            "ocr": {
+              "calls": 2,
+              "wall_s": 3.982935
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "synthetic-60s",
+      "kind": "synthetic",
+      "duration_s": 60.0,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "median_s": 99.037073,
+      "min_s": 99.037073,
+      "max_s": 99.037073,
+      "runs": [
+        {
+          "wall_s": 99.037073,
+          "cpu_s": 8.566354,
+          "status": "partial",
+          "checks": {
+            "duration:passed": 1,
+            "evidence:missing": 1
+          },
+          "picture_samples": 0,
+          "stages": {
+            "probe": {
+              "calls": 2,
+              "wall_s": 1.998556
+            },
+            "picture_decode": {
+              "calls": 14,
+              "wall_s": 96.31442
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "tools": {
+    "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tesseract": "tesseract 5.5.0"
+  }
+}

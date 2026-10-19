@@ -135,10 +135,38 @@ def category_label(intent: ClipIntent) -> str:
     return " ".join(intent.attribute.split()) or "these clips"
 
 
+def _photo_candidates(
+    kept: list[dict[str, Any]], media_kinds: dict[str, str]
+) -> list[dict[str, str]]:
+    """KRI-693: the question's photo candidates, named in the chat's language.
+
+    A candidate id says nothing about its kind, so the app drew a Visuals photo as
+    "Clip 9". Only photos get an entry (video rows are unchanged), numbered in clip
+    order among the photos this question actually offers.
+    """
+    offered = {m for cat in kept for m in cat["candidate_media_ids"]}
+    photos = [m for m, kind in media_kinds.items() if kind == "image" and m in offered]
+    return [
+        {
+            "media_id": media_id,
+            "kind": "image",
+            "label": say(en=f"Photo {n}", tr=f"Fotoğraf {n}"),
+        }
+        for n, media_id in enumerate(photos, 1)
+    ]
+
+
 def build_clip_question(
-    categories: list[dict[str, Any]], *, question_id: str | None = None
+    categories: list[dict[str, Any]],
+    *,
+    question_id: str | None = None,
+    media_kinds: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
-    """The additive ``clip_question`` payload; ``None`` when there is nothing to pick from."""
+    """The additive ``clip_question`` payload; ``None`` when there is nothing to pick from.
+
+    ``media_kinds`` (media id -> ``"video"``/``"image"``, in clip order) lets the payload
+    name its photo candidates; without it, or with no photo offered, the payload is unchanged.
+    """
     kept: list[dict[str, Any]] = []
     seen: set[str] = set()
     for cat in categories:
@@ -162,11 +190,14 @@ def build_clip_question(
         )
     if not kept:
         return None
+    kept = kept[:MAX_QUESTION_CATEGORIES]
+    photos = _photo_candidates(kept, media_kinds) if media_kinds else []
     return {
         "version": CLIP_QUESTION_VERSION,
         "question_id": question_id or str(uuid.uuid4()),
-        "categories": kept[:MAX_QUESTION_CATEGORIES],
+        "categories": kept,
         "allow_none": True,
+        **({"candidate_media": photos} if photos else {}),
     }
 
 

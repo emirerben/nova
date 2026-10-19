@@ -25,6 +25,7 @@ from app.agents import editor_ops_v2 as _v2
 from app.agents._runtime import Agent, AgentSpec, RefusalError, RunContext, SchemaError
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
 from app.agents.editor_ops_v2 import text as _v2_text
+from app.agents.length_options import length_options
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
 from app.kria.brief_route import fold_text, loose_text
@@ -43,7 +44,7 @@ log = structlog.get_logger()
 
 # v82 (KRI-716): a group title is one add_text across the stretch, never one per clip.
 # v81 (KRI-667/KRI-669): keep claimed_ops honesty and measured heading placement together.
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-16-v82"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-18-v83"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -753,6 +754,12 @@ class EditCopilotOutput(BaseModel):
     # (older output, a cassette, malformed): the honesty guard then falls back to
     # reading the reply's wording.
     claimed_ops: list[str] | None = None
+    # KRI-738: the lengths a "how short/long?" question offers, as [{"label", "seconds"}].
+    # The model records them; parse keeps them only while its own question is the reply shown.
+    # Omitted from the dump when empty so every other output stays byte-identical.
+    length_options: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=4, exclude_if=lambda value: not value
+    )
 
 
 _MAX_UNMET_REQUESTS = 6
@@ -3591,6 +3598,17 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         if not isinstance(suggestions_raw, list):
             suggestions_raw = []
         suggestions = [str(s).strip() for s in suggestions_raw if str(s).strip()][:5]
+        # KRI-738: tappable lengths, only while the model's own question is the reply shown
+        # (the branches above swap in server text that does not list them).
+        model_reply_shown = (
+            no_effect_reply is None
+            and capacity_reply is None
+            and not bulk_duration_needs_clarification
+            and not (not ops and state.reply_notes)
+        )
+        offered_lengths = (
+            length_options(data.get("length_options"), reply) if model_reply_shown else []
+        )
 
         needs_clarification = bool(data.get("needs_clarification", False))
         if capacity_reply is not None:
@@ -3722,6 +3740,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 unmet_requests=unmet_requests,
                 reply_notes=" ".join(dict.fromkeys(state.reply_notes)),
                 claimed_ops=claimed_ops,
+                length_options=offered_lengths if outcome == "clarification" else [],
             )
         except Exception as exc:  # noqa: BLE001
             raise RefusalError(f"edit_copilot: output validation — {exc}") from exc

@@ -176,6 +176,8 @@ struct ChatMessageRow: View {
     /// KRI-282: how to present `message.clipQuestion`. nil (old server, flag off, not a question) = text question only.
     var clipSelectionMode: ClipSelectionCardMode? = nil
     var clipSelectionMedia: [CreationAttachedMedia] = []
+    /// KRI-694: the chat's reply language, which the clip answer is posted in.
+    var clipSelectionLanguage: ClipAnswerLanguage = .english
     /// KRI-374: how to present `message.songOrderQuestion`. nil (old server, flag off, not a question) = text only.
     var songOrderMode: SongOrderCardMode? = nil
     var songOrderMedia: [CreationAttachedMedia] = []
@@ -187,6 +189,9 @@ struct ChatMessageRow: View {
     var choiceQuestionMode: ChoiceQuestionCardMode? = nil
     /// KRI-588: how to present `message.songRangeQuestion`. nil (old server, flag off, not a question) = text only.
     var songRangeMode: SongRangeCardMode? = nil
+    /// Tappable answers for a plain `assistant_response` question. nil = not the newest unanswered question
+    /// (or no options): no chips are drawn, so history never keeps stale tappable answers.
+    var replyOptionsMode: ReplyOptionsMode? = nil
 
     private static let userBubbleShape = UnevenRoundedRectangle(
         topLeadingRadius: 18,
@@ -226,14 +231,16 @@ struct ChatMessageRow: View {
                 if message.isProposal {
                     Text("Proposed direction").font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.zinc)
                 }
-                ChatResponseText(content: message.content, startedAt: responseStartedAt)
+                // With receipts and a server `reply_lead`, the lead replaces the long prose: the receipt rows
+                // below carry each fact once. No lead (old server) = today's text, unchanged.
+                ChatResponseText(content: message.displayedContent, startedAt: responseStartedAt)
                     .font(KriaFont.body(14))
                     .foregroundStyle(KriaColor.ink)
                     .lineSpacing(4)
-                    .copyableMessage(message.content, previewShape: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .copyableMessage(message.displayedContent, previewShape: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     // On the text, not the stack: a stack's label is applied to
                     // every child, which read each option chip as the question.
-                    .accessibilityLabel("Kria: \(message.content)")
+                    .accessibilityLabel("Kria: \(message.displayedContent)")
                 if !message.options.isEmpty, let onSelectOption {
                     QuestionOptionsRow(
                         options: message.options,
@@ -241,8 +248,12 @@ struct ChatMessageRow: View {
                         select: onSelectOption
                     )
                 }
+                if !message.replyOptions.isEmpty, let replyOptionsMode {
+                    ReplyOptionChips(options: message.replyOptions, mode: replyOptionsMode)
+                }
                 if let question = message.clipQuestion, let clipSelectionMode {
-                    ClipSelectionCard(question: question, media: clipSelectionMedia, projectID: projectID, mode: clipSelectionMode)
+                    ClipSelectionCard(question: question, media: clipSelectionMedia, projectID: projectID, mode: clipSelectionMode,
+                                      language: clipSelectionLanguage)
                         .id(question.questionID)
                 }
                 if let question = message.songOrderQuestion, let songOrderMode, let projectID {
@@ -264,7 +275,11 @@ struct ChatMessageRow: View {
                         .id(question.questionID)
                 }
                 if !message.receipts.isEmpty {
-                    RequirementChipsView(receipts: message.receipts, requirements: requirements, titlesReady: briefSettled, correct: onCorrectGuess)
+                    RequirementChipsView(
+                        receipts: message.receipts, requirements: requirements, titlesReady: briefSettled,
+                        alsoChanged: message.usesReplyLead ? message.alsoChanged : [],
+                        showsReasons: message.usesReplyLead, correct: onCorrectGuess
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -681,6 +696,7 @@ struct DirectionStage: View {
     /// (older server, nothing choosable) hides the picker; the parent reads the pick
     /// when it sends the approval, so `decide` needs no extra argument.
     var renderShape: (offer: RenderShapeOffer, choice: Binding<RenderShapeChoice>)? = nil
+    var automaticRepairs: Binding<Bool>? = nil
     let isBusy: Bool
     var responseStartedAt: Date? = nil
     /// `decision` is "approve" or "deny". `cleanupChoice` is only meaningful on
@@ -741,6 +757,17 @@ struct DirectionStage: View {
             Text("Nothing renders until you approve this direction.")
                 .font(KriaFont.body(12))
                 .foregroundStyle(KriaColor.zinc)
+
+            if let automaticRepairs {
+                Toggle(isOn: automaticRepairs) {
+                    Text("Allow up to 2 automatic repairs")
+                        .font(KriaFont.body(14).weight(.medium))
+                    Text("If a video check fails, Kria can rebuild it with the same clips, text, timing and sound. Permission lasts 30 minutes.")
+                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+                }
+                .disabled(isBusy)
+                .accessibilityIdentifier("automatic-repair-consent")
+            }
 
             cleanupActions
 
@@ -1068,6 +1095,64 @@ struct QuestionOptionButton: View {
     }
 }
 
+/// Newest-unanswered-question state for `ReplyOptionChips`. History rows get no mode, so they draw no chips.
+struct ReplyOptionsMode {
+    /// Sends the tapped label as a normal user message (plain text, no structured answer).
+    let select: (String) -> Void
+    /// "Other…": puts the creator in the composer; nothing is sent.
+    let other: () -> Void
+}
+
+/// A filled capsule: no stroke, Inter, 44pt tap height. Shared by the reply-option chips so the style
+/// lives in one place (the outlined `PromptChip` predates the no-borders rule and is left alone).
+struct KriaFilledChip: View {
+    let text: String
+    var systemImage: String? = nil
+    var foreground: Color = KriaColor.ink
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(text)
+                    .font(KriaFont.body(13).weight(.medium))
+                    .multilineTextAlignment(.leading)
+                if let systemImage {
+                    Image(systemName: systemImage).font(.system(size: 11, weight: .semibold))
+                }
+            }
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 44)
+            .background(KriaColor.fill)
+            .clipShape(Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(text)
+    }
+}
+
+/// The offered answers of a clarifying question as tappable chips, plus "Other…" to type a different one.
+struct ReplyOptionChips: View {
+    let options: [String]
+    let mode: ReplyOptionsMode
+
+    var body: some View {
+        PlanChipFlow(spacing: 8) {
+            ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                KriaFilledChip(text: option) { mode.select(option) }
+                    .accessibilityIdentifier("reply-option-\(index)")
+            }
+            KriaFilledChip(text: "Other…", systemImage: "pencil", foreground: KriaColor.mutedInk, action: mode.other)
+                .accessibilityIdentifier("reply-option-other")
+        }
+        .padding(.top, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("reply-options")
+    }
+}
+
 struct FailedStage: View {
     var title = "Your video wasn't made"
     var bodyText = "Your direction and footage are safe. Refresh the project or tell me what you want to change."
@@ -1239,41 +1324,109 @@ struct ChatComposer: View {
     var blocksSubmission = false
     var placeholder = "Tell Kria what you want…"
     var isFocused: FocusState<Bool>.Binding
+    /// KRI-742: pass a controller (only when the server advertises `voice_dictation`) to show the mic.
+    var dictation: DictationController? = nil
+    var dictationTerms: () -> [String] = { [] }
     let attach: () -> Void
     let send: () -> Void
 
+    private var dictationIsBusy: Bool {
+        dictation.map { $0.phase == .finalizing || $0.phase == .requestingPermission } ?? false
+    }
     private var canSend: Bool {
         (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || canSendWithoutText) && !isSending && !blocksSubmission
-            && !ChatSubmission.isBareCorrectionStub(text)
+            && !ChatSubmission.isBareCorrectionStub(text) && !dictationIsBusy
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 4) {
-            Button(action: attach) { KriaIcon(.plus).frame(width: 44, height: 44) }
-                .disabled(!canAttach).accessibilityLabel("Attach footage")
-                .accessibilityHint(canAttach ? "" : "Choose a video format first")
-            TextField(placeholder, text: $text, axis: .vertical)
-                .font(KriaFont.body(15)).lineLimit(1...4)
-                .frame(minHeight: 44).accessibilityLabel("Message Kria")
-                .focused(isFocused)
-                .submitLabel(.send)
-                .onSubmit {
-                    if canSend {
-                        send()
-                    } else {
-                        isFocused.wrappedValue = false
+        VStack(alignment: .leading, spacing: 0) {
+            if let notice = dictation?.notice {
+                Text(notice)
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                    .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 2)
+                    .accessibilityIdentifier("chat-dictation-notice")
+            }
+            HStack(alignment: .bottom, spacing: 4) {
+                Button(action: attach) { KriaIcon(.plus).frame(width: 44, height: 44) }
+                    .disabled(!canAttach).accessibilityLabel("Attach footage")
+                    .accessibilityHint(canAttach ? "" : "Choose a video format first")
+                TextField(dictation?.isListening == true && text.isEmpty ? "Listening…" : placeholder, text: $text, axis: .vertical)
+                    .font(KriaFont.body(15)).lineLimit(1...4)
+                    .frame(minHeight: 44).accessibilityLabel("Message Kria")
+                    .focused(isFocused)
+                    .submitLabel(.send)
+                    // Dictated words are written into the field; typing over them mid-sentence would race the recognizer.
+                    .disabled(dictation?.isActive == true)
+                    .onSubmit {
+                        if canSend {
+                            send()
+                        } else {
+                            isFocused.wrappedValue = false
+                        }
                     }
+                if let dictation {
+                    Button { toggleDictation(dictation) } label: { DictationMicLabel(dictation: dictation) }
+                        .disabled(dictationIsBusy || (isSending && !dictation.isListening))
+                        .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate message")
+                        .accessibilityIdentifier("chat-dictate")
                 }
-            Button(action: send) {
-                Image(systemName: isSending ? "ellipsis" : "arrow.up")
-                    .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
-                    .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
-            }.disabled(!canSend).opacity(canSend ? 1 : 0.45)
-                .accessibilityLabel(isSending ? "Sending message" : (canSendWithoutText && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Send clips" : "Send message"))
-                .accessibilityIdentifier("chat-send-message")
+                Button(action: sendTapped) {
+                    Image(systemName: isSending ? "ellipsis" : "arrow.up")
+                        .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+                        .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
+                }.disabled(!canSend).opacity(canSend ? 1 : 0.45)
+                    .accessibilityLabel(isSending ? "Sending message" : (canSendWithoutText && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Send clips" : "Send message"))
+                    .accessibilityIdentifier("chat-send-message")
+            }
         }
         .padding(7).kriaFloatingSurface(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .padding(.horizontal, 14).padding(.vertical, 12)
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: dictation?.phase)
+        .onDisappear { dictation?.cancel() }
+    }
+
+    private func toggleDictation(_ dictation: DictationController) {
+        if dictation.isActive {
+            Task { await dictation.stop() }
+        } else {
+            isFocused.wrappedValue = false
+            dictation.start(base: text, contextTerms: dictationTerms()) { text = $0 }
+        }
+    }
+
+    /// Sending while the mic is live finishes the dictation first, so the message carries the final text.
+    private func sendTapped() {
+        guard let dictation, dictation.isListening else { send(); return }
+        Task {
+            await dictation.stop()
+            if canSend { send() }
+        }
+    }
+}
+
+/// The mic button's face: a mic at rest, a stop square inside a ring that breathes with the voice while
+/// listening, a spinner while the server pass runs.
+struct DictationMicLabel: View {
+    let dictation: DictationController
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            switch dictation.phase {
+            case .idle:
+                Image(systemName: "mic").font(.system(size: 19, weight: .medium)).foregroundStyle(KriaColor.ink)
+            case .requestingPermission, .finalizing:
+                ProgressView().controlSize(.small).tint(KriaColor.ink)
+            case .listening:
+                Circle().fill(KriaColor.butter.opacity(0.55))
+                    .scaleEffect(KriaMotion.isReduced(reduceMotion) ? 1 : 1 + dictation.level * 0.22)
+                    .animation(.easeOut(duration: 0.08), value: dictation.level)
+                Circle().fill(KriaColor.butter).frame(width: 34, height: 34)
+                Image(systemName: "stop.fill").font(.system(size: 13, weight: .bold)).foregroundStyle(KriaColor.ink)
+            }
+        }
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
     }
 }
 

@@ -973,6 +973,14 @@ def phone_subtitled_closing_title_supported() -> bool:
     )
 
 
+def phone_subtitled_spoken_text_supported() -> bool:
+    """Can a phone-rendered `subtitled` (Talking) edit show a creator's text at
+    the word they say (KRI-707)? It is a plain text row on the KRI-467 lane,
+    drawn like the title (one fade-in positioned text layer)."""
+
+    return bool(settings.phone_subtitled_spoken_text_enabled and phone_subtitled_title_supported())
+
+
 def phone_narrated_title_preview_supported() -> bool:
     """Can the requesting app build show a phone `narrated` edit's opening
     title in its editor preview (KRI-455)?

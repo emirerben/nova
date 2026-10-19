@@ -2,6 +2,61 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.43.0] - 2026-10-18
+
+### Added
+- feat: background export verification and bounded approved repairs (KRI-734/KRI-726) (#1663) <!-- release-pr: 1663 -->
+
+## [0.80.42.0] - 2026-10-18
+
+### Changed
+- fix(kria): answer a re-sent copy of a message instead of queuing and re-planning it (KRI-552) (#1672) <!-- release-pr: 1672 -->
+
+## [0.80.41.0] - 2026-10-18
+
+### Changed
+- fix(kria): a Visuals photo in the clip picker shows its thumbnail and reads as a photo (KRI-693) (#1673) <!-- release-pr: 1673 -->
+
+## [0.80.40.0] - 2026-10-18
+
+### Fixed
+- fix(kria): phone Talking shows a creator's text on the word they say (KRI-707) (#1674) <!-- release-pr: 1674 -->
+
+## [0.80.39.0] - 2026-10-18
+
+### Changed
+- fix(kria): clip-picker answer follows the chat language (KRI-694) (#1670) <!-- release-pr: 1670 -->
+
+## [0.80.38.0] - 2026-10-18
+
+### Changed
+- fix(kria): Voiceover cleanup says what it cut and left, no more retakes promise (KRI-551) (#1669) <!-- release-pr: 1669 -->
+
+## [0.80.37.0] - 2026-10-18
+
+### Fixed
+- fix(kria): phone Voiceover chats leave out spoken-word labels instead of refusing every turn (KRI-691) (#1667) <!-- release-pr: 1667 -->
+
+## [0.80.36.0] - 2026-10-18
+
+### Changed
+- fix(kria): the review sees a word-by-word hook as shown; replay the real Lisbon plan (KRI-560) (#1671) <!-- release-pr: 1671 -->
+
+## [0.80.35.0] - 2026-10-18
+
+### Changed
+- feat(ios): talk to Kria — voice dictation in the chat composers (KRI-742) (#1665) <!-- release-pr: 1665 -->
+
+## [0.80.34.0] - 2026-10-18
+
+### Changed
+- perf(ios): the editor opens faster: overlapped requests, parallel clips, sources not re-hashed (KRI-714) (#1666) <!-- release-pr: 1666 -->
+
+## [0.80.33.0] - 2026-10-18
+
+### Fixed
+- fix(kria): longer clips reach back into footage; tappable length answers; one receipt per edit (KRI-737/738/739) (#1664) <!-- release-pr: 1664 -->
+
 ## [0.80.32.0] - 2026-10-18
 
 ### Changed

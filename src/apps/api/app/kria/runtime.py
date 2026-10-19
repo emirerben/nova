@@ -13,7 +13,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import structlog
@@ -40,6 +40,7 @@ from app.kria.contracts import (
     KriaTurnPlan,
     RequirementReceipt,
 )
+from app.kria.duplicate_send import duplicate_reply, find_duplicate_send
 from app.kria.language import is_help_question, is_status_question
 from app.kria.reply_language import (
     remember_reply_language,
@@ -736,6 +737,19 @@ async def submit_turn(
                     else body.expected_thread_revision
                 ),
             )
+    # KRI-552: the creator's identical re-send of their latest message (the chat looked stuck)
+    # is a copy. It is answered below and never planned: queued, it threw the running turn back
+    # to plan again and, after the render, asked the creator to restate what was already done.
+    duplicate = None
+    if (
+        settings.kria_duplicate_resend_enabled
+        and scope is None
+        and choice_selection is None
+        and body.clip_selection is None
+        and body.song_order is None
+        and body.song_range is None
+    ):
+        duplicate = await find_duplicate_send(db, thread, body.message)
     # KRI-520: the chat's reply language after this message, stored on the locked
     # thread row (committed with the event below; rolled back with a refusal).
     reply_language = resolve_reply_language(
@@ -746,6 +760,8 @@ async def submit_turn(
     with reply_language_for(reply_language):
         if scope is not None:
             pass  # "Update: captions, music" is never a status or help question
+        elif duplicate is not None:
+            inert_response = ("progress", duplicate_reply(duplicate))
         elif is_status_question(body.message):
             status = getattr(active, "status", None)
             if status in {"pending", "planning"}:
@@ -791,6 +807,10 @@ async def submit_turn(
     if inert_response is not None:
         turn_value, message = inert_response
         turn_id = uuid.uuid4()
+        # KRI-552: marks both events as a copy of `duplicate.turn_id`'s message. The worker's
+        # revision fence and the planner's reads skip them, so a copy never disturbs the turn
+        # it repeats.
+        copy_of = {"duplicate_of": str(duplicate.turn_id)} if duplicate is not None else {}
         source = await _append_event(
             db,
             thread,
@@ -803,6 +823,7 @@ async def submit_turn(
                 "turn_id": str(turn_id),
                 "turn_status": "completed",
                 "inert": True,
+                **copy_of,
             },
             client_event_id=body.client_event_id,
         )
@@ -818,6 +839,7 @@ async def submit_turn(
                 "receipt_ids": [],
                 "next_actions": [],
                 "schema_version": 2,
+                **copy_of,
             },
         )
         plan = KriaTurnPlan(mode="respond", turn_value=turn_value, response=message)
@@ -2080,7 +2102,11 @@ async def decide_approval(
                 and isinstance(execution_peek.result, dict)
                 and "strategy_media_before" in execution_peek.result
             )
-    needs_plan_item_lock = is_strategy_approval or deny_restore_pending
+    needs_plan_item_lock = (
+        is_strategy_approval
+        or deny_restore_pending
+        or (decision == "approve" and body.automatic_repair_attempts > 0)
+    )
     plan_item = (
         await _lock_strategy_plan_item(
             db, session_id=approval_ref.session_id, creator_id=creator_id
@@ -2422,6 +2448,25 @@ async def decide_approval(
             db, item=plan_item, execution=execution
         )
 
+    if decision == "approve" and body.automatic_repair_attempts:
+        if execution is None:
+            raise RuntimeFailure(
+                409, "approval_target_missing", "The render for this approval is unavailable."
+            )
+        from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+
+        grant_item = plan_item or await db.get(PlanItem, session.plan_item_id)
+        execution.result = {
+            **(execution.result or {}),
+            "automatic_repair_grant": {
+                "version": 1,
+                "max_attempts": 2,
+                "used": 0,
+                "approved_at": now.isoformat(),
+                "expires_at": (now + timedelta(minutes=30)).isoformat(),
+                "media_snapshot": snapshot_media(grant_item),
+            },
+        }
     approval.status = "approved" if decision == "approve" else "denied"
     if decision == "deny":
         turn.status = "completed"
@@ -2499,6 +2544,12 @@ async def read_approval(
         if isinstance(result, dict) and isinstance(result.get("render_retry"), dict):
             retry_of_execution_id = result["render_retry"].get("source_execution_id")
     return ApprovalSnapshotOut(
+        automatic_repair_limit=(
+            2
+            if settings.phone_actual_export_verification_enabled
+            and creator_id in settings.phone_actual_export_verification_user_ids
+            else 0
+        ),
         approval_id=str(approval.id),
         turn_id=str(approval.turn_id),
         draft_id=str(approval.draft_id) if approval.draft_id else None,

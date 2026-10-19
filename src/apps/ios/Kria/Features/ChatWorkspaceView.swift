@@ -419,6 +419,7 @@ private struct CreationWorkspaceView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var approval: ApprovalSnapshot?
+    @State private var allowAutomaticRepairs = true
     /// KRI-306: the creator's pending video-shape pick for the approval / plan on screen.
     @State private var renderShapePick = RenderShapePickerState()
     @State private var approvalNotice: String?
@@ -426,6 +427,14 @@ private struct CreationWorkspaceView: View {
     @State private var availableFormats: [CreationFormat] = []
     @State private var capabilities: CreationCapabilities?
     @State private var capabilitiesFailure: ChatFailure?
+    /// KRI-742: built once the server advertises `voice_dictation`; nil (no mic) until then.
+    @State private var dictationController: DictationController?
+    private var dictationForComposer: DictationController? {
+        capabilities?.voiceDictationEnabled == true ? dictationController : nil
+    }
+    private func dictationContextTerms() -> [String] {
+        DictationController.contextTerms(title: project.title, mediaNames: CreationAttachedMedia.parse(threadState).map(\.displayName))
+    }
     @State private var fullThread: CreationThread?
     @State private var pendingAction: CreationActionIdentity?
     @State private var uploadRecords: [UploadRecoveryRecord] = []
@@ -446,6 +455,8 @@ private struct CreationWorkspaceView: View {
     @State private var isChoosingFormat = false
     @State private var formatResolveFailed = false
     @State private var threadState: [String: JSONValue] = [:]
+    /// KRI-693: the plan item's Visuals, read only while a clip picker offers Visuals (`asset-…`) candidates.
+    @State private var clipPoolVisuals: [CreationVisual] = []
     @State private var afterSequence = -1
     @State private var threadRevision: Int
     @State private var projectionOrder = ThreadProjectionOrder()
@@ -912,14 +923,16 @@ private struct CreationWorkspaceView: View {
                                composerFocused = true
                            },
                            clipSelectionMode: clipSelectionMode(for: message),
-                           clipSelectionMedia: CreationAttachedMedia.parse(threadState),
+                           clipSelectionMedia: clipSelectionMedia(for: message),
+                           clipSelectionLanguage: ClipAnswerLanguage(threadState: threadState),
                            songOrderMode: songOrderMode(for: message),
                            songOrderMedia: CreationAttachedMedia.parse(threadState),
                            songTimeline: songTimelineConfiguration,
                            songDurationS: CreationAttachedMedia.song(threadState)?.durationS,
                            projectID: project.id,
                            choiceQuestionMode: choiceQuestionMode(for: message),
-                           songRangeMode: songRangeMode(for: message))
+                           songRangeMode: songRangeMode(for: message),
+                           replyOptionsMode: replyOptionsMode(for: message))
                 .id(entry.id)
             if let operationID = message.memoryOperationID {
                 SavedTextPreferenceUndo(operationID: operationID, api: model.api)
@@ -942,6 +955,24 @@ private struct CreationWorkspaceView: View {
         case .media:
             EmptyView() // Consecutive receipts are rendered together above.
         }
+    }
+
+    /// Chat media plus the Visuals photos/videos the question offers, appended in candidate order so the picker
+    /// numbers them exactly as before (KRI-693: they were "Clip 9" with no thumbnail).
+    private func clipSelectionMedia(for message: ChatTranscriptMessage) -> [CreationAttachedMedia] {
+        let chatMedia = CreationAttachedMedia.parse(threadState)
+        guard let question = message.clipQuestion, !clipPoolVisuals.isEmpty else { return chatMedia }
+        return chatMedia + ClipPoolMedia.media(for: question, pool: clipPoolVisuals)
+    }
+
+    /// Reads the plan item's Visuals once per question that offers pool candidates. A failed read keeps the
+    /// server's photo names with a placeholder tile.
+    private func loadClipPoolVisuals() async {
+        guard let eventID = latestClipQuestionID, let itemID = fullThread?.activePlanItemID,
+              let event = events.first(where: { $0.id == eventID }),
+              let question = ChatTranscriptMessage.from(event: event)?.clipQuestion,
+              !ClipPoolMedia.poolIDs(in: question).isEmpty else { return }
+        if let loaded = try? await model.api.visuals(itemID: itemID) { clipPoolVisuals = loaded.assets }
     }
 
     /// Picker only when the server advertises `clip_selection_questions`. Interactive on the newest question
@@ -1048,6 +1079,25 @@ private struct CreationWorkspaceView: View {
             // A rejected send removes the pending message, which reopens the card for a retry.
             Task { await send(message: text, choiceSelection: submission) }
         }
+    }
+
+    /// Chips for a plain `assistant_response` question, interactive only on the newest question that no later
+    /// user message has answered. Anything later (an answer, a newer question) removes them from history.
+    private func replyOptionsMode(for message: ChatTranscriptMessage) -> ReplyOptionsMode? {
+        guard transcriptIsFresh, !message.replyOptions.isEmpty else { return nil }
+        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
+            if case .message(let message) = entry.content { message } else { nil }
+        }
+        guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
+        let later = messages[(index + 1)...]
+        guard !later.contains(where: { $0.role == .user || !$0.replyOptions.isEmpty || !$0.options.isEmpty }) else { return nil }
+        return ReplyOptionsMode(
+            select: { option in Task { await send(message: option) } },
+            other: {
+                // Nothing is sent and nothing typed is lost: the creator writes their own answer.
+                composerFocused = true
+            }
+        )
     }
 
     private func mediaReceipts(_ entries: [ChatTimelineEntry]) -> some View {
@@ -1305,6 +1355,11 @@ private struct CreationWorkspaceView: View {
         .onChange(of: currentProject.serverRevision) { _, revision in
             threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: revision)
         }
+        .task(id: capabilities?.voiceDictationEnabled == true) {
+            if capabilities?.voiceDictationEnabled == true, dictationController == nil {
+                dictationController = DictationController.make(api: model.api)
+            }
+        }
         .onReceive(model.uploads.$records) { uploadRecords = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$inFlight) { uploadInFlight = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$photoSelections) { photoSelections = $0; rememberUploadAnchors() }
@@ -1318,6 +1373,9 @@ private struct CreationWorkspaceView: View {
                 guard !Task.isCancelled, capabilities == nil else { return }
                 await refreshCapabilities()
             }
+        }
+        .task(id: "\(latestClipQuestionID ?? "")|\(fullThread?.activePlanItemID ?? "")") {
+            await loadClipPoolVisuals()
         }
         .task(id: latestReceiptEventID) {
             guard latestReceiptEventID != nil else { return }
@@ -1378,6 +1436,7 @@ private struct CreationWorkspaceView: View {
             ReviewPlanView(
                 seed: presentation.seed, initialFlag: presentation.initialFlag,
                 actions: reviewActions(),
+                dictation: dictationForComposer, dictationTerms: dictationContextTerms,
                 close: { reviewPresentation = nil }
             )
             .presentationDetents([.large])
@@ -1439,6 +1498,8 @@ private struct CreationWorkspaceView: View {
                 blocksSubmission: isThinking || pendingUploadCount > 0,
                 placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
                 isFocused: $composerFocused,
+                dictation: dictationForComposer,
+                dictationTerms: dictationContextTerms,
                 attach: openAttachments,
                 send: { Task { await send() } }
             )
@@ -1454,7 +1515,7 @@ private struct CreationWorkspaceView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
                 text: promptBinding, isSending: isSending || isActing,
-                canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
+                canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await send() } }
             )
         }
         .background(KriaColor.paper)
@@ -1506,6 +1567,7 @@ private struct CreationWorkspaceView: View {
                     format: selectedFormat,
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
                     renderShape: approval.retryOfExecutionID == nil ? renderShapePicker : nil,
+                    automaticRepairs: approval.automaticRepairLimit == 2 ? $allowAutomaticRepairs : nil,
                     isBusy: isActing || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     decide: decide,
@@ -2312,7 +2374,8 @@ private struct CreationWorkspaceView: View {
                     speechCleanupAnalysisID: analysisID,
                     speechCleanupChoice: cleanupChoice,
                     outputOrientation: shape?.orientation,
-                    landscapeFit: shape?.landscapeFit
+                    landscapeFit: shape?.landscapeFit,
+                    automaticRepairAttempts: decision == "approve" && approval.automaticRepairLimit == 2 && allowAutomaticRepairs ? 2 : 0
                 )
             } catch let error as APIError where error == .conflict && speechCleanupConflictCodes.contains(error.conflictCode ?? "") {
                 // The approval stays PENDING with the same id/fingerprint --
@@ -2551,6 +2614,17 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     /// KRI-588: the `song_range` a user message carried (from the stored event, or the in-flight send).
     var songRangeAnswer: SongRangeAnswer? = nil
     var memoryOperationID: String? = nil
+    /// Chip labels of a plain `assistant_response` question (`turn_value == "question"`). Distinct from
+    /// `options`, which are the legacy exact-string choices rendered by `QuestionOptionsRow`.
+    var replyOptions: [String] = []
+    /// Short lead sentence that replaces `content` when receipts are present (see `usesReplyLead`).
+    var replyLead: String? = nil
+    /// Deliberate extra changes no request claimed; shown as one muted line under the receipts.
+    var alsoChanged: [String] = []
+
+    /// True only with receipts AND a lead: an old server (no lead) or a reply without receipts renders `content`.
+    var usesReplyLead: Bool { !receipts.isEmpty && !(replyLead ?? "").isEmpty }
+    var displayedContent: String { usesReplyLead ? (replyLead ?? content) : content }
 
     static func syntheticUser(_ content: String) -> Self {
         Self(id: "synthetic-\(content)", role: .user, content: content)
@@ -2592,6 +2666,7 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
             recommendedOption = event.payload?["recommended_option"]?.stringValue
         }
         let receipts = role == .assistant ? RequirementReceiptItem.parse(payload: event.payload) : []
+        let replyExtras = role == .assistant ? ReplyExtras.parse(payload: event.payload, eventType: event.eventType, hasReceipts: !receipts.isEmpty) : nil
         let clipQuestion = role == .assistant ? ClipQuestion.parse(payload: event.payload) : nil
         let songOrderQuestion = role == .assistant ? SongOrderQuestion.parse(payload: event.payload) : nil
         let songOrderAnswer = role == .user ? SongOrderSubmission.parse(payload: event.payload) : nil
@@ -2599,7 +2674,7 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
         let songRangeQuestion = role == .assistant ? SongRangeQuestion.parse(payload: event.payload) : nil
         let songRangeAnswer = role == .user ? SongRangeAnswer.parse(payload: event.payload) : nil
         let memoryOperationID = event.payload?["kind"]?.stringValue == "creator_memory_receipt" ? event.payload?["operation_id"]?.stringValue : nil
-        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, memoryOperationID: memoryOperationID)
+        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, memoryOperationID: memoryOperationID, replyOptions: replyExtras?.options ?? [], replyLead: replyExtras?.lead, alsoChanged: replyExtras?.alsoChanged ?? [])
     }
 }
 

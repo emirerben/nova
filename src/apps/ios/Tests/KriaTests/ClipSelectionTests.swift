@@ -237,6 +237,45 @@ final class ClipSelectionTests: XCTestCase {
         XCTAssertTrue(ClipSelectionSubmission.skip(q).skipped)
     }
 
+    /// KRI-694: Tigre night N1 posted "None of these for …" into a Turkish chat. The visible answer follows the
+    /// chat's reply language (the server keeps it on `thread.state["reply_language"]`); the device language never
+    /// decides, and everything but Turkish stays English.
+    func testMessageTextFollowsTheChatReplyLanguage() throws {
+        let q = try question()
+        let positions = ["a": 1, "b": 7, "c": 3, "d": 2]
+        // "b" is the server's suggestion for Dodgeball and starts ticked, so ticking "c" gives clips 3 and 7.
+        var both = ClipSelectionState(question: q)
+        both.toggle("c", in: "dodgeball")
+        both.toggleNone("football")
+        XCTAssertEqual(both.submission.message(question: q, positions: positions, language: .turkish),
+                       "Dodgeball: klip 3, 7. Football için hiçbiri")
+        XCTAssertEqual(both.submission.message(question: q, positions: positions, language: .english),
+                       "Dodgeball: clips 3, 7. None of these for Football")
+        var single = ClipSelectionState(question: q)
+        single.toggle("d", in: "football")
+        XCTAssertEqual(single.submission.message(question: q, positions: positions, language: .turkish),
+                       "Dodgeball: klip 7. Football: klip 2")
+        XCTAssertEqual(single.submission.message(question: q, positions: positions, language: .english),
+                       "Dodgeball: clip 7. Football: clip 2")
+        XCTAssertEqual(ClipSelectionSubmission.skip(q).message(question: q, positions: positions, language: .turkish),
+                       "Atla, benim yerime sen karar ver")
+        XCTAssertEqual(ClipSelectionSubmission.skip(q).message(question: q, positions: positions, language: .english),
+                       "Skip, decide for me")
+        // An answer with no tick and no "none" reads as a skip in either language.
+        let empty = ClipSelectionSubmission(questionID: q.questionID, answers: [], noneKeys: [], skipped: false)
+        XCTAssertEqual(empty.message(question: q, positions: positions, language: .turkish), "Atla, benim yerime sen karar ver")
+        XCTAssertEqual(empty.message(question: q, positions: positions, language: .english), "Skip, decide for me")
+    }
+
+    func testTheAnswerLanguageComesFromTheThreadStateAndDefaultsToEnglish() {
+        XCTAssertEqual(ClipAnswerLanguage(threadState: ["reply_language": .string("tr")]), .turkish)
+        XCTAssertEqual(ClipAnswerLanguage(threadState: ["reply_language": .string("en")]), .english)
+        // Unknown language, a missing key and a non-string value are English, like the server's `say()`.
+        XCTAssertEqual(ClipAnswerLanguage(threadState: ["reply_language": .string("de")]), .english)
+        XCTAssertEqual(ClipAnswerLanguage(threadState: ["reply_language": .number(1)]), .english)
+        XCTAssertEqual(ClipAnswerLanguage(threadState: [:]), .english)
+    }
+
     func testSummaryForAnsweredCard() throws {
         let q = try question()
         var state = ClipSelectionState(question: q)
@@ -255,6 +294,109 @@ final class ClipSelectionTests: XCTestCase {
         XCTAssertEqual(positions["b"], 2)
         XCTAssertNil(positions["voice"])
         XCTAssertEqual(Set([positions["c"], positions["d"]]), [3, 4], "unlisted candidates still get stable numbers")
+    }
+
+    // MARK: KRI-693 -- a Visuals photo reads as a photo, with its thumbnail
+
+    private static let poolPhotoID = "asset-d9627a79-b228-4db0-9cbb-201f6f921bb2"
+
+    /// Prod shape (thread 2EA478EC, seq 36) plus the server's additive `candidate_media`.
+    private func photoQuestion(label: String? = "Fotoğraf 1", includeNames: Bool = true) throws -> ClipQuestion {
+        var fields: [String: JSONValue] = [
+            "version": .number(1), "question_id": .string("q-photo"), "allow_none": .bool(true),
+            "categories": .array([category("include:lit-house", "ışıklı ev fotoğrafını", ["v1.mp4", "v2.mp4", Self.poolPhotoID])]),
+        ]
+        if includeNames, let label {
+            fields["candidate_media"] = .array([.object(["media_id": .string(Self.poolPhotoID), "kind": .string("image"), "label": .string(label)])])
+        }
+        return try XCTUnwrap(ClipQuestion.parse(payload: ["clip_question": .object(fields)]))
+    }
+
+    private func visual(id: String, kind: String = "image", display: String? = "https://signed.example/photo.jpg", preview: String? = nil) -> CreationVisual {
+        CreationVisual(id: id, kind: kind, status: "ready", sourceFilename: "N1_09_visual.jpg",
+                       displayURL: display.flatMap(URL.init(string:)), previewURL: preview.flatMap(URL.init(string:)), retryable: false)
+    }
+
+    func testServerNamedPhotoReadsAsAPhotoInTheChatsLanguageNotAsClipNine() throws {
+        let q = try photoQuestion(label: "Fotoğraf 1")
+        let info = ClipTileInfo(mediaID: Self.poolPhotoID, position: 9, question: q, media: nil)
+        XCTAssertTrue(info.isPhoto)
+        XCTAssertEqual(info.name, "Fotoğraf 1")
+        XCTAssertEqual(info.symbol, "photo")
+        XCTAssertNotEqual(info.name, "Clip 9")
+    }
+
+    func testVideoTilesAreUnchanged() throws {
+        let q = try photoQuestion()
+        let info = ClipTileInfo(mediaID: "v1.mp4", position: 1, question: q, media: nil)
+        XCTAssertFalse(info.isPhoto)
+        XCTAssertEqual(info.name, "Clip 1")
+        XCTAssertEqual(info.symbol, "film")
+        // A payload without `candidate_media` (older server, or no photo offered) names every tile "Clip N".
+        let plain = try photoQuestion(includeNames: false)
+        XCTAssertTrue(plain.candidateMedia.isEmpty)
+        XCTAssertEqual(ClipTileInfo(mediaID: Self.poolPhotoID, position: 9, question: plain, media: nil).name, "Clip 9")
+    }
+
+    func testPhotoStaysAPhotoWhenOnlyTheVisualsPoolKnowsItsKind() throws {
+        let plain = try photoQuestion(includeNames: false)
+        let media = CreationAttachedMedia(id: Self.poolPhotoID, filename: "N1_09_visual.jpg", kind: "image", previewURL: nil)
+        let info = ClipTileInfo(mediaID: Self.poolPhotoID, position: 9, question: plain, media: media)
+        XCTAssertTrue(info.isPhoto)
+        XCTAssertEqual(info.symbol, "photo")
+    }
+
+    func testMalformedCandidateMediaIsIgnoredAndVideosNeverGetAPhotoName() throws {
+        let fields: [String: JSONValue] = [
+            "version": .number(1), "question_id": .string("q"), "allow_none": .bool(true),
+            "categories": .array([category("g", "x", ["v1.mp4", "p"])]),
+            "candidate_media": .array([
+                .string("junk"), .object(["kind": .string("image")]),
+                .object(["media_id": .string("v1.mp4"), "kind": .string("video"), "label": .string("Video 1")]),
+                .object(["media_id": .string("p"), "kind": .string("image"), "label": .string("  ")]),
+            ]),
+        ]
+        let q = try XCTUnwrap(ClipQuestion.parse(payload: ["clip_question": .object(fields)]))
+        XCTAssertFalse(q.isPhoto("v1.mp4"))
+        XCTAssertEqual(ClipTileInfo(mediaID: "v1.mp4", position: 1, question: q, media: nil).name, "Clip 1")
+        XCTAssertTrue(q.isPhoto("p"), "a photo with a blank name is still a photo")
+        XCTAssertEqual(ClipTileInfo(mediaID: "p", position: 2, question: q, media: nil).name, "Clip 2")
+    }
+
+    func testPoolPhotoGetsItsThumbnailFromTheVisualsPool() throws {
+        let q = try photoQuestion()
+        let pool = [visual(id: "00000000-0000-4000-8000-000000000001"),
+                    visual(id: "D9627A79-B228-4DB0-9CBB-201F6F921BB2", display: "https://signed.example/lit-house.jpg")]
+        let media = ClipPoolMedia.media(for: q, pool: pool)
+        XCTAssertEqual(media.map(\.id), [Self.poolPhotoID])
+        XCTAssertEqual(media[0].kind, "image")
+        XCTAssertEqual(media[0].previewURL?.absoluteString, "https://signed.example/lit-house.jpg")
+        XCTAssertEqual(ClipPoolMedia.poolIDs(in: q), [Self.poolPhotoID])
+    }
+
+    func testPoolVideoUsesItsPosterAndAPhotoWithoutAnyURLStaysThumbnailless() throws {
+        let q = try XCTUnwrap(ClipQuestion.parse(payload: payload(categories: [category("g", "x", ["asset-aaaaaaaa-0000-4000-8000-000000000001", "asset-bbbbbbbb-0000-4000-8000-000000000002"])])))
+        let pool = [visual(id: "aaaaaaaa-0000-4000-8000-000000000001", kind: "video", display: "https://signed.example/raw.mp4", preview: "https://signed.example/poster.jpg"),
+                    visual(id: "bbbbbbbb-0000-4000-8000-000000000002", display: nil)]
+        let media = ClipPoolMedia.media(for: q, pool: pool)
+        XCTAssertEqual(media.count, 2)
+        XCTAssertEqual(media[0].previewURL?.absoluteString, "https://signed.example/poster.jpg", "never the raw video as a thumbnail")
+        XCTAssertNil(media[1].previewURL)
+    }
+
+    func testCandidatesMissingFromThePoolOrThreadMediaAreLeftToTheServerNaming() throws {
+        let q = try photoQuestion()
+        XCTAssertTrue(ClipPoolMedia.media(for: q, pool: []).isEmpty, "a failed or empty Visuals read adds nothing")
+        XCTAssertTrue(ClipPoolMedia.poolIDs(in: try question()).isEmpty, "thread clips are never looked up in Visuals")
+    }
+
+    func testPoolMediaKeepsTheCandidateNumbering() throws {
+        let q = try photoQuestion()
+        func clip(_ id: String) -> CreationAttachedMedia { CreationAttachedMedia(id: id, filename: id, kind: "video", previewURL: nil) }
+        let thread = [clip("v1.mp4"), clip("v2.mp4")]
+        let withPool = thread + ClipPoolMedia.media(for: q, pool: [visual(id: "d9627a79-b228-4db0-9cbb-201f6f921bb2")])
+        XCTAssertEqual(ClipPositions.map(media: withPool, question: q), ClipPositions.map(media: thread, question: q))
+        XCTAssertEqual(ClipPositions.map(media: withPool, question: q)[Self.poolPhotoID], 3)
     }
 
     // MARK: capability gating
