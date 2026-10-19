@@ -27,10 +27,18 @@ Ways this can fail, each pinned below:
    claims an ending the approved windows don't do.
 7. A filming-order ask, a song, a voiceover or the cloud route still gets reordered or
    noted.
+8. The phone worker reorders clips the reply never mentioned: a voice mode, a named voice
+   source, a guided voiceover, no ``spoken_order`` record on the approved plan, or a
+   pinned contract order (KRI-129: no silent overrides).
+9. The kill switch (``SPOKEN_ORDER_ENABLED=false``) leaves a reorder, a seat or a note.
+10. Background chatter alone gets a "your narration plays" sentence.
+11. A welcome said on several clips ("welcome to my kitchen", "welcome to the bedroom")
+    moves one of them.
 """
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import json
 import uuid
@@ -51,12 +59,17 @@ from app.kria import planner
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
 from app.kria.brief_checks import check_requirement, plan_facts_from_rendered_montage
+from app.kria.media_sources import OriginalMediaDescriptor
+from app.kria.narration_notes import speech_order_approved
 from app.kria.planner import PlannedKriaTurn
 from app.kria.reply_language import reply_language_for
+from app.pipeline import unified_montage
 from app.pipeline.guided_story import compile_execution_plan
 from app.pipeline.unified_montage import brief_view, plan_unified_montage
 from app.schemas.clip_intents import ResolvedClipIntent
-from app.services.creator_render_contract import build_render_contract
+from app.services.creator_render_contract import CONTRACT_FIELD, build_render_contract
+from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
+from app.tasks import generative_build as gb
 from tests.pipeline.test_unified_montage import clip
 from tests.tasks.test_selected_clip_dispatch import _verify
 
@@ -156,6 +169,7 @@ async def _gate(
 
 
 def _render(result: PlannedKriaTurn, brief: CreativeBrief, *, speech_order: bool = True):
+    """The montage the phone worker plans from the approved draft (its own gate)."""
     strategy = result.plan.intents[0].arguments["strategy"]
     snapshot = result.media_snapshot
     resolved = BriefBinding.create(
@@ -185,7 +199,8 @@ def _render(result: PlannedKriaTurn, brief: CreativeBrief, *, speech_order: bool
         clip_intents_enabled=True,
         creator_duration_proven=True,
         approved_length_plan=snapshot["length_plan"],
-        speech_order=speech_order and not (contract is not None and contract.order_required),
+        speech_order=speech_order
+        and speech_order_approved(strategy, contract, snapshot["length_plan"]),
     )
     return plan, contract, clips
 
@@ -260,7 +275,7 @@ async def test_incident_reply_says_the_narration_plays_and_where_the_lines_go(
     result = await _gate(monkeypatch, _planned(), _brief())
     summary = _summary(result)
     assert summary.startswith("Tigre kulübe turunu")  # the model's own words stay first
-    assert "your narration plays in the video; I'm not mixing in music" in summary
+    assert "Your clips keep their own sound, so your narration plays in the video." in summary
     assert "“Tigre'de ev turumuza hoş geldiniz” comes right after your opening shot" in summary
     assert "introduces someone (“Bu da Deniz”)" in summary
     assert "I end on that clip without those words" in summary
@@ -281,7 +296,7 @@ async def test_incident_reply_in_the_turkish_chat(monkeypatch: pytest.MonkeyPatc
 # -- where the clips' words decide nothing ---------------------------------------------
 
 
-async def test_a_filming_order_ask_keeps_its_order_and_only_says_the_sound(
+async def test_a_filming_order_ask_keeps_its_order_and_the_reply_adds_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     filmed = BriefRequirement(
@@ -295,7 +310,7 @@ async def test_a_filming_order_ask_keeps_its_order_and_only_says_the_sound(
     result = await _gate(monkeypatch, _planned(), brief, dated=True)
     assert "spoken_order" not in result.media_snapshot["length_plan"]
     summary = _summary(result)
-    assert "your narration plays in the video" in summary
+    assert "narration" not in summary
     assert "hoş geldiniz" not in summary and "Deniz" not in summary
 
 
@@ -336,3 +351,193 @@ async def test_without_the_spoken_order_the_incident_order_returns(
     last = plan.snapshot.fast_cuts[-1]
     assert last.media_id == DENIZ
     assert _overlaps((last.source_start_s, last.source_end_s), DENIZ_WORDS[1])
+
+
+# -- the kill switch, chatter and room-by-room welcomes --------------------------------
+
+
+async def test_the_kill_switch_leaves_no_seat_no_note_and_no_reorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "spoken_order_enabled", False)
+    brief = _brief()
+    result = await _gate(monkeypatch, _planned(), brief)
+    assert "spoken_order" not in result.media_snapshot["length_plan"]
+    assert "narration" not in _summary(result)
+    plan, _contract, _clips = _render(result, brief)
+    assert plan.clip_ids.index(WELCOME) == 8
+    assert "spoken_roles" not in plan.record()
+
+
+def _with_speech(media_id: str, text: str) -> list[dict]:
+    rows = copy.deepcopy(CLIPS)
+    for row in rows:
+        if row["media_id"] == media_id:
+            speech = row["analysis"]["understanding"]["speech"]
+            speech["segments"] = [{"text": text, "start_s": 0.5, "end_s": 2.0}]
+            speech["transcript"] = row["analysis"]["transcript"] = text
+    return rows
+
+
+async def test_chatter_that_moves_nothing_adds_no_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The clips still speak (narration, Deniz's line elsewhere), but nothing the words say
+    moves a clip or shapes the ending: the reply stays the model's own."""
+    rows = _with_speech(WELCOME, "Burası mutfak.")
+    rows = [
+        {
+            **row,
+            "analysis": {
+                **row["analysis"],
+                "understanding": {**row["analysis"]["understanding"], "people": {"count": None}},
+            },
+        }
+        if row["media_id"] == DENIZ
+        else row
+        for row in rows
+    ]
+    monkeypatch.setattr(f"{__name__}.CLIPS", rows)
+    result = await _gate(monkeypatch, _planned(), _brief())
+    assert "spoken_order" not in result.media_snapshot["length_plan"]
+    assert _summary(result) == (
+        "Tigre kulübe turunu 20 saniyelik hızlı bir montaj olarak tasarlıyorum."
+    )
+
+
+async def test_a_welcome_on_two_clips_moves_neither(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = _with_speech("m1_09", "Ve oturma odamıza hoş geldiniz!")
+    monkeypatch.setattr(f"{__name__}.CLIPS", rows)
+    brief = _brief()
+    result = await _gate(monkeypatch, _planned(), brief)
+    roles = result.media_snapshot["length_plan"]["spoken_order"]["roles"]
+    assert roles == {DENIZ: "introduction"}  # the quiet ending still applies
+    assert "hoş geldiniz" not in _summary(result)
+    plan, _contract, _clips = _render(result, brief)
+    assert plan.clip_ids.index(WELCOME) == 8
+
+
+# -- the phone worker follows only what the reply said ----------------------------------
+
+
+class _Planned(Exception):
+    """Raised by the spy once the worker has planned: the rest of the job is not under test."""
+
+
+def _worker(
+    monkeypatch: pytest.MonkeyPatch,
+    result: PlannedKriaTurn,
+    brief: CreativeBrief,
+    *,
+    strategy_update: dict | None = None,
+    keep_record: bool = True,
+    order_required: bool = False,
+) -> dict:
+    """Run ``_run_phone_unified_montage_job`` on the approved draft up to its montage plan."""
+    strategy = {**result.plan.intents[0].arguments["strategy"], **(strategy_update or {})}
+    snapshot = copy.deepcopy(result.media_snapshot)
+    if not keep_record:
+        snapshot["length_plan"].pop("spoken_order", None)
+    binding = BriefBinding.create(
+        uuid.uuid5(uuid.NAMESPACE_URL, "kri-585-worker"),
+        brief,
+        latest_message="Continue",
+        media_snapshot=snapshot,
+    )
+    rows = [row for row in snapshot["clip_assignments"] if row["media_id"] in SELECTED]
+    bindings = [
+        PhoneSourceBinding(
+            media_id=row["media_id"],
+            proxy_path=row["gcs_path"],
+            generation=row["storage_generation"],
+            original=OriginalMediaDescriptor(
+                sha256=f"{index:x}".rjust(64, "a"),
+                byte_count=1000 + index,
+                duration_s=row["duration_s"],
+                width=1080,
+                height=1920,
+                has_audio=True,
+            ),
+        )
+        for index, row in enumerate(rows)
+    ]
+    job_snapshot: dict = {
+        PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings],
+        "creator_generation_id": "generation",
+        "creator_brief_binding": binding.model_dump(mode="json"),
+    }
+    if order_required:
+        contract = build_render_contract(
+            {**strategy, "ordering_choice": "chronological"},
+            generation_id="generation",
+            brief=binding.resolve(),
+            media_snapshot=snapshot,
+        )
+        assert contract is not None and contract.order_required
+        job_snapshot[CONTRACT_FIELD] = contract.model_dump(mode="json")
+    candidates = {
+        "clip_paths": [b.proxy_path for b in bindings],
+        "edit_format": "montage",
+        "creator_strategy": strategy,
+    }
+    monkeypatch.setattr(
+        gb, "_load_unified_montage_inputs", lambda _job: (uuid.uuid4(), rows, binding.resolve())
+    )
+    monkeypatch.setattr(gb, "_load_unified_montage_visuals", lambda *_a, **_k: [])
+    monkeypatch.setattr(gb.settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(gb.settings, "clip_facts_enabled", False)
+    seen: dict = {}
+    real = unified_montage.plan_unified_montage
+
+    def spy(*args, **kwargs):
+        seen["speech_order"] = kwargs.get("speech_order")
+        seen["plan"] = real(*args, **kwargs)
+        raise _Planned
+
+    monkeypatch.setattr(unified_montage, "plan_unified_montage", spy)
+    with pytest.raises(_Planned):
+        gb._run_phone_unified_montage_job(
+            str(uuid.uuid4()), job_snapshot, candidates, ownership_epoch=3
+        )
+    return seen
+
+
+async def test_the_phone_worker_reorders_what_the_reply_said(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    brief = _brief()
+    result = await _gate(monkeypatch, _planned(), brief)
+    seen = _worker(monkeypatch, result, brief)
+    assert seen["speech_order"] is True
+    assert seen["plan"].clip_ids[:2] == [RIVER, WELCOME]
+    assert seen["plan"].clip_ids[-1] == DENIZ
+
+
+@pytest.mark.parametrize(
+    "case", ["voice_mode", "named_voice", "guided_voiceover", "no_record", "pinned_order", "off"]
+)
+async def test_the_phone_worker_never_reorders_what_the_reply_did_not_say(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """The approved draft is the incident's (the reply named the welcome); the worker's
+    own inputs then differ in one way the planner would have refused, or the record is
+    gone. The montage keeps the order nobody chose."""
+    brief = _brief()
+    result = await _gate(monkeypatch, _planned(), brief)
+    kwargs: dict = {}
+    if case == "voice_mode":
+        kwargs["strategy_update"] = {"voice_mode": "per_clip"}
+    elif case == "named_voice":
+        kwargs["strategy_update"] = {
+            "montage_audio": {"preserve_source_audio": True, "source_media_ids": [DENIZ]}
+        }
+    elif case == "guided_voiceover":
+        kwargs["strategy_update"] = {"execution_contract": "guided_voiceover_v1"}
+    elif case == "no_record":
+        kwargs["keep_record"] = False
+    elif case == "pinned_order":
+        kwargs["order_required"] = True
+    else:
+        monkeypatch.setattr(settings, "spoken_order_enabled", False)
+    seen = _worker(monkeypatch, result, brief, **kwargs)
+    assert seen["speech_order"] is False
+    assert seen["plan"].clip_ids.index(WELCOME) == 8
+    assert "spoken_roles" not in seen["plan"].record()

@@ -237,9 +237,11 @@ def _enrich_best_parts_snapshot(
     described = described_line_moments(_described_clip_texts(brief), media_snapshot, skip_ids=held)
 
     def windows_for(seats: SpokenSeats | None) -> dict[str, Any]:
+        quiet_id = seats.quiet_close[0] if seats and seats.quiet_close else None
+        if seats is not None and quiet_id in described:
+            # The creator described that clip by what is said in it.
+            seats = replace(seats, quiet_close=None)
         quiet = seats.quiet_close if seats is not None else None
-        if quiet is not None and quiet[0] in described:
-            quiet = None  # the creator described that clip by what is said in it
         opening = seats.opening if seats is not None else None
         return build_length_plan(
             {**strategy, "voiceover_duration_s": recording},
@@ -273,8 +275,9 @@ def _enrich_best_parts_snapshot(
     )
     length_plan = windows_for(seats)
     if seats is not None and length_plan["conflicts"]:
-        # A held welcome or a capped ending must never be what makes the length impossible.
-        plain = windows_for(None)
+        # A held welcome or a capped ending must never be what makes the length impossible:
+        # the order still follows the words, the windows are the plain ones.
+        plain = windows_for(replace(seats, opening=None, quiet_close=None))
         if not plain["conflicts"]:
             length_plan = plain
     enriched = dict(media_snapshot)
@@ -3603,7 +3606,9 @@ async def _gate_unresolved_choices(
     )
     # KRI-585: on the phone route that plays every clip's own sound, what the clips say
     # may order them; the length plan seats the windows that keeps right.
-    camera_sound = keeps_camera_sound(planned.brief_manifest, strategy)
+    camera_sound = settings.spoken_order_enabled and keeps_camera_sound(
+        planned.brief_manifest, strategy
+    )
     enriched_snapshot = _enrich_best_parts_snapshot(
         strategy,
         planned.media_snapshot,
@@ -3799,6 +3804,11 @@ def _with_narration_note(
             clip_intents_enabled=settings.clip_intents_enabled,
             closing_quote=closing_quote,
         )
+        length_plan = (media_snapshot or {}).get("length_plan")
+        if not (isinstance(length_plan, Mapping) and length_plan.get("spoken_order")):
+            # The phone worker follows only the approved plan's record: without it the
+            # words order nothing, so the reply claims nothing.
+            seats = None
         parts = narration_note_parts(
             strategy, media_snapshot, seats, clip_intents_enabled=settings.clip_intents_enabled
         )

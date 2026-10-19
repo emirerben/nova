@@ -17,8 +17,9 @@ carries a spoken role, so the words are read here. KRI-667: no regex. Words are 
 as ``spoken_quotes.fold_tokens`` tokens (Turkish letters and case folded), against short
 phrase lists in the two languages Kria replies in. Narrow on purpose: a bare "merhaba" /
 "hello" is nobody's welcome (the introduced person says it), whisper's invented "thanks
-for watching" on trailing silence is ignored (``is_outro_hallucination``), and a missed
-role leaves the montage exactly as before.
+for watching" on trailing silence is ignored (``is_outro_hallucination``), a welcome or
+sign-off said on more than one clip ("welcome to my kitchen", "welcome to the bedroom")
+moves nothing, and a missed role leaves the montage exactly as before.
 
 ``spoken_seats`` is the one rule the length plan (``kria/planner``), the montage planner
 (``pipeline/unified_montage``) and the reply (``kria/narration_notes``) share, so the
@@ -117,6 +118,8 @@ _NOT_A_NAME = frozenset({"ben", "biz", "me", "us", "i", "we"})
 _EDGE_PUNCTUATION = "\"'“”‘’«»„()[]{},;:.!?…"
 _APOSTROPHES = ("'", "’")
 _SENTENCE_ENDS = (".", "!", "?", "…")
+# The roles that move a clip; each must be said on exactly one clip.
+_MOVING = ("opening", "closing")
 
 T = TypeVar("T")
 
@@ -376,8 +379,16 @@ def spoken_seats(
     ``hold_closing_words`` is True when the creator asked to hear the closing clip
     (original audio, a quoted closing line): its introduction is then never cut around.
     """
-    lines = {
+    found = {
         clip.clip_id: line for clip in clips if (line := spoken_line(clip.analysis)) is not None
+    }
+    # THE welcome opens and THE sign-off closes: one said on several clips is a room-by-
+    # room tour ("welcome to my kitchen", "welcome to the bedroom"), not an opening.
+    counts = {role: sum(line.role == role for line in found.values()) for role in _MOVING}
+    lines = {
+        clip_id: line
+        for clip_id, line in found.items()
+        if line.role not in _MOVING or counts[line.role] == 1
     }
     if not lines:
         return SpokenSeats(order=tuple(clip.clip_id for clip in clips))

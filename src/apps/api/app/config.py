@@ -1047,6 +1047,18 @@ class Settings(BaseSettings):
     # `fly secrets set CLIP_INTENT_EXCLUDE_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     clip_intent_exclude_enabled: bool = True
+    # KRI-585 kill switch: on the phone route that plays every clip's own sound, what
+    # the clips say may order a montage nobody ordered (a welcome right after the
+    # creator's opening shot, a sign-off at the end) and seat its windows (the
+    # welcome's whole line, a quiet ending on a pinned clip that only introduces
+    # someone), and the reply says so (`app.kria.narration_notes`). The planner records
+    # the decision on the approved length plan (`spoken_order`); the phone worker
+    # reorders only when that record is there. False: byte-identical to before -- no
+    # seats, no record, no reorder, no reply note. Already-approved plans carrying the
+    # record keep their order unless this is off when the worker runs. Rollback:
+    # `fly secrets set SPOKEN_ORDER_ENABLED=false --app nova-video` +
+    # `fly machine restart <id>` (api + worker).
+    spoken_order_enabled: bool = True
 
     # Kill switch for the narrated walkthrough archetype. When False, a job
     # whose plan declares edit_format="narrated" follows the existing voiceover

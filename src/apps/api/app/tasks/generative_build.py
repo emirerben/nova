@@ -6221,6 +6221,8 @@ def _run_phone_unified_montage_job(
     # KRI-585: a pinned contract that requires an order is verified cut for cut, so what
     # the clips say never moves one there.
     contract = read_render_contract(snapshot)
+    from app.kria.narration_notes import speech_order_approved  # noqa: PLC0415
+
     user_id, assignments, brief = _load_unified_montage_inputs(job_id)
     approved_length_plan = _approved_length_plan_envelope(snapshot)
     view = brief_view(brief)
@@ -6332,10 +6334,9 @@ def _run_phone_unified_montage_job(
                 output_orientation=_creator_shape_orientation(all_candidates),
                 creator_duration_proven=creator_duration_proven,
                 approved_length_plan=approved_length_plan,
-                # KRI-585: no song here, so every clip's own sound plays and what the
-                # clips say may order them -- unless the contract pins a confirmed
-                # order, which the phone verifier checks cut for cut.
-                speech_order=not (contract is not None and contract.order_required),
+                # KRI-585: what the clips say orders them only where the approved plan
+                # recorded it (and the reply said so), never against a pinned order.
+                speech_order=speech_order_approved(strategy, contract, approved_length_plan),
             )
     # Complete the initial text lane before the canonical generation is pinned.
     # This uses the request already bound to this job, never a newer thread message.

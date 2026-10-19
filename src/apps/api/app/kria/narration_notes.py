@@ -12,9 +12,13 @@ pinned contract order). It is ``services.spoken_roles.spoken_seats`` over the cl
 dispatch keeps, so the length plan (``kria/planner``) seats the same windows and the
 montage planner (``pipeline/unified_montage``) lays out the same order.
 
+The planner records that plan on the approved length plan (``spoken_order``), and the
+phone worker reorders only when the record is there (``speech_order_approved``), so the
+render never moves a clip the reply did not mention (KRI-129: no silent overrides).
+
 ``narration_note_parts`` is the reply's deterministic copy, read off that plan and the
-approved length plan's windows. It says nothing off the camera-sound route or when no
-kept clip speaks, so every other reply is unchanged.
+approved length plan's windows. It says something only when the clips' words changed
+the edit, so every other reply is unchanged. Kill switch: ``SPOKEN_ORDER_ENABLED``.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, coerce_edit_format
+from app.config import settings
 from app.kria.reply_language import say
 from app.services.clip_order_sequence import SequenceRow, sequence_rows
 from app.services.spoken_roles import (
@@ -50,6 +55,12 @@ def keeps_camera_sound(manifest: Any, strategy: object) -> bool:
         return False
     if getattr(manifest, "has_voiceover", False):
         return False
+    return strategy_keeps_camera_sound(strategy)
+
+
+def strategy_keeps_camera_sound(strategy: object) -> bool:
+    """The strategy half of ``keeps_camera_sound``: a guided montage with no song, no
+    voiceover, no voice mode and no named voice source."""
     if coerce_edit_format(_field(strategy, "edit_format")) not in GUIDED_EDIT_FORMATS:
         return False
     if _field(strategy, "audio_strategy") in ("voiceover", "user_song"):
@@ -64,6 +75,27 @@ def keeps_camera_sound(manifest: Any, strategy: object) -> bool:
     # "Keep the original sound" with no clip named is still every clip's own sound; a
     # named voice source plays only those clips (a different writer).
     return _field(audio, "preserve_source_audio") is True and not _field(audio, "source_media_ids")
+
+
+def speech_order_approved(
+    strategy: object, contract: Any, approved_length_plan: Mapping[str, Any] | None
+) -> bool:
+    """May the phone worker let the clips' words order this montage?
+
+    Only what the reply already said: the approved length plan carries the planner's
+    ``spoken_order`` record (camera-sound route, an order nobody chose), the strategy
+    still keeps every clip's sound, and no pinned contract order (the phone verifier
+    checks that order cut for cut).
+    """
+    if not settings.spoken_order_enabled:
+        return False
+    if contract is not None and getattr(contract, "order_required", False):
+        return False
+    if not isinstance(approved_length_plan, Mapping) or not approved_length_plan.get(
+        "spoken_order"
+    ):
+        return False
+    return strategy_keeps_camera_sound(strategy)
 
 
 def kept_clips(strategy: object, media_snapshot: Mapping[str, Any] | None) -> list[SpokenClip]:
@@ -174,20 +206,15 @@ def narration_note_parts(
     The caller has checked ``keeps_camera_sound``; ``seats`` is ``spoken_plan`` for the
     same strategy and snapshot (None: the clips' words decide nothing). ``media_snapshot``
     carries the approved ``length_plan``, whose windows the ending sentence is read off.
+    The sound sentence leads only when the words changed the edit (a clip moved, or the
+    ending was chosen around them): background chatter alone says nothing.
     """
+    if seats is None:
+        return []
     clips = kept_clips(strategy, media_snapshot)
     if not any(speech_of(clip.analysis) is not None for clip in clips):
         return []
-    parts = [
-        say(
-            en="Your clips keep their own sound, so your narration plays in the video; "
-            "I'm not mixing in music.",
-            tr="Kliplerin kendi sesini koruyorum, yani anlatımın videoda duyulacak; "
-            "müzik eklemiyorum.",
-        )
-    ]
-    if seats is None:
-        return parts
+    parts: list[str] = []
     rows = _sequence(strategy, clip_intents_enabled)
     resolved = [row for row in rows if row[3] == "resolved" and row[2]]
     seated = {member for row in resolved for member in row[2]}
@@ -233,7 +260,7 @@ def narration_note_parts(
         position == "last" and closing in members for position, _name, members, _s in resolved
     )
     if line is None or line.role != "introduction" or not pinned_last:
-        return parts
+        return _with_sound_sentence(parts)
     quote = _quote(line)
     length_plan = (media_snapshot or {}).get("length_plan")
     windows = _windows(length_plan, closing)
@@ -265,7 +292,19 @@ def narration_note_parts(
                 "Daha önce gelmesini istersen söyle.",
             )
         )
-    return parts
+    return _with_sound_sentence(parts)
+
+
+def _with_sound_sentence(parts: list[str]) -> list[str]:
+    if not parts:
+        return []
+    return [
+        say(
+            en="Your clips keep their own sound, so your narration plays in the video.",
+            tr="Kliplerin kendi sesini koruyorum, yani anlatımın videoda duyulacak.",
+        ),
+        *parts,
+    ]
 
 
 def with_note(summary: str, parts: Sequence[str], *, budget: int) -> str:
