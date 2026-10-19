@@ -28,6 +28,11 @@ class Settings(BaseSettings):
 
     # Phone rendering remains off until a capability group has device evidence.
     phone_rendering_enabled: bool = False
+    # Enroll supported NEW phone requests in measured actual-output verification.
+    # The per-request stamp survives flag changes and exact retries.
+    phone_actual_export_verification_enabled: bool = False
+    # Explicit pilot enrollment only; empty means no new requests are enrolled.
+    phone_actual_export_verification_user_ids: list[UUID] = Field(default_factory=list)
     # New editor imports require device qualification; saved receipts remain readable.
     phone_editor_media_enabled: bool = False
     phone_render_verified_features: list[str] = Field(default_factory=list)
@@ -380,6 +385,18 @@ class Settings(BaseSettings):
     # secrets set PHONE_SUBTITLED_CLOSING_TITLE_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_closing_title_enabled: bool = True
+    # KRI-707 (text on a spoken word on phone Talking edits): a brief text ask with
+    # its spoken cue ("big 'ATAKAN' when I say 'Atakan'": literal + `facts.triggers`)
+    # renders as an editable text row from the moment the take says the word, off the
+    # speaker's face and the captions (`app.pipeline.phone_spoken_text`). The worker
+    # reads the pinned brief, so no prompt or strategy field is involved. It rides the
+    # KRI-467 text lane, so it also needs `phone_subtitled_title_supported` -- see
+    # `app.services.phone_rollout.phone_subtitled_spoken_text_supported`. False: the
+    # draft says "a Talking video can't show text at a word you say yet" (KRI-705)
+    # and no row is placed; text already on a variant keeps rendering and survives
+    # Saves. Rollback: `fly secrets set PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED=false
+    # --app nova-video` + `fly machine restart <id>` (api + worker).
+    phone_subtitled_spoken_text_enabled: bool = True
     # KRI-465 (editable title on phone Voiceover edits): the opening title the
     # status route shows (`narrated_title_text_elements`) opens as an ordinary
     # editable text element: the capability map opens `text_elements` and a
@@ -672,6 +689,12 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # KRI-742: voice dictation in the chat composers. `POST /dictation/transcribe` (Whisper) and
+    # the `voice_dictation` capability the iOS mic button reads. Default TRUE; this is the kill
+    # switch only. False: the route 404s and the capability is not advertised, so the app hides
+    # the mic. Audio is never stored. Apply: `fly secrets set VOICE_DICTATION_ENABLED=false`
+    # (api) + restart.
+    voice_dictation_enabled: bool = True
     # One word at a time for caption `Display: Word` (`karaoke.single_word`, capability
     # `singleWordText`): the layer's runs are standalone-centred words and only the active one
     # is drawn. Emitted only when `singleWordText` is in PHONE_RENDER_VERIFIED_FEATURES (fly
@@ -807,6 +830,11 @@ class Settings(BaseSettings):
     # byte-identical to the pre-fix behaviour.
     # Apply: fly secret KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 + restart (api + worker).
     kria_turn_auto_continue_max_runs: int = Field(default=4, ge=0, le=8)
+    # KRI-552: an identical re-send of the creator's latest message (the chat looked stuck) is
+    # answered in one line instead of being queued and planned a second time. False restores
+    # the old behaviour: the copy queues behind the running turn.
+    # Apply: fly secret KRIA_DUPLICATE_RESEND_ENABLED=false + restart (api).
+    kria_duplicate_resend_enabled: bool = True
     # KRI-188: thread-level Creative Brief ledger + deterministic scope router +
     # per-requirement receipts on runtime-v2 turns. False (default): the planner,
     # router, draft validation, dispatch request and replies are byte-identical
@@ -819,11 +847,20 @@ class Settings(BaseSettings):
     # Deploy readers everywhere before enabling snapshot writers.
     kria_brief_binding_enabled: bool = False
     kria_brief_binding_user_ids: Annotated[list[str], NoDecode] = []
+    # KRI-721: enroll new approval writers only after API/worker readers deploy.
+    # Existing stamped assessments remain mandatory when enrollment is disabled.
+    kria_approval_readiness_enabled: bool = False
+    kria_approval_readiness_user_ids: Annotated[list[str], NoDecode] = []
     # NoDecode: pydantic-settings would otherwise JSON-decode the env string
     # before the validator below runs, crashing boot on a bare id or CSV.
     kria_creative_brief_user_ids: Annotated[list[str], NoDecode] = []
 
-    @field_validator("kria_creative_brief_user_ids", "kria_brief_binding_user_ids", mode="before")
+    @field_validator(
+        "kria_creative_brief_user_ids",
+        "kria_brief_binding_user_ids",
+        "kria_approval_readiness_user_ids",
+        mode="before",
+    )
     @classmethod
     def parse_creative_brief_user_ids(cls, value: object) -> object:
         if not isinstance(value, str):
@@ -852,6 +889,12 @@ class Settings(BaseSettings):
         """Writer cohort only; readers always honor previously saved bindings."""
         return self.kria_brief_binding_enabled or (
             user_id is not None and str(user_id) in set(self.kria_brief_binding_user_ids)
+        )
+
+    def approval_readiness_for(self, user_id: object) -> bool:
+        return self.brief_binding_for(user_id) and (
+            self.kria_approval_readiness_enabled
+            or str(user_id) in self.kria_approval_readiness_user_ids
         )
 
     def creative_brief_for(self, user_id: object) -> bool:

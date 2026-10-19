@@ -1,0 +1,134 @@
+{
+  "scope": "KRI-734 first simple-cut phone adapter; all-adapter ticket remains open",
+  "base_sha": "8d590072286e8b9489d9e61a4fa4db3be14b7dfa",
+  "verifier_version": "phone-simple-cut-v1",
+  "source_sha256": {
+    "src/apps/api/app/services/actual_export_verification.py": "39391cad7e656a9b9d4d908eebd3a8ddf51bad28894a78f85e2b1540bca39b78",
+    "src/apps/api/app/services/device_render.py": "7109ba44f2f6ecb280caf66bfc4c056143cc2d80b73e2136a2df5beb6eff0961",
+    "src/apps/api/app/routes/device_render.py": "3ed3b1703bfb163def14a830f93ada0ff91a5845136437f1f0c2a18fb1a93e5c",
+    "src/apps/api/app/kria/render_retry.py": "b34d8a5729edf124b3882ce5613bcd61c4b138ba79566fcb0b9bf4b4346a2379",
+    "src/apps/api/app/kria/device_render.py": "33bdefcb1f18c5d97a95aaaf66e1c75523c89f23b1e4f172717ccfce04b05e99",
+    "src/apps/api/app/tasks/kria_runtime.py": "1595a5c0da4a1cd335ca1c71128d0f2644f37ddfe548a199f734a0b6667754db",
+    "src/apps/ios/Kria/Core/DeviceRenderSessions.swift": "02485d021b10e778873c9eab82523a027f4f88b453e6df5fb56d3d3f45e5e353",
+    "src/apps/ios/Kria/Core/DeviceRendering.swift": "79eed620a2bc069ca6fe345512b67fd747f5b8b4d3e267a47a0cede548072ffc",
+    "src/apps/ios/Kria/Core/Services.swift": "ab7e83e8f26e4dd5841ce650de02a447c583b6fca2ca27ec85392c0f8781be80",
+    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift": "019ef0705822f125a1f33b8c4400df1d24939cc65eff2d5867ec4659093d9699",
+    "src/apps/ios/Kria/Generated/openapi.yaml": "153c2f4711d22b5b83745b956203530406d35bad2e979fe5e60a35a1fbc6c617"
+  },
+  "offline": {
+    "focused_api_passed": 388,
+    "ci_selector_tests_passed": 41,
+    "ci_selector_subtests_passed": 150,
+    "media_negative_controls": 12,
+    "model_calls": 0,
+    "paid_model_spend_usd": 0,
+    "mapped_reliability_passed": 512,
+    "preship": "all green",
+    "format_negative_controls": 1,
+    "local_decoder_invariants": 1,
+    "stale_authority_negative_controls": 2,
+    "exact_ci_profile_passed": 33,
+    "generated_mobile_contract_check": "passed after refreshing output_verification_required"
+  },
+  "native_presentation": {
+    "passed": 26,
+    "failed": 0,
+    "skipped": 0,
+    "client_protocol": 12,
+    "fresh_physical_canary": false,
+    "integrated_with_current_main": true,
+    "after_generated_schema_refresh": true
+  },
+  "retained_physical_export_rechecked_locally": {
+    "result": "checked",
+    "file_sha256": "3d15eb008867621ed9e290b98ef87567367b4419daa11f8bc800a0827f3c2e55",
+    "file_size_bytes": 5299669,
+    "recipe_digest": "eb17069e0f0f0d429d7f1bf2d7b1282d354af0625d006468e49b821a95e41263",
+    "pinned_analysis_proxy_count": 2,
+    "edit_duration_s": 5.0,
+    "file_duration_s": 6.6,
+    "picture_samples": 12,
+    "max_mean_pixel_error": 0.00421,
+    "min_local_ssim": 0.982309,
+    "min_audio_correlation": 0.995794,
+    "audio_gain_range": [
+      0.99277,
+      0.998425
+    ],
+    "text_checks": 4,
+    "title_absent_in_brand_tail": true
+  },
+  "timeline": {
+    "jest_passed": 209,
+    "desktop_passed": 28,
+    "mobile_passed": 42,
+    "browser_workers": 1,
+    "initial_parallel_run": "27 cold Next.js chunk-load/performance timeouts; assertions unchanged in successful serial rerun"
+  },
+  "deployment": "Not deployed; verification disabled by default and pilot allowlist empty",
+  "remaining": [
+    "fresh protocol-12 physical-device canary after authorized deployment",
+    "prepared snapshot migration KRI-722/723",
+    "speech/music/effects/cloud/slides KRI-724/725 and remaining KRI-734 adapter proof",
+    "sampled frames are not an every-frame or subjective-creative guarantee"
+  ],
+  "review": "Inline source, test, scope and documentation review by the implementing agent; no subagents or independent review claimed.",
+  "initial_base_sha": "9e8b1aa2b4775d4e5c03220170a807b0009e1f17",
+  "performance_phase": {
+    "base_sha": "113ef3e63e546f0e8df0ca0f8500732204bb5edf",
+    "baseline_verifier_sha256": "39391cad7e656a9b9d4d908eebd3a8ddf51bad28894a78f85e2b1540bca39b78",
+    "optimized_verifier_sha256": "92cfcffec10b07d60184fc456bbd3707d12dd2e26636db7f263e221b77bdced9",
+    "focused_passed": 394,
+    "exact_media_profile_passed": 39,
+    "mapped_reliability_passed": 512,
+    "ci_selector_tests_passed": 41,
+    "decoder_production_parity_fixtures": 6,
+    "retained_native_check_objects_equal": true,
+    "retained_native_file_sha256_equal": true,
+    "same_sample_schedule_and_thresholds": true,
+    "worker_hardware_report": "worker-optimized.json",
+    "not_a_worker_routing_change": true,
+    "shared_cpu_rollout_blocker": true,
+    "new_physical_canary": false,
+    "review": "Inline implementing-agent source/test/gate/scope review; no independent review or subagents.",
+    "source_sha256": {
+      "src/apps/api/app/services/actual_export_verification.py": "92cfcffec10b07d60184fc456bbd3707d12dd2e26636db7f263e221b77bdced9",
+      "src/apps/api/app/cli/benchmark_device_export.py": "9d73781cf8797636761b90bf7e176541a4fd193b6744b22fa5b251377eb1b652",
+      "src/apps/api/app/tasks/kria_runtime.py": "aaaea098280031a51cb3b3945732129e52b710915a734b42c69fb98eb97409b0",
+      "src/apps/api/tests/integration/test_actual_export_verification.py": "76c9e02ebb5b12167bf4a20c5194a8507d613ab14149c37f26fc8e53f96de9c9"
+    },
+    "worker_cases": [
+      {
+        "case": "native-5s",
+        "before_s": 7.081938,
+        "after_s": 5.784244,
+        "speedup": 1.224
+      },
+      {
+        "case": "synthetic-5s",
+        "before_s": 8.424223,
+        "after_s": 4.654854,
+        "speedup": 1.81
+      },
+      {
+        "case": "synthetic-30s",
+        "before_s": 36.214905,
+        "after_s": 10.060199,
+        "speedup": 3.6
+      },
+      {
+        "case": "synthetic-60s",
+        "before_s": 69.491079,
+        "after_s": 17.48599,
+        "speedup": 3.974
+      }
+    ],
+    "worker_60s_cpu_reduction_pct": 88.3,
+    "worker_measurement_order": "optimized then baseline, same isolated performance-4cpu/8192MiB Machine",
+    "api_frozen_result": "one native 5s and one synthetic 60s run: both partial",
+    "temporary_benchmark_compute_cleanup": "all three task-created Machines destroyed after report capture",
+    "ci_proof_scope": "Local performance evidence; current-head CI is reported by the PR checks.",
+    "measured_at_utc": "2026-10-18"
+  },
+  "source_snapshot": "Initial implementation before performance optimization; current decoder hash is in performance_phase."
+}

@@ -2393,3 +2393,107 @@ def test_kri677_rendered_brief_never_shows_escaped_quotes_to_the_model() -> None
     rendered = _kri677_turn_two_input().generated_brief or ""
     assert '"Hadi gidelim" dediğimiz iskele klibi' in rendered
     assert "\\" not in rendered
+
+
+# ── KRI-552: cleanup asks read as `caption:` intents, and labels cut mid-word ──
+# Prod thread ddc6e71b (stress kit N3, 2026-10-08, seq 19): "I understood 2 of your clip
+# instructions. I couldn't safely verify "caption: long pauses"; "caption: the part where I
+# restart the kilometer t". Please restate just those so I can add them." The drop class on the
+# turn was `intent_invalid:model`: a `caption` with neither copy nor a topic to print.
+_MARATHON_REQUEST = (
+    "My first marathon story with my voiceover. Cut my long pauses and the part where I restart "
+    'the kilometer thirty sentence. When I say "the medal", show my medal photo. When I say '
+    '"four hours and twelve minutes", show the watch photo. Keep the crowd noise quiet under my '
+    "voice. Clean captions."
+)
+
+
+def _marathon_input() -> ClipIntentPlannerInput:
+    return ClipIntentPlannerInput(
+        creator_request=_MARATHON_REQUEST, latest_user_message=_MARATHON_REQUEST
+    )
+
+
+def _marathon_misfiled_cleanup_raw() -> str:
+    return json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "show_medal",
+                    "include",
+                    "my medal photo",
+                    'When I say "the medal", show my medal photo.',
+                ),
+                _games_intent(
+                    "show_watch",
+                    "include",
+                    "the watch photo",
+                    'When I say "four hours and twelve minutes", show the watch photo.',
+                ),
+                _games_intent("cut_pauses", "caption", "long pauses", "Cut my long pauses"),
+                _games_intent(
+                    "cut_restart",
+                    "caption",
+                    "the part where I restart the kilometer thirty sentence",
+                    "the part where I restart the kilometer thirty sentence",
+                ),
+            ],
+            "question": None,
+        }
+    )
+
+
+def test_kri552_the_prod_shape_still_asks_but_never_cuts_a_label_mid_word() -> None:
+    # What a model that still misfiles the cleanup asks gets back: the question names each
+    # instruction in whole words, never "...restart the kilometer t".
+    out = _agent().parse(_marathon_misfiled_cleanup_raw(), _marathon_input())
+
+    assert [i.intent_id for i in out.intents] == ["show_medal", "show_watch"]
+    assert out.salvage_reasons == ["intent_invalid:model"]
+    assert out.salvage_question is not None
+    assert '"caption: long pauses"' in out.salvage_question
+    assert '"caption: the part where I restart the kilometer…"' in out.salvage_question
+    assert 'kilometer t"' not in out.salvage_question
+    assert out.salvage_question.endswith("Please restate just those so I can add them.")
+
+
+def test_kri552_a_turkish_question_names_the_labels_in_whole_words_too() -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "cut_restart",
+                    "caption",
+                    "kilometre otuz cümlesini baştan söylediğim yeri",
+                    "kilometre otuz cümlesini baştan söylediğim yeri",
+                )
+            ],
+            "question": None,
+        },
+        ensure_ascii=False,
+    )
+    request = "Uzun duraklamaları kes. kilometre otuz cümlesini baştan söylediğim yeri çıkar."
+    # one valid intent keeps the question a partial-salvage one
+    raw_dict = json.loads(raw)
+    raw_dict["intents"].insert(
+        0, _games_intent("order_a", "include", "uzun duraklamalar", "Uzun duraklamaları kes.")
+    )
+    out = _agent().parse(
+        json.dumps(raw_dict, ensure_ascii=False),
+        ClipIntentPlannerInput(creator_request=request, reply_language="tr"),
+    )
+
+    assert out.salvage_question is not None
+    assert "yazı: kilometre otuz cümlesini baştan…" in out.salvage_question
+    assert out.salvage_question.endswith("Sadece bunları yeniden yazar mısın, ekleyeyim.")
+
+
+def test_kri552_the_prompt_sends_speech_cleanup_to_the_step_that_owns_it() -> None:
+    # The model, not a regex, tells a cleanup ask from a caption (KRI-667); the prompt says so
+    # in both languages, with the exact prod request as the example.
+    prompt = " ".join(_agent().render_prompt(_marathon_input()).split())
+
+    assert "is speech cleanup, which another step handles" in prompt
+    assert "never a caption, label, group, order, or include" in prompt
+    assert "uzun duraklamaları kes" in prompt
+    assert "Cut my long pauses and the part where I restart the kilometer thirty sentence" in prompt

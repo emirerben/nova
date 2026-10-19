@@ -3825,6 +3825,38 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(Self.object(slots.last)?["clip_index"], .number(7))
     }
 
+    /// Dragging a clip to a new place keeps the video the same length (each cut stays at its position, so a
+    /// crossfade does not travel with the clip), and is one undo step.
+    func testMoveClipKeepsLengthAndCutsByPositionAndUndoesInOneStep() {
+        let ids = ["a", "b", "c"]
+        let durations = [4.0, 3.0, 5.0]
+        var start = 0.0
+        let clips = zip(ids, durations).enumerated().map { index, entry -> EditorClip in
+            defer { start += entry.1 - 0.3 }
+            return EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: index, start: start, end: start + entry.1, trimIn: 0, trimOut: entry.1, slotID: entry.0)
+        }
+        func slotRow(_ id: String, _ index: Int, _ duration: Double, _ transition: String) -> JSONValue {
+            .object(["slot_id": .string(id), "clip_index": .number(Double(index)), "in_s": .number(0), "duration_s": .number(duration),
+                     "transition_after": .string(transition), "transition_duration_s": .number(0.3)])
+        }
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["sections": .object([
+            "timeline_slots": .array([slotRow("a", 0, 4, "crossfade"), slotRow("b", 1, 3, "crossfade"), slotRow("c", 2, 5, "cut")])
+        ])])]
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: clips, text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0, serverSnapshot: snapshot))
+        let total = session.timelineClips.last?.end ?? 0
+        let lifted = session.timelineClips[2].id
+
+        session.moveClip(id: lifted, toIndex: 0)
+
+        XCTAssertEqual(session.document.clips.map(\.id), ["c", "a", "b"])
+        XCTAssertEqual(session.document.clips.map(\.transitionAfter), ["crossfade", "crossfade", "cut"], "cuts stay at their positions")
+        XCTAssertEqual(session.timelineClips.last?.end ?? 0, total, accuracy: 0.0005, "reordering must not change the length")
+        XCTAssertEqual(session.undoHistoryCount, 1)
+        session.undo()
+        XCTAssertEqual(session.document.clips.map(\.id), ["a", "b", "c"])
+        XCTAssertEqual(session.timelineClips.last?.end ?? 0, total, accuracy: 0.0005)
+    }
+
     func testAuthoritativeVariantRebasesStaleRuntimeDraft() {
         let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("old"), "sections": .object(["captions_enabled": .bool(false), "caption_style": .string("word"), "timeline_slots": .array([.object(["slot_id": .string("old-slot"), "clip_index": .number(9), "in_s": .number(0), "duration_s": .number(5)])])])])]
         let server = DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: UUID().uuidString, baseGenerationID: "old", snapshot: snapshot, canUndo: false, createdAt: .now)
@@ -6024,7 +6056,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { throw APIError.unsupported }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws { throw APIError.unsupported }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws { throw APIError.unsupported }
     var playbackURLResult: URL?
     /// Served in order before `playbackURLResult` (a link that fails, then one that plays).
     var playbackURLQueue: [URL] = []

@@ -26,11 +26,11 @@ struct SpeechCleanupStats: Equatable {
         self.longPauses = longPauses
     }
 
-    /// e.g. "Found 3 pauses and retakes (2 filler sounds, 1 long pause) — about 4.2s shorter."
+    /// e.g. "Found 3 pauses and filler sounds (2 filler sounds, 1 long pause) — about 4.2s shorter."
     var summarySentence: String? {
         var sentence = ""
         if let candidateCount, candidateCount > 0 {
-            sentence += "Found \(candidateCount) \(candidateCount == 1 ? "pause or retake" : "pauses and retakes")"
+            sentence += "Found \(candidateCount) \(candidateCount == 1 ? "pause or filler sound" : "pauses and filler sounds")"
             if let fillerSounds, let longPauses, fillerSounds + longPauses > 0 {
                 sentence += " (\(fillerSounds) filler \(fillerSounds == 1 ? "sound" : "sounds"), \(longPauses) long \(longPauses == 1 ? "pause" : "pauses"))"
             }
@@ -56,7 +56,7 @@ struct SpeechCleanupChoiceButtons: View {
 
     var body: some View {
         Group {
-            Text("Choose whether to remove the detected pauses and retakes.")
+            Text("Choose whether to remove the detected pauses and filler sounds. A sentence you restarted stays in; trim it in the editor.")
                 .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
             if let summary = stats.summarySentence {
                 Text(summary)

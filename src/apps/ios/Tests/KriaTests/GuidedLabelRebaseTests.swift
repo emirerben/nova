@@ -392,11 +392,26 @@ final class GuidedLabelRippleSessionTests: XCTestCase {
         XCTAssertNil(rows.first { $0["id"]?.stringValue == "montage-text-cut-2" })
     }
 
-    func testFreeTextIsLeftAloneOutsideAGuidedStory() async throws {
-        let (session, _) = await loaded(includeLabels: false, extraText: Self.montageText, archetype: "montage")
-        session.removeClip(clipID: "s2")
-        XCTAssertEqual(text(session, "kria-late")?.startS, 6.5)
-        XCTAssertEqual(text(session, "kria-chat-1")?.startS, 3)
+    /// Speech-timed archetypes keep their own text rules (the speech compiler re-times them).
+    func testFreeTextIsLeftAloneOnSpeechTimedArchetypes() async throws {
+        for archetype in ["subtitled", "narrated", "talking_head"] {
+            let (session, _) = await loaded(includeLabels: false, extraText: Self.montageText, archetype: archetype)
+            session.removeClip(clipID: "s2")
+            XCTAssertEqual(text(session, "kria-late")?.startS, 6.5, archetype)
+            XCTAssertEqual(text(session, "kria-chat-1")?.startS, 3, archetype)
+        }
+    }
+
+    /// KRI-715 follow-up: a montage-family edit (no `resolved_archetype`, "montage", voiceover ...)
+    /// is a clip timeline too; its text must follow a delete exactly like a guided story's.
+    func testFreeTextFollowsADeleteOnMontageFamilyArchetypes() async throws {
+        for archetype in ["montage", "voiceover", "day_vlog", "single_hero"] {
+            let (session, _) = await loaded(includeLabels: false, extraText: Self.montageText, archetype: archetype)
+            session.removeClip(clipID: "s2")
+            XCTAssertEqual(text(session, "kria-late")?.startS ?? -1, 4.5, accuracy: 0.04, archetype)
+            XCTAssertEqual(text(session, "kria-chat-1")?.startS ?? -1, 2, accuracy: 0.04, archetype)
+            XCTAssertNil(text(session, "montage-text-cut-2"), archetype)
+        }
     }
 
     func testEditsThatMoveNoWindowLeaveTextClean() async throws {
@@ -425,6 +440,118 @@ final class GuidedLabelRippleSessionTests: XCTestCase {
         XCTAssertNotNil(request.timelineSlots)
         XCTAssertNotNil(request.textElements, "server treats text as authored and skips its label-unaware projection")
     }
+}
+
+
+/// KRI-715 follow-up: the same delete, on documents shaped like REAL phone-montage payloads
+/// (prod job fixtures: slot_id == segment id, no media_id on slots, `user_timeline.clips` carrying
+/// media ids, per-cut labels with no segment_id, `clip-label-media-<id>` bars, `kria-<hex>` chat
+/// text, `group-title-montage-N`, `montage-text-<cut>`), across every archetype value a phone
+/// editor can open a timeline for.
+@MainActor
+final class GuidedTextFollowsDeleteRealShapeTests: XCTestCase {
+    private static let jobID = "5b1d2f0a-6c0e-4b8e-9d0a-1c2d3e4f5a6c"
+    private static let clipCount = 8
+    private static let clipS = 1.0
+
+    private static func segment(_ n: Int) -> String { "seg-\(n)" }
+    private static func media(_ n: Int) -> String { "analysis-proxy-ios-M\(n).mp4" }
+
+    private static func slot(_ n: Int) -> JSONValue {
+        .object(["slot_id": .string(segment(n)), "segment_id": .string(segment(n)), "parent_segment_id": .null,
+                 "clip_index": .number(Double(n)), "in_s": .number(0), "duration_s": .number(clipS),
+                 "source_duration_s": .number(5), "output_start_s": .number(Double(n) * clipS),
+                 "output_end_s": .number(Double(n + 1) * clipS), "removed": .bool(false),
+                 "transition_after": .string("cut"), "transition_duration_s": .null, "look_preset": .string("none")])
+    }
+
+    private static func bar(_ id: String, _ start: Double, _ end: Double, text: String, segment: String? = nil) -> JSONValue {
+        var row: [String: JSONValue] = ["id": .string(id), "text": .string(text), "start_s": .number(start), "end_s": .number(end),
+                                         "role": .string("generative_intro"), "position": .string("custom"),
+                                         "x_frac": .number(0.5), "y_frac": .number(0.78)]
+        if let segment { row["segment_id"] = .string(segment) }
+        return .object(row)
+    }
+
+    static func variant(archetype: String?, device: Bool = true) -> [String: JSONValue] {
+        let total = Double(clipCount) * clipS
+        let text: [JSONValue] = [
+            bar("guided-title", 0, 2, text: "Title"),
+            bar("clip-label-unified-cut-5", 4, 5, text: "Cut five"),
+            bar("clip-label-media-\(media(6))", 5, 6, text: "Media six"),
+            bar("montage-text-unified-cut-3", 2, 3, text: "Shot three"),
+            bar("group-title-montage-1", 4, 8, text: "Group"),
+            bar("kria-0f3a9c", 3.5, 6.5, text: "Chat text"),
+            bar("kria-tail", 7, 8, text: "Tail"),
+            bar("guided-pinned-0", 0, total, text: "Pinned"),
+        ]
+        var variant: [String: JSONValue] = [
+            "variant_id": .string("initial"), "render_generation_id": .string("g1"), "render_status": .string("ready"),
+            "duration_s": .number(total), "output_url": .string("file:///tmp/kria-real-shape.mp4"),
+            "render_destination": .string(device ? "device" : "cloud"),
+            "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(true)]),
+            "user_timeline": .object([
+                "slots": .array((0..<clipCount).map(slot)),
+                "clips": .array((0..<clipCount).map { .object(["clip_index": .number(Double($0)), "media_id": .string(media($0))]) }),
+            ]),
+            "text_elements": .array(text),
+        ]
+        if let archetype { variant["resolved_archetype"] = .string(archetype) }
+        return variant
+    }
+
+    private func loaded(archetype: String?, device: Bool = true) async -> NativeEditorSession {
+        let bootstrap = DraftSnapshot(draftID: "d1", itemID: "item", variantKey: "initial", draftRevision: 1, snapshotHash: "h", etag: "e",
+            baseJobID: Self.jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "editor_payload": .object(["base_generation": .string("g1"), "sections": .object([:])])],
+            canUndo: false, createdAt: .now)
+        let fake = EditorCommitSpy(draftSnapshot: bootstrap, authoritativeVariant: Self.variant(archetype: archetype, device: device),
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2",
+                sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: true, mix: false),
+                revisionNumber: 4, revisionHash: "r4", expectedDuration: nil))
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+        return session
+    }
+
+    private func assertDeleteKeepsText(archetype: String?, file: StaticString = #filePath, line: UInt = #line) async throws {
+        let session = await loaded(archetype: archetype)
+        func text(_ id: String) -> EditorTextElement? { session.document.textElements.first { $0.id == id } }
+        XCTAssertNotNil(text("kria-tail"), "fixture loaded", file: file, line: line)
+        session.removeClip(clipID: Self.segment(2))
+        XCTAssertEqual(session.document.clips.count, Self.clipCount - 1, "clip deleted", file: file, line: line)
+        // Every text whose own clip survives is still there, and nothing starts at/after the new 7s total.
+        for id in ["guided-title", "clip-label-unified-cut-5", "clip-label-media-\(Self.media(6))", "group-title-montage-1",
+                   "kria-0f3a9c", "kria-tail", "guided-pinned-0"] {
+            let bar = text(id)
+            XCTAssertNotNil(bar, "\(id) must survive deleting a clip it does not sit on (\(archetype ?? "nil"))", file: file, line: line)
+            if let bar { XCTAssertLessThan(bar.startS, 7, "\(id) must start inside the new 7s video", file: file, line: line) }
+        }
+        XCTAssertEqual(text("kria-tail")?.startS ?? -1, 6, accuracy: 0.04, "later text ripples left with its footage", file: file, line: line)
+        XCTAssertEqual(text("kria-tail")?.endS ?? -1, 7, accuracy: 0.04, file: file, line: line)
+        XCTAssertEqual(text("clip-label-unified-cut-5")?.startS ?? -1, 3, accuracy: 0.04, file: file, line: line)
+        XCTAssertNil(text("montage-text-unified-cut-3"), "per-shot copy goes with its own clip", file: file, line: line)
+        XCTAssertEqual(text("guided-pinned-0")?.endS ?? -1, 7, accuracy: 0.04, file: file, line: line)
+    }
+
+    func testSpeechTimedArchetypeKeepsItsOwnTextRules() async throws {
+        let session = await loaded(archetype: "subtitled")
+        session.removeClip(clipID: Self.segment(2))
+        XCTAssertEqual(session.document.textElements.first { $0.id == "kria-tail" }?.startS, 7)
+    }
+
+    func testCloudMontageWithoutArchetype() async throws {
+        let session = await loaded(archetype: nil, device: false)
+        session.removeClip(clipID: Self.segment(2))
+        XCTAssertEqual(session.document.textElements.first { $0.id == "kria-tail" }?.startS ?? -1, 6, accuracy: 0.04)
+    }
+
+    func testGuidedStory() async throws { try await assertDeleteKeepsText(archetype: "guided_story") }
+    func testMontageWithNoArchetypeKey() async throws { try await assertDeleteKeepsText(archetype: nil) }
+    func testMontage() async throws { try await assertDeleteKeepsText(archetype: "montage") }
+    func testVoiceoverMontage() async throws { try await assertDeleteKeepsText(archetype: "voiceover") }
+    func testDayVlog() async throws { try await assertDeleteKeepsText(archetype: "day_vlog") }
+    func testSingleHero() async throws { try await assertDeleteKeepsText(archetype: "single_hero") }
 }
 
 private extension EditorTextElement { var segmentIDForTest: String? { raw["segment_id"]?.stringValue } }

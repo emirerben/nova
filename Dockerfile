@@ -13,6 +13,8 @@ FROM python:3.11-slim
 # every prod render. Guarded by the segmenter smoke check in docker-build.yml.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    tesseract-ocr \
+    tesseract-ocr-tur \
     fonts-dejavu-core \
     fonts-noto-color-emoji \
     libmagic1 \

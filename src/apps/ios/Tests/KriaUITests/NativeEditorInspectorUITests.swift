@@ -437,6 +437,51 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(time.value as? String, "0:00.0")
     }
 
+    /// Clip durations in timeline order, read from the blocks' accessibility values ("1.000").
+    private func clipDurations(_ app: XCUIApplication) -> [String] {
+        (1...3).map { app.descendants(matching: .any)["native-editor-clip-\($0)"].firstMatch.value as? String ?? "?" }
+    }
+
+    // Long press picks a clip up; dropping it past a neighbour's midpoint moves it there. The blocks keep their
+    // own widths, the video keeps its length, and one Undo puts everything back.
+    func testLongPressDraggingClipReordersKeepsLengthAndUndoesInOneStep() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-reorder-clips"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let first = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        let last = app.descendants(matching: .any)["native-editor-clip-3"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 8))
+        XCTAssertTrue(last.waitForExistence(timeout: 8))
+        XCTAssertEqual(clipDurations(app), ["1.000", "1.400", "1.200"])
+        let spanBefore = last.frame.maxX - first.frame.minX
+        let pixelsPerSecond = first.frame.width / 1.0
+
+        let start = first.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        // Clip 1's centre (0.5 s) + 1.4 s lands at 1.9 s: past clip 2's midpoint (1.4 s once the crossfades
+        // overlap the blocks), short of clip 3's (2.4 s), and clear of the auto-scroll edge.
+        let drop = start.withOffset(CGVector(dx: 1.4 * pixelsPerSecond, dy: 0))
+        start.press(forDuration: 0.9, thenDragTo: drop, withVelocity: .slow, thenHoldForDuration: 0.2)
+
+        XCTAssertEqual(clipDurations(app), ["1.400", "1.000", "1.200"])
+        XCTAssertEqual(last.frame.maxX - first.frame.minX, spanBefore, accuracy: 1.5, "the video must keep its length")
+
+        app.buttons["native-editor-undo"].tap()
+        XCTAssertEqual(clipDurations(app), ["1.000", "1.400", "1.200"], "one Undo restores the order")
+    }
+
+    func testQuickSwipeAcrossAClipSeeksInsteadOfReordering() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-reorder-clips"]
+        app.launch()
+        let first = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-clip-3"].firstMatch.waitForExistence(timeout: 8))
+        let start = first.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 120, dy: 0)))
+        XCTAssertEqual(clipDurations(app), ["1.000", "1.400", "1.200"])
+    }
+
     func testTimelineSwipesSeekUnderFixedPlayhead() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]

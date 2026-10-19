@@ -18,16 +18,39 @@ struct ReviewPlanPresentation: Identifiable {
 struct ReviewPlanView: View {
     @State private var model: ReviewPlanModel
     let close: () -> Void
+    /// KRI-742: pass a controller (only when the server advertises `voice_dictation`) to show the mic.
+    var dictation: DictationController? = nil
+    var dictationTerms: () -> [String] = { [] }
     @FocusState private var promptFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
 
-    init(seed: [PlanBlock], initialFlag: PlanSectionID?, actions: ReviewPlanActions, close: @escaping () -> Void) {
+    init(seed: [PlanBlock], initialFlag: PlanSectionID?, actions: ReviewPlanActions, dictation: DictationController? = nil, dictationTerms: @escaping () -> [String] = { [] }, close: @escaping () -> Void) {
         _model = State(initialValue: ReviewPlanModel(seed: seed, initialFlag: initialFlag, actions: actions))
+        self.dictation = dictation
+        self.dictationTerms = dictationTerms
         self.close = close
     }
 
     private var reduceMotion: Bool { KriaMotion.isReduced(systemReduceMotion) }
+
+    private func toggleDictation(_ dictation: DictationController) {
+        if dictation.isActive {
+            Task { await dictation.stop() }
+        } else {
+            promptFocused = false
+            dictation.start(base: model.draft.prompt, contextTerms: dictationTerms()) { model.draft.prompt = $0 }
+        }
+    }
+
+    /// Updating while the mic is live finishes the dictation first, so the update carries the final text.
+    private func updateTapped() {
+        guard let dictation, dictation.isListening else { model.submitUpdate(); return }
+        Task {
+            await dictation.stop()
+            if model.draft.canUpdate { model.submitUpdate() }
+        }
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -57,7 +80,7 @@ struct ReviewPlanView: View {
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.36, dampingFraction: 0.88), value: model.draft.scope)
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.4, dampingFraction: 0.88), value: model.showsUpdated)
         .task { await model.load() }
-        .onDisappear { model.cancelFollowing() }
+        .onDisappear { model.cancelFollowing(); dictation?.cancel() }
         .onChange(of: model.phase) { _, phase in if phase != .reviewing { promptFocused = false } }
     }
 
@@ -208,10 +231,17 @@ struct ReviewPlanView: View {
                 .onSubmit { promptFocused = false }
                 .padding(.horizontal, 6).padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .disabled(dictation?.isActive == true)
                 .accessibilityIdentifier("review-prompt-field")
-                Button { model.submitUpdate() } label: { Text("Update video") }
+                if let dictation {
+                    Button { toggleDictation(dictation) } label: { DictationMicLabel(dictation: dictation) }
+                        .disabled(dictation.phase == .finalizing || dictation.phase == .requestingPermission || model.isBusy)
+                        .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate what to change")
+                        .accessibilityIdentifier("review-dictate")
+                }
+                Button { updateTapped() } label: { Text("Update video") }
                     .buttonStyle(ReviewUpdateButtonStyle())
-                    .disabled(!model.draft.canUpdate || model.isBusy)
+                    .disabled(!model.draft.canUpdate || model.isBusy || dictation?.phase == .finalizing || dictation?.phase == .requestingPermission)
                     .accessibilityIdentifier("review-update-video")
             }
         }

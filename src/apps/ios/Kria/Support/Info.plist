@@ -35,7 +35,8 @@
 	<key>NSPhotoLibraryAddUsageDescription</key><string>Save finished Kria photos and videos to Photos.</string>
 	<key>NSPhotoLibraryUsageDescription</key><string>Choose photos and videos and save finished posts.</string>
 	<key>NSCameraUsageDescription</key><string>Record your talking videos while you read your script.</string>
-	<key>NSMicrophoneUsageDescription</key><string>Record narration and audio for your talking videos.</string>
+	<key>NSMicrophoneUsageDescription</key><string>Record narration and audio for your talking videos, and talk to Kria instead of typing.</string>
+	<key>NSSpeechRecognitionUsageDescription</key><string>Turn what you say into text when you talk to Kria instead of typing.</string>
 	<key>ITSAppUsesNonExemptEncryption</key><false/>
 </dict>
 </plist>

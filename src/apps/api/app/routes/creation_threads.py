@@ -377,6 +377,8 @@ class CreationCapabilitiesOut(BaseModel):
     # on, `textBend` verified, and a build declaring X-Kria-Client-Protocol >=
     # text_bend_min_client_protocol.
     text_bend: bool = False
+    # KRI-742: the chat composers show a mic button (VOICE_DICTATION_ENABLED).
+    voice_dictation: bool = False
     slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
@@ -3782,6 +3784,10 @@ async def capabilities(
             and "textBend" in set(settings.phone_render_verified_features)
             and client_protocol is not None
             and client_protocol >= settings.text_bend_min_client_protocol
+        ),
+        "voice_dictation": bool(
+            settings.voice_dictation_enabled
+            and (settings.openai_api_key or settings.whisper_backend != "openai-api")
         ),
         "creation_mode": (
             "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"

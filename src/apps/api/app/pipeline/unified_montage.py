@@ -1266,6 +1266,21 @@ def plan_unified_montage(
     if sequence:
         ordered = _apply_sequence(ordered, sequence)
     ordered = _scatter(ordered, visuals)
+    editorial = strategy.get("editorial_plan")
+    if editorial is not None:
+        from app.services.editorial_plan import editorial_order
+
+        existing = [clip.media_id for clip in ordered]
+        ids = editorial_order(
+            editorial,
+            existing,
+            required_order=existing if view.order_by_capture or creator_order else (),
+            sequence=sequence,
+        )
+        by_id = {clip.media_id: clip for clip in ordered}
+        ordered = [by_id[media_id] for media_id in ids]
+        basis = "approved_editorial_plan"
+
     if view.order_by_capture:
         # Visuals carry no capture time: they keep their spread slot, and the
         # receipt says their place is not the filmed order.
@@ -1834,7 +1849,8 @@ def plan_unified_montage(
     def build(extra: Mapping[str, Any]) -> EditProposalSnapshot:
         return EditProposalSnapshot(
             direction="fast_montage",
-            goal="",
+            goal=(editorial.get("viewer_goal", "") if editorial else ""),
+            editorial_plan=editorial,
             pace="fast",
             duration_s=total_s,
             title=(title or SNAPSHOT_FALLBACK_TITLE)[:100],
