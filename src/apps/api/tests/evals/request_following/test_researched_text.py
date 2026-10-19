@@ -490,3 +490,13 @@ def test_plain_copilot_cannot_forge_research_provenance():
     )
     assert result.ops
     assert all("research" not in op for op in result.ops)
+
+
+def test_title_only_edit_still_offers_later_readable_research_windows():
+    from app.services.researched_text import research_windows
+
+    snap = snapshot()
+    snap["text_bars"] = [{"id": "intro", "text": "Our visit", "start_s": 0, "end_s": 3}]
+    windows = research_windows(snap)
+    assert any(row["media_ids"] == ["gallery"] for row in windows)
+    assert all(row["start_s"] >= 3 for row in windows)

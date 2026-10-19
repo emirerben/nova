@@ -469,8 +469,9 @@ def research_windows(snapshot: dict) -> list[dict]:
     for beat in (snapshot.get("editorial_plan") or {}).get("beats", []):
         if beat.get("output_start_s") is not None and beat.get("output_end_s") is not None:
             candidates.append((float(beat["output_start_s"]), float(beat["output_end_s"])))
-    if not candidates:
-        candidates = [_window(slot) for slot in slots]
+    # A title-only draft still has later footage to explain. Existing text/beat
+    # windows are useful groupings, not an exhaustive list of available windows.
+    candidates.extend(_window(slot) for slot in slots)
     result = []
     for start, end in sorted(set(candidates)):
         if start < opener_end or end - start < 2:
