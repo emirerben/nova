@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.58.0] - 2026-10-19
+
+### Changed
+- feat(chat): footage-aware suggestion chips, iOS only, dark (KRI-756) (#1699) <!-- release-pr: 1699 -->
+
 ## [0.80.57.0] - 2026-10-19
 
 ### Changed
