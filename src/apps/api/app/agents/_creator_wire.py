@@ -15,14 +15,16 @@ from functools import cached_property
 
 from jsonschema import Draft202012Validator
 
-VERSION = "typed-presence-v1"
-INSTRUCTION = """\n\nOUTPUT TRANSPORT typed-presence-v1:
+VERSION = "typed-presence-v2"
+INSTRUCTION = """\n\nOUTPUT TRANSPORT typed-presence-v2:
 Return the typed JSON object in the supplied schema.
 This changes serialization only; all creative and safety instructions above still apply.
 Every property is required on the wire. A field described as presence contains [] when
-omitted or null, or [value] when supplied; nested values follow the same rule. A dictionary
+omitted, or [value] when supplied; nested values follow the same rule. A dictionary
 is a list of {key,value} entries; keys must be unique. A union is an object with
 a schema-selected branch tag and its typed value. Do not put JSON inside strings.
+For explicit null, put the property name in its object's _nulls array and use [].
+Null and omission are different; never list a supplied value in _nulls.
 The server decodes this transport before applying its existing validators. Never fill an
 absent field with invented facts. Do not include server-owned fields or execution results.
 """
@@ -318,7 +320,12 @@ def copilot_schema():
             "playback_rate",
         }
     )
-    patch = obj({k: field(k) for k in sorted(patch_names)})
+    patch = obj(
+        {
+            k: ({"anyOf": [field(k), {"type": "null"}]} if k == "background_color" else field(k))
+            for k in sorted(patch_names)
+        }
+    )
     ops = []
     for name, fields in sorted(_OP_FIELDS.items()):
         ops.append(
@@ -366,6 +373,8 @@ def copilot_schema():
     research = ResearchRequest.model_json_schema()
     result["$defs"] = {**_json_defs(), **research.pop("$defs", {})}
     result["properties"]["research_request"] = research
+    for name in ("research_request", "claimed_ops", "clarification_context"):
+        result["properties"][name] = {"anyOf": [result["properties"][name], {"type": "null"}]}
     return result
 
 
@@ -432,7 +441,7 @@ class WireContract:
                     return {
                         k: visit(node["properties"][k], x)
                         for k, x in v.items()
-                        if k in node["properties"] and x is not None
+                        if k in node["properties"]
                     }
                 additional = node.get("additionalProperties")
                 return {
@@ -487,9 +496,14 @@ class WireContract:
                     result = arr(
                         result,
                         maxItems=1,
-                        description="presence: [] means omitted/null; [value] means supplied",
+                        description="presence: [] omit; [value] supply; _nulls clear",
                     )
                 props[key] = result
+            nullable_names = [
+                key for key, child in node["properties"].items() if self._nullable(child)[0]
+            ]
+            if nullable_names:
+                props["_nulls"] = arr({"type": "string", "enum": nullable_names})
             return obj(props, props)
         result = {
             k: copy.deepcopy(v)
@@ -575,6 +589,8 @@ class WireContract:
 
     def encode(self, value):
         value = self.project(value)
+        if not Draft202012Validator(self.source).is_valid(value):
+            raise ValueError("invalid model-owned source value")
 
         def visit(node, v):
             node = self._resolve(node)
@@ -595,6 +611,12 @@ class WireContract:
                         if key not in v:
                             raise ValueError("missing required wire field: " + key)
                         out[key] = visit(child, v[key])
+                if any(self._nullable(child)[0] for child in node["properties"].values()):
+                    out["_nulls"] = [
+                        key
+                        for key, child in node["properties"].items()
+                        if self._nullable(child)[0] and key in v and v[key] is None
+                    ]
                 return out
             if node.get("type") == "object":
                 item = node.get("additionalProperties")
@@ -620,12 +642,20 @@ class WireContract:
             if "properties" in node:
                 required = set(node.get("required", []))
                 out = {}
+                nulls = v.get("_nulls", [])
+                if len(nulls) != len(set(nulls)):
+                    raise ValueError("duplicate explicit null")
                 for key, child in node["properties"].items():
                     nullable, plain = self._nullable(child)
                     if key not in required or nullable:
+                        if key in nulls:
+                            if not nullable or v[key]:
+                                raise ValueError("conflicting explicit null")
+                            out[key] = None
+                            continue
                         if not v[key]:
                             if key in required:
-                                out[key] = None
+                                raise ValueError("missing required presence")
                             continue
                         out[key] = visit(plain, v[key][0])
                     else:

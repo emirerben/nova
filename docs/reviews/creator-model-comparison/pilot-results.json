@@ -1,0 +1,119 @@
+{
+  "status": "incomplete_blocked",
+  "approved_envelope_usd": 5.66,
+  "settled_usd": 0.163816,
+  "held_unknown_usd": 0.433948,
+  "costs": [
+    {
+      "requested_model": "gemini-3.1-pro-preview",
+      "status": "unknown",
+      "n": 1,
+      "settled": 0.0,
+      "held": 0.433948
+    },
+    {
+      "requested_model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "n": 1,
+      "settled": 0.064488,
+      "held": 0.0
+    },
+    {
+      "requested_model": "claude-sonnet-5-5",
+      "status": "released",
+      "n": 1,
+      "settled": 0.0,
+      "held": 0.0
+    },
+    {
+      "requested_model": "gpt-6.1-sol",
+      "status": "settled",
+      "n": 2,
+      "settled": 0.099328,
+      "held": 0.0
+    }
+  ],
+  "results": [
+    {
+      "case": 0,
+      "arm": "G0",
+      "status": "parsed",
+      "elapsed_ms": 54201,
+      "provider_submissions": 1,
+      "first_attempt_parsed": true,
+      "prompt_version": "2026-10-19-v63",
+      "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1"
+    },
+    {
+      "case": 0,
+      "arm": "O",
+      "status": "parsed",
+      "elapsed_ms": 27762,
+      "provider_submissions": 1,
+      "first_attempt_parsed": true,
+      "prompt_version": "2026-10-19-v63+typed-presence-v1",
+      "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1"
+    },
+    {
+      "case": 0,
+      "arm": "S",
+      "status": "failed",
+      "elapsed_ms": 1724,
+      "provider_submissions": 1,
+      "first_attempt_parsed": false,
+      "prompt_version": "2026-10-19-v63+typed-presence-v1",
+      "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1"
+    },
+    {
+      "case": 1,
+      "arm": "G0",
+      "status": "unknown",
+      "elapsed_ms": 131423,
+      "provider_submissions": 1,
+      "first_attempt_parsed": false,
+      "prompt_version": "2026-10-19-v63",
+      "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1"
+    },
+    {
+      "case": 1,
+      "arm": "O",
+      "status": "parsed",
+      "elapsed_ms": 17839,
+      "provider_submissions": 1,
+      "first_attempt_parsed": true,
+      "prompt_version": "2026-10-19-v63+typed-presence-v1",
+      "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1"
+    },
+    {
+      "case": 1,
+      "arm": "S",
+      "status": "blocked",
+      "elapsed_ms": null,
+      "provider_submissions": 0,
+      "first_attempt_parsed": false,
+      "prompt_version": "2026-10-19-v63+typed-presence-v1",
+      "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1"
+    }
+  ],
+  "planned_cases": 3,
+  "case_inputs_ready": {
+    "exact_recorded_main": 2,
+    "reconstructed_real_copilot": 1
+  },
+  "source_scope": {
+    "distinct_creators": 1,
+    "held_out_live_cases": 0
+  },
+  "blockers": [
+    "Anthropic account rejected Sonnet for insufficient credits.",
+    "One Gemini request is outcome unknown after 130 seconds; the envelope is fenced.",
+    "Copilot reconstructed-context preference remains pending."
+  ],
+  "quality_verdict": "unassessed_pending_human_review",
+  "production_selection": "unchanged",
+  "actual_export": "not_run",
+  "compiled_plans": "three accepted without executing commands",
+  "live_schema_version": "typed-presence-v1",
+  "latest_schema_version": "typed-presence-v2_offline_only",
+  "schema_effect": "native schema and provider effects are not isolated in this pilot"
+}

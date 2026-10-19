@@ -1,9 +1,15 @@
-# Paid evaluation cost estimate — approval pending
+# Paid evaluation cost record — approved $5.66 pilot
 
-**Spent on provider evaluations: $0.** No live comparison, paid judge or model
-availability smoke request has run. Official standard API rates were checked
-19 October 2026. This estimate is for inference only, excluding actual exports,
-storage, infrastructure and human review.
+User approved **$5.66 total**, retaining the **$2 per-batch ceiling**. Final
+actual-input preregistration reserved at most **$5.260004** across five batches.
+The partial pilot settled **$0.163816** and holds **$0.433948** for one unknown
+Gemini timeout: **$0.597764 settled plus held**. All further paid submissions are
+stopped. Sonnet's insufficient-credit rejection released its reservation at $0.
+See [pilot report](pilot-report.md) and `pilot-results.json`.
+
+The sizing below is the original historical estimate shown before approval,
+retained for audit. Official standard API rates were checked 19 October 2026.
+Amounts cover inference only, excluding exports, storage, infrastructure and review.
 
 | Model | Input / million | Output / million | Settings |
 | --- | ---: | ---: | --- |
@@ -14,9 +20,9 @@ storage, infrastructure and human review.
 The price registry includes cache discounts/writes and long-context tiers:
 Gemini >200k input $4/$18; Sol >272k input $4/$15. No cache savings or batch
 API discounts are assumed. Reasoning is billed as output without double-counting.
-The reservation estimator allows the full configured answer budget plus another
-full output-priced reasoning allowance; it is deliberately larger than typical
-usage. Prompt tokens are estimates, not provider token-count measurements.
+The original sizing allowed a second output-priced reasoning allowance for every
+provider. Final actual-input sizing uses the inclusive output cap for Sol/Sonnet;
+Gemini retains the conservative separate thinking allowance. Prompt tokens are estimates, not provider token-count measurements.
 
 ## First three-item priced pilot
 
@@ -50,17 +56,19 @@ spend request. Price the actual development and held-out corpus after collection
 repetitions, additional schema/reasoning arms and retries multiply the budget.
 Do not authorize the full experiment from this small reference set.
 
-## Preconditions before requesting a live manifest approval
+## Continuation boundaries
 
-- Deploy the eligibility reader and explicitly enable scoped private capture.
-- Obtain complete exact invocation inputs and human input-bound expectations.
-- Freeze identical inputs/configurations, verify the effective production baseline,
-  and refresh estimates from those actual prompts.
-- Present each frozen manifest hash and <=$2 cap. Only then request paid approval.
+Reconcile the exact unknown Gemini receipt from authoritative provider usage before
+another submission in this envelope. Fund the configured Anthropic account or
+explicitly select an existing funded endpoint. Resolve the reconstructed Copilot
+input preference; otherwise obtain a fresh exact invocation. Never start a new
+envelope ID to bypass held money. New hardening changes the runtime/schema hashes,
+so superseded frozen profiles intentionally fail drift checks; pin a new profile
+while retaining the same approved envelope and historical failures.
 
-The full native-schema improvement and restricted holdout executor remain open,
-with exact blockers in `schema-feasibility.md`. The JSON-only development pilot
-is an explicitly separate profile, not evidence that native schemas are delivered.
+Schema and sealed-executor implementation is complete offline. Provider acceptance,
+held-out data, human scoring and finalist exports remain evidence gaps. No further
+spend approval is implied for a larger corpus.
 
 Sources:
 - [OpenAI Sol model](https://developers.openai.com/api/docs/models/gpt-6.1-sol)

@@ -2,7 +2,7 @@
 
 Compare Nova's current Gemini configuration with `claude-sonnet-5-5` and `gpt-6.1-sol` on authorized real creator requests. Deliver the provider adapters, accurate accounting, structured-output improvements, reasoning controls, private evaluation workflow, and a reviewed result for each agent. Choose Main Creator and Edit Copilot independently; keeping Gemini is a valid outcome.
 
-Status: implementation started on fresh `origin/main` (`ed90bd9ea859129efb1853b327ca00562ecb54a0`), branch `codex/creator-model-comparison`, 19 October 2026. Provider adapters, accounting, privacy, development capture/comparison workflow and offline verification are implemented. Native wire schemas and restricted holdout execution remain open; see README.md and schema-feasibility.md. Paid calls, deployment, real invocation collection and model selection have not run. Original planning revision: `ac15c4726`. Do not infer effective production settings from source defaults.
+Status: implementation and offline checks completed on the isolated branch from `ed90bd9ea859129efb1853b327ca00562ecb54a0`, 19 October 2026. Typed schemas, sealed holdout execution, private source imports and shared-envelope accounting are implemented. The approved $5.66 development pilot is **incomplete and blocked**: three Main Creator responses parsed and compiled, one Gemini submission has unknown billing after timeout, and Sonnet rejected the configured account for insufficient credits. Copilot has one explicitly reconstructed input pending the user's preference. There are no live holdout cases or quality verdicts. See [pilot report](pilot-report.md). No deployment or production model selection occurred. Original planning revision: `ac15c4726`.
 
 **1. Scope and existing work**
 

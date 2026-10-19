@@ -78,3 +78,12 @@ def test_copilot_recorded_response_keeps_parsed_intent_ops_and_reply(path):
     )
     assert after.ops == before.ops
     assert after.intent == before.intent
+
+
+def test_explicit_null_and_omission_remain_distinct():
+    from app.agents._creator_wire import obj
+
+    source = obj({"keep_or_clear": {"anyOf": [{"type": "string"}, {"type": "null"}]}})
+    contract = WireContract(source)
+    for value in ({}, {"keep_or_clear": None}, {"keep_or_clear": "creator copy"}):
+        assert contract.decode(contract.encode(value)) == value

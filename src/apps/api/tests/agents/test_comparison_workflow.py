@@ -263,5 +263,5 @@ def test_production_schema_profile_is_opt_in_and_versioned(monkeypatch):
     monkeypatch.setattr(settings, "main_creator_output_mode", "native")
     configured = configure_creator_agent(original, "main_creator")
     assert configured.spec.response_schema
-    assert configured.spec.prompt_version.endswith("+typed-presence-v1")
+    assert configured.spec.prompt_version.endswith("+typed-presence-v2")
     assert MainCreatorAgent.spec.response_schema is None
