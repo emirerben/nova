@@ -131,8 +131,9 @@ raw-record reconciliation stay private. See `provenance-corrections.json`.
 
 The private review handler also passed HTTP checks proving eligibility-check
 failure returns no candidate body and a foreign Host is refused. Current sources
-passed read-only rechecks. The pre-push scanner's sole medium warning identified
-the synthetic `expired-grant` integration-test value; it is not a credential.
+passed read-only rechecks. Pre-push scanner warnings identified the synthetic `expired-grant` test value
+and the reserved documentation IP used by a negative DSN test. Neither is a
+credential or creator data.
 An additional scan found zero current source identity/grant values in the Git diff.
 
 ## Limits
