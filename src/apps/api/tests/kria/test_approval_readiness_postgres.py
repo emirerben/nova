@@ -205,6 +205,13 @@ async def prepare(
     "extra",
     [
         {"kind": "audio", "scope": "global", "description": "Remove only the wind noise"},
+        {"kind": "audio", "scope": "global", "description": "original camera audio"},
+        {
+            "kind": "audio",
+            "scope": "global",
+            "description": "Keep the clips' original sound",
+            "facts": {"audio_intent": "noise_removal"},
+        },
         {
             "kind": "style",
             "scope": "global",
@@ -401,9 +408,65 @@ async def test_only_named_omissions_can_remove_an_unrenderable_request(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_original_camera_audio_has_a_contract_commitment(monkeypatch):
-    extra = {"kind": "audio", "scope": "global", "description": "Keep the clips' original sound"}
-    _, _, approvals, events = await prepare(monkeypatch, extra=extra)
+@pytest.mark.parametrize("phone", [False, True])
+async def test_dropping_wind_cleanup_preserves_typed_source_audio(monkeypatch, phone):
+    updates = [
+        {"kind": "text", "scope": "title", "literal": "Gameday."},
+        {
+            "kind": "timing",
+            "scope": "global",
+            "description": "6 seconds",
+            "facts": {"duration_s": 6},
+        },
+        {
+            "kind": "audio",
+            "scope": "global",
+            "description": "original camera audio",
+            "facts": {"audio_intent": "source_unchanged"},
+        },
+        {"kind": "audio", "scope": "global", "description": "Remove only the wind noise"},
+    ]
+    user_id, thread_id, approvals, events = await prepare(
+        monkeypatch, updates_override=updates, phone=phone
+    )
+    assert not approvals
+    report = events[-1].payload["brief_coverage"]["approval_readiness"]
+    assert {
+        r["requirement_id"] for r in report["requirements"] if r["disposition"] == "executable"
+    } == {"r1", "r2", "r3"}
+    _, _, approvals, _ = await prepare(
+        monkeypatch,
+        seed=(user_id, thread_id, None),
+        message="Make this simpler version",
+        updates_override=[],
+        phone=phone,
+    )
+    assert len(approvals) == 1
+    with sync_session() as db:
+        snapshot = db.get(CreatorEditDraft, approvals[0].draft_id).snapshot_json
+        requirements = snapshot["brief_binding"]["brief"]["requirements"]
+        assert next(r for r in requirements if r["id"] == "r4")["status"] == "superseded"
+        source_audio = next(r for r in requirements if r["id"] == "r3")
+        assert source_audio["status"] != "superseded"
+        assert source_audio["facts"]["audio_intent"] == "source_unchanged"
+        assert snapshot["brief_coverage"]["approval_readiness"]["ready"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phone", [False, True])
+@pytest.mark.parametrize(
+    "description,facts",
+    [
+        ("Keep the clips' original sound", {}),
+        ("original camera audio", {"audio_intent": "source_unchanged"}),
+        ("kameranın özgün sesi", {"audio_intent": "source_unchanged"}),
+    ],
+)
+async def test_original_camera_audio_has_a_contract_commitment(
+    monkeypatch, phone, description, facts
+):
+    extra = {"kind": "audio", "scope": "global", "description": description, "facts": facts}
+    user_id, thread_id, approvals, events = await prepare(monkeypatch, extra=extra, phone=phone)
     assert len(approvals) == 1, events[-1].content
     with sync_session() as db:
         coverage = db.get(CreatorEditDraft, approvals[0].draft_id).snapshot_json["brief_coverage"]
@@ -411,6 +474,26 @@ async def test_original_camera_audio_has_a_contract_commitment(monkeypatch):
         row = next(r for r in report["requirements"] if r["requirement_id"] == "r3")
         assert row["disposition"] == "executable"
         assert row["evidence_owner"] == "render_contract:audio"
+        approval = approvals[0]
+        body = {
+            "expected_thread_revision": db.get(CreationThread, thread_id).revision,
+            "expected_draft_revision": approval.draft_revision,
+            "expected_approval_fingerprint": approval_fingerprint(approval),
+        }
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        id=user_id, email="qa@test.local"
+    )
+    published = []
+    monkeypatch.setattr("app.routes.kria_runtime._publish_approval", published.append)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        result = await client.post(
+            f"/creation-threads/{thread_id}/approvals/{approval.id}/approve", json=body
+        )
+    assert result.status_code == 200, result.text
+    assert result.json()["status"] == "approved"
+    assert published == [str(approval.id)]
 
 
 @pytest.mark.asyncio
