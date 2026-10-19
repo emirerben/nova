@@ -364,7 +364,8 @@ def _select(state: Any, selector: dict[str, Any]) -> list[int]:
     if selector.get("all"):
         chosen = active
     elif "slot_indexes" in selector:
-        chosen = [i for i in selector["slot_indexes"] if i in active]
+        indexes = [_ops()._snapshot_slot_index(state, i) for i in selector["slot_indexes"]]
+        chosen = [i for i in indexes if i in active]
     elif "clip_ids" in selector:
         wanted = set(selector["clip_ids"])
         chosen = [i for i in active if str(rows[i].get("media_id")) in wanted]

@@ -160,7 +160,8 @@ def test_slot_duration_removal_and_order_are_keyed_by_slot_id() -> None:
         [
             {"op": "set_clip_duration", "slot_index": 1, "duration_s": 1.0},
             {"op": "reorder_clip", "from_index": 3, "to_index": 0},
-            {"op": "remove_clip", "slot_index": 3},
+            # Index 2 is s2 in the snapshot, even after s3 moves ahead of it.
+            {"op": "remove_clip", "slot_index": 2},
         ],
         slots,
     )
