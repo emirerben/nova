@@ -222,7 +222,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `SLIDE_POSTS_ENABLED` — defaults `true`. Mixed-media posts; pipelines/slide-post.md. Rollback: fly secret `…=false` + restart (api+worker). `SLIDE_POST_STICKERS_ENABLED` (protocol `8`, KRI-647): default `true`; old builds 426 on save; sticker images never slides.
 - `FREEHAND_DRAWING_ENABLED` (min protocol `6`) / `SLIDE_POST_DRAWING_ENABLED` (`7`) — default `true`, KRI-589 kill switches. Video needs `freehandDrawing` in `PHONE_RENDER_VERIFIED_FEATURES`, old builds 426 (slides never). `false` ⇒ no new drawings; never roll code back. `docs/pipelines/drawing.md`.
 - `SLIDE_POST_RICH_TEXT_ENABLED` / `SLIDE_POST_CHAT_EDIT_ENABLED` — default `false`. Styled slide text (off = drawtext) / slide chat-edit route (404 off; needs rich text); caps `slide_post_*`.
-- `KRIA_SUGGESTION_CHIPS_ENABLED` / `_USER_IDS` — default `false` / `[]` (KRI-756, iOS only): footage-aware chips via `GET /creation-threads/{id}/suggestions`; app gates on `capabilities.suggestion_chips`; `KRIA_SUGGESTER_MAX_RUNS_PER_THREAD=0` ⇒ template labels. Fly secret + restart api+worker. `docs/pipelines/suggestion-chips.md`.
+- `KRIA_SUGGESTION_CHIPS_ENABLED` / `_USER_IDS` — default `false` / `[]` (KRI-756, iOS only): footage-aware chat chips; `KRIA_SUGGESTER_MAX_RUNS_PER_THREAD=0` ⇒ template labels. Fly secret + restart api+worker. `docs/pipelines/suggestion-chips.md`.
 - `REVIEWER_LOGIN_ENABLED` — default `false`; gates `POST /auth/mobile/reviewer-login` (404 off), Apple review demo login. Email/hash are Fly-secrets only: `docs/runbooks/testflight.md`.
 
 ## Agent evals
