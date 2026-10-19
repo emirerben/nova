@@ -115,8 +115,10 @@ def unsupported_reasons(recipe) -> list[str]:
     return sorted(set(reasons))
 
 
-def _run(arguments: list[str], *, data: bytes | None = None) -> bytes:
-    return subprocess.run(arguments, input=data, check=True, capture_output=True, timeout=20).stdout
+def _run(arguments: list[str], *, data: bytes | None = None, timeout: float = 20) -> bytes:
+    return subprocess.run(
+        arguments, input=data, check=True, capture_output=True, timeout=timeout
+    ).stdout
 
 
 def _probe(path: Path) -> dict:
@@ -390,24 +392,32 @@ def _bounds(layer, recipe) -> tuple[int, int, int, int]:
     )
 
 
-def _read_text(image: Image.Image, colors: list[tuple[int, int, int]]) -> set[str]:
-    image = image.resize((image.width * 2, image.height * 2))
-    pixels = np.asarray(image, dtype=float)
-    distance = np.min([np.linalg.norm(pixels - color, axis=2) for color in colors], axis=0)
-    # A second OCR view isolates the recipe's opaque paint colour from a busy
-    # background. It still reads actual pixels; it never draws the desired words.
-    # Keep the same confidence bar for both views (the physical Gameday export
-    # reads correctly at a cut but Tesseract gives the unprocessed word 0 confidence).
-    painted = Image.fromarray(np.where(distance < 70, 0, 255).astype(np.uint8))
+def _read_text(
+    image: Image.Image, colors: list[tuple[int, int, int]], *, wanted: str | None = None
+) -> set[str]:
     candidates = set()
-    for view in (image, painted):
-        buffer = io.BytesIO()
-        view.save(buffer, format="PNG")
-        raw = _run(["tesseract", "stdin", "stdout", "--psm", "6", "tsv"], data=buffer.getvalue())
-        rows = csv.DictReader(io.StringIO(raw.decode()), delimiter="\t")
-        candidates.add(
-            normalize_text(" ".join(row["text"] for row in rows if float(row["conf"]) >= 40))
-        )
+    # Enlargement helps small type but can join background specks to large
+    # glyphs. Read native pixels too; every candidate still needs exact copy
+    # and the same confidence bar. Never synthesize the expected words.
+    for scale in (2, 1):
+        scaled = image.resize((image.width * scale, image.height * scale))
+        pixels = np.asarray(scaled, dtype=float)
+        distance = np.min([np.linalg.norm(pixels - color, axis=2) for color in colors], axis=0)
+        painted = Image.fromarray(np.where(distance < 70, 0, 255).astype(np.uint8))
+        for view in (scaled, painted):
+            buffer = io.BytesIO()
+            view.save(buffer, format="PNG")
+            raw = _run(
+                ["tesseract", "stdin", "stdout", "--psm", "6", "tsv"],
+                data=buffer.getvalue(),
+                timeout=5,
+            )
+            rows = csv.DictReader(io.StringIO(raw.decode()), delimiter="\t")
+            candidates.add(
+                normalize_text(" ".join(row["text"] for row in rows if float(row["conf"]) >= 40))
+            )
+            if wanted in candidates:
+                return candidates
     return candidates
 
 
@@ -645,7 +655,7 @@ def verify_actual_export(
                     )
                     for run in layer.runs
                 ]
-                observed_text = _read_text(text_frame, colors)
+                observed_text = _read_text(text_frame, colors, wanted=wanted)
                 matches = wanted in observed_text
                 checks.append(
                     {

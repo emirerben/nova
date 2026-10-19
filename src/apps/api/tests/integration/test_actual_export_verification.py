@@ -186,6 +186,7 @@ def encode(
     order=("a", "b"),
     start=0,
     title=True,
+    title_text="Approved",
     title_window=(0, 1.5),
     title_y=35,
     gain=1,
@@ -210,7 +211,7 @@ def encode(
         assert FONT is not None, "Actual-export fixture needs the production font bundle"
         graph += (
             f";[{picture}]drawtext=fontfile={FONT}:"
-            f"text=Approved:fontsize=32:fontcolor=white:x=45:y={title_y}:"
+            f"text={title_text}:fontsize=32:fontcolor=white:x=45:y={title_y}:"
             f"enable='between(t,{title_window[0]},{title_window[1]})'[t]"
         )
     ffmpeg(
@@ -262,6 +263,9 @@ def test_decoded_picture_audio_and_text_match_the_approved_windows(exports):
         ("order", {"order": ("b", "a")}, "picture"),
         ("window", {"start": 2}, "picture"),
         ("text", {"title": False}, "text"),
+        ("wrong_copy", {"title_text": "Rejected"}, "text"),
+        ("missing_letter", {"title_text": "pproved"}, "text"),
+        ("extra_punctuation", {"title_text": "Approved?"}, "text"),
         ("position", {"title_y": 200}, "text"),
         ("text_time", {"title_window": (0, 0.3)}, "text"),
         ("extra_text_time", {"title_window": (0, 3)}, "text"),

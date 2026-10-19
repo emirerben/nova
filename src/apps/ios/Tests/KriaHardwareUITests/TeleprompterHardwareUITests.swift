@@ -383,6 +383,26 @@ import XCTest
         XCTAssertTrue(reopenedEditor.waitForExistence(timeout: 30), app.debugDescription)
         reopenedEditor.tap()
         XCTAssertTrue(preview.waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch.exists)
+        let clip = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "native-editor-timeline-clip-")).firstMatch
+        XCTAssertTrue(clip.exists, "Reopening must retain editable source clips")
+        let textTool = app.buttons["native-editor-tool-text"]
+        XCTAssertTrue(textTool.isEnabled)
+        textTool.tap()
+        let wordingRow = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "native-editor-text-row-", "Would you spend an afternoon here?"
+        )).firstMatch
+        XCTAssertTrue(wordingRow.waitForExistence(timeout: 10), app.debugDescription)
+        wordingRow.tap()
+        let editText = app.buttons["Edit text"]
+        if editText.exists { editText.tap() }
+        let editableWording = app.descendants(matching: .any)["native-editor-text-content"].firstMatch
+        XCTAssertTrue(editableWording.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(editableWording.isEnabled)
+        XCTAssertEqual(editableWording.value as? String, "Would you spend an afternoon here?")
+        let editableShot = XCTAttachment(screenshot: app.screenshot()); editableShot.name = "Original clips and reviewed wording remain editable after relaunch"; editableShot.lifetime = .keepAlways; add(editableShot)
+        app.buttons["native-editor-text-inspector-done"].tap()
         let reopenedShot = XCTAttachment(screenshot: app.screenshot()); reopenedShot.name = "Rendered project survives app relaunch"; reopenedShot.lifetime = .keepAlways; add(reopenedShot)
         #endif
     }
