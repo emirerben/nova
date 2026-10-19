@@ -812,3 +812,24 @@ def test_research_visible_labels_reach_snapshot_without_legacy_speech_as_identit
     result = build_editor_snapshot(job, variant, clip_context={"visible_text": labels})
     assert result["slots"][0]["visible_text"] == "Object 42: marble relief"
     assert not result["slots"][1].get("visible_text")
+
+
+def test_saved_approval_supplies_research_context_without_plan_item_assignments():
+    """Older chat paths still need evidence; stale source generations must not bind."""
+    job, variant = _job_and_variant()
+    media = job.assembly_plan["guided_edit"]["approved_proposal"]["media"]
+    media[0]["analysis"] = {
+        "understanding": {
+            "kind": "video",
+            "summary": "Museum gallery with a marble relief",
+            "on_screen_text": "Object 42: marble relief",
+        }
+    }
+    media[1]["analysis"] = {"on_screen_text": "I think this is Object 99"}
+    result = build_editor_snapshot(job, variant)
+    assert "Museum gallery" in result["slots"][0]["seen"]["text"]
+    assert result["slots"][0]["visible_text"] == "Object 42: marble relief"
+    assert not result["slots"][1].get("visible_text")
+    media[0]["generation"] = "different-generation"
+    stale = build_editor_snapshot(job, variant)
+    assert not any(slot.get("seen") for slot in stale["slots"])

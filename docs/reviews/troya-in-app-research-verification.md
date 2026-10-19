@@ -67,3 +67,15 @@ unknown institutional host may be refused until reviewed. Domain membership is n
 proof: provider grounding and the claim reviewer remain fallible. Unsupported or unidentifiable
 objects require clarification, and research may take around a minute. Short existing cuts
 without readable windows require a timing edit first; research does not silently extend them.
+
+
+## Release preparation
+
+The owner authorized shipping and production iPhone verification on 19 October.
+The release replay suite now passes 1,344 tests (15 optional skips), the required
+PostgreSQL gates pass 1,047 tests, and the generated tool contract is synchronized.
+The CI manifests include the research journey and Sources UI test. Older saved
+projects can obtain bounded descriptions and actual OCR from the approved media,
+joined by exact source identity/generation; stale approvals provide no evidence.
+Production deployment and the signed-in device journey remain pending here until
+separately recorded with their actual outcomes.

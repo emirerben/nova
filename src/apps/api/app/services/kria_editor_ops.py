@@ -847,6 +847,39 @@ def _text_appearance_inventory(text_bars: list[dict[str, Any]], *, cues_present:
     return {"version": 1, "caption_cues_editable": cues_present, "targets": targets}
 
 
+def _approved_research_context(job: Any, variant: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """Older chat paths use the immutable approved media, joined by source generation."""
+    from app.services.clip_understanding import clip_record
+
+    revision = _guided_v2_revision(job, variant)
+    assembly = getattr(job, "assembly_plan", None) or {}
+    proposal = (assembly.get("guided_edit") or {}).get("approved_proposal") or {}
+    rows = proposal.get("media") or []
+    context: dict[str, dict[str, str]] = {"seen": {}, "visible_text": {}}
+    if revision is None:
+        return context
+    for source in revision.get("sources") or []:
+        for row in rows:
+            if not isinstance(row, dict) or any(
+                row.get(key) != source.get(key)
+                for key in ("media_id", "generation", "gcs_path", "lane")
+            ):
+                continue
+            media_id = str(source["media_id"])
+            kind = str(row.get("kind") or "video")
+            analysis = row.get("analysis")
+            seen = _seen_text(analysis, kind=kind)
+            visible = clip_record(
+                analysis if isinstance(analysis, dict) else None, kind=kind
+            ).on_screen_text[:1000]
+            if seen:
+                context["seen"][media_id] = seen
+            if visible:
+                context["visible_text"][media_id] = visible
+            break
+    return context
+
+
 def build_editor_snapshot(
     job: Any,
     variant: dict[str, Any],
@@ -858,13 +891,18 @@ def build_editor_snapshot(
     ``clip_context`` (built by the async planner, which owns the DB read) carries
     ``facts`` (``clip_facts_by_media_id``) and ``brief`` (the rendered Creative
     Brief). Both are optional: with neither, the snapshot is what it always was
-    plus the guided-slot fallback and the label-lane links.
+    plus the guided-slot fallback and the label-lane links. Pinned approved-media
+    descriptions/OCR also support older callers without plan-item context.
     """
 
     clip_context = clip_context or {}
     facts_by_media = clip_context.get("facts") or {}
-    seen_by_media = clip_context.get("seen") or {}
-    visible_by_media = clip_context.get("visible_text") or {}
+    approved_context = _approved_research_context(job, variant)
+    seen_by_media = {**approved_context["seen"], **(clip_context.get("seen") or {})}
+    visible_by_media = {
+        **approved_context["visible_text"],
+        **(clip_context.get("visible_text") or {}),
+    }
     slot_rows = _variant_slots(variant, job)
     guided_source_labels = _slot_moments(job, variant, slot_rows)
     label_links = _clip_label_links(job, variant)
