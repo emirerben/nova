@@ -219,7 +219,8 @@
       "KriaUITests/DrawingJourneyUITests/testAnimationTabKeepsItsLayoutWhateverTheEntranceIs",
       "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability",
       "KriaUITests/GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview",
-      "KriaUITests/NativeSourceWindowUITests/testRangeSheetSlidesAndResizesTheWindow"
+      "KriaUITests/NativeSourceWindowUITests/testRangeSheetSlidesAndResizesTheWindow",
+      "KriaUITests/ResearchSourcesUITests/testPreparedResearchSourcesAndPreview"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -331,6 +332,9 @@
     "src/apps/ios/Kria/Core/SavedMediaReuse.swift": "creation",
     "src/apps/ios/Kria/Features/SavedUploadsView.swift": "creation",
     "src/apps/ios/Kria/Features/SavedUploadsUITestFixture.swift": "creation",
-    "src/apps/ios/Tests/KriaUITests/SavedUploadsUITests.swift": "creation"
+    "src/apps/ios/Tests/KriaUITests/SavedUploadsUITests.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/ResearchSourcesUITests.swift": "editor",
+    "src/apps/ios/Kria/Core/ResearchCitation.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift": "editor"
   }
 }
