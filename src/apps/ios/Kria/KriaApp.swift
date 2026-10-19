@@ -48,7 +48,7 @@ import SwiftData
             _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
             return
         }
-        if ProcessInfo.processInfo.arguments.contains("-camera-roll-benchmark") {
+        if ProcessInfo.processInfo.arguments.contains("-camera-roll-benchmark") || ProcessInfo.processInfo.arguments.contains("-camera-roll-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-device-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-story-review") || ProcessInfo.processInfo.arguments.contains("-camera-roll-export-proof") {
             let container = Self.fallbackContainer()
             self.container = container
             _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore()))
@@ -129,7 +129,15 @@ struct RootView: View {
                     .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
                     .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
             }
-            else if ProcessInfo.processInfo.arguments.contains("-camera-roll-benchmark") { CameraRollBenchmarkView() }
+            else if ProcessInfo.processInfo.arguments.contains("-camera-roll-export-proof") {
+                CameraRollExportProofView()
+            } else if ProcessInfo.processInfo.arguments.contains("-camera-roll-story-review") {
+                CameraRollStoriesUITestHost()
+            } else if ProcessInfo.processInfo.arguments.contains("-camera-roll-collection") {
+            CameraRollCollectionView(api: model.api, fixture: true)
+        } else if ProcessInfo.processInfo.arguments.contains("-camera-roll-device-collection") {
+            CameraRollCollectionView(api: model.api)
+        } else if ProcessInfo.processInfo.arguments.contains("-camera-roll-benchmark") { CameraRollBenchmarkView() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-saved-uploads") { SavedUploadsUITestHost() }
             else if ProcessInfo.processInfo.arguments.contains("-device-effects") { DeviceEffectsView() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { BrandPreviewHost() }

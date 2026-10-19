@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import tempfile
 from collections import defaultdict
 from pathlib import Path
@@ -18,19 +19,29 @@ class _Strict(BaseModel):
 
 
 class PilotProtocol(_Strict):
+    scope: Literal["single_creator", "multi_creator"] = "multi_creator"
     registered_at: AwareDatetime
-    creator_count: int = Field(ge=10)
+    creator_count: int = Field(ge=1)
     collections_per_creator: int = Field(ge=2)
     selection_floor: float = Field(ge=0.5, le=1)
     export_floor: float = Field(ge=0.8, le=1)
     max_corrective_turns: int = Field(ge=0, le=2)
     max_latency_s: float = Field(gt=0)
-    max_settled_spend_usd: float = Field(gt=0, le=2)
+    max_settled_spend_usd: float = Field(ge=0, le=2)
+    total_budget_usd: float = Field(default=2, ge=0, le=2)
     reliability_evidence: str | None = Field(default=None, min_length=1, max_length=500)
     native_output_evidence: str | None = Field(default=None, min_length=1, max_length=500)
     app_revision: str = Field(min_length=1, max_length=160)
     server_revision: str = Field(min_length=1, max_length=160)
     capability_cohort: str = Field(min_length=1, max_length=160)
+
+    @model_validator(mode="after")
+    def sample_matches_scope(self):
+        if (self.scope == "single_creator" and self.creator_count != 1) or (
+            self.scope == "multi_creator" and self.creator_count < 10
+        ):
+            raise ValueError("Sample size must match the declared pilot scope")
+        return self
 
 
 class PilotSession(_Strict):
@@ -84,6 +95,8 @@ def report(protocol: PilotProtocol, sessions: list[PilotSession]) -> dict:
     if len({row.session_key for row in sessions}) != len(sessions):
         raise ValueError("Duplicate session keys")
     pilot = [row for row in sessions if not row.internal_stress_test]
+    if protocol.scope == "single_creator" and len({row.creator_key for row in pilot}) > 1:
+        raise ValueError("Single-creator pilot cannot include another account")
     if any(row.started_at < protocol.registered_at for row in pilot):
         raise ValueError("Protocol must be registered before pilot sessions start")
     counts = {
@@ -138,11 +151,15 @@ def report(protocol: PilotProtocol, sessions: list[PilotSession]) -> dict:
         "fulfilled_exports": export_rate is not None and export_rate >= protocol.export_floor,
         "resource_evidence": resource_evidence,
         "resource_caps": resource_caps,
+        "total_budget": resource_evidence
+        and math.fsum(row.settled_spend_usd or 0 for row in measured) <= protocol.total_budget_usd,
         "reliability_evidence": bool(protocol.reliability_evidence),
         "native_output_evidence": bool(protocol.native_output_evidence),
     }
     return {
         "schema_version": 1,
+        "scope": protocol.scope,
+        "supports_wider_rollout": protocol.scope == "multi_creator" and all(bars.values()),
         "protocol_sha256": hashlib.sha256(protocol.model_dump_json().encode()).hexdigest(),
         "registered_at": protocol.registered_at.isoformat(),
         "app_revision": protocol.app_revision,
@@ -156,7 +173,13 @@ def report(protocol: PilotProtocol, sessions: list[PilotSession]) -> dict:
         "unknown_spend_sessions": sum(row.settled_spend_usd is None for row in measured),
         "known_model_calls": sum(row.model_calls or 0 for row in measured),
         "failed_bars": [name for name, passed in bars.items() if not passed],
-        "decision": "eligible_for_review" if all(bars.values()) else "hold",
+        "decision": (
+            "eligible_for_account_review"
+            if protocol.scope == "single_creator"
+            else "eligible_for_review"
+        )
+        if all(bars.values())
+        else "hold",
         "evidence_limit": (
             "Private artifact references require human review; "
             "this report changes no rollout settings."

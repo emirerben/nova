@@ -571,6 +571,14 @@ class Settings(BaseSettings):
     # after their API and physical-device evidence is complete.
     media_library_enabled: bool = False
     media_collection_proposals_enabled: bool = False
+    media_collection_proposal_user_ids: list[UUID] = Field(default_factory=list)
+    media_collection_cache_only: bool = True
+
+    def media_collection_proposals_for(self, user_id: object) -> bool:
+        return self.media_collection_proposals_enabled and str(user_id) in {
+            str(value) for value in self.media_collection_proposal_user_ids
+        }
+
     # Daily comparison of delayed Standard Usage Cost export with Nova's
     # settled reservation ledger. Targets and project attribution stay JSON so
     # both billing accounts can be added without shipping account IDs in git.

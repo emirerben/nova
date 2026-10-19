@@ -19,6 +19,7 @@ struct CameraRollCollection: Codable, Sendable {
     static let maximumCount = 50
     static let batchSize = 32
     let id: UUID
+    var serverRevision: Int?
     var name: String
     private(set) var entries: [Entry]
 
@@ -26,6 +27,7 @@ struct CameraRollCollection: Codable, Sendable {
         let id: String
         var metadata: CameraRollMetadata?
         var correctedGroup: String?
+        var savedAsset: SavedMediaAsset?
     }
 
     enum SelectionError: Error { case tooManyAssets, invalidSnapshot, erasedAccount }
@@ -56,7 +58,12 @@ struct CameraRollCollection: Codable, Sendable {
             incoming[record.id] = record
         }
         for index in entries.indices {
-            if let record = incoming[entries[index].id] { entries[index].metadata = record }
+            if let record = incoming[entries[index].id] {
+                if let previous = entries[index].metadata, previous.modifiedAt != record.modifiedAt {
+                    entries[index].savedAsset = nil
+                }
+                entries[index].metadata = record
+            }
         }
         if !sharesCaptureContext { clearCaptureContext() }
     }
@@ -64,6 +71,13 @@ struct CameraRollCollection: Codable, Sendable {
     mutating func reconcileAccessibleIdentifiers(_ identifiers: Set<String>) {
         // Revoked/deleted material ceases to be a candidate; post bindings are untouched.
         entries.removeAll { !identifiers.contains($0.id) }
+    }
+
+    mutating func bind(_ asset: SavedMediaAsset, to identifier: String) {
+        guard let index = entries.firstIndex(where: { $0.id == identifier }) else { return }
+        if entries.contains(where: { $0.id != identifier && $0.savedAsset?.id == asset.id }) {
+            entries.remove(at: index)
+        } else { entries[index].savedAsset = asset }
     }
 
     mutating func clearCaptureContext() {
@@ -106,8 +120,13 @@ struct CameraRollCollection: Codable, Sendable {
         guard !FileManager.default.fileExists(atPath: originals.erasureMarker.path) else { throw SelectionError.erasedAccount }
         let directory = originals.root.appendingPathComponent("collection-indexes", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var root = originals.root
+        var values = URLResourceValues(); values.isExcludedFromBackup = true
+        try root.setResourceValues(values)
         let path = directory.appendingPathComponent("\(id).json")
-        try JSONEncoder().encode(self).write(to: path, options: [.atomic, .completeFileProtection])
+        let data = try JSONEncoder().encode(self)
+        guard data.count <= 2 * 1024 * 1024 else { throw SelectionError.invalidSnapshot }
+        try data.write(to: path, options: [.atomic, .completeFileProtection])
         // Account erasure may have raced the directory creation / atomic write.
         if FileManager.default.fileExists(atPath: originals.erasureMarker.path) {
             try? FileManager.default.removeItem(at: path)
@@ -118,6 +137,8 @@ struct CameraRollCollection: Codable, Sendable {
     static func load(id: UUID, in originals: MediaLibraryOriginals, sharesCaptureContext: Bool) throws -> Self {
         guard !FileManager.default.fileExists(atPath: originals.erasureMarker.path) else { throw SelectionError.erasedAccount }
         let path = originals.root.appendingPathComponent("collection-indexes/\(id).json")
+        let size = try path.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max
+        guard size <= 2 * 1024 * 1024 else { throw SelectionError.invalidSnapshot }
         var value = try JSONDecoder().decode(Self.self, from: Data(contentsOf: path))
         guard value.id == id, value.entries.count <= maximumCount,
               Set(value.entries.map(\.id)).count == value.entries.count else { throw SelectionError.invalidSnapshot }

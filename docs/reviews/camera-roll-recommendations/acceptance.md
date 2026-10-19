@@ -43,11 +43,31 @@ Issues: KRI-729–732. Baseline: `b3a2a9edb`, 19 October 2026.
 5. Consented pilot under the protocol; no promotion until prerequisite reliability
    evidence and the pilot's frozen decision bars pass.
 
-## Current dependency truth
+## Execution and study scope
 
-Linear lists KRI-725, KRI-727 and KRI-728 as Backlog. KRI-674, KRI-726 and
-KRI-734 are Done, but ticket status is not implementation or release proof.
-This baseline contains the existing render contracts and retry path; it does
-not contain the newer `prepared_execution` snapshot train. Do not substitute
-recommendation prose for executable source-window authority. Discovery remains
-off pending device evidence and the required integration/release gates.
+The existing guided snapshot/compiler/approval path is the source-window authority for
+this slice; a server-owned binding freezes exact choices before export. Broader cloud,
+slide and effects adapters remain unpromoted. Ticket status alone is not release proof.
+Discovery remains off pending reviewed device and human-evaluation evidence.
+
+The creator limited the study to their account and subsequently permitted model calls
+when needed for the real test, under the discussed $2 total ceiling. No other participants
+are authorized. All added collection items remain eligible;
+limits belong to internal metadata/index/network/model passes, never a second per-item opt-in.
+
+## Recommendation montage timing decisions (19 October continuation)
+
+1. Duration is owned by the existing `EditProposalSnapshot.fast_cuts` and guided
+   compiler/frame schedule: ordered source windows at rate 1, hard cuts, total
+   duration equal to the sum. No second timeline or recommendation renderer.
+2. This creates a new draft. Replacing a selected moment changes only that cut;
+   there are no authored timed lanes to ripple. Generated on-screen copy/music
+   are absent. Later timeline edits use the existing guided editor policies.
+3. Playback/scrubbing uses the existing guided editor and compiled recipe duration.
+4. Source replacement chooses a complete indexed interval; no new drag/resize
+   interaction. Invalid/over-budget windows are refused before approval.
+5. Each explicit correction creates one story revision. Selection binds that exact
+   revision into the existing saved draft; ordinary draft undo remains in charge.
+6. Use the existing fast-cut compiler and phone-guided parity/export fixtures;
+   verify the chosen windows, order, rate and source audio through actual output.
+   Cached analysis and compiler checks alone never satisfy the export gate.

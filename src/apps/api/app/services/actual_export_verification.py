@@ -28,7 +28,8 @@ from app.kria.recipes import MediaTransform
 from app.kria.recipes_v2 import EditRecipeV2
 from app.pipeline.cloud_render_evidence import normalize_text
 
-VERIFIER_VERSION = "phone-simple-cut-v1"
+VERIFIER_VERSION = "phone-simple-cut-v2"
+HISTORICAL_VERIFIER_VERSIONS = frozenset({"phone-simple-cut-v1", VERIFIER_VERSION})
 POLICY_FIELD = "actual_export_policy"
 SAMPLE_RATE = 8000
 # Both the phone export and its analysis proxies are local ISO media files.
@@ -173,7 +174,29 @@ def _frame(
     ).convert("RGB")
 
 
-def _audio(path: Path, start: float, duration: float) -> np.ndarray:
+def _audio(
+    path: Path, start: float, duration: float, *, preserve_channels=False, probe=None
+) -> np.ndarray:
+    filters = []
+    if preserve_channels:
+        audio = next(
+            (
+                value
+                for value in (probe or _probe(path))["streams"]
+                if value["codec_type"] == "audio"
+            ),
+            None,
+        )
+        if audio is None:
+            return np.zeros((round(duration * SAMPLE_RATE), 2))
+        channels = audio.get("channels")
+        if channels not in (1, 2):
+            raise ValueError("unsupported_audio_channels")
+        # AVFoundation maps a mono source to both stereo channels at the same
+        # sample amplitude. FFmpeg's default stereo-to-mono energy fold adds
+        # sqrt(2), so compare both channels without that lossy downmix.
+        if channels == 1:
+            filters = ["-af", "pan=stereo|c0=c0|c1=c0"]
     raw = _run(
         [
             "ffmpeg",
@@ -187,8 +210,9 @@ def _audio(path: Path, start: float, duration: float) -> np.ndarray:
             "-t",
             str(duration),
             "-vn",
+            *filters,
             "-ac",
-            "1",
+            "2" if preserve_channels else "1",
             "-ar",
             str(SAMPLE_RATE),
             "-f",
@@ -196,7 +220,8 @@ def _audio(path: Path, start: float, duration: float) -> np.ndarray:
             "-",
         ]
     )
-    return np.frombuffer(raw, dtype="<f4").astype(np.float64)
+    samples = np.frombuffer(raw, dtype="<f4").astype(np.float64)
+    return samples.reshape(-1, 2) if preserve_channels else samples
 
 
 def _frames(path: Path, times, *, size: tuple[int, int], probe=None, deadline=None, region=None):
@@ -389,14 +414,14 @@ def _audio_measurement(expected: np.ndarray, actual: np.ndarray) -> dict:
     if rms < 0.0001:
         actual_rms = float(np.sqrt(np.mean(centre**2)))
         return {"status": "passed" if actual_rms < 0.002 else "failed", "rms": round(actual_rms, 6)}
-    expected = expected - expected.mean()
-    expected_energy = float(expected @ expected)
+    expected = expected - expected.mean(axis=0)
+    expected_energy = float(expected.ravel() @ expected.ravel())
     best = (-1.0, 0.0, 0)
     for lag in range(-80, 81):
         observed = actual[margin + lag : margin + lag + n]
-        observed = observed - observed.mean()
-        energy = float(observed @ observed)
-        cross = float(expected @ observed)
+        observed = observed - observed.mean(axis=0)
+        energy = float(observed.ravel() @ observed.ravel())
+        cross = float(expected.ravel() @ observed.ravel())
         corr = cross / math.sqrt(expected_energy * energy) if energy > 0 else 0
         if corr > best[0]:
             best = (corr, cross / expected_energy, lag)
@@ -425,6 +450,7 @@ def verify_actual_export(
     recipe = status.request.recipe
     report = {
         "verifier_version": VERIFIER_VERSION,
+        "audio_comparison": "sample-amplitude-per-stereo-channel-v1",
         "identity": status.request.identity.model_dump(mode="json"),
         "status": "partial",
         "checks": [],
@@ -545,11 +571,24 @@ def verify_actual_export(
                 )
                 has_audio = any(s["codec_type"] == "audio" for s in source_probe["streams"])
                 gain = clip.volume * recipe.audio.original_volume
-                observed = _audio(output, clip.timeline_start, clip.source_duration)
+                observed = _audio(
+                    output,
+                    clip.timeline_start,
+                    clip.source_duration,
+                    preserve_channels=True,
+                    probe=probe,
+                )
                 expected = (
-                    _audio(source, clip.source_start, clip.source_duration) * gain
+                    _audio(
+                        source,
+                        clip.source_start,
+                        clip.source_duration,
+                        preserve_channels=True,
+                        probe=source_probe,
+                    )
+                    * gain
                     if has_audio and gain
-                    else np.zeros(round(clip.source_duration * SAMPLE_RATE))
+                    else np.zeros((round(clip.source_duration * SAMPLE_RATE), 2))
                 )
                 # Whole-clip correlation must not hide a short missing/extra sound.
                 for chunk, start in enumerate(range(0, len(expected), SAMPLE_RATE)):

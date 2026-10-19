@@ -2874,6 +2874,33 @@ class MediaCollection(Base):
     )
 
 
+class MediaCollectionStory(Base):
+    """Reviewable recommendation history; selection is never render approval."""
+
+    __tablename__ = "media_collection_stories"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    collection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    collection_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    story_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    moments_json: Mapped[list] = mapped_column(JSONB, nullable=False)
+    events_json: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["collection_id", "user_id"],
+            ["media_collections.id", "media_collections.user_id"],
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "revision >= 1 AND collection_revision >= 1", name="ck_collection_story_revision"
+        ),
+        Index("idx_collection_stories_owner", "user_id", "collection_id", "created_at"),
+    )
+
+
 class MediaCollectionMember(Base):
     __tablename__ = "media_collection_members"
 

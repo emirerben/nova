@@ -29,11 +29,13 @@ from app.schemas.media_collections import (
     MomentSearchOut,
 )
 from app.services import media_library_analysis as facts
+from app.services.clip_understanding import clip_record
 from app.services.media_collections import eligible_sources, members, owned_collection
 from app.services.media_library_ingest import lock_library_owner
 
-INDEX_VERSION = "source-intervals-v1"
+INDEX_VERSION = "source-intervals-v2"
 MAX_SOURCE_MOMENTS = 2000
+SOURCE_CHECK_BATCH_SIZE = 10
 
 
 def _number(value: Any) -> float | None:
@@ -200,6 +202,10 @@ async def index_collection(
             indexed += 1
             continue
         intervals, capped = source_intervals(analysis, transcript, duration)
+        visibility = clip_record(analysis, kind="video").visibility
+        raw_quality_spans = analysis.get("unusable_spans")
+        if not isinstance(raw_quality_spans, list):
+            raw_quality_spans = []
         if not intervals:
             missing.append(asset.id)
         if capped:
@@ -210,6 +216,25 @@ async def index_collection(
             )
         )
         for interval in intervals:
+            quality_spans = []
+            for raw in raw_quality_spans[:20]:
+                if not isinstance(raw, dict):
+                    continue
+                start, end = _number(raw.get("start_s")), _number(raw.get("end_s"))
+                if (
+                    start is not None
+                    and end is not None
+                    and 0 <= start < end <= duration
+                    and start < interval["end_s"]
+                    and end > interval["start_s"]
+                ):
+                    quality_spans.append(
+                        {
+                            "start_s": start,
+                            "end_s": end,
+                            "reason": _clean_text(raw.get("reason"), 80),
+                        }
+                    )
             identity = json.dumps([str(source.id), version, interval], sort_keys=True)
             db.add(
                 MediaSourceMoment(
@@ -226,6 +251,11 @@ async def index_collection(
                         "fact_version": version,
                         "time_basis": "source_seconds",
                         "verification": "cached_analysis_only",
+                        "quality": {
+                            "source_visibility": visibility[:160],
+                            "overlapping_unusable_spans": quality_spans[:3],
+                            "verification": "cached_evidence_only",
+                        },
                         "complete_timed_speech": isinstance(transcript.get("words"), list)
                         and all(
                             _timed_word(word, duration) is not None for word in transcript["words"]
@@ -263,6 +293,8 @@ async def search_moments(
     source_id: uuid.UUID | None = None,
     start_s: float | None = None,
     end_s: float | None = None,
+    all_candidates: bool = False,
+    moment_ids: list[uuid.UUID] | None = None,
 ) -> MomentSearchOut:
     row = await owned_collection(db, owner, identifier, revision=revision)
     selected = members(row)
@@ -313,53 +345,84 @@ async def search_moments(
             MediaAssetSource.status == "available",
             MediaSourceMoment.evidence_json["index_spec"].astext == _index_spec("video"),
         )
-        .order_by(
-            func.ts_rank_cd(vector, terms).desc(), MediaSourceMoment.start_s, MediaSourceMoment.id
-        )
-        .limit(100)
+        .limit(101)
     )
+    ordering = (
+        func.ts_rank_cd(vector, terms).desc(),
+        MediaSourceMoment.start_s,
+        MediaSourceMoment.id,
+    )
+    if all_candidates:
+        # Round-robin the relevance-ranked intervals of every selected source.
+        # Fifty sources can each contribute before any source takes a third slot.
+        statement = statement.order_by(
+            func.row_number().over(partition_by=MediaSourceMoment.source_id, order_by=ordering),
+            *ordering,
+        )
+    else:
+        statement = statement.order_by(*ordering)
+    if moment_ids is not None:
+        if len(moment_ids) > 8:
+            raise HTTPException(422, "At most eight exact story intervals may be checked")
+        statement = statement.where(MediaSourceMoment.id.in_(moment_ids))
     if source_id is not None:
         statement = statement.where(
             MediaSourceMoment.kind == "speech",
             MediaSourceMoment.end_s > start_s,
             MediaSourceMoment.start_s < end_s,
         )
-    else:
+    elif not all_candidates:
         statement = statement.where(vector.op("@@")(terms))
     results = []
     source_counts = {}
     checked_sources = {}
     capped = False
     rows = (await db.execute(statement)).all()
-    capped = len(rows) == 100
+    capped = len(rows) > 100
+    rows = rows[:100]
+    current_sources = {
+        source.id: source
+        for moment, source in rows
+        if moment.evidence_json.get("generation") == source.object_generation
+        and moment.evidence_json.get("uploaded_sha256") == source.uploaded_sha256
+    }
+
+    async def check_source(source):
+        try:
+            metadata = await asyncio.wait_for(
+                asyncio.to_thread(storage.object_metadata_once, source.object_path, timeout_s=5),
+                timeout=5,
+            )
+            return source.id, str(
+                metadata.generation
+            ) == source.object_generation and metadata.size == source.byte_count
+        except (NotFound, FileNotFoundError):
+            return source.id, False
+        except Exception as exc:
+            raise HTTPException(503, "Source availability could not be checked; retry.") from exc
+
+    # All added sources remain eligible. Network/memory are bounded per pass,
+    # rather than asking the creator to select their content a second time.
+    pending = list(current_sources.values())
+    for offset in range(0, len(pending), SOURCE_CHECK_BATCH_SIZE):
+        checked_sources.update(
+            await asyncio.gather(
+                *(
+                    check_source(source)
+                    for source in pending[offset : offset + SOURCE_CHECK_BATCH_SIZE]
+                )
+            )
+        )
     for moment, source in rows:
-        if source_id is None and source_counts.get(source.id, 0) >= 3:
+        if source_id is None and not all_candidates and source_counts.get(source.id, 0) >= 3:
             continue
         if (
             moment.evidence_json.get("generation") != source.object_generation
             or moment.evidence_json.get("uploaded_sha256") != source.uploaded_sha256
         ):
             continue
-        if source.id not in checked_sources:
-            if len(checked_sources) >= 10:
-                capped = True
-                break
-            try:
-                metadata = await asyncio.wait_for(
-                    asyncio.to_thread(storage.object_metadata, source.object_path), timeout=5
-                )
-                checked_sources[source.id] = (
-                    str(metadata.generation) == source.object_generation
-                    and metadata.size == source.byte_count
-                )
-            except (NotFound, FileNotFoundError):
-                checked_sources[source.id] = False
-            except Exception as exc:
-                raise HTTPException(
-                    503, "Source availability could not be checked; retry."
-                ) from exc
-            if not checked_sources[source.id] and source.asset_id not in unavailable:
-                unavailable.append(source.asset_id)
+        if not checked_sources[source.id] and source.asset_id not in unavailable:
+            unavailable.append(source.asset_id)
         if not checked_sources[source.id]:
             continue
         source_counts[source.id] = source_counts.get(source.id, 0) + 1

@@ -116,6 +116,17 @@ protocol SlidePostProposalClient: Sendable {
 }
 
 protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
+    func changeCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, order: [UUID]?, audioPolicy: String?, eventID: String) async throws -> CameraRollStory
+    func indexCameraRollCollection(id: UUID, revision: Int, offset: Int) async throws -> CameraRollIndexPass
+    func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool) async throws -> CameraRollStories
+    func recordCameraRollStoryExposure(collectionID: UUID, story: CameraRollStory, collectionRevision: Int) async throws
+    func correctCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, index: Int, momentID: UUID, eventID: String) async throws -> CameraRollStory
+    func rejectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, eventID: String) async throws -> CameraRollStory
+    func selectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, threadID: UUID, threadRevision: Int, eventID: String) async throws -> TurnAccepted
+    func createCameraRollStoryThread(id: UUID, revision: Int) async throws -> CreationThread
+    func inspectCameraRollMoment(collectionID: UUID, revision: Int, momentID: UUID, question: String, cacheOnly: Bool) async throws -> CameraRollInspection
+    func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset
+    func saveCameraRollCollection(_ collection: CameraRollCollection, revision: Int) async throws -> SavedCameraRollCollection
     func repairSavedMedia(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset
     var mediaLibraryOwner: String? { get }
     func savedMedia(query: String, kind: String?, cursor: String?) async throws -> SavedMediaPage

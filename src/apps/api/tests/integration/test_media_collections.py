@@ -9,16 +9,25 @@ import hashlib
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 
 from app.auth import get_current_user, is_native_client
 from app.database import AsyncSessionLocal, get_db
-from app.models import MediaAsset, MediaAssetAnalysis, MediaAssetSource, User
+from app.models import (
+    ContentPlan,
+    Job,
+    MediaAsset,
+    MediaAssetAnalysis,
+    MediaAssetSource,
+    PlanItem,
+    User,
+)
 from app.services import media_library_analysis as facts
 
 if not os.environ.get("DATABASE_URL", "").rsplit("/", 1)[-1].endswith("_test"):
@@ -40,6 +49,10 @@ async def collection_world(monkeypatch):
         storage, "object_metadata", lambda path: SimpleNamespace(generation="42", size=1234)
     )
 
+    monkeypatch.setattr(
+        storage, "object_metadata_once", lambda path, timeout_s: storage.object_metadata(path)
+    )
+
     def no_download(*args, **kwargs):
         raise AssertionError("Collection indexing must not read media bytes")
 
@@ -47,6 +60,8 @@ async def collection_world(monkeypatch):
     monkeypatch.setattr(storage, "download_to_file", no_download)
     monkeypatch.setattr(facts, "_analyze_source", no_download)
     owner = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@collection.test")
+    monkeypatch.setattr(settings, "media_collection_proposal_user_ids", [owner.id])
+    monkeypatch.setattr(settings, "media_collection_cache_only", False)
     other = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@collection.test")
     asset_ids, source_ids = [], []
     async with AsyncSessionLocal() as db:
@@ -105,6 +120,9 @@ async def collection_world(monkeypatch):
                     status="ready",
                     result_json={
                         "understanding": {
+                            "visibility": (
+                                "Dark evening footage; the illuminated house is the subject"
+                            ),
                             "notable_moments": [
                                 {
                                     "start_s": 155,
@@ -116,8 +134,11 @@ async def collection_world(monkeypatch):
                                     "end_s": 8,
                                     "description": "Invalid reversed interval",
                                 },
-                            ]
+                            ],
                         },
+                        "unusable_spans": [
+                            {"start_s": 170, "end_s": 171, "reason": "lens covered"}
+                        ],
                     },
                 )
             )
@@ -162,6 +183,16 @@ async def collection_world(monkeypatch):
     ) as client:
         yield client, asset_ids, source_ids, owner, app
     async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(PlanItem)
+            .where(
+                PlanItem.content_plan_id.in_(
+                    select(ContentPlan.id).where(ContentPlan.user_id.in_([owner.id, other.id]))
+                )
+            )
+            .values(current_job_id=None)
+        )
+        await db.execute(delete(Job).where(Job.user_id.in_([owner.id, other.id])))
         await db.execute(delete(User).where(User.id.in_([owner.id, other.id])))
         await db.commit()
 
@@ -172,6 +203,148 @@ def selection(assets, sources, count=2):
         "expected_revision": 0,
         "members": [{"asset_id": assets[i], "source_id": sources[i]} for i in range(count)],
     }
+
+
+async def test_collection_capability_and_routes_share_account_and_rollback_gates(
+    collection_world, monkeypatch
+):
+    from app.config import settings
+    from app.routes.creation_threads import router
+
+    client, _, _, owner, app = collection_world
+    app.include_router(router, prefix="/creation-threads")
+    response = await client.get("/creation-threads/capabilities")
+    assert response.status_code == 200, response.text
+    assert response.json()["media_collections"] is True
+    monkeypatch.setattr(settings, "media_collection_proposal_user_ids", [])
+    assert (await client.get("/creation-threads/capabilities")).json()["media_collections"] is False
+    assert (await client.get(f"/me/media-collections/{uuid.uuid4()}")).status_code == 404
+
+    monkeypatch.setattr(settings, "media_collection_proposal_user_ids", [owner.id])
+    monkeypatch.setattr(settings, "media_collection_proposals_enabled", False)
+    assert (await client.get("/creation-threads/capabilities")).json()["media_collections"] is False
+    assert (await client.get(f"/me/media-collections/{uuid.uuid4()}")).status_code == 404
+
+
+async def test_story_candidates_cover_all_fifty_added_sources_in_bounded_passes(
+    collection_world, monkeypatch
+):
+    from app import storage
+    from app.agents.camera_roll_stories import (
+        CameraRollStoriesAgent,
+        CameraRollStoriesOutput,
+        StoryIdea,
+    )
+    from app.models import MediaSourceMoment
+    from app.services.media_moments import _index_spec
+
+    client, _, _, owner, _ = collection_world
+    asset_ids, source_ids = [], []
+    async with AsyncSessionLocal() as db:
+        for index in range(50):
+            asset = MediaAsset(
+                user_id=owner.id,
+                kind="video",
+                status="ready",
+                original_availability="device_only",
+                metadata_json={"duration_s": 180},
+            )
+            db.add(asset)
+            await db.flush()
+            source = MediaAssetSource(
+                user_id=owner.id,
+                asset_id=asset.id,
+                role="analysis_proxy",
+                object_path=f"users/{owner.id}/fifty/{index}.mp4",
+                object_generation="42",
+                uploaded_sha256=hashlib.sha256(str(index).encode()).hexdigest(),
+                byte_count=1234,
+                content_type="video/mp4",
+                status="available",
+            )
+            db.add(source)
+            await db.flush()
+            for part in range(3):
+                db.add(
+                    MediaSourceMoment(
+                        id=uuid.uuid4(),
+                        user_id=owner.id,
+                        asset_id=asset.id,
+                        source_id=source.id,
+                        fact_version="test-frozen-facts",
+                        kind="visual",
+                        start_s=150 + part * 7,
+                        end_s=155 + part * 7,
+                        text=f"Source {index} ferry arrival part {part}"
+                        + (" finalharbour" if index == 49 else ""),
+                        uncertain=True,
+                        evidence_json={
+                            "index_spec": _index_spec("video"),
+                            "generation": "42",
+                            "uploaded_sha256": source.uploaded_sha256,
+                            "complete_timed_speech": True,
+                        },
+                    )
+                )
+            asset_ids.append(str(asset.id))
+            source_ids.append(str(source.id))
+        await db.commit()
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    response = await client.put(path, json=selection(asset_ids, source_ids, count=50))
+    assert response.status_code == 200, response.text
+    searched = await client.get(
+        f"{path}/moments", params={"expected_revision": 1, "query": "finalharbour"}
+    )
+    assert searched.status_code == 200, searched.text
+    assert {value["asset_id"] for value in searched.json()["moments"]} == {asset_ids[-1]}
+    checked = set()
+
+    def metadata(object_path):
+        checked.add(object_path)
+        return SimpleNamespace(generation="42", size=1234)
+
+    monkeypatch.setattr(storage, "object_metadata", metadata)
+    candidates = []
+
+    def ideas(self, input, *, ctx):
+        assert len(input.candidates) <= 100
+        assert {value.source for value in input.candidates} == set(source_ids), (
+            "Every added source must remain eligible"
+        )
+        candidates.extend(value.id for value in input.candidates)
+        return CameraRollStoriesOutput(
+            stories=[
+                StoryIdea(
+                    title="Ferry arrival",
+                    hook="Crossing",
+                    payoff="Arrival",
+                    rationale="Recorded arrival",
+                    moment_ids=[input.candidates[0].id],
+                )
+            ]
+        )
+
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", ideas)
+    stories = await client.post(
+        f"{path}/stories", json={"expected_revision": 1, "query": "Ferry arrival"}
+    )
+    assert stories.status_code == 200, stories.text
+    assert len(checked) == 50
+    late = max(searched.json()["moments"], key=lambda value: value["end_s"])
+    assert late["id"] not in candidates
+    story = stories.json()["stories"][0]
+    corrected = await client.patch(
+        f"{path}/stories/{story['id']}",
+        json={
+            "expected_revision": 1,
+            "expected_story_revision": 1,
+            "client_event_id": "choose-late-interval",
+            "replace_index": 0,
+            "moment_id": late["id"],
+        },
+    )
+    assert corrected.status_code == 200, corrected.text
+    assert corrected.json()["moments"][0]["id"] == late["id"]
 
 
 @pytest.mark.asyncio
@@ -378,3 +551,413 @@ async def test_visual_index_never_claims_complete_speech_coverage(collection_wor
     )
     assert response.json()["moments"] == []
     assert set(response.json()["incomplete_speech_asset_ids"]) == set(assets[:2])
+
+
+@pytest.mark.parametrize("manual_qa", [False, True])
+async def test_semantic_retrieval_is_bounded_cached_and_source_fenced(
+    collection_world, monkeypatch, manual_qa
+):
+    from app.agents.media_moment_relevance import MomentRelevanceAgent, MomentRelevanceOutput
+    from app.config import settings
+
+    client, assets, sources, owner, _app = collection_world
+    monkeypatch.setattr(settings, "ai_usage_environment", "development")
+    monkeypatch.setattr(settings, "ai_manual_qa_reservation_approved", manual_qa)
+    monkeypatch.setattr(
+        settings, "ai_manual_qa_test_run_id", "camera-roll-approved-test" if manual_qa else ""
+    )
+    monkeypatch.setattr(settings, "ai_manual_qa_max_cost_usd", 2 if manual_qa else None)
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    await client.put(path, json=selection(assets, sources))
+    await client.post(f"{path}/index", json={"expected_revision": 1})
+    calls = []
+
+    def rank(self, input, *, ctx):
+        calls.append(input)
+        assert len(input.candidates) <= 100
+        assert ctx.creator_id == str(owner.id)
+        assert ctx.estimated_max_cost_usd == (2 if manual_qa else 0.05)
+        assert ctx.reservation_approved is manual_qa
+        assert ctx.test_run_id == ("camera-roll-approved-test" if manual_qa else None)
+        assert any("Dark evening" in value.quality_notes for value in input.candidates)
+        assert any("lens covered" in value.quality_notes for value in input.candidates)
+        return MomentRelevanceOutput(moment_ids=[input.candidates[-1].id, str(uuid.uuid4())])
+
+    monkeypatch.setattr(MomentRelevanceAgent, "run", rank)
+    body = {"expected_revision": 1, "query": "arrival by boat"}
+    monkeypatch.setattr(settings, "media_collection_cache_only", True)
+    forced = await client.post(f"{path}/semantic-search", json=body)
+    assert forced.status_code == 409 and not calls
+    monkeypatch.setattr(settings, "media_collection_cache_only", False)
+    cold = await client.post(f"{path}/semantic-search", json={**body, "cache_only": True})
+    assert cold.status_code == 409 and not calls
+    response = await client.post(f"{path}/semantic-search", json=body)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["method"] == "semantic-rerank-v1"
+    assert len(result["moments"]) == 1, "Untrusted agent IDs cannot add new evidence"
+    assert result["moments"][0]["uncertain"] is True
+    repeated = await client.post(f"{path}/semantic-search", json={**body, "cache_only": True})
+    assert repeated.json()["moments"] == result["moments"] or len(repeated.json()["moments"]) == 1
+    assert len(calls) == 1, "Repeated immutable candidate/query sets reuse durable results"
+    await client.put(
+        path, json={**selection(assets, sources), "expected_revision": 1, "members": []}
+    )
+    stale = await client.post(f"{path}/semantic-search", json=body)
+    assert stale.status_code == 409
+    assert len(calls) == 1
+
+
+async def test_targeted_inspection_reuses_exact_interval_and_checks_revision(
+    collection_world, monkeypatch
+):
+    from app.services import media_moment_inspection
+
+    client, assets, sources, owner, _app = collection_world
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    await client.put(path, json=selection(assets, sources))
+    await client.post(f"{path}/index", json={"expected_revision": 1})
+    found = (
+        await client.get(f"{path}/moments", params={"query": "ferry", "expected_revision": 1})
+    ).json()["moments"][0]
+    calls = []
+
+    def inspect(source, moment, question, *, ctx):
+        calls.append((source.id, moment.start_s, moment.end_s, question))
+        assert moment.end_s - moment.start_s <= 20
+        assert ctx.estimated_max_cost_usd == 0.05
+        return {
+            "answer": "yes",
+            "confidence": 0.9,
+            "evidence": "Ferry crossing the water",
+            "sample_sha256": "a" * 64,
+        }
+
+    monkeypatch.setattr(media_moment_inspection, "inspect_interval", inspect)
+    body = {"expected_revision": 1, "moment_id": found["id"], "question": "Is a ferry visible?"}
+    cold = await client.post(f"{path}/inspect", json={**body, "cache_only": True})
+    assert cold.status_code == 409 and not calls
+    result = await client.post(f"{path}/inspect", json=body)
+    assert result.status_code == 200, result.text
+    assert result.json()["source_id"] == found["source_id"]
+    assert result.json()["verification"] == "targeted_model_inspection"
+    assert result.json()["uncertain"] is True, (
+        "A model answer is not independent output verification"
+    )
+    assert result.json()["start_s"] == found["start_s"]
+    again = await client.post(f"{path}/inspect", json={**body, "cache_only": True})
+    assert again.status_code == 200
+    assert len(calls) == 1
+    wrong = await client.post(f"{path}/inspect", json={**body, "moment_id": str(uuid.uuid4())})
+    assert wrong.status_code == 404
+    await client.put(
+        path, json={**selection(assets, sources), "expected_revision": 1, "members": []}
+    )
+    stale = await client.post(f"{path}/inspect", json=body)
+    assert stale.status_code == 409
+    assert len(calls) == 1
+
+
+async def test_story_candidates_corrections_and_rejection_are_separate_from_render(
+    collection_world, monkeypatch
+):
+    from app.agents.camera_roll_stories import (
+        CameraRollStoriesAgent,
+        CameraRollStoriesOutput,
+        StoryIdea,
+    )
+    from app.models import CreatorAgentApproval, Job, MediaCollectionStory
+
+    client, assets, sources, owner, _app = collection_world
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    await client.put(path, json=selection(assets, sources))
+    await client.post(f"{path}/index", json={"expected_revision": 1})
+    calls = []
+
+    def ideas(self, input, *, ctx):
+        calls.append(input)
+        return CameraRollStoriesOutput(
+            stories=[
+                StoryIdea(
+                    title="An arrival",
+                    hook="Start on the ferry",
+                    payoff="Finish on the arrival",
+                    rationale="The crossing leads into the recorded arrival.",
+                    moment_ids=[input.candidates[0].id, input.candidates[-1].id],
+                )
+            ]
+        )
+
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", ideas)
+    body = {"expected_revision": 1, "query": "Tell the story of this outing"}
+    cold = await client.post(f"{path}/stories", json={**body, "cache_only": True})
+    assert cold.status_code == 409 and not calls
+    result = await client.post(f"{path}/stories", json=body)
+    assert result.status_code == 200, result.text
+    first = result.json()["stories"][0]
+    assert first["revision"] == 1
+    assert first["requires_render_approval"] is True
+    assert first["on_screen_copy"] == []
+    exposure = {"expected_revision": 1, "expected_story_revision": 1, "client_event_id": "shown-1"}
+    for _ in range(2):
+        shown = await client.post(f"{path}/stories/{first['id']}/expose", json=exposure)
+        assert shown.status_code == 200, shown.text
+    again = await client.post(f"{path}/stories", json={**body, "cache_only": True})
+    assert again.json()["stories"][0]["id"] == first["id"]
+    assert len(calls) == 1
+    choices = calls[0].candidates
+    replacement = next(
+        value.id for value in choices if value.id not in [value["id"] for value in first["moments"]]
+    )
+    correction = {
+        "expected_revision": 1,
+        "expected_story_revision": 1,
+        "replace_index": 0,
+        "moment_id": replacement,
+        "client_event_id": "correction-1",
+    }
+    changed = await client.patch(f"{path}/stories/{first['id']}", json=correction)
+    assert changed.status_code == 200, changed.text
+    revised = changed.json()
+    assert revised["revision"] == 2
+    assert revised["moments"][0]["id"] == replacement
+    assert revised["moments"][1] == first["moments"][1]
+    assert revised["hook"] == first["hook"]
+    stale = await client.patch(
+        f"{path}/stories/{first['id']}", json={**correction, "client_event_id": "correction-2"}
+    )
+    assert stale.status_code == 409
+    sound = await client.patch(
+        f"{path}/stories/{first['id']}",
+        json={
+            "expected_revision": 1,
+            "expected_story_revision": 2,
+            "client_event_id": "sound-1",
+            "audio_policy": "muted",
+        },
+    )
+    assert sound.status_code == 200, sound.text
+    assert sound.json()["moments"] == revised["moments"]
+    assert sound.json()["audio_policy"] == "muted"
+    reordered = await client.patch(
+        f"{path}/stories/{first['id']}",
+        json={
+            "expected_revision": 1,
+            "expected_story_revision": 3,
+            "client_event_id": "order-1",
+            "moment_order": [value["id"] for value in reversed(revised["moments"])],
+        },
+    )
+    assert reordered.status_code == 200, reordered.text
+    assert reordered.json()["moments"] == list(reversed(revised["moments"]))
+    assert reordered.json()["audio_policy"] == "muted"
+    assert reordered.json()["hook"] == revised["hook"]
+    rejected = await client.post(
+        f"{path}/stories/{first['id']}/reject",
+        json={"expected_revision": 1, "expected_story_revision": 4, "client_event_id": "reject-1"},
+    )
+    assert rejected.status_code == 200
+    async with AsyncSessionLocal() as db:
+        row = await db.get(MediaCollectionStory, uuid.UUID(first["id"]))
+        assert [event["type"] for event in row.events_json] == [
+            "offered",
+            "exposure",
+            "correction",
+            "correction",
+            "correction",
+            "rejection",
+        ]
+        assert (
+            await db.scalar(
+                select(func.count())
+                .select_from(CreatorAgentApproval)
+                .where(CreatorAgentApproval.creator_id == owner.id)
+            )
+            == 0
+        )
+        assert (
+            await db.scalar(select(func.count()).select_from(Job).where(Job.user_id == owner.id))
+            == 0
+        )
+
+
+async def test_recommended_story_compiles_exact_source_windows_without_copy(collection_world):
+    from app.models import MediaCollectionStory, PlanItem
+    from app.pipeline.guided_story import compile_proposal_execution_plan
+    from app.services.media_collection_preparation import prepare_story_snapshot
+
+    client, assets, sources, owner, _app = collection_world
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    collection_id = uuid.UUID(path.rsplit("/", 1)[1])
+    await client.put(path, json=selection(assets, sources))
+    await client.post(f"{path}/index", json={"expected_revision": 1})
+    moments = (
+        await client.get(f"{path}/moments", params={"query": "ferry", "expected_revision": 1})
+    ).json()["moments"]
+    async with AsyncSessionLocal() as db:
+        row = MediaCollectionStory(
+            id=uuid.uuid4(),
+            collection_id=collection_id,
+            user_id=owner.id,
+            collection_revision=1,
+            revision=1,
+            story_json={
+                "title": "Unconfirmed AI summary",
+                "hook": "Crossing",
+                "payoff": "Arrival",
+                "rationale": "A journey",
+            },
+            moments_json=moments,
+            events_json=[],
+        )
+        item = PlanItem(
+            clip_assignments=[
+                {
+                    "media_id": f"clip-{index}",
+                    "gcs_path": f"users/{owner.id}/media-library/{assets[index]}.mp4",
+                    "gcs_generation": "42",
+                    "library_asset_id": assets[index],
+                    "library_source_id": sources[index],
+                }
+                for index in range(2)
+            ]
+        )
+        prepared = await prepare_story_snapshot(db, owner.id, row, item)
+        plan = compile_proposal_execution_plan(prepared.snapshot)
+        assert plan["text_elements"] == [], "AI summaries must never silently become captions"
+        windows = [
+            (value["source_start_s"], value["source_end_s"]) for value in plan["story_timeline"]
+        ]
+        assert windows == [(value["start_s"], value["end_s"]) for value in moments]
+        assert all((value["playback_rate"] or 1) == 1 for value in plan["story_timeline"])
+        assert prepared.snapshot.montage_audio.preserve_source_audio is True
+        item.clip_assignments = [
+            {**value, "library_source_id": str(uuid.uuid4())} for value in item.clip_assignments
+        ]
+        with pytest.raises(Exception, match="source"):
+            await prepare_story_snapshot(db, owner.id, row, item)
+
+
+def test_real_targeted_read_crops_bytes_before_one_bounded_model_call(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    import time
+
+    from google import genai
+    from PIL import Image
+
+    from app import storage
+    from app.agents._runtime import RunContext
+    from app.agents.clip_question import ClipQuestionAgent, ClipQuestionOutput
+    from app.services.media_moment_inspection import inspect_interval
+
+    source_file = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=red:s=160x90:d=4:r=30",
+            "-vf",
+            "negate=enable='gte(t,2)'",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-pix_fmt",
+            "yuv420p",
+            str(source_file),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    source = SimpleNamespace(
+        object_path="owned-source",
+        object_generation="42",
+        byte_count=source_file.stat().st_size,
+        uploaded_sha256=hashlib.sha256(source_file.read_bytes()).hexdigest(),
+    )
+    uploads, calls = [], []
+
+    def download(path, target, *, generation, timeout_s):
+        assert path == "owned-source" and generation == "42" and timeout_s <= 15
+        shutil.copyfile(source_file, target)
+
+    monkeypatch.setattr(storage, "download_generation_to_file", download)
+
+    class Files:
+        def upload(self, *, file, config):
+            assert config.http_options.timeout <= 5000
+            assert config.http_options.retry_options.attempts == 1
+            uploads.append(Path(file).read_bytes())
+            probe = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "csv=p=0",
+                    file,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            assert abs(float(probe.stdout) - 1) <= 1 / 30
+            png = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-i",
+                    file,
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "image2pipe",
+                    "-vcodec",
+                    "png",
+                    "-",
+                ],
+                check=True,
+                capture_output=True,
+            ).stdout
+            import io
+
+            color = Image.open(io.BytesIO(png)).getpixel((40, 40))
+            assert color[1] > 200 and color[2] > 200 and color[0] < 30, (
+                "Only the late cyan interval reaches the provider"
+            )
+            return SimpleNamespace(
+                uri="fixture://targeted", name="files/fixture", state=SimpleNamespace(name="ACTIVE")
+            )
+
+        def delete(self, **kwargs):
+            return None
+
+    monkeypatch.setattr(
+        genai, "Client", lambda **kwargs: SimpleNamespace(files=Files(), close=lambda: None)
+    )
+
+    def answer(self, input, *, ctx):
+        assert self.spec.max_attempts == 1
+        assert self.spec.enable_clarification_retries is False
+        assert input.file_uri == "fixture://targeted"
+        calls.append(input)
+        return ClipQuestionOutput(answer="yes", confidence=0.9, evidence="A cyan frame")
+
+    monkeypatch.setattr(ClipQuestionAgent, "run", answer)
+    result = inspect_interval(
+        source,
+        SimpleNamespace(start_s=2, end_s=3),
+        "Is this cyan?",
+        ctx=RunContext(deadline_monotonic=time.monotonic() + 45),
+    )
+    assert len(uploads) == len(calls) == 1
+    assert result["sample_sha256"] == hashlib.sha256(uploads[0]).hexdigest()

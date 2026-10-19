@@ -3,6 +3,17 @@ import XCTest
 
 /// KRI-729: capture context and local identifiers never become upload authority.
 final class CameraRollCollectionTests: XCTestCase {
+    func testAllAddedAssetsSurviveResumeWithoutASecondSelection() throws {
+        let collection = try CameraRollCollection(name: "Whole outing", identifiers: (0..<50).map(String.init))
+        var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(collection)) as! [String: Any]
+        var entries = legacy["entries"] as! [[String: Any]]
+        for index in entries.indices { entries[index]["wantsAnalysis"] = index < 10 }
+        legacy["entries"] = entries
+        let resumed = try JSONDecoder().decode(CameraRollCollection.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertEqual(resumed.entries.map(\.id), (0..<50).map(String.init))
+        let saved = String(decoding: try JSONEncoder().encode(resumed), as: UTF8.self)
+        XCTAssertFalse(saved.contains("wantsAnalysis"), "Old unchecked flags must not exclude added content")
+    }
     func testSelectionResumeCorrectionsAndRemoval() throws {
         var collection = try CameraRollCollection(name: "Outing", identifiers: ["a", "b", "a"])
         XCTAssertEqual(collection.entries.map(\.id), ["a", "b"])

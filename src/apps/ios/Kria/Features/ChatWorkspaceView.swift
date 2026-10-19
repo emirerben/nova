@@ -11,6 +11,9 @@ struct ChatWorkspaceView: View {
     @State private var drawerMounted = false
     @State private var showsGallery = false
     @State private var showsAccount = false
+    @State private var showsCollections = false
+    @State private var collectionsEnabled = false
+    @State private var collectionCacheOnlyRequired = true
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -24,7 +27,8 @@ struct ChatWorkspaceView: View {
             drawer: ProjectsDrawer(
                 close: { setDrawerOpen(false) },
                 openGallery: { setDrawerOpen(false); Perf.begin("gallery.open"); showsGallery = true },
-                openAccount: { setDrawerOpen(false); showsAccount = true }
+                openAccount: { setDrawerOpen(false); showsAccount = true },
+                openCollections: collectionsEnabled ? { setDrawerOpen(false); showsCollections = true } : nil
             ),
             content: workspace
         )
@@ -36,6 +40,9 @@ struct ChatWorkspaceView: View {
             Task { [api = model.api] in await api.prefetchCreationCapabilities() }
         }
         .task {
+            let collectionCapabilities = try? await model.api.creationCapabilities()
+            collectionsEnabled = collectionCapabilities?.mediaCollections == true
+            collectionCacheOnlyRequired = collectionCapabilities?.mediaCollectionCacheOnly ?? true
             Perf.mark("workspace.task")
             await model.openWorkspace(preferredProjectID: UUID(uuidString: lastProjectID))
             Perf.mark("workspace.opened")
@@ -54,6 +61,11 @@ struct ChatWorkspaceView: View {
             NavigationStack { GalleryView(openProjects: { showsGallery = false; setDrawerOpen(true) }) }
                 .environmentObject(model)
         }
+        .sheet(isPresented: $showsCollections) { CameraRollCollectionView(api: model.api, cacheOnlyRequired: collectionCacheOnlyRequired, onSelected: { thread in
+            await model.loadProjects()
+            model.selectProject(thread.summary)
+            showsCollections = false
+        }) }
         .sheet(isPresented: $showsAccount) {
             NavigationStack { AccountView() }
         }

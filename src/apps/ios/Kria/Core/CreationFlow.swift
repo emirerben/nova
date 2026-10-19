@@ -6,6 +6,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var media: [String: CreationMediaLimit]? = nil
     var runtimeVersions: [Int]? = nil
     var mediaLibrary: Bool? = nil
+    var mediaCollections: Bool? = nil
+    var mediaCollectionCacheOnly: Bool? = nil
     var visualsEnabled: Bool? = nil
     var phoneRendering: PhoneRenderingCapabilities? = nil
     /// Server accepts the editor's unsaved state with a chat turn (nil/false = legacy flush-then-send).
@@ -87,6 +89,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case formats, media
         case runtimeVersions = "runtime_versions", visualsEnabled = "visuals_enabled"
         case mediaLibrary = "media_library"
+        case mediaCollections = "media_collections"
+        case mediaCollectionCacheOnly = "media_collection_cache_only"
         case phoneRendering = "phone_rendering"
         case editorStateTurns = "editor_state_turns", editorStateMaxBytes = "editor_state_max_bytes"
         case slidePostRichText = "slide_post_rich_text"
@@ -119,6 +123,8 @@ extension CreationCapabilities {
         media = try container.decodeIfPresent([String: CreationMediaLimit?].self, forKey: .media)?.compactMapValues { $0 }
         runtimeVersions = try container.decodeIfPresent([Int].self, forKey: .runtimeVersions)
         mediaLibrary = try container.decodeIfPresent(Bool.self, forKey: .mediaLibrary)
+        mediaCollections = try container.decodeIfPresent(Bool.self, forKey: .mediaCollections)
+        mediaCollectionCacheOnly = try container.decodeIfPresent(Bool.self, forKey: .mediaCollectionCacheOnly)
         visualsEnabled = try container.decodeIfPresent(Bool.self, forKey: .visualsEnabled)
         phoneRendering = try container.decodeIfPresent(PhoneRenderingCapabilities.self, forKey: .phoneRendering)
         editorStateTurns = try container.decodeIfPresent(Bool.self, forKey: .editorStateTurns)

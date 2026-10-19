@@ -1252,6 +1252,12 @@ class ProposalGuidance(BaseModel):
 
 
 class EditProposalSnapshot(BaseModel):
+    # Explicit no-copy policy for footage recommendations. Missing preserves every
+    # legacy snapshot/hash. A review summary must never become on-screen text.
+    text_policy: Literal["legacy", "none"] = Field(
+        default="legacy", exclude_if=lambda value: value == "legacy"
+    )
+
     # KRI-133: approved integer-frame timing. Absent on legacy snapshots so
     # their serialized approval payloads and compiler replay stay unchanged.
     frame_schedule: EditFrameSchedule | None = Field(

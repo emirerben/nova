@@ -134,34 +134,38 @@ the existing cost ledger with duration pricing and no hidden SDK retries. Cache
 hits make no provider call. A live lease remains processing; failed analysis is
 retryable. Creative interpretation, corrections and take alignment stay per post.
 
-## Camera-roll collection foundation (KRI-729–732)
+## Camera-roll collections (KRI-729–732)
 
-The default-off collection API reuses these catalogue assets and immutable sources:
-`PUT/GET /me/media-collections/{id}`, `POST /{id}/index`,
-`GET /{id}/moments`, and `GET /{id}/sources/{source_id}/transcript` (all under
-`/me/media-collections`). Both library and collection-proposal flags plus native
-authentication are required. No production picker/recommendation capability is
-advertised by this foundation.
+The native collection flow reuses catalogue/source identities and local-original bindings.
+`PUT/GET /me/media-collections/{id}` saves at most 50 added assets; every member is eligible
+without a second selection. Index passes contain at most 32 sources. Photos identifiers
+and raw capture metadata remain on device, with correctable event groups and saved progress.
+Explicit import uses the existing catalogue ingest contract. No whole-library upload occurs.
 
-Writes require an expected revision and at most 50 owned asset/source pairs;
-they neither upload nor analyse media. Indexing consumes compatible existing
-facts in at most 32-source passes. Text search and transcript reads return exact
-source-second windows, cache provenance and uncertainty, with source-generation
-availability checks. Partial speech/index coverage is explicit. Images have no
-source-time interval and are reported as untimed, rather than given invented
-video timing. Collection membership and derived search rows do not pin cloud
-copies or change retention.
+`GET /{id}/moments` and transcript-range reads use complete source-timed cached facts.
+`POST /{id}/semantic-search`, `/inspect` and `/stories` use bounded shared agents/fact leases.
+Candidate selection considers all collection sources, round-robin by each source's relevance;
+100 intervals enter a model call. Exact interval selection/approval is checked independently
+of that candidate projection. Availability requests run in batches of ten, up to 50 sources.
+Partial coverage and uncertainty remain explicit. Still images have no invented video timing.
 
-The native metadata cache retains Photos identifiers only on device, beneath the
-existing account-scoped original-store root; it does not change original files
-or render bindings. Its state/correction persistence is not yet connected to the
-production picker. The DEBUG-only `-camera-roll-benchmark` screen measures an
-explicit Photos selection using no media/provider requests.
+Stories support review, exact-interval replacement/order/removal, original/muted audio,
+rejection and selection. Selection prepares the common revisioned draft, with a server-owned
+story/collection/compiler binding. Separate expiring approval freezes the existing guided
+execution plan. Only the verified original-bound, rate-1, hard-cut video adapter is offered;
+no new renderer, captions, music or cloud/slides promotion. Initial output must pass actual
+picture/timing/audio checks; retries and last-good artifacts use the shared guards.
 
-This is a text-retrieval baseline, not semantic retrieval, targeted inspection,
-story drafting or release proof. Keep discovery off until the execution
-prerequisites and native/pilot gates pass. See the measured evidence, exact
-commands and remaining work in the [implementation status](../reviews/camera-roll-recommendations/status.md).
+Admission requires `MEDIA_LIBRARY_ENABLED`, `MEDIA_COLLECTION_PROPOSALS_ENABLED`, native
+authentication and explicit membership in `MEDIA_COLLECTION_PROPOSAL_USER_IDS`. Empty means
+nobody. Turning the switch off hides discovery and refuses new collection requests without
+modifying historical posts. `MEDIA_COLLECTION_CACHE_ONLY=true` is the default: cache misses
+cannot acquire model work, even if a client requests it. The current authorized pilot is one
+creator account, with up to $2 total model spend authorized only for the real test. No cohort or production flags were changed.
+
+Collection membership/facts do not pin cloud copies or alter retention. Device diagnostics,
+repeatable export proof, offline evaluation contracts and remaining human evidence are in
+[implementation status](../reviews/camera-roll-recommendations/status.md).
 
 ## Retention and erasure
 

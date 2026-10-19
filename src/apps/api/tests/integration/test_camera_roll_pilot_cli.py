@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 
-def run_report(tmp_path, sessions):
+def run_report(tmp_path, sessions, **protocol_overrides):
     protocol = {
         "registered_at": "2026-10-01T00:00:00Z",
         "creator_count": 10,
@@ -21,6 +21,7 @@ def run_report(tmp_path, sessions):
         "server_revision": "test-server",
         "capability_cohort": "test-only",
     }
+    protocol.update(protocol_overrides)
     (tmp_path / "protocol.json").write_text(json.dumps(protocol))
     (tmp_path / "sessions.json").write_text(json.dumps(sessions))
     result = subprocess.run(
@@ -107,6 +108,34 @@ def test_late_registration_duplicate_sessions_and_unapproved_export_rejected(tmp
     row["started_at"] = "2026-09-30T00:00:00Z"
     result, _ = run_report(tmp_path, [row])
     assert result.returncode != 0
+
+
+def test_single_creator_cached_pilot_cannot_qualify_for_wider_rollout(tmp_path):
+    rows = [session(0), session(1)]
+    for row in rows:
+        row.update(model_calls=0, settled_spend_usd=0)
+    result, report = run_report(
+        tmp_path,
+        rows,
+        scope="single_creator",
+        creator_count=1,
+        max_settled_spend_usd=0,
+        total_budget_usd=0,
+    )
+    assert result.returncode == 0, result.stderr
+    assert report["decision"] == "eligible_for_account_review"
+    assert report["supports_wider_rollout"] is False
+    rows[0]["settled_spend_usd"] = 0.01
+    _, report = run_report(
+        tmp_path,
+        rows,
+        scope="single_creator",
+        creator_count=1,
+        max_settled_spend_usd=0,
+        total_budget_usd=0,
+    )
+    assert report["decision"] == "hold"
+    assert "total_budget" in report["failed_bars"]
     row = session(0)
     result, _ = run_report(tmp_path, [row, row])
     assert result.returncode != 0

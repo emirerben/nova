@@ -547,3 +547,46 @@ def test_decoder_optimization_preserves_reference_pixels_and_pcm(tmp_path, timin
             timeout=20,
         ).stdout
         assert np.array_equal(_audio(source, at, 0.75), np.frombuffer(pcm, dtype="<f4"))
+
+
+@pytest.mark.parametrize(
+    "treatment,expected",
+    [("duplicate", "checked"), ("left_muted", "rejected"), ("double", "rejected")],
+)
+def test_native_mono_to_stereo_preserves_samples_without_hiding_channel_errors(
+    exports, treatment, expected
+):
+    root, sources, recipe = exports
+    mono = encode(root, sources)
+    output = root / f"channels-{treatment}.mp4"
+    audio = {
+        "duplicate": "pan=stereo|c0=c0|c1=c0",
+        "left_muted": "pan=stereo|c0=0*c0|c1=c0",
+        "double": "volume=2,pan=stereo|c0=c0|c1=c0",
+    }[treatment]
+    ffmpeg("-i", mono, "-c:v", "copy", "-af", audio, "-c:a", "aac", output)
+    report = verify_actual_export(output, status(recipe), sources)
+    assert report["status"] == expected, report
+    if expected == "rejected":
+        assert any(
+            value["kind"] == "audio" and value["status"] == "failed" for value in report["checks"]
+        )
+
+
+def test_silent_sources_accept_silent_export_and_reject_unrequested_audio(exports):
+    root, sources, recipe = exports
+    audible = encode(root, sources)
+    silent = root / "silent-export.mp4"
+    ffmpeg("-i", audible, "-c:v", "copy", "-an", silent)
+    silent_sources = {}
+    for key, source in sources.items():
+        path = root / f"silent-source-{key}.mp4"
+        ffmpeg("-i", source, "-c:v", "copy", "-an", path)
+        silent_sources[key] = path
+    report = verify_actual_export(silent, status(recipe), silent_sources)
+    assert report["status"] == "checked", report
+    wrong = verify_actual_export(audible, status(recipe), silent_sources)
+    assert wrong["status"] == "rejected", wrong
+    assert any(
+        value["kind"] == "audio" and value["status"] == "failed" for value in wrong["checks"]
+    )

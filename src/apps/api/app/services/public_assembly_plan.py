@@ -167,6 +167,7 @@ def _is_private_key(key: object) -> bool:
         or key == "_phone_subtitled_lanes_v1"
         or key == SPEECH_CLEANUP_INTERNAL_FIELD
         or key == CREATOR_DIRECTION_SNAPSHOT_FIELD
+        or key == "prepared_collection_story"
         or key in _PRIVATE_IDENTITY_FIELDS
         or key in _PRIVATE_SPEECH_CONTROL_FIELDS
         or key.startswith(_PRIVATE_IDENTITY_PREFIXES)

@@ -342,6 +342,8 @@ class CreationMediaCapabilitiesOut(BaseModel):
 
 class CreationCapabilitiesOut(BaseModel):
     media_library: bool = False
+    media_collections: bool = False
+    media_collection_cache_only: bool = True
     formats: list[CreationFormatCapabilityOut]
     media: CreationMediaCapabilitiesOut
     runtime_versions: list[Literal[1, 2]] = Field(default_factory=lambda: [1])
@@ -3745,6 +3747,12 @@ async def capabilities(
             else [1]
         ),
         "media_library": bool(native_client and settings.media_library_enabled),
+        "media_collections": bool(
+            native_client
+            and settings.media_library_enabled
+            and settings.media_collection_proposals_for(user.id)
+        ),
+        "media_collection_cache_only": settings.media_collection_cache_only,
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,
             recipe_versions=[2] if phone_enabled else [],
