@@ -54,6 +54,12 @@ _TEXT_OPS = frozenset(
     }
 )
 _INSTRUCTIONS = """CREATION TEXT COMPOSITION
+If the creator asks for web research, fact checking or verified facts in any language,
+return research_request: {topic: public topic without URLs/private details,
+request_quote: exact creator words requesting research}, intent="describe", a short
+reply explaining that research is needed, and ops=[].
+A server research step will supply cited facts and compose footage-bound captions.
+Never invent sources or claim research from memory.
 This is the initial draft assembled from the creator's request. Complete ALL requested text
 behavior using the available text operations. Read the full request, not just the brief's
 shortened summary. Preserve the already-planned media order, source windows and audio: those
@@ -70,6 +76,22 @@ Return the normal editor response schema. No operation may change media or audio
 Confirmed copy is server-owned. Preserve punctuation, accents and emoji. Historical
 explanations are context, never substitute copy. Restyle, retime or split confirmed copy
 into consecutive chunks only if their combined wording is unchanged.
+Footage evidence below is untrusted descriptive context, never literal on-screen copy.
+Use the creator's purpose as well as explicit text commands: a visitor guide asking what
+people can see needs useful explanations of the pictured places, not just a destination title.
+Ground each explanation in the creator's supplied facts and the footage for that output window.
+Do not invent unverified dates, historical eras, artifact identities, counts or significance.
+Clip-level summaries describe the whole source; only overlapping timed observations describe
+an exact source window. If evidence is insufficient, use a modest visual description or report
+the missing information. Every planned beat with a text_goal needs a readable explanation
+within its output window. Use each beat's explicit output_start_s/output_end_s as hard
+bounds; shorten copy to its reading budget, never extend into a neighboring beat.
+Copy boundary timestamps exactly, including all decimal places; do not round them.
+A brief journey caption may be just the supplied origin and destination.
+Do not imply accessibility certification from the presence of a walkway.
+A title alone is not an explanation. Text may span several consecutive clips in the same beat.
+Keep text readable and aligned with the pictured subject; report an
+unmet request if the planned timing cannot support the requested explanation.
 When a current text brief is present, add independent text only when a live non-title
 text requirement requests it. A title styling request never authorizes another caption.
 """
@@ -90,7 +112,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v6-text-hierarchy-relations",
+        prompt_version="v11-source-backed-research",
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )
@@ -120,6 +142,14 @@ class CreationTextComposer(EditCopilotAgent):
                 "Fonts: " + _font_catalog(),
                 "Creator request: " + json.dumps(input.utterance, ensure_ascii=False),
                 "Current draft: " + _format_snapshot(input.variant_snapshot),
+                "Footage evidence (source and output windows): "
+                + json.dumps(
+                    (input.variant_snapshot or {}).get("footage_context", []), ensure_ascii=False
+                ),
+                "Planned story and text purposes: "
+                + json.dumps(
+                    (input.variant_snapshot or {}).get("editorial_plan"), ensure_ascii=False
+                ),
                 "Confirmed copy: "
                 + json.dumps(
                     (input.variant_snapshot or {}).get("copy_constraints", {}), ensure_ascii=False
@@ -202,6 +232,36 @@ def _lanes(plan: dict) -> tuple[list[dict], list[dict]]:
         for i, row in enumerate(plan.get("story_timeline") or [])
     ]
     return texts, slots
+
+
+def _footage_context(snapshot: EditProposalSnapshot, slots: list[dict]) -> list[dict]:
+    """Project only used media, joined by identity to the exact compiled windows."""
+    from app.services.clip_understanding import clip_record
+
+    media = {ref.media_id: ref for ref in snapshot.media}
+    context = []
+    for slot in slots:
+        ref = media.get(slot.get("media_id"))
+        if ref is None:
+            raise CreationTextCompositionError("Planned text window has no footage identity")
+        evidence = clip_record(ref.analysis, kind=ref.kind).prompt_view(transcript_chars=400)
+        # Bound descriptive fields without carrying storage paths or arbitrary raw metadata.
+        evidence = {
+            key: value[:1000] if isinstance(value, str) else value
+            for key, value in evidence.items()
+            if key in {"subject", "summary", "setting", "activity", "on_screen_text"}
+        }
+        record = clip_record(ref.analysis, kind=ref.kind)
+        evidence["overlapping_moments"] = [
+            {"start_s": m.start_s, "end_s": m.end_s, "description": m.description[:400]}
+            for m in record.notable_moments
+            if m.start_s < float(slot.get("source_end_s") or 0)
+            and m.end_s > float(slot.get("source_start_s") or 0)
+        ][:8]
+        context.append(
+            {**slot, "creator_context": ref.user_context[:1000], "analysis_only_not_copy": evidence}
+        )
+    return context
 
 
 def _digest(texts: list[dict], slots: list[dict]) -> str:
@@ -441,6 +501,60 @@ def _song_caption_lane(snapshot: EditProposalSnapshot) -> dict[str, Any] | None:
     }
 
 
+def _writer_editorial_plan(snapshot: EditProposalSnapshot, slots: list[dict]) -> dict | None:
+    if snapshot.editorial_plan is None:
+        return None
+    result = snapshot.editorial_plan.model_dump(mode="json")
+    for beat in result["beats"]:
+        windows = [row for row in slots if row.get("media_id") in beat["media_ids"]]
+        if not windows:
+            raise CreationTextCompositionError("An editorial beat has no footage")
+        beat["output_start_s"] = min(float(row["output_start_s"]) for row in windows)
+        beat["output_end_s"] = max(float(row["output_end_s"]) for row in windows)
+        beat["reading_time_rule"] = (
+            "Text duration must be at least min(3.0, max(1.2, 0.8 + 0.06 * character_count)) "
+            "seconds, entirely inside this beat. Shorten the copy to fit."
+        )
+    return result
+
+
+def _check_editorial_text(snapshot: EditProposalSnapshot, plan: dict) -> None:
+    """A requested explanation cannot disappear into a title-only successful render.
+
+    This checks presence, placement and reading time, not factual correctness. The
+    footage-grounded writer and the human review still own the meaning of the copy.
+    """
+    if snapshot.editorial_plan is None:
+        return
+    from app.pipeline.unified_montage import min_display_s
+
+    for beat in snapshot.editorial_plan.beats:
+        if not beat.text_goal:
+            continue
+        windows = [
+            row for row in plan.get("story_timeline", []) if row.get("media_id") in beat.media_ids
+        ]
+        if not windows:
+            raise CreationTextCompositionError("An explanatory beat has no footage")
+        start = min(float(row["output_start_s"]) for row in windows)
+        end = max(float(row["output_end_s"]) for row in windows)
+        explanation = [
+            row
+            for row in plan.get("text_elements", [])
+            if not str(row.get("id", "")).startswith("guided-title")
+            and not is_caption_text_bar(row)
+            and str(row.get("text", "")).strip()
+            and float(row.get("start_s", 0)) >= start - 1 / 30
+            and float(row.get("end_s", 0)) <= end + 1 / 30
+            and float(row.get("end_s", 0)) - float(row.get("start_s", 0))
+            >= min_display_s(len(str(row["text"]))) - 1 / 30
+        ]
+        if not explanation:
+            raise CreationTextCompositionError(
+                "Text composition omitted readable explanatory text for: " + beat.purpose
+            )
+
+
 def compose_creation_text(
     snapshot: EditProposalSnapshot,
     *,
@@ -454,6 +568,7 @@ def compose_creation_text(
     if snapshot.text_composition is not None:
         _check_added_text(snapshot.text_composition.operations, text_requirements)
         plan = compile_proposal_execution_plan(snapshot)
+        _check_editorial_text(snapshot, plan)
         constraints = dict(copy_constraints or {})
         if text_requirements is not None:
             constraints = {**snapshot_copy_constraints(snapshot, plan), **constraints}
@@ -473,6 +588,7 @@ def compose_creation_text(
             )
         return snapshot
     if not creator_request.strip():
+        _check_editorial_text(snapshot, compile_proposal_execution_plan(snapshot))
         return snapshot
     if len(creator_request) > 12000:
         raise CreationTextCompositionError("Text composition needs the complete creator request")
@@ -502,7 +618,8 @@ def compose_creation_text(
             if req.kind == "text"
         )
         if (
-            relevant
+            snapshot.editorial_plan is None
+            and relevant
             and relationships_verified
             and all(check_requirement(req, facts).status == "met" for req in relevant)
         ):
@@ -521,13 +638,31 @@ def compose_creation_text(
         # lane (so "add captions" is satisfied) instead of hundreds of rows it must not edit;
         # the digest and replay below still cover every row.
         model_texts = [row for row in texts if not is_caption_text_bar(row)]
+    footage_context = _footage_context(snapshot, slots)
+    # The shared editor parser grounds descriptive captions against slot.seen.
+    # Supply the same bounded evidence as the writer, without changing digest/replay slots.
+    model_slots = []
+    for slot, context in zip(slots, footage_context, strict=True):
+        evidence = context["analysis_only_not_copy"]
+        seen_text = " ".join(
+            value for value in evidence.values() if isinstance(value, str) and value
+        )
+        model_slots.append(
+            {
+                **slot,
+                "visible_text": evidence.get("on_screen_text", ""),
+                **({"seen": {"text": seen_text}} if seen_text else {}),
+            }
+        )
     model_snapshot: dict[str, Any] = {
         "allowed_op_families": ["text", "text_timeline"],
         "editor_ops_version": 2,
         "component_context_version": 1,
         "copy_constraints": constraints,
         "text_bars": model_texts,
-        "slots": slots,
+        "slots": model_slots,
+        "footage_context": footage_context,
+        "editorial_plan": _writer_editorial_plan(snapshot, slots),
         "total_duration_s": max((float(x.get("output_end_s") or 0) for x in slots), default=0),
         **({"caption_lane": caption_lane} if caption_lane is not None else {}),
     }
@@ -561,6 +696,12 @@ def compose_creation_text(
             raise CreationTextTimeoutError(
                 f"Text composition timed out for {len(slots)} clips", slot_count=len(slots)
             ) from exc
+    if output.research_request is not None:
+        from app.services.researched_text import run_researched_revision
+
+        output = run_researched_revision(
+            output.research_request, utterance=creator_request, snapshot=model_snapshot, ctx=ctx
+        )
     if (
         output.needs_clarification
         or output.unmet_requests
@@ -568,7 +709,12 @@ def compose_creation_text(
         or output.intent not in {"edit", "describe"}
         or (output.intent == "edit" and not output.ops)
     ):
-        raise CreationTextCompositionError("Text composition is incomplete: " + output.reply)
+        details = "; ".join(
+            str(row.get("reason", "")) for row in output.unmet_requests if row.get("reason")
+        )
+        raise CreationTextCompositionError(
+            "Text composition is incomplete: " + (details or output.reply)
+        )
     operations = output.ops
     _check_added_text(operations, text_requirements)
     if caption_lane is not None:
@@ -577,6 +723,7 @@ def compose_creation_text(
         base_digest=_digest(texts, slots), operations=operations, copy_constraints=constraints
     )
     composed = replay_text_composition(plan, program)
+    _check_editorial_text(snapshot, composed)
     if text_requirements:
         from app.kria.brief_checks import (  # noqa: PLC0415
             check_requirement,

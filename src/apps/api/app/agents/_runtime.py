@@ -237,6 +237,8 @@ class AgentSpec:
     # genuinely hard to hit in one shot; a higher value costs a real extra
     # model call on every schema miss.
     schema_retry_limit: int = 1
+    # Non-token provider tools (e.g. one grounded search prompt), reserved upfront.
+    max_tool_cost_usd: float = 0.0
 
 
 class ThoughtSummaryAttemptPublisher(Protocol):
@@ -754,7 +756,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                             else self.spec.name
                         ),
                         model=model,
-                        estimated_cost_usd=estimated_cost,
+                        estimated_cost_usd=estimated_cost + self.spec.max_tool_cost_usd,
                         ctx=ctx,
                         cached_behavior_available=bool(
                             ctx.extra.get("cached_behavior_available", False)
