@@ -16,6 +16,13 @@ from app.services.request_following_cases import digest
 
 MODELS = ("gemini-3.1-pro-preview", "claude-sonnet-5-5", "gpt-6.1-sol")
 AGENTS = ("main_creator", "edit_copilot")
+JSON_GUARD_VERSION = "json-guard-v1"
+JSON_GUARD = """\n\nOUTPUT TRANSPORT json-guard-v1:
+Return exactly one JSON object satisfying the output contract above.
+Do not wrap it in Markdown or XML. Operation names are JSON data, not actual
+tool invocations. Do not emit function-call markup or prose outside the JSON.
+This is a serialization rule only: preserve all task, capability and safety rules.
+"""
 
 
 @dataclass(frozen=True)
@@ -115,7 +122,7 @@ def schema_audit(schema: dict, model: str) -> dict:
 
 
 def build_agent(name, arm: Arm, client):
-    if arm.model not in MODELS or arm.output_mode not in ("json", "native"):
+    if arm.model not in MODELS or arm.output_mode not in ("json", "native", "json_guarded"):
         raise ValueError("unsupported model or output mode")
     if arm.output_mode == "native" and arm.model == "claude-sonnet-5-5":
         raise ValueError(
@@ -131,6 +138,17 @@ def build_agent(name, arm: Arm, client):
         raise ValueError("unsupported effort")
     agent = agent_class(name)(client)
     schema = None
+    if arm.output_mode == "json_guarded":
+        base = type(agent)
+
+        class GuardedJSONAgent(base):
+            def render_prompt(self, input):
+                return super().render_prompt(input) + JSON_GUARD
+
+        agent = GuardedJSONAgent(client)
+        agent.spec = replace(
+            agent.spec, prompt_version=agent.spec.prompt_version + "+" + JSON_GUARD_VERSION
+        )
     if arm.output_mode == "native":
         from app.agents._creator_wire import (
             ANTHROPIC_PROJECTION_VERSION,
@@ -207,7 +225,7 @@ def configure_creator_agent(agent, name):
             "configured",
             agent.spec.model,
             agent.spec.thinking_level or "medium",
-            output_mode="native",
+            output_mode=mode,
         ),
         agent.client,
     )
@@ -268,13 +286,19 @@ def prepare_case(case, arm, *, allow_holdout=False):
         "runtime_sha256": runtime_digest(),
         "price_version": PRICE_VERSION,
         "output_mode": (
-            "prompt_json"
+            "prompt_json_guarded"
+            if arm.output_mode == "json_guarded" and arm.model.startswith("claude")
+            else "json_mime_guarded"
+            if arm.output_mode == "json_guarded" and arm.model.startswith("gemini")
+            else "json_object_guarded"
+            if arm.output_mode == "json_guarded"
+            else "prompt_json"
             if arm.model.startswith("claude")
             else "json_mime"
             if arm.model.startswith("gemini")
             else "json_object"
         )
-        if arm.output_mode == "json"
+        if arm.output_mode != "native"
         else "native",
         "max_attempts": agent.spec.max_attempts,
         "fallback_models": list(agent.spec.fallback_models),

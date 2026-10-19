@@ -274,3 +274,53 @@ def test_known_rejected_sonnet_native_profile_requires_explicit_json():
         with pytest.raises(ValueError, match="compiled grammar"):
             build_agent(name, Arm("S", "claude-sonnet-5-5", "high", "native"), None)
         assert build_agent(name, Arm("S-json", "claude-sonnet-5-5", "high", "json"), None)
+
+
+def test_persistence_regrades_structural_candidate_without_rewriting_live_status(
+    tmp_path, monkeypatch, capsys
+):
+    import json
+    from pathlib import Path
+
+    from app.cli.compare_creator_models import main
+    from app.services import creator_comparison_persistence
+
+    tmp_path.chmod(0o700)
+    fixture = Path(__file__).parents[1] / "fixtures/agent_evals/main_creator/montage_strategy.json"
+    packet = tmp_path / "packet.json"
+    main(
+        ["freeze", "--case", str(fixture), "--arm", "O:gpt-6.1-sol:medium", "--output", str(packet)]
+    )
+    capsys.readouterr()
+    main(["replay", "--packet", str(packet), "--directory", str(tmp_path)])
+    journal_path = Path(json.loads(capsys.readouterr().out)["private_journal"])
+    journal = json.loads(journal_path.read_text())
+    row = next(iter(journal["rows"].values()))
+    row["status"] = "structural_failed"
+    row["structural_failures"] = ["Synthetic reconstruction omitted a recorded link"]
+    journal_path.write_text(json.dumps(journal))
+    before = journal_path.read_bytes()
+    seen = []
+
+    async def verify(case, output, **kwargs):
+        seen.append(case["id"])
+        return {"status": "verified", "rendered": False}
+
+    monkeypatch.setattr(creator_comparison_persistence, "verify_saved_candidate", verify)
+    main(
+        [
+            "verify-persistence",
+            "--packet",
+            str(packet),
+            "--journal",
+            str(journal_path),
+            "--directory",
+            str(tmp_path),
+        ]
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["verified"] == 1 and len(seen) == 1
+    report = json.loads(Path(summary["private_report"]).read_text())
+    assert report["rows"][0]["model_status"] == "structural_failed"
+    assert report["rows"][0]["original_structural_failures"] == row["structural_failures"]
+    assert journal_path.read_bytes() == before

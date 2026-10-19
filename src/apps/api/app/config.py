@@ -529,10 +529,10 @@ class Settings(BaseSettings):
     # Keep the interactive executor and proactive director independently reversible.
     main_creator_model: str = "gemini-3.1-pro-preview"
     main_creator_thinking_level: str = "high"
-    main_creator_output_mode: Literal["json", "native"] = "json"
+    main_creator_output_mode: Literal["json", "native", "json_guarded"] = "json"
     edit_copilot_model: str = "gemini-3.1-pro-preview"
     edit_copilot_thinking_level: str = "high"
-    edit_copilot_output_mode: Literal["json", "native"] = "json"
+    edit_copilot_output_mode: Literal["json", "native", "json_guarded"] = "json"
     edit_director_model: str = "gemini-3.1-pro-preview"
     # Eval-only comparison model. It is never contacted by the production
     # Director endpoint, whose explicit review is capped at one paid request.

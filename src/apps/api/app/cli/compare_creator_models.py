@@ -45,7 +45,7 @@ def _private_file(path):
 
 
 def _arm(value):
-    # id:model:effort[:native|json][:legacy]
+    # id:model:effort[:native|json|json_guarded][:legacy]
     parts = value.split(":")
     if not 3 <= len(parts) <= 5:
         raise ValueError("arm syntax id:model:effort[:mode][:legacy]")
@@ -544,6 +544,17 @@ def _execute(
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    imported = sub.add_parser("import-copilot")
+    imported.add_argument("--source", required=True)
+    imported.add_argument("--debug", required=True)
+    imported.add_argument("--run-id", required=True)
+    imported.add_argument("--event-index", required=True, type=int)
+    imported.add_argument("--output", required=True)
+    persistence = sub.add_parser("verify-persistence")
+    persistence.add_argument("--packet", required=True)
+    persistence.add_argument("--journal", required=True)
+    persistence.add_argument("--execution-contexts")
+    persistence.add_argument("--directory", required=True)
     audit = sub.add_parser("schema-audit")
     audit.add_argument("--output", required=True)
     report = sub.add_parser("report")
@@ -583,6 +594,156 @@ def main(argv=None):
             cmd.add_argument("--approval-sha256", required=True)
             cmd.add_argument("--envelope")
     args = parser.parse_args(argv)
+    if args.command == "verify-persistence":
+        import asyncio
+
+        from app.services.creator_comparison_persistence import verify_saved_candidate
+        from app.services.creator_model_comparison import runtime_digest, validate_packet
+
+        packet = read(_private_file(args.packet))
+        validate_packet(packet)
+        if any(c.get("split") == "holdout" for c in packet["cases"]):
+            raise ValueError("holdout persistence belongs to the sealed evaluator")
+        journal = read(_private_file(args.journal))
+        if journal.get("packet_sha256") != packet["sha256"]:
+            raise ValueError("journal does not match frozen packet")
+        contexts = read(_private_file(args.execution_contexts)) if args.execution_contexts else {}
+        directory = private_root(args.directory)
+        app_root = Path(__file__).resolve().parents[1]
+        verifier_hash = digest(
+            {
+                str(path.relative_to(app_root)): path.read_text()
+                for path in sorted(
+                    [
+                        app_root / "cli/compare_creator_models.py",
+                        app_root / "kria/drafts.py",
+                        app_root / "services/creator_comparison_persistence.py",
+                        app_root / "services/creator_capabilities.py",
+                        *app_root.glob("services/kria_editor_ops*.py"),
+                        *app_root.glob("services/editor_ops_v2/*.py"),
+                    ]
+                )
+            }
+        )
+        identity = digest([journal, contexts, runtime_digest(), verifier_hash])
+        target = directory / (packet["sha256"] + ".persistence-" + identity[:16] + ".json")
+        if target.exists():
+            result = read(_private_file(target))
+        else:
+
+            async def verify():
+                cases = {c["id"]: c for c in packet["cases"]}
+                rows = []
+                for key, row in journal.get("rows", {}).items():
+                    case = cases.get(row.get("case"))
+                    bindings = [
+                        b
+                        for b in packet.get("bindings", [])
+                        if b["case"] == row.get("case") and b["arm"] == row.get("arm")
+                    ]
+                    if (
+                        case is None
+                        or len(bindings) != 1
+                        or any(
+                            row.get(k) != bindings[0].get(k)
+                            for k in (
+                                "input_sha256",
+                                "prompt_sha256",
+                                "spec_sha256",
+                                "runtime_sha256",
+                            )
+                        )
+                    ):
+                        raise ValueError("candidate row differs from frozen bindings")
+                    record = {
+                        "key": key,
+                        "case": row["case"],
+                        "arm": row["arm"],
+                        "model_status": row["status"],
+                        "original_structural_failures": row.get("structural_failures", []),
+                    }
+                    # A synthetic structural rejection is a distinct result
+                    # from compiling returned bytes against the owned source
+                    # execution base. Preserve the original journal/verdict.
+                    if row["status"] not in {"parsed", "structural_failed"} or not row.get(
+                        "output"
+                    ):
+                        record.update(status="not_run", reason="candidate_not_parsed")
+                    else:
+                        try:
+                            record.update(
+                                await verify_saved_candidate(
+                                    case, row["output"], execution_context=contexts.get(case["id"])
+                                )
+                            )
+                        except Exception as exc:
+                            record.update(
+                                status="verification_failed", error_class=type(exc).__name__
+                            )
+                    rows.append(record)
+                return rows
+
+            result = {
+                "mode": "scratch_postgres_persistence",
+                "packet_sha256": packet["sha256"],
+                "verification_runtime_sha256": runtime_digest(),
+                "verifier_sha256": verifier_hash,
+                "actual_export": "unassessed",
+                "rows": asyncio.run(verify()),
+            }
+            write(target, result)
+            index_path = directory / "derived-artifacts.json"
+            index = read(_private_file(index_path)) if index_path.exists() else {"artifacts": []}
+            index["artifacts"].append(
+                {
+                    "cases": [c["id"] for c in packet["cases"]],
+                    "files": [target.name],
+                    "expires_at": min(
+                        (c["expires_at"] for c in packet["cases"] if c.get("expires_at")),
+                        default=None,
+                    ),
+                }
+            )
+            write(index_path, index)
+        print(
+            json.dumps(
+                {
+                    "mode": result["mode"],
+                    "rows": len(result["rows"]),
+                    "verified": sum(r["status"] == "verified" for r in result["rows"]),
+                    "not_run": sum(r["status"] == "not_run" for r in result["rows"]),
+                    "not_applicable": sum(r["status"] == "not_applicable" for r in result["rows"]),
+                    "failed": sum(r["status"] == "verification_failed" for r in result["rows"]),
+                    "private_report": str(target),
+                    "actual_export": "unassessed",
+                }
+            )
+        )
+        return
+    if args.command == "import-copilot":
+        from app.services.creator_comparison_sources import from_recorded_copilot
+
+        case = from_recorded_copilot(
+            read(_private_file(args.source)),
+            read(_private_file(args.debug)),
+            run_id=args.run_id,
+            request_event_index=args.event_index,
+        )
+        output = _private_file(args.output)
+        if output.exists():
+            raise ValueError("recorded imports are immutable")
+        write(output, case)
+        print(
+            json.dumps(
+                {
+                    "id": case["id"],
+                    "source_kind": case["source_kind"],
+                    "input_sha256": case["input_sha256"],
+                    "quality_verdict": "unassessed",
+                }
+            )
+        )
+        return
     if args.command == "approve-envelope":
         import uuid
 

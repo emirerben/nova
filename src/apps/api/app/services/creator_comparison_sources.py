@@ -141,3 +141,90 @@ def from_editor_snapshot(export, job, *, request_event_index):
         ],
     )
     return result
+
+
+def from_recorded_copilot(export, debug, *, run_id, request_event_index):
+    """Import a trusted owned job-debug export, never its latest editor state.
+
+    The AgentRun must belong to the exact creator turn. The exported source's
+    existing human review remains a source review, not a new turn/output verdict.
+    """
+    from app.agents.edit_copilot import EditCopilotInput
+
+    job = debug.get("job") or {}
+    job_id = str(job.get("id") or "")
+    sections = export["capture"]["sections"]
+    captured_job = sections.get("job-" + job_id) or {}
+    if (
+        not job_id
+        or str(job.get("user_id")) != export["eligibility"]["creator_id"]
+        or str(captured_job.get("id")) != job_id
+    ):
+        raise ValueError("recorded editor source owner/job mismatch")
+    matches = [r for r in debug.get("agent_runs", []) if r.get("id") == run_id]
+    if len(matches) != 1 or matches[0].get("agent_name") != "nova.edit.copilot":
+        raise ValueError("one recorded Copilot invocation required")
+    recorded = matches[0]
+    raw = copy.deepcopy(recorded.get("input_json"))
+
+    def complete(value):
+        if isinstance(value, dict):
+            if value.get("redacted"):
+                raise ValueError("redacted recorded input is incomplete")
+            for child in value.values():
+                complete(child)
+        elif isinstance(value, list):
+            for child in value:
+                complete(child)
+
+    complete(raw)
+    validated = EditCopilotInput.model_validate(raw).model_dump(mode="json")
+    if validated != raw or not validated["variant_snapshot"]:
+        raise ValueError("complete unchanged recorded editor input required")
+    events = sections["events"]
+    if not 0 <= request_event_index < len(events):
+        raise ValueError("creator event index outside source")
+    event = events[request_event_index]
+    if (
+        event.get("kind") != "user_message"
+        or event.get("actor") != "user"
+        or event.get("content") != raw["utterance"]
+    ):
+        raise ValueError("recorded request does not match creator event")
+
+    def timestamp(value):
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            raise ValueError("source timestamps must have time zones")
+        return parsed
+
+    invoked = timestamp(recorded["created_at"])
+    following = next(
+        (
+            e
+            for e in events[request_event_index + 1 :]
+            if e.get("kind") == "user_message" and e.get("actor") == "user"
+        ),
+        None,
+    )
+    if invoked < timestamp(event["created_at"]) or (
+        following and invoked >= timestamp(following["created_at"])
+    ):
+        raise ValueError("recorded invocation is outside creator turn")
+    result = _bound_case(
+        export,
+        input=raw,
+        agent="edit_copilot",
+        identity=run_id,
+        captured_at=recorded["created_at"],
+        source_kind="exact_invocation",
+    )
+    result.update(
+        origin_agent_run_id=run_id,
+        origin_prompt_version=recorded["prompt_version"],
+        origin_input_sha256=digest(raw),
+        source_job_id=job_id,
+        source_pointer=f"/sections/events/{request_event_index}/content",
+        snapshot_sha256=digest(raw["variant_snapshot"]),
+    )
+    return result

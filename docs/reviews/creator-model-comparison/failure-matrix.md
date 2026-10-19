@@ -64,3 +64,23 @@ schema, holdout, capture and live comparison work. Before implementation:
 - Known full Sonnet grammar rejection: reject native profile locally; only an explicitly selected JSON profile can run, with all earlier rejections retained. No automatic format fallback.
 
 - A fresh packet/request ID repeats the financially contained unknown case on the same model: reject using the protected case/model identity, even though independent cases may proceed. Missing case attribution also fails closed.
+
+## Overnight completion acceptance, fixed before changes
+
+- Recorded Copilot imports must bind the owned captured job and exact creator turn;
+  wrong owner/job/agent, missing or nested redactions, altered input, ambiguous time
+  windows and incomplete editor state must fail. No current editor reconstruction
+  may silently replace a recorded input or acquire a human quality verdict.
+- A prompt-only JSON transport guard must be a separately named, versioned opt-in
+  profile. Existing JSON/native profiles and their historical failures stay intact.
+  Frozen hashes include the guard, estimates count its tokens, and unparsed responses
+  remain failures rather than being repaired or retried silently.
+- Scratch persistence must refuse every non-local or non-`_test` database before
+  writes. Use isolated synthetic owners and real draft services; prove committed
+  reopen equality, stale-write rejection and undo, then remove the owned scratch rows.
+  Never dispatch a render/broker or touch the paid pilot ledger database.
+- State obligations are independently specified from the creator request and bound
+  to its input hash. Report deterministic checks separately from human preference
+  and picture/audio review. A missing/failed output cannot disappear from a denominator.
+- Source shortages and unavailable exports remain incomplete evidence. Broad work
+  approval does not create training consent, new independent creators, or human scores.

@@ -852,7 +852,7 @@
     {
       "id": "creator-model-comparison",
       "needs_native": false,
-      "api_tests": "tests/agents/test_text_provider_contracts.py tests/agents/test_comparison_workflow.py tests/services/test_text_provider_ledger.py tests/services/test_comparison_capture.py tests/integration/test_comparison_eligibility.py tests/services/test_ai_cost_control.py tests/evals/test_main_creator_evals.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_sealed_comparison.py tests/agents/test_comparison_sources.py",
+      "api_tests": "tests/agents/test_text_provider_contracts.py tests/agents/test_comparison_workflow.py tests/services/test_text_provider_ledger.py tests/services/test_comparison_capture.py tests/integration/test_comparison_eligibility.py tests/services/test_ai_cost_control.py tests/evals/test_main_creator_evals.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_sealed_comparison.py tests/agents/test_comparison_sources.py tests/agents/test_recorded_copilot_sources.py tests/agents/test_json_guard_profile.py tests/integration/test_comparison_persistence.py tests/integration/test_comparison_development_inventory.py",
       "paths": [
         "src/apps/api/app/agents/_text_providers.py",
         "src/apps/api/app/services/creator_model_comparison.py",
@@ -871,7 +871,12 @@
         "src/apps/api/app/services/creator_comparison_sources.py",
         "src/apps/api/tests/agents/test_creator_wire_contract.py",
         "src/apps/api/tests/agents/test_sealed_comparison.py",
-        "src/apps/api/tests/agents/test_comparison_sources.py"
+        "src/apps/api/tests/agents/test_comparison_sources.py",
+        "src/apps/api/app/services/creator_comparison_persistence.py",
+        "src/apps/api/tests/agents/test_recorded_copilot_sources.py",
+        "src/apps/api/tests/agents/test_json_guard_profile.py",
+        "src/apps/api/tests/integration/test_comparison_persistence.py",
+        "src/apps/api/tests/integration/test_comparison_development_inventory.py"
       ]
     }
   ]

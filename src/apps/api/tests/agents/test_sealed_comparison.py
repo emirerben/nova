@@ -91,3 +91,49 @@ def test_sealed_replay_executes_without_exposing_body_or_weakening_development(t
     assert result["parsed"] == 1 and result["split"] == "holdout"
     assert "private_journal" not in result
     assert "input" not in result and "output" not in result
+
+
+def test_real_holdout_requires_complete_inventory_and_media_fingerprints():
+    case = {
+        "id": "real",
+        "agent": "main_creator",
+        "split": "holdout",
+        "creator_id": "new-creator",
+        "event_group_ids": ["new-shoot"],
+        "media_group_ids": ["sha256:" + "a" * 64],
+        "source_kind": "exact_invocation",
+        "input": {},
+        "input_sha256": digest({}),
+        "intent_review": {
+            "decision": "approved",
+            "reviewed_by": "actual test reviewer",
+            "input_sha256": digest({}),
+            "expectations": ["source-bound intent"],
+        },
+    }
+    groups = ["creator:development", "media:sha256:" + "b" * 64]
+    inventory = {
+        "groups": groups,
+        "groups_sha256": digest(groups),
+        "owner_map_complete": True,
+        "media_map_complete": True,
+    }
+    sealed = packet(case)
+    for missing in [
+        [],
+        {**inventory, "owner_map_complete": False},
+        {**inventory, "media_map_complete": False},
+    ]:
+        with pytest.raises(ValueError):
+            register_holdout(sealed, development_groups=missing)
+    registration = register_holdout(sealed, development_groups=inventory)
+    validate_registration(sealed, registration)
+    overlap = [*groups, "media:sha256:" + "a" * 64]
+    with pytest.raises(ValueError, match="overlap"):
+        register_holdout(
+            sealed,
+            development_groups={**inventory, "groups": overlap, "groups_sha256": digest(overlap)},
+        )
+    del case["media_group_ids"]
+    with pytest.raises(ValueError):
+        register_holdout(packet(case), development_groups=inventory)

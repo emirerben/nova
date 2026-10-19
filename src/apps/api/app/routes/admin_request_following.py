@@ -188,6 +188,41 @@ async def require_current(db, case):
         raise HTTPException(409, "source_changed_wait_for_collection")
 
 
+@router.get("/comparison-development-groups")
+async def comparison_development_groups(db: DB):
+    """Historical exposure metadata only, including revoked/expired versions.
+
+    Never read request bodies or held-out identities. Content fingerprints need
+    a separate trusted asset inventory; thread identities cannot stand in for it.
+    A bounded result is explicitly incomplete when the bound is exceeded.
+    """
+    rows = (
+        await db.execute(
+            select(RequestFollowingCase.creator_id, RequestFollowingCase.thread_id)
+            .where(RequestFollowingCase.split == "development")
+            .distinct()
+            .order_by(RequestFollowingCase.creator_id, RequestFollowingCase.thread_id)
+            .limit(10_001)
+        )
+    ).all()
+    complete = len(rows) <= 10_000
+    rows = rows[:10_000]
+    owners = {str(r[0]) for r in rows}
+    threads = {str(r[1]) for r in rows}
+    groups = sorted({*("creator:" + v for v in owners), *("event:" + v for v in threads)})
+    return {
+        "schema_version": 1,
+        "groups": groups,
+        "groups_sha256": digest(groups),
+        "creator_count": len(owners),
+        "thread_count": len(threads),
+        "owner_map_complete": complete,
+        "media_map_complete": not rows and complete,
+        "metadata_only": True,
+        "generated_at": datetime.now(UTC).isoformat(),
+    }
+
+
 @router.get("/comparison-eligibility")
 async def comparison_eligibility(
     db: DB,
