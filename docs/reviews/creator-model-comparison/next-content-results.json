@@ -1,0 +1,52 @@
+{
+  "mode": "live_inference_only",
+  "new_calls": 6,
+  "max_new_reservation_usd": 1.396602,
+  "new_metered_spend_usd": 0.440296,
+  "source_kind": "two exact recorded invocation inputs, current pinned prompts",
+  "split": "development",
+  "creators": 1,
+  "threads": 2,
+  "cases": [
+    {
+      "id": "MC-01",
+      "task": "multi-clip travel montage with literal text, style and chronology constraints",
+      "submitted": 3,
+      "parsed": 3,
+      "compiled": 3,
+      "execution": "not_run",
+      "human_review": "pending"
+    },
+    {
+      "id": "CP-04",
+      "task": "align two titles while preserving vertical separation and unrelated text",
+      "submitted": 3,
+      "parsed": 2,
+      "compiled": 2,
+      "first_attempt_format_failure": 1,
+      "usable_candidates_have_identical_ops": true,
+      "preservation_checks_passed": 10,
+      "preservation_checks_total": 10,
+      "execution": "not_run",
+      "human_review": "pending"
+    }
+  ],
+  "ledger": {
+    "confirmed_metered_usd": 1.168546,
+    "retained_unknown_liability_usd": 1.716306,
+    "accounted_usd": 2.884852,
+    "remaining_usd": 2.775148,
+    "active_reserved_or_provider_started": 0,
+    "row_statuses": {
+      "unknown": 1,
+      "released": 7,
+      "settled": 19
+    }
+  },
+  "retries": 0,
+  "fallbacks": 0,
+  "human_lipsync_feedback": "Exclude from creative-direction ranking; grade song timestamp matching separately. No A/B preference assigned.",
+  "independent_real_holdout_cases_enrolled": 0,
+  "provider_identity_reporting": "deferred until blind preference review; fixed mapping retained privately",
+  "quality_winner": null
+}

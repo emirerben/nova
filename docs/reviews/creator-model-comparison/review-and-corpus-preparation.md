@@ -1,12 +1,13 @@
 # Blind review and next real cases
 
-Prepared on 2026-10-19. No new provider calls, production writes, saves, renders,
-device actions or model changes were made during this preparation. Pilot spend
-remains $0.728250 metered plus $1.716306 retained unknown liability.
+Prepared on 2026-10-19. The initial preparation made no provider calls, production
+writes, saves, renders, device actions or model changes. Its spend snapshot was
+$0.728250 metered plus $1.716306 retained unknown liability. The later non-lip-sync
+continuation is separately preregistered in `next-content-preregistration.json`.
 
-## Review available now
+## Initial review, superseded by the continuation below
 
-The private readable board contains the actual request, creator-facing reply,
+The original private readable board contains the actual request, creator-facing reply,
 typed strategy fields, sequence and rationale for seven pilot outputs across
 three panels. It preserves the earlier A/B/C mapping and hides provider identity,
 latency and cost. Full input/output details are expandable and escaped; no external
@@ -26,9 +27,10 @@ does not establish synchronization quality.
 
 Private artifacts, outside Git:
 
-- `readable-blind-review.html`: three panels, seven existing outputs.
-- `supported-cases-review.html`: eight exact real inputs, proposed grading
-  checklists and historical reference behavior.
+- `funded-blind-review.html`: original three panels, seven existing outputs.
+- `readable-blind-review.html`: the current non-lip-sync continuation described below.
+- `supported-cases-review.html`: initially eight Copilot inputs, later extended with
+  four Main inputs, proposed grading checklists and historical reference behavior.
 - Existing `funded-unblind.json`: unchanged provider mapping; do not reveal before
   the user's preferences are recorded.
 
@@ -138,3 +140,46 @@ must use the existing approved envelope and the <=$2 per-batch cap.
   preparation board. Actual source videos and candidate exports were not reviewed.
 - Existing broad implementation checks are recorded in `verification.md`; this
   preparation changes documentation/private artifacts only, so they were not rerun.
+
+## Human correction and non-lip-sync continuation
+
+The user rejected lip-sync as a creative-direction comparison: the job should
+match footage to song timestamps. This feedback is recorded without inventing an
+A/B preference. The earlier lip-sync results remain technical observations and are
+excluded from creative-direction ranking.
+
+The user requested other real content made in the app, without requiring manual
+creator nominations. Complete Main traces from five already approved sources
+yielded 24 exact-input imports. Four selected non-lip-sync cases cover a constrained
+travel montage, a grounded comic hook, a tone correction to a hook, and persistent
+literal titles. Each selected input has a current item/owner binding, no nested
+redactions and a matching creator event before the next creator turn. All source
+text and identities stay private. Alongside the eight Copilot inputs, the selected
+set now covers twelve requests from four development threads, still one creator.
+
+Two frozen cases were then run under the existing approved envelope: one montage
+and CP-04 text alignment, three explicit JSON provider profiles each, one attempt
+per call. The $1.396602 maximum was shown before submission; actual new spend was
+**$0.440296**. No retry, fallback, new unknown submission, production edit or export
+occurred. See `next-content-preregistration.json` and `next-content-results.json`.
+
+All three Main outputs parsed and compiled. Copilot produced two parsed outputs
+with identical operations: both left titles share the same left edge, their heights
+remain unchanged, and the separate right label remains untouched. All ten state
+checks across those two candidates pass. The third response was not valid JSON,
+so it failed before a usable edit; its raw response remains visible in the private
+review and was not repaired. Five successful compiles are not five verified exports.
+
+The review now displays these six new candidate slots, including the failure,
+with a separate fixed private A/B/C mapping for each case. Provider identity and
+per-candidate cost/latency remain hidden while the user reviews. Human preferences
+and request-fulfillment verdicts are pending. The prepared independent holdout
+matrix is unchanged at zero enrolled cases; other content from an already exposed
+creator cannot supply creator-independent evidence.
+
+The persistent ledger reconciles to **$1.168546** metered, **$1.716306** retained old
+Gemini liability, **$2.884852** accounted and **$2.775148** remaining. No active
+reserved/provider-started calls remain. The original unknown is still fenced.
+Both updated private pages were checked again in gstack; the six candidate slots
+are complete, with no external resources, console errors or horizontal overflow
+at 1440 px and 320 px. No candidate media was rendered or watched.
