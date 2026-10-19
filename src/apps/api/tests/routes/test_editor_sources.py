@@ -426,7 +426,7 @@ async def test_footage_admission_runs_post_prepare_get_and_save_validation(admis
     """
     a = admission
     from app.routes import generative_jobs
-    from tests.routes.test_phone_guided_timeline_commit import _guided_phone_job
+    from tests.routes._editor_save_matrix import guided_phone_job as _guided_phone_job
 
     # Keep the actual approval projection: a mocked source helper previously
     # hid the gap between a ready admission and the public timeline read.
