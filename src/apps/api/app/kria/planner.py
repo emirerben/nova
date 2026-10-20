@@ -70,6 +70,12 @@ from app.kria.brief import (
 )
 from app.kria.brief_checks import spoken_text_literals, whole_line_quotes
 from app.kria.brief_route import loose_text
+from app.kria.clip_exclusions import (
+    carry_forward_exclusions,
+    contested_exclusions,
+    earlier_exclusions,
+    exclusion_question,
+)
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
 from app.kria.duplicate_send import is_duplicate_answer
@@ -2699,6 +2705,9 @@ async def _plan_creator_action(
             thread_events = await _load_thread_events(db, thread_id)
         if settings.kria_clip_selection_questions_enabled:
             clip_selections = fold_clip_selections(thread_events)
+        earlier_excluded = (
+            await _earlier_exclusions(db, item_id) if settings.clip_intent_exclude_enabled else []
+        )
         await _kick_clip_understanding(item_id, intent_clips)
         try:
             planned = await plan_and_resolve_clip_intents(
@@ -2878,6 +2887,44 @@ async def _plan_creator_action(
                 ),
             )
         if settings.clip_intent_exclude_enabled:
+            # KRI-761: the resolver is not deterministic and the whole request is re-planned
+            # every turn, so an ask it matched in the draft before keeps that match when it
+            # comes back empty now.
+            carried_intents, carried = carry_forward_exclusions(
+                planned.resolution.intents,
+                earlier_excluded,
+                clip_ids={clip.media_id for clip in intent_clips},
+            )
+            if carried:
+                log.info("kria_clip_exclusions_carried", thread_id=str(thread_id), carried=carried)
+                planned = replace(
+                    planned, resolution=replace(planned.resolution, intents=carried_intents)
+                )
+            # KRI-761: an exclude that names a clip another ask pins, or that look-alikes
+            # share, is the creator's to settle: the picker, never a guess.
+            contested = (
+                contested_exclusions(planned.resolution.intents, action.strategy)
+                if settings.kria_clip_selection_questions_enabled
+                else []
+            )
+            asked = exclusion_question(contested, intent_clips)
+            if asked is not None:
+                log.info(
+                    "kria_clip_exclusions_contested",
+                    thread_id=str(thread_id),
+                    asks=len(contested),
+                    pinned=sum(1 for c in contested if c.blocked),
+                )
+                return PlannedKriaTurn(
+                    plan=_clip_intent_resolution_plan(
+                        question=asked[0],
+                        status="needs_creator",
+                        diagnostics={"stage": "exclusion", "reason": "contested"},
+                        clip_question=asked[1],
+                    ),
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                )
             # KRI-667: "Skip the quad bike clip" leaves the clips the resolver confidently
             # matched out of the pick, whatever the model selected. After the strategy
             # check, so the narrowed strategy is checked again (a refusal keeps the pick).
@@ -3028,6 +3075,30 @@ def _creative_copy_turn(
         manifest_hash=manifest.manifest_hash,
         context_hash=manifest.context_hash,
     )
+
+
+async def _earlier_exclusions(db: AsyncSession, item_id: uuid.UUID) -> list[ResolvedClipIntent]:
+    """The ``exclude`` intents the item's head draft resolved (KRI-761); [] when unreadable.
+
+    Fails open: this only lets an ask keep a match it already had, so no read problem may
+    cost the creator a turn. The read runs in a savepoint (a database error cannot poison
+    the turn's transaction) and releases the transaction like the thread-event read before it.
+    """
+    try:
+        async with db.begin_nested():
+            snapshot = (
+                await db.execute(
+                    select(CreatorEditDraft.snapshot_json)
+                    .where(CreatorEditDraft.item_id == item_id, CreatorEditDraft.is_head.is_(True))
+                    .order_by(CreatorEditDraft.updated_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        await db.rollback()  # no connection pinned across the resolver and vision calls
+        return earlier_exclusions(snapshot)
+    except Exception as exc:  # noqa: BLE001 - an earlier match is a convenience, never a gate
+        log.info("kria_earlier_exclusions_unreadable", error_type=type(exc).__name__)
+        return []
 
 
 def _unapplied_exclusions(planned: PlannedIntentResolution) -> int:

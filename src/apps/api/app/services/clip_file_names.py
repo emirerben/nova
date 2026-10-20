@@ -52,7 +52,8 @@ _FILLER_WORDS = frozenset(
         "clips video videos file files footage shot shots ve sonra ardindan ilk son sonda "
         "sonunda en basta once klip klibi klipler videosu dosya dosyasi ile bu s "
         # KRI-763: the inflected Turkish nouns ("M1_05 klibini", "M1_05 videosunu").
-        "klibini klibine klibin klipi klipleri kliplerini videoyu videosunu dosyayi dosyasini"
+        "klibini klibine klibin klipi klipleri kliplerini videoyu videosunu dosyayi dosyasini "
+        "klibinden klipten"
     ).split()
 )
 
