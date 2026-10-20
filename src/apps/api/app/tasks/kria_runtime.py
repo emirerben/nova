@@ -5612,6 +5612,13 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             JOB_FAILURE_MESSAGES,
         )
 
+        # KRI-673/KRI-765: every code with a sentence of its own says why the render stopped.
+        cause_codes = {
+            "phone_capability_unavailable",
+            "creation_text_failed",
+            *CREATOR_FACING_DETAIL_CODES,
+            *JOB_FAILURE_MESSAGES,
+        }
         recovery_receipts: list[dict[str, Any]] = []
         recovery_message: str | None = None
         raw_recovery = (job.assembly_plan or {}).get("request_recovery")
@@ -5712,6 +5719,16 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 tr="iPhone'un bu dışa aktarımı durdurdu. Onayladığın düzenleme kayıtlı. "
                 "Yeniden denemeden önce cihazdaki hatayı kontrol et.",
             )
+        elif native_without_program and failure_code in cause_codes:
+            # No exact retry exists for this render, but the cause is known: name it, then
+            # the real way forward (KRI-765: "creation_text_failed" read as a generic stop).
+            failure_content = (
+                f"{_job_failure_copy(failure_code, getattr(job, 'error_detail', None))} "
+                + say(
+                    en="To try again, ask for a new version and review its approval.",
+                    tr="Tekrar denemek için yeni bir sürüm isteyip onayını gözden geçir.",
+                )
+            )
         elif native_without_program:
             failure_content = say(
                 en=(
@@ -5742,12 +5759,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # KRI-701: the plan lacked something the creator confirmed; the iPhone can render
             # it, so the "can't render yet" table line would blame the wrong thing.
             failure_content = _phone_evidence_refusal_copy(typed_decline)
-        elif deterministic or failure_code in {
-            "phone_capability_unavailable",
-            "creation_text_failed",
-            *CREATOR_FACING_DETAIL_CODES,
-            *JOB_FAILURE_MESSAGES,
-        }:
+        elif deterministic or failure_code in cause_codes:
             # Retryable, but the generic "didn't finish" copy would hide WHY (KRI-286).
             # Creator-facing codes (KRI-466) show the job's own actionable detail.
             # KRI-673: every code with a table sentence says why; the generic line is

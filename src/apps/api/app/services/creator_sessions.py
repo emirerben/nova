@@ -973,13 +973,9 @@ async def _failure_settled_by_observer(
     return row is not None
 
 
-async def _render_ready_message(db: AsyncSession, session: CreatorAgentSession) -> str:
-    """The "edit is ready" line, in the language of the chat that asked for the render."""
-    from app.kria.reply_language import (  # noqa: PLC0415
-        reply_language_for,
-        say,
-        thread_reply_language,
-    )
+async def _session_reply_language(db: AsyncSession, session: CreatorAgentSession) -> str | None:
+    """The chat's reply language for the project this session renders (None = English)."""
+    from app.kria.reply_language import thread_reply_language  # noqa: PLC0415
 
     thread = (
         (
@@ -995,7 +991,14 @@ async def _render_ready_message(db: AsyncSession, session: CreatorAgentSession) 
         .scalars()
         .first()
     )
-    with reply_language_for(thread_reply_language(thread)):
+    return thread_reply_language(thread)
+
+
+async def _render_ready_message(db: AsyncSession, session: CreatorAgentSession) -> str:
+    """The "edit is ready" line, in the language of the chat that asked for the render."""
+    from app.kria.reply_language import reply_language_for, say  # noqa: PLC0415
+
+    with reply_language_for(await _session_reply_language(db, session)):
         return say(
             en=(
                 "The confirmed edit is ready. Watch it and tell me what feels "
@@ -1006,6 +1009,43 @@ async def _render_ready_message(db: AsyncSession, session: CreatorAgentSession) 
                 "neyi değiştirmek istediğini söyle."
             ),
         )
+
+
+async def _render_failed_message(db: AsyncSession, session: CreatorAgentSession) -> str:
+    """The generic "render didn't finish" line, in the chat's language (KRI-765)."""
+    from app.kria.reply_language import reply_language_for, say  # noqa: PLC0415
+
+    with reply_language_for(await _session_reply_language(db, session)):
+        return say(
+            en="That render didn't finish. Your confirmed plan is saved.",
+            tr="Bu video tamamlanamadı. Onayladığın plan kayıtlı.",
+        )
+
+
+async def _pending_dispatch_pins_job(
+    db: AsyncSession, session: CreatorAgentSession, job: Job
+) -> bool:
+    """True while an approved render is accepted but not yet dispatched and still pins this Job.
+
+    Approval acceptance moves the session to ``executing`` but ``target_job_id`` keeps pointing
+    at the PREVIOUS render until the dispatch mints the new Job. A poll in that window sees the
+    old Job's failure, which the creator was already told about, and would post it again as if
+    the render they just approved had failed (KRI-765). Bounded like the observer window: a
+    dispatch that never happens must not hide the failure forever.
+    """
+    row = (
+        await db.execute(
+            select(CreatorAgentExecution.id)
+            .where(
+                CreatorAgentExecution.session_id == session.id,
+                CreatorAgentExecution.target_job_id == job.id,
+                CreatorAgentExecution.status == "accepted",
+                CreatorAgentExecution.accepted_at > datetime.now(UTC) - OBSERVER_FAILURE_WINDOW,
+            )
+            .limit(1)
+        )
+    ).first()
+    return row is not None
 
 
 async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession) -> bool:
@@ -1278,6 +1318,8 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
         session.phase = "rendering"
         return changed
     if job.status in PLAN_ITEM_JOB_FAILED:
+        if await _pending_dispatch_pins_job(db, session, job):
+            return False
         session.phase = "failed"
         session.last_error = {"code": job.failure_reason or "render_failed"}
         # A runtime-v2 render is settled by its dispatched execution's observer, which
@@ -1288,7 +1330,7 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
                 db,
                 session,
                 event_type="assistant_render_failed",
-                payload={"message": "That render didn't finish. Your confirmed plan is saved."},
+                payload={"message": await _render_failed_message(db, session)},
             )
         return True
     if job.status in PLAN_ITEM_JOB_READY:
