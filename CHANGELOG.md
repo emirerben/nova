@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.64.0] - 2026-10-20
+
+### Changed
+- KRI-763: a file name in a first/last pin is never read as an attachment number (#1693) <!-- release-pr: 1693 -->
+
 ## [0.80.63.0] - 2026-10-20
 
 ### Fixed
