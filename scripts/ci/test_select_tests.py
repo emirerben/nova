@@ -733,6 +733,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-623-ruled-out-clips"),
             ),
             (
+                "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri766_label_echo_vs_described_action.json",
+                (True, "covered", "kri-766-label-bound"),
+            ),
+            (
+                "src/apps/api/tests/kria/test_kri766_label_stays_bound.py",
+                (True, "covered", "kri-766-label-bound"),
+            ),
+            (
                 "src/apps/api/app/kria/narration_notes.py",
                 (True, "covered", "kri-585-spoken-order"),
             ),

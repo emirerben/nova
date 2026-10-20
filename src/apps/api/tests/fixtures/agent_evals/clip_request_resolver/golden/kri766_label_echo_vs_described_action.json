@@ -1,0 +1,117 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-10-19.1",
+  "input": {
+    "creator_request": "Tabağı kameraya uzattığı klibe \"Oblea de la casa\" etiketi koy.",
+    "intents": [
+      {
+        "intent_id": "label_oblea",
+        "op": "label",
+        "attribute": "Tabağı kameraya uzattığı klip",
+        "creator_text": "Oblea de la casa",
+        "caption_attribute": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "kind": "video",
+        "record": {
+          "subject": "woman presenting a waffle dessert at a café table",
+          "summary": "A woman introduces the house dessert, pointing at a waffle on a plate while talking to the camera.",
+          "setting": "café interior",
+          "activity": "presenting a food dish",
+          "people": {
+            "speaks_to_camera": true,
+            "count": 1
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": true,
+            "transcript": "Hi, I'm Karolina, I'm from Ecuador. And this is the Oblea de la casa."
+          },
+          "content_type": "talking_head",
+          "audio_type": "speech"
+        }
+      },
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "woman holding out a plate toward the camera",
+          "summary": "A woman brings a plate of waffles close to the camera lens and holds it out, smiling.",
+          "setting": "café interior",
+          "activity": "presents a plate, pushing it toward the lens",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 1
+          },
+          "notable_moments": [
+            {
+              "start_s": 1.0,
+              "end_s": 3.0,
+              "description": "plate pushed close to the camera"
+            }
+          ],
+          "content_type": "b_roll",
+          "audio_type": "ambient"
+        }
+      },
+      {
+        "alias": "m003",
+        "kind": "video",
+        "record": {
+          "subject": "woman waving goodbye",
+          "summary": "A woman laughs and waves at the camera.",
+          "setting": "café interior",
+          "activity": "laughing and waving goodbye",
+          "people": {
+            "speaks_to_camera": true,
+            "count": 1
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": true,
+            "transcript": "Bye bye. Bye."
+          },
+          "content_type": "talking_head",
+          "audio_type": "speech"
+        }
+      }
+    ]
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"label_oblea\",\n      \"assignments\": [\n        {\n          \"media\": \"m002\",\n          \"value\": \"\",\n          \"evidence\": \"activity: presents a plate, pushing it toward the lens\",\n          \"confidence\": 0.9\n        }\n      ],\n      \"needs_vision\": [\n        {\n          \"media\": \"m001\",\n          \"question\": \"Does she hold the plate out toward the camera lens in this clip?\"\n        }\n      ],\n      \"question\": null,\n      \"caption\": null\n    }\n  ]\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "label_oblea",
+        "assignments": [
+          {
+            "media": "m002",
+            "value": "",
+            "evidence": "activity: presents a plate, pushing it toward the lens",
+            "confidence": 0.9
+          }
+        ],
+        "needs_vision": [
+          {
+            "media": "m001",
+            "question": "Does she hold the plate out toward the camera lens in this clip?"
+          }
+        ],
+        "question": null,
+        "caption": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-766 (prod thread A9100235, Merope cafe M1): the label \"Oblea de la casa\" is for the clip where she pushes the plate to the lens (m002). m001 only SAYS the dish name while introducing it; a spoken echo of the label's own words is not evidence of which clip the creator described, so it may be a vision check at most, never a confident member. Hand-authored expectation; no live run was made (no paid calls).",
+    "expect_covered": {
+      "label_oblea": [
+        "m002"
+      ]
+    }
+  }
+}

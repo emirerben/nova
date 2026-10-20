@@ -502,6 +502,15 @@
       ]
     },
     {
+      "id": "kri-766-label-bound",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri766_label_stays_bound.py tests/evals/test_clip_request_resolver_evals.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri766_label_echo_vs_described_action.json",
+        "src/apps/api/tests/kria/test_kri766_label_stays_bound.py"
+      ]
+    },
+    {
       "id": "kri-761-look-alike-exclusions",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py",
