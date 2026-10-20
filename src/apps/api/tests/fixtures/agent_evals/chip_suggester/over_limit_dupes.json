@@ -1,0 +1,61 @@
+{
+ "id": "over_limit_dupes",
+ "description": "Eight rows over four candidates: capped at the set limit, one chip per kind.",
+ "context": "fp_speech_and_broll",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{cid:captions}}",
+    "label_template": "Add captions",
+    "why": null
+   },
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Add a hook to the opening",
+    "why": null
+   },
+   {
+    "cid": "{{cid:sfx}}",
+    "label_template": "Add sound effects",
+    "why": null
+   },
+   {
+    "cid": "{{cid:transition}}",
+    "label_template": "Add transitions",
+    "why": null
+   },
+   {
+    "cid": "{{cid:captions}}",
+    "label_template": "Add captions",
+    "why": null
+   },
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Add a hook to the opening",
+    "why": null
+   },
+   {
+    "cid": "{{cid:sfx}}",
+    "label_template": "Add sound effects",
+    "why": null
+   },
+   {
+    "cid": "{{cid:transition}}",
+    "label_template": "Add transitions",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "kinds": [
+   "default_edit",
+   "captions",
+   "hook",
+   "sfx"
+  ]
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

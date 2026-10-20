@@ -1,0 +1,47 @@
+{
+ "id": "good_tr_first_prompt",
+ "description": "Turkish thread, Turkish labels inside the Turkish vocabulary, Turkish whys grounded in the Turkish subjects.",
+ "context": "east-run-brief::first_prompt",
+ "model_output": {
+  "default_label": "İlk versiyonu Kria kessin",
+  "ranked": [
+   {
+    "cid": "{{cid:captions}}",
+    "label_template": "Konuşmaya altyazı ekle",
+    "why": "Kameraya konuşan koşucu var"
+   },
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Açılışa bir hook ekle",
+    "why": "Köprüde koşan koşucu açılışı taşır"
+   },
+   {
+    "cid": "{{cid:sfx}}",
+    "label_template": "Ses efektleri ekle",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "kinds": [
+   "default_edit",
+   "captions",
+   "hook",
+   "sfx"
+  ],
+  "label_source": {
+   "captions": "agent",
+   "hook": "agent",
+   "sfx": "agent"
+  },
+  "why": {
+   "captions": true,
+   "hook": true
+  }
+ },
+ "tags": [
+  "natural",
+  "tr"
+ ]
+}

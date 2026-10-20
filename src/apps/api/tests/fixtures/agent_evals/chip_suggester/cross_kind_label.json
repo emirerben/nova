@@ -1,0 +1,33 @@
+{
+ "id": "cross_kind_label",
+ "description": "A captions cid reworded as 'Add sound effects' would promise something the tap does not do: label rejected, template kept, chip kept.",
+ "context": "fp_speech_and_broll",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{cid:captions}}",
+    "label_template": "Add sound effects",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "kinds": [
+   "default_edit",
+   "captions"
+  ],
+  "label_source": {
+   "captions": "template"
+  },
+  "labels": {
+   "captions": "Add captions"
+  },
+  "drops": {
+   "label_off_lexicon": 1
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

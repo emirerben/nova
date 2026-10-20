@@ -126,7 +126,7 @@ def test_added_clip_carries_its_media_identity_through_the_projection(monkeypatc
     added = base.projected["guided_draft_slots"][-1]
     assert added["media_id"] == "m-new"
     assert added["source_duration_s"] == 9.0
-    assert added["slot_id"].startswith("cs-cs-1")  # deterministic id for a new row
+    assert added.get("slot_id") is None  # Save assigns the permanent placement ID
 
 
 def test_digest_excludes_editor_state() -> None:
@@ -454,3 +454,68 @@ async def test_unsupported_editor_refusal_offers_a_redo_that_routes_to_a_replan(
         db, thread_id=uuid.uuid4(), item=item, user_message="x"
     )
     assert plan.response.count('"redo"') == 1
+
+
+def test_unsaved_restored_clip_reorder_remains_saveable(monkeypatch) -> None:
+    """Restore -> chat move/trim -> real Save validation must retain new-slot semantics."""
+    from app.routes.generative_jobs import resolve_timeline_slots_for_edit
+    from tests.routes.test_generative_timeline import _arm, _timeline_job
+
+    _arm(monkeypatch)
+    job = _timeline_job(beat_grid=[])
+    variant = job.assembly_plan["variants"][0]
+    variant["render_generation_id"] = "G2"
+    rows = [
+        {"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_s": 3.0},
+        {"slot_id": None, "clip_index": 1, "in_s": 0.0, "duration_s": 3.0},
+    ]
+    base = resolve_editor_base(job, variant, None, _state({"timeline_slots": rows}))
+    compiled = compile_editor_ops(
+        job,
+        base.projected,
+        [
+            {"op": "reorder_clip", "from_index": 1, "to_index": 0},
+            {"op": "set_clip_in", "slot_index": 1, "in_s": 1.8667},
+            {"op": "set_clip_duration", "slot_index": 1, "duration_s": 2.5},
+        ],
+    )
+    saved = resolve_timeline_slots_for_edit(job, variant, compiled.payload.timeline_slots)
+    assert [row["clip_index"] for row in saved] == [1, 0]
+    assert saved[0]["in_s"] == pytest.approx(1.8667)
+    assert saved[0]["duration_s"] == pytest.approx(2.5)
+    assert saved[0]["slot_id"] not in {"s1", "s2"}
+
+
+@pytest.mark.parametrize("slot_id", ["unknown-slot", "cs-cs-1-1"])
+def test_chat_does_not_relabel_unknown_existing_slot_as_new(monkeypatch, slot_id) -> None:
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import resolve_timeline_slots_for_edit
+    from tests.routes.test_generative_timeline import _arm, _timeline_job
+
+    _arm(monkeypatch)
+    job = _timeline_job(beat_grid=[])
+    variant = job.assembly_plan["variants"][0]
+    variant["render_generation_id"] = "G2"
+    base = resolve_editor_base(
+        job,
+        variant,
+        None,
+        _state(
+            {
+                "timeline_slots": [
+                    {"slot_id": slot_id, "clip_index": 1, "in_s": 0.0, "duration_s": 3.0},
+                ]
+            }
+        ),
+    )
+    compiled = compile_editor_ops(
+        job,
+        base.projected,
+        [
+            {"op": "set_clip_duration", "slot_index": 0, "duration_s": 2.5},
+        ],
+    )
+    with pytest.raises(HTTPException) as error:
+        resolve_timeline_slots_for_edit(job, variant, compiled.payload.timeline_slots)
+    assert error.value.detail["code"] == "TIMELINE_STALE"

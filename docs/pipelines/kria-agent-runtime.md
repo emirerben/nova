@@ -328,6 +328,13 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   description or a cut-length style; a later "use the short clips too" adds them back.
   Photos and Visuals are never dropped; "skip the dark ones" stays the model's call
   (no lighting signal yet). Incident: cabin kit M2 re-send, prod thread 35ccc8ef.
+  KRI-758: ONE clip told apart by what it shows ("Caro'nun … bıraktığı kısa klibi
+  kullanma", "skip the short clip where …") is never a length group — a singular
+  phrase is the clip-intent `exclude` path; the single "en uzun klibi" / "the longest
+  clip" still scopes, and media the strategy itself places (montage audio source,
+  reaction beats, closing media) is never dropped by a length word. Guard:
+  `tests/kria/test_kri758_singular_clip_is_not_a_length_group.py`. Incident: café kit M1,
+  thread 91256BF1.
   Guard: `tests/kria/test_kri623_ruled_out_clips.py`.
 - *What the clips say orders a camera-sound montage (KRI-585)*: a phone montage with no
   song, voiceover or named voice source plays every clip's own sound

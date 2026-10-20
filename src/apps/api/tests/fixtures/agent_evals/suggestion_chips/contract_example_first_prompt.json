@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "set_id": "sg_e7d8e2755565359a",
+  "state": "first_prompt",
+  "status": "ok",
+  "understanding": "done",
+  "retry_after_s": null,
+  "wording": "fallback",
+  "anchor": {
+    "media_digest": "digest-fp_speech_and_broll",
+    "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "render_generation_id": null,
+    "variant_id": null
+  },
+  "chips": [
+    {
+      "id": "sc_dafe025de49c",
+      "kind": "default_edit",
+      "label": "Let Kria cut the first version",
+      "message": "Suggest an edit.",
+      "rank": 1,
+      "default_edit": true,
+      "capability": "dispatch_render",
+      "anchor": {
+        "media_id": null,
+        "clip_ordinal": null,
+        "moment": null,
+        "text_bar_index": null
+      },
+      "why": null,
+      "label_source": "template",
+      "requires_protocol": null
+    },
+    {
+      "id": "sc_9cbed68f727d",
+      "kind": "captions",
+      "label": "Add captions",
+      "message": "Add captions",
+      "rank": 2,
+      "default_edit": false,
+      "capability": "footage:speech",
+      "anchor": {
+        "media_id": null,
+        "clip_ordinal": null,
+        "moment": null,
+        "text_bar_index": null
+      },
+      "why": null,
+      "label_source": "template",
+      "requires_protocol": null
+    },
+    {
+      "id": "sc_95b59daef553",
+      "kind": "hook",
+      "label": "Add a hook to the opening",
+      "message": "Add a hook that matches the video",
+      "rank": 3,
+      "default_edit": false,
+      "capability": "dispatch_render",
+      "anchor": {
+        "media_id": null,
+        "clip_ordinal": null,
+        "moment": null,
+        "text_bar_index": null
+      },
+      "why": null,
+      "label_source": "template",
+      "requires_protocol": null
+    },
+    {
+      "id": "sc_f132f0732b16",
+      "kind": "sfx",
+      "label": "Add sound effects",
+      "message": "Add sound effects",
+      "rank": 4,
+      "default_edit": false,
+      "capability": "sound_effects",
+      "anchor": {
+        "media_id": null,
+        "clip_ordinal": null,
+        "moment": null,
+        "text_bar_index": null
+      },
+      "why": null,
+      "label_source": "template",
+      "requires_protocol": null
+    }
+  ]
+}

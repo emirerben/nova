@@ -5517,6 +5517,11 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 )
                 turn.observed_event_id = review.id
                 db.commit()
+                # KRI-756: the render settled ready: word the follow-up suggestion chips for it
+                # (flag-checked, enqueue-only, never raises).
+                from app.services.suggestion_serve import enqueue_for_thread  # noqa: PLC0415
+
+                enqueue_for_thread(thread.id, trigger="render_ready", creator_id=thread.creator_id)
                 return "completed", _promote_queued_successor_sync(thread.id)
 
         failure_code = variant_failure_code or (

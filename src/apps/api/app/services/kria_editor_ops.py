@@ -1415,15 +1415,8 @@ def client_state_payload(client_state: Any) -> dict[str, Any]:
         for key, value in (state.get("lanes") or {}).items()
         if key not in _STATE_DROP_KEYS and value is not None
     }
-    slots = lanes.get("timeline_slots")
-    if isinstance(slots, list):
-        # New (unsaved) rows have no id yet; give them a deterministic one so the
-        # snapshot the model sees and the compile base index the SAME rows.
-        stamp = str(state.get("client_state_id") or "state")[:12]
-        lanes["timeline_slots"] = [
-            row if row.get("slot_id") else {**row, "slot_id": f"cs-{stamp}-{index}"}
-            for index, row in enumerate(slots)
-        ]
+    # Missing slot IDs mean new placements. Keep that meaning through chat so
+    # the Save boundary can assign permanent IDs; fabricated IDs look stale.
     lanes["base_generation"] = str(state.get("base_generation") or "")
     return lanes
 

@@ -150,6 +150,9 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ),
     # KRI-189: best-guess landmark for a clip from frames + place (provenance: inferred).
     ("nova.video.landmark_guess", "app.agents.landmark_guess", "LandmarkGuessAgent"),
+    # KRI-756: rank + word the suggestion chips the deterministic generator allowed
+    # (behind KRIA_SUGGESTION_CHIPS_ENABLED; text-only, off the request path).
+    ("nova.chat.suggester", "app.agents.chip_suggester", "ChipSuggesterAgent"),
 )
 
 

@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "set_id": "sg_a85eca3812073cf0",
+  "state": "ready",
+  "status": "ok",
+  "understanding": "done",
+  "retry_after_s": null,
+  "wording": "fallback",
+  "anchor": {
+    "media_digest": "digest-rd_plain_montage",
+    "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "render_generation_id": "gen-1",
+    "variant_id": "v1"
+  },
+  "chips": [
+    {
+      "id": "sc_55076d2d8a20",
+      "kind": "hook",
+      "label": "Add a hook to the opening",
+      "message": "Add a hook that matches the video",
+      "rank": 1,
+      "default_edit": false,
+      "capability": "family:title",
+      "anchor": {
+        "media_id": null,
+        "clip_ordinal": null,
+        "moment": null,
+        "text_bar_index": null
+      },
+      "why": null,
+      "label_source": "template",
+      "requires_protocol": null
+    },
+    {
+      "id": "sc_37da4b1df57a",
+      "kind": "sfx",
+      "label": "Add sound effects",
+      "message": "Add sound effects",
+      "rank": 2,
+      "default_edit": false,
+      "capability": "family:sfx",
+      "anchor": {
+        "media_id": null,
+        "clip_ordinal": null,
+        "moment": null,
+        "text_bar_index": null
+      },
+      "why": null,
+      "label_source": "template",
+      "requires_protocol": null
+    },
+    {
+      "id": "sc_7e0baecc8f6a",
+      "kind": "transition",
+      "label": "Add transitions",
+      "message": "Add transitions between the clips",
+      "rank": 3,
+      "default_edit": false,
+      "capability": "family:transition",
+      "anchor": {
+        "media_id": null,
+        "clip_ordinal": null,
+        "moment": null,
+        "text_bar_index": null
+      },
+      "why": null,
+      "label_source": "template",
+      "requires_protocol": null
+    }
+  ]
+}
