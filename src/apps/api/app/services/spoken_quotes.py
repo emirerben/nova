@@ -35,6 +35,7 @@ import asyncio
 import re
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
@@ -585,21 +586,33 @@ def _clauses(text: str) -> list[str]:
     return [clause for clause in text.split("\n") if clause.strip()]
 
 
-def described_line_moments(
-    texts: Sequence[str],
-    media_snapshot: Mapping[str, Any] | None,
-    *,
-    skip_ids: Sequence[str] = (),
-) -> dict[str, tuple[float, float]]:
-    """The spoken sentence each ask describes a clip by, as that clip's source window.
+def _match_sentence(
+    clause: str, sentences: Sequence[tuple[str, float, float, float, set[str]]]
+) -> tuple[str, tuple[int, str, float, float, float] | None]:
+    """("found", best) / ("ambiguous", None) / ("none", None) for one clause of an ask.
 
-    "Teknenin çalışmadığı klipte kendi sesi açık kalsın" names no line, but the boat clip
-    says "tekne çalışmıyor" (KRI-681). Each clause of ``texts`` (the creator's audio and
-    order asks) is matched on word stems against every timed sentence; the clip with the
-    one best match (two shared stems or more) gets that sentence, padded to at least
-    ``DESCRIBED_MOMENT_MIN_S``. A tie between clips moves nothing; the first ask to seat
-    a clip wins; ``skip_ids`` (a held closing line) are never touched.
+    ``best`` is (shared stems, media id, clip duration, start, end) of the one sentence on
+    two or more shared word stems; two clips saying it equally is ambiguous.
     """
+    want = _stems(clause)
+    hits = [
+        (len(want & stems), media_id, duration, start, end)
+        for media_id, duration, start, end, stems in sentences
+        if len(want & stems) >= _MIN_SHARED_STEMS
+    ]
+    if not hits:
+        return "none", None
+    top = max(hit[0] for hit in hits)
+    best = [hit for hit in hits if hit[0] == top]
+    if len({hit[1] for hit in best}) != 1:
+        log.info("described_line_ambiguous", media_ids=sorted({h[1] for h in best}))
+        return "ambiguous", None
+    return "found", min(best, key=lambda hit: hit[3])
+
+
+def _sentences(
+    media_snapshot: Mapping[str, Any] | None, skip_ids: Sequence[str]
+) -> list[tuple[str, float, float, float, set[str]]]:
     rows = [
         row
         for row in (media_snapshot or {}).get("clip_assignments") or []
@@ -609,35 +622,106 @@ def described_line_moments(
         and row.get("kind", "video") == "video"
         and _number(row.get("duration_s"))
     ]
-    sentences = [
+    return [
         (row["media_id"], float(row["duration_s"]), start, end, _stems(text))
         for row in rows
         for start, end, text in _timed_rows(_segments(_row_analysis(row)))
     ]
-    out: dict[str, tuple[float, float]] = {}
-    for text in texts:
-        for clause in _clauses(str(text or "")):
-            want = _stems(clause)
-            hits = [
-                (len(want & stems), media_id, duration, start, end)
-                for media_id, duration, start, end, stems in sentences
-                if len(want & stems) >= _MIN_SHARED_STEMS
-            ]
-            if not hits:
+
+
+def _padded_window(duration: float, start: float, end: float) -> tuple[float, float]:
+    low = max(0.0, start - DESCRIBED_LEAD_S)
+    high = min(duration, max(end + SEGMENT_TAIL_S, low + DESCRIBED_MOMENT_MIN_S))
+    low = max(0.0, min(low, high - DESCRIBED_MOMENT_MIN_S))
+    return round(low, 3), round(high, 3)
+
+
+@dataclass(frozen=True)
+class DescribedLine:
+    """A clip's window and the timed sentence (source seconds) that seated it."""
+
+    window: tuple[float, float]
+    line: tuple[float, float]
+
+
+def described_lines(
+    texts: Sequence[str],
+    media_snapshot: Mapping[str, Any] | None,
+    *,
+    skip_ids: Sequence[str] = (),
+    lines: Sequence[str] = (),
+) -> dict[str, DescribedLine]:
+    """The spoken sentence each ask describes a clip by, as that clip's source window.
+
+    "Teknenin çalışmadığı klipte kendi sesi açık kalsın" names no line, but the boat clip
+    says "tekne çalışmıyor" (KRI-681). Each clause of ``texts`` (the creator's audio and
+    order asks) is matched on word stems against
+    every timed sentence; the clip with the one best match (two shared stems or more) gets
+    that sentence, padded to at least ``DESCRIBED_MOMENT_MIN_S``. A tie between clips moves
+    nothing; the first ask to seat a clip wins; ``skip_ids`` (a held closing line) are never
+    touched. ``lines`` (KRI-760) are lines the creator wants heard whole, each matched as
+    one clause whatever commas it has, and seated before the clauses of ``texts``.
+    """
+    sentences = _sentences(media_snapshot, skip_ids)
+    out: dict[str, DescribedLine] = {}
+    for clauses in ([line] for line in lines), (_clauses(str(text or "")) for text in texts):
+        for clause in (clause for group in clauses for clause in group):
+            status, hit = _match_sentence(clause, sentences)
+            if status != "found" or hit is None:
                 continue
-            top = max(hit[0] for hit in hits)
-            best = [hit for hit in hits if hit[0] == top]
-            if len({hit[1] for hit in best}) != 1:
-                log.info("described_line_ambiguous", media_ids=sorted({h[1] for h in best}))
-                continue
-            _shared, media_id, duration, start, end = min(best, key=lambda hit: hit[3])
+            _shared, media_id, duration, start, end = hit
             if media_id in out:
                 continue
-            low = max(0.0, start - DESCRIBED_LEAD_S)
-            high = min(duration, max(end + SEGMENT_TAIL_S, low + DESCRIBED_MOMENT_MIN_S))
-            low = max(0.0, min(low, high - DESCRIBED_MOMENT_MIN_S))
-            out[media_id] = (round(low, 3), round(high, 3))
-            log.info("described_line_seated", media_id=media_id, start_s=low, end_s=high)
+            window = _padded_window(duration, start, end)
+            out[media_id] = DescribedLine(window=window, line=(start, end))
+            log.info("described_line_seated", media_id=media_id, start_s=window[0], end_s=window[1])
+    return out
+
+
+def described_line_moments(
+    texts: Sequence[str],
+    media_snapshot: Mapping[str, Any] | None,
+    *,
+    skip_ids: Sequence[str] = (),
+) -> dict[str, tuple[float, float]]:
+    """``described_lines``' windows only (KRI-681)."""
+    found = described_lines(texts, media_snapshot, skip_ids=skip_ids)
+    return {media_id: described.window for media_id, described in found.items()}
+
+
+def named_line_records(
+    quotes: Sequence[str],
+    media_snapshot: Mapping[str, Any] | None,
+    *,
+    skip_ids: Sequence[str] = (),
+) -> list[dict[str, Any]]:
+    """Where each line the creator wants heard whole is said (KRI-760), for the receipt.
+
+    One record per quote: ``status`` "found" with the clip and the sentence's source
+    seconds, "ambiguous" when two clips say it equally, "not_found" when no clip does.
+    A line said on a ``skip_ids`` clip (a held closing line) is left out: that clip's
+    window already belongs to the ending.
+    """
+    everywhere = _sentences(media_snapshot, ())
+    out: list[dict[str, Any]] = []
+    for quote in quotes:
+        status, hit = _match_sentence(quote, everywhere)
+        if status == "found" and hit is not None:
+            _shared, media_id, _duration, start, end = hit
+            if media_id in skip_ids:
+                continue
+            out.append(
+                {
+                    "quote": quote,
+                    "status": "found",
+                    "media_id": media_id,
+                    "start_s": round(start, 3),
+                    "end_s": round(end, 3),
+                }
+            )
+        else:
+            missing = "ambiguous" if status == "ambiguous" else "not_found"
+            out.append({"quote": quote, "status": missing})
     return out
 
 
@@ -668,14 +752,17 @@ def closing_quote_notice(record: Mapping[str, Any] | None) -> str | None:
 
 
 __all__ = [
+    "DescribedLine",
     "closing_quote_notice",
     "closing_quote_request",
     "described_line_moments",
+    "described_lines",
     "estimate_in_segments",
     "ground_closing_quote",
     "is_outro_hallucination",
     "locate_in_segments",
     "locate_in_words",
+    "named_line_records",
     "quoted_phrases",
     "quoted_spans",
     "regound_quoted_intents",
