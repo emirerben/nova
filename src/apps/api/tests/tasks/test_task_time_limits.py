@@ -181,3 +181,18 @@ def test_poster_repair_time_limits_under_visibility_timeout() -> None:
         "raising it needs a conscious decision, not a drift."
     )
     assert soft <= hard < visibility_timeout
+
+
+def test_suggester_time_limits_under_visibility_timeout() -> None:
+    """`tasks.kria_suggester` (KRI-756) runs two bounded 12 s text-only model attempts
+    off the request path; it is acks_late like the rest, so the same redelivery
+    invariant applies and it must never drift toward a render-sized budget."""
+    visibility_timeout = _extract_visibility_timeout(_read_source("app/worker.py"))
+    decorator = _extract_celery_task_decorator(
+        _read_source("app/tasks/kria_suggester.py"), "tasks.kria_suggester"
+    )
+    hard = _extract_limit_kwarg(decorator, "time_limit")
+    soft = _extract_limit_kwarg(decorator, "soft_time_limit")
+
+    assert (soft, hard) == (60, 90)
+    assert soft <= hard < visibility_timeout

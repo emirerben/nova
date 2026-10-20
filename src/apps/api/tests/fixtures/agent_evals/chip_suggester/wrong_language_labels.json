@@ -1,0 +1,34 @@
+{
+ "id": "wrong_language_labels",
+ "description": "English labels on a Turkish thread are rejected; Turkish template stays.",
+ "context": "east-run-brief::first_prompt",
+ "model_output": {
+  "default_label": "Let Kria cut it",
+  "ranked": [
+   {
+    "cid": "{{cid:captions}}",
+    "label_template": "Add captions",
+    "why": null
+   },
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Add a hook to the opening",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "label_source": {
+   "captions": "template",
+   "hook": "template",
+   "default_edit": "template"
+  },
+  "labels": {
+   "captions": "Altyazı ekle"
+  }
+ },
+ "tags": [
+  "adversarial",
+  "tr"
+ ]
+}

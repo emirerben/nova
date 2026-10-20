@@ -328,6 +328,13 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   description or a cut-length style; a later "use the short clips too" adds them back.
   Photos and Visuals are never dropped; "skip the dark ones" stays the model's call
   (no lighting signal yet). Incident: cabin kit M2 re-send, prod thread 35ccc8ef.
+  KRI-758: ONE clip told apart by what it shows ("Caro'nun … bıraktığı kısa klibi
+  kullanma", "skip the short clip where …") is never a length group — a singular
+  phrase is the clip-intent `exclude` path; the single "en uzun klibi" / "the longest
+  clip" still scopes, and media the strategy itself places (montage audio source,
+  reaction beats, closing media) is never dropped by a length word. Guard:
+  `tests/kria/test_kri758_singular_clip_is_not_a_length_group.py`. Incident: café kit M1,
+  thread 91256BF1.
   Guard: `tests/kria/test_kri623_ruled_out_clips.py`.
 - *What the clips say orders a camera-sound montage (KRI-585)*: a phone montage with no
   song, voiceover or named voice source plays every clip's own sound
@@ -472,6 +479,12 @@ reply English and prompts byte-identical).
   (`reply_language_for` / `bind_reply_language`): `submit_turn`, `run_kria_turn` (from the
   trusted snapshot), approval dispatch, render observation and expiry. Server copy is written
   `say(en=..., tr=...)`; unbound means English.
+- **Render workers (KRI-765).** A Celery worker has no chat. Dispatch stamps
+  `assembly_plan["creator_reply_language"]` beside `creator_brief_binding`, and the phone
+  montage/narrated writers bind it (`generative_build._worker_reply_language`) around the
+  requirement receipts and the block recovery they store. A reason that names clips can't be
+  re-worded by the chat afterwards, so it must be written in one language. No stamp (English
+  chat, older job) = English, as before.
 - **Models.** Main Creator, the edit copilot and the clip-intent agents get
   `reply_language`; for Turkish their prompt ends with `prompt_language_line("tr")`, which
   asks for every creator-facing sentence in Turkish while on-video text stays exactly as the

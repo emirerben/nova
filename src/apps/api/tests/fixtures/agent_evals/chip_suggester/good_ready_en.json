@@ -1,0 +1,43 @@
+{
+ "id": "good_ready_en",
+ "description": "After a render: reorders, rewords the music chip, writes a grounded why.",
+ "context": "rd_music_loud",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{cid:music}}",
+    "label_template": "Keep the music under my voice",
+    "why": "Pouring matcha is spoken over the track"
+   },
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Add a hook to the start",
+    "why": null
+   },
+   {
+    "cid": "{{cid:sfx}}",
+    "label_template": "Add punchy sound effects",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "kinds": [
+   "music",
+   "hook",
+   "sfx"
+  ],
+  "label_source": {
+   "music": "agent",
+   "hook": "agent"
+  },
+  "why": {
+   "music": true
+  }
+ },
+ "tags": [
+  "natural"
+ ]
+}

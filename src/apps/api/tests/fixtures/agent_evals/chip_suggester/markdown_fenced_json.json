@@ -1,0 +1,19 @@
+{
+ "id": "markdown_fenced_json",
+ "description": "The prompt forbids fences and the request asks for JSON mode; if a model fences anyway the answer is NOT parsed (documented) and the set falls back cleanly to template labels.",
+ "context": "nermin-matcha-update::first_prompt",
+ "raw_text": "```json\n{\"default_label\": null, \"ranked\": [{\"cid\": \"{{cid:hook}}\", \"label_template\": \"Open with a hook\", \"why\": null}]}\n```",
+ "expect": {
+  "wording": "fallback",
+  "kinds": [
+   "default_edit",
+   "hook",
+   "sfx",
+   "transition"
+  ],
+  "fallback_reason": "schema_error"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

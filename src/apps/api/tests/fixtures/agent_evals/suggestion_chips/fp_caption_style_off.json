@@ -1,0 +1,86 @@
+{
+ "name": "fp_caption_style_off",
+ "description": "Speech footage with the manifest `caption_style` capability off. The engine does NOT consult that capability at first prompt (it only mirrors main_creator_agent_execution_enabled and enforces nothing; the strategy witness proves the caption treatment survives the policy), so captions are still offered. Pin: if the backend starts gating on it, this flips on purpose.",
+ "tags": [
+  "flag_off",
+  "speech"
+ ],
+ "context": {
+  "thread_id": "thread-fp_caption_style_off",
+  "state": "first_prompt",
+  "language": "en",
+  "client_protocol": 2,
+  "media_digest": "digest-fp_caption_style_off",
+  "understanding": "complete",
+  "runtime_version": 2,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "creator talking to camera in a kitchen",
+    "setting": "",
+    "has_speech": true,
+    "to_camera": true,
+    "duration_s": 9.0,
+    "notable_moments": [
+     {
+      "start_s": 0.5,
+      "end_s": 2.0,
+      "label": "greeting"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-2",
+    "ordinal": 2,
+    "kind": "video",
+    "subject": "pouring matcha into a glass",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [
+     {
+      "start_s": 1.0,
+      "end_s": 2.5,
+      "label": "the pour"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-3",
+    "ordinal": 3,
+    "kind": "video",
+    "subject": "first sip of the drink",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [
+     {
+      "start_s": 0.5,
+      "end_s": 1.5,
+      "label": "first sip"
+     }
+    ]
+   }
+  ],
+  "capabilities": {
+   "dispatch_render": true,
+   "main_creator_agent": true,
+   "caption_style": false,
+   "sound_effects": true,
+   "transitions": true
+  }
+ },
+ "expect": {
+  "kinds": [
+   "default_edit",
+   "captions",
+   "hook",
+   "sfx"
+  ]
+ }
+}
