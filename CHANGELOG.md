@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.60.0] - 2026-10-20
+
+### Changed
+- KRI-758: one described clip ("…bıraktığı kısa klibi kullanma") is no longer read as "skip the short clips" (#1689) <!-- release-pr: 1689 -->
+
 ## [0.80.59.0] - 2026-10-19
 
 ### Changed
