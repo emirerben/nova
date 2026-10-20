@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.68.0] - 2026-10-20
+
+### Changed
+- KRI-766: a dictated shot label stays bound across turns and asks with the clip picker (#1697) <!-- release-pr: 1697 -->
+
 ## [0.80.67.0] - 2026-10-20
 
 ### Changed
