@@ -758,12 +758,22 @@
     {
       "id": "kri-736-save-after-delete",
       "needs_native": true,
-      "api_tests": "tests/routes/test_editor_save_contract_matrix.py",
+      "api_tests": "tests/routes/test_editor_save_contract_matrix.py tests/routes/test_editor_save_code_catalog.py",
       "xctests": [
         "KriaTests/EditorSaveMatrixTests/testEverySourceWindowVerdictMatchesTheServer",
         "KriaTests/EditorSaveMatrixTests/testTheIncidentWindowsAreInTheMatrix",
         "KriaTests/EditorSaveMatrixTests/testBoundToleranceIsTheServers",
-        "KriaTests/EditorSaveMatrixTests/testANewTextIsEncodedWithTheRoleTheServerAccepts"
+        "KriaTests/EditorSaveMatrixTests/testANewTextIsEncodedWithTheRoleTheServerAccepts",
+        "KriaTests/EditorSaveCodeCatalogTests/testEveryMappedCodeHasSpecificCopy",
+        "KriaTests/EditorSaveCodeCatalogTests/testGenericCodesStayGenericUntilTheyAreWorded",
+        "KriaTests/EditorSaveCodeCatalogTests/testTrimWindowRefusalsTellTheCreatorWhatToDo",
+        "KriaTests/EditorSaveCodeCatalogTests/testReadableServerMessageIsShown",
+        "KriaTests/NativeEditorSessionTests/testTrailingDragToMinimumNeverEncodesBelowTheServerMinimum",
+        "KriaTests/NativeEditorSessionTests/testLeadingDragToMinimumNeverEncodesBelowTheServerMinimum",
+        "KriaTests/NativeEditorSessionTests/testEveryEdgeDragStaysWithinTheServerBound",
+        "KriaTests/NativeEditorSessionTests/testTrailingDragAtDoubleSpeedStopsAtTheFootageEnd",
+        "KriaTests/NativeEditorSessionTests/testTrailingDragWithUnknownSourceLengthCannotGrow",
+        "KriaTests/NativeEditorSessionTests/testTalkingSourceClipHasNoTrimGesture"
       ],
       "paths": [
         "src/apps/api/app/agents/_schemas/text_element.py",
@@ -778,7 +788,15 @@
         "src/apps/ios/Tests/KriaTests/EditorSaveMatrixTests.swift",
         "src/apps/api/tests/routes/_editor_save_matrix.py",
         "src/apps/api/tests/routes/test_editor_save_contract_matrix.py",
-        "src/apps/api/tests/services/test_phone_editor_render_contract.py"
+        "src/apps/api/tests/services/test_phone_editor_render_contract.py",
+        "src/apps/api/app/schemas/editor_window.py",
+        "src/apps/api/app/services/guided_timeline.py",
+        "src/apps/api/app/routes/plan_items.py",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+        "src/apps/ios/Tests/Fixtures/editor_save_codes.json",
+        "src/apps/ios/Tests/KriaTests/EditorSaveCodeCatalogTests.swift",
+        "src/apps/api/tests/routes/test_editor_save_code_catalog.py"
       ]
     },
     {

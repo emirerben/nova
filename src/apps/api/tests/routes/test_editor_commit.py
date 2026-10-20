@@ -8480,6 +8480,27 @@ def test_clip_deletion_on_guided_story_without_song_still_stages_baseline(
     staged.assert_called_once()
 
 
+def test_editor_commit_409_is_logged_as_refused(client: TestClient, monkeypatch) -> None:
+    """KRI-770: a stale-head 409 left no trace; every refusal now names its status and code."""
+    from app.routes import plan_items as plan_item_routes
+
+    item, _staged, _ = _song_guided_endpoint(monkeypatch, deletions=None)
+
+    async def stale(*_args, **_kwargs):
+        raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
+
+    monkeypatch.setattr(plan_item_routes, "_editor_commit_item", stale)
+    warn = MagicMock()
+    monkeypatch.setattr(plan_item_routes.log, "warning", warn)
+    client.post(
+        f"/plan-items/{item.id}/variants/song_text/editor-commit",
+        json={"base_generation": "2026-07-01T00:00:00Z", "editor_state_version": 1},
+    )
+    assert warn.call_args.args[0] == "editor_commit_refused"
+    assert warn.call_args.kwargs["status"] == 409
+    assert warn.call_args.kwargs["detail"] == {"code": "TIMELINE_STALE"}
+
+
 def test_editor_commit_422_is_logged_with_detail_and_section_keys(
     client: TestClient, monkeypatch
 ) -> None:

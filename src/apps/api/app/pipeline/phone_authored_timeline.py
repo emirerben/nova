@@ -74,6 +74,8 @@ def compile_phone_authored_timeline(
     cursor = 0.0
     rows = explicit_authored_slots(variant)
     for index, row in enumerate(rows):
+        if not 0 <= row["clip_index"] < len(catalog):
+            raise ValueError("authored source index is outside the source catalog")
         source = catalog[row["clip_index"]]
         binding = next(
             (

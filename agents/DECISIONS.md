@@ -2981,3 +2981,12 @@ under consent, and validating that needs paid live runs. A deterministic text ma
 token to `current_detector_policy` / bump `DETECTOR_VERSION` (retires `ready` analyses, re-collects consent, reshuffles cohorts), expose
 `retakes` in `public_projection` + the iOS stats, then drop the limit sentence and let `_check_rendered_cleanup` read a cut retake as met.
 **Guards:** `tests/tasks/test_kri551_cleanup_review_note.py` (real N3 words + cut record, English and Turkish).
+
+---
+
+## [2026-10-20] Editor Save: one clip-window rule, readable refusals, and a code catalog (KRI-770)
+
+**Decision:** Every Save path compares a clip window against the minimum with `below_editor_minimum` / `snap_to_editor_minimum` (`app/schemas/editor_window.py`, 0.1 s with a 1e-6 tolerance), never a bare `< 0.1`. The phone's edge-trim drag goes through `KriaSourceWindowGeometry` like the Range sheet. Every non-2xx editor-commit logs (`editor_commit_422` / `editor_commit_refused`). The editor Save code catalog (`ios Tests/Fixtures/editor_save_codes.json`) lists each machine code the Save can raise as `mapped` (specific app copy) or `generic`; `tests/routes/test_editor_save_code_catalog.py` (AST scan) and `EditorSaveCodeCatalogTests` keep server and app in step. The app shows a readable server sentence instead of "This save was rejected".
+**Why:** Troya Road Trip could not be saved after a clip trim. The trailing-edge drag to the 0.1 s minimum encoded `(in_s + 0.1) - in_s` = `0.09999999999999998`; the resolvers refused it with `TIMELINE_INVALID_WINDOW` / `TIMELINE_INVALID_DURATION`, which the app words only as the generic line. Nothing recorded the refusal, so the cause had to be re-derived from code. The same shape (phone allows, server refuses, creator sees nothing specific) had already cost five PRs in KRI-736.
+**Also closed in the same change:** guided-story Saves now fit a submitted text lane to the trimmed total (the authored path already did); the capability map no longer advertises `clips.playback_rate` on a device-rendered guided story (the phone compiler refuses any rate but 1); three non-HTTP failures in the Save prepare path now answer 409/422 instead of 500; a talking-source clip has no trim handle.
+**Revisit if:** the phone compiler learns story-footage retime (reopen `clips.playback_rate` on device), or a Save refusal needs structured per-clip detail in the app.

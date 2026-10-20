@@ -7431,15 +7431,27 @@ async def editor_commit_item(
     db: AsyncSession = Depends(get_db),
     native_client: NativeClient = False,
 ) -> EditorCommitResponse:
-    """Route wrapper: logs every 422 (detail + payload section keys, no content)."""
+    """Route wrapper: logs every refusal (detail + payload section keys, no content).
+
+    A rejected Save stores nothing, so this line is the only record of why a creator's Save
+    failed (KRI-770: Troya's was unrecoverable after the fact). 422 keeps its own event name;
+    every other 4xx/5xx (409 stale head, 426 client update, 503, ...) logs
+    ``editor_commit_refused``.
+    """
     try:
         return await _editor_commit_item(item_id, variant_id, body, user, db, native_client)
     except HTTPException as exc:
-        if exc.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY:
+        event = (
+            "editor_commit_422"
+            if exc.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            else "editor_commit_refused"
+        )
+        if exc.status_code >= 400:
             log.warning(
-                "editor_commit_422",
+                event,
                 item_id=item_id,
                 variant_id=variant_id,
+                status=exc.status_code,
                 detail=exc.detail,
                 sections=sorted(body.model_fields_set),
                 deletion_kinds=sorted({d.kind for d in body.deletions}),
@@ -7635,7 +7647,13 @@ async def _editor_commit_item(
         from app.services.phone_editor_sources import phone_editor_source_revision
         from app.services.phone_sources import PHONE_VISUALS_FIELD
 
-        source_catalog = (phone_editor_source_revision(source_job, source_variant) or {})["sources"]
+        try:
+            source_catalog = (phone_editor_source_revision(source_job, source_variant) or {}).get(
+                "sources"
+            ) or []
+        except ValueError as exc:
+            # KRI-770: a catalog we cannot read is a recoverable state, never a 500.
+            raise HTTPException(409, detail={"code": "editor_source_catalog_invalid"}) from exc
         source_slots = (
             [slot.model_dump() for slot in body.timeline_slots]
             if body.timeline_slots is not None
