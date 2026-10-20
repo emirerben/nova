@@ -1,0 +1,207 @@
+{
+  "source_duration_s": 10.0,
+  "bounds": [
+    {
+      "name": "inside_the_source",
+      "in_s": 1.0,
+      "duration_s": 5.0,
+      "rate": 1.0,
+      "source_duration_s": 10.0,
+      "verdict": "accept",
+      "code": null,
+      "within_bounds": true
+    },
+    {
+      "name": "ends_exactly_on_the_source_end",
+      "in_s": 1.0,
+      "duration_s": 9.0,
+      "rate": 1.0,
+      "source_duration_s": 10.0,
+      "verdict": "accept",
+      "code": null,
+      "within_bounds": true
+    },
+    {
+      "name": "frame_rounding_overshoot_0_3ms",
+      "in_s": 1.0,
+      "duration_s": 9.0003,
+      "rate": 1.0,
+      "source_duration_s": 10.0,
+      "verdict": "accept",
+      "code": null,
+      "within_bounds": true
+    },
+    {
+      "name": "overshoot_20ms",
+      "in_s": 1.0,
+      "duration_s": 9.02,
+      "rate": 1.0,
+      "source_duration_s": 10.0,
+      "verdict": "fit",
+      "code": null,
+      "within_bounds": true
+    },
+    {
+      "name": "overshoot_exactly_the_50ms_tolerance",
+      "in_s": 1.0,
+      "duration_s": 9.05,
+      "rate": 1.0,
+      "source_duration_s": 10.0,
+      "verdict": "fit",
+      "code": null,
+      "within_bounds": true
+    },
+    {
+      "name": "overshoot_60ms",
+      "in_s": 1.0,
+      "duration_s": 9.06,
+      "rate": 1.0,
+      "source_duration_s": 10.0,
+      "verdict": "refuse",
+      "code": "TIMELINE_OUT_OF_BOUNDS",
+      "within_bounds": false
+    },
+    {
+      "name": "overshoot_500ms",
+      "in_s": 1.0,
+      "duration_s": 9.5,
+      "rate": 1.0,
+      "source_duration_s": 10.0,
+      "verdict": "refuse",
+      "code": "TIMELINE_OUT_OF_BOUNDS",
+      "within_bounds": false
+    },
+    {
+      "name": "in_point_past_the_end",
+      "in_s": 10.01,
+      "duration_s": 0.3,
+      "rate": 1.0,
+      "source_duration_s": 10.0,
+      "verdict": "refuse",
+      "code": "TIMELINE_OUT_OF_BOUNDS",
+      "within_bounds": false
+    },
+    {
+      "name": "below_minimum_length_after_shortening",
+      "in_s": 9.96,
+      "duration_s": 0.5,
+      "rate": 1.0,
+      "source_duration_s": 10.0,
+      "verdict": "refuse",
+      "code": "TIMELINE_OUT_OF_BOUNDS",
+      "within_bounds": false
+    },
+    {
+      "name": "shorter_than_the_minimum_length",
+      "in_s": 1.0,
+      "duration_s": 0.05,
+      "rate": 1.0,
+      "source_duration_s": 10.0,
+      "verdict": "refuse",
+      "code": "TIMELINE_INVALID_WINDOW",
+      "within_bounds": false
+    },
+    {
+      "name": "negative_in_point",
+      "in_s": -0.5,
+      "duration_s": 2.0,
+      "rate": 1.0,
+      "source_duration_s": 10.0,
+      "verdict": "refuse",
+      "code": "TIMELINE_INVALID_WINDOW",
+      "within_bounds": false
+    },
+    {
+      "name": "rate_2x_inside_the_source",
+      "in_s": 1.0,
+      "duration_s": 4.0,
+      "rate": 2.0,
+      "source_duration_s": 10.0,
+      "verdict": "accept",
+      "code": null,
+      "within_bounds": true
+    },
+    {
+      "name": "rate_2x_overshoot_40ms",
+      "in_s": 1.0,
+      "duration_s": 4.52,
+      "rate": 2.0,
+      "source_duration_s": 10.0,
+      "verdict": "fit",
+      "code": null,
+      "within_bounds": true
+    },
+    {
+      "name": "rate_2x_overshoot_200ms",
+      "in_s": 1.0,
+      "duration_s": 4.6,
+      "rate": 2.0,
+      "source_duration_s": 10.0,
+      "verdict": "refuse",
+      "code": "TIMELINE_OUT_OF_BOUNDS",
+      "within_bounds": false
+    },
+    {
+      "name": "rate_half_inside_the_source",
+      "in_s": 1.0,
+      "duration_s": 16.0,
+      "rate": 0.5,
+      "source_duration_s": 10.0,
+      "verdict": "accept",
+      "code": null,
+      "within_bounds": true
+    },
+    {
+      "name": "rate_half_overshoot_200ms",
+      "in_s": 1.0,
+      "duration_s": 18.4,
+      "rate": 0.5,
+      "source_duration_s": 10.0,
+      "verdict": "refuse",
+      "code": "TIMELINE_OUT_OF_BOUNDS",
+      "within_bounds": false
+    }
+  ],
+  "text_encode": [
+    {
+      "name": "role_nil_is_sent_as_null",
+      "id": "t-1",
+      "text": "hello",
+      "start_s": 1.0,
+      "end_s": 3.0,
+      "role": null,
+      "wire_role": null,
+      "server_role": "generative_intro"
+    },
+    {
+      "name": "role_generative_intro",
+      "id": "t-1",
+      "text": "hello",
+      "start_s": 1.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "wire_role": "generative_intro",
+      "server_role": "generative_intro"
+    },
+    {
+      "name": "role_generative_sequence",
+      "id": "t-1",
+      "text": "hello",
+      "start_s": 1.0,
+      "end_s": 3.0,
+      "role": "generative_sequence",
+      "wire_role": "generative_sequence",
+      "server_role": "generative_sequence"
+    },
+    {
+      "name": "role_lyric_line",
+      "id": "t-1",
+      "text": "hello",
+      "start_s": 1.0,
+      "end_s": 3.0,
+      "role": "lyric_line",
+      "wire_role": "lyric_line",
+      "server_role": "lyric_line"
+    }
+  ]
+}

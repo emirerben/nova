@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.61.0] - 2026-10-20
+
+### Fixed
+- KRI-767 fix(text): a label the composer moves to another clip is not a copy change (#1690) <!-- release-pr: 1690 -->
+
+## [0.80.60.0] - 2026-10-20
+
+### Changed
+- KRI-758: one described clip ("…bıraktığı kısa klibi kullanma") is no longer read as "skip the short clips" (#1689) <!-- release-pr: 1689 -->
+
+## [0.80.59.0] - 2026-10-19
+
+### Changed
+- fix: keep restored clips previewable and saveable through chat (#1698) <!-- release-pr: 1698 -->
+
+## [0.80.58.0] - 2026-10-19
+
+### Changed
+- feat(chat): footage-aware suggestion chips, iOS only, dark (KRI-756) (#1699) <!-- release-pr: 1699 -->
+
+## [0.80.57.0] - 2026-10-19
+
+### Changed
+- test(editor): one Save contract matrix for every edit shape (KRI-750) (#1681) <!-- release-pr: 1681 -->
+
 ## [0.80.56.0] - 2026-10-19
 
 ### Changed

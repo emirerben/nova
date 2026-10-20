@@ -3101,6 +3101,30 @@
           "title": "SourceCrop",
           "type": "object"
         },
+        "SuggestionTapIn": {
+          "additionalProperties": false,
+          "description": "KRI-756: which offered suggestion chip this message came from (optional, additive).\n\nValidated against the offered-set ring on the thread; absent or invalid falls back to\nmatching the message text against the offered chips. Never changes what the turn does.",
+          "properties": {
+            "chip_id": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Chip Id",
+              "type": "string"
+            },
+            "set_id": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Set Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "set_id",
+            "chip_id"
+          ],
+          "title": "SuggestionTapIn",
+          "type": "object"
+        },
         "SyncAnchor": {
           "properties": {
             "label": {
@@ -3548,6 +3572,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SongRangeAnswerIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "suggestion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SuggestionTapIn"
             },
             {
               "type": "null"
