@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.65.0] - 2026-10-20
+
+### Changed
+- KRI-759: a "simpler version?" refusal names what it dropped, has buttons, and "yes" drafts it (#1695) <!-- release-pr: 1695 -->
+
 ## [0.80.64.0] - 2026-10-20
 
 ### Changed
