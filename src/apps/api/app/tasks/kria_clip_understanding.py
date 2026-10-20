@@ -382,6 +382,12 @@ def _run(item_id: str, chain: int) -> dict[str, Any]:
         stopped=stopped,
         chain=chain,
     )
+    if not stopped and not resumed:
+        # KRI-756: the footage is understood: word the first-prompt suggestion chips. The
+        # enqueue helper re-checks the flag and the run cap and never raises.
+        from app.services.suggestion_serve import enqueue_for_item  # noqa: PLC0415
+
+        enqueue_for_item(identifier, trigger="understanding_done")
     return {
         "item_id": item_id,
         "status": "done",

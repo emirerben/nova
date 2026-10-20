@@ -1,0 +1,292 @@
+{
+ "name": "fp_twelve_clips_kri126",
+ "description": "First 12 of the 30 redacted KRI-126 prod clips (real notable moments). Many clips, mostly speech.",
+ "tags": [
+  "many_clips",
+  "speech",
+  "prod_seed"
+ ],
+ "context": {
+  "thread_id": "thread-fp_twelve_clips_kri126",
+  "state": "first_prompt",
+  "language": "en",
+  "client_protocol": 2,
+  "media_digest": "digest-fp_twelve_clips_kri126",
+  "understanding": "complete",
+  "runtime_version": 2,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "group of young adults",
+    "setting": "grassy park or field under a cloudy sky",
+    "has_speech": true,
+    "to_camera": false,
+    "duration_s": 6.7,
+    "notable_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 1.0,
+      "label": "overcast sky with dark clouds"
+     },
+     {
+      "start_s": 2.5,
+      "end_s": 5.0,
+      "label": "camera panning down to people"
+     },
+     {
+      "start_s": 5.0,
+      "end_s": 6.75,
+      "label": "group of people sitting on grass"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-2",
+    "ordinal": 2,
+    "kind": "video",
+    "subject": "man in [brand] shirt",
+    "setting": "outdoor grassy field during daytime",
+    "has_speech": true,
+    "to_camera": false,
+    "duration_s": 0.866667,
+    "notable_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 2.0,
+      "label": "man makes peace sign"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-3",
+    "ordinal": 3,
+    "kind": "video",
+    "subject": "group of friends",
+    "setting": "grassy outdoor field",
+    "has_speech": true,
+    "to_camera": false,
+    "duration_s": 2.833333,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-4",
+    "ordinal": 4,
+    "kind": "video",
+    "subject": "players on a field",
+    "setting": "outdoor grassy field",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 11.2,
+    "notable_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 2.5,
+      "label": "player kicks off the ball"
+     },
+     {
+      "start_s": 4.5,
+      "end_s": 7.0,
+      "label": "multiple players contest the ball"
+     },
+     {
+      "start_s": 9.0,
+      "end_s": 10.9,
+      "label": "player dribbles the ball downfield"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-5",
+    "ordinal": 5,
+    "kind": "video",
+    "subject": "group of young adults",
+    "setting": "grassy outdoor field",
+    "has_speech": true,
+    "to_camera": false,
+    "duration_s": 6.466667,
+    "notable_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 2.5,
+      "label": "group arriving on field"
+     },
+     {
+      "start_s": 2.5,
+      "end_s": 4.5,
+      "label": "woman smiling at camera"
+     },
+     {
+      "start_s": 4.5,
+      "end_s": 6.5,
+      "label": "people chatting and organizing"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-6",
+    "ordinal": 6,
+    "kind": "video",
+    "subject": "group playing football",
+    "setting": "outdoor grassy field",
+    "has_speech": true,
+    "to_camera": false,
+    "duration_s": 5.066667,
+    "notable_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 1.0,
+      "label": "player kicks ball"
+     },
+     {
+      "start_s": 2.1,
+      "end_s": 3.4,
+      "label": "players chase ball"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-7",
+    "ordinal": 7,
+    "kind": "video",
+    "subject": "people walking across a field",
+    "setting": "outdoor grassy field with distant buildings and trees",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 2.533333,
+    "notable_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "label": "people walking across field"
+     },
+     {
+      "start_s": 3.5,
+      "end_s": 6.0,
+      "label": "two women jogging away"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-8",
+    "ordinal": 8,
+    "kind": "video",
+    "subject": "group of people playing ball",
+    "setting": "outdoor grass field",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.666667,
+    "notable_moments": [
+     {
+      "start_s": 0.53,
+      "end_s": 1.9,
+      "label": "group moving and passing ball"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-9",
+    "ordinal": 9,
+    "kind": "video",
+    "subject": "group of young adults on a field",
+    "setting": "open grassy field",
+    "has_speech": true,
+    "to_camera": false,
+    "duration_s": 4.666667,
+    "notable_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 2.5,
+      "label": "group sitting on grass"
+     },
+     {
+      "start_s": 3.0,
+      "end_s": 5.0,
+      "label": "woman walking away from group"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-10",
+    "ordinal": 10,
+    "kind": "video",
+    "subject": "woman waving at camera",
+    "setting": "grassy outdoor area",
+    "has_speech": true,
+    "to_camera": false,
+    "duration_s": 1.3,
+    "notable_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 1.25,
+      "label": "woman smiles and waves"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-11",
+    "ordinal": 11,
+    "kind": "video",
+    "subject": "group of friends relaxing",
+    "setting": "outdoor park or field under a cloudy sky",
+    "has_speech": true,
+    "to_camera": false,
+    "duration_s": 6.7,
+    "notable_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 2.0,
+      "label": "cloudy sky establishing shot"
+     },
+     {
+      "start_s": 3.0,
+      "end_s": 6.0,
+      "label": "camera pans down to people sitting"
+     },
+     {
+      "start_s": 7.0,
+      "end_s": 9.0,
+      "label": "friends relaxing on grass"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-12",
+    "ordinal": 12,
+    "kind": "video",
+    "subject": "group of people relaxing in a park",
+    "setting": "outdoor park on a cloudy day",
+    "has_speech": true,
+    "to_camera": false,
+    "duration_s": 7.333333,
+    "notable_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 1.96,
+      "label": "cloudy sky overhead"
+     },
+     {
+      "start_s": 4.0,
+      "end_s": 7.0,
+      "label": "pan down to people in park"
+     },
+     {
+      "start_s": 7.5,
+      "end_s": 10.0,
+      "label": "group talking on grass"
+     }
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "kinds": [
+   "default_edit",
+   "captions",
+   "hook",
+   "sfx"
+  ]
+ }
+}

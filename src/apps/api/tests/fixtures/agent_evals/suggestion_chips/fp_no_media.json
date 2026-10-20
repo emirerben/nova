@@ -1,0 +1,20 @@
+{
+ "name": "fp_no_media",
+ "description": "No media attached yet: the loader reports state none. Chips [].",
+ "tags": [
+  "no_media"
+ ],
+ "context": {
+  "thread_id": "thread-fp_no_media",
+  "state": "none",
+  "language": "en",
+  "client_protocol": 2,
+  "media_digest": "",
+  "understanding": "n/a",
+  "clips": []
+ },
+ "expect": {
+  "state": "none",
+  "kinds": []
+ }
+}

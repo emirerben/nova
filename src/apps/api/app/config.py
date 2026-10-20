@@ -854,11 +854,28 @@ class Settings(BaseSettings):
     # NoDecode: pydantic-settings would otherwise JSON-decode the env string
     # before the validator below runs, crashing boot on a bare id or CSV.
     kria_creative_brief_user_ids: Annotated[list[str], NoDecode] = []
+    # KRI-756: footage-aware suggestion chips (GET /creation-threads/{id}/suggestions).
+    # Default off => the endpoint answers status "unavailable", capabilities carry
+    # `suggestion_chips: false`, nothing is written or stamped. The user-id list
+    # (comma-separated or JSON) turns it on for single accounts while the global flag is
+    # off (canary). Clients gate on the capabilities bool: no NEXT_PUBLIC twin.
+    # Apply: `fly secrets set -a nova-video KRIA_SUGGESTION_CHIPS_ENABLED=true` + restart
+    # api + worker. docs/pipelines/suggestion-chips.md.
+    kria_suggestion_chips_enabled: bool = False
+    kria_suggestion_chips_user_ids: Annotated[list[str], NoDecode] = []
+    # KRI-756: bounds on the chip-wording agent (`nova.chat.suggester`). NOT flags: the one
+    # flag above gates the whole feature. 0 runs/thread disables only the agent (chips fall
+    # back to template labels): the cost kill lever without a second flag. The daily limit
+    # counts paid model ATTEMPTS (a retry is a second one), not chip runs, from
+    # `ai_cost_reservations` by feature name (ai_cost_control.py).
+    kria_suggester_max_runs_per_thread: int = Field(default=12, ge=0, le=100)
+    kria_suggester_daily_limit_per_user: int = Field(default=20, ge=0, le=500)
 
     @field_validator(
         "kria_creative_brief_user_ids",
         "kria_brief_binding_user_ids",
         "kria_approval_readiness_user_ids",
+        "kria_suggestion_chips_user_ids",
         mode="before",
     )
     @classmethod
@@ -896,6 +913,14 @@ class Settings(BaseSettings):
             self.kria_approval_readiness_enabled
             or str(user_id) in self.kria_approval_readiness_user_ids
         )
+
+    def suggestion_chips_for(self, user_id: object) -> bool:
+        """Global flag OR the per-account allowlist (allowlist only ever adds)."""
+        if self.kria_suggestion_chips_enabled:
+            return True
+        return user_id is not None and str(user_id) in {
+            str(uid) for uid in self.kria_suggestion_chips_user_ids
+        }
 
     def creative_brief_for(self, user_id: object) -> bool:
         """Global flag OR the per-account allowlist (allowlist only ever adds)."""

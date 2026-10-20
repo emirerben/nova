@@ -274,20 +274,48 @@ def _copy_key(value: str) -> str:
     return unicodedata.normalize("NFC", " ".join(value.split()))
 
 
+def _owns(row: dict, source_id: str) -> bool:
+    return (
+        row.get("id") == source_id
+        or (row.get("source_params") or {}).get("sequence_source_id") == source_id
+    )
+
+
 def _check_copy(texts: list[dict], constraints: Mapping[str, str]) -> None:
+    """Confirmed words must come out of the text pass unchanged.
+
+    A source row that is still there must read exactly as confirmed. A source row that is
+    gone is a move when the composer removed it and re-added the same words on another
+    clip (the new row has a new id): then one row no confirmed copy owns, with the same
+    words, stands in for it. One row per constraint, so a duplicate still has to exist.
+
+    A real change (other words, missing copy, a reworded source row) still fails the pass.
+    It never falls back to the planner's text: that would also drop every other text ask in
+    the same program, and only brief-bound jobs have a receipt check afterwards (KRI-767).
+    """
+    live = [row for row in texts if not row.get("removed")]
+    owned = {id(row) for row in live if any(_owns(row, source_id) for source_id in constraints)}
+    movable = [row for row in live if id(row) not in owned and not is_caption_text_bar(row)]
     for source_id, expected in constraints.items():
-        rows = [
-            row
-            for row in texts
-            if not row.get("removed")
-            and (
-                row.get("id") == source_id
-                or (row.get("source_params") or {}).get("sequence_source_id") == source_id
-            )
-        ]
-        actual = " ".join(row["text"] for row in sorted(rows, key=lambda row: row["start_s"]))
-        if not expected.strip() or _copy_key(actual) != _copy_key(expected):
+        if not expected.strip():
             raise CreationTextCompositionError("Text composition changed confirmed copy")
+        rows = [row for row in live if _owns(row, source_id)]
+        if rows:
+            actual = " ".join(row["text"] for row in sorted(rows, key=lambda row: row["start_s"]))
+            if _copy_key(actual) != _copy_key(expected):
+                raise CreationTextCompositionError("Text composition changed confirmed copy")
+            continue
+        moved = next(
+            (
+                row
+                for row in movable
+                if _copy_key(str(row.get("text") or "")) == _copy_key(expected)
+            ),
+            None,
+        )
+        if moved is None:
+            raise CreationTextCompositionError("Text composition changed confirmed copy")
+        movable.remove(moved)
 
 
 def _check_added_text(

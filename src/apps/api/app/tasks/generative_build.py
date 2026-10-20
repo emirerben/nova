@@ -6094,6 +6094,20 @@ def _resolve_phone_song_bed(job_id: str, user_song: Any) -> Any:
     )
 
 
+def _worker_reply_language(snapshot: dict):
+    """The chat's language for the requirement copy this worker writes (KRI-765).
+
+    The dispatch stamps ``creator_reply_language`` beside the approved brief binding. Binding
+    it around the receipts and the block recovery keeps a reason with clip names in it in one
+    language: the chat can only re-word a stored reason that matches a static English sentence.
+    Absent (English chat, older job) or unsupported -> unbound, English, as before.
+    """
+    from app.kria.reply_language import reply_language_for  # noqa: PLC0415
+
+    language = snapshot.get("creator_reply_language")
+    return reply_language_for(language if isinstance(language, str) else None)
+
+
 def _save_request_recovery(
     job_id: str,
     snapshot: dict,
@@ -6370,18 +6384,19 @@ def _run_phone_unified_montage_job(
         )
 
         record["generation_id"] = generation
-        record["requirement_receipts"] = [
-            {
-                **receipt.model_dump(mode="json"),
-                "brief_version": brief.version,
-                "generation_id": generation,
-            }
-            for receipt in build_receipts(
-                brief.live(),
-                plan_facts_from_unified_montage(record),
-                include_unchecked=bool(snapshot.get("creator_brief_binding")),
-            )
-        ]
+        with _worker_reply_language(snapshot):
+            record["requirement_receipts"] = [
+                {
+                    **receipt.model_dump(mode="json"),
+                    "brief_version": brief.version,
+                    "generation_id": generation,
+                }
+                for receipt in build_receipts(
+                    brief.live(),
+                    plan_facts_from_unified_montage(record),
+                    include_unchecked=bool(snapshot.get("creator_brief_binding")),
+                )
+            ]
         # A checked receipt that only states a limit of the phone montage (KRI-689: it plays
         # every clip at natural speed, and the draft already said so) never blocks the render.
         if snapshot.get("creator_brief_binding") and any(
@@ -6403,7 +6418,8 @@ def _run_phone_unified_montage_job(
             )
             from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
 
-            block = render_block_recovery(failures)
+            with _worker_reply_language(snapshot):
+                block = render_block_recovery(failures)
             recovery_message = block.message
             if not _save_request_recovery(
                 job_id,
@@ -9600,9 +9616,12 @@ def _run_phone_narrated_job(
                     _media_id_for_clip(clip_id) for clip_id in moved_clip_ids
                 ),
             )
-            narrated_failures = _narrated_alignment_receipts(
-                narrated_record, narrated_brief, bound=bool(snapshot.get("creator_brief_binding"))
-            )
+            with _worker_reply_language(snapshot):
+                narrated_failures = _narrated_alignment_receipts(
+                    narrated_record,
+                    narrated_brief,
+                    bound=bool(snapshot.get("creator_brief_binding")),
+                )
             if narrated_failures:
                 from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
 
@@ -9616,7 +9635,8 @@ def _run_phone_narrated_job(
                         "requirement_receipts": narrated_failures,
                     },
                 )
-                recovery_message = render_block_recovery(narrated_failures).message
+                with _worker_reply_language(snapshot):
+                    recovery_message = render_block_recovery(narrated_failures).message
                 if not _save_request_recovery(
                     job_id,
                     snapshot,
