@@ -16,7 +16,11 @@ reader is deliberately narrow: a wrong drop removes footage the creator wanted, 
 ask keeps today's behaviour. So a length word counts only when it names a subset of the
 attached clips ("the long takes", "uzun çekimlerden") in a selecting phrase ("from",
 "only", "skip", "except", "kullanma"); a description ("two long takes of our cabin") or a
-cut-length style ("fast cuts, short clips", "each very short") never does.
+cut-length style ("fast cuts, short clips", "each very short") never does. Nor does ONE
+clip told apart by what it shows ("Caro'nun eğilip tabağı masaya bıraktığı kısa klibi
+kullanma", "skip the short clip where …", KRI-758): a singular phrase is the
+``exclude`` intent's job below, not a length group (the single "longest" / "shortest"
+clip is the exception).
 
 Long and short come from the clips' own durations: one clear gap (the longer side at
 least twice the shorter, and no second gap like it) splits them. Clips of similar length,
@@ -108,6 +112,12 @@ _EN_EVERYTHING = re.compile(
     r"(?:\s+(?:of\s+)?(?:the|my|our|these|those))?(?:\s+\d{1,2})?"
     r"\s+(?:clips?|videos?|takes?|footage|shots?)\b"
 )
+# "the short clip where …" names ONE clip. "any short clip" and "all the short clip" read
+# as the group, so only a definite determiner counts.
+_EN_ONE_DET = ("the", "my", "our")
+_EN_ONE_NOUN = frozenset(
+    {"take", "clip", "video", "vid", "shot", "recording", "walkthrough", "one"}
+)
 
 # -- Turkish (folded: no diacritics, ı -> i) ---------------------------------------------
 _TR_PHRASE = re.compile(
@@ -126,6 +136,18 @@ _TR_ALSO = re.compile(r"^\s+(?:de|da)\s+(?:kullan|ekle|koy|olsun|gelsin|girsin)"
 _TR_EVERYTHING = re.compile(
     r"\b(?:tum|butun)\s+(?:klip|klib|video|cekim)\w*|\b(?:klip|klib|video|cekim)\w*\s+hepsi\w*"
 )
+# The relative-clause participle right before the length word, with its possessive ending
+# ("-dığı", "-dığım", "-duğumuz"): "Caro'nun ... bıraktığı kısa klip" is one clip, told
+# apart by what it shows. "-dık" forms need the plural possessor ("-dıkları") because
+# a bare "-tik" ends plain words (plastik, praktik).
+_TR_RELATIVE = (
+    *(
+        stem + ending
+        for stem in ("dig", "tig", "dug", "tug")
+        for ending in ("i", "u", "im", "um", "in", "un", "imiz", "umuz", "iniz", "unuz")
+    ),
+    *(stem + ending for stem in ("dik", "tik", "duk", "tuk") for ending in ("leri", "lari")),
+)
 
 
 def _group(adjective: str, *, superlative: bool = False) -> Group:
@@ -133,6 +155,37 @@ def _group(adjective: str, *, superlative: bool = False) -> Group:
     if superlative or adjective.endswith("est"):
         return "longest" if long else "shortest"
     return "long" if long else "short"
+
+
+def _english_names_one_clip(match: re.Match[str]) -> bool:
+    """One clip told apart by what it shows ("the short clip where …"), not the short ones.
+
+    "the longest clip" is singular too, but it is the single longest clip of the set: a
+    group of its own (KRI-758).
+    """
+
+    words = match.group().split()
+    return (
+        words[0] in _EN_ONE_DET
+        and words[-1] in _EN_ONE_NOUN
+        and not match.group("adj").endswith("est")
+    )
+
+
+def _turkish_names_one_clip(clause: str, match: re.Match[str]) -> bool:
+    """One clip told apart by what it shows ("Caro'nun ... bıraktığı kısa klibi"), KRI-758.
+
+    A definite singular noun ("klibi", "çekimi", "videoyu": the suffix ends in the vowel
+    of the accusative or possessive) or a relative-clause participle right before the
+    length word names a single clip. A plural suffix ("klipleri") never does, and "en
+    kısa klibi" is the single shortest clip: a group of its own.
+    """
+
+    suffix = match.group("suffix")
+    if match.group("sup") or "ler" in suffix or "lar" in suffix:
+        return False
+    words = clause[: match.start()].split()
+    return suffix.endswith(("i", "u")) or bool(words and words[-1].endswith(_TR_RELATIVE))
 
 
 def _english_effect(clause: str, start: int, end: int) -> Effect | None:
@@ -182,10 +235,14 @@ def length_asks(text: str) -> list[LengthAsk]:
                 asks.append(LengthAsk("all", "reset"))
             continue
         for match in _EN_PHRASE.finditer(clause):
+            if _english_names_one_clip(match):
+                continue
             effect = _english_effect(clause, match.start(), match.end())
             if effect is not None:
                 asks.append(LengthAsk(_group(match.group("adj")), effect))
         for match in _TR_PHRASE.finditer(clause):
+            if _turkish_names_one_clip(clause, match):
+                continue
             effect = _turkish_effect(clause, match)
             if effect is not None:
                 asks.append(
@@ -286,7 +343,9 @@ def apply_clip_scope(
     if strategy.execution_contract is not None:
         # The guided voiceover contract needs its all-media scope; its specialist picks.
         return strategy
-    dropped = ruled_out_clips(creator_texts, manifest.media)
+    # A clip the strategy itself plays or places stays (as in ``excluded_clips``): a length
+    # word never outranks the montage's own audio source or a reaction beat.
+    dropped = ruled_out_clips(creator_texts, manifest.media) - _placed_media(strategy)
     if not dropped:
         return strategy
     takes_everything = strategy.media_scope == "all" or not strategy.selected_media_ids
