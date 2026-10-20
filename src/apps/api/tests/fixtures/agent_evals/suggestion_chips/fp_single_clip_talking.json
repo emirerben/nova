@@ -1,0 +1,48 @@
+{
+ "name": "fp_single_clip_talking",
+ "description": "One talking clip: captions first, no transition.",
+ "tags": [
+  "single_clip",
+  "speech"
+ ],
+ "context": {
+  "thread_id": "thread-fp_single_clip_talking",
+  "state": "first_prompt",
+  "language": "en",
+  "client_protocol": 2,
+  "media_digest": "digest-fp_single_clip_talking",
+  "understanding": "complete",
+  "runtime_version": 2,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "creator talking to camera in a kitchen",
+    "setting": "",
+    "has_speech": true,
+    "to_camera": true,
+    "duration_s": 9.0,
+    "notable_moments": [
+     {
+      "start_s": 0.5,
+      "end_s": 2.0,
+      "label": "greeting"
+     }
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "kinds": [
+   "default_edit",
+   "captions",
+   "hook",
+   "sfx"
+  ],
+  "kinds_exclude": [
+   "transition"
+  ]
+ }
+}

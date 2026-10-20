@@ -839,6 +839,51 @@
         "title": "CarouselMomentEditRequest",
         "type": "object"
       },
+      "ChipAnchorOut": {
+        "properties": {
+          "clip_ordinal": {
+            "default": null,
+            "nullable": true,
+            "title": "Clip Ordinal",
+            "type": "integer"
+          },
+          "media_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Media Id",
+            "type": "string"
+          },
+          "moment": {
+            "$ref": "#/components/schemas/ChipMomentOut",
+            "default": null,
+            "nullable": true
+          },
+          "text_bar_index": {
+            "default": null,
+            "nullable": true,
+            "title": "Text Bar Index",
+            "type": "integer"
+          }
+        },
+        "title": "ChipAnchorOut",
+        "type": "object"
+      },
+      "ChipMomentOut": {
+        "properties": {
+          "end_s": {
+            "default": 0.0,
+            "title": "End S",
+            "type": "number"
+          },
+          "start_s": {
+            "default": 0.0,
+            "title": "Start S",
+            "type": "number"
+          }
+        },
+        "title": "ChipMomentOut",
+        "type": "object"
+      },
       "ChoiceSelectionIn": {
         "additionalProperties": false,
         "description": "The app's answer to a ``choice_question`` (SubmitTurnBody.choice_selection).",
@@ -1160,6 +1205,11 @@
           "song_range_questions": {
             "default": false,
             "title": "Song Range Questions",
+            "type": "boolean"
+          },
+          "suggestion_chips": {
+            "default": false,
+            "title": "Suggestion Chips",
             "type": "boolean"
           },
           "text_bend": {
@@ -9555,6 +9605,11 @@
             "$ref": "#/components/schemas/SongRangeAnswerIn",
             "default": null,
             "nullable": true
+          },
+          "suggestion": {
+            "$ref": "#/components/schemas/SuggestionTapIn",
+            "default": null,
+            "nullable": true
           }
         },
         "required": [
@@ -9563,6 +9618,173 @@
           "expected_thread_revision"
         ],
         "title": "SubmitTurnBody",
+        "type": "object"
+      },
+      "SuggestionAnchorOut": {
+        "properties": {
+          "manifest_hash": {
+            "default": null,
+            "nullable": true,
+            "title": "Manifest Hash",
+            "type": "string"
+          },
+          "media_digest": {
+            "default": "",
+            "title": "Media Digest",
+            "type": "string"
+          },
+          "render_generation_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Render Generation Id",
+            "type": "string"
+          },
+          "variant_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Variant Id",
+            "type": "string"
+          }
+        },
+        "title": "SuggestionAnchorOut",
+        "type": "object"
+      },
+      "SuggestionChipOut": {
+        "properties": {
+          "anchor": {
+            "$ref": "#/components/schemas/ChipAnchorOut"
+          },
+          "capability": {
+            "default": null,
+            "nullable": true,
+            "title": "Capability",
+            "type": "string"
+          },
+          "default_edit": {
+            "default": false,
+            "title": "Default Edit",
+            "type": "boolean"
+          },
+          "id": {
+            "default": "",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "default": "",
+            "title": "Label",
+            "type": "string"
+          },
+          "label_source": {
+            "default": "template",
+            "title": "Label Source",
+            "type": "string"
+          },
+          "message": {
+            "default": "",
+            "title": "Message",
+            "type": "string"
+          },
+          "rank": {
+            "default": 1,
+            "title": "Rank",
+            "type": "integer"
+          },
+          "requires_protocol": {
+            "default": null,
+            "nullable": true,
+            "title": "Requires Protocol",
+            "type": "integer"
+          },
+          "why": {
+            "default": null,
+            "nullable": true,
+            "title": "Why",
+            "type": "string"
+          }
+        },
+        "title": "SuggestionChipOut",
+        "type": "object"
+      },
+      "SuggestionSetOut": {
+        "properties": {
+          "anchor": {
+            "$ref": "#/components/schemas/SuggestionAnchorOut"
+          },
+          "chips": {
+            "items": {
+              "$ref": "#/components/schemas/SuggestionChipOut"
+            },
+            "title": "Chips",
+            "type": "array"
+          },
+          "retry_after_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Retry After S",
+            "type": "integer"
+          },
+          "schema_version": {
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "set_id": {
+            "default": "",
+            "title": "Set Id",
+            "type": "string"
+          },
+          "state": {
+            "default": "none",
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "default": "unavailable",
+            "title": "Status",
+            "type": "string"
+          },
+          "understanding": {
+            "default": "empty",
+            "title": "Understanding",
+            "type": "string"
+          },
+          "wording": {
+            "default": "fallback",
+            "title": "Wording",
+            "type": "string"
+          }
+        },
+        "title": "SuggestionSetOut",
+        "type": "object"
+      },
+      "SuggestionTapIn": {
+        "additionalProperties": false,
+        "description": "KRI-756: which offered suggestion chip this message came from (optional, additive).\n\nValidated against the offered-set ring on the thread; absent or invalid falls back to\nmatching the message text against the offered chips. Never changes what the turn does.",
+        "properties": {
+          "chip_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Chip Id",
+            "type": "string"
+          },
+          "set_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Set Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "set_id",
+          "chip_id"
+        ],
+        "title": "SuggestionTapIn",
         "type": "object"
       },
       "SyncAnchor": {
@@ -12601,6 +12823,48 @@
           }
         ]
       }
+    },
+    "/creation-threads/{thread_id}/suggestions": {
+      "get": {
+        "operationId": "getCreationSuggestions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestionSetOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
     },
     "/creation-threads/{thread_id}/turns": {
       "parameters": [

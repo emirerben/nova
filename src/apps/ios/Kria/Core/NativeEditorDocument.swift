@@ -753,7 +753,7 @@ private extension EditorDocument {
 
     func isTypedRecord(_ section: EditorSection, _ value: [String: JSONValue]) -> Bool {
         switch section {
-        case .timeline: return Self.string(value["slot_id"]) != nil && Self.integer(value["clip_index"]) != nil && Self.number(value["in_s"]) != nil
+        case .timeline: return Self.integer(value["clip_index"]) != nil && Self.number(value["in_s"]) != nil
         case .text: return Self.string(value["id"]) != nil && Self.string(value["text"]) != nil && Self.number(value["start_s"]) != nil && Self.number(value["end_s"]) != nil
         case .captions: return Self.number(value["start_s"]) != nil && Self.number(value["end_s"]) != nil
         case .soundEffects, .mediaOverlays: return Self.string(value["id"]) != nil && (Self.number(value["start_s"] ?? value["start"] ?? value["at_s"]) != nil) && (Self.number(value["end_s"] ?? value["end"] ?? value["at_s"]) != nil)

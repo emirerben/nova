@@ -1,0 +1,34 @@
+{
+ "id": "reorder_follows_model",
+ "description": "The model puts transitions first: rank follows the model, ranks stay 1..n contiguous and chip 1 stays the default edit.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{cid:transition}}",
+    "label_template": "Add transitions",
+    "why": null
+   },
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Add a hook to the opening",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "kinds": [
+   "default_edit",
+   "transition",
+   "hook"
+  ],
+  "label_source": {
+   "default_edit": "template"
+  }
+ },
+ "tags": [
+  "natural"
+ ]
+}

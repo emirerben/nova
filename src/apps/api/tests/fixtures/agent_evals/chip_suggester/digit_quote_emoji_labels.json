@@ -1,0 +1,35 @@
+{
+ "id": "digit_quote_emoji_labels",
+ "description": "Digits, quotes and emoji are rejected in labels.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Add 3 hooks",
+    "why": null
+   },
+   {
+    "cid": "{{cid:sfx}}",
+    "label_template": "Add \"sound effects\"",
+    "why": null
+   },
+   {
+    "cid": "{{cid:transition}}",
+    "label_template": "Add transitions 🔥",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "label_source": {
+   "hook": "template",
+   "sfx": "template",
+   "transition": "template"
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

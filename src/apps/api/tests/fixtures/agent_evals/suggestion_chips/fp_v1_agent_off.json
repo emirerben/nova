@@ -1,0 +1,81 @@
+{
+ "name": "fp_v1_agent_off",
+ "description": "Runtime v1 thread with the Main Creator agent off: a first message cannot draft, render nothing.",
+ "tags": [
+  "v1",
+  "flag_off"
+ ],
+ "context": {
+  "thread_id": "thread-fp_v1_agent_off",
+  "state": "first_prompt",
+  "language": "en",
+  "client_protocol": 2,
+  "media_digest": "digest-fp_v1_agent_off",
+  "understanding": "complete",
+  "runtime_version": 1,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "pouring matcha into a glass",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [
+     {
+      "start_s": 1.0,
+      "end_s": 2.5,
+      "label": "the pour"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-2",
+    "ordinal": 2,
+    "kind": "video",
+    "subject": "packing orders into boxes",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 1.5,
+      "label": "tape sealing the box"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-3",
+    "ordinal": 3,
+    "kind": "video",
+    "subject": "first sip of the drink",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [
+     {
+      "start_s": 0.5,
+      "end_s": 1.5,
+      "label": "first sip"
+     }
+    ]
+   }
+  ],
+  "capabilities": {
+   "dispatch_render": true,
+   "main_creator_agent": false,
+   "caption_style": true,
+   "sound_effects": true,
+   "transitions": true
+  }
+ },
+ "expect": {
+  "kinds": []
+ }
+}

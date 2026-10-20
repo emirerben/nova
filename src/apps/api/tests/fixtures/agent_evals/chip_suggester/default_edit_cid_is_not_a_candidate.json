@@ -1,0 +1,35 @@
+{
+ "id": "default_edit_cid_is_not_a_candidate",
+ "description": "The default edit's cid is not in the ranked pool; the model cannot move or duplicate chip 1.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{default}}",
+    "label_template": "Cut the first draft for me",
+    "why": null
+   },
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Add a hook to the opening",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "kinds": [
+   "default_edit",
+   "hook"
+  ],
+  "drops": {
+   "unknown_cid": 1
+  },
+  "label_source": {
+   "default_edit": "template"
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

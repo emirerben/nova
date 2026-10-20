@@ -397,6 +397,7 @@ def test_request_digest_is_unchanged_when_scope_is_absent_and_sensitive_when_pre
                     "song_range",
                     "scope",
                     "manual_edits",
+                    "suggestion",
                 },
             ),
             sort_keys=True,

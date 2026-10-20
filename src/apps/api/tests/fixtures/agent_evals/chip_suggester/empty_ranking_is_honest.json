@@ -1,0 +1,25 @@
+{
+ "id": "empty_ranking_is_honest",
+ "description": "The model says nothing helps: no usable wording, so the set is the deterministic template set (nothing is lost, nothing is invented).",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "default_label": null,
+  "ranked": []
+ },
+ "expect": {
+  "wording": "fallback",
+  "kinds": [
+   "default_edit",
+   "hook",
+   "sfx",
+   "transition"
+  ],
+  "label_source": {
+   "hook": "template"
+  },
+  "stored_status": "fallback"
+ },
+ "tags": [
+  "natural"
+ ]
+}

@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "set_id": "sg_ff05da77cdb3b8f3",
+  "state": "first_prompt",
+  "status": "pending",
+  "understanding": "pending",
+  "retry_after_s": 3,
+  "wording": "pending",
+  "anchor": {
+    "media_digest": "digest-fp_understanding_pending",
+    "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "render_generation_id": null,
+    "variant_id": null
+  },
+  "chips": [
+    {
+      "id": "sc_54531ad4f5ea",
+      "kind": "default_edit",
+      "label": "Let Kria cut the first version",
+      "message": "Suggest an edit.",
+      "rank": 1,
+      "default_edit": true,
+      "capability": "dispatch_render",
+      "anchor": {
+        "media_id": null,
+        "clip_ordinal": null,
+        "moment": null,
+        "text_bar_index": null
+      },
+      "why": null,
+      "label_source": "template",
+      "requires_protocol": null
+    }
+  ]
+}

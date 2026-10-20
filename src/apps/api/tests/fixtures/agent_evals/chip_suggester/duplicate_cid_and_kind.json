@@ -1,0 +1,35 @@
+{
+ "id": "duplicate_cid_and_kind",
+ "description": "The same chip twice: one survives.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Add a hook to the opening",
+    "why": null
+   },
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Open with a hook",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "kinds": [
+   "default_edit",
+   "hook"
+  ],
+  "labels": {
+   "hook": "Add a hook to the opening"
+  },
+  "drops": {
+   "duplicate_kind": 1
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}
