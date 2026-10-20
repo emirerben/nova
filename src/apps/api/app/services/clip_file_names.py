@@ -33,6 +33,9 @@ _MEDIA_SUFFIXES = frozenset(
 )
 DISPLAY_NAME_MAX_CHARS = 80
 _SEGMENT_SPLIT = re.compile(r"[\s_.\-]+")
+# KRI-763: a generic last word some exports append ("M1_08_footage"); creators type the name
+# without it ("M1_08"). The shorter spelling is one more way to name the same clip.
+_GENERIC_NAME_SUFFIXES = frozenset({"footage"})
 # A leading part of a name identifies a clip only with this many folded characters.
 _MIN_PREFIX_CHARS = 6
 # Creator text splits into words on whitespace and punctuation, but not on the "_", "-" and
@@ -47,7 +50,9 @@ _FILLER_WORDS = frozenset(
         "a an the this that it one and then after next finally followed by first last start "
         "end beginning ending opening closing at with in to of put use show play order clip "
         "clips video videos file files footage shot shots ve sonra ardindan ilk son sonda "
-        "sonunda en basta once klip klibi klipler videosu dosya dosyasi ile bu s"
+        "sonunda en basta once klip klibi klipler videosu dosya dosyasi ile bu s "
+        # KRI-763: the inflected Turkish nouns ("M1_05 klibini", "M1_05 videosunu").
+        "klibini klibine klibin klipi klipleri kliplerini videoyu videosunu dosyayi dosyasini"
     ).split()
 )
 
@@ -109,6 +114,12 @@ class ClipNameIndex:
             if _identifying(full):
                 self._full.setdefault(full, set()).add(media_id)
             segments = [s for s in _SEGMENT_SPLIT.split(name) if s]
+            if len(segments) > 1 and _fold(segments[-1]) in _GENERIC_NAME_SUFFIXES:
+                # "M1_08_footage" is also named "M1_08". Two clips that share the short
+                # spelling match neither (`_lookup`), so this never picks one silently.
+                short = _fold("".join(segments[:-1]))
+                if _identifying(short):
+                    self._full.setdefault(short, set()).add(media_id)
             for count in range(1, len(segments)):
                 prefix = _fold("".join(segments[:count]))
                 if len(prefix) >= _MIN_PREFIX_CHARS and _identifying(prefix) and prefix != full:
@@ -127,7 +138,11 @@ class ClipNameIndex:
 
     def references(self, text: str) -> tuple[list[NameReference], list[str]]:
         """The file names in ``text`` in the order written, plus every other word (folded)."""
-        words = [m.group(0).strip("._-*") for m in _TEXT_TOKEN.finditer(text or "")]
+        # A typed name may carry the iOS upload prefix ("52250013-...-M1_08_footage.mp4").
+        words = [
+            _UPLOAD_PREFIX.sub("", m.group(0), count=1).strip("._-*")
+            for m in _TEXT_TOKEN.finditer(text or "")
+        ]
         words = [w for w in words if w]
         folded = [_fold(_strip_media_suffix(w)) for w in words]
         refs: list[NameReference] = []
