@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.66.0] - 2026-10-20
+
+### Changed
+- KRI-762: first/last clip pins are not an order-basis question (#1694) <!-- release-pr: 1694 -->
+
 ## [0.80.65.0] - 2026-10-20
 
 ### Changed
