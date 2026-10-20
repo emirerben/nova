@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.67.0] - 2026-10-20
+
+### Changed
+- KRI-761: a look-alike or clashing exclude asks which clip to leave out (#1696) <!-- release-pr: 1696 -->
+
 ## [0.80.66.0] - 2026-10-20
 
 ### Changed

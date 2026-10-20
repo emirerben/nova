@@ -27,6 +27,8 @@ from app.kria.reply_language import current_reply_language, say
 from app.schemas.clip_intents import (
     CLIP_DESCRIPTION_ATTRIBUTE,
     CREATOR_LABEL_MAX_WORDS,
+    CREATOR_SELECTED_EVIDENCE,
+    FILE_NAME_EVIDENCE,
     LABEL_MAX_CHARS,
     MAX_CLIP_INTENTS,
     ClipAssignment,
@@ -314,7 +316,9 @@ def apply_creator_selections(
             dropped.add(intent.intent_id)
             continue
         media_ids = sorted((m for m in entry.media_ids if m in by_id), key=order.__getitem__)
-        resolved = _settle(intent, media_ids, by_id, creator_request, evidence="creator selected")
+        resolved = _settle(
+            intent, media_ids, by_id, creator_request, evidence=CREATOR_SELECTED_EVIDENCE
+        )
         if resolved is None:
             remaining.append(intent)
             continue
@@ -434,7 +438,7 @@ def apply_file_name_references(
                 for number, media_id in enumerate(kept, start=1)
             ]
             seated = [
-                _settle(piece, [media_id], by_id, creator_request, evidence="file name")
+                _settle(piece, [media_id], by_id, creator_request, evidence=FILE_NAME_EVIDENCE)
                 for piece, media_id in zip(pieces, kept, strict=True)
             ]
             if any(piece is None for piece in seated):
@@ -443,7 +447,7 @@ def apply_file_name_references(
             settled.extend(piece for piece in seated if piece is not None)
             split[intent.intent_id] = pieces
             continue
-        resolved = _settle(intent, media_ids, by_id, creator_request, evidence="file name")
+        resolved = _settle(intent, media_ids, by_id, creator_request, evidence=FILE_NAME_EVIDENCE)
         if resolved is None:
             remaining.append(intent)
             continue

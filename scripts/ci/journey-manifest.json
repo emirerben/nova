@@ -511,6 +511,14 @@
       ]
     },
     {
+      "id": "kri-761-look-alike-exclusions",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py",
+      "paths": [
+        "src/apps/api/app/kria/clip_exclusions.py"
+      ]
+    },
+    {
       "id": "kri-585-spoken-order",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri585_spoken_order_montage.py tests/pipeline/test_unified_montage_spoken_order.py tests/services/test_spoken_roles.py",
