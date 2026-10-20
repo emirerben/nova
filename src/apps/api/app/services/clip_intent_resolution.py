@@ -797,12 +797,11 @@ def picker_eligible(intent: ClipIntent) -> bool:
 
     Membership ops, and labels/captions whose TEXT is already fixed (creator's words or
     the placeholder). A per-clip authored label or an authored caption still needs a
-    model, so those stay text questions. An exclude (KRI-667) is never asked about at all,
-    so it is never a picker category either.
+    model, so those stay text questions. An exclude (KRI-667) is never asked about by the
+    resolver, so it is never in ``creator_work``; but the clips a creator taps (or names by
+    file name) fully answer it, so it settles like the other membership ops (KRI-761).
     """
-    if intent.op == "exclude":
-        return False
-    if intent.op in {"group", "include", "order"}:
+    if intent.op in {"group", "include", "order", "exclude"}:
         return True
     if intent.op == "label":
         if intent.placeholder:

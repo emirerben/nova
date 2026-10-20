@@ -608,8 +608,10 @@ async def test_skip_the_hallway_clip_never_plays_it(prod_profile, monkeypatch) -
 
 
 async def test_a_clip_the_creator_also_placed_still_plays(prod_profile, monkeypatch) -> None:
-    # 6: "end on the hallway" and "skip the hallway" contradict: the clip stays.
+    # 6: "end on the hallway" and "skip the hallway" contradict: the clip stays. With the
+    # picker on, KRI-761 also asks which clip to leave out (test_kri761_look_alike_exclusions).
     monkeypatch.setattr(settings, "clip_intent_exclude_enabled", True)
+    monkeypatch.setattr(settings, "kria_clip_selection_questions_enabled", False)
     strategy = await _draft(monkeypatch, [_exclude(), _order_last(HALLWAY)])
     assert _played(strategy) == set(ALL)
 

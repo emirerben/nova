@@ -345,7 +345,7 @@ def apply_clip_scope(
         return strategy
     # A clip the strategy itself plays or places stays (as in ``excluded_clips``): a length
     # word never outranks the montage's own audio source or a reaction beat.
-    dropped = ruled_out_clips(creator_texts, manifest.media) - _placed_media(strategy)
+    dropped = ruled_out_clips(creator_texts, manifest.media) - placed_media(strategy)
     if not dropped:
         return strategy
     takes_everything = strategy.media_scope == "all" or not strategy.selected_media_ids
@@ -368,7 +368,7 @@ def apply_clip_scope(
     return strategy.model_copy(update=update)
 
 
-def _placed_media(strategy: CreativeStrategy) -> set[str]:
+def placed_media(strategy: CreativeStrategy) -> set[str]:
     """Media the strategy itself places or plays: never removed by an exclusion."""
 
     placed = {beat.visual_id for beat in strategy.reaction_beats or [] if beat.visual_id}
@@ -399,7 +399,7 @@ def excluded_clips(
     if not excluded:
         return set()
     named = {a.media_id for i in intents if i.op != "exclude" for a in i.assignments}
-    return excluded - named - _placed_media(strategy)
+    return excluded - named - placed_media(strategy)
 
 
 def apply_clip_exclusions(
@@ -451,5 +451,6 @@ __all__ = [
     "excluded_clips",
     "length_asks",
     "length_groups",
+    "placed_media",
     "ruled_out_clips",
 ]
