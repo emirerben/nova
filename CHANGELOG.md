@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.62.0] - 2026-10-20
+
+### Changed
+- KRI-765: failure cards read in the chat's language, name the cause, and never replay an old failure (#1691) <!-- release-pr: 1691 -->
+
 ## [0.80.61.0] - 2026-10-20
 
 ### Fixed
