@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.63.0] - 2026-10-20
+
+### Fixed
+- KRI-760: a quoted line to hear in full keeps its clip window, never a pop-in (#1692) <!-- release-pr: 1692 -->
+
 ## [0.80.62.0] - 2026-10-20
 
 ### Changed
