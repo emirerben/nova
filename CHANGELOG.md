@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.61.0] - 2026-10-20
+
+### Fixed
+- KRI-767 fix(text): a label the composer moves to another clip is not a copy change (#1690) <!-- release-pr: 1690 -->
+
 ## [0.80.60.0] - 2026-10-20
 
 ### Changed
