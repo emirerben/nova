@@ -470,6 +470,10 @@ class UnifiedMontagePlan:
     spoken_roles: dict[str, str] = field(default_factory=dict)
     opening_speech: dict[str, Any] = field(default_factory=dict)
     closing_quiet: dict[str, Any] = field(default_factory=dict)
+    # KRI-760: the lines the creator asked to hear whole, one row per quote: {quote, status
+    # ("held" / "not_held" / "ambiguous" / "not_found"), media_id, source_start_s,
+    # source_end_s}. Empty without such an ask, so every earlier record is unchanged.
+    named_lines: list[dict[str, Any]] = field(default_factory=list)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -496,6 +500,7 @@ class UnifiedMontagePlan:
         song = {"user_song": dict(self.song_receipt)} if self.song_receipt else {}
         speech = {"closing_speech": dict(self.closing_speech)} if self.closing_speech else {}
         quote = {"closing_quote": dict(self.closing_quote)} if self.closing_quote else {}
+        named = {"named_lines": [dict(row) for row in self.named_lines]} if self.named_lines else {}
         best_parts = (
             {"best_parts": list(self.best_parts_receipt)} if self.best_parts_receipt else {}
         )
@@ -558,6 +563,7 @@ class UnifiedMontagePlan:
             **outcomes,
             **choice,
             **zone,
+            **named,
             **song,
             **speech,
             **quote,
@@ -860,6 +866,35 @@ def _closing_records(
             "source_end_s": last.source_end_s,
         }, {}
     return {}, {}
+
+
+def _named_line_records(cuts: Sequence[FastMontageCut], planned: object) -> list[dict[str, Any]]:
+    """The approved plan's whole-line rows (KRI-760), "held" only when a cut covers the line.
+
+    A line the approved plan found is "held" when some cut of its clip covers the sentence's
+    seconds and "not_held" when none does (the clip was left out, or its cut is shorter than
+    the line); a line it could not place stays as it was.
+    """
+    out: list[dict[str, Any]] = []
+    for row in planned if isinstance(planned, list) else []:
+        if not isinstance(row, Mapping) or not row.get("quote") or not row.get("status"):
+            continue
+        record: dict[str, Any] = {"quote": str(row["quote"]), "status": str(row["status"])}
+        start, end = _source_second(row.get("start_s")), _source_second(row.get("end_s"))
+        if record["status"] == "found" and start is not None and end is not None and end > start:
+            record.update(media_id=str(row.get("media_id") or ""))
+            record.update(source_start_s=start, source_end_s=end)
+            held = any(
+                cut.media_id == record["media_id"]
+                and cut.source_start_s <= start + _HELD_LINE_TOLERANCE_S
+                and cut.source_end_s >= end - _HELD_LINE_TOLERANCE_S
+                for cut in cuts
+            )
+            record["status"] = "held" if held else "not_held"
+        elif record["status"] == "found":
+            continue
+        out.append(record)
+    return out
 
 
 def _story_beats(cuts: Sequence[FastMontageCut]) -> list[StoryBeat]:
@@ -1803,6 +1838,9 @@ def plan_unified_montage(
         speech_span,
         approved_length_plan.get("closing_quote") if approved_length_plan is not None else None,
     )
+    named_lines = _named_line_records(
+        cuts, approved_length_plan.get("named_lines") if approved_length_plan is not None else None
+    )
     # Keep the exact frame sum: rounding it to milliseconds can disagree with
     # the frame-aligned cuts by a third of a frame.
     total_s = sum(cut.output_duration_s for cut in cuts)
@@ -1912,6 +1950,7 @@ def plan_unified_montage(
         spoken_roles=spoken_roles,
         opening_speech=opening_speech,
         closing_quiet=closing_quiet,
+        named_lines=named_lines,
     )
 
 

@@ -227,3 +227,19 @@ def test_the_record_helper_matches_labels_by_basename_or_source_id():
         (["the start"], [{"spot": "first", "name": "the start"}], "one"),
         (["b"], [], "two"),
     ]
+
+
+def test_a_turkish_chat_missed_last_clip_asks_in_turkish(monkeypatch):
+    """KRI-765: the worker writes the block recovery in the chat's language, not half and half."""
+    job, snapshot, _binding = _setup(monkeypatch, order=["c2", "c0", "c1"])
+    snapshot["creator_reply_language"] = "tr"
+
+    with pytest.raises(UnsupportedPhonePlan) as caught:
+        gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    message = job.assembly_plan["request_recovery"]["message"]
+    assert message == str(caught.value)
+    assert message.endswith(
+        "Taslağın kaydedildi. Tekrar mı deneyeyim, yoksa isteği sadeleştireyim mi?"
+    )
+    assert "Should I try again" not in message and "Your draft is saved" not in message

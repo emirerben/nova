@@ -4742,7 +4742,14 @@ def test_creator_intent_clip_order_basename_fallback_and_guided_noop() -> None:
 # dispatch never stamps a job whose contract it creates; flag off stamps anyway.
 
 
-def _dispatch_with_binding(monkeypatch, *, enabled, factory_stamped, strategy=None):  # noqa: ANN001, ANN202
+def _dispatch_with_binding(  # noqa: ANN202
+    monkeypatch,  # noqa: ANN001
+    *,
+    enabled,  # noqa: ANN001
+    factory_stamped,  # noqa: ANN001
+    strategy=None,  # noqa: ANN001
+    thread_state=None,  # noqa: ANN001
+):
     from app.config import settings
     from app.kria.brief_binding import BriefBinding
     from app.services import generative_jobs
@@ -4776,7 +4783,7 @@ def _dispatch_with_binding(monkeypatch, *, enabled, factory_stamped, strategy=No
     def before() -> None:
         # The active-thread lookup the stamp block performs resolves to our thread.
         holder["session"].execute.return_value.scalar_one_or_none.return_value = SimpleNamespace(
-            id=thread_id
+            id=thread_id, state=thread_state
         )
 
     original_setup = _guided_voiceover_dispatch_setup
@@ -4802,6 +4809,31 @@ def test_dispatch_stamps_a_contract_it_builds_first(monkeypatch):  # noqa: ANN00
     job = run.session.add.call_args.args[0]
     assert job.all_candidates["creator_render_requirements_version"] == 1
     assert job.all_candidates["creator_plan_authority_version"] == 1
+
+
+# --- KRI-765: the chat's language rides the Job beside the approved brief ---------------
+#
+# Failure modes: a Turkish chat's render worker writes its block reasons in English (no
+# language reaches it); an English / unknown chat gets a stray key; a language the chat does
+# not support is stamped anyway.
+
+
+def test_dispatch_stamps_the_chats_reply_language_beside_the_binding(monkeypatch):  # noqa: ANN001
+    run = _dispatch_with_binding(
+        monkeypatch, enabled=True, factory_stamped=False, thread_state={"reply_language": "tr"}
+    )
+    job = run.session.add.call_args.args[0]
+    assert job.assembly_plan["creator_reply_language"] == "tr"
+    assert "creator_brief_binding" in job.assembly_plan
+
+
+@pytest.mark.parametrize("state", [None, {}, {"reply_language": "fr"}])
+def test_dispatch_stamps_no_language_when_the_chat_has_none(monkeypatch, state):  # noqa: ANN001
+    run = _dispatch_with_binding(
+        monkeypatch, enabled=True, factory_stamped=False, thread_state=state
+    )
+    job = run.session.add.call_args.args[0]
+    assert "creator_reply_language" not in job.assembly_plan
 
 
 def test_dispatch_flag_off_does_not_stamp(monkeypatch):  # noqa: ANN001

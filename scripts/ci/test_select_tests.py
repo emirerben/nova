@@ -617,7 +617,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates,kri-721-approval-readiness",
+                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates,kri-760-whole-line-ask,kri-721-approval-readiness",
                 ),
             ),
             (
@@ -803,6 +803,14 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json",
                 (True, "covered", "kri-681-named-line-windows"),
+            ),
+            (
+                "src/apps/api/app/pipeline/unified_montage.py",
+                (
+                    True,
+                    "covered",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-760-whole-line-ask,kri-648-phone-text",
+                ),
             ),
             (
                 "src/apps/api/app/pipeline/captions.py",

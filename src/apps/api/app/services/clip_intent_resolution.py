@@ -248,6 +248,25 @@ def _alias_for(index: int) -> str:
     return f"m{index + 1:03d}"
 
 
+def _invented_selection(evidence: object, alias: str, resolver_request: str) -> bool:
+    """True when the resolver cites the internal handle ``alias`` as its grounds but the
+    request it read never names that handle (KRI-763).
+
+    Aliases (``m001``...) are internal: the only way one reaches the request is
+    ``_replace_known_media_ids_with_aliases`` swapping a clip id the creator really named,
+    and evidence is meant to quote the clip's record, which never contains one. Creator
+    words like a file name ("M1_08") are not the alias ``m008``, yet the resolver answered
+    "creator explicitly selected m008" for it, pinning the 8th attachment at confidence 1.0.
+    Structural only: it compares the handle, never what the evidence or the request means.
+    """
+    handle = alias.casefold()
+    return (
+        isinstance(evidence, str)
+        and handle in evidence.casefold()
+        and handle not in resolver_request.casefold()
+    )
+
+
 def _replace_known_media_ids_with_aliases(
     creator_request: str,
     alias_to_media: dict[str, str],
@@ -1226,7 +1245,11 @@ async def resolve_clip_intents_for_turn(
             # returned -- the creator would be asked to do the matching themselves.
             stray_questions_ignored += 1
 
-        assignment_by_media = {a.media: a for a in resolved.assignments}
+        assignment_by_media = {
+            a.media: a
+            for a in resolved.assignments
+            if not _invented_selection(a.evidence, a.media, resolver_input.creator_request)
+        }
         vision_media = {nv.media: nv.question for nv in resolved.needs_vision}
         work.had_any_candidate = bool(assignment_by_media or vision_media)
         if intent.op == "caption" and not intent.creator_text:

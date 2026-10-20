@@ -1,0 +1,29 @@
+{
+ "id": "unknown_placeholder",
+ "description": "Only {time} and {filename} may appear, and only if the candidate offers them (none do here).",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Add a hook to the opening {evil}",
+    "why": null
+   },
+   {
+    "cid": "{{cid:sfx}}",
+    "label_template": "Add sound effects {time}",
+    "why": null
+   }
+  ]
+ },
+ "expect": {
+  "label_source": {
+   "hook": "template",
+   "sfx": "template"
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

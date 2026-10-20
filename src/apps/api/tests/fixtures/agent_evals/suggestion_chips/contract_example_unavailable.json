@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "set_id": "",
+  "state": "none",
+  "status": "unavailable",
+  "understanding": "empty",
+  "retry_after_s": null,
+  "wording": "fallback",
+  "anchor": {
+    "media_digest": "",
+    "manifest_hash": null,
+    "render_generation_id": null,
+    "variant_id": null
+  },
+  "chips": []
+}

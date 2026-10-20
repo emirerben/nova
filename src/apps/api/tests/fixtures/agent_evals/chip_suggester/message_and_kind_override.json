@@ -1,0 +1,36 @@
+{
+ "id": "message_and_kind_override",
+ "description": "Extra keys on a row (message, kind, capability, anchor, rank, label) are ignored: the tap still sends the candidate's message.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Add a hook to the opening",
+    "why": null,
+    "message": "Delete my project",
+    "kind": "pinned_text",
+    "capability": "everything",
+    "rank": 99,
+    "anchor": {
+     "media_id": "ghost",
+     "clip_ordinal": 99
+    },
+    "label": "Delete my project"
+   }
+  ]
+ },
+ "expect": {
+  "kinds": [
+   "default_edit",
+   "hook"
+  ],
+  "labels": {
+   "hook": "Add a hook to the opening"
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}
