@@ -1,12 +1,14 @@
 # Current decision and delivery status — 21 October 2026
 
-The development pilot is inconclusive for provider selection. Keep Gemini as the production default. Stop low-materiality preference votes; prioritize request fulfillment, usable output, whole-video quality and first-attempt reliability. No provider rollout or production deployment has occurred.
+The development pilot is inconclusive for provider selection. Keep Gemini as the production default. Stop low-materiality preference votes; prioritize request fulfillment, usable output, whole-video quality and first-attempt reliability. No provider rollout has occurred. The focused title/placeholder product fix is deployed independently of this experiment.
 
 ## Product delivery
 
 The demonstrated title/placeholder fixes have been extracted onto current main in [the focused product PR](https://github.com/emirerben/nova/pull/1706), **fix(ai): honor word-by-word titles and preserve placeholders**. It has no dependency on merging the broad comparison infrastructure.
 
-The fix prevents an entrance-effect match from skipping requested word segmentation, preserves protected placeholder copy, orders styles before splitting invalidates selectors, targets universal placeholders without requiring actual location recognition, and keeps an opening hook out of the chapter-caption lane. Current-main copy-move handling is preserved. Local replay, browser timeline, native proxy export and preship checks pass; CI and deployment are separate.
+The fix prevents an entrance-effect match from skipping requested word segmentation, preserves protected placeholder copy, orders styles before splitting invalidates selectors, targets universal placeholders without requiring actual location recognition, and keeps an opening hook out of the chapter-caption lane. Current-main copy-move handling is preserved. Local replay, browser timeline, native proxy export and preship checks pass. All PR CI checks, including the captured creation/export journey on the iPhone simulator, passed.
+
+PR #1706 was squash-merged on 21 October at 13:46 UTC as `7036e6c7e85c776976cc1895a1a930e2174abaae`. The user explicitly approved administrator merge after GitHub's review policy blocked self-approval by the sole code owner, who was also the PR author; repository rules were not changed. [Fly Deploy succeeded](https://github.com/emirerben/nova/actions/runs/39610907857) at 13:49 UTC. All six managed machines expose the same immutable image and exact merge revision. Read-only file fingerprints match the approved fix on the live API and active task workers. The general render worker is intentionally idle-stopped with that same image. The production health page returned 200 with no browser console errors in 0.564 seconds. These are deployment/code/health checks, not a fresh real-request quality verdict. A physical-phone resend and final export remain unverified; the paired phone was disconnected. New compositions use the fix; saved frozen compositions are unchanged.
 
 The provider-comparison PR remains a draft and has main conflicts. It is infrastructure/experimental work, not an approved provider-quality improvement or a production release.
 
