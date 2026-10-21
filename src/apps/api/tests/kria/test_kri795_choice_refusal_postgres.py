@@ -31,8 +31,10 @@ Failure modes, written before the code:
 * F14 requirement_conflict refusals (lengths, revision, soundtracks) still blame the iPhone
 * F15 the worker's way forward is added twice
 * F16 a device-record needs_choice refusal still says "which option" with no options
+* F17 the re-asked card still recommends the answer the refused render carried, so a
+  "you choose" on the card hands the same refusal back
 
-F1-F12 run here on the scratch Postgres through the real observer, the real `submit_turn`
+F1-F12 and F17 run here on the scratch Postgres through the real observer, the real `submit_turn`
 free-text matcher, the real choice gate and the real render contract. F1-F3, F10 and F13-F16 are
 swept over every refusal the contract writes in `test_kri795_refusal_copy.py`.
 """
@@ -112,15 +114,18 @@ async def _draft_time_question(monkeypatch: pytest.MonkeyPatch, language: str) -
 
 
 def _seed_refused_render(
-    history: list[dict], *, detail: str = PROD_DETAIL
+    history: list[dict], *, detail: str = PROD_DETAIL, answers: list[dict] | None = None
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     """A thread whose approved render was refused at dispatch, awaiting its observer.
 
     ``history`` is the chat before the approval: ``{"role", "event_type", "content",
-    "payload"}`` rows appended after the seeded project events.
+    "payload"}`` rows appended after the seeded project events. ``answers`` are the choice
+    answers the approval pinned (prod T1: on the binding; the job's strategy had lost them).
     """
     user_id, thread_id, session_id = _seed_runtime_project()
-    binding = BriefBinding.create(thread_id, BRIEF, latest_message="Make the edit")
+    binding = BriefBinding.create(
+        thread_id, BRIEF, latest_message="Make the edit", choice_answers=answers
+    )
     with sync_session() as db:
         thread = db.get(CreationThread, thread_id, with_for_update=True)
         session = db.get(CreatorAgentSession, session_id, with_for_update=True)
@@ -228,12 +233,29 @@ def _asked_and_answered(asked: dict, option: str) -> list[dict]:
 
 
 async def _refused(
-    history: list[dict], *, detail: str = PROD_DETAIL
+    history: list[dict], *, detail: str = PROD_DETAIL, answers: list[dict] | None = None
 ) -> tuple[uuid.UUID, uuid.UUID, CreationThreadEvent]:
-    user_id, thread_id, execution_id = _seed_refused_render(history, detail=detail)
+    user_id, thread_id, execution_id = _seed_refused_render(history, detail=detail, answers=answers)
     observed, _ = await asyncio.to_thread(_observe_dispatched_execution, execution_id)
     assert observed == "failed"
     return user_id, thread_id, _failed_event(thread_id)
+
+
+async def _t1_refused(asked: dict) -> tuple[uuid.UUID, uuid.UUID, CreationThreadEvent]:
+    """Prod T1: upload order tapped, pinned on the binding, and the render still refused."""
+    return await _refused(
+        _asked_and_answered(asked, "attachment_order"),
+        answers=[
+            {
+                "conflict": "order_basis",
+                "kind": "order_basis",
+                "option": "attachment_order",
+                "input_digest": asked["question"]["input_digest"],
+                "requirement_ids": ["r2"],
+                "source": "creator",
+            }
+        ],
+    )
 
 
 def _last_selection(thread_id: uuid.UUID) -> dict:
@@ -285,20 +307,27 @@ async def test_the_t1_refusal_names_the_order_and_reasks_the_same_order_question
 ) -> None:
     try:
         asked = await _draft_time_question(monkeypatch, "en")
-        _, _, event = await _refused(_asked_and_answered(asked, "attachment_order"))
+        _, _, event = await _t1_refused(asked)
 
         assert event.content != PROD_CARD
         _assert_no_dead_end(event.content)
         assert event.content.startswith("I couldn't keep the clip order you asked for.")
         # F2: the options are in the text too (a build without the picker shows only this).
-        assert "1. Use the order you added the clips (recommended)" in event.content
-        assert "2. Continue without a fixed order" in event.content
+        # F17: the refused render carried upload order, so it is no longer the recommendation.
+        assert (
+            "\n1. Use the order you added the clips"
+            "\n2. Continue without a fixed order (recommended)\n"
+        ) in event.content
 
         question = event.payload["choice_question"]
         original = asked["question"]
         # F4: the same conflict, inputs and options the gate asked about at draft time.
-        for key in ("conflict", "kind", "input_digest", "options"):
+        for key in ("conflict", "kind", "input_digest"):
             assert question[key] == original[key], key
+        assert [(o["key"], o["label"]) for o in question["options"]] == [
+            (o["key"], o["label"]) for o in original["options"]
+        ]
+        assert [o["key"] for o in question["options"] if o["recommended"]] == ["unordered"]
         # F5: a new ask, so the earlier answer does not close it.
         assert question["question_id"] != original["question_id"]
         # F12: still the creator's decision, never a retry.
@@ -318,6 +347,7 @@ async def test_the_t1_refusal_names_the_order_and_reasks_the_same_order_question
         ("Continue without a fixed order", "unordered"),  # T1 turn 4, typed
         ("no fixed order", "unordered"),
         ("Use the order you added the clips", "attachment_order"),
+        ("you choose", "unordered"),  # F17: delegation never lands on the refused answer
     ],
 )
 @pytest.mark.asyncio
@@ -326,14 +356,15 @@ async def test_an_answer_after_the_refusal_is_replayed_and_the_contract_resolves
 ) -> None:
     try:
         asked = await _draft_time_question(monkeypatch, "en")
-        user_id, thread_id, event = await _refused(_asked_and_answered(asked, "attachment_order"))
+        user_id, thread_id, event = await _t1_refused(asked)
         await _reply(user_id, thread_id, reply)
 
         selection = _last_selection(thread_id)
-        assert selection == {
-            "question_id": event.payload["choice_question"]["question_id"],
-            "option_key": option,
-        }
+        assert (selection["question_id"], selection["option_key"]) == (
+            event.payload["choice_question"]["question_id"],
+            option,
+        )
+        assert selection.get("delegated", False) is (reply == "you choose")
         # The next draft: the real gate replays the answer from the real thread events.
         gated = await _gate(
             monkeypatch, _planned(), rows=ROWS, brief=BRIEF, events=_thread_events(thread_id)
@@ -364,12 +395,13 @@ async def test_a_turkish_chat_gets_the_reason_and_the_turkish_options(
     monkeypatch.setattr(kria_runtime, "thread_reply_language", lambda _thread: "tr")
     try:
         asked = await _draft_time_question(monkeypatch, "tr")
-        user_id, thread_id, event = await _refused(_asked_and_answered(asked, "attachment_order"))
+        user_id, thread_id, event = await _t1_refused(asked)
 
         content = event.content
         assert content.startswith("İstediğin klip sırasını koruyamadım. Hangisini tercih edersin?")
-        assert "1. Klipleri eklediğin sırayı kullan (önerilen)" in content
-        assert "2. Sabit bir sıra olmadan devam et" in content
+        assert (
+            "\n1. Klipleri eklediğin sırayı kullan\n2. Sabit bir sıra olmadan devam et (önerilen)\n"
+        ) in content
         assert "Bir seçeneğe dokun ya da kendi sözlerinle anlat." in content
         for english in ("I couldn't", "Tell me", "iPhone", "order"):
             assert english not in content, content
@@ -425,7 +457,7 @@ async def test_choice_questions_off_attach_no_picker_and_point_at_none(
     try:
         asked = await _draft_time_question(monkeypatch, "en")
         monkeypatch.setattr(settings, "kria_choice_questions_enabled", False)
-        _, _, event = await _refused(_asked_and_answered(asked, "attachment_order"))
+        _, _, event = await _t1_refused(asked)
 
         assert "choice_question" not in event.payload  # F11
         assert "Tap an option" not in event.content

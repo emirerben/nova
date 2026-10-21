@@ -375,19 +375,31 @@ def _numbered_options(options: Iterable[tuple[str, bool]]) -> list[str]:
     return lines
 
 
-def reask_choice_question(question: Mapping[str, Any]) -> dict[str, Any] | None:
+def reask_choice_question(
+    question: Mapping[str, Any], *, refused: str | None = None
+) -> dict[str, Any] | None:
     """A stored ``choice_question`` asked again: same conflict, inputs and options, new id.
 
     KRI-795: a render refused for an unresolved choice re-asks the question the gate already
     asked. Keeping its ``conflict`` and ``input_digest`` is what makes the answer count: the
     next turn's gate replays an answer only for the inputs it computes now. The new
-    ``question_id`` keeps an earlier answer from closing it. ``None`` for a question with
-    fewer than two options (one way forward is not a choice to tap).
+    ``question_id`` keeps an earlier answer from closing it. ``refused`` is the answer the
+    refused render carried: it is never the recommendation again, so a delegated "you
+    choose" cannot hand the same refusal back (an order refusal recommends dropping the fixed
+    order, the way forward that renders). ``None`` for a question with fewer than two
+    options (one way forward is not a choice to tap).
     """
     options = [o for o in question.get("options") or [] if isinstance(o, Mapping) and o.get("key")]
     if len(options) < 2 or not question.get("conflict"):
         return None
-    return {**copy.deepcopy(dict(question)), "question_id": str(uuid.uuid4())}
+    reasked = {**copy.deepcopy(dict(question)), "question_id": str(uuid.uuid4())}
+    others = [str(o["key"]) for o in options if str(o["key"]) != refused]
+    if refused is not None and len(others) < len(options):
+        pick = OPT_UNORDERED if OPT_UNORDERED in others else others[0]
+        for option in reasked["options"]:
+            if isinstance(option, dict):
+                option["recommended"] = option.get("key") == pick
+    return reasked
 
 
 def reasked_question_text(question: Mapping[str, Any]) -> str:

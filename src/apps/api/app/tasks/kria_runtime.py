@@ -4220,13 +4220,15 @@ def _reasked_choice_question(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
     decline: dict[str, str] | None,
+    job: Job,
 ) -> dict[str, Any] | None:
     """The thread's latest question for this refusal's choice, asked again (KRI-795).
 
     Only a refusal the thread's own question answers (`_UNRESOLVED_PLAIN`), only a question
     the gate really asked in this thread (its digest is what the next turn replays an answer
     against), and only while choice questions are on. Anything else gets no picker: a tap
-    nothing replays is worse than plain words.
+    nothing replays is worse than plain words. The answer the refused render carried is not
+    recommended again.
     """
     from app.services.choice_questions import reask_choice_question  # noqa: PLC0415
 
@@ -4251,7 +4253,24 @@ def _reasked_choice_question(
         .limit(1)
     ).scalar_one_or_none()
     question = asked.get("choice_question") if isinstance(asked, dict) else None
-    return reask_choice_question(question) if isinstance(question, dict) else None
+    if not isinstance(question, dict):
+        return None
+    return reask_choice_question(question, refused=_pinned_answer(job, conflict))
+
+
+def _pinned_answer(job: Job, conflict: str) -> str | None:
+    """The option this job's approval pinned for ``conflict``: on the brief binding, or on
+    the approved strategy (the job factory may have stripped it there, KRI-788)."""
+    plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    binding = plan.get("creator_brief_binding")
+    candidates = getattr(job, "all_candidates", None)
+    strategy = candidates.get("creator_strategy") if isinstance(candidates, dict) else None
+    for source in (binding, strategy):
+        rows = source.get("choice_answers") if isinstance(source, dict) else None
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, dict) and row.get("conflict") == conflict and row.get("option"):
+                return str(row["option"])
+    return None
 
 
 def _capability_refusal_copy(decline: dict[str, str]) -> str:
@@ -5902,7 +5921,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     )
                 )
             else:
-                reasked = _reasked_choice_question(db, thread.id, device_decline)
+                reasked = _reasked_choice_question(db, thread.id, device_decline, job)
                 failure_content = _device_refusal_copy(
                     device_decline, last_good=last_good, question=reasked
                 )
@@ -5961,7 +5980,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # so the "can't render yet" table line blamed the wrong thing, and "tell me which
             # option" pointed at options nobody showed: name what is unresolved and ask the
             # thread's own question again when there is one.
-            reasked = _reasked_choice_question(db, thread.id, typed_decline)
+            reasked = _reasked_choice_question(db, thread.id, typed_decline, job)
             failure_content = _choice_refusal_copy(typed_decline, reasked)
             says_way_forward = True
         elif typed_decline is not None and (
