@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.16.0] - 2026-10-21
+
+### Changed
+- fix(kria): a freeze-frame ask is a plain "Couldn't", and its seconds are never the video's length (KRI-777) (#1710) <!-- release-pr: 1710 -->
+
 ## [0.81.15.0] - 2026-10-21
 
 ### Changed
